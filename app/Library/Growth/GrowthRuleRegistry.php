@@ -30,9 +30,10 @@ use App\Library\Growth\Rules\WebsitePackageOutOfSyncRule;
  * OpportunityActionRegistry read it through typeDefinitionsFor() /
  * actionDefinitions(), which keeps their own public API unchanged.
  *
+ * The two rank rules (seo.meaningful_rank_drop, seo.rank_just_outside_top_10)
+ * read STORED rank observations only (GrowthRankFactReader) — never a provider.
+ *
  * DEFERRED (no canonical data — see the V1 doc, "Rules deferred"):
- *   seo.rank_just_outside_top_10       no rank observations
- *   seo.meaningful_rank_drop           no rank observations
  *   ads.zero_conversion_spend          no Google Ads module
  *   ads.cpl_above_target               no Google Ads module
  *   ads.budget_over_pacing             no Google Ads module
@@ -70,6 +71,8 @@ final class GrowthRuleRegistry
             new WebsitePackageOutOfSyncRule(),
             SeoRules::technical(),
             new SeoRules(),
+            SeoRules::rankDrop(),
+            SeoRules::rankJustOutsideTopTen(),
             new CitationRules(),
             CitationRules::notChecked(),
             // Reviews

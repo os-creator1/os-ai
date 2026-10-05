@@ -42,9 +42,16 @@ final class SeoPublishedPage
      * and the body.
      *
      * The body is built from an ALLOWLIST of human-visible text fields per
-     * section type — never a URL, a button label, an asset uid or any other
-     * non-prose value — and an unknown section type contributes nothing
-     * (fail closed).
+     * section type — headings, body text, item names and descriptions, FAQ
+     * answers and the visible labels of call-to-action buttons (page text a
+     * searcher and a search engine both read) — never a URL, an asset uid, a
+     * price label, a person's name or any other non-prose value, and an
+     * unknown section type contributes nothing (fail closed).
+     *
+     * `contact_details` deliberately contributes nothing: its phone, email and
+     * address are frozen at publish time but shown or withheld by a LIVE
+     * privacy check on every request, so the snapshot cannot prove the text is
+     * on the page now. A phrase found only there would be a false "covered".
      *
      * @return array{title: string, meta_description: string, body: string}
      */
@@ -75,9 +82,18 @@ final class SeoPublishedPage
     private function bodyTextsFor(?WebsiteSectionType $type, array $data): array
     {
         $texts = match ($type) {
-            WebsiteSectionType::Hero => [$data['heading'] ?? null, $data['subheading'] ?? null],
-            WebsiteSectionType::Text, WebsiteSectionType::ImageText => [$data['heading'] ?? null, $data['body'] ?? null],
-            WebsiteSectionType::Cta => [$data['heading'] ?? null, $data['body'] ?? null],
+            WebsiteSectionType::Hero => [
+                $data['heading'] ?? null,
+                $data['subheading'] ?? null,
+                is_array($data['primary_cta'] ?? null) ? ($data['primary_cta']['label'] ?? null) : null,
+                is_array($data['secondary_cta'] ?? null) ? ($data['secondary_cta']['label'] ?? null) : null,
+            ],
+            // The wizard's editorial/story section: the same visible heading + body as Text.
+            WebsiteSectionType::Text, WebsiteSectionType::ImageText, WebsiteSectionType::CustomSection => [$data['heading'] ?? null, $data['body'] ?? null],
+            WebsiteSectionType::Cta => array_merge(
+                [$data['heading'] ?? null, $data['body'] ?? null],
+                $this->itemFields($data, ['label'], 'buttons'),
+            ),
             WebsiteSectionType::Services => array_merge(
                 [$data['heading'] ?? null],
                 $this->itemFields($data, ['name', 'description']),
@@ -90,6 +106,13 @@ final class SeoPublishedPage
                 [$data['heading'] ?? null],
                 $this->itemFields($data, ['question', 'answer']),
             ),
+            // Built from the Business's own backdrop rows: a visible heading and, per backdrop, its name and description.
+            WebsiteSectionType::Backdrops => array_merge(
+                [$data['heading'] ?? null],
+                $this->itemFields($data, ['name', 'description']),
+            ),
+            // Only the section heading is prose (the form's fields live in the snapshot's forms, not in the section).
+            WebsiteSectionType::Form, WebsiteSectionType::Gallery => [$data['heading'] ?? null],
             default => [],
         };
 
@@ -102,13 +125,14 @@ final class SeoPublishedPage
     /**
      * @param  array<string, mixed>  $data
      * @param  array<int, string>  $fields
+     * @param  string  $list  the key holding the list of items ("items", or "buttons" for a call to action)
      * @return array<int, mixed>
      */
-    private function itemFields(array $data, array $fields): array
+    private function itemFields(array $data, array $fields, string $list = 'items'): array
     {
         $values = [];
 
-        foreach ((is_array($data['items'] ?? null) ? $data['items'] : []) as $item) {
+        foreach ((is_array($data[$list] ?? null) ? $data[$list] : []) as $item) {
             if (! is_array($item)) {
                 continue;
             }

@@ -26,16 +26,19 @@ use App\Enums\Seo\SeoAuditSeverity;
  * editor. That is why this list is shorter than a generic SEO checklist would
  * be, and why it must not grow on taste.
  *
- * PLATFORM LIMITATIONS ARE NEVER FINDINGS (§8.7, G-2/G-3). There is
- * deliberately no rule for a missing canonical tag, missing JSON-LD /
- * structured data, sitemap scope, or the platform-path `noindex` that every
- * hosted site currently carries: the platform does not offer those controls,
- * so presenting them as the customer's mistakes would be dishonest. The
- * platform-path state is reported separately as an indexability STATUS
- * (SeoIndexabilityState), which is a property of the product, not a defect of
- * the customer's site. Note the distinction from `page_marked_noindex` below:
- * that rule fires only for a page the CUSTOMER chose to mark noindex, which
- * they can un-mark.
+ * PLATFORM-HANDLED TECHNICALITIES ARE NEVER FINDINGS (§8.7, G-2/G-3). There is
+ * deliberately no rule for a canonical tag, JSON-LD / structured data, Open
+ * Graph tags, the sitemap, or the platform-path `noindex`. Since SEO V1 final
+ * the platform EMITS the first four itself on a custom domain (a canonical
+ * URL, LocalBusiness and BreadcrumbList JSON-LD, og: tags and a sitemap of the
+ * indexable pages) and the customer has no control over them, so there is
+ * nothing for them to fix and nothing honest to report as their mistake. They
+ * are not "checked" and not "missing": they are the platform's job. Whether
+ * search engines can find the site at all is reported separately as an
+ * indexability STATUS (SeoIndexability), a property of how the site is set up,
+ * not a defect. Note the distinction from `page_marked_noindex` below: that
+ * rule fires only for a page the CUSTOMER chose to hide from search, which
+ * they can change.
  *
  * LOCATION-PAGE RULES ARE DEFERRED (G-1) until Website provides a canonical
  * page<->Location association. Nothing here infers Location ownership from a
@@ -83,60 +86,67 @@ final class SeoAuditRuleRegistry
      * @var array<string, array{severity: SeoAuditSeverity, site_level: bool, title: string, template: string, facts: array<int, string>}>
      */
     private const RULES = [
+        // OWNER-FACING WORDS ARE PLAIN. The rule KEYS keep their technical names
+        // (they are stored and pinned by tests); what a customer reads says
+        // "page title", "search result description", "hidden from search" and
+        // "image description" instead of SEO jargon.
         self::SEO_TITLE_BLANK => [
             'severity' => SeoAuditSeverity::Info,
             'site_level' => false,
-            'title' => 'No SEO title set',
-            'template' => 'This page has no SEO title, so its page name is used in search results instead. Setting one lets you control that wording.',
+            'title' => 'No page title set',
+            'template' => 'This page has no page title of its own, so its page name is used in search results instead. Setting one lets you control that wording.',
             'facts' => [],
         ],
         self::SEO_TITLE_OVER_RECOMMENDED => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'SEO title longer than recommended',
-            'template' => 'This page\'s SEO title is {length} characters. A recommended length is {recommended_max} or fewer, so longer titles may be shortened in search results.',
+            // Measured on the title visitors and search engines really get:
+            // the page title plus your business name, composed exactly as the
+            // public page composes it (WebsiteHeadMeta::title).
+            'title' => 'Page title longer than recommended',
+            'template' => 'This page\'s title in search results is {length} characters, including your business name. A recommended length is {recommended_max} or fewer, so longer titles may be cut off in search results.',
             'facts' => ['length', 'recommended_max'],
         ],
         self::META_DESCRIPTION_BLANK => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'No meta description set',
-            'template' => 'This page has no meta description, so search engines choose their own summary of it.',
+            'title' => 'No search result description set',
+            'template' => 'This page has no search result description, so search engines choose their own summary of it.',
             'facts' => [],
         ],
         self::META_DESCRIPTION_SHORT => [
             'severity' => SeoAuditSeverity::Info,
             'site_level' => false,
-            'title' => 'Meta description shorter than recommended',
-            'template' => 'This page\'s meta description is {length} characters. A recommended length is around {recommended_min} or more, which gives searchers a fuller summary.',
+            'title' => 'Search result description shorter than recommended',
+            'template' => 'This page\'s search result description is {length} characters. A recommended length is around {recommended_min} or more, which gives searchers a fuller summary.',
             'facts' => ['length', 'recommended_min'],
         ],
         self::DUPLICATE_SEO_TITLE => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'SEO title used on more than one page',
-            'template' => 'This page\'s SEO title is also used on {shared_by} other page(s). A distinct title per page helps search engines tell them apart.',
+            'title' => 'Page title used on more than one page',
+            'template' => 'This page\'s title is also used on {shared_by} other page(s). A distinct title per page helps search engines tell them apart.',
             'facts' => ['shared_by'],
         ],
         self::DUPLICATE_META_DESCRIPTION => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'Meta description used on more than one page',
-            'template' => 'This page\'s meta description is also used on {shared_by} other page(s). A distinct description per page describes each one more accurately.',
+            'title' => 'Search result description used on more than one page',
+            'template' => 'This page\'s search result description is also used on {shared_by} other page(s). A distinct description per page describes each one more accurately.',
             'facts' => ['shared_by'],
         ],
         self::PAGE_MARKED_NOINDEX => [
             'severity' => SeoAuditSeverity::Info,
             'site_level' => false,
-            'title' => 'Page marked as not indexable',
-            'template' => 'This page is marked "noindex", so search engines are asked not to list it. That is intentional for some pages; clear the setting if this one should be found.',
+            'title' => 'Page hidden from search',
+            'template' => 'This page is hidden from search engines, so it will not appear in results. That is intentional for some pages; allow search engines if this one should be found.',
             'facts' => [],
         ],
         self::ASSET_MISSING_ALT => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => true,
-            'title' => 'Images without alternative text',
-            'template' => '{asset_count} image(s) on your site have no alternative text. Alt text describes an image to search engines and to people using a screen reader.',
+            'title' => 'Images without a description',
+            'template' => '{asset_count} image(s) on your site have no image description. A description tells search engines, and people using a screen reader, what the image shows.',
             'facts' => ['asset_count'],
         ],
     ];

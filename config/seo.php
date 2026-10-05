@@ -152,6 +152,12 @@ return [
         // Retention of observations, in months.
         'retention_months' => env('SEO_RANK_RETENTION_MONTHS'),
 
+        // Freshness window, in days: a position whose last completed check
+        // is older than this is shown with "may be out of date", and Growth
+        // ignores it. Display/judgement only: it never changes what is
+        // scheduled or spent. Default 7, range 2-90.
+        'stale_after_days' => env('SEO_RANK_STALE_AFTER_DAYS'),
+
         // Bounded queue behaviour.
         'max_submit_attempts' => env('SEO_RANK_MAX_SUBMIT_ATTEMPTS'),
         'max_poll_hours' => env('SEO_RANK_MAX_POLL_HOURS'),

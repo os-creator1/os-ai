@@ -1337,3 +1337,51 @@ Statuses stay honest: recommended / listed / needs attention / manually complete
 ### 22.7 Reviews page (§8.6)
 
 The request ledger and the Contact choices are capped **per Location** (`SeoPerLocationLimit`, one `UNION ALL` query), so a busy Location cannot starve the others. The header counts (requests recorded, awaiting an outcome) are taken over the whole ledger, and a Location whose list is capped says "Showing the latest N of M". The link is called a "review link": the manager accepts any https link, not only Google's. Reviews stay workflow-only — a self-reported outcome, no rating or count metric, no review markup.
+
+## Addendum — SEO V1 final (supersedes where it differs)
+
+Status: implemented on `agent/seo-v1-final-a`. These notes correct statements above that
+the product has since outgrown; everything not named here is unchanged.
+
+* **§5.2.4 / §8.7 indexability is now truthful.** Custom domains exist, so "every
+  published site is not indexed" is no longer true. `SeoIndexability` (one pure class,
+  states in `SeoIndexabilityState`) reports, from the **published** snapshot only:
+  no published website; published but no **Active primary** domain (platform path, always
+  `noindex`; action: connect a domain); published + domain with every page hidden from
+  search ("Your site is live but hidden from search"; action: allow search engines in
+  Website, then Pages); published + domain with at least one visible page ("Search engines
+  can find N of M pages", exact counts). Plain-word status Good / Needs attention / Action
+  on both the Overview and the Website check (one shared partial). Still a status, never a
+  finding.
+* **§8.7 audit honesty.** The run shown, and the one Growth trusts, is the run for the
+  **currently published revision** (current rule set); after a rollback the newest row is
+  not shown as if it described the live site, and "no run for this version" reads "not
+  checked yet". A **failed** run reads "We couldn't check your site this time — try again"
+  (never "nothing to fix") and "Check again" completes that same run row in place (the
+  unique key leaves one run per revision). The manual re-run checks that something is
+  published **before** it consumes the cooldown.
+* **§8.7 rules, in plain words.** The title-length rule measures the real `<title>`
+  (page title + business name, `WebsiteHeadMeta::title`). Owner copy says "page title",
+  "search result description", "hidden from search" and "image description" instead of SEO
+  jargon; rule keys are unchanged. Canonical, JSON-LD, Open Graph and the sitemap are
+  emitted by the platform on a custom domain, so there is still no rule for them: they are
+  the platform's job, not "missing".
+* **§8.3 Search Console.** Not built. The Overview shows an honest "Not connected / Not
+  available yet" card with no figure of any kind (no zero). Growth's `search_console`
+  domain stays Unavailable.
+* **§8.4 keywords.** Coverage text now includes every visible section (custom section,
+  form and gallery headings, backdrops, call-to-action button labels); `contact_details`
+  contributes nothing (its values are shown or withheld by a live privacy check). A phrase
+  only on pages hidden from search reports "Only on pages hidden from search", not
+  Covered. Search operators (quotes, `site:`, `-word`, `OR`/`AND`, `*`, `|`) are refused
+  at create/update with a clear message. **Suggested keywords:** the Business's Niche
+  Blueprint SEO strategy (`BlueprintConfigReader::seoStrategy`) feeds up to 10 suggestions
+  (3 per pattern, round-robin), filled **only** with the Business's own active service
+  names and the cities of the actor's own active Locations, de-duplicated against every
+  existing keyword by `SeoPhraseNormalizer`; each has an Add button that is the ordinary
+  keyword create POST. Nothing is auto-created and rank-tracking slots stay separate.
+* **Growth.** See `GROWTH-CENTER-OPPORTUNITY-ENGINE-V1.md` (coverage is one Business-wide
+  finding, `v2`; `audit_ran` is a completed audit of the published revision; two rank rules
+  read stored observations only).
+* **Comments.** The "Planned until Sub-slice H, so 404 today" wording in the SEO
+  controllers/routes is obsolete: SeoBasicVisibility and SeoModule are Available.

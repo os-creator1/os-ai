@@ -38,7 +38,7 @@ class GrowthAdvisorTest extends TestCase
             $this->card('uid-a', 'crm.unanswered_new_leads:v1', 'lead_response', 'High', '3 new leads have had no reply for 24+ hours — $2,100 in pipeline value.', ['count' => 3, 'value' => '$2,100']),
             $this->card('uid-b', 'payments.overdue_balance:v1', 'payments', 'High', '1 document has a payment past its due date — $800.', ['count' => 1, 'value' => '$800']),
             $this->card('uid-c', 'booking.type_not_ready:v1', 'bookings', 'High', '1 booking type cannot be booked yet.', ['count' => 1]),
-            $this->card('uid-d', 'seo.keywords_not_covered:v1', 'seo', 'Medium', '2 tracked keywords are not mentioned on your published website.', ['count' => 2]),
+            $this->card('uid-d', 'seo.keywords_not_covered:v2', 'seo', 'Medium', '2 tracked keywords are not mentioned on your published website.', ['count' => 2]),
             $this->card('uid-e', 'reviews.no_review_link:v1', 'reviews', 'Medium', 'This location has no review link saved.', ['count' => 1]),
         ];
     }

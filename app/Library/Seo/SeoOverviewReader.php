@@ -2,7 +2,6 @@
 
 namespace App\Library\Seo;
 
-use App\Enums\Seo\SeoIndexabilityState;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileStatusReader;
 use App\Models\Business;
 use App\Models\User;
@@ -63,9 +62,13 @@ final class SeoOverviewReader
                 'with_seo_title' => $published->pagesWithSeoTitle(),
                 'marked_noindex' => $published->pagesMarkedNoindex(),
             ],
-            indexability: $published === null
-                ? SeoIndexabilityState::NoPublishedWebsite
-                : SeoIndexabilityState::PlatformPathNotIndexable,
+            // Truthful, from the PUBLISHED snapshot: a platform-path site is never
+            // indexable; on an Active primary domain each page is indexable unless
+            // the owner hid it (SeoIndexability).
+            indexability: SeoIndexability::resolve(
+                $published,
+                $published !== null && $this->publishedContent->hasActivePrimaryDomain($published->websiteId),
+            ),
             google: $this->googleStatus->forBusiness($workspace, $business, $actor),
         );
     }

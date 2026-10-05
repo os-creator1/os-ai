@@ -66,7 +66,8 @@ class GrowthEvaluationLifecycleTest extends TestCase
         $status = $this->snapshots()->first()->metrics['domain_status'];
 
         $this->assertSame('unavailable', $status['ads']);
-        $this->assertSame('unavailable', $status['rank']);
+        $this->assertSame('unavailable', $status['search_console']);
+        $this->assertSame('available', $status['rank'], 'The rank module ships: its stored observations are read for an entitled Business.');
         $this->assertSame('available', $status['crm']);
     }
 

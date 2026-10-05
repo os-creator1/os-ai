@@ -17,12 +17,13 @@ use Throwable;
  * existing entitlement architecture) and SeoConfig — there is no plan-name
  * check anywhere else in SEO code.
  *
- * TIER MAPPING. A Workspace with a trial_ends_at is a TRIAL (the same
- * derivation CustomerAccountAccessResolver uses, so an expired-but-uncleared
- * trial stays on the strictest limits). Otherwise core -> core, growth ->
- * growth, and an Agency-tier Workspace uses the growth limits: "unlimited
- * locations" never means unlimited paid queries, because the Agency aggregate
- * cap (SeoConfig::rankWorkspaceMonthlyCapMicros) sits on top of every client.
+ * TIER MAPPING (SeoConfig::rankTierFor, the only mapping). A Workspace with a
+ * trial_ends_at is a TRIAL (the same derivation CustomerAccountAccessResolver
+ * uses, so an expired-but-uncleared trial stays on the strictest limits).
+ * Otherwise core -> core, growth -> growth, and an Agency-tier Workspace uses
+ * the growth limits: "unlimited locations" never means unlimited paid queries,
+ * because the Agency aggregate cap (SeoConfig::rankWorkspaceMonthlyCapMicros)
+ * sits on top of every client. Any other tier fails CLOSED to the trial limits.
  *
  * AGENCY CLIENTS. A client Business follows ITS OWN Workspace's assigned plan;
  * only the aggregate cap is owned by the Agency Workspace.
@@ -68,10 +69,9 @@ class SeoRankEntitlement
         $trialEnds = $summary->trialEndsAt !== null ? CarbonImmutable::instance($summary->trialEndsAt)->utc() : null;
         $isTrial = $trialEnds !== null;
 
-        $tier = $isTrial ? 'trial' : match ($summary->tier->value) {
-            'core' => 'core',
-            default => 'growth',
-        };
+        // The one tier mapping lives in SeoConfig and fails closed: a tier it
+        // does not know gets the trial (strictest) limits, never the Growth ones.
+        $tier = $this->config->rankTierFor($summary->tier, $isTrial);
 
         $limits = $this->config->rankTier($tier);
 

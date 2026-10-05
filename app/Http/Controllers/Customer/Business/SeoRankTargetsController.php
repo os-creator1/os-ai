@@ -9,15 +9,20 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Jobs\Seo\ScheduleSeoRankChecks;
 use App\Jobs\Seo\SubmitSeoRankCheck;
 use App\Library\Seo\Rank\SeoRankBudgetDecision;
+use App\Library\Navigation\CustomerContext;
 use App\Library\Seo\Rank\SeoRankChart;
 use App\Library\Seo\Rank\SeoRankCheckPlanner;
+use App\Library\Seo\Rank\SeoRankDashboardReader;
 use App\Library\Seo\Rank\SeoRankEntitlement;
 use App\Library\Seo\Rank\SeoRankException;
+use App\Library\Seo\Rank\SeoRankFirstCheckNotice;
 use App\Library\Seo\Rank\SeoRankHistoryReader;
+use App\Library\Seo\Rank\SeoRankIdentity;
 use App\Library\Seo\Rank\SeoRankLocationCatalog;
 use App\Library\Seo\Rank\SeoRankTargetManager;
 use App\Library\Seo\Rank\SeoRankTrackingBudget;
 use App\Library\Seo\Rank\SeoSearchConsoleReader;
+use App\Library\Seo\SeoConfig;
 use App\Library\Seo\SeoKeywordCoverageReader;
 use App\Library\Seo\SeoPublishedContentReader;
 use App\Models\Business;
@@ -55,6 +60,8 @@ class SeoRankTargetsController extends CustomerBaseController
         private readonly SeoSearchConsoleReader $searchConsole,
         private readonly SeoKeywordCoverageReader $coverage,
         private readonly SeoPublishedContentReader $publishedContent,
+        private readonly SeoRankFirstCheckNotice $firstCheckNotice,
+        private readonly SeoConfig $config,
     ) {
     }
 
@@ -88,7 +95,8 @@ class SeoRankTargetsController extends CustomerBaseController
 
         ScheduleSeoRankChecks::dispatch($target->id);
 
-        return $this->done($workspaceUid, $businessUid, 'Rank tracking started. The first check is on its way.');
+        // Said from the real state (provider, budget, what we can match), never assumed.
+        return $this->done($workspaceUid, $businessUid, 'Rank tracking started. ' . $this->firstCheckNotice->forBusiness($business));
     }
 
     public function stop(string $workspaceUid, string $businessUid, string $targetUid): RedirectResponse
@@ -118,7 +126,7 @@ class SeoRankTargetsController extends CustomerBaseController
 
         ScheduleSeoRankChecks::dispatch($target->id);
 
-        return $this->done($workspaceUid, $businessUid, 'Rank tracking resumed.');
+        return $this->done($workspaceUid, $businessUid, 'Rank tracking resumed. ' . $this->firstCheckNotice->forBusiness($business));
     }
 
     public function check(string $workspaceUid, string $businessUid, string $targetUid): RedirectResponse
@@ -150,13 +158,16 @@ class SeoRankTargetsController extends CustomerBaseController
         return $this->back($workspaceUid, $businessUid, $targetUid, 'error', $this->refusalCopy($decisions));
     }
 
-    public function show(string $workspaceUid, string $businessUid, string $targetUid): View
+    public function show(Request $request, string $workspaceUid, string $businessUid, string $targetUid): View
     {
         [, $business] = $this->resolveRankTenancy($workspaceUid, $businessUid);
         $this->authorize('view_seo');
 
         $target = $this->targets->findAccessible((int) Auth::id(), $business, $targetUid);
         abort_if($target === null, 404);
+
+        $identity = SeoRankIdentity::forBusiness($business);
+        $context = $request->attributes->get('customerContext');
 
         $series = $this->history->series($target->id);
         $summary = $this->history->summaries([$target->id])[$target->id];
@@ -185,6 +196,13 @@ class SeoRankTargetsController extends CustomerBaseController
             'unavailable' => $this->budget->providerState() !== SeoRankTrackingBudget::PROVIDER_ENABLED,
             'pausedBySpend' => $this->budget->isPausedBySpend($business),
             'canTrack' => $this->entitlement->planFor($business) !== null,
+            // Why a check can never run (no Active primary domain / no phone), and
+            // whether the last result is older than the freshness window.
+            'organicBlocked' => ! $identity->canMatchOrganic(),
+            'localBlocked' => ! $identity->canMatchLocal(),
+            'staleDays' => SeoRankDashboardReader::staleDays($target->last_checked_at, $this->config->rankStaleAfterDays()),
+            // Paid checks are never started on a client's behalf while viewing as them.
+            'viewingAsClient' => $context instanceof CustomerContext && $context->isViewingAsClient(),
         ]);
     }
 

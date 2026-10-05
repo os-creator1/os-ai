@@ -27,6 +27,17 @@
     $archived = $keywords->reject(fn ($k) => $k->isActive());
     $slotsFull = $rankPlan !== null && $summary['slots_used'] >= $rankPlan->trackedTargets;
     $dash = '—';
+
+    // Rank UI is shown only where it means something: the Business is entitled, or
+    // it keeps stored rank results from an earlier plan (read-only). Without either,
+    // "Tracked 0" and a wall of dashes would only be noise.
+    $rankRows = collect($rows)->filter(fn ($r) => $r['target'] !== null);
+    $showRank = $rankPlan !== null || $rankRows->isNotEmpty();
+    $readOnlyRank = $rankPlan === null && $rankRows->isNotEmpty();
+    $viewingAsClient = $viewingAsClient ?? false;
+    $headers = $showRank
+        ? ['Keyword', 'Search location', 'Organic', 'Local', 'Change', 'Website', 'Last checked', 'Actions']
+        : ['Keyword', 'Website', 'Actions'];
 @endphp
 
 @section('content')
@@ -71,7 +82,14 @@
         <x-alert variant="warning" class="mb-2" data-role="rank-paused-notice">Rank checks paused until your usage period resets. Your latest results stay visible.</x-alert>
     @endif
 
-    {{-- Summary: real data only, "—" when there is nothing to summarise. --}}
+    @if($readOnlyRank)
+        <x-alert variant="neutral" class="mb-2" data-role="rank-not-included-notice">Rank tracking is not included in your current plan, so these results are read-only and will not be updated.</x-alert>
+    @elseif(! $showRank)
+        <p class="text-caption mb-2" data-role="rank-not-included">Rank tracking is not part of your plan. Your keywords below still show whether your website mentions them.</p>
+    @endif
+
+    {{-- Summary: real data only, "—" when there is nothing to summarise. Hidden where rank tracking does not apply. --}}
+    @if($showRank)
     <div class="row g-1 mb-2" data-section="rank-summary">
         <div class="col-6 col-lg">
             <x-card :padded="true" class="rank-summary-card h-100">
@@ -106,6 +124,7 @@
             </x-card>
         </div>
     </div>
+    @endif
 
     @can('manage_seo')
         <x-card :padded="true" class="mb-2" data-section="add-keyword">
@@ -131,7 +150,7 @@
                     </div>
                 </div>
 
-                @if($rankPlan !== null)
+                @if($rankPlan !== null && ! $viewingAsClient)
                     <div class="mt-1" data-section="add-rank-tracking">
                         <div class="form-check">
                             <input type="hidden" name="track_rank" value="0">
@@ -153,6 +172,33 @@
                 @endif
             </form>
         </x-card>
+
+        {{-- Ideas from your business type's keyword strategy, filled in ONLY with your own services and
+             cities. Nothing is saved until "Add" is pressed (an ordinary keyword add, with no rank tracking). --}}
+        @if(count($suggestions ?? []) > 0)
+            <x-card :padded="true" class="mb-2" data-section="suggested-keywords">
+                <p class="text-section-heading mb-25">Suggested keywords</p>
+                <p class="text-caption mb-1">Ideas for your type of business, using your own services and locations. Nothing is added until you choose it.</p>
+                <ul class="list-unstyled mb-0">
+                    @foreach($suggestions as $suggestion)
+                        <li class="py-50 d-flex justify-content-between align-items-center flex-wrap gap-1 @unless($loop->last) border-bottom @endunless" data-role="suggested-keyword" data-phrase="{{ $suggestion->phrase }}">
+                            <div>
+                                <strong data-role="suggested-phrase">{{ $suggestion->phrase }}</strong>
+                                <span class="text-caption d-block">{{ $suggestion->intentLabel() }}@if($suggestion->locationName !== null) · {{ $suggestion->locationName }}@endif</span>
+                            </div>
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.store', [$workspaceUid, $businessUid]) }}">
+                                @csrf
+                                <input type="hidden" name="phrase" value="{{ $suggestion->phrase }}">
+                                @if($suggestion->locationUid !== null)
+                                    <input type="hidden" name="location_uid" value="{{ $suggestion->locationUid }}">
+                                @endif
+                                <button class="btn btn-sm btn-outline-primary" type="submit" data-role="suggestion-add">Add</button>
+                            </form>
+                        </li>
+                    @endforeach
+                </ul>
+            </x-card>
+        @endif
     @endcan
 
     <x-card :padded="false" class="mb-2" data-section="keywords">
@@ -165,7 +211,7 @@
                 <table class="table ds-table align-middle mb-0 rank-table" data-role="rank-table">
                     <thead>
                         <tr>
-                            @foreach(['Keyword', 'Search location', 'Organic', 'Local', 'Change', 'Website', 'Last checked', 'Actions'] as $header)
+                            @foreach($headers as $header)
                                 <th class="text-label text-uppercase text-muted">{{ $header }}</th>
                             @endforeach
                         </tr>
@@ -178,7 +224,9 @@
                                 $state = $row['state'];
                                 $result = $coverage[$keyword->id] ?? null;
                                 $locationOpen = $keyword->location === null || $keyword->location->isActive();
-                                $detailUrl = $target !== null ? route('customer.workspaces.businesses.seo.rank-targets.show', [$workspaceUid, $businessUid, $target->uid]) : null;
+                                // The detail page is behind the rank-tracking entitlement (404 without it), so a
+                                // Business that has lost it sees its stored results as plain text: no link, no clickable row.
+                                $detailUrl = ($target !== null && $rankPlan !== null) ? route('customer.workspaces.businesses.seo.rank-targets.show', [$workspaceUid, $businessUid, $target->uid]) : null;
                             @endphp
                             <tr data-role="keyword" data-uid="{{ $keyword->uid }}" data-state="{{ $keyword->lifecycle_state->value }}" data-rank-state="{{ $state }}" @if($detailUrl) data-href="{{ $detailUrl }}" @endif>
                                 <td data-label="Keyword">
@@ -201,6 +249,7 @@
                                     </span>
                                     <span class="text-caption d-block" data-role="keyword-location">{{ $keyword->location?->name ?? 'Whole business' }}</span>
                                 </td>
+                                @if($showRank)
                                 <td data-label="Search location" data-role="search-location">
                                     @if($row['location_label'])
                                         {{ $row['location_label'] }}<span class="text-caption d-block">Google · mobile</span>
@@ -208,9 +257,10 @@
                                         <span class="text-muted">{{ $dash }}</span>
                                     @endif
                                 </td>
-                                <td data-label="Organic">@include('customer.business.seo._rank-badge', ['obs' => $row['organic'], 'kind' => 'organic', 'state' => $state])</td>
-                                <td data-label="Local">@include('customer.business.seo._rank-badge', ['obs' => $row['local'], 'kind' => 'local', 'state' => $state])</td>
+                                <td data-label="Organic">@include('customer.business.seo._rank-badge', ['obs' => $row['organic'], 'kind' => 'organic', 'state' => $state, 'blockedReason' => ($row['organic_blocked'] ?? false) ? SeoRankDashboardReader::NO_DOMAIN_REASON : null])</td>
+                                <td data-label="Local">@include('customer.business.seo._rank-badge', ['obs' => $row['local'], 'kind' => 'local', 'state' => $state, 'blockedReason' => ($row['local_blocked'] ?? false) ? SeoRankDashboardReader::NO_IDENTITY_REASON : null])</td>
                                 <td data-label="Change">@include('customer.business.seo._rank-change', ['change' => $row['change']])</td>
+                                @endif
                                 <td data-label="Website">
                                     @if($result !== null)
                                         <span data-role="keyword-coverage" data-status="{{ $result->status->value }}">
@@ -218,6 +268,8 @@
                                                 <x-badge variant="success">Covered</x-badge>
                                             @elseif($result->status === SeoKeywordCoverageStatus::NotCovered)
                                                 <x-badge variant="warning">Missing</x-badge>
+                                            @elseif($result->status === SeoKeywordCoverageStatus::OnlyOnHiddenPages)
+                                                <x-badge variant="warning">Only on pages hidden from search</x-badge>
                                             @else
                                                 <x-badge variant="neutral">No published website</x-badge>
                                             @endif
@@ -238,17 +290,25 @@
                                         <span class="text-muted">{{ $dash }}</span>
                                     @endif
                                 </td>
+                                @if($showRank)
                                 <td data-label="Last checked" data-role="last-checked">
                                     @if($row['last_checked_at'])
-                                        {{ $row['last_checked_at']->isToday() ? 'Today' : $row['last_checked_at']->diffForHumans() }}
+                                        @if(($row['stale_days'] ?? null) !== null)
+                                            {{-- Past the freshness window: the position is kept visible but labelled. --}}
+                                            <span data-role="rank-stale">{{ $row['stale_days'] }} {{ $row['stale_days'] === 1 ? 'day' : 'days' }} ago — may be out of date</span>
+                                        @else
+                                            {{ $row['last_checked_at']->isToday() ? 'Today' : $row['last_checked_at']->diffForHumans() }}
+                                        @endif
                                     @else
                                         <span class="text-muted">{{ $dash }}</span>
                                     @endif
                                 </td>
+                                @endif
                                 <td data-label="Actions">
                                     @can('manage_seo')
                                         <div class="d-flex flex-wrap gap-50 align-items-start">
-                                            @if($rankPlan !== null && $locationOpen)
+                                            {{-- Starting, resuming and stopping paid rank checks is closed while viewing as a client. --}}
+                                            @if($rankPlan !== null && ! $viewingAsClient && $locationOpen)
                                                 @if($state === SeoRankDashboardReader::STATE_UNTRACKED && ! $slotsFull)
                                                     <details>
                                                         <summary class="btn btn-sm btn-outline-primary" data-role="rank-start">Start tracking</summary>

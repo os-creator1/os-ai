@@ -269,6 +269,14 @@ final class SeoKeywordManager
             throw SeoKeywordException::invalidPhrase();
         }
 
+        // Operators are checked on what the owner TYPED (the normalizer lowers
+        // case, which would hide "OR"). A keyword is plain words: it is matched
+        // against page text and, if tracked, sent to a paid provider that
+        // refuses operator queries.
+        if (SeoPhraseNormalizer::hasSearchOperator($typed)) {
+            throw SeoKeywordException::searchOperator();
+        }
+
         return [$typed, $normalized];
     }
 

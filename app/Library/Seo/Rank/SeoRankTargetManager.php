@@ -5,6 +5,7 @@ namespace App\Library\Seo\Rank;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Seo\SeoRankTrackingState;
 use App\Library\Seo\SeoKeywordManager;
+use App\Library\Seo\SeoPhraseNormalizer;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\SeoKeyword;
@@ -69,6 +70,12 @@ class SeoRankTargetManager
 
             if (! $freshKeyword->isActive()) {
                 throw SeoRankException::keywordNotActive();
+            }
+
+            // A keyword saved before operators were refused can still carry
+            // one: never take a slot for a check the provider would reject.
+            if (SeoPhraseNormalizer::hasSearchOperator((string) $freshKeyword->phrase)) {
+                throw SeoRankException::searchOperator();
             }
 
             $existing = SeoRankTarget::query()
@@ -154,6 +161,10 @@ class SeoRankTargetManager
 
             if (! $target->keyword->isActive()) {
                 throw SeoRankException::keywordNotActive();
+            }
+
+            if (SeoPhraseNormalizer::hasSearchOperator((string) $target->keyword->phrase)) {
+                throw SeoRankException::searchOperator();
             }
 
             $this->assertSlotAvailable($locked);

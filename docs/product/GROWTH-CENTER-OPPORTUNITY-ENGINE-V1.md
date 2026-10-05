@@ -96,7 +96,7 @@ Verdict per rule (`GrowthRuleOutcome`): **Finding** (per Location) · **Passing*
 **Insufficient** (population below the rule's minimum). Only Finding/Passing are
 scored.
 
-### Implemented rules (19 of the 25 requested)
+### Implemented rules (21 of the 25 requested)
 
 | # | Key | Worker | Category | Impact · urgency · effort | Conf. | Min sample |
 |---|---|---|---|---|---|---|
@@ -113,7 +113,9 @@ scored.
 | 7 | `website.not_published:v1` | website | Website | 5 · 3 · 3 | 1.0 | always judgeable |
 | 8 | `website.package_out_of_sync:v1` | website | Website | 3 · 2 · 2 | 1.0 | a published Website |
 | 9 | `seo.technical_findings:v1` | seo | SEO | 4 if any critical else 2 · 2 · 3 | 1.0 | an audit has run |
-| 10 | `seo.keywords_not_covered:v1` | seo | SEO | 3 · 2 · 3 | 0.8 | ≥1 keyword **and** a published site |
+| 10 | `seo.keywords_not_covered:v2` | seo | SEO | 3 · 2 · 3 | 0.8 | ≥1 keyword **and** a published site |
+| 11 | `seo.rank_just_outside_top_10:v1` | seo | SEO | 2 · 2 · 3 | 0.8 | ≥1 tracked keyword with a fresh organic result |
+| 12 | `seo.meaningful_rank_drop:v1` | seo | SEO | 3 · 3 · 3 | 0.8 | ≥1 tracked keyword with a fresh result **and** an earlier one |
 | 19 | `citations.needs_attention:v1` | seo | Local presence | 3 · 2 · 2 | 1.0 | a Location with ≥1 recorded listing |
 | 20 | `citations.directories_not_checked:v1` | seo | Local presence | 2 · 1 · 2 | 1.0 | ≥1 Location |
 | 17 | `reviews.no_review_link:v1` | reputation | Reviews | 3 · 2 · 1 | 1.0 | ≥1 Location |
@@ -121,9 +123,27 @@ scored.
 | 25 | `automations.repeated_failures:v1` | sales | Automations (not scored) | 3 · 4 · 2 | 1.0 | 5 workflow attempts |
 
 (# = position in the original 25‑rule list.) Business-wide rules are
-`website.not_published`, `website.package_out_of_sync`, `seo.technical_findings` and
-`automations.repeated_failures`; all others are one Opportunity **per Location**
-(Location-less records collapse to a Business-wide one).
+`website.not_published`, `website.package_out_of_sync`, `seo.technical_findings`,
+`seo.keywords_not_covered` (v2) and `automations.repeated_failures`; all others are
+one Opportunity **per Location** (Location-less records collapse to a Business-wide
+one).
+
+**SEO V1 final (rules 9-12).** `seo.keywords_not_covered` is now **v2**: a keyword the
+published site never mentions is a site-wide content gap, so it is ONE Business-wide
+finding counting DISTINCT phrases (v1 raised one per Location for the same phrase); only
+Business-wide keyword text rides on it, never a Location's own keyword. Keywords on
+archived Locations are not judged, and a phrase found only on pages hidden from search is
+neither "covered" nor "missing". `seo.technical_findings` and its `audit_ran` fact count
+only a **completed** audit of the **currently published** revision (a failed run, another
+revision's run, or no published site is "not checked", never "no issues").
+The two rank rules read **stored** observations only (`GrowthRankFactReader`; never a
+provider): `meaningful_rank_drop` = organic position worse by at least `rank_drop_positions`
+(default 5) or fell out of the results; `rank_just_outside_top_10` = organic position
+11-20. Results older than `seo.rank_tracking.stale_after_days` are ignored, and both are
+one Opportunity per Location of the keyword. One root problem is reported once: a keyword
+already reported as not on the website is skipped by the rank rules, and a dropped keyword
+is not repeated as "just outside the top 10". Not built: a "website hidden from search"
+fact (the Growth website reader exposes no noindex or domain fact to reuse).
 
 **Notes on semantics.** A deal is counted in **at most one** bucket (unanswered
 takes precedence over stale; stale below the high-value threshold vs. at/above
@@ -139,7 +159,6 @@ ledger): no rating, count, sentiment, gating or reward is read or implied.
 
 | Rule | Missing seam |
 |---|---|
-| 11 rank 11–20, 12 meaningful rank drop | No rank-observation store on main. |
 | 13 ads zero-conversion spend, 14 CPL above target, 15 budget over-pacing, 16 search-term waste | No Google Ads module/facts on main. |
 | Search Console CTR | No Search Console data on main. |
 | Slow response trend / first-response time | Not implemented: needs per-conversation first-inbound/first-outbound pairing; the awaiting-reply rule is. |
@@ -252,11 +271,12 @@ evaluation are independent of deal/conversation/document/Location counts.
 | `GrowthBookingFactReader` | `booking` | booking types, staff, availability rules, next-7-day appointments | `calendar` |
 | `GrowthWebsiteFactReader` | `website` | `websites` + the Website module's own `WebsiteCatalogReferences::staleness()` (package sync) | `website_generation` |
 | `GrowthSeoFactReader` | `seo` | `SeoKeywordCoverageReader`, `SeoPublishedContentReader`, `SeoAuditPageReader` | `seo_module` |
+| `GrowthRankFactReader` | `rank` | stored `seo_rank_observations` via `SeoRankHistoryReader` (organic only, fresh results only) | `seo_rank_tracking` |
 | `GrowthReputationFactReader` | `reviews` | review links + request ledger | `seo_module` |
 | `GrowthCitationFactReader` | `citations` | the directories the Citations page OFFERS at each Location (`SeoCitationApplicability`: active, core or niche-recommended, country-applicable) + citations via `SeoNapComparator` | `seo_module` |
 | `GrowthDocumentFactReader` | `documents` | documents, current-version schedule items (a Balance item still ahead of its due date is the scheduled balance request's job, not "signed but unpaid"), failed payments | `payments_contracts` |
 | `GrowthAutomationFactReader` | `automations` | failed `automation_step_runs` / `automation_executions` (7 d) | `automations` |
-| `GrowthUnavailableFactReader` | `ads`, `rank`, `search_console` | nothing | — |
+| `GrowthUnavailableFactReader` | `ads`, `search_console` | nothing | — |
 
 Reader state: `available` · `unavailable` (module not on this platform) ·
 `not_connected` · `not_entitled` — **never zero**. A reader that **throws** is a

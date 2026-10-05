@@ -13,10 +13,11 @@ use App\Models\Business;
 use Carbon\CarbonImmutable;
 
 /**
- * The activation seam for a domain whose module is NOT on this branch's main:
- * Google Ads (`ads`), rank observations (`rank`) and Search Console
+ * The activation seam for a domain whose module is NOT on this branch's main
+ * (or has no Growth reader yet): Google Ads (`ads`) and Search Console
  * (`search_console`). It reports the domain as Unavailable — which EXCLUDES
- * its rules and its score category — instead of reading zero.
+ * its rules and its score category — instead of reading zero. (`rank` has its
+ * own reader, GrowthRankFactReader, over the rank module's stored observations.)
  *
  * When one of those modules merges, replace the registration of the matching
  * instance in GrowthFactSnapshotBuilder with a reader that returns that
