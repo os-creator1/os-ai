@@ -16,6 +16,7 @@
             <div class="pb-check"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg></div>
             <h2 class="pb-heading">Booking confirmed</h2>
             <p style="margin:0;color:var(--pb-muted)">Your appointment has been booked.</p>
+            @if (is_array($summary) && ! empty($summary['notice']))<p data-role="booking-notice" style="margin:8px 0 0;color:var(--pb-muted)">{{ $summary['notice'] }}</p>@endif
             @if (is_array($summary))
                 <div class="pb-summary">
                     <dl>

@@ -85,6 +85,21 @@ class BookingTypeManager
             $text = trim((string) $attributes['meeting_instructions']);
             $out['meeting_instructions'] = $text === '' ? null : $text;
         }
+        // Customer notifications (Booking Notifications V1): same rule, only submitted keys change.
+        foreach (['notify_email', 'notify_sms'] as $key) {
+            if (array_key_exists($key, $attributes) && $attributes[$key] !== null) {
+                $out[$key] = (bool) $attributes[$key];
+            }
+        }
+        if (array_key_exists('reminder_offsets', $attributes) && is_array($attributes['reminder_offsets'])) {
+            // Only offsets the editor offers; distinct, largest first, at most MAX_REMINDERS.
+            $offsets = array_values(array_unique(array_filter(
+                array_map('intval', $attributes['reminder_offsets']),
+                static fn (int $m): bool => array_key_exists($m, BookingType::REMINDER_OFFSET_OPTIONS),
+            )));
+            rsort($offsets);
+            $out['reminder_offsets'] = array_slice($offsets, 0, BookingType::MAX_REMINDERS);
+        }
 
         return $out;
     }
