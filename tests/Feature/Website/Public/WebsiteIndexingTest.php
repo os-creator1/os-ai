@@ -56,21 +56,16 @@ class WebsiteIndexingTest extends TestCase
 
     public function test_robots_txt_is_untouched_by_this_feature_branch(): void
     {
-        // Read the real, current on-disk bytes ourselves rather than
-        // hardcoding a guessed string — the point of this assertion is
-        // only that nothing on this branch modified the file, proven by
-        // asserting it is byte-identical to itself before/after being
-        // read here (a tautology that still catches any accidental
-        // future edit made in the same PR as this test, since a diff
-        // touching the file would be visible in code review alongside a
-        // now-failing hardcoded expectation). We additionally assert the
-        // known-good shape as a floor.
-        $path = base_path('public/robots.txt');
-        $this->assertFileExists($path);
+        // The platform host's robots.txt still says exactly what the original static public/robots.txt said
+        // ("everything allowed"). It is now a route rather than a file (a file would be served by the web
+        // server ahead of a customer domain's own robots.txt, which carries that site's Sitemap line), so the
+        // contract is asserted on what is SERVED, byte for byte — and that no static file shadows it.
+        $this->assertFileDoesNotExist(base_path('public/robots.txt'));
 
-        $actual = file_get_contents($path);
+        $response = $this->get('/robots.txt')->assertOk();
 
-        $this->assertSame("User-agent: *\nDisallow:\n", $actual);
+        $this->assertStringStartsWith('text/plain', (string) $response->headers->get('Content-Type'));
+        $this->assertSame("User-agent: *\nDisallow:\n", $response->getContent());
     }
 
     public function test_sitemap_lists_every_published_page_regardless_of_its_own_noindex_value(): void

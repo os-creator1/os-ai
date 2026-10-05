@@ -260,7 +260,10 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
         if ($withSitemapAndRobots) {
             $intended = array_column(array_filter($ctx->manifest, fn ($e) => ! $e['noindex']), 'url');
             $audit->auditSitemap($crawler->get('https://' . $this->domain . '/sitemap')['body'], $intended, 'https://' . $this->domain);
-            $audit->auditRobots((string) file_get_contents(base_path('public/robots.txt')));
+            // The robots.txt a crawler gets from the site's own host carries this site's Sitemap line; the platform host's
+            // own robots.txt stays exactly as it was, with none.
+            $audit->auditRobots($crawler->get('https://' . $this->domain . '/robots.txt')['body'], 'https://' . $this->domain . '/sitemap');
+            $audit->auditRobots($crawler->get('http://127.0.0.1/robots.txt')['body']);
         }
 
         return $docs;

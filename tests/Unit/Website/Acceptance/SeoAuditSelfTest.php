@@ -63,6 +63,9 @@ class SeoAuditSelfTest extends TestCase
 <meta name="robots" content="index, follow">
 <meta property="og:title" content="Chicago Photo Booth Rentals">
 <meta property="og:description" content="Acme Booths brings photo booths to weddings and corporate events across Chicago and the suburbs.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://acme.test/">
+<meta name="twitter:card" content="summary">
 <link rel="canonical" href="https://acme.test/">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"LocalBusiness","name":"Acme Booths","url":"https://acme.test/","telephone":"+13125550147"}</script>
 </head><body>
@@ -130,6 +133,13 @@ HTML;
             'wrong business in schema' => [['"name":"Acme Booths"' => '"name":"Someone Else"'], 'schema_business_identity'],
             'schema with an internal id' => [['"url":"https://acme.test/"' => '"url":"https://acme.test/?u=6a93c068-5b88-471f-bdba-b3810966119c"'], 'schema_no_internal_ids'],
             'invalid schema json' => [['"@type":"LocalBusiness",' => '"@type":"LocalBusiness" ,,'], 'schema_valid_json'],
+            'missing og:type' => [['<meta property="og:type" content="website">' => ''], 'social_og_type'],
+            'og:url not the canonical' => [['<meta property="og:url" content="https://acme.test/">' => '<meta property="og:url" content="https://other.test/">'], 'social_og_url'],
+            'large card with no image' => [['content="summary"' => 'content="summary_large_image"'], 'social_twitter_card'],
+            'broken og:image' => [['<meta name="twitter:card" content="summary">' => '<meta name="twitter:card" content="summary_large_image"><meta property="og:image" content="https://acme.test/images/websites/x/gone.jpg"><meta name="twitter:image" content="https://acme.test/images/websites/x/gone.jpg">'], 'social_og_image'],
+            'faq schema on a page with no FAQ' => [['"telephone":"+13125550147"}</script>' => '"telephone":"+13125550147"}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[]}</script>'], 'faq_schema_matches_visible_faq'],
+            'faq without schema' => [['<div data-section="text">' => '<div data-section="faq"><details class="website-faq-item"><summary>Q?</summary><p>A.</p></details></div><div data-section="text">'], 'faq_schema_matches_visible_faq'],
+            'duplicate cta bands' => [['</main>' => '<div data-section="cta"><a href="https://acme.test/contact">Go</a></div><div data-section="cta"><a href="https://acme.test/contact">Go again</a></div></main>'], 'no_duplicate_cta_bands'],
             'duplicate id' => [['<div data-section="text">' => '<div data-section="text" id="a"><span id="a"></span>'], 'no_duplicate_ids'],
         ];
     }
@@ -187,15 +197,26 @@ HTML;
         $this->assertContains('robots_does_not_block_site', $failed);
     }
 
-    public function test_a_valid_robots_file_with_windows_line_endings_is_fine_and_missing_sitemap_line_is_a_gap_not_a_failure(): void
+    public function test_robots_files_a_site_serves_the_sitemap_line_and_the_static_file_does_not(): void
     {
         $crawler = new SiteCrawler(fn (string $url) => ['status' => 200, 'body' => '', 'headers' => [], 'location' => null]);
         $report = new AcceptanceReport();
         $report->context('custom_domain', 'self-test');
+        $audit = new SeoAudit($report, $crawler);
 
-        (new SeoAudit($report, $crawler))->auditRobots("User-agent: *\r\nDisallow:\r\n");
-
+        // The platform-wide static file (Windows line endings are fine): valid, allows all, no Sitemap line.
+        $audit->auditRobots("User-agent: *\r\nDisallow:\r\n");
+        // The site's own: exactly its sitemap.
+        $audit->auditRobots("User-agent: *\nDisallow:\nSitemap: https://acme.test/sitemap\n", 'https://acme.test/sitemap');
         $this->assertSame([], $report->failures());
-        $this->assertSame(['robots_sitemap_directive'], array_column($report->gaps(), 'check'));
+
+        // A missing, wrong, or on-the-static-file Sitemap line is a defect.
+        $bad = new AcceptanceReport();
+        $bad->context('custom_domain', 'self-test');
+        $badAudit = new SeoAudit($bad, $crawler);
+        $badAudit->auditRobots("User-agent: *\nDisallow:\n", 'https://acme.test/sitemap');
+        $badAudit->auditRobots("User-agent: *\nDisallow:\nSitemap: https://other.test/sitemap\n", 'https://acme.test/sitemap');
+        $badAudit->auditRobots("User-agent: *\nDisallow:\nSitemap: https://acme.test/sitemap\n");
+        $this->assertSame(['robots_sitemap_line', 'robots_sitemap_line', 'robots_no_sitemap_line_on_the_static_file'], array_column($bad->failures(), 'check'));
     }
 }

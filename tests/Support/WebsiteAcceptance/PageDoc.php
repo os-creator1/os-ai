@@ -208,6 +208,46 @@ final class PageDoc
         return $this->attrs('//form', 'action');
     }
 
+    /**
+     * Every visible FAQ item (question, answer) on the page, in order, as the page renders them.
+     *
+     * @return array<int, array{question: string, answer: string}>
+     */
+    public function faqItems(): array
+    {
+        $out = [];
+
+        foreach ($this->xp->query('//main//details[contains(@class, "website-faq-item")]') as $node) {
+            $question = $this->xp->query('./summary', $node)->item(0);
+            $answer = $this->xp->query('./p', $node)->item(0);
+            $out[] = ['question' => self::clean($question?->textContent ?? ''), 'answer' => self::clean($answer?->textContent ?? '')];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The (sorted) button hrefs of each call-to-action band in `main`.
+     *
+     * @return array<int, array<int, string>>
+     */
+    public function ctaBandHrefs(): array
+    {
+        $bands = [];
+
+        foreach ($this->xp->query('//main//*[@data-section="cta"]') as $node) {
+            $hrefs = [];
+            foreach ($this->xp->query('.//a[@href]', $node) as $a) {
+                /** @var DOMElement $a */
+                $hrefs[] = $a->getAttribute('href');
+            }
+            sort($hrefs);
+            $bands[] = $hrefs;
+        }
+
+        return $bands;
+    }
+
     /** Visible text of `main` with whitespace collapsed (the content fingerprint). */
     public function mainText(): string
     {

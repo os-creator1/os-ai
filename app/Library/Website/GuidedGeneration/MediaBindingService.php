@@ -106,11 +106,15 @@ final class MediaBindingService
                 continue;
             }
 
+            // A page that already closes with a call to action of its own does not get a second,
+            // near-identical "Planning an event in X?" band stacked under it.
+            $hasOwnCta = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'cta');
+
             $buttons = [];
-            if ($contactSlug && ! $linksTo($page, $contactSlug)) {
+            if (! $hasOwnCta && $contactSlug && ! $linksTo($page, $contactSlug)) {
                 $buttons[] = ['label' => 'Get in touch', 'url' => '/' . $contactSlug];
             }
-            if ($servicesSlug && ! $linksTo($page, $servicesSlug)) {
+            if (! $hasOwnCta && $servicesSlug && ! $linksTo($page, $servicesSlug)) {
                 $buttons[] = ['label' => 'See our services', 'url' => '/' . $servicesSlug];
             }
             if ($buttons !== []) {

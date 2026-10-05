@@ -281,6 +281,7 @@ class WebsiteController extends CustomerBaseController
             'page' => null,
             'assets' => $website->assets()->latest()->get(),
             'forms' => $website->forms()->get(),
+            'formsModule' => app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->options($business, (int) Auth::id()),
         ]);
     }
 
@@ -290,6 +291,8 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
         $attributes = $this->pageAttributesFromRequest($request);
+        // A new page the owner creates with "Hide from search engines" ticked is their own choice.
+        $attributes['noindex_explicit'] = (bool) $attributes['noindex'];
 
         // Independent-review correction round 5 (item 1) — this advanced,
         // direct draft-page editor had NO lease guard at all, despite
@@ -324,6 +327,7 @@ class WebsiteController extends CustomerBaseController
             'page' => $page,
             'assets' => $website->assets()->latest()->get(),
             'forms' => $website->forms()->get(),
+            'formsModule' => app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->options($business, (int) Auth::id()),
         ]);
     }
 
@@ -334,6 +338,9 @@ class WebsiteController extends CustomerBaseController
         $website = $this->resolveWebsite($business);
         $page = $this->resolvePage($website, $pageUid);
         $attributes = $this->pageAttributesFromRequest($request);
+        // The box is pre-ticked on a generated page, so merely saving the page is not a choice: only CHANGING
+        // the box is. Ticking it makes the hide the owner's own; unticking releases it; unchanged keeps what was.
+        $attributes['noindex_explicit'] = $attributes['noindex'] !== (bool) $page->noindex ? (bool) $attributes['noindex'] : (bool) $page->noindex_explicit;
 
         // Independent-review correction round 5 (item 1) — re-resolves
         // the page UNDER the Website lock (never the pre-lock read above)
@@ -374,16 +381,18 @@ class WebsiteController extends CustomerBaseController
         }
 
         try {
-            $changed = $this->generationCoordinator->runExclusive($website, fn () => $website->pages()->where('noindex', true)->update(['noindex' => false]));
+            $result = $this->generationCoordinator->runExclusive($website, fn () => app(\App\Library\Website\WebsiteSearchVisibility::class)->release($website));
         } catch (GenerationInProgressException $e) {
             return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => $changed === 0
+            'message' => ($result['released'] === 0 && $result['kept_by_owner'] === 0 && $result['kept_thin'] === 0)
                 ? 'Every page can already be found in search.'
-                : $changed . ($changed === 1 ? ' page' : ' pages') . ' can now be found in search. Publish to update your live website.',
+                : ($result['released'] === 0 ? 'No page was released.' : $result['released'] . ($result['released'] === 1 ? ' page' : ' pages') . ' can now be found in search. Publish to update your live website.')
+                    . ($result['kept_by_owner'] > 0 ? ($result['kept_by_owner'] === 1 ? ' 1 page you chose to hide stays hidden.' : ' ' . $result['kept_by_owner'] . ' pages you chose to hide stay hidden.') : '')
+                    . ($result['kept_thin'] > 0 ? ($result['kept_thin'] === 1 ? ' 1 page has nothing of its own to show yet and stays hidden.' : ' ' . $result['kept_thin'] . ' pages have nothing of their own to show yet and stay hidden.') : ''),
         ]);
     }
 

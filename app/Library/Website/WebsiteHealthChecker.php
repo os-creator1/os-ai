@@ -57,16 +57,25 @@ final class WebsiteHealthChecker
         // read them; a connected domain does not change that, so say so plainly instead of implying
         // the site is findable.
         $hiddenCount = $pages->where('noindex', true)->count();
+        $ownerHidden = $pages->where('noindex', true)->where('noindex_explicit', true)->count();
         $add(
             'indexing',
             $hiddenCount === 0 ? self::OK : self::WARN,
             'Pages visible to search engines',
             $hiddenCount === 0
                 ? 'Every page can be found in search.'
-                : $hiddenCount . ' of ' . $pages->count() . ' pages are hidden from search engines, so they will not be found in search even on your own domain. Read your pages, then let search engines find them.',
+                : $hiddenCount . ' of ' . $pages->count() . ' pages are hidden from search engines, so they will not be found in search even on your own domain.'
+                    . ($ownerHidden > 0 ? ' You chose to hide ' . $ownerHidden . ' of them.' : '')
+                    . ' Read your pages, then let search engines find them.',
             $hiddenCount === 0 ? null : 'Review pages',
             $links['pages'] ?? null,
         );
+
+        // 2c. A Forms-module form placed on a page that no longer resolves renders nothing for visitors.
+        $staleForms = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->unresolvedOn($website);
+        if ($staleForms !== []) {
+            $add('forms_module', self::WARN, 'Forms on your pages', 'A form on ' . implode(', ', array_values(array_unique(array_column($staleForms, 'page')))) . ' is switched off or its location is closed, so visitors do not see it. Switch it back on in Forms, or choose another.', 'Manage pages', $links['pages'] ?? null);
+        }
 
         // 3 + 4. Titles and descriptions.
         $missingTitles = $pages->filter(fn ($page) => trim((string) $page->seo_title) === '')->pluck('title')->all();

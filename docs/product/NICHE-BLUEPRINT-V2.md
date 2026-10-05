@@ -232,9 +232,11 @@ vocabulary, the adapter needed is a mapping inside `WebsiteConfigComponentAdapte
 translates and suggests; it never writes to a Website, so an existing or customised Website is never
 overwritten by a Blueprint, and a Business with no Blueprint behaves exactly as before.
 
-* **Template** — the wizard's "Choose a style" step pre-selects the Blueprint's preferred template
-  when the Business has no style yet and the Website really offers it (active, for the niche). A
-  Website shell that already has a template keeps its own; the owner still chooses.
+* **Template** — a brand-new (or still style-less) Website starts on the Blueprint's preferred template
+  when the Website really offers it (active, for the niche); otherwise on the niche default (Template 1).
+  The setup no longer opens on a style question, so this applies where the shell is created
+  (`WebsiteWizardController::beginWithDefaultTemplate`) and, for the legacy picker, as its pre-selection.
+  A Website shell that already has a template keeps its own; the owner changes the look on Review.
 * **Page strategy / sections / content** — guided generation receives `niche_defaults` in its prompt
   (the Blueprint's content prompts, plus suggested sections per planned page). Sections are translated
   to the Website's vocabulary (`packages` and `add_ons` -> `services`) and intersected with each page's

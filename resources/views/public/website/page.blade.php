@@ -45,6 +45,26 @@
     <meta name="robots" content="{{ $indexable ? 'index, follow' : 'noindex, follow' }}">
     <meta property="og:title" content="{{ $page->seo->seo_title ?: $page->title }}">
     <meta property="og:description" content="{{ $page->seo->meta_description }}">
+    @if (! empty($socialMeta))
+        {{-- Website V1 closure: og:type / site_name / url / image and the twitter card. The image is only ever a real, Business-owned file (WebsiteSocialMetadata). --}}
+        <meta property="og:type" content="{{ $socialMeta['type'] }}">
+        <meta property="og:site_name" content="{{ $socialMeta['site_name'] }}">
+        @if ($socialMeta['url'])
+            <meta property="og:url" content="{{ $socialMeta['url'] }}">
+        @endif
+        @if ($socialMeta['image'])
+            <meta property="og:image" content="{{ $socialMeta['image']['url'] }}">
+            @if ($socialMeta['image']['width'] && $socialMeta['image']['height'])
+                <meta property="og:image:width" content="{{ $socialMeta['image']['width'] }}">
+                <meta property="og:image:height" content="{{ $socialMeta['image']['height'] }}">
+            @endif
+            @if ($socialMeta['image']['alt'])
+                <meta property="og:image:alt" content="{{ $socialMeta['image']['alt'] }}">
+            @endif
+            <meta name="twitter:image" content="{{ $socialMeta['image']['url'] }}">
+        @endif
+        <meta name="twitter:card" content="{{ $socialMeta['card'] }}">
+    @endif
     {{--
         Set only once the Website has an active custom domain — see
         Public\WebsiteController::renderPage() and
@@ -90,6 +110,13 @@
     @if (! empty($breadcrumbJsonLd ?? null))
         <script type="application/ld+json">{!! json_encode($breadcrumbJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
     @endif
+    {{--
+        FAQPage (Website V1 closure) — built from the FAQ section(s) this page renders, so the markup can only
+        ever say what is visible; same JSON_HEX_* escaping discipline as the blocks above.
+    --}}
+    @if (! empty($faqJsonLd ?? null))
+        <script type="application/ld+json">{!! json_encode($faqJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+    @endif
     @php($theme = $websiteMeta['theme'] ?? [])
     @if (! empty($theme))
         <style>
@@ -115,6 +142,10 @@
             // Template-owned order of a Home page's sections, then the
             // band tone (light / dark / accent / tint) the template gives each type.
             $orderedSections = $isHomePage ? $design->orderHomeSections($sections) : $sections;
+
+            // A Forms-module form that does not resolve (switched off, Location closed) is not a section at all.
+            $orderedSections = array_values(array_filter($orderedSections, fn ($candidate) => ($candidate['type'] ?? '') !== 'forms_module_form'
+                || app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->renderable($candidate['data'] ?? [], $website, (bool) ($isPreview ?? false)) !== null));
 
             // A hero with no image of its own borrows the owner's hero image
             // (Brand & look), else the first real photo already on this page.

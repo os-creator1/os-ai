@@ -43,6 +43,7 @@ final class WebsiteSnapshotBuilder
         private readonly WebsiteAddressPrivacyGate $privacyGate,
         private readonly WebsiteCatalogReferences $catalogReferences,
         private readonly \App\Library\Website\Media\WebsiteMediaPayload $media,
+        private readonly \App\Library\Website\Forms\WebsiteFormsModuleReferences $formsModule,
     ) {}
 
     public function build(Website $website): array
@@ -66,6 +67,22 @@ final class WebsiteSnapshotBuilder
 
                 if ($type === WebsiteSectionType::Form && ! empty($data['form_uid'])) {
                     $referencedFormUids[$data['form_uid']] = true;
+                }
+
+                if ($type === WebsiteSectionType::FormsModuleForm) {
+                    // Resolved at publish time and frozen, like a package price: the page then shows exactly the
+                    // reference that was live when the owner published. A reference that no longer resolves
+                    // (form switched off, Location closed) is frozen as null and renders nothing. Keys are in
+                    // MySQL's JSON order (length, then alphabetical) so the stored snapshot round-trips byte for byte.
+                    $frozen = [];
+
+                    if (isset($data['heading'])) {
+                        $frozen['heading'] = $data['heading'];
+                    }
+
+                    $frozen['resolved'] = $this->formsModule->resolve($business, (string) ($data['forms_module_deployment_uid'] ?? ''));
+                    $frozen['forms_module_deployment_uid'] = $data['forms_module_deployment_uid'] ?? null;
+                    $data = $frozen;
                 }
 
                 if ($type === WebsiteSectionType::ContactDetails) {

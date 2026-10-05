@@ -30,6 +30,7 @@ final class WebsitePageComposer
     public function __construct(
         private readonly WebsiteNavigationBuilder $navigation,
         private readonly WebsiteCtaResolver $cta,
+        private readonly \App\Library\Website\Seo\WebsiteSocialMetadata $social,
     ) {}
 
     public function compose(View $view): void
@@ -66,6 +67,8 @@ final class WebsitePageComposer
             'logo' => $logo,
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
+            // Open Graph / Twitter extras only on a published page (Preview carries none).
+            'socialMeta' => $isPreview ? null : $this->social->build((string) ($meta['name'] ?? ''), $data['canonicalUrl'] ?? null, (array) ($data['sections'] ?? []), $assets, $theme),
         ]);
     }
 

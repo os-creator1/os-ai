@@ -52,6 +52,7 @@ class ResolveCustomDomainWebsite
         private readonly WebsiteLocalBusinessStructuredData $structuredData,
         private readonly WebsiteAddressPrivacyGate $privacyGate,
         private readonly WebsiteBreadcrumbStructuredData $breadcrumbs,
+        private readonly \App\Library\Website\Seo\WebsiteFaqStructuredData $faq,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -147,6 +148,10 @@ class ResolveCustomDomainWebsite
             return $this->renderSitemap($domain, $snapshot);
         }
 
+        if ($path === 'robots.txt') {
+            return $this->renderRobots($domain);
+        }
+
         $page = $path === ''
             ? collect($snapshot['pages'])->firstWhere('is_home', true)
             : collect($snapshot['pages'])->firstWhere('slug', $path);
@@ -201,6 +206,10 @@ class ResolveCustomDomainWebsite
             ? $this->breadcrumbs->build($page, $urlFor(['is_home' => true, 'slug' => null]), $urlFor, $snapshot['pages'])
             : null;
 
+        // FAQPage: built from the FAQ sections this very page renders (so it can only say what is visible),
+        // and only on an indexable page, like every other schema block.
+        $faqJsonLd = $indexable ? $this->faq->build($sections) : null;
+
         // The site "actually works" on this domain — active certificate,
         // published, gate passed, this exact page resolved from the
         // live snapshot — so indexing is allowed unless the page opted
@@ -217,6 +226,7 @@ class ResolveCustomDomainWebsite
             'canonicalUrl' => $canonicalUrl,
             'localBusinessJsonLd' => $localBusinessJsonLd,
             'breadcrumbJsonLd' => $breadcrumbJsonLd,
+            'faqJsonLd' => $faqJsonLd,
             'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
                 'uid' => $candidate['uid'],
                 'title' => $candidate['title'],
@@ -228,6 +238,21 @@ class ResolveCustomDomainWebsite
         ]);
 
         return $response->header('X-Robots-Tag', $indexable ? 'index, follow' : 'noindex, follow');
+    }
+
+    /**
+     * This site's robots.txt: everything allowed (exactly the platform-wide file's rules) plus the one
+     * line only a per-site file can carry — the absolute address of THIS site's sitemap on its canonical
+     * host. Only a published site on its active primary domain ever reaches here (render() has already
+     * redirected an alias, 404ed an unpublished or gated site), so the host is always the canonical one.
+     * Preview and the platform path never serve it. NOTE: it is only reached when the web server hands
+     * /robots.txt to Laravel for this host instead of serving public/robots.txt itself.
+     */
+    private function renderRobots(WebsiteDomain $domain): Response
+    {
+        $body = implode("\n", ['User-agent: *', 'Disallow:', 'Sitemap: https://' . $domain->domain . '/sitemap']) . "\n";
+
+        return response($body, 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
     }
 
     /**

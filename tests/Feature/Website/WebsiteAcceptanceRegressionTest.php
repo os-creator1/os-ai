@@ -222,7 +222,7 @@ class WebsiteAcceptanceRegressionTest extends TestCase
     public function test_health_tells_the_owner_how_many_pages_are_hidden_from_search_and_the_one_action_fixes_it(): void
     {
         [$customer, $business, $workspace, $website] = $this->website();
-        $this->homePage($website, ['noindex' => true]);
+        $this->homePage($website, ['noindex' => true, 'sections' => [$this->section('hero'), $this->section('text')]]);
         $this->subPage($website, 'about', ['noindex' => true]);
         $this->subPage($website, 'services', ['noindex' => false, 'sort_order' => 2]);
         $this->authenticateAsCustomer($customer);

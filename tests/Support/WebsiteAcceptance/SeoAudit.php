@@ -260,6 +260,11 @@ final class SeoAudit
         }
         $this->report->expect($dupes === [], $label, 'no_duplicated_sections', $dupes === [] ? 'no repeated section on the page' : 'repeated: ' . implode(', ', $dupes));
 
+        // Call-to-action bands: never two with the same destinations, never more than two on a page.
+        $ctaBands = array_values(array_filter($doc->ctaBandHrefs(), fn ($set) => $set !== []));
+        $signatures = array_map(fn ($set) => implode('|', $set), $ctaBands);
+        $this->report->expect(count($signatures) === count(array_unique($signatures)) && count($ctaBands) <= 2, $label, 'no_duplicate_cta_bands', count($ctaBands) . ' CTA band(s), ' . count(array_unique($signatures)) . ' distinct');
+
         $main = $doc->mainText();
 
         if ($entry['type'] === 'location' && $entry['area'] !== null) {
@@ -520,10 +525,31 @@ final class SeoAudit
 
         $this->report->expect(in_array('LocalBusiness', $types, true) || count(array_filter($types, fn ($t) => str_contains($t, 'Business'))) > 0, $label, 'schema_local_business', 'types: ' . implode(', ', $types));
 
-        $hasFaq = count(array_filter($doc->sections(), fn ($s) => $s['type'] === 'faq')) > 0;
-        if ($hasFaq && ! in_array('FAQPage', $types, true)) {
-            $this->report->gap($label, 'schema_faq_page', 'Website V1 emits no FAQPage structured data for its FAQ sections');
+        $this->auditFaqSchema($doc, $label, $blocks);
+    }
+
+    /**
+     * FAQPage exists exactly when the page visibly has a FAQ, and says exactly what the FAQ says.
+     *
+     * @param  array<int, string>  $blocks  raw JSON-LD bodies
+     */
+    private function auditFaqSchema(PageDoc $doc, string $label, array $blocks): void
+    {
+        $faqs = array_values(array_filter(array_map(fn ($raw) => json_decode($raw, true), $blocks), fn ($b) => is_array($b) && ($b['@type'] ?? null) === 'FAQPage'));
+        $visible = $doc->faqItems();
+
+        if ($visible === []) {
+            $this->report->expect($faqs === [], $label, 'faq_schema_matches_visible_faq', $faqs === [] ? 'no FAQ on the page, no FAQPage schema' : 'FAQPage schema on a page with no visible FAQ');
+
+            return;
         }
+
+        $schema = [];
+        foreach ($faqs[0]['mainEntity'] ?? [] as $entity) {
+            $schema[] = [PageDoc::clean((string) ($entity['name'] ?? '')), PageDoc::clean((string) ($entity['acceptedAnswer']['text'] ?? ''))];
+        }
+
+        $this->report->expect(count($faqs) === 1 && $schema === array_map(fn ($i) => [$i['question'], $i['answer']], $visible), $label, 'faq_schema_matches_visible_faq', count($visible) . ' visible Q&A, ' . count($schema) . ' in the FAQPage, must be identical in text and order');
     }
 
     // -------------------------------------------------------------- social
@@ -536,13 +562,32 @@ final class SeoAudit
         $this->report->expect($title !== '' && str_contains(mb_strtolower($doc->titles()[0] ?? ''), mb_strtolower($title)), $label, 'og_title', 'og:title "' . $title . '"');
         $this->report->expect($description !== '' && $description === ($doc->metaNamed('description')[0] ?? null), $label, 'og_description', 'og:description matches the meta description');
 
-        foreach (['og:image' => $doc->metaProperty('og:image'), 'og:url' => $doc->metaProperty('og:url'), 'og:type' => $doc->metaProperty('og:type'), 'twitter:card' => $doc->metaNamed('twitter:card')] as $tag => $values) {
-            if ($values === []) {
-                $this->report->gap($label, 'social_' . str_replace(':', '_', $tag), 'Website V1 does not emit ' . $tag);
-            } else {
-                $this->report->pass($label, 'social_' . str_replace(':', '_', $tag), $values[0]);
-            }
+        if ($ctx->surface === 'preview') {
+            $this->report->expect($doc->metaProperty('og:image') === [] && $doc->metaNamed('twitter:card') === [], $label, 'social_none_in_preview', 'Preview carries no social card');
+
+            return;
         }
+
+        $type = $doc->metaProperty('og:type');
+        $url = $doc->metaProperty('og:url');
+        $card = $doc->metaNamed('twitter:card');
+        $image = $doc->metaProperty('og:image');
+
+        $this->report->expect($type === ['website'], $label, 'social_og_type', json_encode($type));
+        $this->report->expect($card === [$image === [] ? 'summary' : 'summary_large_image'], $label, 'social_twitter_card', json_encode($card) . ' with ' . ($image === [] ? 'no image' : 'an image'));
+
+        // og:url is the canonical address (so it exists wherever a canonical does, and nowhere else).
+        $canonical = $doc->canonicals();
+        $this->report->expect($url === $canonical, $label, 'social_og_url', 'og:url ' . json_encode($url) . ' vs canonical ' . json_encode($canonical));
+
+        // og:image: absent, or an absolute URL to a Business-owned file that exists (never a broken image).
+        $imageOk = true;
+        foreach ($image as $src) {
+            $path = $this->imagePath($src);
+            $imageOk = $imageOk && preg_match('#^https?://#', $src) === 1 && $path !== null && is_file($ctx->publicRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $path));
+        }
+        $this->report->expect($imageOk && count($image) <= 1, $label, 'social_og_image', $image === [] ? 'no og:image' : $image[0]);
+        $this->report->expect($doc->metaNamed('twitter:image') === $image, $label, 'social_twitter_image_matches', json_encode($doc->metaNamed('twitter:image')));
     }
 
     // --------------------------------------------------------- html weight
@@ -660,7 +705,7 @@ final class SeoAudit
 
     // -------------------------------------------------------------- robots
 
-    public function auditRobots(string $robotsTxt): void
+    public function auditRobots(string $robotsTxt, ?string $expectedSitemap = null): void
     {
         $normalised = str_replace("\r\n", "\n", $robotsTxt);
         $lines = array_values(array_filter(array_map('trim', explode("\n", $normalised)), fn ($l) => $l !== '' && ! str_starts_with($l, '#')));
@@ -674,8 +719,11 @@ final class SeoAudit
 
         $this->report->expect(strlen($robotsTxt) > 0, 'robots.txt', 'robots_renders', strlen($robotsTxt) . ' bytes');
 
-        if (count(array_filter($lines, fn ($l) => stripos($l, 'sitemap:') === 0)) === 0) {
-            $this->report->gap('robots.txt', 'robots_sitemap_directive', 'robots.txt is one static platform-wide file with no Sitemap: line; each site\'s sitemap is at /sitemap and must be submitted to search engines');
+        $sitemaps = array_values(array_filter($lines, fn ($l) => stripos($l, 'sitemap:') === 0));
+        if ($expectedSitemap !== null) {
+            $this->report->expect($sitemaps === ['Sitemap: ' . $expectedSitemap], 'robots.txt', 'robots_sitemap_line', json_encode($sitemaps) . ' expected Sitemap: ' . $expectedSitemap);
+        } else {
+            $this->report->expect($sitemaps === [], 'robots.txt', 'robots_no_sitemap_line_on_the_static_file', 'the platform-wide static file carries no per-site Sitemap line');
         }
     }
 

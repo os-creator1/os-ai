@@ -144,7 +144,10 @@ deployment (see §8a). The Website's own form implementation is untouched.
   `{url, title, height, form_uid, location_uid}` — or `null` (never throws) for anything else, so a stale or
   foreign reference renders nothing. The renderer contract is the `public.forms._embed` partial (an iframe of the
   real public form).
-* **Not done on purpose (the one final-integration change):** the Website component library and snapshot builder
+* **Done (Website V1 closure):** the Website consumer now exists — see `docs/automation/WEBSITE-V1-FULL-SITE-ACCEPTANCE.md`
+  §Forms placement: `forms_module_form` section (`forms_module_deployment_uid`), `WebsiteFormsModuleReferences`,
+  snapshot resolution at publish, live resolution in Preview, `public.forms._embed` in the renderer.
+* ~~Not done on purpose (the one final-integration change):~~ the Website component library and snapshot builder
   are shared wiring owned by the Website lane. To finish placement that lane adds (1) a `forms_module_form`
   component whose editor stores `forms_module_deployment_uid`, (2) in `WebsiteSnapshotBuilder`, for each such
   component call `FormWebsiteEmbed::resolve($site->business, $uid)` and embed the returned array in the published
