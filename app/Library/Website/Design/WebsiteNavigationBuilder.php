@@ -45,7 +45,14 @@ final class WebsiteNavigationBuilder
         }
 
         if (str_starts_with($slug, 'serving-')) {
-            return trim((string) preg_replace('/^Serving\s+/i', '', (string) $page['title'])) ?: (string) $page['title'];
+            $title = (string) $page['title'];
+
+            // "Serving Austin" -> "Austin"; a headline such as "Photo booth rentals in Austin, TX" -> "Austin, TX".
+            if (preg_match('/^Serving\s+(.+)$/iu', $title, $match) === 1 || preg_match('/^.*\bin\s+(.+)$/iu', $title, $match) === 1) {
+                return trim($match[1]) ?: $title;
+            }
+
+            return $title;
         }
 
         return (string) $page['title'];

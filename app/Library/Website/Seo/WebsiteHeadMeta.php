@@ -95,7 +95,11 @@ final class WebsiteHeadMeta
             return $base;
         }
 
-        return $base.' | '.$siteName;
+        // The name is appended only while the whole title still fits in a search result; a long
+        // page title is left whole rather than cut or pushed past the limit.
+        $withName = $base.' | '.$siteName;
+
+        return mb_strlen($withName) <= self::TITLE_SOFT_LIMIT ? $withName : $base;
     }
 
     public static function description(mixed $value): ?string

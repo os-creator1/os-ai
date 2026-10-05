@@ -509,7 +509,10 @@ final class SeoAudit
 
             $flat = mb_strtolower($raw);
             $this->report->expect(! str_contains($flat, 'aggregaterating') && ! str_contains($flat, '"review') && ! str_contains($flat, 'ratingvalue'), $label, 'schema_no_invented_ratings', $type . ' carries no rating or review markup');
-            $this->report->expect(preg_match('/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i', $raw) === 0 && ! str_contains($raw, '127.0.0.1') && ! str_contains($raw, 'localhost'), $label, 'schema_no_internal_ids', $type . ' has no UID or local address');
+            // The owner's stored photos live in a per-website folder (/images/websites/<folder>/...), the same
+            // address every <img> on the page uses; that folder is not an identifier the markup exposes on its own.
+            $withoutPhotoFolders = preg_replace('#/images/websites/[0-9a-f-]{36}/#i', '/images/websites/photos/', str_replace('\/', '/', $raw));
+            $this->report->expect(preg_match('/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i', $withoutPhotoFolders) === 0 && ! str_contains($raw, '127.0.0.1') && ! str_contains($raw, 'localhost'), $label, 'schema_no_internal_ids', $type . ' has no UID or local address');
 
             if ($type === 'LocalBusiness' || str_contains($type, 'Business')) {
                 $this->report->expect(($data['name'] ?? null) === $ctx->businessName, $label, 'schema_business_identity', 'name ' . json_encode($data['name'] ?? null) . ' vs ' . $ctx->businessName);
@@ -526,9 +529,17 @@ final class SeoAudit
 
         $this->report->expect(in_array('LocalBusiness', $types, true) || count(array_filter($types, fn ($t) => str_contains($t, 'Business'))) > 0, $label, 'schema_local_business', 'types: ' . implode(', ', $types));
 
+        // FAQPage: exactly on the pages that render an FAQ, listing exactly the visible questions and answers.
         $hasFaq = count(array_filter($doc->sections(), fn ($s) => $s['type'] === 'faq')) > 0;
-        if ($hasFaq && ! in_array('FAQPage', $types, true)) {
-            $this->report->gap($label, 'schema_faq_page', 'Website V1 emits no FAQPage structured data for its FAQ sections');
+        $faqBlocks = array_values(array_filter(array_map(fn ($raw) => json_decode($raw, true), $blocks), fn ($d) => is_array($d) && ($d['@type'] ?? null) === 'FAQPage'));
+
+        if (! $hasFaq) {
+            $this->report->expect($faqBlocks === [], $label, 'schema_faq_only_where_rendered', count($faqBlocks) . ' FAQPage block(s) on a page with no FAQ');
+        } else {
+            $visible = $doc->bodyText();
+            $entities = $faqBlocks[0]['mainEntity'] ?? [];
+            $mismatch = array_filter($entities, fn ($q) => ! str_contains($visible, (string) ($q['name'] ?? '')) || ! str_contains($visible, (string) ($q['acceptedAnswer']['text'] ?? '')));
+            $this->report->expect(count($faqBlocks) === 1 && $entities !== [] && $mismatch === [], $label, 'schema_faq_matches_visible', count($entities) . ' question(s) in FAQPage, ' . count($mismatch) . ' not found in the visible text');
         }
     }
 
@@ -577,7 +588,7 @@ final class SeoAudit
             return;
         }
 
-        $this->report->expect(count($visible) >= 2 && $visible[0]['text'] === 'Home' && ($visible[array_key_last($visible)]['href'] ?? 'x') === null, $label, 'breadcrumb_visible', json_encode(array_column($visible, 'text')));
+        $this->report->expect(count($visible) >= 2 && $visible[0]['text'] === 'Home' && $visible[array_key_last($visible)]['href'] === null, $label, 'breadcrumb_visible', json_encode(array_column($visible, 'text')));
 
         // The structured data lists exactly the visible trail (same names, same addresses) on an indexable page.
         $trail = null;

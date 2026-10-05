@@ -419,9 +419,13 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
         $this->post($this->wizardUrl($this->workspace, $this->business, 'pages.allowIndexing'))->assertRedirect();
         $this->report->context('lifecycle');
         $this->report->expect($this->website->pages()->where('noindex', true)->count() === 0, 'site', 'allow_indexing_clears_every_page', 'no page is hidden from search any more');
+        // Health reads the LIVE site: until the update is published it still says pages are hidden, and says why.
         $health = app(\App\Library\Website\WebsiteHealthChecker::class)->check($this->website->fresh(), ['pages' => '/pages']);
-        $this->report->expect(collect($health['checks'])->firstWhere('key', 'indexing')['status'] === 'ok', 'site', 'health_reports_indexing_ok', 'Health: pages visible to search engines');
+        $beforePublish = collect($health['checks'])->firstWhere('key', 'indexing');
+        $this->report->expect($beforePublish['status'] === 'warn' && str_contains($beforePublish['detail'], 'publish to make that live'), 'site', 'health_does_not_call_unpublished_indexing_good', $beforePublish['detail']);
         $this->publish();
+        $health = app(\App\Library\Website\WebsiteHealthChecker::class)->check($this->website->fresh(), ['pages' => '/pages']);
+        $this->report->expect(collect($health['checks'])->firstWhere('key', 'indexing')['status'] === 'ok' && collect($health['checks'])->firstWhere('key', 'search_files')['status'] === 'ok', 'site', 'health_reports_indexing_ok', 'Health: pages visible to search engines, sitemap listed');
 
         // ---- 5. Every template: the SAME content, crawled in Preview and as the published site.
         foreach ($designs as $index => $design) {

@@ -61,10 +61,14 @@ class SeoAuditSelfTest extends TestCase
 <title>Chicago Photo Booth Rentals — Acme Booths</title>
 <meta name="description" content="Acme Booths brings photo booths to weddings and corporate events across Chicago and the suburbs.">
 <meta name="robots" content="index, follow">
-<meta property="og:title" content="Chicago Photo Booth Rentals">
+<meta property="og:title" content="Chicago Photo Booth Rentals — Acme Booths">
 <meta property="og:description" content="Acme Booths brings photo booths to weddings and corporate events across Chicago and the suburbs.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://acme.test/">
+<meta property="og:image" content="https://acme.test/images/websites/x/hero.jpg">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://acme.test/">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"LocalBusiness","name":"Acme Booths","url":"https://acme.test/","telephone":"+13125550147"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"LocalBusiness","@id":"https://acme.test/#business","name":"Acme Booths","url":"https://acme.test/","telephone":"+13125550147"}</script>
 </head><body>
 <header><a href="https://acme.test/">Home</a> <a data-testid="header-cta" href="https://acme.test/contact">Request a quote</a></header>
 <main>
@@ -131,6 +135,16 @@ HTML;
             'schema with an internal id' => [['"url":"https://acme.test/"' => '"url":"https://acme.test/?u=6a93c068-5b88-471f-bdba-b3810966119c"'], 'schema_no_internal_ids'],
             'invalid schema json' => [['"@type":"LocalBusiness",' => '"@type":"LocalBusiness" ,,'], 'schema_valid_json'],
             'duplicate id' => [['<div data-section="text">' => '<div data-section="text" id="a"><span id="a"></span>'], 'no_duplicate_ids'],
+            'brand repeated in the title' => [['<title>Chicago Photo Booth Rentals — Acme Booths</title>' => '<title>Acme Booths — Photo booths | Acme Booths</title>'], 'title_brand_once'],
+            'title too long for a search result' => [['<title>Chicago Photo Booth Rentals — Acme Booths</title>' => '<title>Chicago Photo Booth Rentals For Weddings, Corporate Events And Birthday Parties — Acme Booths</title>'], 'title_not_truncated_in_results'],
+            'og:url not the canonical' => [['<meta property="og:url" content="https://acme.test/">' => '<meta property="og:url" content="https://acme.test/other">'], 'social_og_url_equals_canonical'],
+            'no og:image' => [['<meta property="og:image" content="https://acme.test/images/websites/x/hero.jpg">' => ''], 'social_og_image'],
+            'og:image from another folder' => [['https://acme.test/images/websites/x/hero.jpg">
+<meta name' => 'https://acme.test/elsewhere/hero.jpg">
+<meta name'], 'social_og_image_is_owner_media'],
+            'no twitter card' => [['<meta name="twitter:card" content="summary_large_image">' => ''], 'social_twitter_card'],
+            'schema url is the page not the site' => [['"url":"https://acme.test/"' => '"url":"https://acme.test/about"'], 'schema_canonical_url'],
+            'schema without a site-wide id' => [['"@id":"https://acme.test/#business",' => ''], 'schema_one_site_entity'],
         ];
     }
 
@@ -179,7 +193,7 @@ HTML;
         $audit = new SeoAudit($report, $crawler);
 
         $audit->auditSitemap('<urlset><url><loc>https://acme.test/</loc></url><url><loc>https://acme.test/workspaces/1/preview/x</loc></url></urlset>', ['https://acme.test/', 'https://acme.test/services'], 'https://acme.test');
-        $audit->auditRobots("User-agent: *\r\nDisallow: /\r\n");
+        $audit->auditRobots("User-agent: *\nDisallow: /\n");
 
         $failed = array_column($report->failures(), 'check');
         $this->assertContains('sitemap_matches_indexable_pages', $failed);
@@ -187,15 +201,19 @@ HTML;
         $this->assertContains('robots_does_not_block_site', $failed);
     }
 
-    public function test_a_valid_robots_file_with_windows_line_endings_is_fine_and_missing_sitemap_line_is_a_gap_not_a_failure(): void
+    public function test_a_robots_file_must_carry_the_sitemap_line_and_unix_line_endings(): void
     {
         $crawler = new SiteCrawler(fn (string $url) => ['status' => 200, 'body' => '', 'headers' => [], 'location' => null]);
-        $report = new AcceptanceReport();
-        $report->context('custom_domain', 'self-test');
 
-        (new SeoAudit($report, $crawler))->auditRobots("User-agent: *\r\nDisallow:\r\n");
+        $good = new AcceptanceReport();
+        $good->context('custom_domain', 'self-test');
+        (new SeoAudit($good, $crawler))->auditRobots("User-agent: *\nDisallow:\n\nSitemap: https://acme.test/sitemap.xml\n", 'https://acme.test/sitemap.xml');
+        $this->assertSame([], $good->failures());
 
-        $this->assertSame([], $report->failures());
-        $this->assertSame(['robots_sitemap_directive'], array_column($report->gaps(), 'check'));
+        // No Sitemap line, and Windows line endings: each is its own finding.
+        $bad = new AcceptanceReport();
+        $bad->context('custom_domain', 'self-test');
+        (new SeoAudit($bad, $crawler))->auditRobots("User-agent: *\r\nDisallow:\r\n", 'https://acme.test/sitemap.xml');
+        $this->assertEqualsCanonicalizing(['robots_sitemap_directive', 'robots_unix_line_endings'], array_column($bad->failures(), 'check'));
     }
 }

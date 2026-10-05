@@ -255,12 +255,21 @@ final class PageDoc
         return implode(' | ', $parts);
     }
 
-    /** Visible text of the whole body (header and footer included). */
+    /** Visible text of the whole body (header and footer included; the breadcrumb is navigation, not copy). */
     public function bodyText(): string
     {
         $body = $this->xp->query('//body')->item(0);
 
-        return $body === null ? '' : self::clean($body->textContent);
+        if ($body === null) {
+            return '';
+        }
+
+        $copy = $body->cloneNode(true);
+        foreach (iterator_to_array($this->xp->query('.//nav[@aria-label="Breadcrumb"]', $copy)) as $crumbs) {
+            $crumbs->parentNode?->removeChild($crumbs);
+        }
+
+        return self::clean($copy->textContent);
     }
 
     public function bytes(): int

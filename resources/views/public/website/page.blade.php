@@ -93,6 +93,10 @@
         only ever passed for a genuinely indexable custom-domain page
         (App\Http\Middleware\ResolveCustomDomainWebsite::renderPage()).
     --}}
+    @if (! empty($faqJsonLd ?? null))
+        {{-- Only on a page that renders its own FAQ section, built from exactly that section's questions and answers. --}}
+        <script type="application/ld+json">{!! json_encode($faqJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+    @endif
     @if (! empty($breadcrumbJsonLd ?? null))
         <script type="application/ld+json">{!! json_encode($breadcrumbJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
     @endif

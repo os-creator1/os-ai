@@ -370,4 +370,38 @@ class WebsiteSeoV1FinalTest extends TestCase
         $this->assertFalse($page->fresh()->noindex_by_owner);
         $this->assertFalse($page->fresh()->noindex);
     }
+    // ------------------------------------------------------------------ FAQ schema
+
+    public function test_faq_schema_lists_exactly_the_questions_a_page_renders_and_only_on_that_page(): void
+    {
+        $faq = ['type' => 'faq', 'data' => ['heading' => 'Questions', 'items' => [
+            ['question' => 'How long is a rental?', 'answer' => 'Most rentals run  three hours.'],
+            ['question' => 'How long is a rental?', 'answer' => 'A duplicate is listed once.'],
+            ['question' => 'Blank answer', 'answer' => '   '],
+            ['question' => 'Do you travel?', 'answer' => 'Yes, across Chicago <and> beyond.'],
+        ]]];
+
+        $schema = \App\Library\Website\Seo\WebsiteFaqStructuredData::build([$faq]);
+        $this->assertSame('FAQPage', $schema['@type']);
+        $this->assertSame(['How long is a rental?', 'Do you travel?'], array_column($schema['mainEntity'], 'name'));
+        $this->assertSame('Most rentals run three hours.', $schema['mainEntity'][0]['acceptedAnswer']['text']);
+        $this->assertNull(\App\Library\Website\Seo\WebsiteFaqStructuredData::build([['type' => 'hero', 'data' => []]]));
+        $this->assertNull(\App\Library\Website\Seo\WebsiteFaqStructuredData::build([['type' => 'faq', 'data' => ['items' => [['question' => 'Q', 'answer' => '']]]]]));
+
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business, ['name' => 'Luma Booth Co']);
+        $this->homePage($website, ['seo_title' => 'Luma Booth Co', 'meta_description' => 'Photo booth rentals in Chicago.']);
+        $this->subPage($website, 'photo-booth-faq', ['title' => 'FAQ', 'seo_title' => 'FAQ | Luma Booth Co', 'meta_description' => 'Answers about booking.', 'sections' => [$this->section('hero'), ['type' => 'faq', 'data' => ['heading' => 'Questions', 'items' => [['question' => 'How long is a rental?', 'answer' => 'Most rentals run three hours.'], ['question' => 'Do you travel?', 'answer' => 'Yes, across Chicago and beyond.']]]]]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $this->activeDomain($website->fresh(), 'faq-schema.test');
+
+        $withFaq = $this->get('http://faq-schema.test/photo-booth-faq')->assertOk()->getContent();
+        preg_match_all('#<script type="application/ld\+json">(.+?)</script>#s', $withFaq, $blocks);
+        $types = array_map(fn ($json) => json_decode($json, true)['@type'] ?? null, $blocks[1]);
+        $this->assertContains('FAQPage', $types);
+        $this->assertStringContainsString('How long is a rental?', $withFaq, 'The schema question is visible on the page.');
+
+        $home = $this->get('http://faq-schema.test/')->assertOk()->getContent();
+        $this->assertStringNotContainsString('FAQPage', $home, 'FAQPage is never emitted site-wide.');
+    }
 }

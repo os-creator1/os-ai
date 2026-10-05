@@ -4,8 +4,10 @@ namespace App\Http\Middleware;
 
 use App\Enums\Website\WebsiteDomainStatus;
 use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
+use App\Library\Website\Seo\WebsiteAssetUrls;
 use App\Library\Website\Seo\WebsiteBreadcrumbStructuredData;
 use App\Library\Website\Seo\WebsiteCrawlFiles;
+use App\Library\Website\Seo\WebsiteFaqStructuredData;
 use App\Library\Website\Seo\WebsiteHeadMeta;
 use App\Library\Website\Seo\WebsiteRedirectMap;
 use App\Library\Website\Seo\WebsiteLocalBusinessStructuredData;
@@ -150,6 +152,9 @@ class ResolveCustomDomainWebsite
             return $this->notFound($domain->domain);
         }
 
+        // Photos load from the customer's own domain, whichever host published the revision.
+        $snapshot = WebsiteAssetUrls::rebase($snapshot, 'https://'.$domain->domain);
+
         // One address per page: "/about/" is the same page as "/about", so it
         // answers a permanent redirect instead of a second indexable URL.
         $requestPath = $request->getPathInfo();
@@ -262,6 +267,7 @@ class ResolveCustomDomainWebsite
             'canonicalUrl' => $canonicalUrl,
             'localBusinessJsonLd' => $localBusinessJsonLd,
             'breadcrumbJsonLd' => $breadcrumbJsonLd,
+            'faqJsonLd' => $indexable ? WebsiteFaqStructuredData::build($sections) : null,
             'navigationPages' => $navigationPages,
         ]);
 
