@@ -290,6 +290,7 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
         $attributes = $this->pageAttributesFromRequest($request);
+        $attributes['noindex_by_owner'] = (bool) ($attributes['noindex'] ?? false);
 
         // Independent-review correction round 5 (item 1) — this advanced,
         // direct draft-page editor had NO lease guard at all, despite
@@ -334,6 +335,7 @@ class WebsiteController extends CustomerBaseController
         $website = $this->resolveWebsite($business);
         $page = $this->resolvePage($website, $pageUid);
         $attributes = $this->pageAttributesFromRequest($request);
+        $attributes['noindex_by_owner'] = (bool) ($attributes['noindex'] ?? false);
 
         // Independent-review correction round 5 (item 1) — re-resolves
         // the page UNDER the Website lock (never the pre-lock read above)
@@ -374,7 +376,12 @@ class WebsiteController extends CustomerBaseController
         }
 
         try {
-            $changed = $this->generationCoordinator->runExclusive($website, fn () => $website->pages()->where('noindex', true)->update(['noindex' => false]));
+            $changed = $this->generationCoordinator->runExclusive($website, function () use ($website) {
+                // Remembered, so a later rebuild keeps the pages open instead of re-hiding the whole site.
+                $website->forceFill(['indexing_released_at' => now()])->save();
+
+                return $website->pages()->where('noindex', true)->where('noindex_by_owner', false)->update(['noindex' => false]);
+            });
         } catch (GenerationInProgressException $e) {
             return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
@@ -382,7 +389,7 @@ class WebsiteController extends CustomerBaseController
         return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
             'message' => $changed === 0
-                ? 'Every page can already be found in search.'
+                ? 'Every page you have not hidden yourself can already be found in search.'
                 : $changed . ($changed === 1 ? ' page' : ' pages') . ' can now be found in search. Publish to update your live website.',
         ]);
     }

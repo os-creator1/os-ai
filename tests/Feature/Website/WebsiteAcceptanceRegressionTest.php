@@ -247,7 +247,7 @@ class WebsiteAcceptanceRegressionTest extends TestCase
 
         // Idempotent: a second click changes nothing and says so.
         $this->post(route('customer.workspaces.businesses.website.pages.allowIndexing', [$workspace->uid, $business->uid]))
-            ->assertSessionHas('message', 'Every page can already be found in search.');
+            ->assertSessionHas('message', 'Every page you have not hidden yourself can already be found in search.');
 
         // Nothing goes live by itself: the published site is only changed by Publish.
         $this->assertNull($website->fresh()->published_revision_id);

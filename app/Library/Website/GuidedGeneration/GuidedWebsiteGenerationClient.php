@@ -194,7 +194,10 @@ class GuidedWebsiteGenerationClient
 
         $primaryLocation = $business->primaryLocation()->first();
         if ($primaryLocation !== null) {
-            if ((bool) $primaryLocation->public_address && trim((string) $primaryLocation->address_line_1) !== '') {
+            // The same privacy decision the published site makes (active location, a storefront or hybrid
+            // service model, the public-address permission): an address the site would withhold must not
+            // reach the AI either, or it can be pasted into body copy the privacy gate never redacts.
+            if (app(\App\Library\Website\Seo\WebsiteAddressPrivacyGate::class)->currentlyPermitsAddress($business) && trim((string) $primaryLocation->address_line_1) !== '') {
                 $facts['address'] = array_filter([
                     'address_line_1' => $primaryLocation->address_line_1,
                     'city' => $primaryLocation->city,

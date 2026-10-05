@@ -324,15 +324,26 @@ final class WebsitePageStrategy
 
         // Slugs already spoken for by the fixed and saved-location pages: an
         // area that would land on one is skipped, never two pages at one URL.
-        $usedSlugs = array_filter(['services', 'packages', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact', 'gallery', 'backdrops', $hasCustom ? Str::slug($customSection['title']) : null]);
+        $usedSlugs = array_filter(['services', 'packages', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact', 'gallery', 'backdrops', $hasCustom ? WebsiteSlugRules::customSectionSlug((string) $customSection['title']) : null]);
+
+        // One address per saved location. Two locations in the same city and region used to plan the
+        // same slug and abort the whole generation; the second now gets "-2" (and so on). A location with
+        // no city is "serving-location", never a page named after an internal database id.
+        $locationSlugs = [];
         foreach ($locationCandidates as $location) {
             $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
-            $usedSlugs[] = 'serving-' . Str::slug($cityLabel !== '' ? $cityLabel : (string) $location->id);
+            $base = WebsiteSlugRules::bounded('serving-', $cityLabel, 'location');
+            $slug = $base;
+            for ($suffix = 2; in_array($slug, $usedSlugs, true); $suffix++) {
+                $slug = substr($base, 0, WebsiteSlugRules::MAX_LENGTH - strlen('-'.$suffix)).'-'.$suffix;
+            }
+            $locationSlugs[$location->id] = $slug;
+            $usedSlugs[] = $slug;
         }
         $areaExcluded = [];
         $areaQueue = [];
         foreach ($areaCandidates as $area) {
-            $slug = 'serving-' . Str::slug($area);
+            $slug = WebsiteSlugRules::bounded('serving-', (string) $area, 'area');
             if (in_array($slug, $usedSlugs, true)) {
                 $areaExcluded[] = ['area' => $area, 'reason' => 'Already covered by another page at the same address.'];
 
@@ -406,7 +417,7 @@ final class WebsitePageStrategy
                     'page_key' => 'service:' . $service->uid,
                     'page_type' => 'service_detail',
                     'is_home' => false,
-                    'slug' => 'service-' . Str::slug($service->slug ?: $service->name),
+                    'slug' => WebsiteSlugRules::bounded('service-', (string) ($service->slug ?: $service->name), 'page'),
                     'title' => $service->name,
                     'allowed_section_types' => $allowed('service_detail'),
                     'entity' => $this->serviceEntity($service),
@@ -464,7 +475,7 @@ final class WebsitePageStrategy
         }
 
         if ($hasCustom) {
-            $plan[] = ['page_key' => 'custom_section', 'page_type' => 'custom_section', 'is_home' => false, 'slug' => Str::slug($customSection['title']), 'title' => $customSection['title'], 'allowed_section_types' => $allowed('custom_section'), 'entity' => null];
+            $plan[] = ['page_key' => 'custom_section', 'page_type' => 'custom_section', 'is_home' => false, 'slug' => WebsiteSlugRules::customSectionSlug((string) $customSection['title']), 'title' => $customSection['title'], 'allowed_section_types' => $allowed('custom_section'), 'entity' => null];
             $decide('custom_section', $customSection['title'], 'custom_section', true, 'The extra section you added.');
         }
 
@@ -477,7 +488,7 @@ final class WebsitePageStrategy
                     'page_key' => 'location:' . $location->id,
                     'page_type' => 'location',
                     'is_home' => false,
-                    'slug' => 'serving-' . Str::slug($cityLabel !== '' ? $cityLabel : (string) $location->id),
+                    'slug' => $locationSlugs[$location->id],
                     'title' => $title,
                     'allowed_section_types' => $allowed('location'),
                     'entity' => $this->locationEntity($location),
@@ -497,7 +508,7 @@ final class WebsitePageStrategy
                     'page_key' => 'area:' . Str::slug($area),
                     'page_type' => 'location',
                     'is_home' => false,
-                    'slug' => 'serving-' . Str::slug($area),
+                    'slug' => WebsiteSlugRules::bounded('serving-', (string) $area, 'area'),
                     'title' => 'Serving ' . $area,
                     'allowed_section_types' => $allowed('location'),
                     'entity' => $this->areaEntity($area, $areaCandidates, $services, $primaryCity),

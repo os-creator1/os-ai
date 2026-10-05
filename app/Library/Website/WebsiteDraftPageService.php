@@ -188,6 +188,9 @@ final class WebsiteDraftPageService
             'seo_title' => $attributes['seo_title'] ?? null,
             'meta_description' => $attributes['meta_description'] ?? null,
             'noindex' => (bool) ($attributes['noindex'] ?? false),
+            // Set only by the owner's own page form: a page they hid on purpose is
+            // never released by "let search engines find these pages" and survives a rebuild.
+            'noindex_by_owner' => (bool) ($attributes['noindex'] ?? false) && (bool) ($attributes['noindex_by_owner'] ?? $existing?->noindex_by_owner ?? false),
         ];
     }
 

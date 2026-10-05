@@ -70,7 +70,8 @@ final class SeoAudit
             $this->auditImages($doc, $label, $ctx);
             $this->auditLinks($doc, $label, $ctx);
             $this->auditStructuredData($doc, $label, $ctx, $entry);
-            $this->auditSocial($doc, $label, $ctx);
+            $this->auditSocial($doc, $label, $ctx, $entry);
+            $this->auditBreadcrumbs($doc, $label, $ctx, $entry);
             $this->auditHtmlWeight($doc, $label);
         }
 
@@ -149,7 +150,11 @@ final class SeoAudit
 
         $this->report->expect(count($found) === 1 && $title !== '', $label, 'title_single_nonempty', count($found) . ' <title> element(s): "' . $title . '"');
 
-        $page = trim(explode('—', $title)[0] ?? '');
+        $page = trim(preg_split('/\s[|—]\s/u', $title)[0] ?? '');
+        $brandCount = substr_count(mb_strtolower($title), mb_strtolower($ctx->businessName));
+        $this->report->expect($brandCount <= 1, $label, 'title_brand_once', $brandCount . ' mention(s) of the business name in "' . $title . '"');
+        $this->report->expect(mb_strlen($title) <= 70, $label, 'title_not_truncated_in_results', mb_strlen($title) . ' characters (up to 70 is shown in full)');
+
         $useful = $page !== ''
             && ! in_array(mb_strtolower($page), self::GENERIC_TITLES, true)
             && mb_strtolower($page) !== mb_strtolower($ctx->businessName)
@@ -508,7 +513,8 @@ final class SeoAudit
 
             if ($type === 'LocalBusiness' || str_contains($type, 'Business')) {
                 $this->report->expect(($data['name'] ?? null) === $ctx->businessName, $label, 'schema_business_identity', 'name ' . json_encode($data['name'] ?? null) . ' vs ' . $ctx->businessName);
-                $this->report->expect(isset($data['url']) && str_starts_with((string) $data['url'], (string) $ctx->canonicalOrigin), $label, 'schema_canonical_url', 'url ' . json_encode($data['url'] ?? null));
+                $this->report->expect(($data['url'] ?? null) === $ctx->canonicalOrigin . '/', $label, 'schema_canonical_url', 'url ' . json_encode($data['url'] ?? null) . ' (the site, not this page)');
+                $this->report->expect(($data['@id'] ?? null) === $ctx->canonicalOrigin . '/#business', $label, 'schema_one_site_entity', '@id ' . json_encode($data['@id'] ?? null));
             }
 
             if ($type === 'BreadcrumbList') {
@@ -528,21 +534,67 @@ final class SeoAudit
 
     // -------------------------------------------------------------- social
 
-    private function auditSocial(PageDoc $doc, string $label, AuditContext $ctx): void
+    /** @param  array<string, mixed>  $entry */
+    private function auditSocial(PageDoc $doc, string $label, AuditContext $ctx, array $entry): void
     {
         $title = $doc->metaProperty('og:title')[0] ?? '';
         $description = $doc->metaProperty('og:description')[0] ?? '';
 
-        $this->report->expect($title !== '' && str_contains(mb_strtolower($doc->titles()[0] ?? ''), mb_strtolower($title)), $label, 'og_title', 'og:title "' . $title . '"');
+        $this->report->expect($title !== '' && mb_strtolower($title) === mb_strtolower($doc->titles()[0] ?? ''), $label, 'og_title', 'og:title "' . $title . '" equals the page title');
         $this->report->expect($description !== '' && $description === ($doc->metaNamed('description')[0] ?? null), $label, 'og_description', 'og:description matches the meta description');
 
-        foreach (['og:image' => $doc->metaProperty('og:image'), 'og:url' => $doc->metaProperty('og:url'), 'og:type' => $doc->metaProperty('og:type'), 'twitter:card' => $doc->metaNamed('twitter:card')] as $tag => $values) {
-            if ($values === []) {
-                $this->report->gap($label, 'social_' . str_replace(':', '_', $tag), 'Website V1 does not emit ' . $tag);
-            } else {
-                $this->report->pass($label, 'social_' . str_replace(':', '_', $tag), $values[0]);
+        $type = $doc->metaProperty('og:type');
+        $this->report->expect($type === ['website'], $label, 'social_og_type', json_encode($type));
+
+        $card = $doc->metaNamed('twitter:card');
+        $this->report->expect(count($card) === 1 && in_array($card[0], ['summary', 'summary_large_image'], true), $label, 'social_twitter_card', json_encode($card));
+
+        // og:url is the canonical, exactly: present only where a canonical is (the custom domain).
+        $urls = $doc->metaProperty('og:url');
+        $canonicals = $doc->canonicals();
+        $this->report->expect($urls === $canonicals, $label, 'social_og_url_equals_canonical', 'og:url ' . json_encode($urls) . ' vs canonical ' . json_encode($canonicals));
+
+        // og:image: the owner's own published photo (this fixture has a logo and a hero): an absolute URL that loads.
+        $image = $doc->metaProperty('og:image');
+        $this->report->expect(count($image) === 1 && preg_match('#^https?://#', $image[0]) === 1, $label, 'social_og_image', json_encode($image));
+
+        if ($image !== []) {
+            $path = $this->imagePath($image[0]);
+            $this->report->expect($path !== null && is_file($ctx->publicRoot . '/' . $path) && str_starts_with($path, 'images/'), $label, 'social_og_image_is_owner_media', $image[0] . ' -> ' . ($path ?? 'not a local owner image'));
+        }
+    }
+
+    // --------------------------------------------------------- breadcrumbs
+
+    /** @param  array<string, mixed>  $entry */
+    private function auditBreadcrumbs(PageDoc $doc, string $label, AuditContext $ctx, array $entry): void
+    {
+        $visible = $doc->breadcrumbs();
+
+        if ($entry['type'] === 'home') {
+            $this->report->expect($visible === [], $label, 'breadcrumb_absent_on_home', count($visible) . ' crumb(s) on the home page');
+
+            return;
+        }
+
+        $this->report->expect(count($visible) >= 2 && $visible[0]['text'] === 'Home' && ($visible[array_key_last($visible)]['href'] ?? 'x') === null, $label, 'breadcrumb_visible', json_encode(array_column($visible, 'text')));
+
+        // The structured data lists exactly the visible trail (same names, same addresses) on an indexable page.
+        $trail = null;
+        foreach ($doc->jsonLd() as $raw) {
+            $data = json_decode($raw, true);
+            if (($data['@type'] ?? null) === 'BreadcrumbList') {
+                $trail = $data['itemListElement'] ?? [];
             }
         }
+
+        if (! $ctx->indexingAllowed || $entry['noindex']) {
+            return;
+        }
+
+        $names = array_column($visible, 'text');
+        $schemaNames = $trail === null ? null : array_map(fn ($item) => (string) ($item['name'] ?? ''), $trail);
+        $this->report->expect($schemaNames === $names, $label, 'breadcrumb_schema_matches_visible', 'visible ' . json_encode($names) . ' vs schema ' . json_encode($schemaNames));
     }
 
     // --------------------------------------------------------- html weight
@@ -660,7 +712,7 @@ final class SeoAudit
 
     // -------------------------------------------------------------- robots
 
-    public function auditRobots(string $robotsTxt): void
+    public function auditRobots(string $robotsTxt, ?string $expectedSitemap = null): void
     {
         $normalised = str_replace("\r\n", "\n", $robotsTxt);
         $lines = array_values(array_filter(array_map('trim', explode("\n", $normalised)), fn ($l) => $l !== '' && ! str_starts_with($l, '#')));
@@ -674,11 +726,55 @@ final class SeoAudit
 
         $this->report->expect(strlen($robotsTxt) > 0, 'robots.txt', 'robots_renders', strlen($robotsTxt) . ' bytes');
 
-        if (count(array_filter($lines, fn ($l) => stripos($l, 'sitemap:') === 0)) === 0) {
-            $this->report->gap('robots.txt', 'robots_sitemap_directive', 'robots.txt is one static platform-wide file with no Sitemap: line; each site\'s sitemap is at /sitemap and must be submitted to search engines');
+        $sitemaps = array_values(array_filter($lines, fn ($l) => stripos($l, 'sitemap:') === 0));
+        if ($expectedSitemap !== null) {
+            $this->report->expect($sitemaps === ['Sitemap: ' . $expectedSitemap], 'robots.txt', 'robots_sitemap_directive', json_encode($sitemaps) . ' expected ' . $expectedSitemap);
         }
+
+        $this->report->expect(! str_contains($robotsTxt, "\r"), 'robots.txt', 'robots_unix_line_endings', 'no carriage returns, whatever the checkout');
     }
 
+    // --------------------------------------------------- one address per page
+
+    /**
+     * Crawl-safety of the public URL space (custom domain): one address per page, a real 404 that is
+     * the customer's own and not indexable, no redirect loops. Needs a Website with at least one non-home page.
+     *
+     * @param  callable(string): array{status: int, body: string, headers: array<string, string>, location: ?string}  $fetchRaw  fetches a URL exactly as written (no trailing-slash trimming)
+     */
+    public function auditUrlSpace(SiteCrawler $crawler, AuditContext $ctx, callable $fetchRaw): void
+    {
+        $page = null;
+        foreach ($ctx->manifest as $entry) {
+            if ($entry['slug'] !== null) {
+                $page = $entry;
+                break;
+            }
+        }
+
+        if ($page === null) {
+            return;
+        }
+
+        $origin = (string) $ctx->canonicalOrigin;
+        $slash = $fetchRaw($origin . '/' . $page['slug'] . '/');
+        $this->report->expect($slash['status'] === 301 && $slash['location'] === $page['url'], 'urls', 'trailing_slash_redirects_to_canonical', 'HTTP ' . $slash['status'] . ' -> ' . json_encode($slash['location']));
+
+        $query = $crawler->get($page['url'] . '?utm_source=test');
+        $canonical = (new PageDoc($page['url'], $query['status'], $query['body'], $query['headers']))->canonicals();
+        $this->report->expect($canonical === [$page['url']], 'urls', 'query_string_never_changes_canonical', json_encode($canonical));
+
+        $missing = $crawler->get($origin . '/definitely-not-a-page');
+        $this->report->expect(
+            $missing['status'] === 404 && str_contains(strtolower($missing['headers']['x-robots-tag'] ?? ''), 'noindex') && ! str_contains($missing['body'], '/login') && str_contains($missing['body'], 'href="' . $origin . '/"'),
+            'urls',
+            'not_found_is_a_real_404_on_the_customers_own_page',
+            'HTTP ' . $missing['status'] . ', X-Robots-Tag "' . ($missing['headers']['x-robots-tag'] ?? '') . '"',
+        );
+
+        $loop = $crawler->resolve($origin . '/about/');
+        $this->report->expect(! $loop['loop'], 'urls', 'no_redirect_loops', 'resolved to HTTP ' . $loop['status'] . ' in ' . $loop['hops'] . ' hop(s)');
+    }
     // ------------------------------------------------------------- helpers
 
     /** @param  array<string, mixed>  $entry */

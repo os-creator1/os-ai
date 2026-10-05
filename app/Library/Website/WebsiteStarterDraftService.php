@@ -122,7 +122,7 @@ final class WebsiteStarterDraftService
                     'sections' => $sections,
                     'seo_title' => Str::limit($business->name, 70, ''),
                     'meta_description' => $business->description
-                        ? Str::limit(trim($business->description), 160, '')
+                        ? $this->describe(trim($business->description))
                         : null,
                 ]);
 
@@ -311,7 +311,7 @@ final class WebsiteStarterDraftService
             'sections' => $homeSections,
             'seo_title' => Str::limit($business->name, 70, ''),
             'meta_description' => $business->description
-                ? Str::limit(trim($business->description), 160, '')
+                ? $this->describe(trim($business->description))
                 : null,
         ]);
 
@@ -331,7 +331,7 @@ final class WebsiteStarterDraftService
                         $servicesSection,
                         $contact,
                     ])),
-                    'seo_title' => Str::limit('Services | ' . $business->name, 70, ''),
+                    'seo_title' => $this->seoTitle('Services', $business->name),
                     'meta_description' => null,
                 ]);
                 $servicesOverviewUrl = 'services';
@@ -349,7 +349,7 @@ final class WebsiteStarterDraftService
                     $catalogSection,
                     $contact,
                 ])),
-                'seo_title' => Str::limit('Packages | ' . $business->name, 70, ''),
+                'seo_title' => $this->seoTitle('Packages', $business->name),
                 'meta_description' => null,
             ]);
         }
@@ -398,7 +398,7 @@ final class WebsiteStarterDraftService
             'slug' => 'gallery',
             'is_home' => false,
             'sections' => $sections,
-            'seo_title' => Str::limit('Gallery | ' . $business->name, 70, ''),
+            'seo_title' => $this->seoTitle('Gallery', $business->name),
             'meta_description' => null,
         ]);
     }
@@ -415,7 +415,7 @@ final class WebsiteStarterDraftService
      */
     private function createServiceDetailPage(Website $website, Business $business, BusinessService $service, ?array $contact, ?string $servicesOverviewUrl): void
     {
-        $slug = 'service-' . Str::slug($service->slug ?: $service->name);
+        $slug = WebsiteSlugRules::bounded('service-', (string) ($service->slug ?: $service->name), 'page');
 
         $sections = [
             ['type' => 'hero', 'data' => ['heading' => Str::limit($service->name, 120, '')]],
@@ -458,9 +458,9 @@ final class WebsiteStarterDraftService
             'slug' => $slug,
             'is_home' => false,
             'sections' => $sections,
-            'seo_title' => Str::limit($service->name . ' | ' . $business->name, 70, ''),
+            'seo_title' => $this->seoTitle($service->name, $business->name),
             'meta_description' => trim((string) $service->description) !== ''
-                ? Str::limit(trim($service->description), 160, '')
+                ? $this->describe(trim($service->description))
                 : null,
         ]);
     }
@@ -504,15 +504,15 @@ final class WebsiteStarterDraftService
             $sections[] = $contact;
         }
 
-        $slug = 'serving-' . Str::slug($cityLabel !== '' ? $cityLabel : (string) $location->id);
+        $slug = WebsiteSlugRules::bounded('serving-', $cityLabel, 'location');
 
         $this->pages->createPage($website, [
             'title' => $cityLabel !== '' ? 'Serving ' . $cityLabel : 'Service area',
             'slug' => $slug,
             'is_home' => false,
             'sections' => $sections,
-            'seo_title' => Str::limit($heading . ' | ' . $business->name, 70, ''),
-            'meta_description' => Str::limit($this->serviceAreaAnswer($location), 160, ''),
+            'seo_title' => $this->seoTitle($heading, $business->name),
+            'meta_description' => $this->describe($this->serviceAreaAnswer($location)),
         ]);
     }
 
@@ -563,7 +563,7 @@ final class WebsiteStarterDraftService
                 'slug' => $page['slug'],
                 'is_home' => false,
                 'sections' => $sections,
-                'seo_title' => Str::limit($page['hero'] . ' | ' . $business->name, 70, ''),
+                'seo_title' => $this->seoTitle($page['hero'], $business->name),
                 'meta_description' => null,
                 'noindex' => true,
             ]);
@@ -637,7 +637,7 @@ final class WebsiteStarterDraftService
             'slug' => 'photo-booth-about',
             'is_home' => false,
             'sections' => $sections,
-            'seo_title' => Str::limit('About | ' . $business->name, 70, ''),
+            'seo_title' => $this->seoTitle('About', $business->name),
             // Never byte-identical to Home's own meta_description (which
             // also draws from $business->description) — Search Central's
             // own guidance treats duplicate metadata across pages as a
@@ -645,7 +645,7 @@ final class WebsiteStarterDraftService
             // being about the business rather than repeating Home's exact
             // summary verbatim.
             'meta_description' => trim((string) $business->description) !== ''
-                ? Str::limit('Learn more about ' . $business->name . ': ' . trim($business->description), 160, '')
+                ? $this->describe('Learn more about ' . rtrim($business->name, '. ') . ': ' . trim($business->description))
                 : null,
             'noindex' => true,
         ]);
@@ -726,7 +726,7 @@ final class WebsiteStarterDraftService
             'slug' => 'photo-booth-faq',
             'is_home' => false,
             'sections' => $sections,
-            'seo_title' => Str::limit('FAQ | ' . $business->name, 70, ''),
+            'seo_title' => $this->seoTitle('FAQ', $business->name),
             'meta_description' => Str::limit('Answers to common questions about booking ' . $business->name . '.', 160, ''),
             'noindex' => true,
         ]);
@@ -759,7 +759,7 @@ final class WebsiteStarterDraftService
             'slug' => 'photo-booth-contact',
             'is_home' => false,
             'sections' => $sections,
-            'seo_title' => Str::limit('Contact | ' . $business->name, 70, ''),
+            'seo_title' => $this->seoTitle('Contact', $business->name),
             // Never "free quote": whether a quote is free is not a
             // saved fact anywhere on the Business or its pricing
             // method, so this never claims it either.
@@ -1015,5 +1015,38 @@ final class WebsiteStarterDraftService
         }
 
         return null;
+    }
+    /**
+     * "<page> | <Business>" within 70 characters. The PAGE part is shortened, never the business name
+     * (cutting the name mid-word made the layout append the full name a second time).
+     */
+    private function seoTitle(string $page, string $business): string
+    {
+        $page = trim($page);
+        $business = trim($business);
+        $suffix = ' | ' . $business;
+        $room = 70 - mb_strlen($suffix);
+
+        if ($page === '' || $room < 12) {
+            return $page !== '' ? $this->describe($page, 70) : Str::limit($business, 70, '');
+        }
+
+        return $this->describe($page, $room) . $suffix;
+    }
+
+    /** A search description: whole words, an ellipsis only when something was cut. */
+    private function describe(string $text, int $limit = 160): string
+    {
+        $text = trim((string) preg_replace('/\s+/u', ' ', $text));
+
+        if (mb_strlen($text) <= $limit) {
+            return $text;
+        }
+
+        $cut = mb_substr($text, 0, max(1, $limit - 1));
+        $space = mb_strrpos($cut, ' ');
+        $cut = $space !== false && $space > (int) ($limit * 0.5) ? mb_substr($cut, 0, $space) : $cut;
+
+        return rtrim($cut, " ,;:-—") . '…';
     }
 }

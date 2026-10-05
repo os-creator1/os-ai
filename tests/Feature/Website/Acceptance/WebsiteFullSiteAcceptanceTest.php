@@ -259,11 +259,40 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
 
         if ($withSitemapAndRobots) {
             $intended = array_column(array_filter($ctx->manifest, fn ($e) => ! $e['noindex']), 'url');
-            $audit->auditSitemap($crawler->get('https://' . $this->domain . '/sitemap')['body'], $intended, 'https://' . $this->domain);
-            $audit->auditRobots((string) file_get_contents(base_path('public/robots.txt')));
+            $audit->auditSitemap($crawler->get('https://' . $this->domain . '/sitemap.xml')['body'], $intended, 'https://' . $this->domain);
+            $audit->auditRobots($crawler->get('https://' . $this->domain . '/robots.txt')['body'], 'https://' . $this->domain . '/sitemap.xml');
+            // The test client trims a trailing slash from the URL, so this request is handed to the kernel as built.
+            $audit->auditUrlSpace($crawler, $ctx, function (string $url): array {
+                $response = $this->app->make(\Illuminate\Contracts\Http\Kernel::class)->handle(\Illuminate\Http\Request::create($url, 'GET'));
+
+                return ['status' => $response->getStatusCode(), 'body' => (string) $response->getContent(), 'headers' => [], 'location' => $response->headers->get('Location')];
+            });
         }
 
         return $docs;
+    }
+
+    /**
+     * With an Active custom domain the platform path is not a second copy of the site: every page
+     * answers ONE permanent redirect to its canonical address, which then loads (no loop, no chain).
+     */
+    private function auditPlatformRedirects(string $template): void
+    {
+        $this->report->context('platform', $template);
+        $crawler = new SiteCrawler($this->fetcher());
+
+        foreach ($this->manifest('platform') as $entry) {
+            $expected = 'https://' . $this->domain . ($entry['slug'] === null ? '/' : '/' . $entry['slug']);
+            $first = $crawler->get($entry['url']);
+            $resolved = $crawler->resolve($entry['url']);
+
+            $this->report->expect(
+                $first['status'] === 301 && $first['location'] === $expected && $resolved['status'] === 200 && $resolved['hops'] === 1 && ! $resolved['loop'],
+                $entry['slug'] ?? 'home',
+                'platform_path_redirects_to_canonical',
+                'HTTP ' . $first['status'] . ' -> ' . json_encode($first['location']) . ', final ' . $resolved['status'] . ' after ' . $resolved['hops'] . ' hop(s)',
+            );
+        }
     }
 
     /**
@@ -405,7 +434,7 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
             }
 
             $publicDocs = $this->auditSurface('custom_domain', $design->label, true);
-            $this->auditSurface('platform', $design->label);
+            $this->auditPlatformRedirects($design->label);
             $this->assertPreviewMatchesPublic($design->label, $previewDocs, $publicDocs);
 
             // The template's own markup is what was rendered.

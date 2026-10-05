@@ -58,6 +58,24 @@ final class PageDoc
         return $this->attrs('//head/link[@rel="canonical"]', 'href');
     }
 
+    /**
+     * The visible breadcrumb trail (nav[aria-label=Breadcrumb]), in order.
+     *
+     * @return array<int, array{text: string, href: ?string}>
+     */
+    public function breadcrumbs(): array
+    {
+        $out = [];
+
+        foreach ($this->xp->query('//nav[@aria-label="Breadcrumb"]//li') as $li) {
+            /** @var DOMElement $li */
+            $anchor = $li->getElementsByTagName('a')->item(0);
+            $out[] = ['text' => self::clean($li->textContent), 'href' => $anchor instanceof DOMElement ? trim($anchor->getAttribute('href')) : null];
+        }
+
+        return $out;
+    }
+
     public function robotsMeta(): ?string
     {
         return $this->metaNamed('robots')[0] ?? null;
