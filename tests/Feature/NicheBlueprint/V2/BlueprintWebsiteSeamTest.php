@@ -88,6 +88,47 @@ class BlueprintWebsiteSeamTest extends TestCase
         $this->assertSame('photo_booth_luxury', $website->fresh()->template_key);
     }
 
+    private function startSetup($customer, Business $business)
+    {
+        $this->authenticateAs($customer);
+
+        return $this->get(route('customer.workspaces.businesses.website.setup.start', [
+            \App\Models\Workspace::query()->findOrFail($business->workspace_id)->uid, $business->uid,
+        ]));
+    }
+
+    public function test_a_brand_new_setup_begins_on_the_blueprints_template_not_just_a_pre_ticked_picker(): void
+    {
+        // Setup no longer opens on a style question: it starts on the niche default and the owner changes the
+        // look on Review. The Blueprint's preferred template must be that starting point for a new Website.
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Start Booth', 'Start WS');
+
+        $this->startSetup($customer, $business)->assertRedirect();
+
+        $this->assertSame('photo_booth_editorial', Website::query()->where('business_id', $business->id)->sole()->template_key);
+    }
+
+    public function test_a_setup_for_a_business_with_no_blueprint_still_starts_on_template_one(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Plain Start Co', 'Plain Start WS');
+        DB::table('business_blueprint_component_installations')->where('business_id', $business->id)->delete();
+
+        $this->startSetup($customer, $business)->assertRedirect();
+
+        $this->assertSame('photo_booth_modern', Website::query()->where('business_id', $business->id)->sole()->template_key, 'Template 1, exactly as before');
+    }
+
+    public function test_a_shell_that_already_has_a_style_keeps_it_when_setup_starts(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Chosen Booth', 'Chosen WS');
+        $website = Website::create(['business_id' => $business->id, 'name' => 'Chosen', 'template_key' => 'photo_booth_luxury']);
+
+        $this->startSetup($customer, $business)->assertRedirect();
+
+        $this->assertSame('photo_booth_luxury', $website->fresh()->template_key, 'a Blueprint never replaces a style the owner already has');
+        $this->assertSame(1, Website::query()->where('business_id', $business->id)->count());
+    }
+
     public function test_a_preferred_template_the_website_does_not_offer_is_ignored(): void
     {
         [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Mismatch Booth', 'Mismatch WS');

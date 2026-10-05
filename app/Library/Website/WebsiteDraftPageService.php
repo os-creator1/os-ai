@@ -178,9 +178,11 @@ final class WebsiteDraftPageService
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
         $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 
-        $this->sectionValidator->validate($sections, $validAssetUids, true, $validFormUids);
+        $validFormsModuleUids = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->knownUids($website->business);
 
-        return [
+        $this->sectionValidator->validate($sections, $validAssetUids, true, $validFormUids, true, $validFormsModuleUids);
+
+        $validated = [
             'title' => $attributes['title'],
             'slug' => $slug,
             'is_home' => $isHome,
@@ -189,6 +191,13 @@ final class WebsiteDraftPageService
             'meta_description' => $attributes['meta_description'] ?? null,
             'noindex' => (bool) ($attributes['noindex'] ?? false),
         ];
+
+        // Only the owner's editor says whether noindex is their own choice; every other caller leaves it alone.
+        if (array_key_exists('noindex_explicit', $attributes)) {
+            $validated['noindex_explicit'] = (bool) $attributes['noindex_explicit'] && $validated['noindex'];
+        }
+
+        return $validated;
     }
 
     /**

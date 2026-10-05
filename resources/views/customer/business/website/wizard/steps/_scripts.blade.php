@@ -425,6 +425,28 @@
         var target = event.target;
         var el;
 
+        if ((el = target.closest('[data-faq-suggestion]'))) {
+            // Niche suggestion: fill the first empty question row, else add one — the owner writes the answer.
+            event.preventDefault();
+            var faqContainer = el.closest('[data-testid="faq-suggestions"]').nextElementSibling;
+            var emptyQuestion = null;
+            directRows(faqContainer).some(function (row) {
+                var q = row.querySelector('input[name$="[question]"]');
+                if (q && q.value.trim() === '') { emptyQuestion = q; return true; }
+                return false;
+            });
+            if (!emptyQuestion) {
+                addRow(faqContainer);
+                var rows = directRows(faqContainer);
+                emptyQuestion = rows[rows.length - 1].querySelector('input[name$="[question]"]');
+            }
+            if (emptyQuestion) {
+                emptyQuestion.value = el.getAttribute('data-faq-suggestion');
+                var answer = emptyQuestion.closest('[data-row]').querySelector('textarea, input[name$="[answer]"]');
+                if (answer) { answer.focus(); }
+            }
+            return;
+        }
         if ((el = target.closest('[data-add-row]'))) { event.preventDefault(); addRow(el.closest('[data-repeatable]')); return; }
         if ((el = target.closest('[data-remove-row]'))) { event.preventDefault(); removeRow(el.closest('[data-row]')); return; }
         if ((el = target.closest('[data-move-row]'))) { event.preventDefault(); moveRow(el.closest('[data-row]'), el.getAttribute('data-move-row')); return; }

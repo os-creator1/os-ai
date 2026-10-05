@@ -86,6 +86,11 @@ Website setup owns no package model.
 * Remaining seam: a site published *before* this lane has no uid references
   and cannot be flagged automatically; one rebuild stamps them.
 
+> *Website V1 final:* setup now begins on the first question with the niche's
+> default template; the look (four real previews, brand colour, logo, hero image)
+> and a "Website plan" are chosen/explained on the Review screen. Service
+> positions continue across the two service steps. See `WEBSITE-TEMPLATES-V1.md`.
+
 ## Service-area pages
 
 The owner's cities are SEO/service-area targets, **not** `BusinessLocation`s

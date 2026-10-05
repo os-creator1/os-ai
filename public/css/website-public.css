@@ -664,3 +664,7 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
     .website-header-conversion .website-hero { padding-top: 4rem; padding-bottom: 4rem; }
     .website-header-modern .website-hero-inner { max-width: 100%; }
 }
+
+/* A package's included features, as a list (never a run-on paragraph). */
+.website-service-features { margin: 0.5rem 0 0.75rem; padding-left: 1.2rem; }
+.website-service-features li { margin: 0.2rem 0; }

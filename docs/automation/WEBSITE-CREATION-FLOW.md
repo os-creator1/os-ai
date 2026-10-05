@@ -7,7 +7,9 @@ unchanged (see `WEBSITE-GUIDED-GENERATION-CONTRACT.md`).
 ## The rule
 
 **A `websites` row is not a created website.** The wizard deliberately creates
-a shell row at the template step, long before any question is answered or any
+a shell row when setup starts (with the niche's default template — since Website V1
+final there is no up-front style question; the look is chosen on the Review
+screen, see `WEBSITE-TEMPLATES-V1.md`), long before any question is answered or any
 page generated, and a blank/legacy shell can exist with nothing at all. Before
 this change every entry point treated "a Website row exists" as "created" and
 dropped the owner into Website Studio / the Pages checklist with 0 pages.

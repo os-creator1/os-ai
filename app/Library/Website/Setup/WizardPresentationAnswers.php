@@ -104,6 +104,67 @@ final class WizardPresentationAnswers
     }
 
     /**
+     * Every service the owner entered across ALL `business_service` steps,
+     * in questionnaire order then entry order — the order the applier will
+     * give them (continuing positions), so the Review screen's page plan
+     * previews exactly what Generate will build.
+     *
+     * @return array<int, array{name: string, description: ?string}>
+     */
+    public static function serviceRows(?QuestionnaireResponse $response): array
+    {
+        if ($response === null) {
+            return [];
+        }
+
+        $rows = [];
+
+        foreach ($response->version->steps() as $step) {
+            if (($step['target_module'] ?? null) !== 'business_service') {
+                continue;
+            }
+
+            $answer = $response->answer($step['key']);
+
+            if (! is_array($answer)) {
+                continue;
+            }
+
+            foreach ($answer as $item) {
+                $name = trim((string) (is_array($item) ? ($item['name'] ?? '') : ''));
+
+                if ($name !== '') {
+                    $rows[] = ['name' => $name, 'description' => isset($item['description']) ? trim((string) $item['description']) : null];
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /** Whether the owner entered at least one backdrop (so a Backdrops page will be planned). */
+    public static function hasBackdrops(?QuestionnaireResponse $response): bool
+    {
+        if ($response === null) {
+            return false;
+        }
+
+        foreach ($response->version->steps() as $step) {
+            if (($step['target_module'] ?? null) !== 'backdrop') {
+                continue;
+            }
+
+            $answer = $response->answer($step['key']);
+
+            if (is_array($answer) && collect($answer)->contains(fn ($item) => is_array($item) && trim((string) ($item['name'] ?? '')) !== '')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * The owner's service areas, in the order they entered them (that order
      * is their priority), when the questionnaire collects them as a list.
      * Null for a questionnaire that does not (v1's free-text answer): no

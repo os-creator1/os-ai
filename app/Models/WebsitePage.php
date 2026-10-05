@@ -30,6 +30,7 @@ class WebsitePage extends Model
         'seo_title',
         'meta_description',
         'noindex',
+        'noindex_explicit',
         'sort_order',
     ];
 
@@ -37,6 +38,7 @@ class WebsitePage extends Model
         'is_home' => 'boolean',
         'sections' => 'array',
         'noindex' => 'boolean',
+        'noindex_explicit' => 'boolean',
     ];
 
     public function generateUid()

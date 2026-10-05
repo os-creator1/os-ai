@@ -51,13 +51,18 @@ class WebsiteWizardControllerTest extends TestCase
             ->assertDontSee('Publish');
     }
 
-    public function test_start_with_nothing_in_progress_goes_to_the_template_step(): void
+    public function test_start_with_nothing_in_progress_begins_on_the_first_question_with_the_default_template(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
+        // No up-front style question: the look is chosen on the Review screen.
         $this->get(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]))
-            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']));
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'business_name']));
+
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertSame('photo_booth_modern', $website->template_key, 'Template 1 is the niche default.');
+        $this->assertSame(0, $website->pages()->count());
     }
 
     public function test_choosing_a_template_creates_the_website_shell_and_starts_the_questionnaire(): void
@@ -906,14 +911,14 @@ class WebsiteWizardControllerTest extends TestCase
         $this->assertNotNull($galleryAsset->fresh(), 'The wrong-purpose asset must survive an endpoint scoped to a different purpose.');
     }
 
-    public function test_back_from_the_first_question_shows_the_template_picker_for_a_first_time_session(): void
+    public function test_back_from_the_first_question_returns_to_the_website_landing_and_the_picker_stays_reachable(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
         $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
 
         $this->post(route('customer.workspaces.businesses.website.setup.back', [$workspace->uid, $business->uid, 'business_name']))
-            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']));
+            ->assertRedirect(route('customer.workspaces.businesses.website.show', [$workspace->uid, $business->uid]));
 
         $this->get(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']))
             ->assertOk()
@@ -1484,14 +1489,17 @@ class WebsiteWizardControllerTest extends TestCase
             ->assertDontSee('Publish');
     }
 
-    public function test_start_with_a_leftover_shell_and_no_session_goes_to_the_template_step_not_studio(): void
+    public function test_start_with_a_leftover_shell_and_no_session_adopts_the_shell_and_starts_not_studio(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
-        $this->createWebsite($business);
+        $shell = $this->createWebsite($business);
 
         $this->get(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]))
-            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']));
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'business_name']));
+
+        $this->assertSame(1, Website::where('business_id', $business->id)->count(), 'The leftover shell is adopted, never duplicated.');
+        $this->assertSame('photo_booth_modern', $shell->fresh()->template_key);
 
         $this->get(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']))
             ->assertOk();

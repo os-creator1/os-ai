@@ -74,10 +74,10 @@ class WebsiteOnboardingSetupFlowTest extends TestCase
         $this->assertSame(2, (int) $response->version->version_number);
         $this->assertCount(9, (new QuestionnaireStepResolver())->screens($response->version->steps(), []));
 
-        // 9 screens + the style step + the review screen.
+        // 9 screens + the review screen.
         $this->get($this->wizardUrl($workspace, $business, 'setup.step', ['business_name']))
             ->assertOk()
-            ->assertSee('Step 2 of 11');
+            ->assertSee('Step 1 of 10');
     }
 
     public function test_a_multi_step_screen_renders_every_field_and_the_actions_sit_below_them(): void

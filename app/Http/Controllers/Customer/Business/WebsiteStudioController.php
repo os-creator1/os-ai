@@ -46,7 +46,38 @@ class WebsiteStudioController extends CustomerBaseController
         private readonly QuestionnaireResolver $questionnaireResolver,
         private readonly WebsiteCreationStateResolver $creationState,
         private readonly \App\Library\Website\WebsiteCatalogReferences $catalogReferences,
+        private readonly \App\Library\Website\WebsiteHealthChecker $health,
     ) {
+    }
+
+    /**
+     * Where each health check's "fix it" link goes (the existing Website screens).
+     *
+     * @return array<string, string>
+     */
+    private function healthLinks(Business $business): array
+    {
+        $workspaceUid = $business->workspace->uid;
+        $params = [$workspaceUid, $business->uid];
+
+        return [
+            'publish' => route('customer.workspaces.businesses.website.studio.show', $params),
+            'domains' => route('customer.workspaces.businesses.website.domains.index', $params),
+            'photos' => route('customer.workspaces.businesses.website.photos.index', $params),
+            'pages' => route('customer.workspaces.businesses.website.pages.index', $params),
+            'answers' => route('customer.workspaces.businesses.website.edit-setup', $params),
+        ];
+    }
+
+    /** The deep technical audit lives in the SEO module — linked only when this account can open it. */
+    private function seoAuditUrl(Business $business): ?string
+    {
+        $workspace = $business->workspace;
+
+        $allowed = app(\App\Library\Entitlement\EntitlementManager::class)
+            ->decide($workspace, $business, PlatformFeature::SeoModule->value, (int) \Illuminate\Support\Facades\Auth::id())->allowed;
+
+        return $allowed ? route('customer.workspaces.businesses.seo.audit.index', [$workspace->uid, $business->uid]) : null;
     }
 
     /**
@@ -106,6 +137,9 @@ class WebsiteStudioController extends CustomerBaseController
                 'pageCount' => $website->pages()->count(),
                 'catalogSync' => $this->catalogReferences->staleness($website),
                 'mediaWarnings' => $website->guidedGenerationAttempts()->latest('id')->first()?->warnings ?? [],
+                'health' => $this->health->check($website, $this->healthLinks($business)),
+                'seoAuditUrl' => $this->seoAuditUrl($business),
+                'currentDesign' => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($website->template_key),
             ],
             'packages' => [
                 'catalogItems' => CatalogItem::where('business_id', $business->id)
