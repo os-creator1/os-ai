@@ -17,8 +17,8 @@ namespace App\Enums\Seo;
  *  - Listed         the user marked it Listed; not every field is checked yet.
  *  - NeedsAttention the user marked it "needs correction", or a recorded
  *                   value differs from the business profile.
- *  - InProgress     the user marked it in progress.
- *  - NotStarted     nothing recorded yet (the default).
+ *  - InProgress     the user marked it in progress ("Needs setup", not a problem).
+ *  - NotStarted     nothing recorded yet (the default; "Needs setup", not a problem).
  *  - NotApplicable  the user marked it not applicable.
  */
 enum SeoCitationDisplayState: string
@@ -66,12 +66,29 @@ enum SeoCitationDisplayState: string
         };
     }
 
-    /** True when the row should surface in the "Needs attention" list. */
+    /**
+     * True when the row is a real PROBLEM: the owner marked it as needing a
+     * correction, or a recorded value differs from the business profile. This
+     * is "Needs attention" — and only this.
+     */
+    public function isProblem(): bool
+    {
+        return $this === self::NeedsAttention;
+    }
+
+    /**
+     * True when the owner has not started, or not finished, setting the
+     * listing up. That is "Needs setup": work still to do, not something
+     * wrong, so it is never counted as "Needs attention".
+     */
+    public function needsSetup(): bool
+    {
+        return $this === self::InProgress || $this === self::NotStarted;
+    }
+
+    /** True when the row has a next step for the owner — either a problem or unfinished setup. */
     public function isActionable(): bool
     {
-        return match ($this) {
-            self::NeedsAttention, self::InProgress, self::NotStarted => true,
-            default => false,
-        };
+        return $this->isProblem() || $this->needsSetup();
     }
 }

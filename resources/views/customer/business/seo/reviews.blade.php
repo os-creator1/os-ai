@@ -41,7 +41,7 @@
     $withLink = collect($sections)->filter(fn ($section) => $section->effectiveLink !== null)->count();
     $missingLink = collect($sections)->filter(fn ($section) => $section->effectiveLink === null)->count();
     $totalRequests = collect($sections)->sum(fn ($section) => $section->requestCount);
-    $awaitingOutcome = collect($sections)->sum(fn ($section) => collect($section->requests)->where('status', 'requested')->count());
+    $awaitingOutcome = collect($sections)->sum(fn ($section) => $section->awaitingCount);
     $lastRequestAt = collect($sections)->flatMap(fn ($section) => collect($section->requests)->pluck('requested_at'))->filter()->max();
     $linkPercent = $locationCount > 0 ? (int) round($withLink / $locationCount * 100) : 0;
     $firstFixable = collect($sections)->first(fn ($section) => $section->effectiveLink === null && $section->writable);
@@ -55,7 +55,7 @@
     <div class="rv-header mb-2">
         <div>
             <h1 class="h3 mb-25">Reviews</h1>
-            <p class="text-caption mb-0">Keep each Location's Google review link in one place and note who you have asked.</p>
+            <p class="text-caption mb-0">Keep each Location's review link in one place and note who you have asked.</p>
         </div>
         <div class="rv-header-actions">
             <x-badge variant="neutral" data-role="business-name"><x-ds-icon name="building-2" size="14" /> {{ $business->name }}</x-badge>
@@ -72,7 +72,7 @@
     <div class="rv-note mb-2" data-role="reviews-note">
         <x-ds-icon name="info" size="18" />
         <p class="mb-0">
-            Keep the link where customers can leave a Google review, and note who you have asked.
+            Keep the link where customers can leave a review, and note who you have asked.
             This page does not send anything. To contact someone, use Conversations or an Automation.
         </p>
     </div>
@@ -163,7 +163,7 @@
                             <p class="text-label mb-25" data-role="review-link-none">No review link yet.</p>
                             <p class="text-caption mb-0">
                                 @if($canWrite)
-                                    Paste the https link customers use to leave a Google review. Once it is saved you can copy it, open it and record who you have asked.
+                                    Paste the https link customers use to leave a review. Once it is saved you can copy it, open it and record who you have asked.
                                 @elseif(! $section->writable)
                                     This Location is archived, so its link can no longer be changed.
                                 @else
@@ -249,6 +249,9 @@
                         </div>
                     </div>
                 @else
+                    @if($section->requestsAreTruncated())
+                        <p class="text-caption mb-50" data-role="requests-truncated">Showing the latest {{ $requestRows->count() }} of {{ $section->requestCount }} requests recorded.</p>
+                    @endif
                     @foreach($requestRows as $row)
                         @if($loop->index === $visibleRequests)
                             <details class="rv-more">

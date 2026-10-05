@@ -28,7 +28,7 @@
     $notApplicable = $row->isNotApplicable();
     $mode = $row->trackingMode();
 @endphp
-<div class="cz-row @if($notApplicable) cz-row--muted @endif" data-role="citation-row" data-directory="{{ $directory->key }}" data-status="{{ $row->status->value }}" data-state="{{ $state->value }}" data-setup="{{ $row->status->value }}" data-importance="{{ $importance->value }}" data-custom="{{ $row->isCustom() ? '1' : '0' }}" data-notchecked="{{ $row->isNotChecked() ? '1' : '0' }}" data-attention="{{ (! $notApplicable && ($state->isActionable() || $row->reviewDue)) ? '1' : '0' }}" data-name="{{ \Illuminate\Support\Str::lower($directory->name) }}" data-drawer="#{{ $drawerId }}">
+<div class="cz-row @if($notApplicable) cz-row--muted @endif" data-role="citation-row" data-directory="{{ $directory->key }}" data-status="{{ $row->status->value }}" data-state="{{ $state->value }}" data-setup="{{ $row->status->value }}" data-importance="{{ $importance->value }}" data-custom="{{ $row->isCustom() ? '1' : '0' }}" data-notchecked="{{ $row->isNotChecked() ? '1' : '0' }}" data-attention="{{ $row->needsAttention() ? '1' : '0' }}" data-setup-needed="{{ $row->needsSetup() ? '1' : '0' }}" data-name="{{ \Illuminate\Support\Str::lower($directory->name) }}" data-drawer="#{{ $drawerId }}">
     <div class="cz-c-dir cz-dir">
         <span class="cz-dir-icon"><x-ds-icon :name="$directory->icon ?: 'map'" size="18" /></span>
         <span class="min-w-0">
