@@ -627,6 +627,11 @@
                 return $request;
             });
 
+            // Website V1 final — the template-driven public layout's header,
+            // navigation, CTA and brand tokens (preview, platform path and
+            // custom domain all render this one view).
+            \Illuminate\Support\Facades\View::composer('public.website.page', \App\Http\View\Composers\WebsitePageComposer::class);
+
             // Force HTTPS if enabled
             if (config('app.url_force_https') === true) {
                 URL::forceScheme('https');

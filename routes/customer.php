@@ -2014,6 +2014,11 @@
             // was registered first, regardless of route name). Route
             // NAMES stay "setup.*" since that is the concept, only the
             // URL segment differs.
+            // Website V1 final — the real-renderer template preview (the Review
+            // screen's cards and the rebuild flow) and the one look-update POST.
+            Route::get('/template-preview/{templateKey}', 'Business\WebsiteLookController@templatePreview')->name('template-preview');
+            Route::post('/look', 'Business\WebsiteLookController@update')->name('look.update');
+
             Route::prefix('build')->name('setup.')->group(function () {
                 Route::get('/', 'Business\WebsiteWizardController@start')->name('start');
                 Route::get('/review', 'Business\WebsiteWizardController@reviewGenerate')->name('review');
@@ -2042,6 +2047,7 @@
             Route::get('/pages', 'Business\WebsiteController@pages')->name('pages.index');
             Route::get('/pages/create', 'Business\WebsiteController@createPage')->name('pages.create');
             Route::post('/pages', 'Business\WebsiteController@storePage')->name('pages.store');
+            Route::post('/pages/allow-indexing', 'Business\WebsiteController@allowIndexing')->name('pages.allowIndexing');
             Route::get('/pages/{pageUid}/edit', 'Business\WebsiteController@editPage')->name('pages.edit');
             Route::put('/pages/{pageUid}', 'Business\WebsiteController@updatePage')->name('pages.update');
             Route::delete('/pages/{pageUid}', 'Business\WebsiteController@destroyPage')->name('pages.destroy');

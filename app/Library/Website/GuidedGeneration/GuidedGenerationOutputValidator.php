@@ -32,6 +32,9 @@ final class GuidedGenerationOutputValidator
     /** Two service-area pages whose text (area names removed) is this similar are treated as one page. */
     private const AREA_MAX_SIMILARITY = 88.0;
 
+    /** About copy: about 120 words asked for, so ~900 characters; the cap leaves slack. */
+    public const ABOUT_MAX_CHARS = 1100;
+
     /** similar_text() is quadratic-plus; bound what is compared. */
     private const AREA_COMPARE_CHARS = 1500;
 
@@ -136,6 +139,7 @@ final class GuidedGenerationOutputValidator
 
         $this->assertNoDuplicateSeoFields($pages, $errors);
         $this->assertAreaPagesAreDistinct($pages, $planByKey, $errors);
+        $this->assertAboutIsConcise($pages, $planByKey, $errors);
 
         if (! empty($errors)) {
             throw ValidationException::withMessages($errors);
@@ -178,6 +182,32 @@ final class GuidedGenerationOutputValidator
                 if ($percent >= self::AREA_MAX_SIMILARITY) {
                     $errors["pages.{$b}.area"][] = "Service-area page '{$pages[$b]['page_key']}' is nearly identical to '{$pages[$a]['page_key']}' — each area page needs its own wording.";
                 }
+            }
+        }
+    }
+
+    /**
+     * The About page tells a short story. A very long one fails validation and takes the
+     * existing corrective retry, so the owner never publishes a wall of text.
+     */
+    private function assertAboutIsConcise(array $pages, Collection $planByKey, array &$errors): void
+    {
+        foreach ($pages as $index => $page) {
+            $planPage = $planByKey->get($page['page_key'] ?? '');
+
+            if (($planPage['page_type'] ?? null) !== 'about') {
+                continue;
+            }
+
+            $length = 0;
+            foreach ($page['sections'] ?? [] as $section) {
+                if (in_array($section['type'] ?? null, ['text', 'image_text'], true)) {
+                    $length += mb_strlen((string) ($section['data']['body'] ?? ''));
+                }
+            }
+
+            if ($length > self::ABOUT_MAX_CHARS) {
+                $errors["pages.{$index}.about"][] = "The About page is too long (" . $length . " characters, at most " . self::ABOUT_MAX_CHARS . ") — keep it to two short paragraphs.";
             }
         }
     }

@@ -1,7 +1,7 @@
 {{-- Website Component Library — testimonials (contract §7.2/§7.1). Explicitly authored content only — never sourced from any review platform. Plain escaped text only. --}}
 <section class="website-section website-testimonials">
     @if (! empty($data['heading']))
-        <h2>{{ $data['heading'] }}</h2>
+        <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
     @endif
     <div class="website-testimonials-grid">
         @foreach (($data['items'] ?? []) as $item)

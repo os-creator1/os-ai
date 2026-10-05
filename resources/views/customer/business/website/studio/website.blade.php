@@ -89,3 +89,6 @@
         <x-button variant="outline" type="submit">Rebuild from setup answers</x-button>
     </form>
 </x-card>
+
+@include('customer.business.website.studio._look')
+@include('customer.business.website.studio._health')
