@@ -58,6 +58,7 @@ class PlatformBillingController extends Controller
         private readonly PlatformPlanPresenter $plans,
         private readonly EntitlementManager $entitlements,
         private readonly PlatformPriceVerifier $prices,
+        private readonly \App\Library\PlatformOwner\PlatformPlanAdministrator $admin,
     ) {
     }
 
@@ -93,78 +94,29 @@ class PlatformBillingController extends Controller
             'trial_enabled' => ['nullable', 'boolean'],
             'trial_days' => ['nullable', 'integer', 'min:1', 'max:730'],
             'available_for_signup' => ['nullable', 'boolean'],
-            // §10.1 — a Stripe Price is immutable in the relevant sense, so
-            // changing the amount means creating a NEW Price in Stripe and
-            // entering its id here. Validated for shape so a Product id, a
-            // secret, or a stray paste cannot be stored as a Price.
+            // §10.1 — see PlatformPlanAdministrator::verifyStripePrice().
             'provider_price_id' => ['nullable', 'string', 'regex:' . self::PRICE_ID_PATTERN],
             'reason' => ['required', 'string', 'min:3', 'max:500'],
         ]);
 
-        $trialEnabled = (bool) ($data['trial_enabled'] ?? false);
-
-        if ($trialEnabled && ($data['trial_days'] ?? null) === null) {
-            return back()->withInput()->withErrors([
-                'trial_days' => __('Set how many days the trial lasts, or turn the trial off.'),
-            ]);
+        // Platform Owner V1 final: one writer for plan edits. This legacy form
+        // posts commercial fields only, so structure and packaging stay as-is.
+        try {
+            $this->admin->apply($catalog, [
+                'price' => $data['price'],
+                'currency_id' => (int) $data['currency_id'],
+                'billing_cycle' => $data['billing_cycle'],
+                'trial_enabled' => (bool) ($data['trial_enabled'] ?? false),
+                'trial_days' => $data['trial_days'] ?? null,
+                'available_for_signup' => (bool) ($data['available_for_signup'] ?? false),
+                'provider_price_id' => $data['provider_price_id'] ?? null,
+                'reason' => $data['reason'],
+            ], (int) Auth::id());
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return back()->withInput()->withErrors($e->errors());
         }
 
-        // §11 — THE PARITY CHECK, before a single row changes.
-        //
-        // The regex above proves only that the operator typed something
-        // Price-shaped. This proves the Price actually exists on THIS
-        // platform's Stripe account, is active and recurring, and charges
-        // exactly the amount, currency and interval being saved. Without it
-        // the catalog could say €297/yearly while Stripe charges $99/monthly.
-        //
-        // It runs OUTSIDE any transaction (§5) and BEFORE updateCatalogPricing(),
-        // so a failure leaves zero catalog and zero pricing-history rows
-        // written.
-        if (! blank($data['provider_price_id'] ?? null)) {
-            $currencyCode = (string) DB::table('currencies')->where('id', (int) $data['currency_id'])->value('code');
-
-            try {
-                $mismatches = $this->prices->mismatches(
-                    (string) $data['provider_price_id'],
-                    (string) $data['price'],
-                    $currencyCode,
-                    (string) $data['billing_cycle'],
-                );
-            } catch (PlatformBillingException $e) {
-                return back()->withInput()->withErrors(['provider_price_id' => $e->customerMessage()]);
-            }
-
-            if ($mismatches !== []) {
-                return back()->withInput()->withErrors(['provider_price_id' => $mismatches]);
-            }
-        }
-
-        // Price + currency: the existing audited authority.
-        $this->entitlements->updateCatalogPricing(
-            $catalog,
-            $data['price'],
-            (int) $data['currency_id'],
-            $catalog->additional_business_slot_price_ratio === null ? null : (string) $catalog->additional_business_slot_price_ratio,
-            (int) Auth::id(),
-            $data['reason'],
-        );
-
-        // Commercial switches that carry no price history.
-        $catalog->refresh()->forceFill([
-            'billing_cycle' => $data['billing_cycle'],
-            'trial_enabled' => $trialEnabled,
-            // A disabled trial carries no duration. Keeping the prior number
-            // around once the trial is off left the owner surface unable to
-            // express "no trial configured" again after one had ever been
-            // set — the stale value was dead data (every trial read site
-            // checks `trial_enabled` first), but "dead" is not the same as
-            // "correctly nulled", and an operator or an acceptance run
-            // reading the column directly deserves the truth.
-            'trial_days' => $trialEnabled ? (int) $data['trial_days'] : null,
-            'available_for_signup' => (bool) ($data['available_for_signup'] ?? false),
-            'provider_price_id' => $data['provider_price_id'] ?? null,
-        ])->save();
-
+        $catalog->refresh();
         return back()->with([
             'status' => 'success',
             'message' => __(':plan updated.', ['plan' => $catalog->display_name]),

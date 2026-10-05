@@ -228,19 +228,11 @@ class AdminUsersRolesAnnouncementsExistingBehaviorPreservedTest extends TestCase
         $this->assertNotSame(1, $actor->id);
         $role = Role::create(['name' => 'protect-' . uniqid('', true), 'status' => 1]);
 
-        $update = $this->put(route('admin.administrators.update', $this->superAdmin->uid), [
-            'first_name' => $this->superAdmin->first_name, 'email' => $this->superAdmin->email,
-            'roles' => [$role->id], 'timezone' => 'UTC', 'locale' => 'en',
-            'status' => 0,
-        ]);
-
-        // The FormRequest/controller boundary succeeds (real permission
-        // held); the repository's own target-protection guard is what
-        // rejects the mutation, rendered as the app's generic JSON error
-        // shape (App\Exceptions\Handler -- see other tests' notes on
-        // this app's exception rendering).
-        $update->assertOk();
-        $update->assertJson(['status' => 'error']);
+        // Platform Owner V1 final: deactivation moved to the audited
+        // administrators.status route (PlatformAdministratorManager::setActive),
+        // which carries the same target-specific super-admin protection.
+        $this->post(route('admin.administrators.status', $this->superAdmin->uid), ['active' => 0, 'reason' => 'attempted deactivation'])
+            ->assertSessionHas('status', 'error');
         $this->assertTrue((bool) $this->superAdmin->fresh()->status, 'The super-admin must remain active.');
     }
 

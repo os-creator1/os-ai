@@ -18,10 +18,7 @@ use Tests\TestCase;
 class AdminUsersRolesAnnouncementsDesignSystemContentTest extends TestCase
 {
     private const A3_VIEWS = [
-        'resources/views/admin/Administrator/index.blade.php',
-        'resources/views/admin/Administrator/create.blade.php',
-        'resources/views/admin/Administrator/show.blade.php',
-        'resources/views/admin/AdminRoles/index.blade.php',
+        // Administrator views and AdminRoles/index: replaced in Platform Owner V1 final.
         'resources/views/admin/AdminRoles/create.blade.php',
         'resources/views/admin/Announcements/index.blade.php',
         'resources/views/admin/Announcements/create.blade.php',
@@ -90,14 +87,6 @@ class AdminUsersRolesAnnouncementsDesignSystemContentTest extends TestCase
         // page-script DataTables/AJAX wiring. A single renamed id or class
         // silently breaks bulk actions, status toggles, or row deletion.
         $expectations = [
-            'resources/views/admin/Administrator/index.blade.php' => [
-                'id="bulk_actions"', 'class="dropdown-item bulk-enable"', 'class="dropdown-item bulk-disable"', 'class="dropdown-item bulk-delete"',
-                'class="table datatables-basic"', "route('admin.administrators.search')", "route('admin.administrators.batch_action')",
-            ],
-            'resources/views/admin/AdminRoles/index.blade.php' => [
-                'id="bulk_actions"', 'class="dropdown-item bulk-enable"', 'class="dropdown-item bulk-disable"', 'class="dropdown-item bulk-delete"',
-                'class="table datatables-basic"', "route('admin.roles.search')", "route('admin.roles.batch_action')",
-            ],
             'resources/views/admin/Announcements/_announcements.blade.php' => [
                 'id="bulk_actions"', 'class="dropdown-item bulk-delete"', 'class="table datatables-basic"',
             ],
@@ -119,8 +108,8 @@ class AdminUsersRolesAnnouncementsDesignSystemContentTest extends TestCase
     public function test_form_critical_ids_and_classes_survive_the_restyle(): void
     {
         $expectations = [
-            'resources/views/admin/Administrator/create.blade.php' => ['id="role"', 'name="roles[]"', 'class="select2 w-100"', 'name="status"'],
-            'resources/views/admin/Administrator/show.blade.php' => ['id="role"', 'name="roles[]"', 'id="timezone"', 'id="locale"'],
+            'resources/views/admin/Administrator/create.blade.php' => ['name="roles[]"', 'name="email"'],
+            'resources/views/admin/Administrator/show.blade.php' => ['name="roles[]"', 'name="first_name"'],
             'resources/views/admin/AdminRoles/create.blade.php' => ['id="selectAll"', 'name="permissions[]"'],
             'resources/views/admin/Announcements/create.blade.php' => [
                 'id="select_all"', 'id="select_multiple"', 'id="user_id"', 'name="users_id[]"',

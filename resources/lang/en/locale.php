@@ -788,6 +788,37 @@
         'menu' => [
             'Dashboard'           => 'Dashboard',
             'Home'                => 'Home',
+            // Platform Owner V1 final sidebar labels.
+            'Accounts & Operations'   => 'Accounts & Operations',
+            'Users'                   => 'Users',
+            'Commercial'              => 'Commercial',
+            'Usage & Provider Costs'  => 'Usage & Provider Costs',
+            'Product & Configuration' => 'Product & Configuration',
+            'Website Templates'       => 'Website Templates',
+            'Feature Management'      => 'Feature Management',
+            'Platform Automations'    => 'Platform Automations',
+            'Governance'              => 'Governance',
+            'Roles'                   => 'Roles',
+            'System / Advanced'       => 'System / Advanced',
+            'Messaging Operations'    => 'Messaging Operations',
+            'Provisioning Incidents'  => 'Provisioning Incidents',
+            'Port-Out Requests'       => 'Port-Out Requests',
+            'Number Lifecycle'        => 'Number Lifecycle',
+            'Legacy Slot Agreements'  => 'Legacy Slot Agreements',
+            'Citation Catalogs'       => 'Citation Catalogs',
+            // Permission-matrix categories that never had a label.
+            'Agency Relationships'    => 'Agency Relationships',
+            'Email'                   => 'Email',
+            'Google Ads'              => 'Google Ads',
+            'Packages & Products'     => 'Packages & Products',
+            'Forms'                   => 'Forms',
+            'AI COO'                  => 'AI COO',
+            'Payments & Contracts'    => 'Payments & Contracts',
+            'Directories'             => 'Directories',
+            'Niches'                  => 'Niches',
+            'Legacy SMS Gateway'      => 'Legacy SMS Gateway',
+            'SMS Plans'               => 'SMS Plans',
+            'SMS Invoices'            => 'SMS Invoices',
             'Messaging Dashboard' => 'Messaging Dashboard',
             'Number Operations'   => 'Number Operations',
             'Billing & Revenue'   => 'Billing & Revenue',
@@ -1542,6 +1573,12 @@
 
         'permission' => [
             //admin permission
+            // Added by Platform Owner V1 final: permissions that had no label.
+            'manage_business_email'              => 'Manage business email',
+            'packages_products'                  => 'Packages & products',
+            'forms'                              => 'Forms',
+            'business_advisor'                   => 'Business advisor',
+            'payments_contracts'                 => 'Payments & contracts',
             'dashboard'                          => 'dashboard',
             'read'                               => 'Read',
             'create'                             => 'Create',
@@ -1627,8 +1664,10 @@
             'view_seo'                           => 'view_seo',
             'manage_seo'                         => 'manage_seo',
             'manage_search_console'              => 'manage_search_console',
-            'view_google_ads'                    => 'view_google_ads',
-            'manage_google_ads'                  => 'manage_google_ads',
+            'view_google_ads'                    => 'View Google Ads',
+            'manage_google_ads'                  => 'Manage Google Ads',
+            'view_meta_ads'                      => 'View Meta Ads',
+            'manage_meta_ads'                    => 'Manage Meta Ads',
         ],
 
         'contacts'  => [

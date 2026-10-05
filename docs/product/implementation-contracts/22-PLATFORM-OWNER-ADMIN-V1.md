@@ -68,6 +68,12 @@ a convenience, every route re-checks authority.
 
 ## 3a. Platform Owner shell (navigation V1)
 
+> **Superseded by [Contract 24](./24-PLATFORM-OWNER-V1-FINAL.md).** The sidebar table below
+> describes the intermediate shell; the final information architecture (Plans as the one plan
+> authority, Users, Support, Feature Management, Announcements, Administrators/Roles, a
+> System / Advanced group, and the legacy SMS surfaces grouped and hidden) is defined there.
+> The rules about how the builder prunes and marks entries still apply unchanged.
+
 The admin sidebar is the static array in `Helper::menuData()['admin']`, resolved
 per user by `App\Library\Navigation\AdminMenuBuilder` (used by the vertical
 sidebar and the horizontal menu). The builder only prunes and marks; it adds no

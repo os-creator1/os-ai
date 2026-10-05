@@ -22,10 +22,19 @@
                         <x-button variant="secondary" size="sm" :href="route('admin.workspaces.index')">Find a Workspace</x-button>
                         @can('view business')<x-button variant="secondary" size="sm" :href="route('admin.businesses.index')">Businesses</x-button>@endcan
                         <x-button variant="secondary" size="sm" :href="route('admin.platform-billing.index')">Billing &amp; Revenue</x-button>
-                        @can('view workspace plans')<x-button variant="secondary" size="sm" :href="route('admin.workspace-plan-catalog.index')">Plan Catalog</x-button>@endcan
+                        @can('view workspace plans')<x-button variant="secondary" size="sm" :href="route('admin.platform-plans.index')">Plans</x-button>@endcan
+                        @can('view customer')<x-button variant="secondary" size="sm" :href="route('admin.platform-users.index')">Users</x-button>@endcan
+                        <x-button variant="secondary" size="sm" :href="route('admin.platform-support.index')">Support</x-button>
                         <x-button variant="secondary" size="sm" :href="route('admin.platform-owner.audit')">Audit Logs</x-button>
                     </div>
                     <p class="text-muted small mt-2 mb-0">To recover a customer's access, open their Workspace: the account state, subscription and the restore-access control are on that page.</p>
+                </x-card>
+            </div>
+
+            <div class="col-12" data-testid="po-provider-readiness">
+                <x-card title="Provider readiness">
+                    @include('admin.partials.provider-readiness', ['readiness' => $readiness])
+                    <p class="text-muted small mt-2 mb-0">Based on configuration only. Secrets are set in the server environment and are never shown here.</p>
                 </x-card>
             </div>
 

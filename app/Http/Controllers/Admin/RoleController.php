@@ -59,7 +59,9 @@ class RoleController extends AdminBaseController
                 ['name' => __('locale.menu.Admin Roles')],
         ];
 
-        return view('admin.AdminRoles.index', compact('breadcrumbs'));
+        $roles = \App\Models\Role::query()->withCount('admins')->orderBy('name')->get();
+
+        return view('admin.AdminRoles.index', compact('breadcrumbs', 'roles'));
     }
 
 
@@ -241,6 +243,12 @@ class RoleController extends AdminBaseController
 
         $this->roles->store($request->input());
 
+        app(\App\Library\PlatformOwner\PlatformAdminAuditLog::class)->record(
+            (int) \Illuminate\Support\Facades\Auth::id(), 'role.created', 'role', null,
+            'Created role "' . (string) $request->input('name') . '"', null,
+            ['permissions' => array_values((array) $request->input('permissions', []))]
+        );
+
         return redirect()->route('admin.roles.index')->with([
                 'status'  => 'success',
                 'message' => __('locale.role.role_successfully_added'),
@@ -302,7 +310,15 @@ class RoleController extends AdminBaseController
             ]);
         }
 
+        $before = collect($role->permissions)->map(fn ($p) => is_object($p) ? $p->name : $p)->sort()->values()->all();
         $this->roles->update($role, $request->input());
+        $after = collect((array) $request->input('permissions', []))->sort()->values()->all();
+
+        app(\App\Library\PlatformOwner\PlatformAdminAuditLog::class)->record(
+            (int) \Illuminate\Support\Facades\Auth::id(), 'role.updated', 'role', $role->uid,
+            'Updated role "' . (string) $request->input('name', $role->name) . '"', null,
+            ['added' => array_values(array_diff($after, $before)), 'removed' => array_values(array_diff($before, $after))]
+        );
 
         return redirect()->route('admin.roles.index')->with([
                 'status'  => 'success',
