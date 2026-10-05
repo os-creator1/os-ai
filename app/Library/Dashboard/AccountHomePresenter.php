@@ -614,11 +614,14 @@ final class AccountHomePresenter
             return null;
         }
 
-        if (config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show')) {
+        $workspace = $context->frameWorkspace();
+
+        // Guided onboarding is offered only to someone who can manage the account (or who has none yet).
+        // Restricted staff never get a create action, whether or not the wizard is switched on.
+        if (config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show')
+            && ($workspace === null || $workspace->canManage())) {
             return route('customer.onboarding.show');
         }
-
-        $workspace = $context->frameWorkspace();
 
         if ($workspace !== null && $workspace->canManage() && Route::has('customer.workspaces.show')) {
             return route('customer.workspaces.show', $workspace->uid);

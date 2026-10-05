@@ -232,7 +232,7 @@
                 @if ($offered->isEmpty() && count($locations))
                     <div class="fb-note" data-role="forms-integrate-none">This form isn't offered anywhere yet. Turn on a location under Settings → Where it is offered, or make it available to Website pages here.</div>
                 @endif
-                <div class="fb-note mb-0">Placing the reference on a Website page is a Website step: the Website reads the reference and shows this same public form. Until that is wired, use the link or embed code above.</div>            </div>
+                <div class="fb-note mb-0">To show it on a Website page, add a "Form from the Forms module" section to that page and choose this form. The Website shows this same public form; you can also use the link or embed code above.</div>            </div>
         </div>
     </div>
 
