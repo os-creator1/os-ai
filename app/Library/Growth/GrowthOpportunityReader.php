@@ -6,6 +6,7 @@ namespace App\Library\Growth;
 
 use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityStatus;
+use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Models\Business;
 use App\Models\Opportunity;
 use Carbon\CarbonImmutable;
@@ -70,6 +71,9 @@ final class GrowthOpportunityReader
             ->whereIn('type', array_keys(GrowthRuleRegistry::all()));
 
         if (! $viewer->fullAccess) {
+            // Ad spend and cost figures are Business-wide money data: a Location-restricted actor never sees them.
+            $query->where('worker_key', '!=', OpportunityWorkerKey::Ads->value);
+
             $query->where(function (Builder $q) use ($viewer): void {
                 $q->whereNull('location_id');
 

@@ -332,12 +332,19 @@ class GrowthFactReadersTest extends TestCase
 
     // ── Entitlements / unavailable modules ───────────────────────────────
 
-    public function test_ads_rank_and_search_console_are_unavailable_never_zero(): void
+    public function test_search_console_is_unavailable_and_unentitled_ads_and_rank_are_never_zero(): void
     {
         $sets = $this->facts()->sets();
 
-        foreach (['ads', 'rank', 'search_console'] as $domain) {
-            $this->assertSame(GrowthFactStatus::Unavailable, $sets[$domain]->status);
+        $this->assertSame(GrowthFactStatus::Unavailable, $sets['search_console']->status);
+
+        // Ads and rank have real readers now; without the module they are NOT ENTITLED (neutral), never a zero.
+        foreach (['ads', 'rank'] as $domain) {
+            $this->assertContains($sets[$domain]->status, [GrowthFactStatus::NotEntitled, GrowthFactStatus::Available], $domain);
+
+            if ($sets[$domain]->status === GrowthFactStatus::NotEntitled) {
+                $this->assertSame([], $sets[$domain]->data);
+            }
         }
     }
 
