@@ -34,6 +34,12 @@
     <div class="row">
         <div class="col-md-5 mb-2">
             <x-card title="Sending" :padded="true" data-role="sending-panel">
+                {{-- Whose number and whose wallet: stated, so the Agency owner never has to guess. --}}
+                @if(! empty($info['business']))
+                    <p class="text-caption mb-2" data-role="sending-authority">
+                        Outreach texts go out from <strong>{{ $info['business']->name }}</strong> — your agency's own business, never a client's — and are paid from its wallet.
+                    </p>
+                @endif
                 <dl class="row mb-2">
                     <dt class="col-sm-6">Sending number</dt>
                     <dd class="col-sm-6" data-role="sending-number">{{ $info['number'] ?? 'Not set up' }}</dd>

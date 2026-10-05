@@ -3,6 +3,9 @@
 @section('title', $decision->heading ?? 'Account access')
 
 @section('content')
+    {{-- This full-page layout carries no shell, so while an Agency actor is viewing a client whose
+         account has locked, the Exit control must be rendered here (nothing renders otherwise). --}}
+    <x-view-as-banner />
     <section id="account-locked" class="d-flex align-items-center justify-content-center" style="min-height: 100vh; padding: 2rem 1rem;">
         <div class="col-12 col-sm-10 col-md-7 col-lg-5">
             <div class="card">

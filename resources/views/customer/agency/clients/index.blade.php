@@ -34,13 +34,40 @@
                         <x-input name="intended_business_name" label="Intended business name (optional)" />
                     </div>
                     <div class="col-12 col-md-2 d-flex align-items-start">
-                        <x-button type="submit" variant="primary" class="mt-4" data-role="invite-client-submit">
+                        <x-button type="submit" variant="primary" class="mt-md-4" data-role="invite-client-submit">
                             Send invitation
                         </x-button>
                     </div>
                 </div>
             </form>
         </x-card>
+
+        @if ($pendingInvitations->isNotEmpty())
+            <x-card title="Waiting for the client to accept" class="mb-2" data-role="pending-invitations">
+                {{-- A list, not a table: five columns would scroll sideways at phone width. --}}
+                <ul class="list-unstyled mb-0">
+                    @foreach ($pendingInvitations as $invitation)
+                        <li class="d-flex flex-wrap justify-content-between align-items-center gap-1 py-1 @unless ($loop->last) border-bottom @endunless" data-role="pending-invitation-row">
+                            <div>
+                                <strong>{{ $invitation->email }}</strong>
+                                @if ($invitation->intended_business_name)
+                                    <span class="text-muted"> — {{ $invitation->intended_business_name }}</span>
+                                @endif
+                                <div class="text-caption text-muted">
+                                    Sent {{ $invitation->created_at?->format('M j, Y') }}@if ($invitation->expires_at) · expires {{ $invitation->expires_at->format('M j, Y') }}@endif
+                                </div>
+                            </div>
+                            @if ($isAgencyOwner)
+                                <form method="POST" action="{{ route('customer.workspaces.client-invitations.revoke', [$agencyWorkspace->uid, $invitation->uid]) }}" data-role="revoke-invitation-form">
+                                    @csrf
+                                    <x-button type="submit" variant="ghost" size="sm">Cancel invitation<span class="visually-hidden"> for {{ $invitation->email }}</span></x-button>
+                                </form>
+                            @endif
+                        </li>
+                    @endforeach
+                </ul>
+            </x-card>
+        @endif
 
         <x-card title="Managed clients">
             @php
@@ -53,7 +80,7 @@
                         <x-search-field id="clients-search" name="search" label="Search clients" :value="$search" placeholder="Search by name" />
                     </div>
                     <div class="col-12 col-md-4">
-                        <label for="clients-state" class="form-label">Business</label>
+                        <label for="clients-state" class="form-label">Setup status</label>
                         <select id="clients-state" name="state" class="form-select" data-role="clients-state-filter" onchange="this.form.submit()">
                             <option value="">All clients</option>
                             @foreach ($stateFilters as $option)
@@ -68,10 +95,12 @@
                 <x-empty-state
                     icon="users"
                     :title="$isFiltered ? 'No clients match your search' : 'No clients yet'"
-                    :description="$isFiltered ? 'Try a different search term or filter.' : 'Invite your first client above to get started.'"
+                    :description="$isFiltered ? 'Try a different search term or filter.' : 'Invite your first client above to get started. They appear here once they accept and set up their account.'"
                     data-role="clients-empty-state"
                 />
             @else
+                {{-- Wider screens: a table. At phone width the same clients are listed stacked below instead, so the page never scrolls sideways. --}}
+                <div class="d-none d-md-block">
                 <x-table :headers="['Client', 'Business', 'Account', 'Plan', 'Agency billing', 'Since', '']" data-role="clients-table">
                     @foreach ($clients as $client)
                         @php
@@ -110,7 +139,7 @@
                             <td data-role="client-agency-billing">
                                 @if ($client['agency_subscription_status'] !== null)
                                     {{ $client['agency_subscription_plan'] }}
-                                    <span class="text-caption">· {{ str_replace('_', ' ', $client['agency_subscription_status']->value) }}</span>
+                                    <span class="text-caption">· {{ $client['agency_subscription_status']->label() }}</span>
                                 @else
                                     —
                                 @endif
@@ -124,7 +153,7 @@
                                         :href="route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $client['workspace_uid']])"
                                         data-role="open-client"
                                     >
-                                        Open
+                                        Details
                                     </x-button>
                                     @if ($clientBusinessActive)
                                         <form method="POST" action="{{ route('customer.workspaces.clients.view-as', [$agencyWorkspace->uid, $client['workspace_uid']]) }}" data-role="view-as-form">
@@ -143,6 +172,38 @@
                         </tr>
                     @endforeach
                 </x-table>
+                </div>
+
+                <ul class="list-unstyled d-md-none mb-0" data-role="clients-stacked">
+                    @foreach ($clients as $client)
+                        @php
+                            $cardActive = $client['business_status'] === \App\Enums\Business\BusinessStatus::Active->value;
+                            $cardDraft = $client['business_status'] === \App\Enums\Business\BusinessStatus::Draft->value;
+                        @endphp
+                        <li class="py-1 @unless ($loop->last) border-bottom @endunless" data-role="client-card">
+                            <h3 class="h6 mb-25">{{ $client['workspace_name'] }}</h3>
+                            <p class="text-caption text-muted mb-50">{{ $client['business_name'] ?? 'No business on file' }}</p>
+                            <div class="d-flex flex-wrap gap-50 mb-50">
+                                <x-badge :variant="$client['account']['variant']">{{ $client['account']['label'] }}</x-badge>
+                                @if ($cardDraft)
+                                    <x-badge variant="warning">Waiting for client setup</x-badge>
+                                @elseif (! $cardActive && $client['business_name'] !== null)
+                                    <x-badge variant="secondary">Business inactive</x-badge>
+                                @endif
+                            </div>
+                            <p class="mb-50">{{ $client['plan_name'] ?? 'No plan yet' }}@if ($client['agency_subscription_status'] !== null) <span class="text-caption">· {{ $client['agency_subscription_plan'] }} — {{ $client['agency_subscription_status']->label() }}</span>@endif</p>
+                            <div class="d-flex gap-1">
+                                <x-button variant="outline" size="sm" :href="route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $client['workspace_uid']])">Details<span class="visually-hidden"> for {{ $client['workspace_name'] }}</span></x-button>
+                                @if ($cardActive)
+                                    <form method="POST" action="{{ route('customer.workspaces.clients.view-as', [$agencyWorkspace->uid, $client['workspace_uid']]) }}">
+                                        @csrf
+                                        <x-button type="submit" variant="ghost" size="sm">View as client<span class="visually-hidden"> {{ $client['workspace_name'] }}</span></x-button>
+                                    </form>
+                                @endif
+                            </div>
+                        </li>
+                    @endforeach
+                </ul>
                 <div class="mt-3" data-role="clients-pagination">{{ $clients->links() }}</div>
             @endif
         </x-card>

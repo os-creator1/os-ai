@@ -81,7 +81,10 @@ class AgencyAccountHomeTest extends TestCase
         $this->assertStringContainsString(AttentionType::WebsiteUnpublished->sentence(), $table);
         $this->assertStringContainsString('Nothing needs attention', $table);
         $this->assertStringContainsString('Charlie Cafe', $table);
-        $this->assertStringContainsString('Not active', $table);
+        // Charlie is still in setup (Draft): said in the client's own terms, not as a bare "Not active" with
+        // "Nothing needs attention" it has not earned (Agency V1 final).
+        $this->assertStringContainsString('Waiting for client setup', $table);
+        $this->assertStringContainsString('has not finished setting up', $table);
         $this->assertSame(2, substr_count($table, 'data-role="client-open"'), 'Only active clients can be opened.');
         $this->assertStringNotContainsString('Northwind HQ', $table, "The Agency's own Business is never one of its clients.");
         $this->assertStringNotContainsString(route('customer.context.business.switch'), $table, 'A managed client is opened through the canonical Agency View As, never an ordinary switch.');

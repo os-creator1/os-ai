@@ -334,7 +334,10 @@ trait CreatesCustomerContextFixtures
      */
     protected function shellText(string $html): string
     {
-        $shell = preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $this->shellHtml($html)) ?? '';
+        // Script and style bodies are code, not the interface a customer reads: the navbar's search script carries the
+        // /workspaces/… URL it calls, and that must not count as the shell "saying" workspace.
+        $shell = preg_replace('#<(script|style)\b.*?</>#si', '', $this->shellHtml($html)) ?? '';
+        $shell = preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $shell) ?? '';
 
         return html_entity_decode(strip_tags($shell));
     }

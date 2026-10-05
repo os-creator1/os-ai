@@ -5,7 +5,13 @@
      without a reload (the feed itself already excludes it the instant it is cancelled or its
      expiry passes). Text is inserted with textContent only. --}}
 @auth
-    @unless (Auth::user()->is_admin)
+    {{-- Never while an Agency actor is viewing a client: those notices are the ACTOR's own account's,
+         and the feed route is closed under View As (it would only answer 404 on every page). --}}
+    @php
+        $noticesContext = request()->attributes->get('customerContext');
+        $noticesViewingClient = $noticesContext instanceof \App\Library\Navigation\CustomerContext && $noticesContext->isViewingAsClient();
+    @endphp
+    @unless (Auth::user()->is_admin || $noticesViewingClient)
         <script>
             (function () {
                 var url = @json(route('customer.platform-notices.feed'));
