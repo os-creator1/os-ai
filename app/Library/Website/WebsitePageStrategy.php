@@ -85,6 +85,16 @@ final class WebsitePageStrategy
      */
     public const MAX_AREA_PAGES = 8;
 
+    /**
+     * Website V1 final — budget priority knobs (see planWithExplanation()):
+     * the owner's first N services always get a page before FAQ/Gallery/
+     * Backdrops, and the top M areas are reserved a slot so neither side
+     * can starve the other.
+     */
+    public const CORE_SERVICE_PAGES = 5;
+
+    public const MIN_AREA_PAGES = 2;
+
     /** How many of the owner's other areas are given to an area page as "nearby" context. */
     private const MAX_AREA_NEIGHBORS = 6;
 
@@ -154,6 +164,7 @@ final class WebsitePageStrategy
         return $business->services()
             ->where('status', BusinessServiceStatus::Active->value)
             ->orderBy('sort_order')
+            ->orderBy('id')
             ->get();
     }
 
@@ -254,26 +265,112 @@ final class WebsitePageStrategy
      */
     public function buildPlan(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): array
     {
+        return $this->planWithExplanation($business, $template, $website, $customSection, $catalogItemUids, $serviceAreas)['plan'];
+    }
+
+    /**
+     * Website V1 final — the same deterministic plan buildPlan() returns,
+     * plus WHY each candidate page is in or out, so the owner (Review
+     * screen) and the tests can explain every inclusion/exclusion instead
+     * of guessing. buildPlan() is exactly `['plan']` of this — one
+     * algorithm, never two.
+     *
+     * Page budget (MAX_TOTAL_PAGES) priority, highest first:
+     *  1. Always: Home, Contact, About, the Services overview, Packages,
+     *     the custom section (whichever genuinely exist).
+     *  2. The owner's first CORE_SERVICE_PAGES services, in THEIR order
+     *     (a service page is the page most likely to earn a search), while
+     *     MIN_AREA_PAGES slots stay reserved for the owner's top areas.
+     *  3. Gallery, Backdrops, FAQ — whichever are eligible.
+     *  4. Any further services, then saved-location pages, then more areas
+     *     (up to MAX_AREA_PAGES), until the budget is full.
+     * Nothing is ever dropped silently: every candidate has a decision.
+     *
+     * @return array{plan: array<int, array>, decisions: array<int, array{key: string, title: string, type: string, included: bool, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>}, budget: array{max: int, planned: int}}
+     */
+    public function planWithExplanation(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?Collection $servicesOverride = null, ?bool $backdropsOverride = null): array
+    {
         $manifestByType = collect($template->page_manifest['pages'] ?? [])->keyBy('page_type');
         $allowed = fn (string $type) => $manifestByType->get($type)['allowed_section_types'] ?? [];
         $hasType = fn (string $type) => $manifestByType->has($type);
 
+        // The two overrides exist for the Review screen only: before the
+        // owner presses Generate their services and backdrops are still
+        // wizard answers, not saved rows yet, so the plan is previewed from
+        // the same facts (unsaved models) through this one algorithm.
+        $services = $servicesOverride ?? $this->eligibleServices($business);
+        $catalogItems = $this->selectedCatalogItems($business, $catalogItemUids);
+        $decisions = [];
+        $decide = function (string $key, string $title, string $type, bool $included, string $reason) use (&$decisions) {
+            $decisions[] = ['key' => $key, 'title' => $title, 'type' => $type, 'included' => $included, 'reason' => $reason];
+        };
+
+        $hasOverview = $hasType('services_overview') && $services->isNotEmpty();
+        $hasPackages = $hasType('packages') && $catalogItems->isNotEmpty();
+        $hasAbout = $hasType('about');
+        $hasContact = $hasType('contact');
+        $hasCustom = $hasType('custom_section') && $customSection !== null;
+        $galleryReady = $hasType('gallery') && $this->galleryEligible($website);
+        $backdropsReady = $hasType('backdrops') && ($backdropsOverride ?? $this->backdropsEligible($business));
+        $hasFaq = $hasType('faq');
+
+        // 1. The always-included pages.
+        $mandatory = 1 + (int) $hasOverview + (int) $hasPackages + (int) $hasAbout + (int) $hasContact + (int) $hasCustom;
+        $slots = max(0, self::MAX_TOTAL_PAGES - $mandatory);
+
+        $serviceCandidates = $hasType('service_detail') ? $services->take(self::MAX_SERVICE_DETAIL_PAGES)->values() : collect();
+        $locationCandidates = $hasType('location') ? $this->eligibleLocations($business)->take(self::MAX_LOCATION_PAGES)->values() : collect();
+        $areaCandidates = $hasType('location') ? $this->plannedAreas($serviceAreas, $services, $catalogItems) : [];
+
+        // Slugs already spoken for by the fixed and saved-location pages: an
+        // area that would land on one is skipped, never two pages at one URL.
+        $usedSlugs = array_filter(['services', 'packages', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact', 'gallery', 'backdrops', $hasCustom ? Str::slug($customSection['title']) : null]);
+        foreach ($locationCandidates as $location) {
+            $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
+            $usedSlugs[] = 'serving-' . Str::slug($cityLabel !== '' ? $cityLabel : (string) $location->id);
+        }
+        $areaExcluded = [];
+        $areaQueue = [];
+        foreach ($areaCandidates as $area) {
+            $slug = 'serving-' . Str::slug($area);
+            if (in_array($slug, $usedSlugs, true)) {
+                $areaExcluded[] = ['area' => $area, 'reason' => 'Already covered by another page at the same address.'];
+
+                continue;
+            }
+            $usedSlugs[] = $slug;
+            $areaQueue[] = $area;
+        }
+
+        // 2. Core service pages, keeping a small reserve for the top areas.
+        $areaReserve = min(count($areaQueue), self::MIN_AREA_PAGES, $slots);
+        $coreServices = max(0, min($serviceCandidates->count(), self::CORE_SERVICE_PAGES, $slots - $areaReserve));
+        $slots -= $areaReserve + $coreServices;
+
+        // 3. Gallery, Backdrops, FAQ.
+        $includeGallery = $galleryReady && $slots > 0;
+        $slots -= (int) $includeGallery;
+        $includeBackdrops = $backdropsReady && $slots > 0;
+        $slots -= (int) $includeBackdrops;
+        $includeFaq = $hasFaq && $slots > 0;
+        $slots -= (int) $includeFaq;
+
+        // 4. Further services, saved-location pages, more areas.
+        $extraServices = max(0, min($serviceCandidates->count() - $coreServices, $slots));
+        $slots -= $extraServices;
+        $locationsPlanned = min($locationCandidates->count(), $slots);
+        $slots -= $locationsPlanned;
+        $moreAreas = max(0, min(min(count($areaQueue), self::MAX_AREA_PAGES) - $areaReserve, $slots));
+        $slots -= $moreAreas;
+        $areasPlanned = $areaReserve + $moreAreas;
+        $servicesPlanned = $coreServices + $extraServices;
+
         $plan = [];
 
-        $plan[] = [
-            'page_key' => 'home',
-            'page_type' => 'home',
-            'is_home' => true,
-            'slug' => null,
-            'title' => 'Home',
-            'allowed_section_types' => $allowed('home'),
-            'entity' => null,
-        ];
+        $plan[] = ['page_key' => 'home', 'page_type' => 'home', 'is_home' => true, 'slug' => null, 'title' => 'Home', 'allowed_section_types' => $allowed('home'), 'entity' => null];
+        $decide('home', 'Home', 'home', true, 'Every website has a Home page.');
 
-        $services = $this->eligibleServices($business);
-        $catalogItems = $this->selectedCatalogItems($business, $catalogItemUids);
-
-        if ($hasType('services_overview') && $services->isNotEmpty()) {
+        if ($hasOverview) {
             $plan[] = [
                 'page_key' => 'services_overview',
                 'page_type' => 'services_overview',
@@ -283,9 +380,12 @@ final class WebsitePageStrategy
                 'allowed_section_types' => $allowed('services_overview'),
                 'entity' => ['services' => $this->serviceEntities($services->take(self::MAX_OVERVIEW_ENTITIES))],
             ];
+            $decide('services_overview', 'Services', 'services_overview', true, 'You have active services, so visitors get one page that lists them all.');
+        } elseif ($hasType('services_overview')) {
+            $decide('services_overview', 'Services', 'services_overview', false, 'No active services yet.');
         }
 
-        if ($hasType('packages') && $catalogItems->isNotEmpty()) {
+        if ($hasPackages) {
             $plan[] = [
                 'page_key' => 'packages',
                 'page_type' => 'packages',
@@ -295,38 +395,13 @@ final class WebsitePageStrategy
                 'allowed_section_types' => $allowed('packages'),
                 'entity' => ['packages' => $this->catalogEntities($catalogItems->take(self::MAX_OVERVIEW_ENTITIES))],
             ];
+            $decide('packages', 'Packages', 'packages', true, 'Your selected packages, with live prices from Packages & Products.');
+        } elseif ($hasType('packages')) {
+            $decide('packages', 'Packages', 'packages', false, 'No packages selected to show.');
         }
 
-        // Independent-review correction round 3 — the total plan is
-        // bounded below (MAX_TOTAL_PAGES) after every fixed/always-
-        // eligible page above is already counted, so the two aggregate,
-        // per-entity categories built next (service_detail, then
-        // location, in that deterministic priority order) are each
-        // reduced to whatever budget genuinely remains — never merely to
-        // their own individual per-type cap, which alone could still let
-        // the total blow past what the AI envelope can afford.
-        $remainingPageBudget = max(0, self::MAX_TOTAL_PAGES - count($plan) - $this->fixedPageCount($hasType, $business, $website, $customSection));
-
-        // Service-area pages share the remaining budget with service pages
-        // (up to half of it) so a business with several services still gets
-        // its top areas instead of service_detail pages consuming every
-        // slot. Only the owner's own chosen areas, and only when there is
-        // real service content to localize — never a page for an area with
-        // nothing to say.
-        $areas = $hasType('location') ? $this->plannedAreas($serviceAreas, $services, $catalogItems) : [];
-        $areaBudget = $areas === [] ? 0 : min(count($areas), self::MAX_AREA_PAGES, intdiv($remainingPageBudget + 1, 2));
-
-        if ($hasType('service_detail')) {
-            // Independent-review correction round 2/3 — bounds the number
-            // of AI-authored pages one generation request can ever be
-            // asked for, regardless of how many BusinessService rows a
-            // questionnaire's own (generously bounded per-step, but
-            // unbounded in aggregate across steps) repeatable-group
-            // answers created. Deterministic and stable: always the
-            // first N by this Collection's own existing sort_order.
-            $serviceDetailLimit = min(self::MAX_SERVICE_DETAIL_PAGES, max(0, $remainingPageBudget - $areaBudget));
-
-            foreach ($services->take($serviceDetailLimit) as $service) {
+        foreach ($serviceCandidates as $index => $service) {
+            if ($index < $servicesPlanned) {
                 $plan[] = [
                     'page_key' => 'service:' . $service->uid,
                     'page_type' => 'service_detail',
@@ -336,144 +411,119 @@ final class WebsitePageStrategy
                     'allowed_section_types' => $allowed('service_detail'),
                     'entity' => $this->serviceEntity($service),
                 ];
+                $decide('service:' . $service->uid, $service->name, 'service_detail', true, $index < self::CORE_SERVICE_PAGES
+                    ? 'One of your first ' . self::CORE_SERVICE_PAGES . ' services (your order), so it gets its own page.'
+                    : 'Fits in the ' . self::MAX_TOTAL_PAGES . '-page limit, so it gets its own page.');
+            } else {
+                $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Move it higher in your services list to include it.');
             }
-
-            $remainingPageBudget = max(0, $remainingPageBudget - $serviceDetailLimit);
+        }
+        foreach ($hasType('service_detail') ? $services->slice(self::MAX_SERVICE_DETAIL_PAGES) : [] as $service) {
+            $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: a website builds at most ' . self::MAX_SERVICE_DETAIL_PAGES . ' service pages.');
         }
 
-        if ($hasType('about')) {
-            $plan[] = [
-                'page_key' => 'about',
-                'page_type' => 'about',
-                'is_home' => false,
-                'slug' => 'photo-booth-about',
-                'title' => 'About',
-                'allowed_section_types' => $allowed('about'),
-                'entity' => null,
-            ];
+        if ($hasAbout) {
+            $plan[] = ['page_key' => 'about', 'page_type' => 'about', 'is_home' => false, 'slug' => 'photo-booth-about', 'title' => 'About', 'allowed_section_types' => $allowed('about'), 'entity' => null];
+            $decide('about', 'About', 'about', true, 'Every website has an About page.');
         }
 
-        if ($hasType('faq')) {
-            $plan[] = [
-                'page_key' => 'faq',
-                'page_type' => 'faq',
-                'is_home' => false,
-                'slug' => 'photo-booth-faq',
-                'title' => 'FAQ',
-                'allowed_section_types' => $allowed('faq'),
-                'entity' => null,
-            ];
+        if ($hasFaq) {
+            if ($includeFaq) {
+                $plan[] = ['page_key' => 'faq', 'page_type' => 'faq', 'is_home' => false, 'slug' => 'photo-booth-faq', 'title' => 'FAQ', 'allowed_section_types' => $allowed('faq'), 'entity' => null];
+                $decide('faq', 'FAQ', 'faq', true, 'Common questions, answered for your niche.');
+            } else {
+                $decide('faq', 'FAQ', 'faq', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Your questions still appear on the Home page.');
+            }
         }
 
-        if ($hasType('gallery') && $this->galleryEligible($website)) {
-            $plan[] = [
-                'page_key' => 'gallery',
-                'page_type' => 'gallery',
-                'is_home' => false,
-                'slug' => 'gallery',
-                'title' => 'Gallery',
-                'allowed_section_types' => $allowed('gallery'),
-                'entity' => null,
-            ];
+        if ($hasType('gallery')) {
+            if ($includeGallery) {
+                $plan[] = ['page_key' => 'gallery', 'page_type' => 'gallery', 'is_home' => false, 'slug' => 'gallery', 'title' => 'Gallery', 'allowed_section_types' => $allowed('gallery'), 'entity' => null];
+                $decide('gallery', 'Gallery', 'gallery', true, 'You added ' . self::MIN_GALLERY_ASSETS . ' or more gallery photos.');
+            } elseif ($galleryReady) {
+                $decide('gallery', 'Gallery', 'gallery', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.');
+            } else {
+                $decide('gallery', 'Gallery', 'gallery', false, 'Add at least ' . self::MIN_GALLERY_ASSETS . ' gallery photos to get a Gallery page.');
+            }
         }
 
-        if ($hasType('contact')) {
-            $plan[] = [
-                'page_key' => 'contact',
-                'page_type' => 'contact',
-                'is_home' => false,
-                'slug' => 'photo-booth-contact',
-                'title' => 'Contact',
-                'allowed_section_types' => $allowed('contact'),
-                'entity' => null,
-            ];
+        if ($hasContact) {
+            $plan[] = ['page_key' => 'contact', 'page_type' => 'contact', 'is_home' => false, 'slug' => 'photo-booth-contact', 'title' => 'Contact', 'allowed_section_types' => $allowed('contact'), 'entity' => null];
+            $decide('contact', 'Contact', 'contact', true, 'Every website has a Contact page.');
         }
 
-        if ($hasType('backdrops') && $this->backdropsEligible($business)) {
-            $plan[] = [
-                'page_key' => 'backdrops',
-                'page_type' => 'backdrops',
-                'is_home' => false,
-                'slug' => 'backdrops',
-                'title' => 'Backdrops',
-                'allowed_section_types' => $allowed('backdrops'),
-                'entity' => null,
-            ];
+        if ($hasType('backdrops')) {
+            if ($includeBackdrops) {
+                $plan[] = ['page_key' => 'backdrops', 'page_type' => 'backdrops', 'is_home' => false, 'slug' => 'backdrops', 'title' => 'Backdrops', 'allowed_section_types' => $allowed('backdrops'), 'entity' => null];
+                $decide('backdrops', 'Backdrops', 'backdrops', true, 'You added backdrops.');
+            } elseif ($backdropsReady) {
+                $decide('backdrops', 'Backdrops', 'backdrops', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.');
+            } else {
+                $decide('backdrops', 'Backdrops', 'backdrops', false, 'No backdrops added.');
+            }
         }
 
-        if ($hasType('custom_section') && $customSection !== null) {
-            $plan[] = [
-                'page_key' => 'custom_section',
-                'page_type' => 'custom_section',
-                'is_home' => false,
-                'slug' => Str::slug($customSection['title']),
-                'title' => $customSection['title'],
-                'allowed_section_types' => $allowed('custom_section'),
-                'entity' => null,
-            ];
+        if ($hasCustom) {
+            $plan[] = ['page_key' => 'custom_section', 'page_type' => 'custom_section', 'is_home' => false, 'slug' => Str::slug($customSection['title']), 'title' => $customSection['title'], 'allowed_section_types' => $allowed('custom_section'), 'entity' => null];
+            $decide('custom_section', $customSection['title'], 'custom_section', true, 'The extra section you added.');
         }
 
-        if ($hasType('location')) {
-            // Independent-review correction round 2/3 — same aggregate
-            // bound as service_detail pages above, for the same reason —
-            // now against whatever total-page budget genuinely remains
-            // after every fixed page and every service_detail page
-            // already placed, not merely its own standalone cap.
-            $locationLimit = min(self::MAX_LOCATION_PAGES, max(0, $remainingPageBudget - $areaBudget));
-            $locationsPlanned = 0;
+        foreach ($locationCandidates as $index => $location) {
+            $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
+            $title = $cityLabel !== '' ? 'Serving ' . $cityLabel : 'Service area';
 
-            foreach ($this->eligibleLocations($business)->take($locationLimit) as $location) {
-                $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
-
+            if ($index < $locationsPlanned) {
                 $plan[] = [
                     'page_key' => 'location:' . $location->id,
                     'page_type' => 'location',
                     'is_home' => false,
                     'slug' => 'serving-' . Str::slug($cityLabel !== '' ? $cityLabel : (string) $location->id),
-                    'title' => $cityLabel !== '' ? 'Serving ' . $cityLabel : 'Service area',
+                    'title' => $title,
                     'allowed_section_types' => $allowed('location'),
                     'entity' => $this->locationEntity($location),
                 ];
-                $locationsPlanned++;
+                $decide('location:' . $location->id, $title, 'location', true, 'A saved location with real local details.');
+            } else {
+                $decide('location:' . $location->id, $title, 'location', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.');
             }
+        }
 
-            // Service-area pages: the owner's chosen areas, in their priority
-            // order, as many as the budget left allows. Each gets its own
-            // distinct slug/title and its own local facts.
-            $usedSlugs = array_filter(array_column($plan, 'slug'));
-            // The reserve above only guarantees areas are not starved by
-            // service pages; whatever budget genuinely remains after
-            // services and saved locations may all go to areas (still capped).
-            $areaLimit = min(self::MAX_AREA_PAGES, max(0, $remainingPageBudget - $locationsPlanned));
-            $primaryCity = $business->primaryLocation()->first()?->city;
-            $areaPlans = 0;
+        $primaryCity = $business->primaryLocation()->first()?->city;
+        $plannedAreas = [];
 
-            foreach ($areas as $area) {
-                if ($areaPlans >= $areaLimit) {
-                    break;
-                }
-
-                $slug = 'serving-' . Str::slug($area);
-
-                if (in_array($slug, $usedSlugs, true)) {
-                    continue; // never two pages at one URL
-                }
-
-                $usedSlugs[] = $slug;
+        foreach ($areaQueue as $index => $area) {
+            if ($index < $areasPlanned) {
                 $plan[] = [
                     'page_key' => 'area:' . Str::slug($area),
                     'page_type' => 'location',
                     'is_home' => false,
-                    'slug' => $slug,
+                    'slug' => 'serving-' . Str::slug($area),
                     'title' => 'Serving ' . $area,
                     'allowed_section_types' => $allowed('location'),
-                    'entity' => $this->areaEntity($area, $areas, $services, $primaryCity),
+                    'entity' => $this->areaEntity($area, $areaCandidates, $services, $primaryCity),
                 ];
-                $areaPlans++;
+                $plannedAreas[] = $area;
+                $decide('area:' . Str::slug($area), 'Serving ' . $area, 'location', true, 'One of your top service areas (your order).');
+            } else {
+                $reason = $index >= self::MAX_AREA_PAGES
+                    ? 'Not planned: a website builds at most ' . self::MAX_AREA_PAGES . ' local pages. It is still listed as a service area.'
+                    : 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. It is still listed as a service area.';
+                $areaExcluded[] = ['area' => $area, 'reason' => $reason];
+                $decide('area:' . Str::slug($area), 'Serving ' . $area, 'location', false, $reason);
             }
         }
 
-        return $plan;
+        return [
+            'plan' => $plan,
+            'decisions' => $decisions,
+            'areas' => [
+                'saved' => count($areaCandidates),
+                'planned' => count($plannedAreas),
+                'planned_list' => $plannedAreas,
+                'excluded' => $areaExcluded,
+            ],
+            'budget' => ['max' => self::MAX_TOTAL_PAGES, 'planned' => count($plan)],
+        ];
     }
 
     /**
@@ -634,26 +684,6 @@ final class WebsitePageStrategy
         }
 
         return rtrim($truncated) . '…';
-    }
-
-    /**
-     * The fixed/always-possible pages this plan may still add AFTER the
-     * aggregate service_detail/location categories are sized — counted
-     * up front (using the exact same eligibility checks buildPlan() uses
-     * for each) so those two categories are sized against the TRUE
-     * remaining budget, never merely their own per-type cap.
-     */
-    private function fixedPageCount(\Closure $hasType, Business $business, Website $website, ?array $customSection): int
-    {
-        $count = 0;
-        $count += $hasType('about') ? 1 : 0;
-        $count += $hasType('faq') ? 1 : 0;
-        $count += $hasType('gallery') && $this->galleryEligible($website) ? 1 : 0;
-        $count += $hasType('contact') ? 1 : 0;
-        $count += $hasType('backdrops') && $this->backdropsEligible($business) ? 1 : 0;
-        $count += $hasType('custom_section') && $customSection !== null ? 1 : 0;
-
-        return $count;
     }
 
     /**

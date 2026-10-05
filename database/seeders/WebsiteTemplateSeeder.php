@@ -9,14 +9,16 @@ use Illuminate\Database\Seeder;
  * Website Generator + Local SEO Completion. Seeds the exact four
  * operator-owned visual templates the product direction requires.
  * Internal `key`s are stable and customer-invisible; `display_name` is
- * neutral and customer-friendly (never a competitor's name). Each
- * template's presentation-variant values are drawn broadly from one of
- * four live photo-booth-rental reference sites' overall visual grammar
- * (dark high-contrast hero + teal accent; warm narrative serif
- * editorial; restrained gold/charcoal tiered-package luxury; punchy
- * red/blue event-type-picker conversion-first) — never their copy,
- * photos, logos, reviews, or literal CSS/markup. See docs/automation/
- * WEBSITE-GENERATOR-SEO-COMPLETION-NOTE.md for the exact mapping.
+ * neutral and customer-friendly (never a competitor's name).
+ *
+ * Website V1 final — the four templates ARE the four canonical designs
+ * (App\Library\Website\Design\WebsiteDesigns), Template 1..4 in order, each
+ * translating the visual grammar of one named reference site into an
+ * original design (header layout, hero, section rhythm, typography,
+ * packages/services presentation, footer) — never their copy, photos,
+ * logos, reviews, markup or CSS. The seeded `theme` carries only the
+ * design's own default colours; the layout itself lives in the design.
+ * See docs/automation/WEBSITE-TEMPLATES-V1.md for the exact mapping.
  *
  * `page_manifest.pages` lists every page TYPE a template supports and
  * which of the 10 existing WebsiteSectionType values that type may use
@@ -44,12 +46,12 @@ class WebsiteTemplateSeeder extends Seeder
             [
                 'key' => 'photo_booth_modern',
                 'niche_key' => 'photo_booth_service',
-                'display_name' => 'Modern',
-                'description' => 'High-contrast, confident, and direct — a bold dark hero with a strong first impression.',
+                'display_name' => 'Bold Event',
+                'description' => 'Navy and gold with a full-width photo hero, big uppercase headlines and one clear booking button.',
                 'theme' => [
                     'font' => 'system',
-                    'primary_color' => '#0ea5b0',
-                    'secondary_color' => '#0b1220',
+                    'primary_color' => '#fac815',
+                    'secondary_color' => '#061633',
                     'button_style' => 'rounded',
                     'content_width' => '1160px',
                     'header_variant' => 'modern',
@@ -62,12 +64,12 @@ class WebsiteTemplateSeeder extends Seeder
             [
                 'key' => 'photo_booth_editorial',
                 'niche_key' => 'photo_booth_service',
-                'display_name' => 'Editorial',
-                'description' => 'Warm, narrative-led, and generously spaced — serif headlines and a considered pace.',
+                'display_name' => 'Classic Gold',
+                'description' => 'Clean white, black and gold with a centered logo, elegant serif headlines and calm, spacious sections.',
                 'theme' => [
                     'font' => 'serif',
-                    'primary_color' => '#b6562c',
-                    'secondary_color' => '#2b241d',
+                    'primary_color' => '#fac815',
+                    'secondary_color' => '#1b1b1b',
                     'button_style' => 'outline',
                     'content_width' => '1000px',
                     'header_variant' => 'editorial',
@@ -80,12 +82,12 @@ class WebsiteTemplateSeeder extends Seeder
             [
                 'key' => 'photo_booth_luxury',
                 'niche_key' => 'photo_booth_service',
-                'display_name' => 'Luxury',
-                'description' => 'Restrained and elegant — a muted gold and charcoal palette built around tiered packages.',
+                'display_name' => 'Midnight Gold',
+                'description' => 'Near-black with one champagne-gold accent, rounded pill buttons, a sticky header and tiered package cards.',
                 'theme' => [
                     'font' => 'display',
-                    'primary_color' => '#a8874f',
-                    'secondary_color' => '#14110c',
+                    'primary_color' => '#d9a520',
+                    'secondary_color' => '#09090b',
                     'button_style' => 'pill',
                     'content_width' => '1080px',
                     'header_variant' => 'luxury',
@@ -98,12 +100,12 @@ class WebsiteTemplateSeeder extends Seeder
             [
                 'key' => 'photo_booth_conversion',
                 'niche_key' => 'photo_booth_service',
-                'display_name' => 'Conversion',
-                'description' => 'Punchy and direct — event-type quick-picks and a clear numbered booking process.',
+                'display_name' => 'Party Luxe',
+                'description' => 'Lavender and peach with a deep plum and coral accent, heavy headlines, a floating pill menu and event-style tiles.',
                 'theme' => [
                     'font' => 'system',
-                    'primary_color' => '#ef4444',
-                    'secondary_color' => '#111827',
+                    'primary_color' => '#f4a28f',
+                    'secondary_color' => '#2a1d45',
                     'button_style' => 'solid',
                     'content_width' => '1120px',
                     'header_variant' => 'conversion',

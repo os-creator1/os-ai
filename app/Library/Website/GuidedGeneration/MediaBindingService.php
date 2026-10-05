@@ -106,11 +106,15 @@ final class MediaBindingService
                 continue;
             }
 
+            // A page that already closes with a call to action of its own does not get a second,
+            // near-identical "Planning an event in X?" band stacked under it.
+            $hasOwnCta = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'cta');
+
             $buttons = [];
-            if ($contactSlug && ! $linksTo($page, $contactSlug)) {
+            if (! $hasOwnCta && $contactSlug && ! $linksTo($page, $contactSlug)) {
                 $buttons[] = ['label' => 'Get in touch', 'url' => '/' . $contactSlug];
             }
-            if ($servicesSlug && ! $linksTo($page, $servicesSlug)) {
+            if (! $hasOwnCta && $servicesSlug && ! $linksTo($page, $servicesSlug)) {
                 $buttons[] = ['label' => 'See our services', 'url' => '/' . $servicesSlug];
             }
             if ($buttons !== []) {
@@ -182,7 +186,11 @@ final class MediaBindingService
         // cover (WebsiteGalleryManager::setCover()) is the homepage hero
         // candidate whenever one is set; only when none exists does the
         // first asset by sort_order act as the deterministic fallback.
-        $heroAsset = $assets->firstWhere('is_cover', true) ?? $assets->first();
+        // The Hero image the owner chose on Review (Brand & look) outranks both: it is the one hero every other page
+        // already uses, so the Home page must not show a different photo.
+        $ownerHeroUid = $website->theme['hero_asset_uid'] ?? null;
+        $ownerHero = is_string($ownerHeroUid) ? $website->assets()->where('uid', $ownerHeroUid)->where('purpose', WebsiteAssetPurpose::Hero->value)->first() : null;
+        $heroAsset = $ownerHero ?? $assets->firstWhere('is_cover', true) ?? $assets->first();
         $heroAssetUid = $heroAsset->uid;
         $remainingPool = $assets->reject(fn (WebsiteAsset $asset) => $asset->is($heroAsset))->values();
         // Every asset is still eligible for the round-robin pool at
@@ -363,7 +371,7 @@ final class MediaBindingService
                 continue;
             }
 
-            $pages[$index]['sections'][] = ['type' => 'backdrops', 'data' => ['heading' => 'Our Backdrops', 'items' => $items]];
+            $pages[$index]['sections'] = $this->withContentSection($page['sections'] ?? [], ['type' => 'backdrops', 'data' => ['heading' => 'Our Backdrops', 'items' => $items]]);
         }
 
         return $pages;
@@ -571,9 +579,35 @@ final class MediaBindingService
             }
 
             $items = array_map(fn ($asset) => ['image' => $asset->uid], array_slice($assets, 0, 24));
-            $pages[$index]['sections'][] = ['type' => 'gallery', 'data' => ['heading' => 'Photos', 'items' => $items]];
+            $pages[$index]['sections'] = $this->withContentSection($page['sections'] ?? [], ['type' => 'gallery', 'data' => ['heading' => 'Photos', 'items' => $items]]);
         }
 
         return $pages;
+    }
+
+    /**
+     * A system-built content section (the photos, the backdrops) belongs with the page's content,
+     * after its hero and any copy, but BEFORE the closing contact / call-to-action / form blocks,
+     * so a Gallery page reads hero -> photos -> contact rather than hero -> contact -> photos.
+     *
+     * @param  array<int, array<string, mixed>>  $sections
+     * @param  array<string, mixed>  $section
+     * @return array<int, array<string, mixed>>
+     */
+    private function withContentSection(array $sections, array $section): array
+    {
+        $position = count($sections);
+
+        foreach ($sections as $i => $existing) {
+            if ($i > 0 && in_array($existing['type'] ?? null, ['contact_details', 'cta', 'form'], true)) {
+                $position = $i;
+
+                break;
+            }
+        }
+
+        array_splice($sections, $position, 0, [$section]);
+
+        return $sections;
     }
 }

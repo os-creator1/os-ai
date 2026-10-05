@@ -14,7 +14,20 @@
         ($step['target_module'] ?? null) === 'knowledge_profile' => 'review',
         default => 'entry',
     };
+    $faqSuggestions = (($step['target_module'] ?? null) === 'faq')
+        ? \App\Library\Website\Setup\NicheFaqSuggestions::for(app(\App\Library\Website\Setup\QuestionnaireResolver::class)->nicheKeyFor($business))
+        : [];
 @endphp
+@if ($faqSuggestions !== [])
+    <div class="mb-2" data-testid="faq-suggestions">
+        <div class="text-caption mb-1">Common questions for your kind of business — tap one, then write your own answer:</div>
+        <div class="d-flex flex-wrap gap-1">
+            @foreach ($faqSuggestions as $suggestion)
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-faq-suggestion="{{ $suggestion }}">{{ $suggestion }}</button>
+            @endforeach
+        </div>
+    </div>
+@endif
 <div data-repeatable @if($isCustomSectionGroup) data-max-rows="1" @endif>
     <div data-repeatable-rows>
         @foreach ($rows as $i => $row)

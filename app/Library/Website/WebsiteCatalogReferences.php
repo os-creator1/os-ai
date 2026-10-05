@@ -130,6 +130,10 @@ final class WebsiteCatalogReferences
                 }
 
                 $item['name'] = Str::limit($catalogItem->name, self::NAME_MAX, '');
+                // Whether the owner flagged it as their featured package is
+                // presentation only (a template may emphasise it); it is read
+                // from the same canonical row as the name and price.
+                $item['featured'] = (bool) $catalogItem->featured;
 
                 if ($catalogItem->price_minor !== null && $catalogItem->currency_code) {
                     $item['price_label'] = Str::limit(CatalogMoney::format($catalogItem->price_minor, $catalogItem->currency_code), self::PRICE_LABEL_MAX, '');

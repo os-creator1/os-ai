@@ -33,11 +33,11 @@
             : null,
     ];
 @endphp
-<section class="website-section website-contact-details">
-    <h2>Contact Us</h2>
+<section class="website-section website-contact-details @if ($design ?? null) wd-contact @endif">
+    <h2 class="wd-section-title">Contact Us</h2>
     <ul class="website-contact-list">
         @if (! empty($resolved['phone']))
-            <li><a href="tel:{{ $resolved['phone'] }}">{{ $resolved['phone'] }}</a></li>
+            <li><a href="tel:{{ \App\Library\Website\Design\PhoneDisplay::dial($resolved['phone']) }}">{{ \App\Library\Website\Design\PhoneDisplay::format($resolved['phone']) }}</a></li>
         @endif
         @if (! empty($resolved['email']))
             <li><a href="mailto:{{ $resolved['email'] }}">{{ $resolved['email'] }}</a></li>
@@ -46,4 +46,7 @@
             <li>{{ $resolved['address'] }}</li>
         @endif
     </ul>
+    @if (($design ?? null) && ($siteCta ?? null) && ! empty($siteCta['url']))
+        <a class="wd-btn wd-btn-primary wd-btn-lg" href="{{ $siteCta['url'] }}">{{ $siteCta['label'] }}</a>
+    @endif
 </section>

@@ -130,6 +130,8 @@ class WebsiteController extends Controller
                 'uid' => $candidate['uid'],
                 'title' => $candidate['title'],
                 'is_home' => $candidate['is_home'],
+                'slug' => $candidate['slug'] ?? null,
+                'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
                 'url' => $candidate['is_home']
                     ? route('public.website.home', $website->public_id)
                     : route('public.website.page', [$website->public_id, $candidate['slug']]),

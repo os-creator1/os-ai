@@ -119,7 +119,7 @@ class FormBuilderTest extends TestCase
         $this->assertSame(['Wedding', 'Corporate'], $this->field($state['doc'], 'event_type')['options']);
 
         $groups = array_column($state['toolbox'], 'id');
-        $this->assertSame(['quick', 'personal', 'fields', 'content', 'custom', 'submit', 'consent'], $groups, 'no Payments group: there is no safe canonical seam');
+        $this->assertSame(['quick', 'personal', 'contact', 'fields', 'choice', 'content', 'custom', 'consent', 'submit'], $groups, 'no Payments group: there is no safe canonical seam');
 
         $this->get($this->formsRoute('edit', $this->workspace, $this->business, [$form->uid]))
             ->assertSee('data-role="forms-builder"', false)
@@ -143,7 +143,7 @@ class FormBuilderTest extends TestCase
 
     public function test_adding_a_field_saves_the_next_version_and_the_old_one_is_untouched(): void
     {
-        $form = $this->makeForm($this->business);
+        $form = $this->makeForm($this->business, [], true);
         $v1 = $form->currentVersion();
         $v1Fields = $v1->fields;
 
@@ -161,7 +161,7 @@ class FormBuilderTest extends TestCase
 
     public function test_removing_a_field_removes_it_from_the_next_version_only(): void
     {
-        $form = $this->makeForm($this->business);
+        $form = $this->makeForm($this->business, [], true);
 
         $this->edit($form, function (array $d) {
             $d['fields'] = array_values(array_filter($d['fields'], fn ($f) => $f['key'] !== 'message'));
@@ -175,7 +175,7 @@ class FormBuilderTest extends TestCase
 
     public function test_reordering_fields_is_a_new_version_with_the_new_order(): void
     {
-        $form = $this->makeForm($this->business);
+        $form = $this->makeForm($this->business, [], true);
         $original = $this->keys($form);
 
         $this->edit($form, function (array $d) {
@@ -573,7 +573,7 @@ class FormBuilderTest extends TestCase
 
     public function test_a_stale_tab_gets_a_conflict_and_writes_nothing(): void
     {
-        $form = $this->makeForm($this->business);
+        $form = $this->makeForm($this->business, [], true);
         $tabA = $this->builderDocumentFor($form);
         $tabB = $this->builderDocumentFor($form);
 
@@ -867,7 +867,7 @@ class FormBuilderTest extends TestCase
         $this->customFields->create($this->business, 'CF select', 'select', ['A', 'B']);
         $this->customFields->create($this->business, 'CF multi', 'multi_select', ['A', 'B']);
 
-        $form = $this->makeForm($this->business);
+        $form = $this->makeForm($this->business, [], true);
         $custom = collect($this->pageState($form)['toolbox'])->firstWhere('id', 'custom')['items'];
         $this->assertCount(11, $custom);
 
