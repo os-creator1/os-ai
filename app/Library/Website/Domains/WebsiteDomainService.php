@@ -196,6 +196,21 @@ final class WebsiteDomainService
             $domain->status = WebsiteDomainStatus::Active;
             $domain->activated_at = now();
             $domain->failure_reason = null;
+
+            // The first domain a website attaches is flagged primary at once, even if it never gets
+            // to Active. If a LATER domain becomes Active while no Active domain is primary, the
+            // whole site would be unreachable (an alias with no primary to redirect to answers 404).
+            // So the first domain to go live while there is no live primary takes the primary role.
+            $hasLivePrimary = $domain->website->domains()
+                ->where('id', '!=', $domain->id)
+                ->where('is_primary', true)
+                ->where('status', WebsiteDomainStatus::Active->value)
+                ->exists();
+
+            if (! $hasLivePrimary) {
+                $domain->website->domains()->where('id', '!=', $domain->id)->update(['is_primary' => false]);
+                $domain->is_primary = true;
+            }
         } elseif ($status === WebsiteDomainCertificateStatus::Failed) {
             $domain->status = WebsiteDomainStatus::Failed;
             $domain->failure_reason = 'Certificate provisioning failed. Remove this domain and try adding it again.';
