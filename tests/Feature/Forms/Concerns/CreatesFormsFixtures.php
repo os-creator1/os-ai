@@ -124,6 +124,7 @@ trait CreatesFormsFixtures
             'pages' => $version->pages(),
             'fields' => $version->fields,
             'base_version' => (int) $form->current_version,
+            'base_hash' => $version->content_hash,
         ];
     }
 

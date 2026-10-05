@@ -61,6 +61,7 @@
     var again = false;
     var stale = false;
     var version = S.version;
+    var baseHash = S.hash || null;
     var timer = null;
     var seq = 0;
 
@@ -204,6 +205,7 @@
         var mine = ++seq;
         var body = payload();
         body.base_version = version;
+        body.base_hash = baseHash;
         setSave('saving', 'Saving…');
         return post(C.saveUrl, body).then(function (res) {
             return res.json().catch(function () { return {}; }).then(function (data) { return { res: res, data: data }; });
@@ -211,6 +213,7 @@
             if (mine !== seq) { return; }          // a newer save superseded this answer
             if (r.res.status === 200 && r.data.status === 'saved') {
                 version = r.data.version;
+                baseHash = r.data.hash || baseHash;
                 banner('');
                 setSave(dirty ? 'saving' : 'saved', dirty ? 'Saving…' : 'Saved');
             } else if (r.res.status === 409) {
@@ -874,6 +877,12 @@
             $('fb-frame-wrap').classList.toggle('is-mobile', b.getAttribute('data-d') === 'mobile');
         });
     });
+    var locSel = $('fb-integrate-location');
+    if (locSel) {
+        locSel.addEventListener('change', function () {
+            [].forEach.call(document.querySelectorAll('.fb-integrate-loc'), function (n) { n.hidden = n.getAttribute('data-location') !== locSel.value; });
+        });
+    }
     function openIntegrate() { flush(); modal('fb-integrate-modal', true); }
     $('fb-integrate-btn').addEventListener('click', openIntegrate);
     [].forEach.call(document.querySelectorAll('[data-copy]'), function (b) { b.addEventListener('click', function () { copy(b.getAttribute('data-copy'), b); }); });

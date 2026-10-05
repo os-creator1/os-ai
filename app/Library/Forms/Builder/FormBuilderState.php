@@ -53,6 +53,7 @@ final class FormBuilderState
         return [
             'formUid' => $form->uid,
             'version' => (int) $form->current_version,
+            'hash' => $version->content_hash,
             'status' => $form->lifecycle_state->value,
             'doc' => [
                 'name' => $form->name,
