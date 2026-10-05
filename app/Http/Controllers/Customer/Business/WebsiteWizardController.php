@@ -100,6 +100,8 @@ class WebsiteWizardController extends CustomerBaseController
         private readonly WebsiteSetupPackageManager $packageManager,
         private readonly WebsiteReviewSourceStatus $reviewSources,
         private readonly BusinessImageStore $businessImages,
+        private readonly \App\Library\Website\Setup\WebsitePlanSummary $planSummary,
+        private readonly \App\Library\Website\Design\WebsiteTemplatePreviewRenderer $templatePreviews,
     ) {
     }
 
@@ -123,8 +125,35 @@ class WebsiteWizardController extends CustomerBaseController
             WebsiteCreationStage::InProgress => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $state->response->current_step_key]),
             WebsiteCreationStage::ReadyToGenerate => redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]),
             WebsiteCreationStage::Generated => redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]),
-            WebsiteCreationStage::NotStarted => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]),
+            // No up-front style question: setup begins on the first real
+            // question with the niche's default template (Template 1), and the
+            // owner picks or changes the look on the Review screen — with
+            // real previews of their own business — before generating.
+            WebsiteCreationStage::NotStarted => $this->beginWithDefaultTemplate($business, $definition, $state->website, $workspaceUid, $businessUid),
         };
+    }
+
+    /**
+     * Starts a setup on the niche's default template (idempotent, like
+     * chooseTemplate(): a leftover zero-page shell is adopted, never
+     * duplicated) and lands on the first question.
+     */
+    private function beginWithDefaultTemplate(Business $business, QuestionnaireDefinition $definition, ?Website $shell, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $template = $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business))
+            ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
+            ->first();
+
+        if ($template === null) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);
+        }
+
+        $website = $shell === null
+            ? $this->starterDrafts->createShellFromTemplate($business, $template)
+            : ($shell->template_key === null ? $this->starterDrafts->updateShellTemplate($shell, $template) : $shell);
+        $response = $this->sessionManager->start($business, $definition->key, $website->id);
+
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
     }
 
     public function show(string $workspaceUid, string $businessUid, string $stepKey): View|RedirectResponse
@@ -220,11 +249,13 @@ class WebsiteWizardController extends CustomerBaseController
             'screenKey' => $stepKey,
             'step' => $screen[0],
             'previousStepKey' => $previousStepKey ?? self::TEMPLATE_STEP,
-            'answers' => $answers,
-            'answer' => $response->answer($stepKey),
+            // "Never ask twice": a question whose answer already lives in the Business OS is shown filled in.
+            'answers' => $answers + \App\Library\Website\Setup\WizardPrefill::forSteps($business, $screen, $answers),
+            'answer' => $response->answer($stepKey) ?? (\App\Library\Website\Setup\WizardPrefill::forSteps($business, $screen, $answers)[$stepKey] ?? null),
             'packageRows' => $this->packageRowsFor($business, $screen, $answers),
             'reviewSource' => $this->reviewSources->forBusiness($business, $screen),
-            'progress' => ['current' => $position !== false ? $position + 2 : 2, 'total' => count($screens) + 2, 'label' => $screen[0]['prompt']],
+            // Screens, then the Review screen (the look is chosen there — no separate style step).
+            'progress' => ['current' => $position !== false ? $position + 1 : 1, 'total' => count($screens) + 1, 'label' => $screen[0]['prompt']],
         ]);
     }
 
@@ -408,7 +439,9 @@ class WebsiteWizardController extends CustomerBaseController
                 return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
             }
 
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);
+            // Nothing precedes the first question any more (the look is chosen
+            // on the Review screen): Back returns to the Website landing.
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
         }
 
         try {
@@ -469,7 +502,45 @@ class WebsiteWizardController extends CustomerBaseController
             'lastAttemptFailed' => $lastAttempt !== null && $lastAttempt->status === WebsiteGuidedGenerationAttempt::STATUS_FAILED,
             'generationAvailable' => (bool) config('services.openai.active'),
             'answerSummary' => $this->answerSummary($response),
-        ]);
+        ] + $this->lookAndPlanData($business, $response));
+    }
+
+    /**
+     * The Review screen's template cards, brand/logo/hero state and the
+     * "Website plan" (which pages Generate will build, and why not the
+     * others). An edit-mode session never shows them (its pages exist).
+     *
+     * @return array<string, mixed>
+     */
+    private function lookAndPlanData(Business $business, QuestionnaireResponse $response): array
+    {
+        $website = $response->website;
+
+        if ($response->edit_mode || $website === null) {
+            return ['templateCards' => [], 'plan' => null];
+        }
+
+        $templates = $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business))
+            ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
+            ->values();
+
+        $current = $templates->firstWhere('key', $website->template_key) ?? $templates->first();
+        $theme = $website->theme ?? [];
+        $assets = $website->assets()->whereIn('uid', array_filter([$theme['logo_asset_uid'] ?? null, $theme['hero_asset_uid'] ?? null]))->get()->keyBy('uid');
+
+        return [
+            'templateCards' => $templates->map(fn (WebsiteTemplate $template) => [
+                'key' => $template->key,
+                'design' => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($template->key),
+                'selected' => $current !== null && $template->key === $current->key,
+                // The real renderer, embedded (srcdoc): no extra request per card.
+                'html' => $this->templatePreviews->render($business, $website, $template),
+            ])->all(),
+            'brandColor' => $theme['brand_color'] ?? null,
+            'logo' => isset($theme['logo_asset_uid'], $assets[$theme['logo_asset_uid']]) ? ['url' => $assets[$theme['logo_asset_uid']]->url(), 'alt' => $assets[$theme['logo_asset_uid']]->alt_text] : null,
+            'hero' => isset($theme['hero_asset_uid'], $assets[$theme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($assets[$theme['hero_asset_uid']]), 'alt' => $assets[$theme['hero_asset_uid']]->alt_text] : null,
+            'plan' => $current !== null ? $this->planSummary->forResponse($business, $website, $current, $response) : null,
+        ];
     }
 
     /**
@@ -736,7 +807,8 @@ class WebsiteWizardController extends CustomerBaseController
 
                     return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
                         'status' => 'error',
-                        'message' => $attempt->failure_reason ?? 'Generation did not complete. Try again.',
+                        // A failure_reason is for support (it may carry internals); the customer gets a calm, safe sentence.
+                        'message' => \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt->failure_reason),
                     ]);
                 }
 
@@ -1271,6 +1343,8 @@ class WebsiteWizardController extends CustomerBaseController
             if (is_file($fullPath)) {
                 @unlink($fullPath);
             }
+
+            app(\App\Library\Website\Media\ImageVariants::class)->delete($path);
         }
     }
 
