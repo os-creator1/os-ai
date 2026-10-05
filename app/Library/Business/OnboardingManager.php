@@ -13,9 +13,12 @@ use App\Jobs\Business\BuildInitialBusinessSnapshot;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
+use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
+use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -54,6 +57,8 @@ class OnboardingManager
         private readonly CustomerOnboardingRepository $onboardingRepository,
         private readonly BusinessRepository $businessRepository,
         private readonly BusinessManager $businessManager,
+        private readonly ?WorkspaceRepository $workspaceRepository = null,
+        private readonly ?AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository = null,
     ) {
     }
 
@@ -71,6 +76,70 @@ class OnboardingManager
         }
 
         return $onboarding;
+    }
+
+    /**
+     * Hand the Business a paid V1 signup provisioned (Workspace, one Draft
+     * Business, its initial Location) to onboarding: start the customer's
+     * onboarding row if there is none and attach THAT Business to it, so the
+     * wizard continues it instead of creating another.
+     *
+     * Called by V1SignupManager's one activation seam once the provider has
+     * confirmed payment, so a cancelled or unpaid signup never has an
+     * onboarding row. Idempotent and race-safe: the browser return and the
+     * webhook both reach it, customer_id is unique on customer_onboardings,
+     * and an existing row (and its attachment) is left exactly as it is.
+     *
+     * @throws AuthorizationException if $business does not belong to $customer.
+     */
+    public function startForProvisionedBusiness(Customer $customer, Business $business, bool $required = true): CustomerOnboarding
+    {
+        if ((int) $business->customer_id !== (int) $customer->user_id) {
+            throw new AuthorizationException('This business does not belong to the given customer.');
+        }
+
+        try {
+            $onboarding = $this->start($customer, $required);
+        } catch (UniqueConstraintViolationException $e) {
+            // The other confirmation path won the insert. Converge on its row.
+            $onboarding = $this->onboardingRepository->findByCustomer($customer) ?? throw $e;
+        }
+
+        if ($onboarding->business_id === null) {
+            $onboarding = $this->onboardingRepository->attachBusiness($onboarding, $business);
+        }
+
+        return $onboarding;
+    }
+
+    /**
+     * The one Draft Business a signup (or an earlier visit) already
+     * provisioned for this customer, or null when onboarding is legitimately
+     * responsible for creating it. Never an Agency-managed Client Business:
+     * that one is activated only by its owner's own confirmation
+     * (BusinessManager::activateClientBusiness()). Ambiguity (several Drafts)
+     * adopts nothing rather than guessing.
+     */
+    private function provisionedDraftBusinessFor(Customer $customer): ?Business
+    {
+        $workspaces = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+        $relationships = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+
+        $candidates = $this->businessRepository->draftBusinessesForCustomer($customer->user_id)
+            ->filter(function (Business $business) use ($customer, $workspaces, $relationships): bool {
+                if ($business->workspace_id === null) {
+                    return false;
+                }
+
+                $workspace = $workspaces->findById((int) $business->workspace_id);
+
+                return $workspace !== null
+                    && (int) $workspace->owner_user_id === (int) $customer->user_id
+                    && $relationships->findActiveForClientWorkspace((int) $workspace->id) === null;
+            })
+            ->values();
+
+        return $candidates->count() === 1 ? $candidates->first() : null;
     }
 
     /**
@@ -158,9 +227,15 @@ class OnboardingManager
                 }
             }
 
+            // A paid V1 signup has already provisioned this customer's one
+            // Draft Business (and its Location). That Business is the
+            // canonical one, so the wizard continues it. Creation is only for
+            // a customer who genuinely has no Business to continue.
+            $existingBusiness ??= $this->provisionedDraftBusinessFor($customer);
+
             $business = $this->businessManager->createOrUpdateOnboardingBusiness($customer, $existingBusiness, $attributes);
 
-            if ($existingBusiness === null) {
+            if ($onboarding->business_id === null) {
                 $onboarding = $this->onboardingRepository->attachBusiness($onboarding, $business);
             }
 
@@ -294,6 +369,13 @@ class OnboardingManager
 
         return DB::transaction(function () use ($onboarding, $customer) {
             $updated = $this->onboardingRepository->complete($onboarding);
+
+            // RFC-001 §32: a finished onboarding activates the Draft
+            // Business it was completing, through the one activation seam.
+            $this->businessManager->activateForCompletedOnboarding(
+                $customer,
+                $this->resolveOwnedBusiness($updated, $customer),
+            );
 
             CustomerOnboardingCompleted::dispatch($updated->id, $customer->user_id);
 
