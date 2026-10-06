@@ -3191,6 +3191,20 @@
          * means okay". Returns a ready-to-send error JsonResponse, or
          * null when the value is valid for the given scope.
          */
+        private function isBusinessManagedNumber(int $businessId, string $number): bool
+        {
+            if ($number === '') {
+                return false;
+            }
+
+            return \App\Models\BusinessMessagingNumber::query()
+                ->where('phone_number', $number)
+                ->where('status', \App\Enums\Messaging\BusinessMessagingNumberStatus::Active->value)
+                ->whereIn('business_messaging_identity_id', \App\Models\BusinessMessagingIdentity::query()
+                    ->where('business_id', $businessId)->select('id'))
+                ->exists();
+        }
+
         private function validateQuickSendOriginatorValue($user, ?int $businessId, $senderId, string $capabilitiesType, string $dbSmsType): ?JsonResponse
         {
             $check_sender_id = ($businessId !== null
@@ -3206,6 +3220,12 @@
                     ? PhoneNumbers::where('business_id', $businessId)
                     : PhoneNumbers::where('user_id', $user->id))
                 ->where('number', $senderId)->where('status', 'assigned')->first();
+
+            if ( ! $number && $businessId !== null && $this->isBusinessManagedNumber($businessId, (string) $senderId)) {
+                // The Business's OWN active managed number (never another
+                // Business's): managed numbers have no phone_numbers row.
+                return null;
+            }
 
             if ( ! $number) {
                 return response()->json([

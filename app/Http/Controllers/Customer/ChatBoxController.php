@@ -1553,16 +1553,33 @@
                         $q->where('notification', 0)->orWhereNull('notification');
                     });
                     break;
-                case 'recents':
-                    $query->orderBy('updated_at', 'desc');
-                    break;
             }
+
+            // Every tab is newest-activity-first, not only "Recents": without
+            // an ORDER BY, Unread / Read / All came back in primary-key order
+            // (the OLDEST conversation first), and with 50 per page the
+            // newest threads fell onto later pages. id breaks a same-second
+            // tie so the order is deterministic.
+            $query->orderBy('updated_at', 'desc')->orderBy('id', 'desc');
 
             if ($search !== '') {
                 // Grouped, so the OR can never escape the business_id filter.
-                $query->where(function ($q) use ($search) {
-                    $q->where('from', 'LIKE', "%{$search}%")
-                        ->orWhere('to', 'LIKE', "%{$search}%");
+                //
+                // The list shows a Contact's NAME, so the box finds it too: a
+                // name typed here is matched against this Business's own
+                // Contacts, and their numbers select the conversations.
+                $namedPhones = ChatBox::phonesMatchingName($business, $search);
+
+                // % and _ are characters the person typed, not wildcards.
+                $like = '%' . addcslashes($search, '%_\\') . '%';
+
+                $query->where(function ($q) use ($like, $namedPhones) {
+                    $q->where('from', 'LIKE', $like)
+                        ->orWhere('to', 'LIKE', $like);
+
+                    if ($namedPhones !== []) {
+                        $q->orWhereIn('to', $namedPhones);
+                    }
                 });
             }
 
@@ -1571,6 +1588,8 @@
             return view('customer.ChatBox.partials._chat_list', [
                 'chat_box'        => $chat_box,
                 'displayNames'    => ChatBox::displayNamesFor($business, $chat_box->getCollection()),
+                'showEmptyState'  => (int) $page <= 1,
+                'emptyReason'     => $search !== '' ? 'search' : ($filter === 'unread' || $filter === 'read' ? 'filtered' : null),
             ])->render();
         }
 
