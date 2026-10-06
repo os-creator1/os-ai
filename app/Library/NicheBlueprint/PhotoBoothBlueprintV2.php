@@ -146,6 +146,7 @@ final class PhotoBoothBlueprintV2
                     ['pattern' => 'photo booth near me', 'intent' => 'local'],
                 ],
                 'faq_topics' => ['How far in advance should we book?', 'What is included in a package?', 'How much space does a booth need?', 'Do you travel to my venue?'],
+                'content_topics' => self::seoContentTopics(),
                 'schema_types' => ['LocalBusiness', 'FAQPage', 'Service'],
                 'schema_notes' => 'LocalBusiness on the home page; FAQPage on packages; one Service per package.',
                 'internal_links' => [
@@ -168,6 +169,57 @@ final class PhotoBoothBlueprintV2
         ];
 
         return $components;
+    }
+
+    /**
+     * The niche's article topics (SEO Content Engine). A SMALL, hand-written set — not permutations: the
+     * engine expands `per: service` only for a Business's top few service pages and `per: city` only for its
+     * primary location (plus one nearby served city). Every title carries an informational word (a question,
+     * cost, comparison or ideas), because an article must SUPPORT a service/location/packages page with a
+     * different question, never compete with it for "photo booth rental {city}".
+     *
+     * `supports` is a hint resolved against the Business's own published pages: a page kind (packages,
+     * services_hub, home, contact, service, location) or a word found in a service page (wedding, 360,
+     * corporate). Nothing here carries a price, a volume or a promise.
+     *
+     * @return list<array{title: string, intent: string, per: string, supports: string, cluster: string, why: string}>
+     */
+    public static function seoContentTopics(): array
+    {
+        return [
+            ['title' => 'How much does a photo booth rental cost in {city}?', 'intent' => 'cost', 'per' => 'city', 'supports' => 'packages', 'cluster' => 'Pricing',
+                'why' => 'Price is usually the first thing people want to know. A plain explanation of what shapes the cost can send them to your packages.'],
+            ['title' => '{service} cost: what affects the price', 'intent' => 'cost', 'per' => 'service', 'supports' => 'packages', 'cluster' => 'Pricing',
+                'why' => 'Explains what moves the price of this service, so a visitor can read your packages with the right expectations.'],
+            ['title' => 'What is included in a photo booth rental package?', 'intent' => 'guide', 'per' => 'none', 'supports' => 'packages', 'cluster' => 'Pricing',
+                'why' => 'A walk-through of what a package typically covers, linking to the packages you actually offer.'],
+            ['title' => 'How long should you book a photo booth for your event?', 'intent' => 'planning', 'per' => 'none', 'supports' => 'packages', 'cluster' => 'Pricing',
+                'why' => 'Helps a planner choose a booking length before they compare packages.'],
+            ['title' => '360 photo booth vs traditional photo booth', 'intent' => 'comparison', 'per' => 'none', 'supports' => '360', 'cluster' => 'Choosing a booth',
+                'why' => 'A fair comparison for people deciding between booth styles. It supports your 360 page without repeating it.'],
+            ['title' => 'Open-air vs enclosed photo booth: which is right for your event?', 'intent' => 'comparison', 'per' => 'none', 'supports' => 'services_hub', 'cluster' => 'Choosing a booth',
+                'why' => 'Compares booth layouts so a reader can pick a style before looking at your services.'],
+            ['title' => 'How to choose a photo booth company: questions to ask', 'intent' => 'how_to', 'per' => 'none', 'supports' => 'home', 'cluster' => 'Choosing a booth',
+                'why' => 'A buyer\'s checklist of questions, written to help the reader decide, with a path to contact you.'],
+            ['title' => 'Wedding photo booth ideas', 'intent' => 'ideas', 'per' => 'none', 'supports' => 'wedding', 'cluster' => 'Weddings',
+                'why' => 'Ideas for couples who are not ready to book yet. It supports your wedding page with a different search.'],
+            ['title' => 'Photo booth guestbook ideas for weddings and parties', 'intent' => 'ideas', 'per' => 'none', 'supports' => 'wedding', 'cluster' => 'Weddings',
+                'why' => 'A practical ideas article that fits naturally beside your wedding service.'],
+            ['title' => 'Photo booth backdrop ideas that photograph well', 'intent' => 'ideas', 'per' => 'none', 'supports' => 'services_hub', 'cluster' => 'Event ideas',
+                'why' => 'Backdrop ideas for any event, linking to your services.'],
+            ['title' => 'Are photo booths worth it for corporate events?', 'intent' => 'guide', 'per' => 'none', 'supports' => 'corporate', 'cluster' => 'Corporate events',
+                'why' => 'Answers a question event planners ask internally before they request a quote.'],
+            ['title' => 'How much room does a photo booth need?', 'intent' => 'planning', 'per' => 'none', 'supports' => 'services_hub', 'cluster' => 'Event planning',
+                'why' => 'Space is a common logistics question. A clear answer saves a back-and-forth with the venue.'],
+            ['title' => 'Photo booth venue checklist: what to confirm before event day', 'intent' => 'planning', 'per' => 'none', 'supports' => 'contact', 'cluster' => 'Event planning',
+                'why' => 'Power, access and timing questions to settle with a venue, ending with a way to talk to you.'],
+            ['title' => 'Prints vs digital delivery: how do guests get their photos?', 'intent' => 'comparison', 'per' => 'none', 'supports' => 'services_hub', 'cluster' => 'Event planning',
+                'why' => 'Explains the options for printed photos and online galleries.'],
+            ['title' => '{service} planning checklist', 'intent' => 'planning', 'per' => 'service', 'supports' => 'service', 'cluster' => 'Event planning',
+                'why' => 'A practical checklist for planning this kind of booth, linking back to its service page.'],
+            ['title' => 'Planning a photo booth at a {city} venue: power, space and timing', 'intent' => 'planning', 'per' => 'city', 'supports' => 'location', 'cluster' => 'Event planning',
+                'why' => 'Local planning tips for events in this city, supporting your location page.'],
+        ];
     }
 
     /**

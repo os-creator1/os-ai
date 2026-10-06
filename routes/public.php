@@ -387,6 +387,11 @@
             ->missing(fn () => abort(404));
         Route::get('{website:public_id}/sitemap', 'Public\WebsiteController@sitemap')->whereUuid('website')->name('public.website.sitemap')
             ->missing(fn () => abort(404));
+        // SEO Content Engine V1 — declared BEFORE the {slug} page route so /blog is never read as a page slug.
+        Route::get('{website:public_id}/blog', 'Public\WebsiteBlogController@index')->whereUuid('website')->middleware('attribution.capture')->name('public.website.blog.index')
+            ->missing(fn () => abort(404));
+        Route::get('{website:public_id}/blog/{slug}', 'Public\WebsiteBlogController@show')->whereUuid('website')->middleware('attribution.capture')->name('public.website.blog.show')
+            ->missing(fn () => abort(404));
         Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->middleware('attribution.capture')->name('public.website.page')
             ->missing(fn () => abort(404));
 

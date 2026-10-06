@@ -36,6 +36,30 @@ final class WebsiteSocialMetadata
         ];
     }
 
+    /**
+     * SEO Content Engine V1 — the same tags for a blog article: og:type `article`, the article's own
+     * published/modified times, and its featured image (a real, Business-owned file chosen by the same
+     * `pick()` rule as every other page).
+     *
+     * @param  array<string, mixed>|null  $imageAsset  the featured image's media payload (url, width, height, variants, alt_text)
+     * @return array{type: string, site_name: string, url: ?string, image: ?array{url: string, width: ?int, height: ?int, alt: ?string}, card: string, published_time: ?string, modified_time: ?string}
+     */
+    public function forArticle(string $siteName, ?string $canonicalUrl, ?array $imageAsset, ?string $publishedIso, ?string $modifiedIso): array
+    {
+        $picked = $imageAsset !== null ? $this->pick($imageAsset) : null;
+        $image = $picked !== null ? $picked + ['alt' => ($imageAsset['alt_text'] ?? null) ?: null] : null;
+
+        return [
+            'type' => 'article',
+            'site_name' => $siteName,
+            'url' => $canonicalUrl !== null && $canonicalUrl !== '' ? $canonicalUrl : null,
+            'image' => $image,
+            'card' => $image !== null ? 'summary_large_image' : 'summary',
+            'published_time' => $publishedIso,
+            'modified_time' => $modifiedIso,
+        ];
+    }
+
     /** @return ?array{url: string, width: ?int, height: ?int, alt: ?string} */
     private function image(array $sections, array $assetsByUid, array $theme): ?array
     {

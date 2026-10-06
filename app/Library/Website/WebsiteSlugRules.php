@@ -33,6 +33,8 @@ final class WebsiteSlugRules
         'assets',
         'home',
         '_website',
+        // SEO Content Engine V1 — /blog and /blog/{slug} are served by the blog, never by a page.
+        'blog',
     ];
 
     public static function isValid(string $slug): bool

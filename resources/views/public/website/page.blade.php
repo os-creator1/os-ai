@@ -64,6 +64,12 @@
             <meta name="twitter:image" content="{{ $socialMeta['image']['url'] }}">
         @endif
         <meta name="twitter:card" content="{{ $socialMeta['card'] }}">
+        @if (! empty($socialMeta['published_time']))
+            <meta property="article:published_time" content="{{ $socialMeta['published_time'] }}">
+        @endif
+        @if (! empty($socialMeta['modified_time']))
+            <meta property="article:modified_time" content="{{ $socialMeta['modified_time'] }}">
+        @endif
     @endif
     {{--
         Set only once the Website has an active custom domain — see
@@ -117,6 +123,16 @@
     @if (! empty($faqJsonLd ?? null))
         <script type="application/ld+json">{!! json_encode($faqJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
     @endif
+    {{--
+        BlogPosting (SEO Content Engine V1) — real article data only (WebsiteArticleStructuredData), passed in only
+        for a genuinely indexable article; same JSON_HEX_* escaping discipline as the blocks above.
+    --}}
+    @if (! empty($articleJsonLd ?? null))
+        <script type="application/ld+json">{!! json_encode($articleJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+    @endif
+    @if (! empty($blog ?? null) && empty($inlineCss ?? null))
+        <link rel="stylesheet" href="{{ asset('css/website-blog.css') }}?v={{ is_file(public_path('css/website-blog.css')) ? filemtime(public_path('css/website-blog.css')) : 1 }}">
+    @endif
     @php($theme = $websiteMeta['theme'] ?? [])
     @if (! empty($theme))
         <style>
@@ -169,6 +185,10 @@
         ?>
 
         <main class="wd-main" id="wd-main">
+            @if (! empty($blog ?? null))
+                {{-- SEO Content Engine V1: the blog index / article sits where a page's sections would, inside the template's own header, footer and bands. --}}
+                @include('public.website.blog.' . $blog['mode'])
+            @endif
             @foreach ($orderedSections as $section)
                 @php($type = $section['type'] ?? '')
                 @php($componentView = 'public.website.components.' . $type)
@@ -263,6 +283,9 @@
 
         <main class="website-main">
             <div class="website-container">
+                @if (! empty($blog ?? null))
+                    @include('public.website.blog.' . $blog['mode'])
+                @endif
                 @foreach ($sections as $section)
                     @php($componentView = 'public.website.components.' . ($section['type'] ?? ''))
                     @if (\Illuminate\Support\Facades\View::exists($componentView))

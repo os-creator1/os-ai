@@ -445,6 +445,7 @@ final class CustomerMenuBuilder
             $this->item($user, 'seo-keywords', 'Search keywords', 'hash', ['view_seo'], 'customer.workspaces.businesses.seo.keywords.index', $scoped, $current, [
                 'customer.workspaces.businesses.seo.keywords.',
             ]),
+            $this->seoContentMenuItem($user, $scoped, $current),
             $this->entitled('google_business_profile_module', $this->item($user, 'gbp', 'Get found', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
                 'customer.workspaces.businesses.gbp.', 'customer.gbp.',
             ])),
@@ -460,6 +461,44 @@ final class CustomerMenuBuilder
         ]));
 
         return new MenuItem('seo', 'SEO', $overview->url, 'trending-up', false, $children);
+    }
+
+    /**
+     * SEO Content Engine V1 — SEO → Content. The landing is the Content Plan route; on a Business without
+     * `seo_module` that route renders the Articles list (so Core is never sent to a 404). With `seo_module`
+     * the entry opens into Content Plan / Articles / Opportunities; without it, Articles is the only child,
+     * so a single "Content" link is emitted instead of a one-item group. Same `item()`/`entitled()` rules
+     * as every sibling: this is presentation, not authorization — the routes enforce the gates themselves.
+     *
+     * @param  array<int, string|null>  $scoped
+     */
+    private function seoContentMenuItem(User $user, array $scoped, string $current): ?MenuItem
+    {
+        $landing = $this->item($user, 'seo-content', 'Content', 'file-text', ['view_seo'], 'customer.workspaces.businesses.seo.content.plan', $scoped, $current, [
+            'customer.workspaces.businesses.seo.content.',
+        ]);
+
+        if ($landing === null) {
+            return null;
+        }
+
+        $plan = $this->entitled('seo_module', $this->item($user, 'seo-content-plan', 'Content Plan', 'layout-list', ['view_seo'], 'customer.workspaces.businesses.seo.content.plan', $scoped, $current, [
+            'customer.workspaces.businesses.seo.content.plan',
+        ]));
+        $articles = $this->item($user, 'seo-content-articles', 'Articles', 'file-text', ['view_seo'], 'customer.workspaces.businesses.seo.content.articles.index', $scoped, $current, [
+            'customer.workspaces.businesses.seo.content.articles.',
+        ]);
+        $opportunities = $this->entitled('seo_module', $this->item($user, 'seo-content-opportunities', 'Opportunities', 'lightbulb', ['view_seo'], 'customer.workspaces.businesses.seo.content.opportunities', $scoped, $current, [
+            'customer.workspaces.businesses.seo.content.opportunities',
+        ]));
+
+        $children = array_values(array_filter([$plan, $articles, $opportunities]));
+
+        if (count($children) <= 1) {
+            return $landing;
+        }
+
+        return new MenuItem('seo-content', 'Content', $landing->url, 'file-text', $landing->active, $children);
     }
 
     /**

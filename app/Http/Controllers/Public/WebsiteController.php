@@ -30,6 +30,7 @@ class WebsiteController extends Controller
     public function __construct(
         private readonly WebsitePublicEntitlementGate $gate,
         private readonly WebsiteAddressPrivacyGate $privacyGate,
+        private readonly \App\Library\Website\Blog\WebsiteBlogRenderer $blog,
     ) {
     }
 
@@ -66,6 +67,10 @@ class WebsiteController extends Controller
 
             return '<url><loc>' . e($loc) . '</loc></url>';
         })->implode('');
+
+        // SEO Content Engine V1 — the blog index and published, indexable articles join the same sitemap.
+        $urls .= collect($this->blog->sitemapUrls($website, \App\Library\Website\Blog\WebsiteBlogSurface::platform($website), $snapshot))
+            ->map(fn (string $loc) => '<url><loc>' . e($loc) . '</loc></url>')->implode('');
 
         $xml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . $urls . '</urlset>';
 
@@ -126,16 +131,8 @@ class WebsiteController extends Controller
             'isPreview' => false,
             'canonicalUrl' => $canonicalUrl,
             // Public navigation is built only from the immutable revision.
-            'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
-                'uid' => $candidate['uid'],
-                'title' => $candidate['title'],
-                'is_home' => $candidate['is_home'],
-                'slug' => $candidate['slug'] ?? null,
-                'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
-                'url' => $candidate['is_home']
-                    ? route('public.website.home', $website->public_id)
-                    : route('public.website.page', [$website->public_id, $candidate['slug']]),
-            ])->all(),
+            // The shared builder: every snapshot page addressed for this surface, plus the Blog entry.
+            'navigationPages' => $this->blog->navigationPages($website, $snapshot, \App\Library\Website\Blog\WebsiteBlogSurface::platform($website)),
         ]);
 
         return $response->header('X-Robots-Tag', 'noindex, follow');

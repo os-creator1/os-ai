@@ -274,6 +274,11 @@
             $schedule->job(new \App\Jobs\Seo\PruneSeoRankObservations())->dailyAt('03:40');
             $schedule->command('seo:rank-sync-locations')->weeklyOn(1, '04:20')->withoutOverlapping();
 
+            // SEO Content Engine V1 — owner-scheduled articles go live at their time. publishDue()
+            // re-checks every article first (an article that no longer passes goes back to Draft), so
+            // a one-minute cadence only means "at the time they chose", never "publish whatever is waiting".
+            $schedule->command('articles:publish-due')->everyMinute()->withoutOverlapping();
+
             // Google Ads Module V1 contract §5 — the daily, staggered Ads read
             // sync sweep. It only queues per-account jobs (deduplicated, behind
             // the project circuit breaker); registered unconditionally like the

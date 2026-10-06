@@ -45,6 +45,29 @@ final class WebsiteSearchVisibility
         return ['released' => $released, 'kept_by_owner' => $keptByOwner, 'kept_thin' => $keptThin];
     }
 
+    /**
+     * SEO Content Engine V1 — the Website-wide owner decision, as the published snapshot records it.
+     *
+     * There is no separate site-level switch: "Let search engines find these pages" (release()) and the
+     * owner's own per-page choice are both stored as the pages' `noindex` flag, and the Home page is the
+     * site. A site whose published Home page is still hidden from search is a site the owner has not
+     * opened up yet — so blog articles are held back with it, never indexed ahead of it. Blog articles
+     * and the blog index may only narrow this (an owner `noindex` on one article); they can never
+     * override it.
+     *
+     * @param  array<string, mixed>  $snapshot  the published revision snapshot
+     */
+    public static function siteOpenToSearch(array $snapshot): bool
+    {
+        foreach ((array) ($snapshot['pages'] ?? []) as $page) {
+            if (($page['is_home'] ?? false) === true) {
+                return ! ($page['seo']['noindex'] ?? false);
+            }
+        }
+
+        return false;
+    }
+
     private function hasContent(WebsitePage $page): bool
     {
         foreach ($page->sections ?? [] as $section) {

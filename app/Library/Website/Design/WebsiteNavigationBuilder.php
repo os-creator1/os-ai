@@ -38,6 +38,7 @@ final class WebsiteNavigationBuilder
         $about = null;
         $faq = null;
         $contact = null;
+        $blog = null;
         $areas = [];
         $other = [];
 
@@ -66,6 +67,7 @@ final class WebsiteNavigationBuilder
                 $slug === 'photo-booth-about' => $about = $page,
                 $slug === 'photo-booth-faq' => $faq = $page,
                 $slug === 'photo-booth-contact' => $contact = $page,
+                $slug === 'blog' => $blog = $page,
                 str_starts_with($slug, 'serving-') => $areas[] = $page,
                 default => $other[] = $page,
             };
@@ -110,6 +112,11 @@ final class WebsiteNavigationBuilder
             $primary[] = $item($about);
         }
 
+        // SEO Content Engine V1 — the blog, once it has a published article (WebsiteBlogRenderer adds the entry).
+        if ($blog !== null) {
+            $primary[] = $item($blog);
+        }
+
         if ($contact !== null) {
             $primary[] = $item($contact);
         }
@@ -121,7 +128,7 @@ final class WebsiteNavigationBuilder
         unset($entry);
 
         $link = fn (array $page): array => ['title' => $page['title'], 'url' => $page['url']];
-        $explore = array_values(array_map($link, array_filter([$home, $overview, $packages, $gallery, $backdrops, $about, $faq, $contact], fn ($p) => $p !== null)));
+        $explore = array_values(array_map($link, array_filter([$home, $overview, $packages, $gallery, $backdrops, $about, $blog, $faq, $contact], fn ($p) => $p !== null)));
 
         foreach ($other as $page) {
             $explore[] = $link($page);

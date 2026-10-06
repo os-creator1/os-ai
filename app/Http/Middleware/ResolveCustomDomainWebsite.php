@@ -53,6 +53,7 @@ class ResolveCustomDomainWebsite
         private readonly WebsiteAddressPrivacyGate $privacyGate,
         private readonly WebsiteBreadcrumbStructuredData $breadcrumbs,
         private readonly \App\Library\Website\Seo\WebsiteFaqStructuredData $faq,
+        private readonly \App\Library\Website\Blog\WebsiteBlogRenderer $blog,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -152,6 +153,20 @@ class ResolveCustomDomainWebsite
             return $this->renderRobots($domain);
         }
 
+        // SEO Content Engine V1 — /blog and /blog/{slug}, through the same renderer the platform path uses.
+        // (`blog` is a reserved slug, so no Website page can ever collide with it.)
+        if ($path === 'blog' || (str_starts_with($path, 'blog/') && substr_count($path, '/') === 1)) {
+            $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($website, $domain->domain);
+
+            if ($path === 'blog') {
+                $page = filter_var($request->query('page', 1), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+                return $this->blog->index($website, $surface, $page === false ? 1 : $page);
+            }
+
+            return $this->blog->article($website, $surface, substr($path, 5));
+        }
+
         $page = $path === ''
             ? collect($snapshot['pages'])->firstWhere('is_home', true)
             : collect($snapshot['pages'])->firstWhere('slug', $path);
@@ -227,14 +242,8 @@ class ResolveCustomDomainWebsite
             'localBusinessJsonLd' => $localBusinessJsonLd,
             'breadcrumbJsonLd' => $breadcrumbJsonLd,
             'faqJsonLd' => $faqJsonLd,
-            'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
-                'uid' => $candidate['uid'],
-                'title' => $candidate['title'],
-                'is_home' => $candidate['is_home'],
-                'slug' => $candidate['slug'] ?? null,
-                'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
-                'url' => $urlFor($candidate),
-            ])->all(),
+            // The shared builder: every snapshot page addressed for the custom domain, plus the Blog entry.
+            'navigationPages' => $this->blog->navigationPages($website, $snapshot, \App\Library\Website\Blog\WebsiteBlogSurface::custom($website, $domain->domain)),
         ]);
 
         return $response->header('X-Robots-Tag', $indexable ? 'index, follow' : 'noindex, follow');
@@ -272,6 +281,11 @@ class ResolveCustomDomainWebsite
 
                 return '<url><loc>'.e($loc).'</loc></url>';
             })->implode('');
+
+        // SEO Content Engine V1 — the blog index and every published, indexable article (never a draft,
+        // a noindex article, or anything while the site itself is hidden from search).
+        $urls .= collect($this->blog->sitemapUrls($domain->website, \App\Library\Website\Blog\WebsiteBlogSurface::custom($domain->website, $domain->domain), $snapshot))
+            ->map(fn (string $loc) => '<url><loc>'.e($loc).'</loc></url>')->implode('');
 
         $xml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'.$urls.'</urlset>';
 

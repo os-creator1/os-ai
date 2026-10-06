@@ -1311,6 +1311,34 @@
             // revision is published, and re-auditing one is idempotent.
             Route::get('/site-audit', 'Business\SeoAuditController@audit')->name('audit.index');
             Route::post('/site-audit/run', 'Business\SeoAuditController@rerun')->middleware('throttle:6,1')->name('audit.rerun');
+
+            // SEO Content Engine V1 — SEO -> Content: the Content Plan, Articles, Opportunities and the
+            // article editor. Articles (list, editor, preview, publish flow) ride SeoBasicVisibility;
+            // Opportunities, the plan's clusters and AI drafting ride SeoModule (404 without it). Reads
+            // need view_seo, writes manage_seo. An article is addressed by uid and always resolved
+            // through the Business. The AI is reachable from exactly one POST (opportunities.draft).
+            Route::prefix('/content')->name('content.')->group(function () {
+                Route::get('/', 'Business\SeoContentController@plan')->name('plan');
+                Route::get('/articles', 'Business\SeoContentController@articles')->name('articles.index');
+                Route::get('/opportunities', 'Business\SeoContentController@opportunities')->name('opportunities');
+                Route::post('/opportunities/draft', 'Business\SeoContentArticleController@opportunityDraft')->middleware('throttle:10,1')->name('opportunities.draft');
+                Route::post('/opportunities/start', 'Business\SeoContentArticleController@opportunityStart')->middleware('throttle:30,1')->name('opportunities.start');
+
+                Route::get('/articles/create', 'Business\SeoContentArticleController@create')->name('articles.create');
+                Route::post('/articles', 'Business\SeoContentArticleController@store')->middleware('throttle:30,1')->name('articles.store');
+                Route::post('/markdown-preview', 'Business\SeoContentArticleController@markdownPreview')->middleware('throttle:120,1')->name('markdown-preview');
+                Route::get('/articles/{articleUid}/edit', 'Business\SeoContentArticleController@edit')->name('articles.edit');
+                Route::post('/articles/{articleUid}/update', 'Business\SeoContentArticleController@update')->middleware('throttle:60,1')->name('articles.update');
+                Route::get('/articles/{articleUid}/preview', 'Business\SeoContentArticleController@preview')->name('articles.preview');
+                Route::get('/articles/{articleUid}/analysis', 'Business\SeoContentArticleController@analysis')->middleware('throttle:60,1')->name('articles.analysis');
+                Route::post('/articles/{articleUid}/publish', 'Business\SeoContentArticleController@publish')->middleware('throttle:30,1')->name('articles.publish');
+                Route::post('/articles/{articleUid}/schedule', 'Business\SeoContentArticleController@schedule')->middleware('throttle:30,1')->name('articles.schedule');
+                Route::post('/articles/{articleUid}/draft', 'Business\SeoContentArticleController@draft')->middleware('throttle:30,1')->name('articles.draft');
+                Route::post('/articles/{articleUid}/archive', 'Business\SeoContentArticleController@archive')->middleware('throttle:30,1')->name('articles.archive');
+                Route::post('/articles/{articleUid}/restore', 'Business\SeoContentArticleController@restore')->middleware('throttle:30,1')->name('articles.restore');
+                Route::post('/articles/{articleUid}/reviewed', 'Business\SeoContentArticleController@reviewed')->middleware('throttle:30,1')->name('articles.reviewed');
+                Route::post('/articles/{articleUid}/track', 'Business\SeoContentArticleController@track')->middleware('throttle:30,1')->name('articles.track');
+            });
         });
 
         /*

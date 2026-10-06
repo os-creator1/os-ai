@@ -73,6 +73,7 @@ class SeedPhotoBoothBlueprintV2Command extends Command
         }
 
         $added += $this->applyProposalPaymentTerms($publisher, $actor, $draft);
+        $added += $this->applySeoContentTopics($publisher, $actor, $draft);
 
         if ($this->option('draft-only')) {
             $this->info("Draft v{$draft->version_number} holds the Photo Booth v2 configuration ({$added} added).");
@@ -92,6 +93,30 @@ class SeedPhotoBoothBlueprintV2Command extends Command
 
         return self::SUCCESS;
     }
+
+    /**
+     * A Blueprint seeded before the SEO Content Engine already carries `photo_booth_seo` without article
+     * topics, and the component loop above skips an existing key. Adds the topics to that one component —
+     * only when the `content_topics` key is ABSENT, so an operator who later cleared or edited the list in
+     * the Blueprint Workspace (which always writes the key) is never overwritten.
+     */
+    private function applySeoContentTopics(NicheBlueprintPublisher $publisher, int $actor, \App\Models\NicheBlueprintVersion $draft): int
+    {
+        $changed = 0;
+
+        foreach (NicheBlueprintComponent::query()->where('blueprint_version_id', $draft->id)->where('component_key', 'photo_booth_seo')->where('component_type', 'seo_strategy')->get() as $component) {
+            $payload = is_array($component->payload) ? $component->payload : [];
+
+            if (! array_key_exists('content_topics', $payload)) {
+                $payload['content_topics'] = PhotoBoothBlueprintV2::seoContentTopics();
+                $publisher->updateDraftComponent($actor, $component, ['payload' => $payload]);
+                $changed++;
+            }
+        }
+
+        return $changed;
+    }
+
     private function applyProposalPaymentTerms(NicheBlueprintPublisher $publisher, int $actor, \App\Models\NicheBlueprintVersion $draft): int
     {
         $uid = \App\Models\DocumentTemplate::query()->where('seed_key', 'photo_booth_proposal')->whereNull('business_id')->value('uid');

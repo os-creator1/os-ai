@@ -68,7 +68,8 @@ final class WebsitePageComposer
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
             // Open Graph / Twitter extras only on a published page (Preview carries none).
-            'socialMeta' => $isPreview ? null : $this->social->build((string) ($meta['name'] ?? ''), $data['canonicalUrl'] ?? null, (array) ($data['sections'] ?? []), $assets, $theme),
+            // A blog page brings its own (og:type article, published/modified times, featured image).
+            'socialMeta' => array_key_exists('socialMetaOverride', $data) ? $data['socialMetaOverride'] : ($isPreview ? null : $this->social->build((string) ($meta['name'] ?? ''), $data['canonicalUrl'] ?? null, (array) ($data['sections'] ?? []), $assets, $theme)),
         ]);
     }
 
