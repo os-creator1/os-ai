@@ -47,6 +47,11 @@ class SeoRankCheckPlanner
             return [];
         }
 
+        // A suspended, inactive, draft or locked Business is skipped before anything is reserved.
+        if (! $this->budget->businessMaySpend($business)) {
+            return [];
+        }
+
         $plan = $this->entitlement->planFor($business, $now);
 
         if ($plan === null) {

@@ -124,6 +124,9 @@
             </x-card>
         </div>
     </div>
+    @if(! empty($summary['basis']))
+        <p class="text-caption mb-2" data-role="summary-basis">Based on {{ $summary['basis']['fresh'] }} of {{ $summary['basis']['checked'] }} {{ $summary['basis']['checked'] === 1 ? 'keyword' : 'keywords' }} checked recently. Older results are shown on their rows but are not counted in these figures.</p>
+    @endif
     @endif
 
     @can('manage_seo')
@@ -308,7 +311,8 @@
                                     @can('manage_seo')
                                         <div class="d-flex flex-wrap gap-50 align-items-start">
                                             {{-- Starting, resuming and stopping paid rank checks is closed while viewing as a client. --}}
-                                            @if($rankPlan !== null && ! $viewingAsClient && $locationOpen)
+                                            {{-- A keyword on an archived Location can still be STOPPED (it cannot be started, resumed or edited). --}}
+                                            @if($rankPlan !== null && ! $viewingAsClient && ($locationOpen || ! in_array($state, [SeoRankDashboardReader::STATE_UNTRACKED, SeoRankDashboardReader::STATE_PAUSED], true)))
                                                 @if($state === SeoRankDashboardReader::STATE_UNTRACKED && ! $slotsFull)
                                                     <details>
                                                         <summary class="btn btn-sm btn-outline-primary" data-role="rank-start">Start tracking</summary>

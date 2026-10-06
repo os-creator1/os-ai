@@ -180,6 +180,46 @@ class SeoRankTargetManager
         });
     }
 
+    /**
+     * Stops EVERY tracking target of one keyword, freeing their slots and keeping
+     * their history. Used when the keyword is archived or reactivated, so a keyword
+     * coming back from the archive never silently resumes paid checks (it must be
+     * started again on purpose). Returns how many targets it stopped.
+     */
+    public function stopForKeyword(int $actorUserId, Business $business, SeoKeyword $keyword): int
+    {
+        return DB::transaction(function () use ($actorUserId, $business, $keyword) {
+            $locked = $this->lockAuthorizedBusiness($actorUserId, $business);
+            $now = CarbonImmutable::now('UTC');
+            $stopped = 0;
+
+            $targets = SeoRankTarget::query()
+                ->where('business_id', $locked->id)
+                ->where('seo_keyword_id', $keyword->id)
+                ->where('tracking_state', SeoRankTrackingState::Tracking->value)
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($targets as $target) {
+                $target->forceFill([
+                    'tracking_state' => SeoRankTrackingState::Stopped->value,
+                    'stopped_at' => $now,
+                    'next_check_at' => null,
+                    'updated_by_user_id' => $actorUserId,
+                ])->save();
+                $stopped++;
+            }
+
+            return $stopped;
+        });
+    }
+
+    /** Whether the keyword has ever been rank tracked (a target exists, tracking or stopped). */
+    public function hasHistory(SeoKeyword $keyword): bool
+    {
+        return SeoRankTarget::query()->where('seo_keyword_id', $keyword->id)->exists();
+    }
+
     /** A target by uid, resolved inside the Business and behind its keyword's Location ACL. */
     public function findAccessible(int $actorUserId, Business $business, string $targetUid): ?SeoRankTarget
     {

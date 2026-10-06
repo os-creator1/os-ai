@@ -204,7 +204,13 @@ final class SeoRankDashboardReader
      */
     private function summary(Business $business, array $rows, ?SeoRankPlan $plan): array
     {
-        $tracked = array_filter($rows, fn ($r) => $r['target'] !== null && $r['target']->tracking_state === SeoRankTrackingState::Tracking);
+        $trackedAll = array_filter($rows, fn ($r) => $r['target'] !== null && $r['target']->tracking_state === SeoRankTrackingState::Tracking);
+        $hasResult = fn ($r) => ($r['organic'] ?? null) !== null || ($r['local'] ?? null) !== null;
+        // The cards describe how the Business is doing NOW: a position older than the freshness
+        // window is still shown on its row (labelled), but is not averaged in as if it were current.
+        $tracked = array_filter($trackedAll, fn ($r) => ($r['stale_days'] ?? null) === null);
+        $checked = count(array_filter($trackedAll, $hasResult));
+        $fresh = count(array_filter($tracked, $hasResult));
         $organic = array_filter(array_map(fn ($r) => $r['organic'] ?? null, $tracked));
         $local = array_filter(array_map(fn ($r) => $r['local'] ?? null, $tracked));
         $foundOrganic = array_filter($organic, fn (SeoRankObservation $o) => $o->isFound());
@@ -218,6 +224,8 @@ final class SeoRankDashboardReader
             'top10' => $organic === [] ? null : count(array_filter($foundOrganic, fn ($o) => $o->position <= 10)),
             'improved' => $organic === [] ? null : count(array_filter($tracked, fn ($r) => ($r['change']['kind'] ?? null) === SeoRankHistoryReader::CHANGE_UP)),
             'local_top3' => $local === [] ? null : count(array_filter($foundLocal, fn ($o) => $o->position <= 3)),
+            // "Based on N of M keywords checked recently", only when some results are stale.
+            'basis' => $fresh < $checked ? ['fresh' => $fresh, 'checked' => $checked] : null,
         ];
     }
 }

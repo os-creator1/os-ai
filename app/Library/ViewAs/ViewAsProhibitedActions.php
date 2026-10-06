@@ -75,6 +75,9 @@ final class ViewAsProhibitedActions
         'customer.contact.delete-contact-field',
         'customer.workspaces.businesses.contact.delete-contact-field',
         'user.account.delete',
+        // bringing an archived SEO keyword back can put a rank-tracked keyword (and so the client's paid
+        // checks and slots) back in play; treated as spend-class like the rank routes below
+        'customer.workspaces.businesses.seo.keywords.reactivate',
         // spending the viewed client's AI allowance (AI-3, contract §15.5)
         'customer.workspaces.businesses.performance.explain',
         // funding the actor's own account

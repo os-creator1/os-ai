@@ -10,6 +10,7 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\SeoKeyword;
+use App\Models\SeoRankTarget;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -177,6 +178,16 @@ final class SeoKeywordManager
                 && $current->phrase_normalized === $normalized
                 && $currentLocationId === $newLocationId) {
                 return $current;
+            }
+
+            // A rank position belongs to the exact words it was checked for. Re-wording a
+            // keyword that has rank history would show the OLD phrase's position (and a
+            // false change) under the new words, so that is refused: archive it and add
+            // the new wording as a new keyword. A change of scope or of letter case
+            // (same normalized phrase) is fine.
+            if ($current->phrase_normalized !== $normalized
+                && SeoRankTarget::query()->where('seo_keyword_id', $current->id)->exists()) {
+                throw SeoKeywordException::rankTracked();
             }
 
             $current->fill([

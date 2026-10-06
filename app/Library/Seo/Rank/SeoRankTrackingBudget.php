@@ -2,10 +2,12 @@
 
 namespace App\Library\Seo\Rank;
 
+use App\Enums\Business\BusinessStatus;
 use App\Enums\Seo\SeoRankCheckType;
 use App\Enums\Seo\SeoRankRunState;
 use App\Enums\Seo\SeoRankTrackingState;
 use App\Enums\Seo\SeoRankTrigger;
+use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Seo\Rank\Provider\DataForSeoRankProvider;
 use App\Library\Seo\Rank\Provider\SeoRankProvider;
 use App\Library\Seo\SeoConfig;
@@ -50,6 +52,7 @@ class SeoRankTrackingBudget
         private readonly SeoConfig $config,
         private readonly SeoRankEntitlement $entitlement,
         private readonly SeoRankProvider $provider,
+        private readonly CustomerAccountAccessResolver $access,
     ) {
     }
 
@@ -144,11 +147,16 @@ class SeoRankTrackingBudget
             }
         }
 
+        // A Business that is switched off buys nothing, whoever asks and whenever the job was queued.
+        if (! $this->businessMaySpend($business)) {
+            return SeoRankBudgetDecision::refused(SeoRankBudgetDecision::TARGET_INACTIVE);
+        }
+
         $fresh = SeoRankTarget::query()
             ->whereKey($target->id)
             ->where('business_id', $business->id)
             ->where('tracking_state', SeoRankTrackingState::Tracking->value)
-            ->whereHas('keyword', fn ($q) => $q->active())
+            ->whereHas('keyword', fn ($q) => $q->operational())
             ->first();
 
         if ($fresh === null) {
@@ -296,13 +304,34 @@ class SeoRankTrackingBudget
         return in_array($target->id, $allowedIds, true);
     }
 
-    /** Slots in use: tracking targets whose keyword is still active. */
+    /** Slots in use: tracking targets whose keyword is still active and not on an archived Location. */
     public function trackedTargetsQuery(Business $business)
     {
         return SeoRankTarget::query()
             ->where('business_id', $business->id)
             ->where('tracking_state', SeoRankTrackingState::Tracking->value)
-            ->whereHas('keyword', fn ($q) => $q->active());
+            ->whereHas('keyword', fn ($q) => $q->operational());
+    }
+
+    /**
+     * May this Business have paid checks bought for it at all? The system-side
+     * twin of the user-facing authority check in SeoRankTargetManager: the
+     * Business must be Active, its Workspace active, and the account not locked
+     * (CustomerAccountAccessResolver, the one authority for that). Read-only.
+     */
+    public function businessMaySpend(Business $business): bool
+    {
+        if ($business->status !== BusinessStatus::Active) {
+            return false;
+        }
+
+        $workspace = $business->workspace;
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return false;
+        }
+
+        return ! $this->access->resolve($workspace)->isLocked();
     }
 
     /**
