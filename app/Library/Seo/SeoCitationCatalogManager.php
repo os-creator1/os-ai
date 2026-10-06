@@ -141,7 +141,7 @@ final class SeoCitationCatalogManager
      * @throws AuthorizationException
      * @throws SeoCitationCatalogException
      */
-    public function syncRecommendation(int $actorUserId, string $nicheKey, string $directoryUid, ?string $importance, ?string $guidance, ?array $previouslyDeclared = null): SeoNicheCitationRecommendation
+    public function syncRecommendation(int $actorUserId, string $nicheKey, string $directoryUid, ?string $importance, ?string $guidance, ?array $previouslyDeclared = null): ?SeoNicheCitationRecommendation
     {
         $this->assertPlatformAdministrator($actorUserId);
         $this->assertNiche($nicheKey);
@@ -154,7 +154,9 @@ final class SeoCitationCatalogManager
             ->first();
 
         if ($row === null) {
-            return $this->recommend($actorUserId, $nicheKey, $directoryUid, $importance, $guidance);
+            // The previous version already listed it and the row is gone: the Platform Owner removed it on
+            // purpose, and a republish must not bring it back. Only a directory new to the list is created.
+            return $previouslyDeclared !== null ? null : $this->recommend($actorUserId, $nicheKey, $directoryUid, $importance, $guidance);
         }
 
         if ($previouslyDeclared === null

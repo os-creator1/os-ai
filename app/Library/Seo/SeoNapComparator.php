@@ -88,7 +88,11 @@ final class SeoNapComparator
         'north' => 'n', 'south' => 's', 'east' => 'e', 'west' => 'w',
         'northeast' => 'ne', 'northwest' => 'nw', 'southeast' => 'se', 'southwest' => 'sw',
         'suite' => 'unit', 'ste' => 'unit', 'apartment' => 'unit', 'apt' => 'unit', 'room' => 'unit', 'rm' => 'unit',
+        'shop' => 'unit', 'flat' => 'unit', 'level' => 'unit', 'lot' => 'unit',
     ];
+
+    /** Words that introduce a sub-unit number ("Shop 3", "Level 2"): the number after one is never the house number. */
+    private const UNIT_WORDS = ['unit', 'fl', 'bldg'];
 
     /** US states, DC and Canadian provinces: full name => postal abbreviation (a name that contains another comes first). */
     private const REGIONS = [
@@ -166,7 +170,7 @@ final class SeoNapComparator
         $addressCountry = $location ?? $business;
 
         return [
-            'name' => $this->field($canonical['name'] ?? null, $listed['name'] ?? null, self::normalizeText(...)),
+            'name' => $this->field($canonical['name'] ?? null, $listed['name'] ?? null, self::normalizeName(...)),
             'phone' => $comparePhone
                 ? $this->phoneField($canonical['phone'] ?? null, $listed['phone'] ?? null, self::CALLING_CODES[$phoneCountry ?? ''] ?? null)
                 : SeoNapFieldResult::NotComparable,
@@ -189,13 +193,28 @@ final class SeoNapComparator
             return SeoNapFieldResult::NotComparable;
         }
 
-        return $canonicalNormalized === $listedNormalized ? SeoNapFieldResult::Consistent : SeoNapFieldResult::Mismatch;
+        if ($canonicalNormalized === $listedNormalized) {
+            return SeoNapFieldResult::Consistent;
+        }
+
+        // The same site with another path is often a landing page for the Location, not a
+        // different business: unable to verify. Only another host is a definite difference.
+        return self::websiteHost($canonicalNormalized) === self::websiteHost($listedNormalized)
+            ? SeoNapFieldResult::NotComparable
+            : SeoNapFieldResult::Mismatch;
+    }
+
+    private static function websiteHost(string $normalized): string
+    {
+        return explode('/', $normalized, 2)[0];
     }
 
     /**
-     * Scheme (http/https), a leading "www.", host case, a trailing slash and
-     * any #fragment are not differences; the path and query are. No fuzzy
-     * matching: https://a.com/x and https://a.com/y differ.
+     * Scheme (http/https), a leading "www.", host case, a trailing slash, the
+     * query string (tracking parameters such as ?utm_source=gbp) and any
+     * #fragment are not differences; the host is. The path is kept so the
+     * caller can tell "same site, another page" (unable to verify) from "another
+     * site" (a mismatch). No fuzzy matching of hosts.
      */
     public static function normalizeWebsite(?string $value): ?string
     {
@@ -229,9 +248,8 @@ final class SeoNapComparator
         }
         $port = isset($parts['port']) && ! in_array((int) $parts['port'], [80, 443], true) ? ':' . $parts['port'] : '';
         $path = rtrim((string) ($parts['path'] ?? ''), '/');
-        $query = isset($parts['query']) && $parts['query'] !== '' ? '?' . $parts['query'] : '';
 
-        return $host . $port . $path . $query;
+        return $host . $port . $path;
     }
 
     public static function normalizeText(?string $value): ?string
@@ -255,6 +273,34 @@ final class SeoNapComparator
         }
 
         return mb_strtolower($collapsed);
+    }
+
+    /** Trailing legal-form words that are not part of what a customer calls the business. */
+    private const LEGAL_SUFFIXES = ['llc', 'inc', 'incorporated', 'ltd', 'limited', 'co', 'company', 'corp', 'corporation', 'llp', 'pty', 'plc'];
+
+    /**
+     * A business NAME as a person would recognise it: apostrophes and curly
+     * quotes, "&" / "and" / "&amp;", repeated punctuation and a trailing legal
+     * suffix ("LLC", "Inc.", ", Ltd") are not differences. A genuinely different
+     * name still differs. (normalizeText() stays the GBP-conformant primitive.)
+     */
+    public static function normalizeName(?string $value): ?string
+    {
+        $text = self::normalizeText($value === null ? null : html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+        if ($text === null) {
+            return null;
+        }
+
+        $text = str_replace(['&'], [' and '], $text);
+        $text = (string) preg_replace('/[\'’‘`´]+/u', '', $text);
+        $words = preg_split('/[^\p{L}\p{N}]+/u', $text, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        while (count($words) > 1 && in_array(end($words), self::LEGAL_SUFFIXES, true)) {
+            array_pop($words);
+        }
+
+        return $words === [] ? $text : implode(' ', $words);
     }
 
     public static function normalizePhone(?string $value): ?string
@@ -325,6 +371,12 @@ final class SeoNapComparator
             return SeoNapFieldResult::Mismatch;
         }
 
+        // No known calling code: a "+" form beside a national form, or a national
+        // trunk 0, cannot be read either way — unable to verify, not different.
+        if ($a['scope'] === 'unknown' && (($a['plus'] ?? false) !== ($b['plus'] ?? false) || ($a['trunk'] ?? false) || ($b['trunk'] ?? false))) {
+            return SeoNapFieldResult::NotComparable;
+        }
+
         // One a tail of the other (a "+" form beside a bare form with no known
         // country, or a number listed without its area code) may be the same
         // number written differently: unable to verify, not different.
@@ -334,7 +386,7 @@ final class SeoNapComparator
     }
 
     /**
-     * @return array{digits: string, scope: string}|null  scope: `national` (the Business country, calling code
+     * @return array{digits: string, scope: string, plus?: bool, trunk?: bool}|null  scope: `national` (the Business country, calling code
      *         removed), `foreign` (an international number of another country, calling code kept) or `unknown`
      *         (no country to read it against)
      */
@@ -360,7 +412,7 @@ final class SeoNapComparator
         }
 
         if ($callingCode === null) {
-            return ['digits' => $digits, 'scope' => 'unknown'];
+            return ['digits' => $digits, 'scope' => 'unknown', 'plus' => $international, 'trunk' => str_starts_with($digits, '0') && ! $international];
         }
 
         if ($international) {
@@ -419,7 +471,8 @@ final class SeoNapComparator
         }
 
         // Differences that cannot be formatting.
-        if ($a['house'] !== null && $b['house'] !== null && $a['house'] !== $b['house']) {
+        if ($a['house'] !== null && $b['house'] !== null && $a['house'] !== $b['house']
+            && ! in_array($a['house'], $b['numbers'], true) && ! in_array($b['house'], $a['numbers'], true)) {
             return SeoNapFieldResult::Mismatch;
         }
 
@@ -433,7 +486,7 @@ final class SeoNapComparator
     }
 
     /**
-     * @return array{tokens: array<int, string>, house: ?string, postal: ?string}|null
+     * @return array{tokens: array<int, string>, house: ?string, numbers: array<int, string>, postal: ?string}|null
      */
     private static function addressParts(?string $value, ?string $country): ?array
     {
@@ -444,6 +497,8 @@ final class SeoNapComparator
         }
 
         $text = str_replace(['&', '#'], [' and ', ' unit '], $text);
+        // "3/123 Smith St" and "Shop 3/123 Smith St": the number before a slash is a unit, not the house.
+        $text = (string) preg_replace('/\b(\d+[a-z]?)\s*\/\s*(\d+[a-z]?)\b/', ' unit $1 $2', $text);
         // "60601-1234" is the same postal code as "60601"; "M5V 2T6" as "M5V2T6".
         $text = (string) preg_replace('/\b(\d{5})\s*-\s*\d{4}\b/', '$1', $text);
         $text = (string) preg_replace('/\b([a-z]\d[a-z])\s*(\d[a-z]\d)\b/', '$1$2', $text);
@@ -469,12 +524,17 @@ final class SeoNapComparator
 
         $postal = null;
         $house = null;
+        $numbers = [];
         $isHouseNumber = static fn (string $word): bool => preg_match('/\A\d+[a-z]?\z/', $word) === 1;
 
         foreach ($words as $index => $word) {
-            if ($house === null && $isHouseNumber($word) && ($words[$index - 1] ?? null) !== 'unit') {
-                $house = $word;
+            // A number straight after a sub-unit word ("shop 3", "level 2", "flat 2") is the unit.
+            if (! $isHouseNumber($word) || in_array($words[$index - 1] ?? null, self::UNIT_WORDS, true)) {
+                continue;
             }
+
+            $numbers[] = $word;
+            $house ??= $word;
         }
 
         foreach ($words as $index => $word) {
@@ -494,7 +554,9 @@ final class SeoNapComparator
             $house = null;
         }
 
-        return ['tokens' => array_values(array_unique($words)), 'house' => $house, 'postal' => $postal];
+        $numbers = array_values(array_diff(array_unique($numbers), [$postal]));
+
+        return ['tokens' => array_values(array_unique($words)), 'house' => $house, 'numbers' => $numbers, 'postal' => $postal];
     }
 
     private static function countryCode(?string $value): ?string
