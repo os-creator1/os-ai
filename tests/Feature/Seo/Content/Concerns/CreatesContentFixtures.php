@@ -46,6 +46,8 @@ trait CreatesContentFixtures
 
     public const DOMAIN = 'jazminphotobooth.test';
 
+    protected int $contentTenantCount = 0;
+
     protected function manager(): ArticleManager
     {
         return app(ArticleManager::class);
@@ -54,8 +56,26 @@ trait CreatesContentFixtures
     /**
      * @return array{0: Customer, 1: Business, 2: Workspace, 3: Website}
      */
-    protected function photoBoothContentTenant(WorkspacePlanTier $tier = WorkspacePlanTier::Growth, string $templateKey = 'photo_booth_modern', bool $withDomain = true): array
+    protected function seedPhotoBoothBlueprintForContent(): void
     {
+        $this->ensureRequiredAppConfigRowsExist();
+        $adminId = $this->platformAdminId();
+        \App\Models\User::query()->whereKey($adminId)->update(['is_admin' => true]);
+
+        (new \Database\Seeders\WebsiteTemplateSeeder())->run();
+
+        $this->artisan('blueprint:seed-photo-booth', ['--actor' => $adminId])->assertExitCode(0);
+        $this->assertSame(0, \Illuminate\Support\Facades\Artisan::call('documents:seed-photo-booth-templates', ['--actor' => $adminId]));
+        $this->artisan('blueprint:seed-photo-booth-v2', ['--actor' => $adminId])->assertExitCode(0);
+    }
+
+    protected function photoBoothContentTenant(WorkspacePlanTier $tier = WorkspacePlanTier::Growth, string $templateKey = 'photo_booth_modern', bool $withDomain = true, bool $withBlueprint = false): array
+    {
+        if ($withBlueprint) {
+            // Seeded BEFORE the Business exists: the Blueprint installs when the Business gets its first plan.
+            $this->seedPhotoBoothBlueprintForContent();
+        }
+
         [$customer, $business, $workspace] = $this->entitledTenant($tier);
 
         DB::table('businesses')->where('id', $business->id)->update([
@@ -81,8 +101,10 @@ trait CreatesContentFixtures
         $website->update(['template_key' => $templateKey, 'name' => 'Jazmin Photo Booth Co.']);
 
         if ($withDomain) {
+            // A domain is globally unique: the first tenant of a test gets the named one, any further tenant a prefixed one.
+            $domain = $this->contentTenantCount++ === 0 ? self::DOMAIN : 'tenant' . $this->contentTenantCount . '.' . self::DOMAIN;
             $website->domains()->create([
-                'domain' => self::DOMAIN, 'is_primary' => true, 'status' => WebsiteDomainStatus::Active,
+                'domain' => $domain, 'is_primary' => true, 'status' => WebsiteDomainStatus::Active,
                 'verification_token' => 'content-fixture', 'verified_at' => now(), 'activated_at' => now(),
             ]);
         }

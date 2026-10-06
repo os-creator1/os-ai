@@ -70,6 +70,10 @@ final class GrowthRuleRegistry
             new WebsitePackageOutOfSyncRule(),
             SeoRules::technical(),
             new SeoRules(),
+            \App\Library\Growth\Rules\ContentRules::topicsNotCovered(),
+            \App\Library\Growth\Rules\ContentRules::nearPageOne(),
+            \App\Library\Growth\Rules\ContentRules::rankDeclined(),
+            \App\Library\Growth\Rules\ContentRules::stale(),
             new CitationRules(),
             CitationRules::notChecked(),
             // Reviews

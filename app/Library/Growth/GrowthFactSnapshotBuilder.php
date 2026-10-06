@@ -48,13 +48,14 @@ class GrowthFactSnapshotBuilder
         GrowthBookingFactReader $booking,
         GrowthWebsiteFactReader $website,
         GrowthSeoFactReader $seo,
+        \App\Library\Growth\Readers\GrowthContentFactReader $content,
         GrowthReputationFactReader $reviews,
         GrowthCitationFactReader $citations,
         GrowthDocumentFactReader $documents,
         GrowthAutomationFactReader $automations,
     ) {
         $this->readers = [
-            $crm, $conversations, $booking, $website, $seo, $reviews, $citations, $documents, $automations,
+            $crm, $conversations, $booking, $website, $seo, $content, $reviews, $citations, $documents, $automations,
             // Modules not on main: reported Unavailable, never zero.
             new GrowthUnavailableFactReader('ads'),
             new GrowthUnavailableFactReader('rank'),

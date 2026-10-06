@@ -26,6 +26,16 @@ final class SeoPublishedPage
     ) {
     }
 
+    /**
+     * The page's snapshot sections, read-only (SEO Content Engine: FAQ and summary grounding for AI drafts).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function sections(): array
+    {
+        return $this->sections;
+    }
+
     public function hasSeoTitle(): bool
     {
         return $this->seoTitle !== null && trim($this->seoTitle) !== '';

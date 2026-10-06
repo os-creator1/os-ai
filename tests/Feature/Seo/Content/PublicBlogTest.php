@@ -345,6 +345,7 @@ class PublicBlogTest extends TestCase
 
             // The next loop iteration creates a fresh Business, so clear the shared host mapping.
             \App\Models\WebsiteDomain::query()->delete();
+            $this->contentTenantCount = 0;
             app('cache')->flush();
         }
     }

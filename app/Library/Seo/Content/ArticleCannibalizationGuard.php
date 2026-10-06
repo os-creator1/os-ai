@@ -35,7 +35,7 @@ final class ArticleCannibalizationGuard
     /**
      * @param  array<int, string>  $phrases  the topic phrases to test (e.g. title and primary topic)
      */
-    public function check(Business $business, array $phrases, ?int $ignoreArticleId = null): CannibalizationResult
+    public function check(Business $business, array $phrases, ?int $ignoreArticleId = null, ?array $pages = null): CannibalizationResult
     {
         $candidates = [];
 
@@ -53,7 +53,7 @@ final class ArticleCannibalizationGuard
 
         $findings = [];
 
-        foreach ($this->inventory->pages($business) as $page) {
+        foreach ($pages ?? $this->inventory->pages($business) as $page) {
             if (! $page['money']) {
                 continue;
             }
