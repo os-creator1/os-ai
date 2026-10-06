@@ -60,6 +60,13 @@ class WebsiteController extends Controller
 
             abort_unless($target !== null, 404);
 
+            // With an Active domain the final address is on that domain: one hop, not two.
+            $domain = $website->activePrimaryDomain();
+
+            if ($domain !== null) {
+                return redirect()->away('https://'.$domain->domain.($target === '' ? '/' : '/'.$target), 301);
+            }
+
             return redirect()->to($this->addressOf($website, $target === '' ? null : $target), 301);
         }
 

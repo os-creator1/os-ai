@@ -404,4 +404,16 @@ class WebsiteSeoV1FinalTest extends TestCase
         $home = $this->get('http://faq-schema.test/')->assertOk()->getContent();
         $this->assertStringNotContainsString('FAQPage', $home, 'FAQPage is never emitted site-wide.');
     }
+    public function test_a_renamed_page_on_the_platform_path_of_a_site_with_a_domain_redirects_once(): void
+    {
+        $website = $this->liveSite('one-hop.test');
+        $about = $website->pages()->where('slug', 'about')->first();
+        app(WebsiteDraftPageService::class)->updatePage($website, $about, ['title' => 'About us', 'slug' => 'about-us', 'is_home' => false]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        // One hop straight to the canonical address, not platform-old -> platform-new -> domain.
+        $this->get('http://localhost/sites/'.$website->public_id.'/about')
+            ->assertStatus(301)
+            ->assertRedirect('https://one-hop.test/about-us');
+    }
 }

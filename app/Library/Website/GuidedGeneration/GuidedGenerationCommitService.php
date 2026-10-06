@@ -254,13 +254,68 @@ final class GuidedGenerationCommitService
                     }
                 }
 
-                $sections[] = $section;
+                $sections[] = $this->withoutInventedLinks($section, $business);
             }
 
             $pages[$pageIndex]['sections'] = $sections;
         }
 
         return $pages;
+    }
+
+    /**
+     * A button the AI wrote may only lead somewhere the business really is: a page of this site ("/slug"),
+     * its own phone (tel:), its own email (mailto:) or its own website's host. An invented domain or phone
+     * number would break the site's NAP coherence, so such a button is dropped (the site CTA takes over).
+     *
+     * @param  array<string, mixed>  $section
+     * @return array<string, mixed>
+     */
+    private function withoutInventedLinks(array $section, Business $business): array
+    {
+        $data = (array) ($section['data'] ?? []);
+
+        foreach (['primary_cta', 'secondary_cta'] as $key) {
+            if (isset($data[$key]) && is_array($data[$key]) && ! $this->linkIsReal((string) ($data[$key]['url'] ?? ''), $business)) {
+                unset($data[$key]);
+            }
+        }
+
+        if (isset($data['buttons']) && is_array($data['buttons'])) {
+            $data['buttons'] = array_values(array_filter($data['buttons'], fn ($button) => is_array($button) && $this->linkIsReal((string) ($button['url'] ?? ''), $business)));
+        }
+
+        $section['data'] = $data;
+
+        return $section;
+    }
+
+    private function linkIsReal(string $url, Business $business): bool
+    {
+        $url = trim($url);
+
+        if ($url === '' || $url === '#') {
+            return false;
+        }
+
+        if (str_starts_with($url, '/')) {
+            return ! str_starts_with($url, '//');
+        }
+
+        $digits = fn (?string $value) => substr((string) preg_replace('/\D+/', '', (string) $value), -10);
+
+        if (stripos($url, 'tel:') === 0) {
+            return $digits($business->phone) !== '' && $digits(substr($url, 4)) === $digits($business->phone);
+        }
+
+        if (stripos($url, 'mailto:') === 0) {
+            return trim((string) $business->email) !== '' && strcasecmp(trim(substr($url, 7)), trim((string) $business->email)) === 0;
+        }
+
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        $own = strtolower((string) parse_url((string) $business->website_url, PHP_URL_HOST));
+
+        return $host !== '' && $own !== '' && preg_replace('/^www\./', '', $host) === preg_replace('/^www\./', '', $own);
     }
 
     private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt

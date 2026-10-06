@@ -443,7 +443,7 @@ final class WebsitePageStrategy
                 $plan[] = ['page_key' => 'faq', 'page_type' => 'faq', 'is_home' => false, 'slug' => 'photo-booth-faq', 'title' => 'FAQ', 'allowed_section_types' => $allowed('faq'), 'entity' => null];
                 $decide('faq', 'FAQ', 'faq', true, 'Common questions, answered for your niche.');
             } else {
-                $decide('faq', 'FAQ', 'faq', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Your questions still appear on the Home page.');
+                $decide('faq', 'FAQ', 'faq', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full, so your own FAQ answers are not shown anywhere on the site. Free a page (for example a lower-priority service or area) to include them.');
             }
         }
 
@@ -761,10 +761,12 @@ final class WebsitePageStrategy
     private function locationSignalScore($location): int
     {
         $score = 0;
+        $distinctContent = false;
 
         $cities = collect($location->service_area_cities ?? [])->filter();
         if ($cities->isNotEmpty() || (bool) $location->service_radius_km) {
             $score++;
+            $distinctContent = true;
         }
 
         if ((bool) $location->public_address && trim((string) $location->address_line_1) !== '') {
@@ -779,8 +781,12 @@ final class WebsitePageStrategy
 
         if (CatalogItemLocationOverride::where('business_location_id', $location->id)->exists()) {
             $score++;
+            $distinctContent = true;
         }
 
-        return $score;
+        // A location page must have something of its own to SAY on the page: its service cities/radius or
+        // its own offers. A street address and verified hours are real facts but the generated page does
+        // not show them, so on their own they would still be "city name + generic services" (a doorway page).
+        return $distinctContent ? $score : min($score, 1);
     }
 }

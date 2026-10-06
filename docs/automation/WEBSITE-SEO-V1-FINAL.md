@@ -30,7 +30,10 @@ conflicts: `AppServiceProvider` keeps both the Blueprint safety mode and `Websit
   page, or a page promoted to homepage, answers a **301** from its old address instead of a 404.
   Chains collapse to the final address; entries whose target no longer exists, or whose source is
   a live page again, are dropped; the map is capped at 200 entries. Pages deleted outright, or
-  recreated by a rebuild (new uid), answer a plain 404.
+  recreated by a rebuild (new uid), answer a plain 404. **Rollback limit:** a rollback serves the
+  older revision's own stored map, so an address created only by a rename made *after* that
+  revision answers 404 until the owner publishes again (and the next publish is computed from the
+  rolled-back revision, so that intermediate address is not re-recorded).
 * A demoted homepage gets a real, valid, unique slug (it used to keep `NULL`, which made every
   platform-path URL throw and put `/` in the sitemap twice). Publishing refuses any non-home page
   without a valid, unique slug.
