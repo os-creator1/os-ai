@@ -134,6 +134,53 @@
             return $locations->count() === 1 ? (int) $locations->first() : null;
         }
 
+        /**
+         * The numbers of this Business's own Contacts whose first or last name
+         * contains EVERY word of $search — so the inbox's search box finds a
+         * conversation by the name it displays, not only by phone number.
+         *
+         * Scoped to the Business (never the customer's other Businesses), the
+         * same tenancy rule displayContactsFor() applies. Display-only: it
+         * selects conversations, it never creates or changes a Contact.
+         *
+         * @return list<string> normalized counterparty numbers, as chat_boxes.to stores them
+         */
+        public static function phonesMatchingName(Business $business, string $search): array
+        {
+            $words = array_slice(preg_split('/\s+/', trim($search), -1, PREG_SPLIT_NO_EMPTY) ?: [], 0, 4);
+
+            if ($words === []) {
+                return [];
+            }
+
+            $query = DB::table('contacts as c')->where('c.business_id', $business->id);
+
+            foreach ($words as $word) {
+                $like = '%' . addcslashes($word, '%_\\') . '%';
+
+                $query->whereExists(static function ($exists) use ($like): void {
+                    $exists->selectRaw('1')
+                        ->from('contacts_custom_field as v')
+                        ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+                        ->whereColumn('v.contact_id', 'c.id')
+                        ->whereIn('f.tag', ['FIRST_NAME', 'LAST_NAME'])
+                        ->where('v.value', 'LIKE', $like);
+                });
+            }
+
+            $phones = [];
+
+            foreach ($query->limit(500)->pluck('c.phone') as $phone) {
+                $normalized = ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $phone);
+
+                if ($normalized !== '') {
+                    $phones[$normalized] = true;
+                }
+            }
+
+            return array_keys($phones);
+        }
+
         public function boxMessages()
         {
             $this->belongsTo(ChatBoxMessage::class, 'box_id', 'id');
