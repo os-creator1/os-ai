@@ -2242,7 +2242,7 @@
                 ]);
             }
 
-            $filepath = $request->filepath;
+            $filepath = $contact->resolveStagedImportFile($request->filepath);
 
             // 🧼 Force BOM cleaning before reading
             StringHelper::checkAndRemoveUTF8BOM($filepath);
@@ -2279,7 +2279,7 @@
                 ]);
             }
 
-            $job = $contact->dispatchImportJob($request->filepath, $request->input('mapping'));
+            $job = $contact->dispatchImportJob($contact->resolveStagedImportFile($request->filepath), $request->input('mapping'));
 
             return response()->json([
                 'status'      => 'success',

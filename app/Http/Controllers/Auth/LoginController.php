@@ -130,6 +130,10 @@
                     ]);
                 }
 
+                // A fresh credential login must always face its own 2FA challenge: never inherit the
+                // "already passed 2FA" flag of whichever account was signed in on this session before.
+                $request->session()->forget('two-factor-login-success');
+
                 if ( ! Auth::user()->status) {
 
                     Auth::logout();

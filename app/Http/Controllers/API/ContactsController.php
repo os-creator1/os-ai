@@ -17,6 +17,7 @@
     class ContactsController extends Controller
     {
         use ApiResponser;
+        use \App\Http\Controllers\API\Concerns\AuthorizesOwnedContactGroup;
 
         /**
          * @var ContactsRepository $contactGroups
@@ -59,6 +60,7 @@
          */
         public function storeContact(ContactGroups $group_id, StoreContact $request): JsonResponse
         {
+            $this->ownedGroupOrAbort($group_id);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -114,6 +116,7 @@
          */
         public function searchContact(ContactGroups $group_id, Contacts $uid): JsonResponse
         {
+            $this->ownedContactOrAbort($group_id, $uid);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -164,6 +167,7 @@
          */
         public function updateContact(ContactGroups $group_id, Contacts $uid, StoreContact $request): JsonResponse
         {
+            $this->ownedGroupOrAbort($group_id);
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -217,6 +221,7 @@
          */
         public function deleteContact(ContactGroups $group_id, Contacts $uid): JsonResponse
         {
+            $this->ownedContactOrAbort($group_id, $uid);
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -252,6 +257,7 @@
          */
         public function allContact(ContactGroups $group_id): JsonResponse
         {
+            $this->ownedGroupOrAbort($group_id);
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -350,6 +356,7 @@
          */
         public function show(ContactGroups $group_id): JsonResponse
         {
+            $this->ownedGroupOrAbort($group_id);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -383,6 +390,7 @@
 
         public function update(ContactGroups $contact, UpdateContactGroup $request): JsonResponse
         {
+            $this->ownedGroupOrAbort($contact);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -410,6 +418,7 @@
          */
         public function destroy(ContactGroups $contact): JsonResponse
         {
+            $this->ownedGroupOrAbort($contact);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([

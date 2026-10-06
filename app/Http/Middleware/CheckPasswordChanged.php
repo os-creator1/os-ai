@@ -16,6 +16,18 @@
             if (Auth::check()) {
                 $user = Auth::user();
 
+                // A user disabled by an admin / agency / parent customer after sign-in must lose the
+                // live session immediately, not only be blocked at the next login.
+                if ($user->status === false || $user->status === 0 || $user->status === '0') {
+                    Auth::logout();
+
+                    $request->session()->invalidate();
+                    $request->session()->regenerateToken();
+
+                    return redirect()->route('login')
+                        ->withErrors(['message' => __('locale.auth.disabled')]);
+                }
+
                 // Ensure the model has 'password_changed_at' in the $casts array as 'datetime'
                 if ($user->password_changed_at) {
                     $sessionTimestamp = session('password_changed_at');
