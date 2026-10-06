@@ -18,7 +18,13 @@
     <x-flash-alert class="mb-3" />
 
     @if ($pages->contains('noindex', true))
-        <x-alert variant="accent" class="mb-3">Starter service and package pages are marked hidden from search. Add your own details and photos to each page before removing that setting. All public websites remain hidden from search until the platform's search launch.</x-alert>
+        <x-alert variant="accent" class="mb-3" data-testid="hidden-from-search">
+            {{ $pages->where('noindex', true)->count() }} of {{ $pages->count() }} pages are hidden from search engines. Generated pages start hidden so you can read them first. When you are happy with them, let search engines find them, then publish. (Search engines only list a website on its own domain; a platform address is never listed.)
+            <form method="POST" action="{{ route('customer.workspaces.businesses.website.pages.allowIndexing', [$workspaceUid, $businessUid]) }}" class="mt-2">
+                @csrf
+                <button type="submit" class="btn btn-primary btn-sm" data-testid="allow-indexing">Let search engines find these pages</button>
+            </form>
+        </x-alert>
     @endif
 
     @if ($isPhotoBooth)

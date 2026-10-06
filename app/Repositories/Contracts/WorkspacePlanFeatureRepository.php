@@ -27,4 +27,13 @@ interface WorkspacePlanFeatureRepository extends BaseRepository
      * foreign key can express "must be a valid enum case" (RFC-004 §10.2).
      */
     public function create(array $attributes): WorkspacePlanFeature;
+
+    /**
+     * Platform Owner V1 final — make the tier's packaged set exactly
+     * $featureKeys (each a valid PlatformFeature value).
+     *
+     * @param  list<string>  $featureKeys
+     * @return array{added: list<string>, removed: list<string>}
+     */
+    public function syncFeatureKeys(WorkspacePlanCatalog $catalog, array $featureKeys): array;
 }

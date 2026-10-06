@@ -22,6 +22,9 @@ enum WebsiteSectionType: string
     case Gallery = 'gallery';
     case Form = 'form';
 
+    /** Website V1 closure — a Forms-module form placed on a page, by the stable uid of its Website-source FormDeployment (see WebsiteFormsModuleReferences). */
+    case FormsModuleForm = 'forms_module_form';
+
     /** Website Builder redesign — built entirely by MediaBindingService from real BusinessBackdropImage rows, never AI-authored (same rule as Gallery/Form). */
     case Backdrops = 'backdrops';
 

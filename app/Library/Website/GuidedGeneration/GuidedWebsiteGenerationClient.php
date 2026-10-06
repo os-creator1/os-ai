@@ -131,6 +131,11 @@ class GuidedWebsiteGenerationClient
             'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
         ];
 
+        // A short, plain About page reads better and converts better than a long story.
+        if (collect($plan)->contains(fn ($page) => ($page['page_type'] ?? null) === 'about')) {
+            array_splice($instructions, -1, 0, ['Keep the About page concise: at most two short paragraphs (about 120 words in total) in the owner\'s own voice, never padded.']);
+        }
+
         // Only when the plan actually contains service-area pages (kept out
         // of every other request so the prompt envelope is unchanged).
         if (collect($plan)->contains(fn ($page) => is_array($page['entity'] ?? null) && isset($page['entity']['area']))) {

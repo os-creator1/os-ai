@@ -305,6 +305,9 @@ class AgencyAccountHomeTest extends TestCase
 
     public function test_an_agency_with_no_client_yet_is_offered_its_first_client_account(): void
     {
+        // The zero-Business call to action points at the account page only while the onboarding wizard is
+        // off; with it on (the V1 default) it points at onboarding instead. This test is about the account-page link.
+        config(['business.onboarding.enabled' => false]);
         $this->ensureRequiredAppConfigRowsExist();
         $this->platformAdminId();
         $agency = $this->createCustomer();

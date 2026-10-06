@@ -70,6 +70,9 @@ final class BusinessImageStore
             throw new InvalidWebsiteAssetException('The image failed integrity verification after storage.');
         }
 
+        // Responsive derivatives next to the original (see ImageVariants); never fails the upload.
+        app(\App\Library\Website\Media\ImageVariants::class)->generate($this->relativePath($business, $filename));
+
         return [
             'disk' => 'public',
             'path' => $this->relativePath($business, $filename),
@@ -132,6 +135,7 @@ final class BusinessImageStore
         }
 
         @unlink(public_path($path));
+        app(\App\Library\Website\Media\ImageVariants::class)->delete($path);
     }
 
     private function relativePath(Business $business, string $filename): string

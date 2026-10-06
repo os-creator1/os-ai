@@ -162,10 +162,27 @@ final class GrowthAdvisor
 
             case 'wasting_money':
                 $money = $this->only($cards, ['sales_pipeline', 'proposals_sales', 'payments']);
+                $ads = array_values(array_filter($this->only($cards, ['ads']), fn ($c) => ! in_array($c['rule_key'] ?? '', ['ads.connection_needed:v1', 'ads.sync_stale:v1'], true)));
+                $adsNotConnected = array_filter($cards, fn ($c) => ($c['rule_key'] ?? '') === 'ads.connection_needed:v1') !== [];
+                $sections = [];
+
+                if ($ads !== []) {
+                    $sections[] = ['title' => 'Ad budget to review', 'items' => array_map(fn ($c) => $this->item($c), array_slice($ads, 0, 5))];
+                }
+
+                if ($money !== []) {
+                    $sections[] = ['title' => 'Money waiting on you', 'items' => array_map(fn ($c) => $this->item($c), array_slice($money, 0, 5))];
+                }
+
+                $adsUnavailable = $adsNotConnected || in_array('Ads', $unavailable, true);
 
                 return $base + [
-                    'lead' => 'Ad spend is not connected to Business OS yet, so I cannot say whether any of it is wasted. The money I can see sitting idle is:',
-                    'sections' => $money === [] ? [] : [['title' => 'Money waiting on you', 'items' => array_map(fn ($c) => $this->item($c), array_slice($money, 0, 5))]],
+                    'lead' => match (true) {
+                        $ads !== [] => 'Here is where ad budget may be going to waste, and the money I can see sitting idle:',
+                        $adsUnavailable => 'Ad spend is not connected to Business OS yet, so I cannot say whether any of it is wasted. The money I can see sitting idle is:',
+                        default => 'I do not see any ad budget problems right now. The money I can see sitting idle is:',
+                    },
+                    'sections' => $sections,
                 ];
 
             case 'five_bookings':

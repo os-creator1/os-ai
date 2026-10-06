@@ -290,7 +290,9 @@ final class GuidedGenerationCommitService
                 }
 
                 $locked->update([
-                    'theme' => $template->theme,
+                    // The template's own tokens, plus the owner's brand colour,
+                    // logo and hero image (never lost to a rebuild).
+                    'theme' => array_merge($template->theme, \App\Library\Website\Design\WebsiteLookService::ownerTokens($locked->theme)),
                     'template_key' => $template->key,
                     // Independent-review correction round 3 (item 11) —
                     // the one place real Website page content actually

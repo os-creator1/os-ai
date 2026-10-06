@@ -33,6 +33,11 @@
                     </div>
                 @endif
 
+                @if (! empty($templateCards))
+                    @include('customer.business.website.wizard.steps._look')
+                    @include('customer.business.website.wizard.steps._plan')
+                @endif
+
                 @forelse ($answerSummary as $heading => $blocks)
                     <div class="card mb-3">
                         <div class="card-body">

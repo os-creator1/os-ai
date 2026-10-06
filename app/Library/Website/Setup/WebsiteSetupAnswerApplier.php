@@ -91,6 +91,13 @@ final class WebsiteSetupAnswerApplier
             $submittedServiceKeys = null;
             $submittedPackageKeys = null;
             $submittedBackdropKeys = null;
+            // A questionnaire may carry more than one `business_service` step
+            // (booth types, then events/services). Positions must CONTINUE
+            // across them: each step restarting at 0 gave two services the
+            // same sort_order, so the page planner's "first N services in the
+            // owner's order" interleaved the steps and could drop a core
+            // service (a 360 or mirror booth) in favour of an event type.
+            $servicePosition = 0;
 
             foreach ($allSteps as $step) {
                 $module = $step['target_module'];
@@ -131,7 +138,7 @@ final class WebsiteSetupAnswerApplier
                     'business' => $this->applyBusinessField($business, $step['target_field'], $value),
                     'business_location' => $this->applyLocationFields($business, $value),
                     'knowledge_profile' => $this->applyKnowledgeProfileField($business, $step['target_field'], $value, $actorUserId),
-                    'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys, $this->applyServices($business, $value)),
+                    'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys, $this->applyServices($business, $value, $servicePosition)),
                     'catalog_item' => ($step['input_type'] ?? null) === 'catalog_selection'
                         ? null
                         : $submittedPackageKeys = array_merge($submittedPackageKeys, $this->applyPackages($business, $value)),
@@ -212,11 +219,12 @@ final class WebsiteSetupAnswerApplier
      * @param  array<int, array{key: string, name: string, description: ?string, starting_price: ?int, currency_code: ?string}>  $items
      * @return array<int, string> the submitted entries' own source keys (nulls excluded), for reconcileRemovedServices()
      */
-    private function applyServices(Business $business, array $items): array
+    private function applyServices(Business $business, array $items, int &$nextPosition = 0): array
     {
         $submittedKeys = [];
 
-        foreach ($items as $position => $item) {
+        foreach (array_values($items) as $index => $item) {
+            $position = $nextPosition + $index;
             $sourceKey = $item['key'] ?? null;
             if ($sourceKey !== null) {
                 $submittedKeys[] = $sourceKey;
@@ -263,6 +271,8 @@ final class WebsiteSetupAnswerApplier
                 $winner->fill($attributes)->save();
             }
         }
+
+        $nextPosition += count($items);
 
         return $submittedKeys;
     }

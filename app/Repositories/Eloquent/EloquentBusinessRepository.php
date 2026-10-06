@@ -81,6 +81,15 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
             ->first();
     }
 
+    public function draftBusinessesForCustomer(int $customerId): Collection
+    {
+        return $this->query()
+            ->where('customer_id', $customerId)
+            ->where('status', BusinessStatus::Draft)
+            ->orderBy('id')
+            ->get();
+    }
+
     public function primaryBusinessesForCustomer(int $customerId): Collection
     {
         return $this->query()

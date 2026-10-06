@@ -903,7 +903,12 @@ class BusinessOnboardingHttpTest extends TestCase
                 // Workspace's own sole Business already meets currentCount >= max —
                 // Contract 13 leaves no sibling Business to add here anymore.
                 $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
-                $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Existing']));
+                $existing = $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Existing']));
+                // An ACTIVE Business is what a capacity denial protects. A
+                // DRAFT one is the signup/provisioned Business, which
+                // onboarding now continues instead of creating another
+                // (V1SignupOnboardingHandoffTest).
+                $businessRepository->updateStatus($existing, \App\Enums\Business\BusinessStatus::Active);
                 break;
             case 'workspace_plan_unassigned':
             default:

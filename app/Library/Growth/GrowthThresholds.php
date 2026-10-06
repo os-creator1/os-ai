@@ -28,6 +28,11 @@ final class GrowthThresholds
         'dismiss_cooldown_days' => [30, 1, 365],
         'min_sample' => [8, 1, 1000],
         'automation_failure_min' => [3, 1, 100],
+        'ads_settling_days' => [7, 0, 60],
+        'rank_drop_positions' => [5, 1, 50],
+        'rank_gain_positions' => [3, 1, 50],
+        'rank_stale_days' => [14, 1, 90],
+        'forms_quiet_days' => [14, 1, 180],
     ];
 
     public function get(string $key): int

@@ -31,47 +31,46 @@ class PlatformOwnerShellNavigationTest extends TestCase
         'Home' => 'platform-owner',
         'Workspaces' => 'workspaces',
         'Businesses' => 'businesses',
+        'Users' => 'platform-users',
+        'Support' => 'platform-support',
         'Opportunities' => 'opportunities',
-        'Platform Automations' => 'platform-automations',
-        'Announcements' => 'platform-announcements',
-        'Customers' => 'customers',
-        'Subscriptions' => 'subscriptions',
-        'Niche Blueprints' => 'niche-blueprints',
-        'Template Library' => 'template-library',
-        'Messaging Dashboard' => 'dashboard',
-        'Sending Servers' => 'sending-servers',
-        'Messaging Provisioning Incidents' => 'messaging-provisioning-incidents',
-        'Messaging Port-Out Requests' => 'messaging-port-out-requests',
-        'Messaging Number Lifecycle' => 'messaging-number-lifecycle',
+        'Plans' => 'platform-plans',
         'Billing & Revenue' => 'platform-billing',
-        'Plan Catalog' => 'workspace-plan-catalog',
-        'Plans' => 'plans',
-        'Invoices' => 'invoices',
         'Safety Limits' => 'usage-billing/safety-limits',
         'AI Usage' => 'ai-usage',
         'Provider Events' => 'provider-events',
-        'Additional Slot Agreements' => 'additional-business-slot-agreements',
+        'Niche Blueprints' => 'niche-blueprints',
+        'Website Templates' => 'template-library',
+        'Proposal Templates' => 'document-templates',
+        'Feature Management' => 'platform-features',
+        'Announcements' => 'platform-announcements',
+        'Platform Automations' => 'platform-automations',
         'Audit Logs' => 'platform-owner/audit',
+        'Administrators' => 'administrators',
+        'Roles' => 'roles',
         'Platform Settings' => 'settings',
+        'Provisioning Incidents' => 'messaging-provisioning-incidents',
+        'Port-Out Requests' => 'messaging-port-out-requests',
+        'Number Lifecycle' => 'messaging-number-lifecycle',
+        'Legacy Slot Agreements' => 'additional-business-slot-agreements',
+        'Messaging Dashboard' => 'dashboard',
+        'Sending Servers' => 'sending-servers',
     ];
 
     /** The Platform Owner product surfaces: each must render, not merely exist. */
     private const OWNER_SURFACES = [
-        'Home', 'Workspaces', 'Businesses', 'Opportunities', 'Niche Blueprints', 'Template Library',
-        'Messaging Provisioning Incidents', 'Messaging Port-Out Requests', 'Messaging Number Lifecycle',
-        'Billing & Revenue', 'Plan Catalog', 'Safety Limits', 'AI Usage', 'Provider Events',
-        'Additional Slot Agreements', 'Audit Logs',
+        'Home', 'Workspaces', 'Businesses', 'Users', 'Support', 'Opportunities', 'Plans', 'Billing & Revenue',
+        'Safety Limits', 'AI Usage', 'Provider Events', 'Niche Blueprints', 'Website Templates', 'Proposal Templates',
+        'Feature Management', 'Announcements', 'Audit Logs', 'Administrators', 'Roles',
+        'Provisioning Incidents', 'Port-Out Requests', 'Number Lifecycle', 'Legacy Slot Agreements',
     ];
-
     private const OWNER_HEADERS = [
         'Accounts & Operations',
-        'Product & Configuration',
-        'Messaging & Infrastructure',
         'Commercial',
+        'Product & Configuration',
         'Governance',
-        'System',
+        'System / Advanced',
     ];
-
     /** Every permission string the owner menu can ask for. */
     private const ALL_OWNER_PERMISSIONS = [
         'access backend', 'view workspace', 'view business', 'edit business', 'view workspace plans',
@@ -174,10 +173,10 @@ class PlatformOwnerShellNavigationTest extends TestCase
 
         $labels = array_column($this->sidebar($this->get(route('admin.platform-owner.overview'))->assertOk()->getContent())['links'], 'label');
 
-        foreach (['Messaging Dashboard', 'Sending Servers', 'Sender ID', 'SMS History', 'Plans', 'Invoices', 'Blacklist', 'Customers', 'Subscriptions'] as $legacy) {
+        foreach (['Messaging Dashboard', 'Sending Servers', 'Sender ID', 'SMS History', 'SMS Plans', 'SMS Invoices', 'Blacklist', 'Customers', 'Subscriptions', 'Legacy SMS Gateway', 'Currencies', 'Tax Settings'] as $legacy) {
             $this->assertNotContains($legacy, $labels, "{$legacy} is a legacy gateway surface and must not be in the default Platform Owner sidebar.");
         }
-        foreach (['Home', 'Workspaces', 'Announcements', 'Plan Catalog', 'Administrators', 'Number Operations'] as $kept) {
+        foreach (['Home', 'Workspaces', 'Users', 'Support', 'Plans', 'Feature Management', 'Announcements', 'Administrators', 'Roles', 'Messaging Operations', 'Audit Logs'] as $kept) {
             $this->assertContains($kept, $labels, "{$kept} must stay in the Platform Owner sidebar.");
         }
 
@@ -193,7 +192,7 @@ class PlatformOwnerShellNavigationTest extends TestCase
             'href'
         );
 
-        foreach (['admin.platform-billing.index', 'admin.workspace-plan-catalog.index', 'admin.opportunities.index', 'admin.platform-owner.audit'] as $route) {
+        foreach (['admin.platform-billing.index', 'admin.platform-plans.index', 'admin.platform-users.index', 'admin.platform-support.index', 'admin.platform-features.index', 'admin.platform-announcements.index', 'admin.opportunities.index', 'admin.platform-owner.audit', 'admin.administrators.index', 'admin.roles.index'] as $route) {
             $this->assertContains(route($route), $hrefs, "{$route} is routed but not linked");
         }
     }
@@ -265,9 +264,12 @@ class PlatformOwnerShellNavigationTest extends TestCase
             [route('admin.workspaces.show', $workspace), 'Workspaces'],
             [route('admin.businesses.show', $business), 'Businesses'],
             [route('admin.platform-billing.index'), 'Billing & Revenue'],
-            [route('admin.workspace-plan-catalog.index'), 'Plan Catalog'],
+            [route('admin.platform-plans.index'), 'Plans'],
+            [route('admin.platform-users.index'), 'Users'],
+            [route('admin.platform-announcements.index'), 'Announcements'],
+            [route('admin.administrators.index'), 'Administrators'],
             [route('admin.niche-blueprints.index'), 'Niche Blueprints'],
-            [route('admin.template-library.index'), 'Template Library'],
+            [route('admin.template-library.index'), 'Website Templates'],
             [route('admin.home'), 'Messaging Dashboard'],
         ];
 
@@ -301,11 +303,14 @@ class PlatformOwnerShellNavigationTest extends TestCase
         };
 
         $admin = config('app.admin_path');
-        $this->assertSame(['Plan Catalog'], $activeFor("{$admin}/workspace-plan-catalog"));
+        $this->assertSame(['Plans'], $activeFor("{$admin}/platform-plans/growth"));
+        $this->assertSame(['Users'], $activeFor("{$admin}/platform-users/abc"));
+        // The retired read-only catalog route lights nothing: it is no longer linked.
+        $this->assertSame([], $activeFor("{$admin}/workspace-plan-catalog"));
         $this->assertSame(['Audit Logs'], $activeFor("{$admin}/platform-owner/audit"));
         $this->assertSame(['Home'], $activeFor("{$admin}/platform-owner"));
         // Reports > Dashboard must light up only itself, never the owner's Messaging Dashboard (/dashboard).
-        $this->assertSame(['Dashboard'], $activeFor("{$admin}/reports/dashboard"));
+        $this->assertSame([], $activeFor("{$admin}/reports/dashboard"));
         $this->assertSame(['Messaging Dashboard'], $activeFor("{$admin}/dashboard"));
     }
 
@@ -331,7 +336,7 @@ class PlatformOwnerShellNavigationTest extends TestCase
         $this->assertContains('Home', $labels);
         $this->assertContains('Workspaces', $labels);
         $this->assertNotContains('Businesses', $labels);
-        $this->assertNotContains('Plan Catalog', $labels);
+        $this->assertNotContains('Plans', $labels);
         $this->assertNotContains('Opportunities', $labels);
     }
 
@@ -356,10 +361,10 @@ class PlatformOwnerShellNavigationTest extends TestCase
         $hrefs = array_column($sidebar['links'], 'href');
 
         $this->assertContains('Dashboard', $labels, 'Staff keep the legacy Dashboard');
-        foreach (['Home', 'Workspaces', 'Businesses', 'Opportunities', 'Niche Blueprints', 'Template Library', 'Billing & Revenue', 'Plan Catalog', 'Audit Logs', 'Number Operations', 'Messaging Dashboard'] as $ownerOnly) {
+        foreach (['Home', 'Workspaces', 'Businesses', 'Opportunities', 'Niche Blueprints', 'Website Templates', 'Billing & Revenue', 'Plans', 'Users', 'Support', 'Feature Management', 'Audit Logs', 'Messaging Operations', 'Messaging Dashboard'] as $ownerOnly) {
             $this->assertNotContains($ownerOnly, $labels);
         }
-        foreach (['platform-owner', 'platform-billing', 'workspace-plan-catalog', 'niche-blueprints', 'template-library', 'messaging-provisioning-incidents', '/workspaces', '/businesses'] as $fragment) {
+        foreach (['platform-owner', 'platform-billing', 'platform-plans', 'platform-users', 'platform-support', 'platform-announcements', 'niche-blueprints', 'template-library', 'messaging-provisioning-incidents', '/workspaces', '/businesses'] as $fragment) {
             foreach ($hrefs as $href) {
                 $this->assertStringNotContainsString($fragment, $href);
             }
@@ -431,15 +436,26 @@ class PlatformOwnerShellNavigationTest extends TestCase
         $topNames = array_column(array_filter($admin, fn ($e) => isset($e['name'])), 'name');
         $this->assertNotContains('Platform Owner', $topNames, 'Home/Workspaces/Businesses/Audit Logs are top-level, not a nested group');
 
-        // The three messaging ops screens were moved out of Usage Billing, not duplicated.
-        $usage = collect($admin)->firstWhere('name', 'Usage Billing');
-        $this->assertNotContains('Messaging Provisioning Incidents', array_column($usage['submenu'], 'name'));
-        $ops = collect($admin)->firstWhere('name', 'Number Operations');
+        // The messaging ops screens live under System / Advanced, not under Commercial.
+        $usage = collect($admin)->firstWhere('name', 'Usage & Provider Costs');
+        $this->assertNotContains('Provisioning Incidents', array_column($usage['submenu'], 'name'));
+        $ops = collect($admin)->firstWhere('name', 'Messaging Operations');
         $this->assertSame(
-            ['Messaging Provisioning Incidents', 'Messaging Port-Out Requests', 'Messaging Number Lifecycle'],
+            ['Provisioning Incidents', 'Port-Out Requests', 'Number Lifecycle'],
             array_column($ops['submenu'], 'name')
         );
 
+        // One plan authority: no entry named "Plan Catalog" and no top-level legacy "Plan" group.
+        $names = [];
+        $collect = function (array $entries) use (&$collect, &$names): void {
+            foreach ($entries as $e) {
+                if (isset($e['name'])) { $names[] = $e['name']; }
+                if (isset($e['submenu'])) { $collect($e['submenu']); }
+            }
+        };
+        $collect($admin);
+        $this->assertNotContains('Plan Catalog', $names);
+        $this->assertSame(1, count(array_keys($names, 'Plans', true)), 'Exactly one entry is named Plans (the legacy one is "SMS Plans", hidden by default).');
         // No destination is listed twice under different labels.
         $urls = [];
         $walk = function (array $entries) use (&$walk, &$urls): void {

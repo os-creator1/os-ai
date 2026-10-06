@@ -20,6 +20,7 @@ final class PlatformAnnouncementAudience
         'workspace_owners' => 'Workspace owners',
         'business_owners' => 'Business owners',
         'tier' => 'A plan tier (Core / Growth / Agency)',
+        'tiers' => 'Customers on any of several plan tiers',
         'trial' => 'Workspaces on a trial',
         'workspaces' => 'Specific Workspaces',
         'businesses' => 'Specific Businesses',
@@ -41,6 +42,13 @@ final class PlatformAnnouncementAudience
         }
         if ($kind === 'tier' && ! in_array((string) ($audience['tier'] ?? ''), self::TIERS, true)) {
             return ['Choose a plan tier.'];
+        }
+        if ($kind === 'tiers') {
+            $tiers = array_values(array_unique(array_map('strval', (array) ($audience['tiers'] ?? []))));
+
+            if ($tiers === [] || array_diff($tiers, self::TIERS) !== []) {
+                return ['Pick at least one plan.'];
+            }
         }
         if (in_array($kind, ['workspaces', 'businesses', 'users'], true) && self::refs($audience) === []) {
             return ['List at least one ' . rtrim($kind, 's') . '.'];
@@ -65,6 +73,10 @@ final class PlatformAnnouncementAudience
                 ->join('workspace_plan_assignments as a', 'a.workspace_id', '=', 'w.id')
                 ->join('workspace_plan_catalog as c', 'c.id', '=', 'a.workspace_plan_catalog_id')
                 ->where('c.tier', (string) ($audience['tier'] ?? '')),
+            'tiers' => $workspaceOwners()
+                ->join('workspace_plan_assignments as a', 'a.workspace_id', '=', 'w.id')
+                ->join('workspace_plan_catalog as c', 'c.id', '=', 'a.workspace_plan_catalog_id')
+                ->whereIn('c.tier', array_map('strval', (array) ($audience['tiers'] ?? []))),
             'trial' => $workspaceOwners()
                 ->join('platform_subscriptions as s', 's.workspace_id', '=', 'w.id')
                 ->where('s.status', 'trialing'),

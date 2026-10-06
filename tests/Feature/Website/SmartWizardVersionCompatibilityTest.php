@@ -82,7 +82,7 @@ class SmartWizardVersionCompatibilityTest extends TestCase
             ->assertOk()
             ->assertSee('name="value"', false)
             ->assertDontSee('name="s[business_name][value]"', false)
-            ->assertSee('Step 2 of 18'); // 16 visible questions (backdrops hidden) + style + review
+            ->assertSee('Step 1 of 17'); // 16 visible questions (backdrops hidden) + review
 
         // A legacy comma-separated service-area answer still saves exactly as before.
         foreach (['business_name' => 'Legacy Booth Co', 'phone' => '6305550100', 'email' => 'old@legacy.test'] as $key => $value) {

@@ -36,10 +36,13 @@ class AdministratorController extends AdminBaseController
     /**
      * Create a new controller instance.
      */
-    public function __construct(UserRepository $users, RoleRepository $roles)
+    protected \App\Library\PlatformOwner\PlatformAdministratorManager $manager;
+
+    public function __construct(UserRepository $users, RoleRepository $roles, \App\Library\PlatformOwner\PlatformAdministratorManager $manager)
     {
         $this->users = $users;
         $this->roles = $roles;
+        $this->manager = $manager;
     }
 
     /**
@@ -56,7 +59,9 @@ class AdministratorController extends AdminBaseController
             ['name' => __('locale.menu.Administrators')],
         ];
 
-        return view('admin.Administrator.index', compact('breadcrumbs'));
+        $administrators = User::query()->where('is_admin', true)->with('roles')->orderBy('first_name')->get();
+
+        return view('admin.Administrator.index', compact('breadcrumbs', 'administrators'));
     }
 
     /**
@@ -212,30 +217,30 @@ class AdministratorController extends AdminBaseController
         return view('admin.Administrator.create', compact('breadcrumbs', 'roles'));
     }
 
-    public function store(StoreAdministrator $request): RedirectResponse
+    public function store(Request $request): RedirectResponse
     {
-        if (config('app.stage') == 'demo') {
-            return redirect()->route('admin.administrators.index')->with([
-                'status' => 'error',
-                'message' => 'Sorry! This option is not available in demo mode',
-            ]);
-        }
+        $this->authorize('create administrator');
 
-        $admin = $this->users->store($request->input());
+        $data = $request->validate([
+            'first_name' => ['required', 'string', 'max:255'],
+            'last_name' => ['nullable', 'string', 'max:255'],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'roles' => ['required', 'array', 'min:1'],
+            'roles.*' => ['integer'],
+        ]);
 
-        // Upload and save image
-        if ($request->hasFile('image')) {
-            if ($request->file('image')->isValid()) {
-                $admin->image = $admin->uploadImage($request->file('image'));
-                $admin->save();
-            }
+        try {
+            $admin = $this->manager->invite((int) Auth::id(), $data);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return back()->withInput()->withErrors($e->errors());
+        } catch (\RuntimeException $e) {
+            return redirect()->route('admin.administrators.index')->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
         return redirect()->route('admin.administrators.index')->with([
             'status' => 'success',
-            'message' => __('locale.administrator.administrator_successfully_added'),
+            'message' => __('Invitation sent to :email. They set their own password from the email.', ['email' => $admin->email]),
         ]);
-
     }
 
     /**
@@ -262,37 +267,69 @@ class AdministratorController extends AdminBaseController
         $languages = Language::where('status', 1)->get();
         $roles = $this->roles->getAllowedRoles();
 
-        return view('admin.Administrator.show', compact('breadcrumbs', 'administrator', 'languages', 'roles', 'get_roles'));
+        abort_unless($administrator->is_admin, 404);
+
+        $history = \App\Models\PlatformAdminAction::query()->with('actor:id,first_name,last_name,email')
+            ->where('subject_type', 'administrator')->where('subject_ref', $administrator->uid)
+            ->orderByDesc('id')->limit(15)->get();
+
+        return view('admin.Administrator.show', compact('breadcrumbs', 'administrator', 'languages', 'roles', 'get_roles', 'history'));
     }
 
     /**
      * @throws AuthorizationException
      */
-    public function update(User $administrator, UpdateAdministrator $request): RedirectResponse
+    public function update(User $administrator, Request $request): RedirectResponse
     {
         $this->authorize('edit administrator');
 
-        if (config('app.stage') == 'demo') {
-            return redirect()->route('admin.administrators.index')->with([
-                'status' => 'error',
-                'message' => 'Sorry! This option is not available in demo mode',
-            ]);
-        }
+        $data = $request->validate([
+            'first_name' => ['required', 'string', 'max:255'],
+            'last_name' => ['nullable', 'string', 'max:255'],
+            'roles' => ['required', 'array', 'min:1'],
+            'roles.*' => ['integer'],
+        ]);
 
-        $this->users->update($administrator, $request->input());
-
-        // Upload and save image
-        if ($request->hasFile('image')) {
-            if ($request->file('image')->isValid()) {
-                $administrator->image = $administrator->uploadImage($request->file('image'));
-                $administrator->save();
-            }
+        try {
+            $this->manager->updateProfileAndRoles((int) Auth::id(), $administrator, $data);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return back()->withInput()->withErrors($e->errors());
+        } catch (\RuntimeException $e) {
+            return back()->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
         return redirect()->route('admin.administrators.index')->with([
             'status' => 'success',
-            'message' => __('locale.administrator.administrator_successfully_updated'),
+            'message' => __('Administrator updated.'),
         ]);
+    }
+
+    public function resendInvitation(User $administrator): RedirectResponse
+    {
+        $this->authorize('edit administrator');
+
+        try {
+            $this->manager->resendInvitation((int) Auth::id(), $administrator);
+        } catch (\RuntimeException $e) {
+            return back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        return back()->with(['status' => 'success', 'message' => __('Invitation sent to :email.', ['email' => $administrator->email])]);
+    }
+
+    public function setStatus(Request $request, User $administrator): RedirectResponse
+    {
+        $this->authorize('edit administrator');
+
+        $data = $request->validate(['active' => ['required', 'boolean'], 'reason' => ['required', 'string', 'min:3', 'max:500']]);
+
+        try {
+            $this->manager->setActive((int) Auth::id(), $administrator, (bool) $data['active'], $data['reason']);
+        } catch (\RuntimeException $e) {
+            return back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        return back()->with(['status' => 'success', 'message' => $data['active'] ? __('Administrator activated.') : __('Administrator deactivated and signed out.')]);
     }
 
     /**
