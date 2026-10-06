@@ -257,7 +257,24 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, location
         const select = formEl.querySelector('[data-role="wf-writable-field-select"]')
         fillFieldSelect(select, catalogs.writableFields, catalogs.contactGroups, 'Choose a field')
 
-        select.value = node.config.field_id != null ? String(node.config.field_id) : ''
+        // The Business's own custom fields — the canonical values Forms, the Contact page and
+        // merge fields read. Value "cf:<id>"; a per-list field keeps its plain id.
+        const businessFields = (catalogs.customFields || []).filter((field) => !field.archived)
+
+        if (businessFields.length > 0) {
+            const optgroup = el('optgroup')
+            optgroup.label = 'Business custom fields'
+            businessFields.forEach((field) => {
+                const opt = el('option', null, field.label)
+                opt.value = 'cf:' + String(field.id)
+                optgroup.appendChild(opt)
+            })
+            select.appendChild(optgroup)
+        }
+
+        select.value = node.config.custom_field_id != null
+            ? 'cf:' + String(node.config.custom_field_id)
+            : (node.config.field_id != null ? String(node.config.field_id) : '')
         formEl.querySelector('[data-field="value"]').value = node.config.value != null ? node.config.value : ''
     }
 
@@ -888,9 +905,15 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, location
     function readUpdateContactField() {
         const fieldValue = formEl.querySelector('[data-role="wf-writable-field-select"]').value
 
+        const value = formEl.querySelector('[data-field="value"]').value
+
+        if (fieldValue.indexOf('cf:') === 0) {
+            return { custom_field_id: Number(fieldValue.slice(3)), value }
+        }
+
         return {
             field_id: fieldValue ? Number(fieldValue) : null,
-            value: formEl.querySelector('[data-field="value"]').value,
+            value,
         }
     }
 

@@ -274,7 +274,9 @@ class CustomFieldsHttpTest extends TestCase
         app(WorkspaceMembershipLocationRepository::class)->assign($membership, $granted);
         $this->signInStaff($staff, ['view_contact', 'update_contact']);
 
-        $deniedPage = $this->get(route('customer.workspaces.businesses.people.show', $this->args($workspace, $business, [$deniedContact->uid])))->assertOk();
+        // A Contact at a Location the staff member was not granted is not found at all (CRM
+        // acceptance 02, D2) — so neither its fields nor its values can be seen.
+        $deniedPage = $this->get(route('customer.workspaces.businesses.people.show', $this->args($workspace, $business, [$deniedContact->uid])))->assertNotFound();
         $deniedPage->assertDontSee('data-role="contact-custom-fields"', false);
         $deniedPage->assertDontSee('Secret Hall');
 
