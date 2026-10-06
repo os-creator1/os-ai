@@ -128,7 +128,7 @@ Analytics budget ×1, CustomerContextResolution ×5, Business capacity ×2).
 ### Re-verification after the rebase
 
 The integration branch moved while this lane was open (`6c42beb3`, Booking Notifications V1: 30 files, none shared
-with this lane). The lane was rebased onto it (`7b5ee7ab`) and re-run. Comparisons are by failing test **name and
+with this lane). The lane was rebased onto it (first rebase) and re-run; the tables below are from that run. Comparisons are by failing test **name and
 message**, against a pristine detached worktree of `6c42beb3` on a disposable sibling database.
 
 | Suite | Result after the rebase |
@@ -166,6 +166,32 @@ No failure is in an Agency, View As, isolation or navigation-contract test. Each
 
 The suites outside this list (QueryBudget, Branding, DesignSystem, CustomerShell, Analytics, Business capacity) were
 compared against the base before the rebase, as above; the rebase delta shares no file with them.
+### Final head: rebased again onto `c2a31402`
+
+The integration branch moved a second time (24 commits: Platform Owner, Growth, Website, signup/onboarding,
+deployment readiness). Three files overlap this lane: `app/Library/Dashboard/AccountHomePresenter.php`,
+`resources/lang/en/locale.php` and `tests/Feature/Dashboards/AgencyAccountHomeTest.php`. The rebase merged them
+without conflict; the merged presenter differs from the integration head only by this lane's intended changes, and
+the signup lane's own fix in it is kept. The focused set was re-run on the final head:
+
+| Suite | Result on the final head |
+| --- | --- |
+| `tests/Feature/Agency` (polish + isolation + existing Agency, Outreach, billing) | 150 passed (2721 assertions) |
+| `tests/Feature/Dashboards` | 241 passed (2718 assertions) |
+| View As: `AgencyViewAsTest` 39, `AgencyViewAsContextResolutionTest` 20, `ViewAsClientTest` 7, `ViewAsAccessLossTest` 6, `Security/ViewAsRouteBoundaryTest` 12 | all passed |
+| `WorkspacePlanPageTest` 16, `PlatformAnnouncementTest` 10, `tests/Feature/Theme` 87, `BusinessLocaleFieldsTest` 10 | all passed |
+| `tests/Feature/Navigation` | 98 passed, 2 failed |
+| `tests/Feature/CustomerShell` | 30 passed, 2 failed |
+| `DesignSystem/CustomerShellNavigationTest` | 10 passed, 1 failed |
+| `Analytics/AnalyticsResultsExperienceTest` | 22 passed, 1 failed |
+| `Workspace/CustomerContextResolutionTest` | 16 passed, 5 failed |
+
+Each of those suites was also run once on a pristine detached worktree of `c2a31402`, compared by failing test name
+and message. Navigation: 2 of 2 identical. CustomerShell: 2 of the base's 3 (the lane fixed the third).
+DesignSystem: 1 of the base's 2. Analytics: 1 of 1. CustomerContextResolution: 5 of the base's 7 by name (two with
+identical messages; three now stop on a later assertion for the reasons above). Nothing fails in the lane that does
+not fail on the base. The wide Calendar, Workspace and Security runs above were not repeated on the final head: the
+new commits touch none of this lane's files beyond the three named here.
 ## 7. Tests
 
 * `tests/Feature/Agency/AgencyV1FinalPolishTest.php` — one test per defect above.
