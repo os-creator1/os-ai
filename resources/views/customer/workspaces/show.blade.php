@@ -181,7 +181,7 @@
                         {{-- Creating a Business: an Agency's client accounts, or a Core or
                              Growth account's FIRST Business. A Core or Growth account that
                              already has its Business never reaches this page. --}}
-                        @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
+                        @if (in_array($workspace['role'], ['Owner', 'Admin'], true) && ($section === 'first-business' || empty($businesses)))
                             <form method="POST" data-workspace-action="businesses" class="mb-2">
                                 @csrf
 
@@ -256,7 +256,11 @@
                                             <h5>{{ __('locale.usage_billing.responsibility.account_frame_title') }}</h5>
                                             <p class="text-caption mb-1">{{ __('locale.usage_billing.responsibility.account_frame_help') }}</p>
                                             @if (empty($billingResponsibility['businesses']))
-                                                <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.account_frame_empty') }}</p>
+                                                <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.account_frame_empty') }}
+                                                    @if (Route::has('customer.workspaces.clients.index'))
+                                                        <a href="{{ route('customer.workspaces.clients.index', request()->route('workspaceUid')) }}" data-role="billing-responsibility-clients-link">Open Clients</a>
+                                                    @endif
+                                                </p>
                                             @else
                                                 @foreach ($billingResponsibility['businesses'] as $clientAccount)
                                                     @if ($clientAccount['responsibility'] === 'managing_agency')

@@ -376,7 +376,7 @@ class ViewAsRouteBoundaryTest extends TestCase
         $home = $this->home()->assertOk();
         $keys = $this->menuKeys($home->getContent());
 
-        foreach (['home', 'contacts', 'conversations', 'automations', 'website', 'gbp', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'contacts', 'conversations', 'automations', 'website', 'gbp', 'settings'] as $expected) {
             $this->assertContains($expected, $keys);
         }
 

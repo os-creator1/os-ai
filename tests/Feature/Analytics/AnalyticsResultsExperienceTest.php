@@ -585,6 +585,11 @@ class AnalyticsResultsExperienceTest extends TestCase
 
         $source = file_get_contents(resource_path('views/customer/business/analytics/overview.blade.php'));
         $this->assertStringContainsString("@include('auth.loggedAs')", $source);
-        $this->assertStringContainsString('<x-view-as-banner />', $source);
+
+        // Agency V1 final: the View-as-client banner is no longer carried by
+        // this page (or by the title bar it switches off) — the layout
+        // masters render it for every page, so it cannot be lost here.
+        $this->assertStringNotContainsString('<x-view-as-banner />', $source);
+        $this->assertStringContainsString('<x-view-as-banner />', file_get_contents(resource_path('views/layouts/verticalLayoutMaster.blade.php')));
     }
 }

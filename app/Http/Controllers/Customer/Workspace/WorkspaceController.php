@@ -721,6 +721,16 @@ class WorkspaceController extends CustomerBaseController
 
         try {
             $this->workspaceManager->createBusinessInWorkspace($actorUserId, $customer, $workspace, $request->validated());
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            // One Business per account (businesses_workspace_id_unique). Authorization has already passed inside
+            // the manager, so for THAT index this is only ever "it already has one": answered in plain words, never
+            // by the database's own duplicate-key error (a 500). An Agency adds clients by inviting them from
+            // Clients, not by creating Businesses here. Any other unique violation is a real fault: not disguised.
+            if (! str_contains($e->getMessage(), 'businesses_workspace_id_unique')) {
+                throw $e;
+            }
+
+            return redirect()->back()->with('flash_error', 'This account already has its Business. To add a client, invite them from Clients.');
         } catch (UnauthorizedWorkspaceManagementException) {
             return redirect()->back()->with('flash_error', 'You are not authorized to create a Business in this Workspace.');
         } catch (InactiveWorkspaceMutationException) {

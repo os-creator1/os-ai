@@ -3,8 +3,7 @@
 @include('auth.loggedAs')
 {{--For Logged as customer option end here--}}
 
-{{-- Customer Experience Slice 1B (contract §5.5): persistent View-as-client banner with Exit; renders nothing otherwise. --}}
-<x-view-as-banner />
+{{-- The View-as-client banner is rendered by the layout masters, not here: it must show even when this title bar is switched off. --}}
 
 
 <div class="content-header row">

@@ -97,7 +97,7 @@
                         @if($customerContext?->isBusinessFrame() && $customerContext->selectedWorkspace && $customerContext->selectedBusiness)
                             <li class="nav-item dropdown me-25" data-role="global-search">
                                 <div class="position-relative">
-                                    <x-search-field id="global-search-input" label="Search" placeholder="Search this business" class="me-1" style="width: 220px;" />
+                                    <x-search-field id="global-search-input" label="Search" placeholder="Search this business" class="me-1" style="width: min(220px, 34vw);" />
                                     <div class="dropdown-menu dropdown-menu-media" data-role="global-search-results" style="display:none; width: 320px;">
                                         <div class="scrollable-container media-list" data-role="global-search-results-list"></div>
                                         <div class="p-2 text-muted small" data-role="global-search-empty" style="display:none;">No results.</div>

@@ -82,6 +82,10 @@
 
         //Localization for application labels
         'labels'     => [
+            // Used by the Conversations "block this number" control (customer/ChatBox/index.blade.php)
+            // and the admin Sender ID pages; it only ever existed under 'buttons', so the tooltip
+            // rendered the raw key "locale.labels.block".
+            'block'                                 => 'Block',
             'language'                              => 'Language',
             'actions'                               => 'Actions',
             'reason'                                => 'Reason',
@@ -994,6 +998,10 @@
             'Client account'          => 'Client account',
             'Client accounts'         => 'Client accounts',
             'Prospecting'             => 'Prospecting',
+            // The Ads group's provider children (CustomerMenuBuilder::adsMenuItem()); without an entry the
+            // sidebar fell back to the plain label and CustomerShellTranslationTest failed on "Google".
+            'Google'                  => 'Google',
+            'Meta'                    => 'Meta',
             'Business Home'           => 'Business Home',
             'Agency Home'             => 'Agency Home',
             'Business settings'       => 'Business settings',
@@ -2427,6 +2435,9 @@ on ',
                 'agency_manages_help'      => 'Your agency funds this business\'s paid activity and sets its spending limit. You will not see funding controls here. Talk to your agency if you need a limit changed.',
                 'client_pays'              => 'This client account pays for its own usage.',
                 'client_pays_help'         => 'The client tops up their own balance and manages their own automatic top-up and spending limits. You can change who is billed under Client accounts.',
+                // The Agency's OWN Business (an Agency account holds exactly one): not a client account.
+                'agency_own_pays'          => 'Your agency account pays for this business\'s usage.',
+                'agency_own_pays_help'     => 'Paid activity is funded from this business\'s balance, which the agency account tops up. Each client\'s usage is funded separately, from that client\'s own page under Clients.',
                 'agency_pays'              => 'Your agency pays for this client account\'s usage.',
                 'agency_pays_help'         => 'Paid activity is funded from this account\'s balance, which your agency tops up. The client sees "Billing managed by your agency" and no funding controls.',
                 'manage_where'             => 'Change who is billed under Client accounts → this business → Billing responsibility.',
@@ -2435,7 +2446,7 @@ on ',
                 'account_frame_title'      => 'Client accounts — billing responsibility',
                 'account_frame_help'       => 'Choose who adds funds and controls automatic top-up and spending limits for each client account. Saving the option that is already active changes nothing.',
                 'account_frame_current'    => 'currently:',
-                'account_frame_empty'      => 'No client accounts yet.',
+                'account_frame_empty'      => 'Billing for a client is set from the Clients list: open a client and use Usage funding.',
                 'account_frame_button'     => 'Save billing responsibility',
                 'agency_pays_option'       => 'Agency pays',
                 'agency_pays_option_help'  => 'Your agency adds funds and manages automatic top-up and spending limits for this client account.',

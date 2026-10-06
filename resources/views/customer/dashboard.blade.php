@@ -14,12 +14,9 @@
 
 @section('content')
     {{-- The shared title bar (panels.breadcrumb) is switched off on this page
-         so its <h2> never precedes the page's own <h1>; the View-as-client
-         banner it normally carries is therefore rendered here, first, in
-         every branch (§3, §15). The component renders nothing unless a
-         view-as session is active. --}}
-    <x-view-as-banner />
-
+         so its <h2> never precedes the page's own <h1>. The View-as-client
+         banner is rendered by the layout master (every page, every branch),
+         so it is not repeated here. --}}
     <div class="customer-dashboard" data-role="dashboard" data-kind="{{ $dashboard->kind }}">
         <div class="mb-2" data-role="dashboard-header">
             <h1 class="text-page-title mb-0" id="dashboard-title">

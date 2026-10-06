@@ -60,7 +60,7 @@ class WorkspacePlanPageTest extends TestCase
 
         $this->assertSame('Agency', $this->text($page, 'plan-name'));
         $page->assertSee('Northwind Agency');
-        $this->assertContains('Prospecting', $this->includedNames($page));
+        $this->assertContains('Outreach', $this->includedNames($page));
     }
 
     /**
