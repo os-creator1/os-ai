@@ -106,13 +106,16 @@
                             <span class="d-block" data-role="google-state">
                                 @if(! $status->bound)
                                     Not linked to a Google listing yet
-                                @elseif($status->connectionState === 'revoked')
-                                    Google connection lost. Reconnect to keep this listing up to date.
+                                @elseif($status->connectionState !== 'active')
+                                    Google connection is not active. Reconnect to keep this listing up to date.
                                 @else
                                     Linked{{ $status->health !== null ? ' · ' . $status->health->label() : '' }}
                                 @endif
                             </span>
-                            @if($status->napMismatchCount !== null && $status->napMismatchCount > 0)
+                            @if($status->bound && $status->connectionState === 'active' && $status->health !== null && $status->healthIsStale)
+                                <span class="text-caption d-block" data-role="google-stale">Google data may be out of date{{ $status->healthAsOf !== null ? ' (as of ' . $status->healthAsOf->format('M j, Y') . ')' : '' }}.</span>
+                            @endif
+                            @if($status->connectionState === 'active' && ! $status->healthIsStale && $status->napMismatchCount !== null && $status->napMismatchCount > 0)
                                 <span class="text-caption d-block" data-role="google-mismatch">{{ $status->napMismatchCount }} {{ $status->napMismatchCount === 1 ? 'detail differs' : 'details differ' }} from your Google listing</span>
                             @endif
                         </li>

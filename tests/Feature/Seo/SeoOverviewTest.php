@@ -211,7 +211,7 @@ class SeoOverviewTest extends TestCase
         $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
 
         $this->assertStringContainsString('Not linked to a Google listing yet', $html);
-        $this->assertStringContainsString('Google connection lost', $html);
+        $this->assertStringContainsString('Google connection is not active', $html);
     }
 
     // -----------------------------------------------------------------
