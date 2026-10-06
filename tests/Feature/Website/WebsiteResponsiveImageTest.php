@@ -373,6 +373,12 @@ class WebsiteResponsiveImageTest extends TestCase
         $this->assertCount(4, $images[0]['variants']);
         $this->assertArrayNotHasKey('variants', $images[1], 'A URL that is not one of our stored images is left alone.');
 
+        // While a Website asset still names the picture (here the mirror), it is NOT deleted: a published page may serve it.
+        app(BusinessImageStore::class)->deleteIfUnreferenced($business, $stored['path']);
+        $this->assertFileExists(public_path($stored['path']));
+        $this->assertNotSame([], app(ImageVariants::class)->existing($stored['path']), 'A picture a Website still names keeps its derivatives.');
+
+        $mirror->delete();
         app(BusinessImageStore::class)->deleteIfUnreferenced($business, $stored['path']);
         $this->assertSame([], app(ImageVariants::class)->existing($stored['path']), 'An unreferenced picture takes its derivatives with it.');
     }
