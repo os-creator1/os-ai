@@ -134,10 +134,44 @@ final class BusinessImageStore
             return;
         }
 
+        // A picture the owner just removed or replaced may still be on a PUBLISHED page (a revision freezes the
+        // photo's address, and its responsive variants, into the page). Deleting the file under a live or
+        // rollback-able revision serves broken images on an indexed site, so a path any of this Business's
+        // Website revisions, draft pages or stored assets still names is kept (an orphan costs disk, a gap costs visitors).
+        if ($this->referencedByAWebsite($business, $path)) {
+            return;
+        }
+
         @unlink(public_path($path));
         app(\App\Library\Website\Media\ImageVariants::class)->delete($path);
     }
 
+    private function referencedByAWebsite(Business $business, string $path): bool
+    {
+        $websiteIds = \App\Models\Website::where('business_id', $business->id)->pluck('id');
+
+        if ($websiteIds->isEmpty()) {
+            return false;
+        }
+
+        if (\App\Models\WebsiteAsset::whereIn('website_id', $websiteIds)->where('path', $path)->exists()) {
+            return true;
+        }
+
+        // JSON text may hold the address with escaped slashes ("images\/business\/...") or plain ones; LOCATE
+        // matches the literal text, so no LIKE escaping can go wrong.
+        $needles = [$path, str_replace('/', '\\/', $path)];
+
+        foreach ([['website_revisions', 'snapshot'], ['website_pages', 'sections']] as [$table, $column]) {
+            foreach ($needles as $needle) {
+                if (\Illuminate\Support\Facades\DB::table($table)->whereIn('website_id', $websiteIds)->whereRaw("LOCATE(?, CAST({$column} AS CHAR)) > 0", [$needle])->exists()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
     private function relativePath(Business $business, string $filename): string
     {
         return 'images/business/' . $business->uid . '/' . $filename;
