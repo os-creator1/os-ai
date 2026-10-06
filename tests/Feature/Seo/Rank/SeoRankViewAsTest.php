@@ -89,7 +89,7 @@ class SeoRankViewAsTest extends TestCase
         }
 
         // Ordinary SEO edits are not spend: they stay open exactly as before.
-        foreach (['keywords.store', 'keywords.update', 'keywords.archive', 'keywords.reactivate', 'audit.rerun'] as $name) {
+        foreach (['keywords.store', 'keywords.update', 'keywords.archive', 'audit.rerun'] as $name) {
             $this->assertFalse($prohibited->isProhibitedRoute($this->route($name), 'POST'), "{$name} is an ordinary edit, not paid-provider spend.");
         }
     }

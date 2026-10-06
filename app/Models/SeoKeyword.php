@@ -77,4 +77,18 @@ class SeoKeyword extends Model
     {
         return $query->where('lifecycle_state', SeoKeywordLifecycleState::Active->value);
     }
+
+    /**
+     * Active AND still worked on: Business-wide, or attributed to a Location that
+     * is itself active. A keyword on an archived Location is neither scheduled for
+     * paid checks nor counted against the rank slot allowance.
+     */
+    public function scopeOperational(Builder $query): Builder
+    {
+        return $query->where('lifecycle_state', SeoKeywordLifecycleState::Active->value)
+            ->where(fn (Builder $q) => $q->whereNull('business_location_id')->orWhereIn(
+                'business_location_id',
+                \Illuminate\Support\Facades\DB::table('business_locations')->select('id')->where('lifecycle_state', 'active'),
+            ));
+    }
 }

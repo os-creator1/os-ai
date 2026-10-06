@@ -235,9 +235,12 @@ class SeoRankCheckExecutor
 
             // Never spend for something the owner has since stopped, or when the
             // operator has switched the provider off: release and close.
+            // ...or for a Business that has been switched off since the job was queued.
             if (! $this->budget->enabled()
                 || $target === null
-                || $target->tracking_state !== SeoRankTrackingState::Tracking) {
+                || $target->tracking_state !== SeoRankTrackingState::Tracking
+                || $target->business === null
+                || ! $this->budget->businessMaySpend($target->business)) {
                 $run->forceFill([
                     'state' => SeoRankRunState::FailedTerminal->value,
                     'failed_at' => $now,

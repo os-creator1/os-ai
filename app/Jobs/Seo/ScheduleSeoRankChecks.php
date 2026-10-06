@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Seo;
 
+use App\Enums\Business\BusinessStatus;
 use App\Enums\Seo\SeoRankTrackingState;
 use App\Library\Seo\Rank\SeoRankCheckPlanner;
 use App\Library\Seo\Rank\SeoRankTrackingBudget;
@@ -48,7 +49,8 @@ class ScheduleSeoRankChecks implements ShouldQueue
             ->where('tracking_state', SeoRankTrackingState::Tracking->value)
             ->when($this->targetId !== null, fn ($q) => $q->whereKey($this->targetId))
             ->where(fn ($q) => $q->whereNull('next_check_at')->orWhere('next_check_at', '<=', $now))
-            ->whereHas('keyword', fn ($q) => $q->active())
+            ->whereHas('keyword', fn ($q) => $q->operational())
+            ->whereHas('business', fn ($q) => $q->where('status', BusinessStatus::Active->value))
             ->with('business')
             ->orderBy('id')
             ->chunkById(100, function ($targets) use ($planner, $now) {

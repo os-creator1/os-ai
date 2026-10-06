@@ -190,7 +190,10 @@ class SeoKeywordsController extends CustomerBaseController
             return $this->refused($workspaceUid, $businessUid, $e);
         }
 
-        return $this->done($workspaceUid, $businessUid, 'Keyword archived.');
+        // Archiving frees the keyword's rank slot: its tracking is stopped (history kept).
+        $stopped = $this->rankTargets->stopForKeyword($actorId, $business, $keyword);
+
+        return $this->done($workspaceUid, $businessUid, $stopped > 0 ? 'Keyword archived. Rank tracking for it was stopped and its slot is free.' : 'Keyword archived.');
     }
 
     public function reactivate(string $workspaceUid, string $businessUid, string $keywordUid): RedirectResponse
@@ -209,7 +212,11 @@ class SeoKeywordsController extends CustomerBaseController
             return $this->refused($workspaceUid, $businessUid, $e);
         }
 
-        return $this->done($workspaceUid, $businessUid, 'Keyword reactivated.');
+        // Coming back from the archive never silently resumes paid checks: any tracking that
+        // survived (e.g. archived before this rule existed) is stopped; start it again on purpose.
+        $stopped = $this->rankTargets->stopForKeyword($actorId, $business, $keyword);
+
+        return $this->done($workspaceUid, $businessUid, $stopped > 0 ? 'Keyword reactivated. Rank tracking stays off until you start it again.' : 'Keyword reactivated.');
     }
 
     /**

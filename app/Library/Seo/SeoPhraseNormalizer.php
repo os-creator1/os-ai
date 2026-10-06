@@ -50,6 +50,8 @@ final class SeoPhraseNormalizer
      */
     public static function hasSearchOperator(string $phrase): bool
     {
-        return preg_match('/["*|]|(^|\s)-\S|\b[a-z]+:|\s(OR|AND)\s/u', $phrase) === 1;
+        // "Site:", "INTITLE:" and "Inurl:" are operators in any case; only the capitalised boolean
+        // words OR / AND are (a lower-case "and" or "or" is just a word: "rock and roll").
+        return preg_match('/["*|]|(^|\s)-\S|\b(?i:[a-z]+):|\s(OR|AND)\s/u', $phrase) === 1;
     }
 }

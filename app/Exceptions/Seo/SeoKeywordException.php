@@ -19,6 +19,7 @@ final class SeoKeywordException extends RuntimeException
     public const LOCATION_NOT_ACTIVE = 'location_not_active';
     public const NOT_ACTIVE = 'not_active';
     public const SEARCH_OPERATOR = 'search_operator';
+    public const RANK_TRACKED = 'rank_tracked';
 
     private function __construct(public readonly string $reason, string $message)
     {
@@ -40,6 +41,12 @@ final class SeoKeywordException extends RuntimeException
     public static function searchOperator(): self
     {
         return new self(self::SEARCH_OPERATOR, 'The keyword contains a search operator.');
+    }
+
+    /** The keyword has rank history, which belongs to its exact wording. */
+    public static function rankTracked(): self
+    {
+        return new self(self::RANK_TRACKED, 'The keyword has rank history and cannot be re-worded.');
     }
 
     public static function duplicate(): self
@@ -66,6 +73,7 @@ final class SeoKeywordException extends RuntimeException
     {
         return match ($this->reason) {
             self::INVALID_PHRASE => 'Enter a keyword of up to 120 characters, without line breaks or special control characters.',
+            self::RANK_TRACKED => 'This keyword has Google rank history, which belongs to its exact words, so it cannot be re-worded. Archive it and add the new wording as a new keyword.',
             self::SEARCH_OPERATOR => 'Use plain words only. A keyword cannot contain quotes, "site:" style prefixes, a leading minus ("-word"), the words OR or AND, or the characters * and |.',
             self::DUPLICATE => 'You already have this keyword for that location. It may be archived; if so, reactivate it instead.',
             self::LIMIT_REACHED => 'You have reached the limit of active keywords. Archive one to add another.',
