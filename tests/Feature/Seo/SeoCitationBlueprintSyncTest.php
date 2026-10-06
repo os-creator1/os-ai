@@ -94,6 +94,28 @@ class SeoCitationBlueprintSyncTest extends TestCase
         $this->assertSame('Only if you serve drivers.', $row->guidance);
     }
 
+    public function test_a_recommendation_the_owner_removed_is_not_recreated_by_a_republish(): void
+    {
+        $adminId = $this->platformAdminId();
+        $declared = $this->payload([['mapquest', 'optional', null], ['gigsalad', 'recommended', null]]);
+
+        $this->adapter()->onPublished($this->blueprint(), $declared, null, $adminId);
+        $this->assertNotNull($this->row('mapquest'));
+
+        // The Platform Owner removes it on purpose; the same list is published again.
+        $this->row('mapquest')->delete();
+        $this->adapter()->onPublished($this->blueprint(), $declared, $declared, $adminId);
+
+        $this->assertNull($this->row('mapquest'), 'It was already in the previous version, so a republish leaves it removed.');
+
+        // A directory that is NEW to the list is still created.
+        $withNew = $this->payload([['mapquest', 'optional', null], ['gigsalad', 'recommended', null], ['yellow_pages', 'optional', null]]);
+        $this->adapter()->onPublished($this->blueprint(), $withNew, $declared, $adminId);
+
+        $this->assertNull($this->row('mapquest'));
+        $this->assertNotNull($this->row('yellow_pages'));
+    }
+
     public function test_a_change_the_blueprint_itself_made_updates_an_unedited_row_but_never_an_edited_one(): void
     {
         $adminId = $this->platformAdminId();

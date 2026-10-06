@@ -160,6 +160,86 @@ class SeoCitationsAuditRepairTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Listing health: a suspended / conflicting profile is not a finished Essential listing
+    // -----------------------------------------------------------------
+
+    /** @return array<string, array{0: GoogleLocationHealth, 1: string}> */
+    public static function googleHealthProblems(): array
+    {
+        return [
+            'suspended' => [GoogleLocationHealth::Suspended, 'Google has suspended this listing.'],
+            'disabled' => [GoogleLocationHealth::Disabled, 'Google has disabled this listing.'],
+            'ownership conflict' => [GoogleLocationHealth::OwnershipConflict, 'Google reports an ownership conflict on this listing.'],
+            'duplicate' => [GoogleLocationHealth::Duplicate, 'Google reports this as a duplicate listing.'],
+            'unverified' => [GoogleLocationHealth::Unverified, 'This Google listing is not verified.'],
+            'verification pending' => [GoogleLocationHealth::VerificationPending, 'Verification of this Google listing is still pending.'],
+        ];
+    }
+
+    #[DataProvider('googleHealthProblems')]
+    public function test_a_google_listing_with_a_health_fault_needs_attention_and_is_not_a_finished_essential(GoogleLocationHealth $health, string $words): void
+    {
+        $this->bindFakeGoogleClient();
+        [$customer, $business, $workspace, $location] = $this->tenant();
+        $this->bindGoogleLocation($business, $location, $this->activeConnection($business), true, ['title' => $business->name], $health);
+
+        $section = $this->section($customer, $workspace, $business, $location);
+        $summary = $section->summary();
+        $item = collect($section->attentionItems())->firstWhere('name', 'Google Business Profile');
+
+        $this->assertSame($words, $section->googleHealthProblem());
+        $this->assertSame(0, $summary['completed']);
+        $this->assertSame(0, $summary['essentialDone']);
+        $this->assertSame(1, $summary['attention']);
+        $this->assertSame(1, $item['priority']);
+        $this->assertStringContainsString($words, $item['message']);
+
+        $html = $this->page($workspace, $business, $location);
+        $this->assertMatchesRegularExpression('/data-role="google-row"[^>]*data-attention="1"/', $html);
+        $this->assertMatchesRegularExpression('/data-role="google-state">.*?Needs attention/s', $html);
+        $this->assertStringContainsString($words, $html);
+        $this->assertStringContainsString('data-action="google"', $html, 'It is in "What to do next", linking to Google Business Profile.');
+    }
+
+    /** @return array<string, array{0: GoogleLocationHealth}> */
+    public static function googleHealthFine(): array
+    {
+        return [
+            'verified' => [GoogleLocationHealth::Verified],
+            'unknown' => [GoogleLocationHealth::Unknown],
+            'awaiting Google review' => [GoogleLocationHealth::AwaitingReview],
+        ];
+    }
+
+    #[DataProvider('googleHealthFine')]
+    public function test_a_healthy_or_unknown_google_listing_stays_a_finished_essential(GoogleLocationHealth $health): void
+    {
+        $this->bindFakeGoogleClient();
+        [$customer, $business, $workspace, $location] = $this->tenant();
+        $this->bindGoogleLocation($business, $location, $this->activeConnection($business), true, ['title' => $business->name], $health);
+
+        $section = $this->section($customer, $workspace, $business, $location);
+
+        $this->assertNull($section->googleHealthProblem());
+        $this->assertSame(1, $section->summary()['completed']);
+        $this->assertSame(0, $section->summary()['attention']);
+    }
+
+    public function test_stale_health_alone_is_a_note_not_a_problem(): void
+    {
+        $this->bindFakeGoogleClient();
+        [$customer, $business, $workspace, $location] = $this->tenant();
+        $binding = $this->bindGoogleLocation($business, $location, $this->activeConnection($business), false, [], GoogleLocationHealth::Verified);
+        $binding->forceFill(['last_synced_at' => now()->subDays(60)])->save();
+
+        $section = $this->section($customer, $workspace, $business, $location);
+
+        $this->assertTrue($section->google->healthIsStale);
+        $this->assertSame(0, $section->summary()['attention']);
+        $this->assertSame(1, $section->summary()['completed']);
+    }
+
+    // -----------------------------------------------------------------
     // B3 — Google health says how old it is
     // -----------------------------------------------------------------
 

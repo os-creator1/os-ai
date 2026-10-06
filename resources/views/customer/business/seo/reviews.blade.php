@@ -37,9 +37,13 @@
 
     $rel = SeoLinkSafety::EXTERNAL_REL;
 
-    $locationCount = count($sections);
-    $withLink = collect($sections)->filter(fn ($section) => $section->effectiveLink !== null)->count();
-    $missingLink = collect($sections)->filter(fn ($section) => $section->effectiveLink === null)->count();
+    // The link figures are over ACTIVE Locations only: an archived Location is read-only, has nothing to fix
+    // and is not a gap (Growth judges the same set). They are listed below without an action.
+    $activeSections = collect($sections)->filter(fn ($section) => $section->writable);
+    $locationCount = $activeSections->count();
+    $archivedCount = count($sections) - $locationCount;
+    $withLink = $activeSections->filter(fn ($section) => $section->effectiveLink !== null)->count();
+    $missingLink = $activeSections->filter(fn ($section) => $section->effectiveLink === null)->count();
     $totalRequests = collect($sections)->sum(fn ($section) => $section->requestCount);
     $awaitingOutcome = collect($sections)->sum(fn ($section) => $section->awaitingCount);
     $lastRequestAt = collect($sections)->flatMap(fn ($section) => collect($section->requests)->pluck('requested_at'))->filter()->max();
@@ -77,13 +81,13 @@
         </p>
     </div>
 
-    @if($locationCount > 0)
+    @if(count($sections) > 0)
         <div class="row rv-summary" data-section="review-summary">
             <div class="col-6 col-lg-3 mb-2">
                 <x-card class="h-100" data-role="summary-with-link">
                     <p class="rv-stat-label"><x-ds-icon name="circle-check" size="16" /> With a review link</p>
                     <p class="rv-stat-value">{{ $withLink }}</p>
-                    <p class="text-caption mb-0">{{ $locationCount }} {{ $locationCount === 1 ? 'Location' : 'Locations' }} in total</p>
+                    <p class="text-caption mb-0">{{ $locationCount }} {{ $locationCount === 1 ? 'active Location' : 'active Locations' }} in total @if($archivedCount > 0) · {{ $archivedCount }} archived, not counted @endif</p>
                     <div class="rv-meter" role="img" aria-label="{{ $linkPercent }} percent of Locations have a review link"><span style="width: {{ $linkPercent }}%"></span></div>
                 </x-card>
             </div>

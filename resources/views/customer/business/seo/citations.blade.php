@@ -251,7 +251,9 @@
                             @php
                                 $google = $section->google;
                                 [$gLabel, $gVariant, $gIcon, $gCopy] = match ($googleState) {
-                                    SeoCitationLocationSection::GOOGLE_CONNECTED => ['Connected', 'success', 'circle-check', $section->googleCheckedAutomatically() ? 'Checked automatically from your Google connection.' : 'Linked to your Google listing.'],
+                                    SeoCitationLocationSection::GOOGLE_CONNECTED => $section->googleHealthProblem() !== null
+                                        ? ['Needs attention', 'warning', 'triangle-alert', $section->googleHealthProblem()]
+                                        : ['Connected', 'success', 'circle-check', $section->googleCheckedAutomatically() ? 'Checked automatically from your Google connection.' : 'Linked to your Google listing.'],
                                     SeoCitationLocationSection::GOOGLE_CONNECTION_LOST => ['Needs attention', 'warning', 'triangle-alert', 'The Google connection is not active.'],
                                     default => ['Not linked', 'neutral', 'circle-dashed', 'Not linked to a Google listing yet. Nothing to do if this business has no Google listing.'],
                                 };
@@ -259,7 +261,7 @@
                                 $gDifferingFields = $section->googleDifferingFields();
                                 $gDiffering = array_merge(array_map('ucfirst', $gDifferingFields), $section->googleOtherDifferences());
                                 $gAttention = $section->googleNeedsAttention();
-                                $gAccurate = $googleNap !== null && $gDifferingFields === [] && in_array(SeoNapFieldResult::Consistent, $googleNap, true);
+                                $gAccurate = $googleNap !== null && $gDifferingFields === [] && ! $gAttention && in_array(SeoNapFieldResult::Consistent, $googleNap, true);
                                 $gDataState = $gAccurate ? 'accurate' : ($gAttention ? 'needs_attention' : ($googleState === SeoCitationLocationSection::GOOGLE_NOT_LINKED ? 'not_started' : 'listed'));
                                 $gAsOf = $google?->healthAsOf;
                             @endphp

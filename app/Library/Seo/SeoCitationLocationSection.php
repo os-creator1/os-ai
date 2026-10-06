@@ -3,6 +3,7 @@
 namespace App\Library\Seo;
 
 use App\DTO\GoogleBusinessProfile\GoogleLocationStatus;
+use App\Enums\GoogleBusinessProfile\GoogleLocationHealth;
 use App\Enums\Seo\SeoCitationDisplayState;
 use App\Enums\Seo\SeoDirectoryImportance;
 use App\Enums\Seo\SeoNapFieldResult;
@@ -64,6 +65,20 @@ final class SeoCitationLocationSection
     public const GROUP_RECOMMENDED = 'recommended';
     public const GROUP_OPTIONAL = 'optional';
     public const GROUP_CUSTOM = 'custom';
+
+    /**
+     * Listing health states that are a real fault in the Google listing, in plain words. Stale health
+     * is not one of them (that is the "may be out of date" note), and "awaiting Google review" is
+     * Google working, not a fault.
+     */
+    private const GOOGLE_HEALTH_PROBLEMS = [
+        'suspended' => 'Google has suspended this listing.',
+        'disabled' => 'Google has disabled this listing.',
+        'ownership_conflict' => 'Google reports an ownership conflict on this listing.',
+        'duplicate' => 'Google reports this as a duplicate listing.',
+        'unverified' => 'This Google listing is not verified.',
+        'verification_pending' => 'Verification of this Google listing is still pending.',
+    ];
 
     /** The GBP comparison fields the Google row's own chips already show. */
     private const GOOGLE_CHIP_LABELS = ['Business name', 'Phone', 'Website'];
@@ -156,14 +171,39 @@ final class SeoCitationLocationSection
         return $row->isCustom() && ($row->directory->business_location_id !== null || $this->canEditSharedDirectories);
     }
 
-    /** A real Google problem: a lost connection, or a shown detail that differs. Not-linked is not a problem. */
+    /**
+     * Plain-words problem with the connected listing's health (suspended, disabled, ownership
+     * conflict, duplicate, not verified, verification pending), or null when the health is fine,
+     * unknown or absent. Only an active connection reports one.
+     */
+    public function googleHealthProblem(): ?string
+    {
+        $health = $this->google?->health;
+
+        if (! $health instanceof GoogleLocationHealth || $this->googleState() !== self::GOOGLE_CONNECTED) {
+            return null;
+        }
+
+        return self::GOOGLE_HEALTH_PROBLEMS[$health->value] ?? null;
+    }
+
+    /**
+     * A real Google problem: a lost connection, a listing health fault, or a shown detail that
+     * differs. Not-linked is not a problem.
+     */
     public function googleNeedsAttention(): bool
     {
         return match ($this->googleState()) {
             self::GOOGLE_CONNECTION_LOST => true,
-            self::GOOGLE_CONNECTED => $this->googleDifferingFields() !== [],
+            self::GOOGLE_CONNECTED => $this->googleHealthProblem() !== null || $this->googleDifferingFields() !== [],
             default => false,
         };
+    }
+
+    /** Connected AND not reporting a health fault: the only state that counts as a finished Essential listing. */
+    public function googleIsComplete(): bool
+    {
+        return $this->googleState() === self::GOOGLE_CONNECTED && $this->googleHealthProblem() === null;
     }
 
     /**
@@ -275,7 +315,7 @@ final class SeoCitationLocationSection
             $s['tracked']++;
             $s['essentialTotal']++;
 
-            if ($google === self::GOOGLE_CONNECTED) {
+            if ($this->googleIsComplete()) {
                 $s['completed']++;
                 $s['essentialDone']++;
             }
@@ -325,8 +365,14 @@ final class SeoCitationLocationSection
 
         if ($google === self::GOOGLE_CONNECTION_LOST) {
             $items[] = ['priority' => 2, 'kind' => 'inaccurate', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Reconnect', 'message' => 'The Google connection is not active.'];
-        } elseif ($this->googleNeedsAttention()) {
-            $items[] = ['priority' => 2, 'kind' => 'inaccurate', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Review', 'message' => 'Google shows details that differ from your business profile.'];
+        } else {
+            if ($this->googleHealthProblem() !== null) {
+                $items[] = ['priority' => 1, 'kind' => 'inaccurate', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Review', 'message' => $this->googleHealthProblem() . ' Open Google Business Profile to see what to fix.'];
+            }
+
+            if ($this->googleDifferingFields() !== []) {
+                $items[] = ['priority' => 2, 'kind' => 'inaccurate', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Review', 'message' => 'Google shows details that differ from your business profile.'];
+            }
         }
 
         foreach ($this->rows as $row) {

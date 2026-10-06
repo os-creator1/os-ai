@@ -127,6 +127,26 @@ class SeoReviewsAuditRepairTest extends TestCase
         $this->assertStringContainsString('Requests recorded: 205', $html);
     }
 
+    public function test_archived_locations_are_not_counted_as_missing_a_link(): void
+    {
+        [, $business, $workspace, $active] = $this->tenant();
+        $this->makeReviewLink($business, $active);
+        $archived = $this->reviewLocation($business, 'Old Branch');
+        $this->archiveLocation($archived);
+
+        $html = $this->get($this->reviewsUrl($workspace, $business))->assertOk()->getContent();
+
+        $this->assertSame(1, preg_match('/data-role="summary-with-link">(.*?)<\/div>/s', $html, $with));
+        $this->assertSame(1, preg_match('/data-role="summary-missing-link">(.*?)<\/div>/s', $html, $missing));
+        $withText = trim(preg_replace('/\s+/', ' ', strip_tags($with[1])));
+        $missingText = trim(preg_replace('/\s+/', ' ', strip_tags($missing[1])));
+
+        $this->assertStringContainsString('With a review link 1 1 active Location in total · 1 archived, not counted', $withText);
+        $this->assertStringContainsString('Missing a link 0 Every Location is ready.', $missingText);
+        $this->assertStringContainsString('100 percent', $html);
+        $this->assertStringNotContainsString('data-role="jump-to-missing"', $html, 'There is nothing to add for an archived Location.');
+    }
+
     public function test_contact_choices_are_capped_for_each_location_not_across_all_of_them(): void
     {
         [$customer, $business, $workspace, $busy] = $this->tenant();

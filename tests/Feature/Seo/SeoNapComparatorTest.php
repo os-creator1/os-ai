@@ -95,7 +95,7 @@ class SeoNapComparatorTest extends TestCase
             ],
             'name differs' => [
                 $c,
-                ['name' => 'Acme Plumbing Ltd', 'phone' => '+15550101234', 'address' => null],
+                ['name' => 'Acme Heating', 'phone' => '+15550101234', 'address' => null],
                 ['name' => 'mismatch', 'phone' => 'consistent', 'address' => 'unchecked'],
             ],
             'phone national vs international with no known country is unable to verify, not a mismatch' => [
@@ -323,6 +323,99 @@ class SeoNapComparatorTest extends TestCase
 
         $this->assertSame(SeoNapFieldResult::NotComparable, $skipped['phone'], 'not compared, so never a false Mismatch');
         $this->assertSame(SeoNapFieldResult::Consistent, $skipped['name']);
+    }
+
+    // -----------------------------------------------------------------
+    // Review follow-up: sub-units, no-calling-code phones, websites, names
+    // -----------------------------------------------------------------
+
+    /** @return array<string, array{0: string, 1: string, 2: string, 3: string}> */
+    public static function subUnitAddresses(): array
+    {
+        $sydney = '123 Smith St, Sydney, NSW, 2000, AU';
+        $london = '10 Downing St, London, SW1A 2AA, GB';
+
+        return [
+            'a shop number before the house number' => [$sydney, 'Shop 3/123 Smith Street, Sydney NSW 2000', 'AU', 'not_comparable'],
+            'a bare unit prefix' => [$sydney, '3/123 Smith St, Sydney NSW 2000, Australia', 'AU', 'not_comparable'],
+            'a flat before the house' => [$london, 'Flat 2, 10 Downing Street, London SW1A 2AA', 'GB', 'not_comparable'],
+            'a level before the house' => [$sydney, 'Level 2, 123 Smith Street, Sydney NSW 2000', 'AU', 'not_comparable'],
+            'a genuinely different house number is still a mismatch' => [$sydney, 'Level 2, 99 Other Road, Sydney NSW 2000', 'AU', 'mismatch'],
+        ];
+    }
+
+    #[DataProvider('subUnitAddresses')]
+    public function test_a_leading_sub_unit_is_never_taken_for_the_house_number(string $canonical, string $listed, string $country, string $expected): void
+    {
+        $result = app(SeoNapComparator::class)->compare(
+            ['name' => null, 'phone' => null, 'address' => $canonical],
+            ['name' => null, 'phone' => null, 'address' => $listed],
+            $country,
+            $country,
+        );
+
+        $this->assertSame($expected, $result['address']->value);
+    }
+
+    /** @return array<string, array{0: string, 1: string, 2: ?string, 3: string}> */
+    public static function phonesWithoutACallingCode(): array
+    {
+        return [
+            'PH national with trunk 0 beside +63' => ['+63 917 123 4567', '0917 123 4567', 'PH', 'not_comparable'],
+            'PH +63 listed, national in the profile' => ['0917 123 4567', '+639171234567', 'PH', 'not_comparable'],
+            'JP trunk 0 beside +81' => ['+81 3 1234 5678', '03-1234-5678', 'JP', 'not_comparable'],
+            'the same form with different digits is still a mismatch' => ['+63 917 123 4567', '+63 917 123 9999', 'PH', 'mismatch'],
+            'bare forms with different digits are still a mismatch' => ['917 123 4567', '917 123 9999', 'PH', 'mismatch'],
+        ];
+    }
+
+    #[DataProvider('phonesWithoutACallingCode')]
+    public function test_a_country_with_no_known_calling_code_is_compared_conservatively(string $canonical, string $listed, ?string $country, string $expected): void
+    {
+        $result = app(SeoNapComparator::class)->compare(
+            ['name' => null, 'phone' => $canonical, 'address' => null],
+            ['name' => null, 'phone' => $listed, 'address' => null],
+            $country,
+            $country,
+        );
+
+        $this->assertSame($expected, $result['phone']->value);
+    }
+
+    public function test_a_tracking_query_or_landing_path_is_not_a_website_mismatch_but_another_host_is(): void
+    {
+        $c = app(SeoNapComparator::class);
+
+        $this->assertSame(SeoNapFieldResult::Consistent, $c->compareWebsite('https://example.test', 'https://www.example.test/?utm_source=gbp&utm_medium=organic#top'));
+        $this->assertSame(SeoNapFieldResult::Consistent, $c->compareWebsite('https://example.test/shop?ref=a', 'http://example.test/shop/'));
+        $this->assertSame(SeoNapFieldResult::NotComparable, $c->compareWebsite('https://example.test', 'https://example.test/locations/chicago?utm_source=gbp'));
+        $this->assertSame(SeoNapFieldResult::Mismatch, $c->compareWebsite('https://example.test', 'https://example.org/?utm_source=gbp'));
+    }
+
+    /** @return array<string, array{0: string, 1: string, 2: string}> */
+    public static function names(): array
+    {
+        return [
+            'apostrophes and curly quotes' => ["Joe's Pizza", 'Joe’s Pizza', 'consistent'],
+            'ampersand and "and"' => ['Smith & Sons', 'Smith and Sons', 'consistent'],
+            'the HTML entity' => ['Smith &amp; Sons', 'Smith & Sons', 'consistent'],
+            'a trailing legal suffix, with or without dots and commas' => ['Acme Plumbing LLC', 'Acme Plumbing, Inc.', 'consistent'],
+            'a suffix on one side only' => ['Acme Plumbing', 'Acme Plumbing Ltd.', 'consistent'],
+            'repeated punctuation' => ['Acme -- Plumbing!!', 'Acme Plumbing', 'consistent'],
+            'a genuinely different name' => ['Acme Plumbing', 'Acme Heating', 'mismatch'],
+            'a different name with the same suffix' => ['Acme Plumbing LLC', 'Apex Plumbing LLC', 'mismatch'],
+        ];
+    }
+
+    #[DataProvider('names')]
+    public function test_names_ignore_quotes_ampersands_punctuation_and_legal_suffixes(string $canonical, string $listed, string $expected): void
+    {
+        $result = app(SeoNapComparator::class)->compare(
+            ['name' => $canonical, 'phone' => null, 'address' => null],
+            ['name' => $listed, 'phone' => null, 'address' => null],
+        );
+
+        $this->assertSame($expected, $result['name']->value);
     }
 
     public function test_the_comparator_holds_no_state_and_touches_no_io(): void

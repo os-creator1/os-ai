@@ -1385,3 +1385,13 @@ the product has since outgrown; everything not named here is unchanged.
   read stored observations only).
 * **Comments.** The "Planned until Sub-slice H, so 404 today" wording in the SEO
   controllers/routes is obsolete: SeoBasicVisibility and SeoModule are Available.
+
+### 22.8 Review follow-up
+
+- Address: a number after a sub-unit word (`shop`, `flat`, `level`, `lot`, `suite`, `unit`, `floor`) or before a slash (`3/123 Smith St`) is the unit, never the house number; a house-number difference is definite only when neither side also carries the other's number. Otherwise the answer is "unable to verify".
+- Phone, country with no known calling code: a `+` form beside a national form, or a trunk `0`, is unable to verify; only two clearly same-form numbers with different digits are a mismatch.
+- Website: the query string and fragment are ignored; the same host with another path is unable to verify; another host is a mismatch. (GBP's own comparator keeps its stricter contract §22.3 rule and is unchanged.)
+- Name: apostrophes / curly quotes, `&` / `and` / `&amp;`, repeated punctuation and a trailing legal suffix (LLC, Inc, Ltd, Co, Corp ...) are not differences; a different name is.
+- The connected Google row is a finished Essential only while the listing health is not suspended, disabled, in ownership conflict, duplicate, not verified or verification-pending. Those are "Needs attention" items (first in "What to do next", linking to Google Business Profile). Stale health is only the "may be out of date" note.
+- Reviews summary tiles count ACTIVE Locations only; archived Locations are shown separately, without an action.
+- A Blueprint republish never recreates a recommendation the Platform Owner removed: a missing row is created only for a directory the previous version did not list.

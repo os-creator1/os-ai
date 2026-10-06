@@ -494,7 +494,7 @@ class SeoCitationsV1Test extends TestCase
             $this->assertSame(SeoNapFieldResult::Consistent, $c->compareWebsite('https://example.test', $same), $same);
         }
 
-        $this->assertSame(SeoNapFieldResult::Mismatch, $c->compareWebsite('https://example.test', 'https://example.test/other'));
+        $this->assertSame(SeoNapFieldResult::NotComparable, $c->compareWebsite('https://example.test', 'https://example.test/other'), 'The same site with another page is unable to verify, not a mismatch.');
         $this->assertSame(SeoNapFieldResult::Mismatch, $c->compareWebsite('https://example.test', 'https://example.com'));
         $this->assertSame(SeoNapFieldResult::Mismatch, $c->compareWebsite('https://a.example.test', 'https://example.test'), 'No fuzzy matching of subdomains.');
         $this->assertSame(SeoNapFieldResult::NotComparable, $c->compareWebsite('https://example.test', null));
