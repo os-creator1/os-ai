@@ -177,9 +177,13 @@
             ];
 
             // latestMessage, not the full history: a preview needs one row.
-            $pinnedChats = ChatBox::query()
+            $pinnedQuery = ChatBox::query()
                 ->where('business_id', $business->id)
-                ->where('pinned', true)
+                ->where('pinned', true);
+
+            app(\App\Library\Crm\CrmLocationScope::class)->restrict($pinnedQuery, $business, (int) Auth::id(), 'chat_boxes.location_id');
+
+            $pinnedChats = $pinnedQuery
                 ->with('latestMessage')
                 ->orderBy('updated_at', 'desc')
                 ->get();
@@ -1540,6 +1544,10 @@
             // business_id = the selected Business, and nothing wider. A
             // NULL-business legacy conversation never appears here.
             $query = ChatBox::query()->where('business_id', $business->id)->where('pinned', false);
+
+            // A Location-limited member sees only the threads of Locations they can reach (plus
+            // Business-wide ones) — the same rule the single-record actions already enforce.
+            app(\App\Library\Crm\CrmLocationScope::class)->restrict($query, $business, (int) Auth::id(), 'chat_boxes.location_id');
 
             switch ($filter) {
                 case 'unread':

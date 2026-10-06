@@ -125,7 +125,12 @@
         public function update(User $customer, array $input): User
         {
 
-            $customer->fill(Arr::except($input, 'password'));
+            // Whitelist: is_admin / is_customer / status / sms_unit / api_token must never be mass-assigned.
+            $customer->fill(Arr::only($input, ['first_name', 'last_name', 'email', 'timezone', 'locale']));
+
+            if ( ! empty($input['password'])) {
+                $customer->password_changed_at = now(); // kill the account's other live sessions
+            }
 
             if ( ! $this->save($customer, $input)) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));

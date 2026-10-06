@@ -101,8 +101,19 @@
          *
          * @return Application|Factory|\Illuminate\Contracts\View\View
          */
+        /**
+         * Subscriptions are bound by uid with no tenant scope; only the owner may act on one.
+         */
+        private function ownedSubscriptionOrAbort(Subscription $subscription): Subscription
+        {
+            abort_unless((int) $subscription->user_id === (int) \Illuminate\Support\Facades\Auth::id(), 404);
+
+            return $subscription;
+        }
+
         public function logs(Subscription $subscription)
         {
+            $this->ownedSubscriptionOrAbort($subscription);
 
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -117,6 +128,7 @@
 
         public function renew(Subscription $subscription)
         {
+            $this->ownedSubscriptionOrAbort($subscription);
 
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -156,6 +168,7 @@
 
         public function renewPost(Subscription $subscription, PayPaymentRequest $request)
         {
+            $this->ownedSubscriptionOrAbort($subscription);
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.subscriptions.renew', $subscription->uid)->with([
@@ -359,6 +372,7 @@
          */
         public function cancel(Subscription $subscription): JsonResponse
         {
+            $this->ownedSubscriptionOrAbort($subscription);
 
             if (config('app.stage') == 'demo') {
 
@@ -390,6 +404,7 @@
 
         public function checkoutPurchase(Plan $plan, Subscription $subscription, PayPaymentRequest $request)
         {
+            $this->ownedSubscriptionOrAbort($subscription);
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.subscriptions.purchase', $plan->uid)->with([
@@ -508,6 +523,7 @@
          */
         public function preferences(Subscription $subscription, UpdatePreferencesRequest $request): RedirectResponse
         {
+            $this->ownedSubscriptionOrAbort($subscription);
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.subscriptions.index')->withInput(['tab' => 'preferences'])->with([

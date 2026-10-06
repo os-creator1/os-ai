@@ -404,6 +404,13 @@
                 $input['send_keyword_message'] = false;
             }
 
+            // Whitelist: customer_id / business_id / batch_id / sending_server / cache are tenancy
+            // and provider fields and must never come from the request.
+            $input = Arr::only($input, [
+                'name', 'sender_id', 'send_welcome_sms', 'unsubscribe_notification',
+                'send_keyword_message', 'welcome_sms', 'unsubscribe_sms',
+            ]);
+
             if ( ! $contactGroups->update($input)) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));
             }

@@ -1949,7 +1949,7 @@
          */
         public function sendApi(Campaigns $campaign, array $input): JsonResponse
         {
-            $user = User::where('status', true)->where('api_token', $input['api_key'])->first();
+            $user = User::findByApiToken($input['api_key'] ?? null, true);
 
             if ( ! $user) {
                 return response()->json([
@@ -2589,7 +2589,7 @@
         public function apiCampaignBuilder(Campaigns $campaign, array $input): JsonResponse
         {
 
-            $user     = User::where('status', true)->where('api_token', $input['api_key'])->first();
+            $user     = User::findByApiToken($input['api_key'] ?? null, true);
             $customer = $user->customer;
 
             if ($user->sms_unit != '-1' && $user->sms_unit == 0) {

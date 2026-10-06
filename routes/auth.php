@@ -86,7 +86,7 @@
 
             // Authentication Routes...
             Route::get('login', 'LoginController@showLoginForm')->name('login');
-            Route::post('login', 'LoginController@login');
+            Route::post('login', 'LoginController@login')->middleware('throttle:10,1');
             Route::any('logout', 'LoginController@logout')->name('logout');
 
             Route::get('login/{provider}', 'LoginController@redirectToProvider')->name('social.login');
@@ -101,8 +101,9 @@
             //two-step verification routes
             Route::get('verify/resend', 'TwoFactorController@resend')->name('verify.resend');
             Route::get('verify/backup-code', 'TwoFactorController@backUpCode')->name('verify.backup');
-            Route::post('verify/backup-code', 'TwoFactorController@updateBackUpCode')->name('verify.backup.store');
-            Route::resource('verify', 'TwoFactorController')->only(['index', 'store']);
+            Route::post('verify/backup-code', 'TwoFactorController@updateBackUpCode')->middleware('throttle:6,1')->name('verify.backup.store');
+            Route::get('verify', 'TwoFactorController@index')->name('verify.index');
+            Route::post('verify', 'TwoFactorController@store')->middleware('throttle:6,1')->name('verify.store');
 
             //common or public data access routes
             Route::get('download-sample-file', 'LoginController@downloadSampleFile')->name('sample.file');
@@ -163,7 +164,7 @@
             Route::post('notifications/batch_action', 'AccountController@notificationBatchAction')->name('account.notifications.batch_action');
 
             //Registration Payment
-            Route::any('account/{user}/success/{plan}/{payment_method}', 'AccountController@successfulRegisterPayment')->name('registers.payment_success')->withoutMiddleware(['verified', 'auth']);
+            Route::any('account/{user}/success/{plan}/{payment_method}', 'AccountController@successfulRegisterPayment')->name('registers.payment_success');
             Route::any('account/{user}/cancel', 'AccountController@cancelledRegisterPayment')->name('registers.payment_cancel');
             Route::post('account/{user}/braintree', 'AccountController@braintreeRegister')->name('registers.braintree');
             Route::post('account/{user}/authorize-net', 'AccountController@authorizeNetRegister')->name('registers.authorize_net');

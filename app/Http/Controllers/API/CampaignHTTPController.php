@@ -75,7 +75,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
 
             if ( ! $user) {
                 return response()->json([
@@ -286,7 +286,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
 
             if ( ! $user) {
                 return response()->json([
@@ -324,7 +324,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
 
             if ( ! $user) {
                 return response()->json([
@@ -426,7 +426,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
 
             if ( ! $user) {
                 return response()->json([
@@ -569,7 +569,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
 
             if ( ! $user) {
                 return response()->json([
@@ -586,6 +586,9 @@
             if ( ! isset($user->customer)) {
                 return $this->error('Customer not found');
             }
+
+            // $uid is bound by uid with no tenant scope: never describe another tenant's campaign.
+            abort_unless((int) $uid->user_id === (int) $user->id, 404);
 
 
             $activeSubscription = $user->customer->activeSubscription();
