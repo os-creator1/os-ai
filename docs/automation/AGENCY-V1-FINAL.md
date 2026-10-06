@@ -125,6 +125,47 @@ raw-key (1), two `CustomerContextResolutionTest`. The pre-existing reds that rem
 (Navigation query-count 6 vs 5 ×2, QueryBudget ×8, Branding ×3, DesignSystem marker counts ×4, CustomerShell ×2,
 Analytics budget ×1, CustomerContextResolution ×5, Business capacity ×2).
 
+### Re-verification after the rebase
+
+The integration branch moved while this lane was open (`6c42beb3`, Booking Notifications V1: 30 files, none shared
+with this lane). The lane was rebased onto it (`7b5ee7ab`) and re-run. Comparisons are by failing test **name and
+message**, against a pristine detached worktree of `6c42beb3` on a disposable sibling database.
+
+| Suite | Result after the rebase |
+| --- | --- |
+| `tests/Feature/Agency` (polish + isolation + every existing Agency, Outreach and billing test) | 150 passed (2721 assertions) |
+| `tests/Feature/Navigation` | 98 passed, 2 failed |
+| `tests/Feature/Calendar` | 450 passed, 8 failed |
+| `tests/Feature/Workspace` (includes every View As and context test) | 1099 passed, 85 failed |
+| `tests/Feature/Security` (includes `ViewAsRouteBoundaryTest`) | 355 passed, 1 failed |
+
+No failure is in an Agency, View As, isolation or navigation-contract test. Each is outside this lane:
+
+* Navigation x2 — query-count budget (6 queries against 5); identical on the base.
+* Calendar section navigation x2 — router-script assertions; identical on the base.
+* Calendar `AppointmentBookingConcurrencyTest` x6 — multi-process timing ("children entered ... too far to be a
+  genuine race"). The same kinds of failure occur on the pristine base on an otherwise quiet machine (2 of 20) and
+  the count rises with machine load; it is a timing test, not a behaviour change.
+* Workspace x77 — migration-replay tests (`AgencyBusinessMigrationV1*`, `NonAgencyBusinessSplitV1`,
+  `NonAgencyMultiBusinessReport`, `WorkspaceBusinessOneToOneEnforcement`, `WorkspaceMembershipLocationRepository`,
+  the PreContract13 probes) fail with `Cannot drop index 'website_assets_website_id_sort_order_index': needed in a
+  foreign key constraint` while replaying migrations. This lane changes no migration. `NonAgencyMultiBusinessReportTest`
+  reproduces the identical error on the pristine base (7 of 7); the other classes of this family raise the same
+  exception from the same replay and were not re-run one by one.
+* Workspace `CustomerContextResolutionTest` x5 — all five also fail on the base (which fails seven; this lane fixed
+  two). Two have identical messages. Three now stop on a *later* assertion only because this lane corrected the
+  earlier stale ones: the navbar's inline search script carries a `/workspaces/...` URL, so "the shell must not say
+  Workspace" fails (same assertion on the base); Results is no longer a menu entry, so a stale `analytics` link
+  assertion fails; and a stale "no `accounts` key on a business route" assertion contradicts the Blueprint section 28
+  rule (Clients stays in both frames) that the same test asserts a few lines earlier. The lane does not change when
+  the `accounts` key appears.
+* Workspace `AdminWorkspaceEntitlementControllerTest` x1, `WorkspaceAccountCreationBoundaryTest` x1,
+  `PreContract13HistoricalTestCaseLifecycleTest` x3 — fail on the base as well (1, 1 and 4).
+* Security `LegacyWebhookUsageMeasurementTest` x1 — a 20-second child-process timeout under machine load; it passes
+  15 of 15 when re-run alone, in the lane and on the base.
+
+The suites outside this list (QueryBudget, Branding, DesignSystem, CustomerShell, Analytics, Business capacity) were
+compared against the base before the rebase, as above; the rebase delta shares no file with them.
 ## 7. Tests
 
 * `tests/Feature/Agency/AgencyV1FinalPolishTest.php` — one test per defect above.
