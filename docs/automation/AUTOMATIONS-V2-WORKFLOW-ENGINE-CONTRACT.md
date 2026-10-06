@@ -621,8 +621,14 @@ rows. Pure, deterministic, unit-testable, and it enforces:
    passes it to `validate()` and the compiler reads nothing more.
 7. **Reachability**: every emitted node reachable from the root; `nodes =
    edges + 1`. With `UNIQUE(to_node_id)` this proves a tree.
-8. Trigger/action compatibility (e.g. B4 §7.B: `update_contact_field` requires
-   an explicit trigger group).
+8. Trigger/action compatibility (e.g. B4 §7.B: `update_contact_field` with a
+   per-list `field_id` requires an explicit trigger group). **Lead-lifecycle
+   amendment:** `update_contact_field` may instead carry `custom_field_id` — a
+   Business custom field (canonical `custom_field_values`, written through
+   `CustomFieldValueService`), which is Business-wide and needs no trigger group,
+   so it works on every trigger. It must be an active Contact field of the same
+   Business; the executor re-derives that at run time. See
+   `docs/product/v1-acceptance/08-LEAD-LIFECYCLE.md`.
 
 Output is inserted in **one transaction** with bulk inserts: all nodes, then
 all edges.

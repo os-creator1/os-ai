@@ -528,7 +528,9 @@ class NodeTypeRegistry
     {
         $errors = [];
 
-        if (! $this->isPositiveInt($config['field_id'] ?? null)) {
+        // Either a Business custom field (canonical — what Forms, the Contact page and merge
+        // fields all read) or, as before, a per-list contact-group field.
+        if (! $this->isPositiveInt($config['custom_field_id'] ?? null) && ! $this->isPositiveInt($config['field_id'] ?? null)) {
             $errors[] = 'Choose which contact field to update.';
         }
 

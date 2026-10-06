@@ -198,7 +198,9 @@ export function summarize(node, catalogs) {
         }
 
         case NODE_TYPES.UPDATE_CONTACT_FIELD: {
-            const label = fieldLabel(catalogs.writableFields, config.field_id)
+            const label = config.custom_field_id != null
+                ? fieldLabel(catalogs.customFields || [], config.custom_field_id)
+                : fieldLabel(catalogs.writableFields, config.field_id)
 
             if (!label) {
                 return { summary: 'Choose a field to update', incomplete: true }
