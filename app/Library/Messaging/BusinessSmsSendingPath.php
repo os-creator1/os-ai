@@ -155,7 +155,27 @@ class BusinessSmsSendingPath
             ->get(['number', 'capabilities'])
             ->first(fn ($row): bool => str_contains((string) $row->capabilities, 'sms'));
 
-        return $number === null ? null : (string) $number->number;
+        if ($number !== null) {
+            return (string) $number->number;
+        }
+
+        // A Business whose ONLY sender is the managed number it bought in Text
+        // messaging has neither a SenderID nor a phone_numbers row (provisioning
+        // writes an identity and a number, nothing legacy). Its own active
+        // primary managed number is its originator; the managed dispatcher
+        // chooses the number itself, and the send core re-authorizes this one
+        // against the same Business (validateQuickSendOriginatorValue()).
+        $identity = $this->identities->resolveForBusiness($business);
+
+        if ($identity === null) {
+            return null;
+        }
+
+        try {
+            return (string) $this->identities->resolvePrimaryNumber($identity)->phone_number;
+        } catch (MessagingIdentityConflictException) {
+            return null;
+        }
     }
 
     /**

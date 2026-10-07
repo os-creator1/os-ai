@@ -65,8 +65,7 @@ class SeoAuditSelfTest extends TestCase
 <meta property="og:description" content="Acme Booths brings photo booths to weddings and corporate events across Chicago and the suburbs.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://acme.test/">
-<meta property="og:image" content="https://acme.test/images/websites/x/hero.jpg">
-<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:card" content="summary">
 <link rel="canonical" href="https://acme.test/">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"LocalBusiness","@id":"https://acme.test/#business","name":"Acme Booths","url":"https://acme.test/","telephone":"+13125550147"}</script>
 </head><body>
@@ -134,15 +133,16 @@ HTML;
             'wrong business in schema' => [['"name":"Acme Booths"' => '"name":"Someone Else"'], 'schema_business_identity'],
             'schema with an internal id' => [['"url":"https://acme.test/"' => '"url":"https://acme.test/?u=6a93c068-5b88-471f-bdba-b3810966119c"'], 'schema_no_internal_ids'],
             'invalid schema json' => [['"@type":"LocalBusiness",' => '"@type":"LocalBusiness" ,,'], 'schema_valid_json'],
+            'missing og:type' => [['<meta property="og:type" content="website">' => ''], 'social_og_type'],
+            'og:url not the canonical' => [['<meta property="og:url" content="https://acme.test/">' => '<meta property="og:url" content="https://other.test/">'], 'social_og_url'],
+            'large card with no image' => [['content="summary"' => 'content="summary_large_image"'], 'social_twitter_card'],
+            'broken og:image' => [['<meta name="twitter:card" content="summary">' => '<meta name="twitter:card" content="summary_large_image"><meta property="og:image" content="https://acme.test/images/websites/x/gone.jpg"><meta name="twitter:image" content="https://acme.test/images/websites/x/gone.jpg">'], 'social_og_image'],
+            'faq schema on a page with no FAQ' => [['"telephone":"+13125550147"}</script>' => '"telephone":"+13125550147"}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[]}</script>'], 'faq_schema_matches_visible_faq'],
+            'faq without schema' => [['<div data-section="text">' => '<div data-section="faq"><details class="website-faq-item"><summary>Q?</summary><p>A.</p></details></div><div data-section="text">'], 'faq_schema_matches_visible_faq'],
+            'duplicate cta bands' => [['</main>' => '<div data-section="cta"><a href="https://acme.test/contact">Go</a></div><div data-section="cta"><a href="https://acme.test/contact">Go again</a></div></main>'], 'no_duplicate_cta_bands'],
             'duplicate id' => [['<div data-section="text">' => '<div data-section="text" id="a"><span id="a"></span>'], 'no_duplicate_ids'],
             'brand repeated in the title' => [['<title>Chicago Photo Booth Rentals — Acme Booths</title>' => '<title>Acme Booths — Photo booths | Acme Booths</title>'], 'title_brand_once'],
             'title too long for a search result' => [['<title>Chicago Photo Booth Rentals — Acme Booths</title>' => '<title>Chicago Photo Booth Rentals For Weddings, Corporate Events And Birthday Parties — Acme Booths</title>'], 'title_not_truncated_in_results'],
-            'og:url not the canonical' => [['<meta property="og:url" content="https://acme.test/">' => '<meta property="og:url" content="https://acme.test/other">'], 'social_og_url_equals_canonical'],
-            'no og:image' => [['<meta property="og:image" content="https://acme.test/images/websites/x/hero.jpg">' => ''], 'social_og_image'],
-            'og:image from another folder' => [['https://acme.test/images/websites/x/hero.jpg">
-<meta name' => 'https://acme.test/elsewhere/hero.jpg">
-<meta name'], 'social_og_image_is_owner_media'],
-            'no twitter card' => [['<meta name="twitter:card" content="summary_large_image">' => ''], 'social_twitter_card'],
             'schema url is the page not the site' => [['"url":"https://acme.test/"' => '"url":"https://acme.test/about"'], 'schema_canonical_url'],
             'schema without a site-wide id' => [['"@id":"https://acme.test/#business",' => ''], 'schema_one_site_entity'],
         ];
@@ -214,6 +214,6 @@ HTML;
         $bad = new AcceptanceReport();
         $bad->context('custom_domain', 'self-test');
         (new SeoAudit($bad, $crawler))->auditRobots("User-agent: *\r\nDisallow:\r\n", 'https://acme.test/sitemap.xml');
-        $this->assertEqualsCanonicalizing(['robots_sitemap_directive', 'robots_unix_line_endings'], array_column($bad->failures(), 'check'));
+        $this->assertEqualsCanonicalizing(['robots_sitemap_line', 'robots_unix_line_endings'], array_column($bad->failures(), 'check'));
     }
 }

@@ -81,7 +81,10 @@ class AgencyAccountHomeTest extends TestCase
         $this->assertStringContainsString(AttentionType::WebsiteUnpublished->sentence(), $table);
         $this->assertStringContainsString('Nothing needs attention', $table);
         $this->assertStringContainsString('Charlie Cafe', $table);
-        $this->assertStringContainsString('Not active', $table);
+        // Charlie is still in setup (Draft): said in the client's own terms, not as a bare "Not active" with
+        // "Nothing needs attention" it has not earned (Agency V1 final).
+        $this->assertStringContainsString('Waiting for client setup', $table);
+        $this->assertStringContainsString('has not finished setting up', $table);
         $this->assertSame(2, substr_count($table, 'data-role="client-open"'), 'Only active clients can be opened.');
         $this->assertStringNotContainsString('Northwind HQ', $table, "The Agency's own Business is never one of its clients.");
         $this->assertStringNotContainsString(route('customer.context.business.switch'), $table, 'A managed client is opened through the canonical Agency View As, never an ordinary switch.');
@@ -305,6 +308,9 @@ class AgencyAccountHomeTest extends TestCase
 
     public function test_an_agency_with_no_client_yet_is_offered_its_first_client_account(): void
     {
+        // The zero-Business call to action points at the account page only while the onboarding wizard is
+        // off; with it on (the V1 default) it points at onboarding instead. This test is about the account-page link.
+        config(['business.onboarding.enabled' => false]);
         $this->ensureRequiredAppConfigRowsExist();
         $this->platformAdminId();
         $agency = $this->createCustomer();

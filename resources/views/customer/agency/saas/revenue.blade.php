@@ -59,7 +59,7 @@
                             <tr data-role="agency-revenue-row" @if ($row['needs_attention']) data-attention="1" @endif>
                                 <td>{{ $row['client_name'] }}</td>
                                 <td>{{ $row['plan_name'] }}</td>
-                                <td>{{ $row['status'] }}</td>
+                                <td>{{ $row['status_label'] }}</td>
                                 <td>{{ $row['price'] }} {{ $row['currency_code'] }} / {{ $row['billing_cycle'] }}</td>
                                 <td>{{ $row['current_period_end']?->toFormattedDateString() }}</td>
                             </tr>

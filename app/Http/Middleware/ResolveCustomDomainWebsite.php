@@ -57,6 +57,7 @@ class ResolveCustomDomainWebsite
         private readonly WebsiteLocalBusinessStructuredData $structuredData,
         private readonly WebsiteAddressPrivacyGate $privacyGate,
         private readonly WebsiteBreadcrumbStructuredData $breadcrumbs,
+        private readonly \App\Library\Website\Seo\WebsiteFaqStructuredData $faq,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -170,7 +171,12 @@ class ResolveCustomDomainWebsite
             return response(WebsiteCrawlFiles::customDomainRobots($domain->domain, $snapshot), 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
         }
 
-        if ($path === 'sitemap' || $path === 'sitemap.xml') {
+        // One sitemap address: the older extensionless /sitemap permanently redirects to /sitemap.xml.
+        if ($path === 'sitemap') {
+            return redirect()->away('https://'.$domain->domain.'/sitemap.xml', 301);
+        }
+
+        if ($path === 'sitemap.xml') {
             return $this->renderSitemap($domain, $snapshot);
         }
 
@@ -213,8 +219,8 @@ class ResolveCustomDomainWebsite
         // (even one reached through rollback), never only starting with
         // the next publish. `$business` is a live read on purpose.
         $business = $website->business;
-        $sections = $this->privacyGate->redactSections($page['sections'], $business);
-        $localBusiness = $this->privacyGate->redactLocalBusiness($snapshot['website']['localBusiness'] ?? [], $business);
+        $sections = $this->privacyGate->redactSections($page['sections'], $business, $page['slug'] ?? null);
+        $localBusiness = $this->privacyGate->redactLocalBusiness($snapshot['website']['localBusiness'] ?? [], $business, $page['slug'] ?? null);
 
         // LocalBusiness structured data is otherwise built ONLY from the
         // frozen snapshot's own localBusiness facts (WebsiteSnapshotBuilder::
@@ -251,6 +257,10 @@ class ResolveCustomDomainWebsite
             ? $this->breadcrumbs->build(WebsiteBreadcrumbStructuredData::trail($page, $navigationPages))
             : null;
 
+        // FAQPage: built from the FAQ sections this very page renders (so it can only say what is visible),
+        // and only on an indexable page, like every other schema block.
+        $faqJsonLd = $indexable ? $this->faq->build($sections) : null;
+
         // The site "actually works" on this domain — active certificate,
         // published, gate passed, this exact page resolved from the
         // live snapshot — so indexing is allowed unless the page opted
@@ -267,7 +277,7 @@ class ResolveCustomDomainWebsite
             'canonicalUrl' => $canonicalUrl,
             'localBusinessJsonLd' => $localBusinessJsonLd,
             'breadcrumbJsonLd' => $breadcrumbJsonLd,
-            'faqJsonLd' => $indexable ? WebsiteFaqStructuredData::build($sections) : null,
+            'faqJsonLd' => $faqJsonLd,
             'navigationPages' => $navigationPages,
         ]);
 

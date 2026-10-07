@@ -28,6 +28,13 @@ return [
         'conversation_awaiting_hours' => 24,    // last message inbound, no reply for this long
         'conversation_lookback_days' => 30,     // only conversations active inside this window
 
+        // Ads / rank / forms (Growth final)
+        'ads_settling_days' => 7,               // a newly selected ad account is not judged until it has this long
+        'rank_drop_positions' => 5,             // fell this many places (or out of the results) = a drop
+        'rank_gain_positions' => 3,             // rose this many places (or entered the results) = a gain
+        'rank_stale_days' => 14,                // a tracking keyword not checked for this long is stale
+        'forms_quiet_days' => 14,               // a live form with no submission since going live this long
+
         // Booking
         'low_availability_open_minutes' => 240, // open bookable minutes in the next 7 days
 
@@ -64,6 +71,9 @@ return [
         // A category is only scored once it has at least this many applicable
         // rules whose fact readers are available.
         'min_applicable_rules' => 1,
+
+        // Categories that need more than one scored rule before they count (neutral until then).
+        'category_min_rules' => ['ads' => 2],
 
         // Daily snapshots are kept this many days (>= 13 months).
         'retention_days' => 430,

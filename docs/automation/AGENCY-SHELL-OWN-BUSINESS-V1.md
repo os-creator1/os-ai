@@ -73,3 +73,12 @@ shared definition, entitlement denial, View As isolation, all-scope staff,
 selected-scope staff, owner-only writes, Core/Growth unchanged, no-Business
 fallback). Existing navigation tests that encoded "Agency account frame has no
 Business entries" were updated to the §28 rule.
+
+## Agency V1 final — which frame a page belongs to
+
+Superseded wording above: the Agency's management pages (Clients, Outreach, SaaS Plans, Agency
+Revenue, White Label, Team, Agency settings and the account overview) are the **Agency account**
+frame whichever frame the owner came from, and the own-Business modules are the **Business**
+frame (`CustomerContextResolver` step 3a). The switcher lists the owner's own Business under
+"Your business" and never offers View As for it; the menu entry is **Outreach**. Full detail,
+defects and tests: [`AGENCY-V1-FINAL.md`](./AGENCY-V1-FINAL.md).

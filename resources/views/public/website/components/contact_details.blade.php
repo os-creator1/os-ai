@@ -17,7 +17,9 @@
     $previewLocation = $website->business?->primaryLocation;
     $addressPermitted = $previewLocation !== null
         && $previewLocation->isActive()
-        && app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask::class)->addressPermittedForLocation($previewLocation);
+        && app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask::class)->addressPermittedForLocation($previewLocation)
+        // Same rule the published page applies: a "Serving <place>" page that is not the primary Location's own never shows the primary address.
+        && \App\Library\Website\Seo\WebsiteLocationPageAddress::pageMayShowAddress($page->slug ?? null, $website->business);
 
     $resolved = $data['resolved'] ?? [
         'phone' => ($data['show_phone'] ?? false) ? $website->business?->phone : null,

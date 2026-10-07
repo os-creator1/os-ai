@@ -23,6 +23,8 @@ enum GrowthCategory: string
     case ProposalsSales = 'proposals_sales';
     case Payments = 'payments';
     case Automations = 'automations';
+    /** Provider connection prompts — setup, never part of the score. */
+    case Connections = 'connections';
 
     public function label(): string
     {
@@ -40,6 +42,7 @@ enum GrowthCategory: string
             self::ProposalsSales => 'Proposals & sales',
             self::Payments => 'Payments',
             self::Automations => 'Automations',
+            self::Connections => 'Connections',
         };
     }
 
@@ -50,12 +53,12 @@ enum GrowthCategory: string
             self::LeadResponse => GrowthScoreCategory::LeadResponse,
             self::SalesPipeline, self::ProposalsSales, self::Payments => GrowthScoreCategory::SalesConversion,
             self::Bookings => GrowthScoreCategory::Booking,
-            self::Website, self::Forms => GrowthScoreCategory::Website,
+            self::Website => GrowthScoreCategory::Website,
             self::Seo => GrowthScoreCategory::Seo,
             self::Ads => GrowthScoreCategory::Ads,
             self::Reviews => GrowthScoreCategory::Reviews,
             self::LocalPresence => GrowthScoreCategory::LocalPresence,
-            self::Automations => null,
+            self::Automations, self::Forms, self::Connections => null,
         };
     }
 }

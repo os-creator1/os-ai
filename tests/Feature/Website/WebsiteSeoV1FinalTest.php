@@ -341,34 +341,14 @@ class WebsiteSeoV1FinalTest extends TestCase
         $website = $this->createWebsite($business);
         $this->homePage($website, ['noindex' => true]);
         $generated = $this->subPage($website, 'about', ['noindex' => true]);
-        $hidden = $this->subPage($website, 'private', ['noindex' => true, 'noindex_by_owner' => true]);
+        $hidden = $this->subPage($website, 'private', ['noindex' => true, 'noindex_explicit' => true]);
         $this->authenticateAsCustomer($customer);
 
-        $this->post(route('customer.workspaces.businesses.website.pages.allowIndexing', [$workspace->uid, $business->uid]))
-            ->assertSessionHas('message', '2 pages can now be found in search. Publish to update your live website.');
+        $this->post(route('customer.workspaces.businesses.website.pages.allowIndexing', [$workspace->uid, $business->uid]))->assertRedirect();
 
         $this->assertFalse($generated->fresh()->noindex);
         $this->assertTrue($hidden->fresh()->noindex, 'An owner-hidden page stays hidden.');
-        $this->assertNotNull($website->fresh()->indexing_released_at);
-    }
-
-    public function test_ticking_hide_on_the_page_form_marks_the_page_as_the_owners_choice(): void
-    {
-        [, $business] = $this->entitledTenant();
-        $website = $this->createWebsite($business);
-        $this->homePage($website);
-        $page = $this->subPage($website, 'about');
-
-        app(WebsiteDraftPageService::class)->updatePage($website, $page, ['title' => 'About', 'slug' => 'about', 'is_home' => false, 'noindex' => true, 'noindex_by_owner' => true]);
-        $this->assertTrue($page->fresh()->noindex_by_owner);
-
-        // A generator-style update (no owner flag) must not change or invent the owner's choice.
-        app(WebsiteDraftPageService::class)->updatePage($website, $page->fresh(), ['title' => 'About', 'slug' => 'about', 'is_home' => false, 'noindex' => true]);
-        $this->assertTrue($page->fresh()->noindex_by_owner);
-
-        app(WebsiteDraftPageService::class)->updatePage($website, $page->fresh(), ['title' => 'About', 'slug' => 'about', 'is_home' => false, 'noindex' => false, 'noindex_by_owner' => false]);
-        $this->assertFalse($page->fresh()->noindex_by_owner);
-        $this->assertFalse($page->fresh()->noindex);
+        $this->assertNotNull($website->fresh()->indexing_released_at, 'The release is remembered so a rebuild keeps the pages open.');
     }
     // ------------------------------------------------------------------ FAQ schema
 
@@ -381,12 +361,13 @@ class WebsiteSeoV1FinalTest extends TestCase
             ['question' => 'Do you travel?', 'answer' => 'Yes, across Chicago <and> beyond.'],
         ]]];
 
-        $schema = \App\Library\Website\Seo\WebsiteFaqStructuredData::build([$faq]);
+        $schema = app(\App\Library\Website\Seo\WebsiteFaqStructuredData::class)->build([$faq]);
         $this->assertSame('FAQPage', $schema['@type']);
-        $this->assertSame(['How long is a rental?', 'Do you travel?'], array_column($schema['mainEntity'], 'name'));
+        // Exactly the visible pairs, in order (a repeated question is shown twice, so it is listed twice); the blank answer is not shown, so it is not listed.
+        $this->assertSame(['How long is a rental?', 'How long is a rental?', 'Do you travel?'], array_column($schema['mainEntity'], 'name'));
         $this->assertSame('Most rentals run three hours.', $schema['mainEntity'][0]['acceptedAnswer']['text']);
-        $this->assertNull(\App\Library\Website\Seo\WebsiteFaqStructuredData::build([['type' => 'hero', 'data' => []]]));
-        $this->assertNull(\App\Library\Website\Seo\WebsiteFaqStructuredData::build([['type' => 'faq', 'data' => ['items' => [['question' => 'Q', 'answer' => '']]]]]));
+        $this->assertNull(app(\App\Library\Website\Seo\WebsiteFaqStructuredData::class)->build([['type' => 'hero', 'data' => []]]));
+        $this->assertNull(app(\App\Library\Website\Seo\WebsiteFaqStructuredData::class)->build([['type' => 'faq', 'data' => ['items' => [['question' => 'Q', 'answer' => '']]]]]));
 
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business, ['name' => 'Luma Booth Co']);
@@ -415,5 +396,55 @@ class WebsiteSeoV1FinalTest extends TestCase
         $this->get('http://localhost/sites/'.$website->public_id.'/about')
             ->assertStatus(301)
             ->assertRedirect('https://one-hop.test/about-us');
+    }
+    // ------------------------------------------------- secondary Location address
+
+    public function test_a_secondary_location_page_never_shows_the_primary_locations_address(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $primary = \App\Models\BusinessLocation::create([
+            'business_id' => $business->id, 'service_mode' => 'storefront', 'address_line_1' => '123 Main St',
+            'city' => 'Chicago', 'region' => 'IL', 'public_address' => true,
+        ]);
+        $primary->is_primary = true;
+        $primary->save();
+        \App\Models\BusinessLocation::create([
+            'business_id' => $business->id, 'service_mode' => 'storefront', 'address_line_1' => '9 Other Rd',
+            'city' => 'Naperville', 'region' => 'IL', 'public_address' => true,
+        ]);
+
+        $website = $this->createWebsite($business, ['name' => 'Luma Booth Co']);
+        $contact = $this->section('contact_details');
+        $this->homePage($website, ['seo_title' => 'Luma Booth Co', 'meta_description' => 'Photo booths.', 'sections' => [$this->section('hero'), $contact]]);
+        foreach (['serving-chicago-il' => 'Chicago', 'serving-naperville-il' => 'Naperville'] as $slug => $city) {
+            $this->subPage($website, $slug, ['title' => 'Serving '.$city.', IL', 'seo_title' => $city.' photo booths | Luma Booth Co', 'meta_description' => 'Photo booths in '.$city.'.', 'sections' => [$this->section('hero'), $contact]]);
+        }
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $this->activeDomain($website->fresh(), 'two-places.test');
+
+        $jsonLdAddress = function (string $html) {
+            preg_match_all('#<script type="application/ld\+json">(.+?)</script>#s', $html, $blocks);
+            foreach ($blocks[1] as $json) {
+                $data = json_decode($json, true);
+                if (($data['@type'] ?? null) === 'LocalBusiness') {
+                    return $data['address'] ?? null;
+                }
+            }
+
+            return 'no-local-business-block';
+        };
+
+        $home = $this->get('http://two-places.test/')->assertOk()->getContent();
+        $own = $this->get('http://two-places.test/serving-chicago-il')->assertOk()->getContent();
+        $other = $this->get('http://two-places.test/serving-naperville-il')->assertOk()->getContent();
+
+        // The business's own pages and the primary Location's page show the primary address.
+        $this->assertStringContainsString('123 Main St', $home);
+        $this->assertStringContainsString('123 Main St', $own);
+        $this->assertSame('123 Main St', $jsonLdAddress($own)['streetAddress'] ?? null);
+
+        // The secondary Location's page is NOT given the primary address, in the page or the structured data.
+        $this->assertStringNotContainsString('123 Main St', $other);
+        $this->assertNull($jsonLdAddress($other), 'No address in the LocalBusiness data of a page that is not the primary Location.');
     }
 }

@@ -200,8 +200,23 @@
         }
 
 
+        /**
+         * A customer may only act on sub-accounts they own; anything else is indistinguishable from absent.
+         */
+        private function ownedSubAccountOrAbort(User $subAccount): User
+        {
+            abort_unless(
+                $subAccount->parent_id !== null && (int) $subAccount->parent_id === (int) Auth::id(),
+                404
+            );
+
+            return $subAccount;
+        }
+
         public function show(User $subAccount)
         {
+            $this->ownedSubAccountOrAbort($subAccount);
+
             $breadcrumbs = [
                 ['link' => route('user.home'), 'name' => __('locale.menu.Dashboard')],
                 ['link' => route('customer.sub_accounts.index'), 'name' => __('locale.labels.sub_accounts')],
@@ -238,6 +253,8 @@
 
         public function update(User $subAccount, UpdateSubAccountRequest $request)
         {
+            $this->ownedSubAccountOrAbort($subAccount);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('user.home')->with([
                     'status'  => 'error',
@@ -266,6 +283,7 @@
          */
         public function avatar(User $subAccount): mixed
         {
+            $this->ownedSubAccountOrAbort($subAccount);
 
             if ( ! empty($subAccount->imagePath())) {
 
@@ -290,6 +308,8 @@
          */
         public function activeToggle(User $sub_account): JsonResponse
         {
+            $this->ownedSubAccountOrAbort($sub_account);
+
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -377,6 +397,8 @@
          */
         public function destroy(User $sub_account): JsonResponse
         {
+            $this->ownedSubAccountOrAbort($sub_account);
+
             if (app()->isLocal() === false && config('app.stage') === 'demo') {
                 return response()->json([
                     'status'  => 'error',

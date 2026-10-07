@@ -24,9 +24,18 @@
                 @endif
             </div>
 
+            @if(count($clients['rows']) === 0)
+                <x-empty-state icon="briefcase" title="No client accounts yet"
+                               description="Invite your first client from Clients. Once they accept and finish setting up, they appear here." />
+                @if($clients['manageUrl'])
+                    <div class="text-center mt-1">
+                        <x-button variant="primary" size="sm" :href="$clients['manageUrl']" data-role="clients-invite">Invite a client</x-button>
+                    </div>
+                @endif
+            @else
             {{-- Wider screens: a table. --}}
             <div class="d-none d-md-block" data-role="clients-table">
-                <x-table :headers="['Client account', 'Status', 'Needs attention', 'Open']" class="mb-0">
+                <x-table :headers="['Client account', 'Status', 'Needs attention', 'View']" class="mb-0">
                     @foreach($clients['rows'] as $row)
                         <tr data-role="client-row">
                             <td class="fw-bolder">{{ $row['name'] }}</td>
@@ -38,7 +47,7 @@
                                         <span>{{ $flag['text'] }}</span>
                                     </div>
                                 @empty
-                                    <span class="text-muted">Nothing needs attention</span>
+                                    <span class="text-muted">{{ $row['note'] ?? 'Nothing needs attention' }}</span>
                                 @endforelse
                             </td>
                             <td>
@@ -48,7 +57,7 @@
                                 @if($row['openUrl'])
                                     <form method="POST" action="{{ $row['openUrl'] }}" data-role="client-open">
                                         @csrf
-                                        <x-button type="submit" variant="outline" size="sm">Open<span class="visually-hidden"> {{ $row['name'] }}</span></x-button>
+                                        <x-button type="submit" variant="outline" size="sm">View as client<span class="visually-hidden"> {{ $row['name'] }}</span></x-button>
                                     </form>
                                 @endif
                             </td>
@@ -69,17 +78,18 @@
                                 <span>{{ $flag['text'] }}</span>
                             </div>
                         @empty
-                            <p class="text-muted mb-50">Nothing needs attention</p>
+                            <p class="text-muted mb-50">{{ $row['note'] ?? 'Nothing needs attention' }}</p>
                         @endforelse
                         @if($row['openUrl'])
                             <form method="POST" action="{{ $row['openUrl'] }}" data-role="client-open">
                                 @csrf
-                                <x-button type="submit" variant="outline" size="sm">Open<span class="visually-hidden"> {{ $row['name'] }}</span></x-button>
+                                <x-button type="submit" variant="outline" size="sm">View as client<span class="visually-hidden"> {{ $row['name'] }}</span></x-button>
                             </form>
                         @endif
                     </li>
                 @endforeach
             </ul>
+            @endif
         </x-card>
     </section>
 @endif
@@ -100,6 +110,9 @@
             </div>
             <p class="text-caption text-muted mb-1" data-role="cross-client-span">{{ $performance['rangeLabel'] }} · {{ $performance['spanLabel'] }}</p>
 
+            @if(count($performance['rows']) === 0)
+                <p class="text-muted mb-0" data-role="cross-client-empty">Client performance appears here once you have a client account.</p>
+            @else
             {{-- Wider screens: a table. --}}
             <div class="d-none d-md-block" data-role="cross-client-table">
                 <x-table :headers="['Client account', 'New contacts', 'New conversations']" class="mb-0">
@@ -133,6 +146,7 @@
                     <p class="mb-0">{{ number_format($performance['totals']['newConversations']) }} new {{ \Illuminate\Support\Str::plural('conversation', $performance['totals']['newConversations']) }}</p>
                 </li>
             </ul>
+            @endif
         </x-card>
     </section>
 @endif
@@ -185,7 +199,7 @@
                 <dt class="col-6 col-md-4 text-label">Prospects</dt>
                 <dd class="col-6 col-md-8 mb-0" data-role="prospecting-prospects">{{ number_format($prospecting['prospects']) }}</dd>
             </dl>
-            <x-button variant="outline" size="sm" :href="$prospecting['url']">Open prospecting</x-button>
+            <x-button variant="outline" size="sm" :href="$prospecting['url']">Open Outreach</x-button>
         </x-card>
     </section>
 @endif

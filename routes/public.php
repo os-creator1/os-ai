@@ -375,9 +375,12 @@
      * environment, per its own pre-existing, unmodified behavior —
      * mirroring routes/admin.php's identical {business} precedent).
      */
-    // robots.txt for the platform host. Custom domains answer their own robots.txt
-    // from App\Http\Middleware\ResolveCustomDomainWebsite before routing runs.
-    Route::get('robots.txt', 'Public\WebsiteController@robots')->name('public.robots');
+    /*
+     * The platform host's robots.txt (everything allowed). A route, not a static file, so the web server
+     * can never serve a file ahead of a customer domain's own, Sitemap-carrying robots.txt
+     * (ResolveCustomDomainWebsite). Byte for byte what public/robots.txt used to say.
+     */
+    Route::get('robots.txt', 'Public\RobotsController@show')->name('public.robots');
 
     Route::prefix('sites')->group(function () {
         Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->middleware('attribution.capture')->name('public.website.home')

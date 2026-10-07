@@ -193,6 +193,7 @@ class UsageBillingController extends AdminBaseController
     {
         return view('admin.usage-billing.safety-limits.index', [
             'paymentProviderStatus' => PaymentProviderConfigurationStatus::label(),
+            'providerReadiness' => array_values(array_filter(app(\App\Library\PlatformOwner\PlatformProviderReadiness::class)->all(), fn ($p) => $p['key'] === 'stripe')),
             'safetyLimits' => $this->safetyLimitRepository->all(),
             'history' => $this->limitTransitionRepository->recentPlatformSafetyLimitHistory(),
             'breadcrumbs' => [

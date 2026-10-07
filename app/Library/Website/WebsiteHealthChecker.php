@@ -102,6 +102,12 @@ final class WebsiteHealthChecker
         // until the owner has read them; a connected domain does not change that.
         $this->indexingCheck($add, $pages, $livePages, $published, $links);
 
+        // 3b. A Forms-module form placed on a page that no longer resolves renders nothing for visitors.
+        $staleForms = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->unresolvedOn($website);
+        if ($staleForms !== []) {
+            $add('forms_module', self::WARN, 'Forms on your pages', 'A form on ' . implode(', ', array_values(array_unique(array_column($staleForms, 'page')))) . ' is switched off or its location is closed, so visitors do not see it. Switch it back on in Forms, or choose another.', 'Manage pages', $links['pages'] ?? null);
+        }
+
         // 4. Titles (as visitors and search engines see them: with the business name appended once).
         $this->titleCheck($add, $pages, $siteName, $links);
 
@@ -174,6 +180,9 @@ final class WebsiteHealthChecker
     private function indexingCheck(callable $add, Collection $pages, array $livePages, bool $published, array $links): void
     {
         $draftHidden = $pages->where('noindex', true)->count();
+        // Of the pages still hidden in the draft, the ones the OWNER chose to hide (never released by the bulk action).
+        $ownerHidden = $pages->where('noindex', true)->where('noindex_explicit', true)->count();
+        $ownerNote = $ownerHidden > 0 ? ' You chose to hide ' . $ownerHidden . ' of them.' : '';
 
         if ($published && $livePages !== []) {
             $liveTotal = count($livePages);
@@ -191,7 +200,7 @@ final class WebsiteHealthChecker
                 'indexing',
                 self::WARN,
                 'Pages visible to search engines',
-                $liveHidden.' of '.$liveTotal.' live pages are hidden from search engines, so they will not be found in search even on your own domain. Read your pages, then let search engines find them.'.$note,
+                $liveHidden.' of '.$liveTotal.' live pages are hidden from search engines, so they will not be found in search even on your own domain.'.$ownerNote.' Read your pages, then let search engines find them.'.$note,
                 'Review pages',
                 $links['pages'] ?? null,
             );
@@ -205,7 +214,7 @@ final class WebsiteHealthChecker
             'Pages visible to search engines',
             $draftHidden === 0
                 ? 'None of your pages is hidden from search engines. They become visible once you publish.'
-                : $draftHidden.' of '.$pages->count().' pages are hidden from search engines, so they will not be found in search once you publish. Read your pages, then let search engines find them.',
+                : $draftHidden.' of '.$pages->count().' pages are hidden from search engines, so they will not be found in search once you publish.'.$ownerNote.' Read your pages, then let search engines find them.',
             $draftHidden === 0 ? null : 'Review pages',
             $links['pages'] ?? null,
         );

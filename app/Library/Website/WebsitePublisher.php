@@ -131,8 +131,10 @@ final class WebsitePublisher
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
         $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 
+        $validFormsModuleUids = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->knownUids($website->business);
+
         foreach ($pages as $page) {
-            $this->sectionValidator->validate($page->sections ?? [], $validAssetUids, true, $validFormUids);
+            $this->sectionValidator->validate($page->sections ?? [], $validAssetUids, true, $validFormUids, true, $validFormsModuleUids);
         }
     }
 

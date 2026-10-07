@@ -37,7 +37,7 @@ class DeliverPlatformAnnouncementChunk implements ShouldQueue
         $announcement = PlatformAnnouncement::query()->find($this->announcementId);
 
         // Cancelled / expired between publish and this chunk: deliver nothing more.
-        if ($announcement === null || $announcement->status !== PlatformAnnouncement::STATUS_PUBLISHED) {
+        if ($announcement === null || $announcement->status !== \App\Enums\PlatformOwner\PlatformAnnouncementStatus::Published) {
             return;
         }
 

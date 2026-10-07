@@ -113,6 +113,13 @@
          */
         public function register()
         {
+            // The ONE announcement delivery seam, bound to the Platform Automations delivery
+            // runtime (queued, chunked, idempotent; banner / notification / email).
+            $this->app->bind(
+                \App\Library\PlatformOwner\Announcements\PlatformAnnouncementDelivery::class,
+                \App\Library\PlatformAutomation\Announcements\CanonicalPlatformAnnouncementDelivery::class,
+            );
+
             // Shared customer request query-budget optimization (Automations
             // V2 §18, the V2-E blocker on PR #280) — bound as a singleton so
             // every resolution within one request/container shares the same

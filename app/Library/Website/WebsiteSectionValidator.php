@@ -26,6 +26,8 @@ final class WebsiteSectionValidator
      *        any non-empty asset reference is itself a validation failure
      * @param array $validFormUids uids of WebsiteForm rows belonging to this
      *        Website — a `form` section's form_uid must match one of these
+     * @param array $validFormsModuleUids the Forms-module Website references (FormDeployment uids) of THIS
+     *        Website's Business — a `forms_module_form` section's reference must be one of them
      * @param bool $requireImageOnImageText false ONLY for the guided-generation
      *        pre-binding pass (acceptance-correction round 2, Blocker 1):
      *        AI is forbidden from ever supplying an asset reference
@@ -40,7 +42,7 @@ final class WebsiteSectionValidator
      * @return array the validated (structurally unchanged) sections array
      * @throws ValidationException
      */
-    public function validate(array $sections, array $validAssetUids, bool $allowAssetReferences = true, array $validFormUids = [], bool $requireImageOnImageText = true): array
+    public function validate(array $sections, array $validAssetUids, bool $allowAssetReferences = true, array $validFormUids = [], bool $requireImageOnImageText = true, array $validFormsModuleUids = []): array
     {
         $errors = [];
 
@@ -65,7 +67,7 @@ final class WebsiteSectionValidator
             }
 
             try {
-                $this->validateData($type, $section['data'], $validAssetUids, $allowAssetReferences, $validFormUids, $requireImageOnImageText);
+                $this->validateData($type, $section['data'], $validAssetUids, $allowAssetReferences, $validFormUids, $requireImageOnImageText, $validFormsModuleUids);
             } catch (ValidationException $e) {
                 foreach ($e->errors() as $field => $messages) {
                     $errors["sections.{$index}.{$field}"] = $messages;
@@ -83,7 +85,7 @@ final class WebsiteSectionValidator
     /**
      * @throws ValidationException
      */
-    private function validateData(WebsiteSectionType $type, array $data, array $validAssetUids, bool $allowAssetReferences, array $validFormUids = [], bool $requireImageOnImageText = true): void
+    private function validateData(WebsiteSectionType $type, array $data, array $validAssetUids, bool $allowAssetReferences, array $validFormUids = [], bool $requireImageOnImageText = true, array $validFormsModuleUids = []): void
     {
         $rules = match ($type) {
             WebsiteSectionType::Hero => [
@@ -149,6 +151,11 @@ final class WebsiteSectionValidator
                 'heading' => 'nullable|string|max:120',
                 'form_uid' => 'required|string',
             ],
+            // A Forms-module form: only a reference (the uid of a Website-source FormDeployment), never a URL or markup.
+            WebsiteSectionType::FormsModuleForm => [
+                'heading' => 'nullable|string|max:120',
+                'forms_module_deployment_uid' => 'required|string|max:64',
+            ],
             // Built entirely by MediaBindingService::bindBackdrops() from
             // real BusinessBackdropImage rows, never AI-authored — image
             // references are resolved URLs (BusinessBackdropImage::url()),
@@ -187,6 +194,10 @@ final class WebsiteSectionValidator
 
         if ($type === WebsiteSectionType::Form && ! in_array($data['form_uid'], $validFormUids, true)) {
             throw ValidationException::withMessages(['form_uid' => ['Unknown or foreign form reference.']]);
+        }
+
+        if ($type === WebsiteSectionType::FormsModuleForm && ! in_array($data['forms_module_deployment_uid'], $validFormsModuleUids, true)) {
+            throw ValidationException::withMessages(['forms_module_deployment_uid' => ['Unknown or foreign Forms reference.']]);
         }
     }
 

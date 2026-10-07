@@ -24,19 +24,24 @@ final class WebsiteHeadMeta
     /** Titles longer than this are usually truncated in results. */
     public const TITLE_SOFT_LIMIT = 70;
 
+    private const CARD_MIN_WIDTH = 1200;
+
     /**
      * @param  array<string, mixed>  $page  the page as a snapshot array (title, seo, is_home …)
      * @param  array<string, mixed>  $websiteMeta  snapshot['website'] (name, theme …)
      * @param  array<string, array<string, mixed>>  $assetsByUid
+     * @param  array<int, array{type?: string, data?: array<string, mixed>}>  $sections  the page's sections (its own hero photo is the first og:image candidate)
+     * @param  bool  $isPreview  the owner's Preview carries only title/description, never social extras
      * @return array{title: string, description: ?string, canonical: ?string, og: array<string, string>, twitter: array<string, string>, lang: string}
      */
-    public function build(array $page, array $websiteMeta, ?string $canonicalUrl, array $assetsByUid): array
+    public function build(array $page, array $websiteMeta, ?string $canonicalUrl, array $assetsByUid, array $sections = [], bool $isPreview = false): array
     {
         $siteName = trim((string) ($websiteMeta['name'] ?? ''));
         $seo = (array) ($page['seo'] ?? []);
 
         $title = self::title((string) ($seo['seo_title'] ?? ''), (string) ($page['title'] ?? ''), $siteName);
         $description = self::description($seo['meta_description'] ?? null);
+        $canonical = $canonicalUrl !== null && $canonicalUrl !== '' ? $canonicalUrl : null;
 
         $og = ['og:title' => $title];
 
@@ -44,36 +49,48 @@ final class WebsiteHeadMeta
             $og['og:description'] = $description;
         }
 
-        $og['og:type'] = 'website';
+        $twitter = [];
 
-        if ($siteName !== '') {
-            $og['og:site_name'] = $siteName;
-        }
+        if (! $isPreview) {
+            $og['og:type'] = 'website';
 
-        if ($canonicalUrl !== null && $canonicalUrl !== '') {
-            $og['og:url'] = $canonicalUrl;
-        }
-
-        $image = $this->shareImage($websiteMeta, $assetsByUid);
-
-        if ($image !== null) {
-            $og['og:image'] = $image['url'];
-
-            if ($image['alt'] !== '') {
-                $og['og:image:alt'] = $image['alt'];
+            if ($siteName !== '') {
+                $og['og:site_name'] = $siteName;
             }
+
+            if ($canonical !== null) {
+                $og['og:url'] = $canonical;
+            }
+
+            $image = $this->shareImage($sections, (array) ($websiteMeta['theme'] ?? []), $assetsByUid);
+
+            if ($image !== null) {
+                $og['og:image'] = $image['url'];
+
+                if ($image['width'] && $image['height']) {
+                    $og['og:image:width'] = (string) $image['width'];
+                    $og['og:image:height'] = (string) $image['height'];
+                }
+
+                if ($image['alt'] !== '') {
+                    $og['og:image:alt'] = $image['alt'];
+                }
+
+                $twitter['twitter:image'] = $image['url'];
+            }
+
+            $twitter = ['twitter:card' => $image !== null ? 'summary_large_image' : 'summary'] + $twitter;
         }
 
         return [
             'title' => $title,
             'description' => $description,
-            'canonical' => $canonicalUrl !== null && $canonicalUrl !== '' ? $canonicalUrl : null,
+            'canonical' => $canonical,
             'og' => $og,
-            'twitter' => ['twitter:card' => $image !== null ? 'summary_large_image' : 'summary'],
+            'twitter' => $twitter,
             'lang' => 'en',
         ];
     }
-
     /**
      * "<seo title or page title> | <Business name>", unless the Business
      * name is already part of it (then it is used as written).
@@ -115,31 +132,67 @@ final class WebsiteHeadMeta
     }
 
     /**
-     * The owner's hero image, else their logo — an image the Business owns
-     * and published; never a platform placeholder. Prefers the widest
-     * derivative up to 1280px (a share card never needs the multi-MB
-     * original).
+     * The page's own hero photo, else the owner's Hero image — a Business-owned file the page already
+     * uses and that really exists on disk, so a social card never points at a broken URL. The smallest
+     * derivative wide enough for a card (>= 1200px) is preferred, else the widest, else the original.
+     * No usable image: no og:image (and the small "summary" card).
      *
-     * @param  array<string, mixed>  $websiteMeta
+     * @param  array<int, array{type?: string, data?: array<string, mixed>}>  $sections
+     * @param  array<string, mixed>  $theme
      * @param  array<string, array<string, mixed>>  $assetsByUid
-     * @return array{url: string, alt: string}|null
+     * @return array{url: string, width: ?int, height: ?int, alt: string}|null
      */
-    private function shareImage(array $websiteMeta, array $assetsByUid): ?array
+    private function shareImage(array $sections, array $theme, array $assetsByUid): ?array
     {
-        $theme = (array) ($websiteMeta['theme'] ?? []);
+        $candidates = [];
 
-        foreach (['hero_asset_uid', 'logo_asset_uid'] as $key) {
-            $uid = $theme[$key] ?? null;
-            $asset = $uid !== null ? ($assetsByUid[$uid] ?? null) : null;
-
-            if (! is_array($asset)) {
-                continue;
+        foreach ($sections as $section) {
+            if (($section['type'] ?? null) === 'hero' && ! empty($section['data']['background_image'])) {
+                $candidates[] = (string) $section['data']['background_image'];
+                break;
             }
+        }
 
-            $url = self::bestUrl($asset);
+        if (! empty($theme['hero_asset_uid'])) {
+            $candidates[] = (string) $theme['hero_asset_uid'];
+        }
 
-            if ($url !== null) {
-                return ['url' => $url, 'alt' => Str::limit(trim((string) ($asset['alt_text'] ?? '')), 120, '')];
+        foreach ($candidates as $uid) {
+            $asset = $assetsByUid[$uid] ?? null;
+            $picked = is_array($asset) ? $this->pick($asset) : null;
+
+            if ($picked !== null) {
+                return $picked + ['alt' => Str::limit(trim((string) ($asset['alt_text'] ?? '')), 120, '')];
+            }
+        }
+
+        return null;
+    }
+
+    /** @return ?array{url: string, width: ?int, height: ?int} */
+    private function pick(array $asset): ?array
+    {
+        $variants = array_values(array_filter((array) ($asset['variants'] ?? []), fn ($v) => is_array($v) && ! empty($v['url']) && ! empty($v['w'])));
+        usort($variants, fn ($a, $b) => $a['w'] <=> $b['w']);
+
+        $chosen = null;
+        foreach ($variants as $variant) {
+            if ($variant['w'] >= self::CARD_MIN_WIDTH) {
+                $chosen = $variant;
+                break;
+            }
+        }
+        $chosen ??= $variants === [] ? null : end($variants);
+
+        $options = [];
+        if ($chosen !== null) {
+            $options[] = ['url' => (string) $chosen['url'], 'width' => (int) $chosen['w'], 'height' => isset($chosen['h']) ? (int) $chosen['h'] : null];
+        }
+        $options[] = ['url' => (string) ($asset['url'] ?? ''), 'width' => isset($asset['width']) ? (int) $asset['width'] : null, 'height' => isset($asset['height']) ? (int) $asset['height'] : null];
+
+        foreach ($options as $option) {
+            if (self::existsOnDisk($option['url'])) {
+                return $option;
             }
         }
 
@@ -147,26 +200,27 @@ final class WebsiteHeadMeta
     }
 
     /**
-     * The best absolute URL to share for an asset payload: the widest derivative up to 1280px, else the original.
+     * The best absolute URL for an asset payload (a card-sized derivative, else the original), used by
+     * structured data for the logo.
      *
      * @param  array<string, mixed>  $asset
      */
     public static function bestUrl(array $asset): ?string
     {
-        $best = null;
+        $picked = (new self())->pick($asset);
 
-        foreach ((array) ($asset['variants'] ?? []) as $variant) {
-            if (! is_array($variant) || empty($variant['url']) || empty($variant['w'])) {
-                continue;
-            }
+        return $picked['url'] ?? null;
+    }
 
-            if ($variant['w'] <= 1280 && ($best === null || $variant['w'] > $best['w'])) {
-                $best = $variant;
-            }
+    /** True only for an absolute URL whose file is really on disk under /images. */
+    private static function existsOnDisk(string $url): bool
+    {
+        if ($url === '' || preg_match('#^https?://#i', $url) !== 1) {
+            return false;
         }
 
-        $url = $best['url'] ?? ($asset['url'] ?? null);
+        $path = ltrim((string) parse_url($url, PHP_URL_PATH), '/');
 
-        return is_string($url) && preg_match('#^https?://#i', $url) === 1 ? $url : null;
+        return str_starts_with($path, 'images/') && ! str_contains($path, '..') && is_file(public_path($path));
     }
 }

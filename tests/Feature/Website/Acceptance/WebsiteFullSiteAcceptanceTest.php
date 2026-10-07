@@ -261,6 +261,8 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
             $intended = array_column(array_filter($ctx->manifest, fn ($e) => ! $e['noindex']), 'url');
             $audit->auditSitemap($crawler->get('https://' . $this->domain . '/sitemap.xml')['body'], $intended, 'https://' . $this->domain);
             $audit->auditRobots($crawler->get('https://' . $this->domain . '/robots.txt')['body'], 'https://' . $this->domain . '/sitemap.xml');
+            // The platform host's own robots.txt allows everything and names no site's sitemap.
+            $audit->auditRobots($crawler->get('http://127.0.0.1/robots.txt')['body']);
             // The test client trims a trailing slash from the URL, so this request is handed to the kernel as built.
             $audit->auditUrlSpace($crawler, $ctx, function (string $url): array {
                 $response = $this->app->make(\Illuminate\Contracts\Http\Kernel::class)->handle(\Illuminate\Http\Request::create($url, 'GET'));

@@ -64,9 +64,9 @@ final class WebsiteAddressPrivacyGate
      * @param  array<int, array{type: string, data: array}>  $sections
      * @return array<int, array{type: string, data: array}>
      */
-    public function redactSections(array $sections, ?Business $business): array
+    public function redactSections(array $sections, ?Business $business, ?string $pageSlug = null): array
     {
-        if ($this->currentlyPermitsAddress($business)) {
+        if ($this->currentlyPermitsAddress($business) && WebsiteLocationPageAddress::pageMayShowAddress($pageSlug, $business)) {
             return $sections;
         }
 
@@ -88,9 +88,9 @@ final class WebsiteAddressPrivacyGate
      * @param  array<string, mixed>  $localBusiness
      * @return array<string, mixed>
      */
-    public function redactLocalBusiness(array $localBusiness, ?Business $business): array
+    public function redactLocalBusiness(array $localBusiness, ?Business $business, ?string $pageSlug = null): array
     {
-        if (! $this->currentlyPermitsAddress($business)) {
+        if (! $this->currentlyPermitsAddress($business) || ! WebsiteLocationPageAddress::pageMayShowAddress($pageSlug, $business)) {
             $localBusiness['address'] = null;
         }
 

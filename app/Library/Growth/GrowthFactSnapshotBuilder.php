@@ -6,12 +6,14 @@ namespace App\Library\Growth;
 
 use App\Enums\Growth\GrowthFactStatus;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Growth\Readers\GrowthAdsFactReader;
 use App\Library\Growth\Readers\GrowthAutomationFactReader;
 use App\Library\Growth\Readers\GrowthBookingFactReader;
 use App\Library\Growth\Readers\GrowthCitationFactReader;
 use App\Library\Growth\Readers\GrowthConversationFactReader;
 use App\Library\Growth\Readers\GrowthCrmFactReader;
 use App\Library\Growth\Readers\GrowthDocumentFactReader;
+use App\Library\Growth\Readers\GrowthFormsFactReader;
 use App\Library\Growth\Readers\GrowthRankFactReader;
 use App\Library\Growth\Readers\GrowthReputationFactReader;
 use App\Library\Growth\Readers\GrowthSeoFactReader;
@@ -49,17 +51,18 @@ class GrowthFactSnapshotBuilder
         GrowthBookingFactReader $booking,
         GrowthWebsiteFactReader $website,
         GrowthSeoFactReader $seo,
-        GrowthRankFactReader $rank,
         GrowthReputationFactReader $reviews,
         GrowthCitationFactReader $citations,
         GrowthDocumentFactReader $documents,
         GrowthAutomationFactReader $automations,
+        GrowthAdsFactReader $ads,
+        GrowthRankFactReader $rank,
+        GrowthFormsFactReader $forms,
     ) {
         $this->readers = [
-            // `rank` reads the rank module's STORED observations only (entitled Businesses).
-            $crm, $conversations, $booking, $website, $seo, $rank, $reviews, $citations, $documents, $automations,
-            // Modules not on main (or with no reader yet): reported Unavailable, never zero.
-            new GrowthUnavailableFactReader('ads'),
+            $crm, $conversations, $booking, $website, $seo, $reviews, $citations, $documents, $automations,
+            $ads, $rank, $forms,
+            // No reader exists for these: reported Unavailable, never zero.
             new GrowthUnavailableFactReader('search_console'),
         ];
     }

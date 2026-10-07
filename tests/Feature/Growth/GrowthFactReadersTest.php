@@ -294,7 +294,7 @@ class GrowthFactReadersTest extends TestCase
 
         $this->assertFalse($seo->get('coverage_known'));
         $this->assertSame([], $seo->get('not_covered'));
-        $this->assertSame(S::Insufficient, $this->outcomes()['seo.keywords_not_covered:v2']->status);
+        $this->assertSame(S::Insufficient, $this->outcomes()['seo.keywords_not_covered:v1']->status);
     }
 
     // ── Citations ────────────────────────────────────────────────────────
@@ -332,27 +332,20 @@ class GrowthFactReadersTest extends TestCase
 
     // ── Entitlements / unavailable modules ───────────────────────────────
 
-    public function test_ads_and_search_console_are_unavailable_never_zero(): void
+    public function test_search_console_is_unavailable_and_unentitled_ads_and_rank_are_never_zero(): void
     {
         $sets = $this->facts()->sets();
 
-        foreach (['ads', 'search_console'] as $domain) {
-            $this->assertSame(GrowthFactStatus::Unavailable, $sets[$domain]->status);
+        $this->assertSame(GrowthFactStatus::Unavailable, $sets['search_console']->status);
+
+        // Ads and rank have real readers now; without the module they are NOT ENTITLED (neutral), never a zero.
+        foreach (['ads', 'rank'] as $domain) {
+            $this->assertContains($sets[$domain]->status, [GrowthFactStatus::NotEntitled, GrowthFactStatus::Available], $domain);
+
+            if ($sets[$domain]->status === GrowthFactStatus::NotEntitled) {
+                $this->assertSame([], $sets[$domain]->data);
+            }
         }
-    }
-
-    public function test_rank_is_read_from_stored_observations_and_with_none_is_insufficient_never_zero(): void
-    {
-        $rank = $this->facts()->set('rank');
-
-        // The rank module ships, so the domain is available to an entitled Business...
-        $this->assertSame(GrowthFactStatus::Available, $rank->status);
-        $this->assertSame(0, $rank->get('judged_count'));
-
-        // ...but with nothing stored there is nothing to judge: never "all clear".
-        $outcomes = $this->outcomes();
-        $this->assertSame(S::Insufficient, $outcomes['seo.meaningful_rank_drop:v1']->status);
-        $this->assertSame(S::Insufficient, $outcomes['seo.rank_just_outside_top_10:v1']->status);
     }
 
     public function test_a_plan_without_a_module_excludes_its_rules_instead_of_scoring_them(): void

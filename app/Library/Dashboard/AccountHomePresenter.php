@@ -214,7 +214,18 @@ final class AccountHomePresenter
             $rows[] = [
                 'name' => $client->name,
                 'active' => $client->isSelectable(),
-                'statusWord' => $client->isSelectable() ? 'Active' : 'Not active',
+                'statusWord' => match (true) {
+                    $client->isSelectable() => 'Active',
+                    $client->status === BusinessStatus::Draft->value => 'Waiting for client setup',
+                    default => 'Not active',
+                },
+                // Why there is nothing to open / flag, said in the client's own terms rather than
+                // "Nothing needs attention" (which a client still in setup does not earn).
+                'note' => match (true) {
+                    $client->isSelectable() => null,
+                    $client->status === BusinessStatus::Draft->value => 'The client has not finished setting up their Business yet.',
+                    default => 'This client\'s Business is not active.',
+                },
                 'openUrl' => $canOpen && $client->isSelectable()
                     ? route('customer.workspaces.clients.view-as', [$workspace->uid, $client->workspaceUid])
                     : null,
@@ -227,7 +238,7 @@ final class AccountHomePresenter
 
         return [
             'rows' => $rows,
-            'manageUrl' => $this->manageUrl($user, $workspace),
+            'manageUrl' => $this->clientsUrl($user, $workspace),
         ];
     }
 
@@ -267,7 +278,7 @@ final class AccountHomePresenter
             'unlimited' => $decision->unlimited,
             'allowed' => $decision->allowed,
             'sentence' => $sentence,
-            'manageUrl' => $this->manageUrl($user, $workspace),
+            'manageUrl' => $this->planUrl($user, $workspace),
         ];
     }
 
@@ -514,7 +525,7 @@ final class AccountHomePresenter
             'plan' => $workspace->tierDisplayName,
             'paused' => true,
             'sentence' => 'Paid activity is paused across this agency account, so messaging is stopped for every client account.',
-            'manageUrl' => Route::has('customer.workspaces.show') ? route('customer.workspaces.show', $workspace->uid) : null,
+            'manageUrl' => Route::has('customer.workspaces.settings.show') ? route('customer.workspaces.settings.show', $workspace->uid) : null,
         ];
     }
 
@@ -614,11 +625,14 @@ final class AccountHomePresenter
             return null;
         }
 
-        if (config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show')) {
+        $workspace = $context->frameWorkspace();
+
+        // Guided onboarding is offered only to someone who can manage the account (or who has none yet).
+        // Restricted staff never get a create action, whether or not the wizard is switched on.
+        if (config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show')
+            && ($workspace === null || $workspace->canManage())) {
             return route('customer.onboarding.show');
         }
-
-        $workspace = $context->frameWorkspace();
 
         if ($workspace !== null && $workspace->canManage() && Route::has('customer.workspaces.show')) {
             return route('customer.workspaces.show', $workspace->uid);
@@ -694,10 +708,24 @@ final class AccountHomePresenter
         return route('customer.workspaces.businesses.activate.show', [$business->workspaceUid, $business->uid]);
     }
 
-    private function manageUrl(User $user, WorkspaceCandidate $workspace): ?string
+    /**
+     * "Manage client accounts" opens the Clients list — the surface that lists, invites and
+     * opens clients. (It used to open the account overview, which lists none of them.)
+     */
+    private function clientsUrl(User $user, WorkspaceCandidate $workspace): ?string
     {
-        return Route::has('customer.workspaces.show') && Gate::forUser($user)->allows('access_backend')
-            ? route('customer.workspaces.show', $workspace->uid)
+        return Route::has('customer.workspaces.clients.index') && Gate::forUser($user)->allows('access_backend')
+            ? route('customer.workspaces.clients.index', $workspace->uid)
+            : null;
+    }
+
+    /**
+     * "Manage capacity" opens Plan & subscription, where the capacity figure and its plan live.
+     */
+    private function planUrl(User $user, WorkspaceCandidate $workspace): ?string
+    {
+        return Route::has('customer.workspaces.plan.show') && Gate::forUser($user)->allows('access_backend')
+            ? route('customer.workspaces.plan.show', $workspace->uid)
             : null;
     }
 

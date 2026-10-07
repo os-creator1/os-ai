@@ -1,6 +1,3 @@
-
-
-
 <?php
     use App\Http\Controllers\Customer\DLRController;
     use Illuminate\Support\Facades\DB;

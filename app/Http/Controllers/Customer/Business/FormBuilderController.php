@@ -50,10 +50,13 @@ class FormBuilderController extends Controller
         [, $business] = $this->formsScope($workspaceUid, $businessUid);
         $form = $this->formOrAbort($business, $formUid);
 
-        $data = $this->validatedDocument($request) + $request->validate(['base_version' => ['required', 'integer', 'min:1']]);
+        $data = $this->validatedDocument($request) + $request->validate([
+            'base_version' => ['required', 'integer', 'min:1'],
+            'base_hash' => ['nullable', 'string', 'size:64'],
+        ]);
 
         try {
-            $updated = $this->forms->update($business, $form, $data, (int) Auth::id(), (int) $data['base_version']);
+            $updated = $this->forms->update($business, $form, $data, (int) Auth::id(), (int) $data['base_version'], $data['base_hash'] ?? null, true);
         } catch (FormStaleVersionException $exception) {
             return response()->json(['status' => 'conflict', 'message' => $exception->getMessage(), 'current_version' => $exception->currentVersion], 409);
         } catch (FormRuleException $exception) {
@@ -63,6 +66,7 @@ class FormBuilderController extends Controller
         return response()->json([
             'status' => 'saved',
             'version' => (int) $updated->current_version,
+            'hash' => $updated->currentVersion()->content_hash,
             'saved_at' => now()->toIso8601String(),
         ]);
     }

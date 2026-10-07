@@ -183,3 +183,25 @@ proves each rule fails on a deliberately broken page. Result: **0 FAIL, 0 GAP** 
 * Legacy (non-template) sites keep their original hero as a CSS background image.
 * Gallery photos without a title share one generated alt text; owners can edit each.
 * Real-AI copy quality cannot be verified without credentials (the acceptance bot uses a deterministic fake).
+
+## 5. Reconciliation with the canonical completion head (2888c567)
+
+The completion head and this lane had independently built overlapping pieces. One implementation won
+for each, the other was removed, and callers and tests were moved to the winner:
+
+| Concern | Canonical implementation (kept) | Removed |
+| --- | --- | --- |
+| Owner-intent indexing | `website_pages.noindex_explicit` + `WebsiteSearchVisibility::release()` (head). `websites.indexing_released_at` (migration `2026_11_05_090001`) stays as a *different* fact: it records that the owner released indexing, so a rebuild keeps pages open and keeps `noindex_explicit` pages hidden. | `website_pages.noindex_by_owner` |
+| robots.txt / sitemap | `WebsiteCrawlFiles` is the one generator. Platform host: `Public\RobotsController` (route `public.robots`). Custom domain: `ResolveCustomDomainWebsite` serves `/robots.txt` (Sitemap line only when something is indexable) and `/sitemap.xml`; `/sitemap` 301s to `/sitemap.xml`. No static `public/robots.txt`. | `WebsiteController@robots`, the head's always-on `renderRobots`, the extensionless sitemap authority |
+| FAQPage | `Website\Seo\WebsiteFaqStructuredData` (injected instance): every visible Q/A pair in order, whitespace-normalised. One JSON-LD block in the layout. | the static builder and the second layout block |
+| Head metadata | `Website\Seo\WebsiteHeadMeta` (title brand once and <= 70 characters, description only when real, og/twitter incl. image size, alt and `twitter:image`, image only if the file exists, none of the extras in Preview). | `WebsiteSocialMetadata` |
+| Growth rank facts | The head's `GrowthRankFactReader` + `RankRules`. Growth Center stays the lifecycle authority; this lane keeps only the deterministic SEO facts readers. | this lane's rank reader, `seo.meaningful_rank_drop` / `seo.rank_just_outside_top_10` rules and their tests |
+
+### Secondary Location address
+
+A Website has one physical-address authority, the primary Location. `WebsiteLocationPageAddress` allows a
+`serving-*` page to show an address only when it is the primary Location's own page. Every other
+`serving-*` page (a secondary Location, or a service-area page that implies no storefront) carries **no**
+street address in the page or in its LocalBusiness data. Applied when publishing (snapshot), at render
+(custom domain and platform path) and in the owner Preview, so Preview equals the published page.
+Regression test: `WebsiteSeoV1FinalTest::test_a_secondary_location_page_never_shows_the_primary_locations_address`.

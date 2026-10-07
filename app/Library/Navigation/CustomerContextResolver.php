@@ -104,6 +104,31 @@ final class CustomerContextResolver
             }
         }
 
+        // 3a. An Agency-management page (Clients, Outreach, SaaS plans, White label,
+        //     Team, Agency settings…) is the Agency ACCOUNT, never the Agency's own
+        //     Business. Without this the remembered own Business stayed "current" on
+        //     those pages, so the shell read "Your business · <own Business>" over the
+        //     client list. Standing on one is therefore a deliberate account-frame
+        //     choice, remembered exactly as the switcher's account option is (and
+        //     re-authorized the same way on every request); the actor's own Business
+        //     comes back the moment they open one of its modules (rule 2 above).
+        //     The frame follows PAGES the owner looks at, never an action they take: a POST (View As, an invitation,
+        //     a save) leaves the remembered frame exactly where it was, so starting View As never moves the owner's context.
+        if ($selectedWorkspace !== null
+            && $routeBusinessUid === null
+            && $request->isMethod('GET')
+            && $this->isAgencyManagementRoute($request)
+            && $selectedWorkspace->isAgency()
+            && $selectedWorkspace->isActive
+            && $selectedWorkspace->hasAccountHome()
+            && $selectedWorkspace->seesAccountFrame()) {
+            if (! ($remembered['accountFrame'] && $remembered['workspace'] === $selectedWorkspace->uid)) {
+                $this->preference->rememberAccount($selectedWorkspace->uid);
+            }
+
+            return $this->context($userId, $workspaces, $selectedWorkspace, null, ContextSource::AccountPreference, null, false);
+        }
+
         if ($selectedWorkspace === null && $remembered['workspace'] !== null) {
             $selectedWorkspace = $this->findWorkspace($workspaces, $remembered['workspace']);
 
@@ -277,6 +302,38 @@ final class CustomerContextResolver
         }
 
         return $result;
+    }
+
+    /**
+     * Route-name prefixes of the Agency's own management area. Each is addressed
+     * by `workspaceUid` alone (no Business), which is what makes it account-level.
+     * `customer.workspaces.agency-plan.` (a CLIENT's page about its agency plan)
+     * deliberately does not start with `customer.workspaces.agency.`.
+     */
+    private const AGENCY_MANAGEMENT_ROUTE_PREFIXES = [
+        'customer.workspaces.clients.',
+        'customer.workspaces.agency.',
+        'customer.workspaces.team.',
+        'customer.workspaces.settings.',
+        'customer.workspaces.plan.',
+        'customer.workspaces.prospecting.',
+    ];
+
+    private function isAgencyManagementRoute(Request $request): bool
+    {
+        $name = (string) $request->route()?->getName();
+
+        if ($name === 'customer.workspaces.show') {
+            return true;
+        }
+
+        foreach (self::AGENCY_MANAGEMENT_ROUTE_PREFIXES as $prefix) {
+            if (str_starts_with($name, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function routeParameter(Request $request, string $name): ?string

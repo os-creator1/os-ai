@@ -94,6 +94,7 @@
                     <option value="contact_details">Contact details</option>
                     <option value="gallery">Gallery</option>
                     <option value="form">Form</option>
+                    <option value="forms_module_form">Form from the Forms module</option>
                 </select>
                 <x-button type="button" variant="secondary" id="add-section-btn">Add section</x-button>
             </div>
@@ -114,6 +115,7 @@
     var initialSections = @json(old('sections_decoded', $page->sections ?? []));
     var availableAssets = @json(isset($assets) ? $assets->map(fn ($asset) => ['uid' => $asset->uid, 'label' => $asset->alt_text ?: 'Uploaded photo', 'url' => $asset->url()])->values()->all() : []);
     var availableForms = @json(isset($forms) ? $forms->map(fn ($form) => ['uid' => $form->uid, 'name' => $form->name])->values()->all() : []);
+    var availableFormsModule = @json($formsModule ?? []);
     var listEl = document.getElementById('sections-list');
     var counter = 0;
 
@@ -157,6 +159,10 @@
         form: [
             {key: 'heading', label: 'Heading', type: 'text'},
             {key: 'form_uid', label: 'Form', type: 'form_select'}
+        ],
+        forms_module_form: [
+            {key: 'heading', label: 'Heading', type: 'text'},
+            {key: 'forms_module_deployment_uid', label: 'Form', type: 'forms_module_select'}
         ]
     };
 
@@ -186,6 +192,12 @@
             }
             return '<div class="mb-2"><select class="form-select" data-field="' + key + '">' + formOptions(value) + '</select></div>';
         }
+        if (type === 'forms_module_select') {
+            if (availableFormsModule.length === 0 && !value) {
+                return '<div class="mb-2 text-caption">No Forms-module form is offered to Website pages yet. In Forms, open a form and switch on "Website pages" for a location.</div>';
+            }
+            return '<div class="mb-2"><select class="form-select" data-field="' + key + '">' + formsModuleOptions(value) + '</select></div>';
+        }
         if (type === 'textarea') {
             return '<div class="mb-2"><textarea class="form-control" data-field="' + key + '" rows="3">' + escapeHtml(value) + '</textarea></div>';
         }
@@ -204,6 +216,19 @@
         availableAssets.forEach(function (asset, index) {
             options += '<option value="' + escapeHtml(asset.uid) + '"' + (asset.uid === selected ? ' selected' : '') + '>' + escapeHtml(asset.label) + ' #' + (index + 1) + '</option>';
         });
+        return options;
+    }
+
+    function formsModuleOptions(selected) {
+        var options = '<option value="">Choose a form</option>';
+        var found = false;
+        availableFormsModule.forEach(function (form) {
+            if (form.uid === selected) { found = true; }
+            options += '<option value="' + escapeHtml(form.uid) + '"' + (form.uid === selected ? ' selected' : '') + '>' + escapeHtml(form.label) + '</option>';
+        });
+        if (selected && !found) {
+            options += '<option value="' + escapeHtml(selected) + '" selected>Unavailable — this form is switched off or its location is closed</option>';
+        }
         return options;
     }
 

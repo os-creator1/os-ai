@@ -430,6 +430,27 @@ guard and lands on `signup.plan`; a finished customer is sent Home from every
 guest URL. The verification email is sent when the account is created (never
 gating the purchase).
 
+**Hand-off to first-run onboarding.** Provisioning creates the Workspace's one
+Draft Business and its initial Location *before* payment. Onboarding must
+continue THAT Business — a second one is refused by the one-Business-per-
+Workspace rule. So `V1SignupManager::activateFromConfirmedSubscription()` (the
+one seam both the Checkout return and the webhook call) also starts the
+customer's required `CustomerOnboarding` row and attaches the signup's Business
+to it (`OnboardingManager::startForProvisionedBusiness()`), idempotently — a
+cancelled or unpaid signup therefore never has an onboarding row and is never
+sent into the wizard. The wizard's Business step updates that Business and its
+Location in place (and adopts the customer's single Draft Business if a row was
+started without one); only a customer with no Business to continue gets one
+created. Completing onboarding is what activates the Draft Business
+(`BusinessManager::activateForCompletedOnboarding()`, never for an
+Agency-managed Client Workspace, which keeps `activateClientBusiness()`), after
+which Home is the normal Business Home. An Agency signup takes the same hand-off: the
+Agency owner configures their OWN Business (its one Business, never a client)
+through first-run onboarding, and no Agency-client relationship or second
+Workspace/Business is created. `BUSINESS_ONBOARDING_ENABLED` therefore defaults to `true`
+(RFC-001 deployment note); `REQUIRE_NEW_CUSTOMERS` stays `false` because it only
+governs the legacy `register()` path.
+
 **Signup closed.** `register*` is registered whether or not signup is open.
 When `account.can_register` is off, or nothing is sellable, every step renders
 the same branded shell with "New registrations are temporarily unavailable." and

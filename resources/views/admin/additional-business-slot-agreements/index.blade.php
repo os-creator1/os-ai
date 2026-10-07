@@ -15,6 +15,10 @@
                 @endif
             </div>
 
+            <div class="col-12 mb-2">
+                <p class="text-muted mb-0">Extra-Business purchases were retired. This page lists the customers who bought extra Businesses before that and still hold them: each keeps what they paid for until they cancel, and their renewals continue here. No new agreements are created, and you can ignore this page when the list is empty.</p>
+            </div>
+
             <div class="col-12 mb-2" data-payment-provider-status>
                 <strong>Payment provider</strong>
                 <div>{{ $paymentProviderStatus }}</div>

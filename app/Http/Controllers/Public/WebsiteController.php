@@ -89,12 +89,6 @@ class WebsiteController extends Controller
         return redirect()->away('https://'.$domain->domain.'/sitemap.xml', 301);
     }
 
-    /** The platform host's own robots.txt (the static public/robots.txt was removed so the platform and custom domains share one generator). */
-    public function robots(): Response
-    {
-        return response(WebsiteCrawlFiles::platformRobots(), 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
-    }
-
     /**
      * The one address of a page on the platform path ($slug null = home).
      */
@@ -149,7 +143,7 @@ class WebsiteController extends Controller
         // custom domain: a revoked address permission must be withheld
         // here too, since this platform-path response renders the exact
         // same `contact_details` component.
-        $sections = $this->privacyGate->redactSections($page['sections'], $website->business);
+        $sections = $this->privacyGate->redactSections($page['sections'], $website->business, $page['slug'] ?? null);
 
         $response = response()->view('public.website.page', [
             'website' => $website,

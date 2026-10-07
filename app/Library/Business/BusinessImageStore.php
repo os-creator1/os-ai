@@ -137,7 +137,7 @@ final class BusinessImageStore
         // A picture the owner just removed or replaced may still be on a PUBLISHED page (a revision freezes the
         // photo's address, and its responsive variants, into the page). Deleting the file under a live or
         // rollback-able revision serves broken images on an indexed site, so a path any of this Business's
-        // Website revisions, draft pages or stored assets still names is kept (an orphan costs disk, a gap costs visitors).
+        // published Website revisions or stored assets still name is kept (an orphan costs disk, a gap costs visitors).
         if ($this->referencedByAWebsite($business, $path)) {
             return;
         }
@@ -162,7 +162,7 @@ final class BusinessImageStore
         // matches the literal text, so no LIKE escaping can go wrong.
         $needles = [$path, str_replace('/', '\\/', $path)];
 
-        foreach ([['website_revisions', 'snapshot'], ['website_pages', 'sections']] as [$table, $column]) {
+        foreach ([['website_revisions', 'snapshot']] as [$table, $column]) {
             foreach ($needles as $needle) {
                 if (\Illuminate\Support\Facades\DB::table($table)->whereIn('website_id', $websiteIds)->whereRaw("LOCATE(?, CAST({$column} AS CHAR)) > 0", [$needle])->exists()) {
                     return true;

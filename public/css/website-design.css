@@ -301,7 +301,8 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
     .wd-nav-item { flex-wrap: wrap; border-bottom: 1px solid var(--wd-header-line, rgba(0, 0, 0, 0.12)); }
     .wd-nav-link { flex: 1 1 auto; padding: 1rem 0.25rem; font-size: 1.05rem; text-align: left; letter-spacing: 0.05em; }
     .wd-dd-toggle { flex: 0 0 48px; width: 48px; height: 48px; margin: 0; }
-    .wd-dd-label { width: 100%; display: flex; justify-content: space-between; }
+    /* The label-only dropdown (Locations) puts its chevron where a linked dropdown's toggle button (Services) centres its own: 24px from the edge. */
+    .wd-nav .wd-dd-label { width: 100%; display: flex; justify-content: space-between; padding-right: calc(24px - 0.225em); }
     .wd-dd { position: static; min-width: 0; width: 100%; border: 0; box-shadow: none; background: transparent; padding: 0 0 0.6rem 0.9rem; max-height: none; color: inherit; }
     .wd-has-dd:hover > .wd-dd, .wd-has-dd:focus-within > .wd-dd { display: none; }
     .wd-nav-item[data-open="true"] > .wd-dd { display: block; }
@@ -576,3 +577,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd .website-service-features { list-style: none; margin: 0.6rem 0 0.9rem; padding: 0; text-align: left; color: inherit; }
 .wd .website-service-features li { position: relative; margin: 0.3rem 0; padding-left: 1.3rem; color: inherit; }
 .wd .website-service-features li::before { content: "\2713"; position: absolute; left: 0; font-weight: 800; color: var(--wd-a, currentColor); }
+
+/* Call-to-action bands that follow each other read as ONE block (same tone, no double padding between them). */
+.wd-band-cta + .wd-band-cta { border-top: 1px solid var(--wd-t-line); }
+.wd-band-cta + .wd-band-cta > .wd-container { padding-top: 0; }

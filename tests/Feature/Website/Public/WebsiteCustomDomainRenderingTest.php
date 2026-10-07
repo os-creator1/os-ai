@@ -157,7 +157,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'sitemap-domain.test');
 
-        $response = $this->get('http://'.$domain->domain.'/sitemap');
+        $response = $this->get('http://'.$domain->domain.'/sitemap.xml');
         $response->assertOk();
         $this->assertStringContainsString('https://sitemap-domain.test/about', $response->getContent());
         $this->assertStringNotContainsString($website->public_id, $response->getContent());
@@ -178,7 +178,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'sitemap-noindex.test');
 
-        $response = $this->get('http://'.$domain->domain.'/sitemap');
+        $response = $this->get('http://'.$domain->domain.'/sitemap.xml');
 
         $response->assertOk();
         $this->assertStringContainsString('https://sitemap-noindex.test/about', $response->getContent());

@@ -2241,7 +2241,23 @@ function createDrawer(_ref) {
   function populateUpdateContactField(node) {
     var select = formEl.querySelector('[data-role="wf-writable-field-select"]');
     fillFieldSelect(select, catalogs.writableFields, catalogs.contactGroups, 'Choose a field');
-    select.value = node.config.field_id != null ? String(node.config.field_id) : '';
+
+    // The Business's own custom fields — the canonical values Forms, the Contact page and
+    // merge fields read. Value "cf:<id>"; a per-list field keeps its plain id.
+    var businessFields = (catalogs.customFields || []).filter(function (field) {
+      return !field.archived;
+    });
+    if (businessFields.length > 0) {
+      var optgroup = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('optgroup');
+      optgroup.label = 'Business custom fields';
+      businessFields.forEach(function (field) {
+        var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, field.label);
+        opt.value = 'cf:' + String(field.id);
+        optgroup.appendChild(opt);
+      });
+      select.appendChild(optgroup);
+    }
+    select.value = node.config.custom_field_id != null ? 'cf:' + String(node.config.custom_field_id) : node.config.field_id != null ? String(node.config.field_id) : '';
     formEl.querySelector('[data-field="value"]').value = node.config.value != null ? node.config.value : '';
   }
   function populateTrigger(node) {
@@ -2870,9 +2886,16 @@ function createDrawer(_ref) {
   }
   function readUpdateContactField() {
     var fieldValue = formEl.querySelector('[data-role="wf-writable-field-select"]').value;
+    var value = formEl.querySelector('[data-field="value"]').value;
+    if (fieldValue.indexOf('cf:') === 0) {
+      return {
+        custom_field_id: Number(fieldValue.slice(3)),
+        value: value
+      };
+    }
     return {
       field_id: fieldValue ? Number(fieldValue) : null,
-      value: formEl.querySelector('[data-field="value"]').value
+      value: value
     };
   }
   function readTagAction() {
@@ -3926,7 +3949,7 @@ function summarize(node, catalogs) {
       }
     case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.UPDATE_CONTACT_FIELD:
       {
-        var label = fieldLabel(catalogs.writableFields, config.field_id);
+        var label = config.custom_field_id != null ? fieldLabel(catalogs.customFields || [], config.custom_field_id) : fieldLabel(catalogs.writableFields, config.field_id);
         if (!label) {
           return {
             summary: 'Choose a field to update',

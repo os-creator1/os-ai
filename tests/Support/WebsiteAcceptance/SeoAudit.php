@@ -265,6 +265,11 @@ final class SeoAudit
         }
         $this->report->expect($dupes === [], $label, 'no_duplicated_sections', $dupes === [] ? 'no repeated section on the page' : 'repeated: ' . implode(', ', $dupes));
 
+        // Call-to-action bands: never two with the same destinations, never more than two on a page.
+        $ctaBands = array_values(array_filter($doc->ctaBandHrefs(), fn ($set) => $set !== []));
+        $signatures = array_map(fn ($set) => implode('|', $set), $ctaBands);
+        $this->report->expect(count($signatures) === count(array_unique($signatures)) && count($ctaBands) <= 2, $label, 'no_duplicate_cta_bands', count($ctaBands) . ' CTA band(s), ' . count(array_unique($signatures)) . ' distinct');
+
         $main = $doc->mainText();
 
         if ($entry['type'] === 'location' && $entry['area'] !== null) {
@@ -529,18 +534,31 @@ final class SeoAudit
 
         $this->report->expect(in_array('LocalBusiness', $types, true) || count(array_filter($types, fn ($t) => str_contains($t, 'Business'))) > 0, $label, 'schema_local_business', 'types: ' . implode(', ', $types));
 
-        // FAQPage: exactly on the pages that render an FAQ, listing exactly the visible questions and answers.
-        $hasFaq = count(array_filter($doc->sections(), fn ($s) => $s['type'] === 'faq')) > 0;
-        $faqBlocks = array_values(array_filter(array_map(fn ($raw) => json_decode($raw, true), $blocks), fn ($d) => is_array($d) && ($d['@type'] ?? null) === 'FAQPage'));
+        $this->auditFaqSchema($doc, $label, $blocks);
+    }
 
-        if (! $hasFaq) {
-            $this->report->expect($faqBlocks === [], $label, 'schema_faq_only_where_rendered', count($faqBlocks) . ' FAQPage block(s) on a page with no FAQ');
-        } else {
-            $visible = $doc->bodyText();
-            $entities = $faqBlocks[0]['mainEntity'] ?? [];
-            $mismatch = array_filter($entities, fn ($q) => ! str_contains($visible, (string) ($q['name'] ?? '')) || ! str_contains($visible, (string) ($q['acceptedAnswer']['text'] ?? '')));
-            $this->report->expect(count($faqBlocks) === 1 && $entities !== [] && $mismatch === [], $label, 'schema_faq_matches_visible', count($entities) . ' question(s) in FAQPage, ' . count($mismatch) . ' not found in the visible text');
+    /**
+     * FAQPage exists exactly when the page visibly has a FAQ, and says exactly what the FAQ says.
+     *
+     * @param  array<int, string>  $blocks  raw JSON-LD bodies
+     */
+    private function auditFaqSchema(PageDoc $doc, string $label, array $blocks): void
+    {
+        $faqs = array_values(array_filter(array_map(fn ($raw) => json_decode($raw, true), $blocks), fn ($b) => is_array($b) && ($b['@type'] ?? null) === 'FAQPage'));
+        $visible = $doc->faqItems();
+
+        if ($visible === []) {
+            $this->report->expect($faqs === [], $label, 'faq_schema_matches_visible_faq', $faqs === [] ? 'no FAQ on the page, no FAQPage schema' : 'FAQPage schema on a page with no visible FAQ');
+
+            return;
         }
+
+        $schema = [];
+        foreach ($faqs[0]['mainEntity'] ?? [] as $entity) {
+            $schema[] = [PageDoc::clean((string) ($entity['name'] ?? '')), PageDoc::clean((string) ($entity['acceptedAnswer']['text'] ?? ''))];
+        }
+
+        $this->report->expect(count($faqs) === 1 && $schema === array_map(fn ($i) => [$i['question'], $i['answer']], $visible), $label, 'faq_schema_matches_visible_faq', count($visible) . ' visible Q&A, ' . count($schema) . ' in the FAQPage, must be identical in text and order');
     }
 
     // -------------------------------------------------------------- social
@@ -554,25 +572,32 @@ final class SeoAudit
         $this->report->expect($title !== '' && mb_strtolower($title) === mb_strtolower($doc->titles()[0] ?? ''), $label, 'og_title', 'og:title "' . $title . '" equals the page title');
         $this->report->expect($description !== '' && $description === ($doc->metaNamed('description')[0] ?? null), $label, 'og_description', 'og:description matches the meta description');
 
-        $type = $doc->metaProperty('og:type');
-        $this->report->expect($type === ['website'], $label, 'social_og_type', json_encode($type));
+        if ($ctx->surface === 'preview') {
+            $this->report->expect($doc->metaProperty('og:image') === [] && $doc->metaNamed('twitter:card') === [], $label, 'social_none_in_preview', 'Preview carries no social card');
 
-        $card = $doc->metaNamed('twitter:card');
-        $this->report->expect(count($card) === 1 && in_array($card[0], ['summary', 'summary_large_image'], true), $label, 'social_twitter_card', json_encode($card));
-
-        // og:url is the canonical, exactly: present only where a canonical is (the custom domain).
-        $urls = $doc->metaProperty('og:url');
-        $canonicals = $doc->canonicals();
-        $this->report->expect($urls === $canonicals, $label, 'social_og_url_equals_canonical', 'og:url ' . json_encode($urls) . ' vs canonical ' . json_encode($canonicals));
-
-        // og:image: the owner's own published photo (this fixture has a logo and a hero): an absolute URL that loads.
-        $image = $doc->metaProperty('og:image');
-        $this->report->expect(count($image) === 1 && preg_match('#^https?://#', $image[0]) === 1, $label, 'social_og_image', json_encode($image));
-
-        if ($image !== []) {
-            $path = $this->imagePath($image[0]);
-            $this->report->expect($path !== null && is_file($ctx->publicRoot . '/' . $path) && str_starts_with($path, 'images/'), $label, 'social_og_image_is_owner_media', $image[0] . ' -> ' . ($path ?? 'not a local owner image'));
+            return;
         }
+
+        $type = $doc->metaProperty('og:type');
+        $url = $doc->metaProperty('og:url');
+        $card = $doc->metaNamed('twitter:card');
+        $image = $doc->metaProperty('og:image');
+
+        $this->report->expect($type === ['website'], $label, 'social_og_type', json_encode($type));
+        $this->report->expect($card === [$image === [] ? 'summary' : 'summary_large_image'], $label, 'social_twitter_card', json_encode($card) . ' with ' . ($image === [] ? 'no image' : 'an image'));
+
+        // og:url is the canonical address (so it exists wherever a canonical does, and nowhere else).
+        $canonical = $doc->canonicals();
+        $this->report->expect($url === $canonical, $label, 'social_og_url', 'og:url ' . json_encode($url) . ' vs canonical ' . json_encode($canonical));
+
+        // og:image: absent, or an absolute URL to a Business-owned file that exists (never a broken image).
+        $imageOk = true;
+        foreach ($image as $src) {
+            $path = $this->imagePath($src);
+            $imageOk = $imageOk && preg_match('#^https?://#', $src) === 1 && $path !== null && is_file($ctx->publicRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $path));
+        }
+        $this->report->expect($imageOk && count($image) <= 1, $label, 'social_og_image', $image === [] ? 'no og:image' : $image[0]);
+        $this->report->expect($doc->metaNamed('twitter:image') === $image, $label, 'social_twitter_image_matches', json_encode($doc->metaNamed('twitter:image')));
     }
 
     // --------------------------------------------------------- breadcrumbs
@@ -739,7 +764,9 @@ final class SeoAudit
 
         $sitemaps = array_values(array_filter($lines, fn ($l) => stripos($l, 'sitemap:') === 0));
         if ($expectedSitemap !== null) {
-            $this->report->expect($sitemaps === ['Sitemap: ' . $expectedSitemap], 'robots.txt', 'robots_sitemap_directive', json_encode($sitemaps) . ' expected ' . $expectedSitemap);
+            $this->report->expect($sitemaps === ['Sitemap: ' . $expectedSitemap], 'robots.txt', 'robots_sitemap_line', json_encode($sitemaps) . ' expected Sitemap: ' . $expectedSitemap);
+        } else {
+            $this->report->expect($sitemaps === [], 'robots.txt', 'robots_no_sitemap_line_on_the_static_file', 'the platform-wide static file carries no per-site Sitemap line');
         }
 
         $this->report->expect(! str_contains($robotsTxt, "\r"), 'robots.txt', 'robots_unix_line_endings', 'no carriage returns, whatever the checkout');

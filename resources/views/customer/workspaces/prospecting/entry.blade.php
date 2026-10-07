@@ -5,19 +5,19 @@
     $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
 @endphp
 
-@section('title', 'Prospecting')
+@section('title', 'Outreach')
 
 @section('content')
     <div class="row mb-2">
         <div class="col-12">
-            <h4 class="mb-0">Prospecting</h4>
+            <h4 class="mb-0">Outreach</h4>
         </div>
     </div>
 
     @if(count($accessible) === 0)
         <x-card :padded="true">
-            <x-empty-state icon="target" title="No {{ ucfirst($accountNoun) }} available yet"
-                            description="Agency AI Prospecting is a {{ $accountNoun }}-level feature available on the Agency plan. You don't have owner or admin access to an entitled {{ $accountNoun }} yet." />
+            <x-empty-state icon="target" title="Outreach is not available to you yet"
+                            description="Outreach comes with the Agency plan and is run by the owner or an admin of the Agency account. You do not have owner or admin access to an Agency account that includes it." />
         </x-card>
     @else
         <x-card :padded="true">

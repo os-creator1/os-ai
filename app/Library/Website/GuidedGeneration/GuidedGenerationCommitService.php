@@ -391,9 +391,9 @@ final class GuidedGenerationCommitService
                 // let search engines find their pages, the rebuilt pages stay open, and a
                 // page the owner hid on purpose stays hidden (matched by its address). A
                 // first generation, or a site never released, stays hidden until reviewed.
-                $previous = $locked->pages()->get(['slug', 'is_home', 'noindex', 'noindex_by_owner']);
+                $previous = $locked->pages()->get(['slug', 'is_home', 'noindex', 'noindex_explicit']);
                 $ownerOpened = $locked->indexing_released_at !== null;
-                $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_by_owner)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
+                $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_explicit)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
 
                 $locked->pages()->delete();
 
@@ -408,7 +408,7 @@ final class GuidedGenerationCommitService
                         'seo_title' => $page['seo_title'] ?? null,
                         'meta_description' => $page['meta_description'] ?? null,
                         'noindex' => $hiddenByOwner || ! $ownerOpened,
-                        'noindex_by_owner' => $hiddenByOwner,
+                        'noindex_explicit' => $hiddenByOwner,
                     ]);
                 }
 

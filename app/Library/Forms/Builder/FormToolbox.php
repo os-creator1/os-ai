@@ -50,6 +50,8 @@ final class FormToolbox
                 $this->item('full_name', 'Full name', 'user', $this->element(FormFieldType::Text, 'Full name', ['contact_name' => true, 'required' => true])),
                 $this->item('first_name', 'First name', 'user', $this->element(FormFieldType::Text, 'First name', ['contact_part' => 'first_name', 'width' => 'half', 'required' => true])),
                 $this->item('last_name', 'Last name', 'user', $this->element(FormFieldType::Text, 'Last name', ['contact_part' => 'last_name', 'width' => 'half'])),
+            ]],
+            ['id' => 'contact', 'label' => 'Contact', 'items' => [
                 $this->item('email', 'Email', 'mail', $this->element(FormFieldType::Email, 'Email', ['required' => true])),
                 $this->item('phone', 'Phone', 'phone', $this->element(FormFieldType::Phone, 'Phone', ['required' => true])),
             ]],
@@ -60,6 +62,8 @@ final class FormToolbox
                 $this->item('currency', 'Currency', 'dollar-sign', $this->element(FormFieldType::Currency, 'Amount')),
                 $this->item('date', 'Date', 'calendar', $this->element(FormFieldType::Date, 'Date')),
                 $this->item('datetime', 'Date & time', 'clock', $this->element(FormFieldType::DateTime, 'Date & time')),
+            ]],
+            ['id' => 'choice', 'label' => 'Choice', 'items' => [
                 $this->item('dropdown', 'Dropdown', 'chevron-down', $this->choice(FormFieldType::Select, 'Dropdown')),
                 $this->item('multi_select', 'Multi-select', 'check-square', $this->choice(FormFieldType::MultiSelect, 'Multi-select')),
                 $this->item('checkbox', 'Checkbox', 'check', $this->element(FormFieldType::Checkbox, 'Checkbox')),
@@ -87,13 +91,13 @@ final class FormToolbox
         }
         $groups[] = ['id' => 'custom', 'label' => 'Custom fields', 'items' => $custom];
 
-        $groups[] = ['id' => 'submit', 'label' => 'Submit', 'items' => [
-            ['id' => 'submit_button', 'label' => 'Submit button', 'icon' => 'send', 'special' => 'submit'],
-        ]];
-
         $groups[] = ['id' => 'consent', 'label' => 'Consent', 'items' => [
             $this->item('consent_transactional', 'Transactional consent', 'shield', $this->element(FormFieldType::ConsentTransactional, self::TRANSACTIONAL_TEXT)),
             $this->item('consent_marketing', 'Marketing consent', 'shield', $this->element(FormFieldType::ConsentMarketing, self::MARKETING_TEXT)),
+        ]];
+
+        $groups[] = ['id' => 'submit', 'label' => 'Submit', 'items' => [
+            ['id' => 'submit_button', 'label' => 'Submit button', 'icon' => 'send', 'special' => 'submit'],
         ]];
 
         return $groups;

@@ -75,6 +75,8 @@ final class WebsitePageComposer
                 $meta,
                 $data['canonicalUrl'] ?? null,
                 $assets,
+                (array) ($data['sections'] ?? []),
+                $isPreview,
             ),
         ]);
     }

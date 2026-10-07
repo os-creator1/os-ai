@@ -93,12 +93,15 @@
         only ever passed for a genuinely indexable custom-domain page
         (App\Http\Middleware\ResolveCustomDomainWebsite::renderPage()).
     --}}
-    @if (! empty($faqJsonLd ?? null))
-        {{-- Only on a page that renders its own FAQ section, built from exactly that section's questions and answers. --}}
-        <script type="application/ld+json">{!! json_encode($faqJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
-    @endif
     @if (! empty($breadcrumbJsonLd ?? null))
         <script type="application/ld+json">{!! json_encode($breadcrumbJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+    @endif
+    {{--
+        FAQPage (Website V1 closure) — built from the FAQ section(s) this page renders, so the markup can only
+        ever say what is visible; same JSON_HEX_* escaping discipline as the blocks above.
+    --}}
+    @if (! empty($faqJsonLd ?? null))
+        <script type="application/ld+json">{!! json_encode($faqJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
     @endif
     @php($theme = $websiteMeta['theme'] ?? [])
     @if (! empty($theme))
@@ -126,6 +129,10 @@
             // Template-owned order of a Home page's sections, then the
             // band tone (light / dark / accent / tint) the template gives each type.
             $orderedSections = $isHomePage ? $design->orderHomeSections($sections) : $sections;
+
+            // A Forms-module form that does not resolve (switched off, Location closed) is not a section at all.
+            $orderedSections = array_values(array_filter($orderedSections, fn ($candidate) => ($candidate['type'] ?? '') !== 'forms_module_form'
+                || app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->renderable($candidate['data'] ?? [], $website, (bool) ($isPreview ?? false)) !== null));
 
             // A hero with no image of its own borrows the owner's hero image
             // (Brand & look), else the first real photo already on this page.

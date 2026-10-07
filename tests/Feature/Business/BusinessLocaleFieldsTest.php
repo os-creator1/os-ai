@@ -97,7 +97,9 @@ class BusinessLocaleFieldsTest extends TestCase
 
     public function test_a_business_created_with_the_offered_values_stores_the_canonical_codes(): void
     {
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency);
+        // An account holds ONE Business (businesses_workspace_id_unique), so the Create Business form is only for an
+        // account that has none yet.
+        [$owner, $workspace] = $this->agencyWithoutBusiness();
         $this->authenticateAs($owner);
 
         $this->post(route('customer.workspaces.businesses.store', $workspace->uid), [
@@ -230,15 +232,33 @@ class BusinessLocaleFieldsTest extends TestCase
 
     private function createBusinessForm(): TestResponse
     {
-        // The Create Business form lives on the Agency account page: a Growth
-        // account with its Business is never offered another (owner decision).
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency);
+        // The Create Business form lives on the Agency account page, and only while the account has no Business
+        // yet: a Growth account — or an Agency — with its Business is never offered another (owner decision;
+        // one Business per account, Contract 13).
+        [$owner, $workspace] = $this->agencyWithoutBusiness();
         $this->authenticateAs($owner);
 
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
         $response->assertSee('data-workspace-action="businesses"', false);
 
         return $response;
+    }
+
+    /**
+     * An Agency account that has no Business of its own yet.
+     *
+     * @return array{0: \App\Models\Customer, 1: \App\Models\Workspace}
+     */
+    private function agencyWithoutBusiness(): array
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+
+        $customer = $this->createCustomer();
+        $workspace = $this->createWorkspace($customer->user, ['name' => 'Locale Agency']);
+        $this->assignTier($workspace, WorkspacePlanTier::Agency);
+
+        return [$customer, $workspace->fresh()];
     }
 
     /**

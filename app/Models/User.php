@@ -108,6 +108,9 @@
             'password',
             'remember_token',
             'invitation_token',
+            'api_token',
+            'two_factor_code',
+            'two_factor_backup_code',
         ];
 
         /**
@@ -162,7 +165,7 @@
         {
             $backUpCode = [];
             for ($i = 0; $i < 8; $i++) {
-                $backUpCode[] = rand(100000, 999999);
+                $backUpCode[] = random_int(100000, 999999);
             }
 
             return json_encode($backUpCode);
@@ -238,12 +241,33 @@
         }
 
         /**
+         * Resolve a user from a request-supplied legacy api_token.
+         *
+         * Never use User::where('api_token', $input): a missing/null input compiles to
+         * "api_token IS NULL" and would authenticate the caller as the first user without a token.
+         */
+        public static function findByApiToken(mixed $token, bool $activeOnly = false): ?self
+        {
+            if ( ! is_string($token) || trim($token) === '') {
+                return null;
+            }
+
+            $query = static::where('api_token', $token);
+
+            if ($activeOnly) {
+                $query->where('status', true);
+            }
+
+            return $query->first();
+        }
+
+        /**
          * generate two-factor code
          */
         public function generateTwoFactorCode(): void
         {
             $this->timestamps            = false;
-            $this->two_factor_code       = rand(100000, 999999);
+            $this->two_factor_code       = random_int(100000, 999999);
             $this->two_factor_expires_at = now()->addMinutes(10);
             $this->save();
         }

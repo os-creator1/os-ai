@@ -70,14 +70,14 @@ final class FormManager
     /**
      * @param  array<string, mixed>  $input
      */
-    public function update(Business $business, Form $form, array $input, ?int $actorUserId = null, ?int $expectedVersion = null): Form
+    public function update(Business $business, Form $form, array $input, ?int $actorUserId = null, ?int $expectedVersion = null, ?string $expectedHash = null, bool $coalesceUnpublished = false): Form
     {
         $name = $this->definitions->name($input['name'] ?? null);
         // The current version's questions: a mapping it already holds may be kept
         // even if its custom field has since been archived (never newly added).
         $content = $this->definitions->content($business, $input, $form->currentVersion()?->fields ?? []);
 
-        return DB::transaction(function () use ($business, $form, $name, $content, $actorUserId, $expectedVersion): Form {
+        return DB::transaction(function () use ($business, $form, $name, $content, $actorUserId, $expectedVersion, $expectedHash, $coalesceUnpublished): Form {
             $locked = $this->lock($business, $form);
 
             // The visual builder autosaves: it names the version it was editing, and
@@ -95,7 +95,27 @@ final class FormManager
                 ->where('version', $locked->current_version)
                 ->firstOrFail();
 
-            if ($current->content_hash !== $this->definitions->hash($content)) {
+            // The visual builder also names the CONTENT it was editing. Content can
+            // change without a new version number (see below), so the version alone
+            // cannot tell two tabs apart on a form that has never been published.
+            if ($expectedHash !== null && ! hash_equals($current->content_hash, $expectedHash)) {
+                throw new FormStaleVersionException((int) $locked->current_version);
+            }
+
+            $hash = $this->definitions->hash($content);
+
+            if ($current->content_hash === $hash) {
+                // nothing changed
+            } elseif ($coalesceUnpublished && $this->isUnpublished($locked)) {
+                // DRAFT EDITING. A form that has never been activated cannot have been
+                // rendered to a visitor, so no token, session or submission can be
+                // pinned to its versions: its working version is a draft. Rewriting it
+                // in place keeps an editing session from writing a version per pause.
+                // The moment the form is activated (activated_at is set, never cleared)
+                // this branch is closed for good and every change is a new immutable
+                // version again.
+                $this->rewriteDraftVersion($current, $content, $hash);
+            } else {
                 $next = $locked->current_version + 1;
                 $this->writeVersion($locked, $next, $content, $actorUserId);
                 $locked->forceFill(['current_version' => $next]);
@@ -105,6 +125,41 @@ final class FormManager
 
             return $locked->fresh();
         });
+    }
+
+    /**
+     * True only while nothing can reference any version of the form: never
+     * activated, and (defensively) no submission or questionnaire session exists.
+     */
+    private function isUnpublished(Form $locked): bool
+    {
+        return $locked->activated_at === null
+            && ! DB::table('form_submissions')->where('form_id', $locked->id)->exists()
+            && ! DB::table('form_sessions')
+                ->join('form_versions', 'form_versions.id', '=', 'form_sessions.form_version_id')
+                ->where('form_versions.form_id', $locked->id)->exists();
+    }
+
+    /**
+     * The one sanctioned in-place write to a FormVersion row, reachable only through
+     * isUnpublished(). A query-builder update on purpose: the model still refuses
+     * every Eloquent update.
+     *
+     * @param  array<string, mixed>  $content
+     */
+    private function rewriteDraftVersion(FormVersion $current, array $content, string $hash): void
+    {
+        DB::table('form_versions')->where('id', $current->id)->update([
+            'content_hash' => $hash,
+            'intro' => $content['intro'],
+            'submit_label' => $content['submit_label'],
+            'success_message' => $content['success_message'],
+            'pages' => json_encode($content['pages'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'design' => isset($content['design']) ? json_encode($content['design'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+            'fields' => json_encode($content['fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'create_opportunity' => $content['create_opportunity'],
+            'opportunity_pipeline_id' => $content['opportunity_pipeline_id'],
+        ]);
     }
 
     /** Draft or Inactive -> Active. Already Active is a no-op. */

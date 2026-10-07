@@ -140,9 +140,16 @@ class WebsiteWizardController extends CustomerBaseController
      */
     private function beginWithDefaultTemplate(Business $business, QuestionnaireDefinition $definition, ?Website $shell, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $template = $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business))
-            ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
-            ->first();
+        $offered = $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business));
+
+        // The Niche Blueprint's preferred template starts a brand-new (or still style-less) Website, when the
+        // Website really offers it; otherwise the niche's default. A shell that already has a style keeps it
+        // (see below) — a Blueprint only ever suggests the starting point, never replaces a choice.
+        $preferredKey = ($shell === null || $shell->template_key === null) ? $this->blueprintTemplateKey($business) : null;
+        $template = ($preferredKey !== null ? $offered->firstWhere('key', $preferredKey) : null)
+            ?? $offered
+                ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
+                ->first();
 
         if ($template === null) {
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);

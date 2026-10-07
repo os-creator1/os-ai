@@ -144,7 +144,7 @@
                         @foreach($members as $member)
                             <li class="mb-1 d-flex justify-content-between align-items-center">
                                 <a href="{{ route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $member->prospect->uid]) }}">{{ $member->prospect->company_name }}</a>
-                                <x-badge variant="neutral">Stage {{ $member->stage->value }}</x-badge>
+                                <x-badge variant="neutral">{{ \App\Library\AgencyOutreach\OutreachProspectStatusPresenter::stageLabel($member->stage) }}</x-badge>
                             </li>
                         @endforeach
                     </ul>

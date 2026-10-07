@@ -51,6 +51,7 @@ final class ContextSwitcherPresenter
         $businesses = $this->businesses($context);
         $accounts = $this->accounts($context);
         $links = $this->links($context);
+        $heading = $this->businessesHeading($context);
 
         return new ContextSwitcherView(
             interactive: $this->isInteractive($context, $businesses, $accounts, $links),
@@ -58,13 +59,13 @@ final class ContextSwitcherPresenter
             currentName: $context->contextName(),
             toggleAriaLabel: $this->toggleAriaLabel($context),
             identityAriaLabel: $this->identityAriaLabel($context),
-            businessesHeading: $context->businessesNoun(),
+            businessesHeading: $heading,
             accountsHeading: ucfirst($context->accountsNoun()),
             businesses: $businesses,
             accounts: $accounts,
             links: $links,
             showsFilter: count($businesses) >= self::FILTER_THRESHOLD,
-            filterLabel: 'Search ' . strtolower($context->businessesNoun()),
+            filterLabel: 'Search ' . strtolower($heading),
         );
     }
 
@@ -106,7 +107,11 @@ final class ContextSwitcherPresenter
         }
 
         $switchUrl = route('customer.context.business.switch');
-        $viewAsUrl = $context->canViewAsClient() && Route::has('customer.view-as.start')
+        // In the Agency shell the Businesses listed are the Agency's OWN (a managed client lives in
+        // its own Workspace and is reached through Clients -> View As, never from here), so offering
+        // "View <own Business> as a client" would put the owner behind a client banner on their own
+        // Business. Only a context that really lists clients may offer it.
+        $viewAsUrl = $context->canViewAsClient() && ! $context->hasAgencyShell() && Route::has('customer.view-as.start')
             ? route('customer.view-as.start')
             : null;
         $showsAccountName = $context->hasMultipleWorkspaces();
@@ -213,6 +218,19 @@ final class ContextSwitcherPresenter
         return [new ContextSwitcherLink('Account settings', route('customer.workspaces.show', $workspace->uid))];
     }
 
+    /**
+     * The heading over the Business rows. For an Agency owner in the Agency shell those rows
+     * are their OWN Business, not client accounts, so it says so.
+     */
+    private function businessesHeading(CustomerContext $context): string
+    {
+        if ($context->hasAgencyShell()) {
+            return count($context->selectableBusinesses()) > 1 ? 'Your businesses' : 'Your business';
+        }
+
+        return $context->businessesNoun();
+    }
+
     private function frameLabel(CustomerContext $context): string
     {
         // Say which of the three places the Agency actor is standing in: a
@@ -238,7 +256,7 @@ final class ContextSwitcherPresenter
      */
     private function toggleAriaLabel(CustomerContext $context): string
     {
-        $noun = strtolower($context->businessNoun());
+        $noun = $context->hasAgencyShell() ? 'business' : strtolower($context->businessNoun());
 
         return $context->selectedBusiness !== null
             ? 'Current ' . $noun . ': ' . $context->selectedBusiness->name . '. Switch ' . $noun

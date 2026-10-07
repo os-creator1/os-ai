@@ -78,19 +78,19 @@ class WebsiteBoundaryTest extends TestCase
      * (WebsitePageStrategy::withoutAiUnfillableSections()). The set
      * remains closed at 12, not open-ended.
      */
-    public function test_website_section_type_enum_has_exactly_the_twelve_known_cases_and_no_generic_form_variant(): void
+    public function test_website_section_type_enum_has_exactly_the_thirteen_known_cases_and_no_generic_form_variant(): void
     {
         $values = array_map(static fn (WebsiteSectionType $case) => $case->value, WebsiteSectionType::cases());
 
         sort($values);
 
         $this->assertSame(
-            ['backdrops', 'contact_details', 'cta', 'custom_section', 'faq', 'form', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
+            ['backdrops', 'contact_details', 'cta', 'custom_section', 'faq', 'form', 'forms_module_form', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
             $values
         );
 
         foreach (['contact_form', 'lead_form', 'form_builder'] as $forbidden) {
-            $this->assertNotContains($forbidden, $values, "Section type [{$forbidden}] must not exist — only the one closed `form` type does.");
+            $this->assertNotContains($forbidden, $values, "Section type [{$forbidden}] must not exist — only the one closed `form` type (and the Forms-module reference `forms_module_form`) does.");
         }
     }
 

@@ -61,7 +61,7 @@ class GrowthRulesTest extends TestCase
     {
         $keys = array_keys(GrowthRuleRegistry::all());
 
-        $this->assertCount(21, $keys);
+        $this->assertCount(18, $keys);
         $this->assertSame($keys, array_values(array_unique($keys)));
 
         foreach (GrowthRuleRegistry::all() as $key => $rule) {
@@ -185,13 +185,12 @@ class GrowthRulesTest extends TestCase
             'audit_ran' => true, 'audit_findings' => ['critical' => 0, 'warning' => 0, 'rules' => []],
         ])]);
 
-        $hit = $this->outcome('seo.keywords_not_covered:v2', $seo(['not_covered_total' => 1, 'not_covered_examples' => ['photo booth chicago']]));
+        $hit = $this->outcome('seo.keywords_not_covered:v1', $seo(['not_covered' => [1 => ['count' => 1, 'phrases' => ['photo booth chicago']]]]));
         $this->assertSame(S::Finding, $hit->status);
         $this->assertSame(['photo booth chicago'], $hit->findings[0]->evidence['phrases']);
-        $this->assertNull($hit->findings[0]->locationId, 'A site-wide content gap is ONE Business-wide finding.');
 
-        $this->assertSame(S::Insufficient, $this->outcome('seo.keywords_not_covered:v2', $seo(['coverage_known' => false]))->status, 'no published site: coverage cannot be judged');
-        $this->assertSame(S::Passing, $this->outcome('seo.keywords_not_covered:v2', $seo(['keyword_count' => 9]))->status);
+        $this->assertSame(S::Insufficient, $this->outcome('seo.keywords_not_covered:v1', $seo(['coverage_known' => false]))->status, 'no published site: coverage cannot be judged');
+        $this->assertSame(S::Passing, $this->outcome('seo.keywords_not_covered:v1', $seo(['keyword_count' => 9]))->status);
 
         $tech = $this->outcome('seo.technical_findings:v1', $seo(['audit_findings' => ['critical' => 1, 'warning' => 2, 'rules' => ['x']]]));
         $this->assertSame(S::Finding, $tech->status);

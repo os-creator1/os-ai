@@ -3,14 +3,12 @@
 namespace App\Library\Website\Seo;
 
 /**
- * SEO V1 final — FAQPage (schema.org) structured data, only ever for a page that
- * actually renders a `faq` section, and built from exactly the questions and
- * answers that section prints (the same escaped text, whitespace-normalised) —
- * never emitted site-wide, never invented, never from AI at render time.
- *
- * A page with several FAQ sections lists every question once, in page order.
- * A question or answer left blank in the section is skipped (it is not shown
- * either); a page with no usable question gets no FAQPage at all.
+ * FAQPage (schema.org) structured data, and only ever the FAQ a visitor can actually read on that page.
+ * It is built from the very `faq` sections the page renders (the same redacted array the template
+ * receives), so the markup cannot drift from the visible text: every Question/Answer here is one
+ * rendered `<summary>` / `<p>` pair (whitespace-normalised, in page order, every visible pair exactly once). A page
+ * with no FAQ section, or whose FAQ section has no complete question + answer, gets nothing, and
+ * there is no site-wide FAQ block. The caller decides indexability (like every other schema block).
  */
 final class WebsiteFaqStructuredData
 {
@@ -18,7 +16,7 @@ final class WebsiteFaqStructuredData
      * @param  array<int, array{type?: string, data?: array<string, mixed>}>  $sections  the page's sections as rendered
      * @return ?array<string, mixed>
      */
-    public static function build(array $sections): ?array
+    public function build(array $sections): ?array
     {
         $entities = [];
 
@@ -35,7 +33,7 @@ final class WebsiteFaqStructuredData
                     continue;
                 }
 
-                $entities[$question] ??= [
+                $entities[] = [
                     '@type' => 'Question',
                     'name' => $question,
                     'acceptedAnswer' => ['@type' => 'Answer', 'text' => $answer],
@@ -47,11 +45,7 @@ final class WebsiteFaqStructuredData
             return null;
         }
 
-        return [
-            '@context' => 'https://schema.org',
-            '@type' => 'FAQPage',
-            'mainEntity' => array_values($entities),
-        ];
+        return ['@context' => 'https://schema.org', '@type' => 'FAQPage', 'mainEntity' => $entities];
     }
 
     private static function text(mixed $value): string

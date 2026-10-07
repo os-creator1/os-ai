@@ -39,3 +39,10 @@ failing command named if one step fails.
   default; set `LEGACY_MESSAGING_MENU=true` to show them. Their routes stay registered.
 
 There is no web installer: `APP_STAGE=new` answers 503 with the command to run.
+
+Production deployment (environment, scheduler, queue, web server, storage, the exact
+checklist) is in [`DEPLOYMENT-READINESS.md`](DEPLOYMENT-READINESS.md).
+
+Idempotency is verified by row count: after the first full install, further runs leave
+every table's row count unchanged (an earlier version of `CurrenciesSeeder` added 12
+currencies per run; it now keys on `code`).

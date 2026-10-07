@@ -88,6 +88,11 @@ class UsageBillingController extends CustomerBaseController
             'businessUid' => $businessUid,
             'dashboard' => $viewModel,
             'responsibility' => $responsibility,
+            // The Agency's OWN Business (owned by the Agency owner inside the Agency account) is not a client
+            // account: its page must not talk about "this client account" or what "the client sees".
+            // Same test BillingProfileManager's account page uses (the Agency's own Business is the one its owner is the customer of).
+            // A Business of ANOTHER customer inside an Agency Workspace is a different, supported shape and keeps its own wording.
+            'ownsAgencyBusiness' => $responsibility['is_agency'] && (int) $business->customer_id === (int) $business->workspace->owner_user_id,
             'aiUsage' => $aiUsage,
             'workspaceControls' => $workspaceControls,
             'capabilities' => $capabilities,
