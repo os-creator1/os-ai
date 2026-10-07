@@ -61,6 +61,9 @@ final class ArticleManager
             $article->business_id = $business->id;
             $article->website_id = $website->id;
             $article->status = ArticleStatus::Draft;
+            $article->noindex = false;
+            $article->ai_generated = false;
+            $article->source = 'manual';
             $article->created_by_user_id = $actorId;
 
             $title = trim((string) ($attributes['title'] ?? ''));

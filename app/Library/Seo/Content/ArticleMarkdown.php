@@ -68,7 +68,8 @@ final class ArticleMarkdown
         $text = self::withoutImages((string) $markdown);
         $text = (string) preg_replace(self::REF_PATTERN, '$1', $text);
         $text = (string) preg_replace('/\[([^\]]+)\]\([^)]*\)/', '$1', $text);
-        $text = (string) preg_replace('/^[#>\-\*\+\d\.\)\s]+(?=\S)/m', '', $text);
+        // Block markers only (heading hashes, quote, bullet, "1." numbering) — never a number that is part of the sentence ("70% of ...").
+        $text = (string) preg_replace('/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/m', '', $text);
         $text = (string) preg_replace('/[*_`~]+/', '', $text);
 
         return trim((string) preg_replace('/\s+/u', ' ', $text));

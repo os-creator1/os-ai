@@ -61,7 +61,8 @@ class GrowthRulesTest extends TestCase
     {
         $keys = array_keys(GrowthRuleRegistry::all());
 
-        $this->assertCount(18, $keys);
+        // 19 on the base + the 4 SEO Content rules (content.*).
+        $this->assertCount(23, $keys);
         $this->assertSame($keys, array_values(array_unique($keys)));
 
         foreach (GrowthRuleRegistry::all() as $key => $rule) {
