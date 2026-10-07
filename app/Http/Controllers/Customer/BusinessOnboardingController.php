@@ -209,6 +209,12 @@ class BusinessOnboardingController extends CustomerBaseController
             return redirect()
                 ->route('customer.onboarding.show', ['step' => 'results'])
                 ->withErrors(['onboarding' => 'Finish the required steps before completing onboarding.']);
+        } catch (WorkspacePlanUnassignedException | InactiveWorkspacePlanException | SuspendedWorkspacePlanException) {
+            // No usable paid plan: the completion rolled back and the
+            // Business stays Draft.
+            return redirect()
+                ->route('customer.onboarding.show', ['step' => 'results'])
+                ->withErrors(['onboarding' => self::CAPACITY_DENIAL_MESSAGE]);
         }
 
         return redirect()->route('user.home');

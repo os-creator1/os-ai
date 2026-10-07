@@ -5,6 +5,7 @@ namespace App\Library\PlatformBilling;
 use App\Exceptions\Entitlement\WorkspacePlanAlreadyAssignedException;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Business\BusinessManager;
+use App\Enums\Business\BusinessStatus;
 use App\Library\Business\OnboardingManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
@@ -278,7 +279,12 @@ final class V1SignupManager
             $customer = Customer::query()->where('user_id', $workspace->owner_user_id)->first();
             $business = Business::query()->where('workspace_id', $workspace->id)->first();
 
-            if ($customer !== null && $business !== null) {
+            // Only a Business that genuinely still needs onboarding (Draft) is
+            // handed off. A renewal, replay or any later confirmation of the
+            // same subscription reaches this seam too; an Active (or
+            // otherwise non-Draft) Business must never gain, or be sent back
+            // into, an onboarding requirement because of it.
+            if ($customer !== null && $business !== null && $business->status === BusinessStatus::Draft) {
                 $this->onboarding->startForProvisionedBusiness($customer, $business);
             }
         } catch (\Throwable $e) {

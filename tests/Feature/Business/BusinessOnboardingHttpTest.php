@@ -816,6 +816,7 @@ class BusinessOnboardingHttpTest extends TestCase
             $this->businessAttributes(),
             $businessOverrides
         ));
+        $this->assignPaidPlanFixture($business);
 
         app(BusinessLocationRepository::class)->upsertPrimary($business, $this->locationAttributes());
         app(BusinessServiceRepository::class)->syncForBusiness($business, [

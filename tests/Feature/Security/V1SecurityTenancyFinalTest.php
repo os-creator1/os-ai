@@ -127,7 +127,7 @@ class V1SecurityTenancyFinalTest extends TestCase
             'status' => 0,
             'parent_id' => 1,
             'sms_unit' => 999999,
-            'permissions' => ['access_backend' => 1],
+            'permissions' => ['access_backend' => 'access_backend'],
         ]);
 
         $fresh = $sub->fresh();

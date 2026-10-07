@@ -28,6 +28,24 @@
         {
             //
 
+            // Release-risk closure item 6 — the public contact subscribe /
+            // unsubscribe MUTATION endpoints (routes/public.php). Two bounds,
+            // both keyed on the group named in the URL so one Business's
+            // traffic never spends another's allowance: a per-visitor bound
+            // sized for a person fixing typos, and a per-group ceiling so a
+            // distributed flood cannot fill or empty one list. The existing
+            // group lookup / captcha / validation inside the controllers are
+            // untouched.
+            RateLimiter::for('public-contact-consent', function (Request $request) {
+                $group = $request->route('contact');
+                $group = is_object($group) ? ($group->uid ?? get_class($group)) : (string) $group;
+
+                return [
+                    Limit::perMinute(10)->by('visitor|' . $group . '|' . $request->ip()),
+                    Limit::perMinute(120)->by('group|' . $group),
+                ];
+            });
+
             parent::boot();
             $this->map();
         }
@@ -60,7 +78,7 @@
                 ->namespace($this->namespace)
                 ->group(base_path('routes/web.php'));
 
-            Route::middleware(['web', \App\Http\Middleware\RecordLegacyWebhookUsage::class])
+            Route::middleware(['web', \App\Http\Middleware\RecordLegacyWebhookUsage::class, \App\Http\Middleware\DisableUnsupportedLegacyWebhooks::class])
                 ->namespace($this->namespace)
                 ->group(base_path('routes/public.php'));
 

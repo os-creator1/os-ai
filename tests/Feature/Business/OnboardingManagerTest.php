@@ -635,6 +635,7 @@ class OnboardingManagerTest extends TestCase
     {
         $customer = $this->createCustomer();
         $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $this->assignPaidPlanFixture($business);
 
         app(BusinessLocationRepository::class)->upsertPrimary($business, [
             'service_mode' => 'storefront',

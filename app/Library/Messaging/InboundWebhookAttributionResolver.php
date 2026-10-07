@@ -79,6 +79,7 @@ class InboundWebhookAttributionResolver
         private readonly MessagingWebhookRejectionRecorder $rejections,
         private readonly UsageWalletManager $walletManager,
         private readonly ConversationHistoryWriter $history,
+        private readonly InboundOptOutHandler $optOuts,
     ) {
     }
 
@@ -532,6 +533,12 @@ class InboundWebhookAttributionResolver
                         $event->mediaUrls,
                         $messageType,
                     );
+
+                    // A STOP-like command withdraws SMS consent for THIS Business
+                    // only. Same transaction and same single execution as the
+                    // history write above, and before the domain event below
+                    // fires, so no automation can text the sender back.
+                    $this->optOuts->handle($business, $event->fromNumber, $event->body);
                 }
             });
         } catch (UniqueConstraintViolationException) {

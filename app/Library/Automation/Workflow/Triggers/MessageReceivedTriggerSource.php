@@ -9,6 +9,7 @@ use App\Jobs\Automation\Workflow\AdvanceWorkflowEnrollment;
 use App\Library\Automation\Workflow\Contracts\EnrollmentService;
 use App\Library\Automation\Workflow\Contracts\TriggerSource;
 use App\Library\Automation\Workflow\WorkflowLimits;
+use App\Library\Contacts\ContactPhone;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationStepRun;
 use App\Models\AutomationWorkflow;
@@ -88,11 +89,13 @@ class MessageReceivedTriggerSource implements TriggerSource
     /**
      * The one phone normalization inbound attribution already uses, so a number
      * written by an inbound path, an outbound send and a contact row compare as
-     * the same string. Deliberately not a second, "smarter" scheme.
+     * the same string. Deliberately not a second, "smarter" scheme: the
+     * stripping itself is ContactPhone::legacyDigits(), and Contact MATCHING
+     * goes through ContactPhone::candidates() (see theOneSubscribedContact()).
      */
     public static function normalizePhone(string $raw): string
     {
-        return str_replace(['(', ')', '+', '-', ' '], '', trim($raw));
+        return ContactPhone::legacyDigits($raw);
     }
 
     /**
@@ -112,7 +115,7 @@ class MessageReceivedTriggerSource implements TriggerSource
             return $this->skip($result, self::SKIPPED_NO_BUSINESS);
         }
 
-        $contact = $this->theOneSubscribedContact((int) $business->id, self::normalizePhone($event->senderPhone));
+        $contact = $this->theOneSubscribedContact($business, $event->senderPhone);
 
         if ($contact === null) {
             return $this->skip($result, self::SKIPPED_AMBIGUOUS_CONTACT);
@@ -204,15 +207,20 @@ class MessageReceivedTriggerSource implements TriggerSource
      * Limited to two rows: whether there is one or "more than one" is all this
      * needs to know.
      */
-    private function theOneSubscribedContact(int $businessId, string $phone): ?Contacts
+    private function theOneSubscribedContact(Business $business, string $senderPhone): ?Contacts
     {
-        if ($phone === '') {
+        // Business scope first, then the one Contact phone normalization:
+        // the provider's E.164 sender matches a Contact stored in any
+        // equivalent form, and never one of another Business.
+        $forms = ContactPhone::candidates($senderPhone, ContactPhone::regionFor($business));
+
+        if ($forms === []) {
             return null;
         }
 
         $matches = Contacts::query()
-            ->where('business_id', $businessId)
-            ->where('phone', $phone)
+            ->where('business_id', (int) $business->id)
+            ->whereIn('phone', $forms)
             ->where('status', Contacts::STATUS_SUBSCRIBE)
             ->orderBy('id')
             ->limit(2)

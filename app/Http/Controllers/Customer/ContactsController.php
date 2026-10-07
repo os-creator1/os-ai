@@ -2363,9 +2363,16 @@
                 return redirect()->route('contacts.unsubscribe_url', $contact->uid)->withInput($request->all())->withErrors($validation->errors());
             }
 
-            $phone = $request->input('phone');
+            // Group scope first (the list named in the URL), then the one phone
+            // normalization: "(415) 555-1234" must find the Contact stored as
+            // 14155551234, or a person could not withdraw their consent.
+            $region = \App\Library\Contacts\ContactPhone::regionFor(
+                $contact->business_id === null ? null : \App\Models\Business::query()->find($contact->business_id)
+            );
 
-            $checkExist = Contacts::where('group_id', $contact->id)->where('phone', $phone)->first();
+            $checkExist = Contacts::where('group_id', $contact->id)
+                ->whereIn('phone', \App\Library\Contacts\ContactPhone::candidates((string) $request->input('phone'), $region))
+                ->first();
 
             if ( ! $checkExist) {
 

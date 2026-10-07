@@ -136,7 +136,8 @@
      * All public routes listed here. No middleware will not affect these routes
      */
     Route::get('contacts/{contact}/subscribe-url', 'Customer\ContactsController@subscribeURL')->name('contacts.subscribe_url');
-    Route::post('contacts/{contact}/subscribe-url', 'Customer\ContactsController@insertContactBySubscriptionForm');
+    Route::post('contacts/{contact}/subscribe-url', 'Customer\ContactsController@insertContactBySubscriptionForm')
+        ->middleware('throttle:public-contact-consent')->name('contacts.subscribe_url.store');
     Route::any('dlr/twilio', 'Customer\DLRController@dlrTwilio')->name('dlr.twilio');
     Route::any('inbound/twilio/{gateway?}', 'Customer\DLRController@inboundTwilio')->name('inbound.twilio');
 
@@ -264,7 +265,8 @@
     Route::any('inbound/diafaan/{gateway?}', 'Customer\DLRController@inboundDiafaan')->name('inbound.diafaan');
 
     Route::get('contacts/{contact}/unsubscribe-url', 'Customer\ContactsController@unsubscribeURL')->name('contacts.unsubscribe_url');
-    Route::post('contacts/{contact}/unsubscribe-url', 'Customer\ContactsController@postUnsubscribeURL');
+    Route::post('contacts/{contact}/unsubscribe-url', 'Customer\ContactsController@postUnsubscribeURL')
+        ->middleware('throttle:public-contact-consent')->name('contacts.unsubscribe_url.store');
 
     Route::any('inbound/webhook/{user}', 'Customer\DLRController@inboundReceiveWebhook')->name('inbound.webhook');
 

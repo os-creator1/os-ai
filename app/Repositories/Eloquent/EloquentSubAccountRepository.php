@@ -17,6 +17,7 @@
     use Illuminate\Support\Facades\Hash;
     use Illuminate\Support\Facades\Mail;
     use Illuminate\Support\Str;
+    use Illuminate\Validation\ValidationException;
     use Throwable;
 
 
@@ -55,6 +56,8 @@
         public function store(array $input, bool $confirmed = false): User
         {
 
+            $grantable = $this->permissionsWithinParentCeiling($input['permissions'] ?? []);
+
             /** @var User $user */
             $user  = $this->make(Arr::only($input, ['first_name', 'last_name', 'email']));
             $token = Str::random(64);
@@ -74,7 +77,7 @@
             }
 
 
-            $permissionsData = array_values($input['permissions']);
+            $permissionsData = $grantable;
 
             $subAccount = Customer::create([
                 'user_id'       => $user->id,
@@ -113,6 +116,51 @@
 
 
         /**
+         * Release-risk closure item 5 — the privilege ceiling.
+         *
+         * A parent may grant a sub-account only permissions the parent itself
+         * holds (its own `customers.permissions`) AND that are real, defined
+         * application permissions (config/customer-permissions). Anything else
+         * — a permission the parent lacks, an unknown key such as an admin or
+         * platform capability, a non-string — is refused outright with a
+         * validation error rather than silently trimmed, so a forged request
+         * can never obtain more than the form could have offered. This is the
+         * single choke point for both store() and update(); the sub-account
+         * routes already tenant-scope the target (ownedSubAccountOrAbort()).
+         *
+         * @param  mixed  $requested the submitted `permissions` array
+         * @return list<string>
+         *
+         * @throws ValidationException
+         */
+        private function permissionsWithinParentCeiling(mixed $requested): array
+        {
+            $requested = is_array($requested) ? array_values($requested) : [];
+
+            // What the parent actually holds right now: the permission set its
+            // session authorizes with (loaded from customers.permissions at
+            // login, and what every `can:` gate reads), else the stored set.
+            $held = session('permissions');
+            $ceiling = $held !== null
+                ? collect($held)->all()
+                : json_decode((string) optional(Auth::user()?->customer)->permissions, true);
+            $ceiling = is_array($ceiling) ? $ceiling : [];
+            $defined = array_keys((array) config('customer-permissions'));
+
+            foreach ($requested as $permission) {
+                if (! is_string($permission)
+                    || ! in_array($permission, $ceiling, true)
+                    || ! in_array($permission, $defined, true)) {
+                    throw ValidationException::withMessages([
+                        'permissions' => __('locale.exceptions.something_went_wrong'),
+                    ]);
+                }
+            }
+
+            return array_values(array_unique($requested));
+        }
+
+        /**
          * Sub-accounts the acting customer owns; every batch mutation must go through this.
          */
         private function ownedQuery()
@@ -149,6 +197,10 @@
          */
         public function update(User $subAccount, array $input): User
         {
+            // Fail closed BEFORE any write: the permission set is checked against
+            // the acting parent's own ceiling first.
+            $permissions = $this->permissionsWithinParentCeiling($input['permissions'] ?? []);
+
             // Fill the sub-account model with the remaining data (excluding password and permissions).
             // Whitelist: never mass-assign is_admin, status, parent_id, api_token, ... from the request.
             $subAccount->fill(Arr::only($input, ['first_name', 'last_name', 'email']));
@@ -157,8 +209,6 @@
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));
             }
 
-
-            $permissions = array_values($input['permissions']) ?? [];
 
             $subAccount->customer()->update([
                 'permissions' => json_encode($permissions),

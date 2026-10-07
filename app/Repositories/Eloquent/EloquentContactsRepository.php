@@ -7,6 +7,7 @@
     use App\Exceptions\GeneralException;
     use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
     use App\Jobs\AutomationJob;
+    use App\Library\Contacts\ContactPhone;
     use App\Library\Tool;
     use App\Models\Business;
     use App\Models\Campaigns;
@@ -39,7 +40,7 @@
             string $rawPhone,
             array $input = [],
         ): Contacts {
-            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            [$phone, $phoneForms] = $this->phoneForms($location, $rawPhone);
             $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
             if (! DB::table('booking_contact_identity_locks')->where($key)->exists()) {
                 DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
@@ -48,10 +49,11 @@
             }
             $this->lockBookingIdentity($location, $phone);
 
-            $contact = Contacts::query()->where('location_id', $location->id)
-                ->where('phone', $phone)->orderBy('id')->first();
+            $contact = Contacts::query()->where('business_id', (int) $location->business_id)
+                ->where('location_id', $location->id)
+                ->whereIn('phone', $phoneForms)->orderBy('id')->first();
             if ($contact !== null) {
-                if ($contact->isListedInBlacklist()) {
+                if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'phone' => __('locale.blacklist.phone_was_blacklisted'),
                     ]);
@@ -60,7 +62,7 @@
             }
 
             $contact = new Contacts(['phone' => $phone]);
-            if ($contact->isListedInBlacklist()) {
+            if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'phone' => __('locale.blacklist.phone_was_blacklisted'),
                 ]);
@@ -84,6 +86,51 @@
             $contactGroups->updateCache();
 
             return $contact;
+        }
+
+        /**
+         * The canonical phone and every stored form an equivalent number may
+         * already carry, for a Contact that belongs to $location's Business
+         * (App\Library\Contacts\ContactPhone — the one normalization path).
+         *
+         * @return array{0: string, 1: list<string>}
+         */
+        private function phoneForms(BusinessLocation $location, string $rawPhone): array
+        {
+            $region = ContactPhone::regionFor($location->business, $location);
+
+            return [ContactPhone::canonical($rawPhone, $region), ContactPhone::candidates($rawPhone, $region)];
+        }
+
+        /**
+         * Whether this number is blacklisted FOR THIS BUSINESS: the Business's
+         * own rows, its legacy un-attributed rows (owner = the Business's
+         * customer), and platform-admin rows, which apply everywhere.
+         *
+         * Another Business's opt-out (an inbound STOP is recorded per
+         * Business) must never refuse a booking or form at this one, which is
+         * what the old number-only lookup did.
+         *
+         * @param  list<string>  $phoneForms
+         */
+        private function blacklistedForBusiness(int $businessId, array $phoneForms): bool
+        {
+            if ($phoneForms === []) {
+                return false;
+            }
+
+            $customerId = Business::query()->whereKey($businessId)->value('customer_id');
+
+            return \App\Models\Blacklists::query()
+                ->whereIn('number', $phoneForms)
+                ->where(function ($query) use ($businessId, $customerId): void {
+                    $query->where('business_id', $businessId)
+                        ->orWhere(function ($legacy) use ($customerId): void {
+                            $legacy->whereNull('business_id')->where('user_id', $customerId);
+                        })
+                        ->orWhereIn('user_id', User::query()->where('is_admin', true)->select('id'));
+                })
+                ->exists();
         }
 
         public function lockBookingIdentity(BusinessLocation $location, string $phone): void
@@ -119,7 +166,7 @@
          */
         public function findOrCreateForWebsiteForm(BusinessLocation $location, string $rawPhone, array $fields): array
         {
-            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            [$phone, $phoneForms] = $this->phoneForms($location, $rawPhone);
             $businessId = (int) $location->business_id;
 
             $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
@@ -133,7 +180,7 @@
             $matches = Contacts::query()
                 ->where('business_id', $businessId)
                 ->where('location_id', $location->id)
-                ->where('phone', $phone)
+                ->whereIn('phone', $phoneForms)
                 ->orderBy('id')
                 ->limit(2)
                 ->get();
@@ -148,7 +195,7 @@
             if ($matches->count() === 1) {
                 $contact = $matches->first();
 
-                if ($contact->isListedInBlacklist()) {
+                if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'phone' => __('locale.blacklist.phone_was_blacklisted'),
                     ]);
@@ -158,7 +205,7 @@
             }
 
             $contact = new Contacts(['phone' => $phone]);
-            if ($contact->isListedInBlacklist()) {
+            if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'phone' => __('locale.blacklist.phone_was_blacklisted'),
                 ]);
@@ -221,7 +268,7 @@
          */
         public function findOrCreateForForm(BusinessLocation $location, string $rawPhone, array $fields): array
         {
-            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            [$phone, $phoneForms] = $this->phoneForms($location, $rawPhone);
 
             if ($phone === '') {
                 return [null, FormContactResolution::None];
@@ -252,7 +299,7 @@
             $matches = Contacts::query()
                 ->where('business_id', $businessId)
                 ->where('location_id', $location->id)
-                ->where('phone', $phone)
+                ->whereIn('phone', $phoneForms)
                 ->orderBy('id')
                 ->limit(2)
                 ->get();
@@ -267,7 +314,7 @@
             if ($matches->count() === 1) {
                 $contact = $matches->first();
 
-                if ($contact->isListedInBlacklist()) {
+                if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'phone' => __('locale.blacklist.phone_was_blacklisted'),
                     ]);
@@ -277,7 +324,7 @@
             }
 
             $contact = new Contacts(['phone' => $phone]);
-            if ($contact->isListedInBlacklist()) {
+            if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'phone' => __('locale.blacklist.phone_was_blacklisted'),
                 ]);
@@ -985,7 +1032,20 @@
 
 
             $rules = $contactGroups->getFieldRules();
-            $phone = isset($input['PHONE']) ? str_replace(['+', '-', '(', ')', ' '], '', $input['PHONE']) : '';
+            // The one canonical form (ContactPhone): an explicit international
+            // number keeps its digits exactly as before, and a number typed
+            // without a country code resolves against the Business's own
+            // country when — and only when — that yields a valid number there.
+            $region = ContactPhone::regionFor(
+                $contactGroups->business_id === null ? null : Business::query()->find($contactGroups->business_id)
+            );
+            $phone = isset($input['PHONE']) ? ContactPhone::canonical($input['PHONE'], $region) : '';
+
+            if (isset($input['PHONE'])) {
+                // updateFields() writes the PHONE field back onto contacts.phone;
+                // it must receive the canonical value, never the raw typing.
+                $input['PHONE'] = $phone;
+            }
 
             $rules['PHONE'] = [
                 'required',
@@ -1017,6 +1077,29 @@
             if ($subscriber->isListedInBlacklist()) {
                 $validator->after(function ($validator) {
                     $validator->errors()->add('phone', __('locale.blacklist.phone_was_blacklisted'));
+                });
+            }
+
+            // A row written before canonicalization (the same number in its
+            // national form) is the same Contact: refuse it exactly as the
+            // unique rule refuses the canonical form, instead of letting the
+            // re-typed number create a duplicate beside it.
+            $historicalForms = array_values(array_diff(ContactPhone::candidates($input['PHONE'] ?? '', $region), [$phone]));
+
+            if ($historicalForms !== []) {
+                $validator->after(function ($validator) use ($historicalForms, $contactGroups, $locationId) {
+                    $exists = Contacts::query()
+                        ->whereIn('phone', $historicalForms)
+                        ->where(function ($query) use ($contactGroups, $locationId) {
+                            $locationId === null
+                                ? $query->where('group_id', $contactGroups->id)
+                                : $query->where('business_id', $contactGroups->business_id)->where('location_id', $locationId);
+                        })
+                        ->exists();
+
+                    if ($exists) {
+                        $validator->errors()->add('PHONE', __('validation.unique', ['attribute' => 'PHONE']));
+                    }
                 });
             }
 

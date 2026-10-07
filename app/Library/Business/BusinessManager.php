@@ -7,8 +7,11 @@ use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
+use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
+use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
+use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
@@ -386,6 +389,20 @@ class BusinessManager
                 throw new RuntimeException(
                     "Business [{$locked->id}] is not Draft (status: {$locked->status->value}); onboarding cannot activate it."
                 );
+            }
+
+            // Release-risk closure (item 3): a Draft Business becomes Active
+            // only while its Workspace holds a genuinely usable plan — the
+            // canonical CustomerAccountAccessResolver::hasActiveSubscription()
+            // answer (assigned AND not locked), the same one every other
+            // product surface uses. An unpaid signup's Workspace has no plan
+            // assignment, so opening /onboarding by hand can no longer
+            // activate the Draft Business it already owns. Checked under the
+            // Workspace lock, only for the Draft -> Active transition.
+            if (! app(CustomerAccountAccessResolver::class)->hasActiveSubscription($lockedWorkspace)) {
+                throw app(EntitlementManager::class)->getWorkspaceEntitlementSummary($lockedWorkspace)->isAssigned
+                    ? new InactiveWorkspacePlanException((int) $lockedWorkspace->id)
+                    : new WorkspacePlanUnassignedException((int) $lockedWorkspace->id);
             }
 
             return [$this->businessRepository->updateStatus($locked, BusinessStatus::Active), true];
