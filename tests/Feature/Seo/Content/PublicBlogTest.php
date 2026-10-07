@@ -113,7 +113,7 @@ class PublicBlogTest extends TestCase
             $this->assertStringNotContainsString($title, $index);
         }
 
-        $sitemap = $this->body(self::HOST . '/sitemap');
+        $sitemap = $this->body(self::HOST . '/sitemap.xml');
         $this->assertStringContainsString('/blog/' . $live->slug, $sitemap);
         foreach ([$draft, $scheduled, $archived] as $hidden) {
             $this->assertStringNotContainsString('/blog/' . $hidden->slug, $sitemap);
@@ -168,7 +168,7 @@ class PublicBlogTest extends TestCase
         $this->assertStringContainsString('<meta name="robots" content="noindex, follow">', $html);
         $this->assertStringNotContainsString('"BlogPosting"', $html);
 
-        $this->assertStringNotContainsString('/blog/' . $article->slug, $this->body(self::HOST . '/sitemap'));
+        $this->assertStringNotContainsString('/blog/' . $article->slug, $this->body(self::HOST . '/sitemap.xml'));
     }
 
     public function test_the_blog_cannot_bypass_a_website_the_owner_has_not_opened_to_search(): void
@@ -176,21 +176,13 @@ class PublicBlogTest extends TestCase
         [, $business, , $website] = $this->photoBoothContentTenant();
         $article = $this->publishedArticle($business);
 
-        // The owner has NOT released the site: the published Home page is still noindex.
-        $revision = \App\Models\WebsiteRevision::find($website->published_revision_id);
-        $snapshot = $revision->snapshot;
-        foreach ($snapshot['pages'] as &$page) {
-            if ($page['is_home']) {
-                $page['seo']['noindex'] = true;
-            }
-        }
-        unset($page);
-        $revision->update(['snapshot' => $snapshot]);
+        // The owner has NOT released the website for search (websites.indexing_released_at is empty).
+        \App\Models\Website::whereKey($website->id)->update(['indexing_released_at' => null]);
         app('cache')->flush();
 
         $this->get(self::HOST . '/blog/' . $article->slug)->assertOk()->assertHeader('X-Robots-Tag', 'noindex, follow');
         $this->assertStringContainsString('noindex, follow', $this->body(self::HOST . '/blog'));
-        $this->assertStringNotContainsString('/blog', $this->body(self::HOST . '/sitemap'));
+        $this->assertStringNotContainsString('/blog', $this->body(self::HOST . '/sitemap.xml'));
     }
 
     public function test_the_platform_path_serves_the_blog_noindex_with_the_custom_domain_canonical(): void
@@ -207,7 +199,8 @@ class PublicBlogTest extends TestCase
         $this->assertStringNotContainsString('"BlogPosting"', $html);
 
         $this->get(route('public.website.blog.index', $website->public_id))->assertOk();
-        $this->assertStringContainsString('/blog/' . $article->slug, $this->body(route('public.website.sitemap', $website->public_id)));
+        // The platform path has no sitemap of its own: it points at the custom domain's.
+        $this->get(route('public.website.sitemap', $website->public_id))->assertRedirect('https://' . self::DOMAIN . '/sitemap.xml');
     }
 
     public function test_a_platform_only_site_has_no_canonical_and_no_preview_urls_leak(): void
@@ -240,7 +233,7 @@ class PublicBlogTest extends TestCase
         $this->manager()->archive((int) $business->customer_id, $business, $article->fresh());
         $this->get(self::HOST . '/blog/' . $old)->assertNotFound();
         $this->get(self::HOST . '/blog/how-much-room-for-a-booth')->assertNotFound();
-        $this->assertStringNotContainsString('how-much-room-for-a-booth', $this->body(self::HOST . '/sitemap'));
+        $this->assertStringNotContainsString('how-much-room-for-a-booth', $this->body(self::HOST . '/sitemap.xml'));
     }
 
     public function test_a_draft_slug_change_leaves_no_redirect(): void
@@ -320,7 +313,7 @@ class PublicBlogTest extends TestCase
         $this->get($platformUrl)->assertOk();
         $this->get(self::HOST . '/blog')->assertOk();
         $this->get(self::HOST . '/blog/' . $article->slug)->assertOk();
-        $this->get(self::HOST . '/sitemap')->assertOk();
+        $this->get(self::HOST . '/sitemap.xml')->assertOk();
 
         $this->assertSame(0, $fake->callCount());
     }

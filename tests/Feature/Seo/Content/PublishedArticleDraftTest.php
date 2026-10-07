@@ -53,7 +53,7 @@ class PublishedArticleDraftTest extends TestCase
         $this->assertSame($before, $this->get($url)->getContent());
         $this->get(self::HOST . '/blog/brand-new-address')->assertNotFound();
         $this->assertStringNotContainsString('A Completely New Headline', $this->get(self::HOST . '/blog')->getContent());
-        $this->assertStringNotContainsString('brand-new-address', $this->get(self::HOST . '/sitemap')->getContent());
+        $this->assertStringNotContainsString('brand-new-address', $this->get(self::HOST . '/sitemap.xml')->getContent());
         $this->assertSame(0, \App\Models\WebsiteArticleSlugHistory::count(), 'no redirect until the update is published');
     }
 
@@ -80,7 +80,7 @@ class PublishedArticleDraftTest extends TestCase
 
         $this->get(self::HOST . '/blog/updated-planning-address')->assertOk()->assertSee('Updated Planning Headline');
         $this->get(self::HOST . '/blog/' . $old)->assertStatus(301)->assertRedirect('https://' . self::DOMAIN . '/blog/updated-planning-address');
-        $this->assertStringContainsString('/blog/updated-planning-address', $this->get(self::HOST . '/sitemap')->getContent());
+        $this->assertStringContainsString('/blog/updated-planning-address', $this->get(self::HOST . '/sitemap.xml')->getContent());
     }
 
     public function test_discard_removes_the_draft_and_archive_stays_explicit(): void
@@ -145,34 +145,22 @@ class PublishedArticleDraftTest extends TestCase
         $visible = $this->publishedArticle($business);
         $hidden = $this->publishedArticle($business, ['title' => 'Owner hidden planning article', 'primary_topic' => 'owner hidden planning', 'noindex' => true]);
 
-        // The owner has NOT released the website for search: its Home page is still noindex.
-        $revision = WebsiteRevision::find($website->published_revision_id);
-        $snapshot = $revision->snapshot;
-        foreach ($snapshot['pages'] as &$page) {
-            $page['seo']['noindex'] = true;
-        }
-        unset($page);
-        $revision->update(['snapshot' => $snapshot]);
+        // The owner has NOT released the website for search.
+        \App\Models\Website::whereKey($website->id)->update(['indexing_released_at' => null]);
         app('cache')->flush();
 
         $closed = $this->get(self::HOST . '/blog/' . $visible->slug)->assertOk();
         $this->assertStringContainsString('noindex, follow', $closed->getContent());
         $closed->assertHeader('X-Robots-Tag', 'noindex, follow');
-        $this->assertStringNotContainsString('/blog', $this->get(self::HOST . '/sitemap')->getContent());
+        $this->assertStringNotContainsString('/blog', $this->get(self::HOST . '/sitemap.xml')->getContent());
 
-        // Released (what "Let search engines find these pages" produces): eligible articles become indexable.
-        $snapshot = $revision->fresh()->snapshot;
-        foreach ($snapshot['pages'] as &$page) {
-            $page['seo']['noindex'] = false;
-        }
-        unset($page);
-        $revision->update(['snapshot' => $snapshot]);
+        // The owner releases it through the Website's own action ("Let search engines find these pages").
+        app(WebsiteSearchVisibility::class)->release($website->fresh());
         app('cache')->flush();
 
         $open = $this->get(self::HOST . '/blog/' . $visible->slug)->assertOk()->assertHeader('X-Robots-Tag', 'index, follow');
-        $sitemap = $this->get(self::HOST . '/sitemap')->getContent();
+        $sitemap = $this->get(self::HOST . '/sitemap.xml')->getContent();
         $this->assertStringContainsString('/blog/' . $visible->slug, $sitemap);
-
         // An article the owner hid stays noindex and out of the sitemap, released site or not.
         $this->get(self::HOST . '/blog/' . $hidden->slug)->assertOk()->assertHeader('X-Robots-Tag', 'noindex, follow');
         $this->assertStringNotContainsString('/blog/' . $hidden->slug, $sitemap);

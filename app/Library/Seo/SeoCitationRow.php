@@ -21,7 +21,9 @@ use App\Models\SeoCitationDirectory;
  *
  * `listedAddress` is null whenever the Location is not permitted to expose an
  * address, whatever the row holds — a privacy floor on the read side that
- * mirrors the write-side refusal.
+ * mirrors the write-side refusal. `phoneCompared` is false where the Business
+ * phone is not claimed for this Location (a secondary Location), so a phone
+ * that was not compared is not reported as one that could not be verified.
  */
 final class SeoCitationRow
 {
@@ -45,6 +47,7 @@ final class SeoCitationRow
         public readonly SeoNapFieldResult $websiteResult = SeoNapFieldResult::NotComparable,
         public readonly bool $reviewDue = false,
         public readonly bool $offered = true,
+        public readonly bool $phoneCompared = true,
     ) {
     }
 
@@ -105,6 +108,58 @@ final class SeoCitationRow
     }
 
     /**
+     * A real PROBLEM the owner should look at: a recorded value differs from
+     * the business profile, the owner marked the listing as needing a
+     * correction, or a manual listing is due a review. The ONE definition
+     * behind the "Needs attention" count, the list filter and the row flag, so
+     * the three cannot disagree.
+     */
+    public function needsAttention(): bool
+    {
+        return $this->countsTowardProgress() && ($this->displayState()->isProblem() || $this->reviewDue);
+    }
+
+    /**
+     * Setup still to do (not started, or in progress). Deliberately NOT part of
+     * "Needs attention": an untouched directory is work to do, not a problem.
+     */
+    public function needsSetup(): bool
+    {
+        return $this->countsTowardProgress() && $this->displayState()->needsSetup();
+    }
+
+    /**
+     * Recorded values the comparison could not confirm either way (the listing
+     * says something, but it cannot be told whether it is the same as the
+     * business profile). They are neither matches nor mismatches, so a row
+     * that has any is never called "Accurate".
+     *
+     * @return array<int, string>
+     */
+    public function unverifiedFields(): array
+    {
+        $recorded = ['name' => $this->listedName, 'phone' => $this->listedPhone, 'address' => $this->listedAddress];
+        $fields = [];
+
+        foreach ($recorded as $field => $value) {
+            // The Business phone is deliberately not compared at a secondary Location: that is not "unverified".
+            if ($field === 'phone' && ! $this->phoneCompared) {
+                continue;
+            }
+
+            if ($value !== null && ($this->nap[$field] ?? null) === SeoNapFieldResult::NotComparable) {
+                $fields[] = $field;
+            }
+        }
+
+        if ($this->listedWebsite !== null && $this->websiteResult === SeoNapFieldResult::NotComparable) {
+            $fields[] = 'website';
+        }
+
+        return $fields;
+    }
+
+    /**
      * Per-field tallies of the read-time comparison. `comparable` counts the
      * fields that HAVE a canonical value to compare against; a field with no
      * recorded listing value is `unchecked`, never `mismatched`.
@@ -157,7 +212,7 @@ final class SeoCitationRow
             default => match (true) {
                 $tally['mismatched'] > 0 => SeoCitationDisplayState::NeedsAttention,
                 $this->status === SeoCitationStatus::Listed
-                    && $tally['comparable'] > 0 && $tally['unchecked'] === 0 => SeoCitationDisplayState::Accurate,
+                    && $tally['comparable'] > 0 && $tally['unchecked'] === 0 && $this->unverifiedFields() === [] => SeoCitationDisplayState::Accurate,
                 $this->status === SeoCitationStatus::Listed => SeoCitationDisplayState::Listed,
                 $this->status === SeoCitationStatus::InProgress => SeoCitationDisplayState::InProgress,
                 default => SeoCitationDisplayState::NotStarted,
@@ -231,13 +286,28 @@ final class SeoCitationRow
                 ? ucfirst(implode(' and ', $tally['differing'])) . ($tally['mismatched'] === 1 ? ' differs' : ' differ') . ' from your business profile.'
                 : 'You marked this listing as needing a correction.',
             SeoCitationDisplayState::Accurate => 'Everything you recorded matches your business profile.',
-            SeoCitationDisplayState::Listed => $tally['matched'] > 0
-                ? $tally['matched'] . ' of ' . $tally['comparable'] . ' details checked and matching.'
-                : 'Listed. Record what it shows to compare it.',
+            SeoCitationDisplayState::Listed => $this->listedHelperText($tally),
             SeoCitationDisplayState::InProgress => 'Setup is in progress.',
             SeoCitationDisplayState::NotStarted => $this->hasRecordedDetails()
                 ? 'Not marked as listed yet.'
                 : 'No listing details recorded yet.',
         };
+    }
+
+    /**
+     * @param  array{matched: int, mismatched: int, unchecked: int, comparable: int, differing: array<int, string>}  $tally
+     */
+    private function listedHelperText(array $tally): string
+    {
+        $unverified = $this->unverifiedFields();
+        $note = $unverified === []
+            ? ''
+            : ' ' . ucfirst(implode(' and ', $unverified)) . (count($unverified) === 1 ? ' was' : ' were') . ' recorded but could not be verified automatically — check by eye.';
+
+        if ($tally['matched'] > 0) {
+            return $tally['matched'] . ' of ' . $tally['comparable'] . ' details checked and matching.' . $note;
+        }
+
+        return $unverified === [] ? 'Listed. Record what it shows to compare it.' : 'Listed.' . $note;
     }
 }

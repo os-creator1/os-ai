@@ -8,8 +8,6 @@
 @php($article = $blog['article'])
 <div class="wd-band wd-tone-{{ $tone }} blog-band blog-band-article">
     <div class="website-container wd-container blog-container blog-container-article">
-        @include('public.website.blog.breadcrumbs', ['trail' => $blog['trail']])
-
         <article class="blog-article">
             <header class="blog-article-header">
                 <p class="blog-meta">

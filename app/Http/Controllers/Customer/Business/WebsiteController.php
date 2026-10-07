@@ -456,6 +456,7 @@ class WebsiteController extends CustomerBaseController
             'websiteMeta' => ['name' => $website->name, 'theme' => $website->theme ?? []],
             'page' => (object) [
                 'uid' => $page->uid,
+                'slug' => $page->slug,
                 'title' => $page->title,
                 'seo' => (object) [
                     'seo_title' => $page->seo_title,

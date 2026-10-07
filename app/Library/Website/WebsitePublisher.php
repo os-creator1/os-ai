@@ -115,6 +115,19 @@ final class WebsitePublisher
             ]);
         }
 
+        // Every non-home page needs a real, unique slug: a NULL one is an
+        // unreachable page and a duplicate "/" in the sitemap.
+        $slugs = [];
+        foreach ($pages->where('is_home', false) as $page) {
+            if ($page->slug === null || ! WebsiteSlugRules::isValid((string) $page->slug) || isset($slugs[$page->slug])) {
+                throw ValidationException::withMessages([
+                    'website' => ['The page "'.$page->title.'" needs its own web address (slug) before the Website can be published.'],
+                ]);
+            }
+
+            $slugs[$page->slug] = true;
+        }
+
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
         $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 

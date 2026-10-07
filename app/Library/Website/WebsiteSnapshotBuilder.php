@@ -57,7 +57,7 @@ final class WebsiteSnapshotBuilder
             // Package blocks are resolved from Packages & Products at
             // publish time (name + price), then frozen into this immutable
             // revision exactly like `contact_details` values are.
-            $sections = collect($this->media->enrichSections($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id)))->map(function ($section) use ($business, &$referencedAssetUids, &$referencedFormUids) {
+            $sections = collect($this->media->enrichSections($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id)))->map(function ($section) use ($business, $page, &$referencedAssetUids, &$referencedFormUids) {
                 $type = WebsiteSectionType::tryFrom($section['type'] ?? '');
                 $data = $section['data'] ?? [];
 
@@ -96,7 +96,7 @@ final class WebsiteSnapshotBuilder
                     $data['resolved'] = [
                         'phone' => $data['show_phone'] ? $business?->phone : null,
                         'email' => $data['show_email'] ? $business?->email : null,
-                        'address' => ($data['show_address'] && $this->addressPermitted($business)) ? $this->formatAddress($business) : null,
+                        'address' => ($data['show_address'] && $this->addressPermitted($business) && \App\Library\Website\Seo\WebsiteLocationPageAddress::pageMayShowAddress($page->slug, $business)) ? $this->formatAddress($business) : null,
                     ];
                 }
 
@@ -159,6 +159,14 @@ final class WebsiteSnapshotBuilder
             'pages' => $pageSnapshots,
             'assets' => $assets,
             'forms' => $forms,
+            // Old address -> new address for pages renamed since the live revision
+            // (see WebsiteRedirectMap): the public renderers 301 these instead of 404ing.
+            'redirects' => (new \App\Library\Website\Seo\WebsiteRedirectMap())->compute(
+                $website->published_revision_id !== null
+                    ? \App\Models\WebsiteRevision::find($website->published_revision_id)?->snapshot
+                    : null,
+                $pageSnapshots,
+            ),
         ];
     }
 

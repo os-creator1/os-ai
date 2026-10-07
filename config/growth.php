@@ -47,6 +47,11 @@ return [
         'review_request_lookback_days' => 30,   // no request recorded inside this window
         'citation_priority_directories' => 5,   // the first N active directories are "important"
 
+        // SEO rank (stored observations only): a tracked keyword is a "meaningful
+        // drop" when its organic position got worse by at least this many places
+        // (or it fell out of the results entirely).
+        'rank_drop_positions' => 5,
+
         // Dismiss cooldown: a dismissed Opportunity may return after this
         // many days, but only if a later run re-confirms the problem.
         'dismiss_cooldown_days' => 30,

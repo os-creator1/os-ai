@@ -6,8 +6,6 @@
 @php($tone = ($design ?? null) ? $design->toneFor('text') : 'light')
 <div class="wd-band wd-tone-{{ $tone }} blog-band">
     <div class="website-container wd-container blog-container">
-        @include('public.website.blog.breadcrumbs', ['trail' => $blog['trail']])
-
         <header class="blog-header">
             <h1 class="blog-title">{{ $blog['heading'] }}</h1>
             <p class="blog-intro">{{ $blog['intro'] }}</p>

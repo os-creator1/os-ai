@@ -111,6 +111,10 @@
                                         <x-badge variant="success" class="ms-50">Matches</x-badge>
                                     @elseif($result === SeoNapFieldResult::Mismatch)
                                         <x-badge variant="warning" class="ms-50">Differs</x-badge>
+                                    @elseif($field === 'phone' && ! $section->phoneComparable)
+                                        <span class="cz-muted ms-50" data-role="phone-not-compared">Not compared here</span>
+                                    @else
+                                        <x-badge variant="neutral" class="ms-50" data-role="unverified">Could not verify</x-badge>
                                     @endif
                                 @else
                                     <span class="cz-muted">{{ $result === SeoNapFieldResult::NotComparable && $field !== 'website' ? 'Not compared' : 'Not checked' }}</span>
@@ -222,16 +226,19 @@
                     <input type="hidden" name="applicable" value="{{ $notApplicable ? 1 : 0 }}">
                     <p class="text-caption">
                         @if($notApplicable)
-                            It is out of your progress and "Needs attention" list. Restoring keeps everything you recorded.
+                            It is out of your progress and to-do counts. Restoring keeps everything you recorded.
                         @else
-                            Mark it not applicable (for example, it does not serve your area or category). It leaves your progress and "Needs attention" list; what you recorded is kept and you can restore it any time.
+                            Mark it not applicable (for example, it does not serve your area or category). It leaves your progress and to-do counts; what you recorded is kept and you can restore it any time.
                         @endif
                     </p>
                     <button type="submit" class="btn btn-sm btn-outline-secondary" data-role="applicability-button">{{ $notApplicable ? 'Restore' : 'Mark not applicable' }}</button>
                 </form>
             </section>
 
-            @if($row->isCustom())
+            @if($row->isCustom() && ! $section->canEditDirectory($row))
+                <p class="text-caption mb-0" data-role="drawer-shared-readonly">This directory is shared by all your locations, so only someone with access to every location can change it.</p>
+            @endif
+            @if($section->canEditDirectory($row))
                 <section data-role="drawer-custom-edit">
                     <h6>Your custom directory</h6>
                     <form method="POST" action="{{ route('customer.workspaces.businesses.seo.citations.custom.update', [$workspaceUid, $businessUid, $location->uid, $directory->key]) }}" class="mb-1">

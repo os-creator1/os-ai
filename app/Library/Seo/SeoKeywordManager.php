@@ -10,6 +10,7 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\SeoKeyword;
+use App\Models\SeoRankTarget;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -179,6 +180,16 @@ final class SeoKeywordManager
                 return $current;
             }
 
+            // A rank position belongs to the exact words it was checked for. Re-wording a
+            // keyword that has rank history would show the OLD phrase's position (and a
+            // false change) under the new words, so that is refused: archive it and add
+            // the new wording as a new keyword. A change of scope or of letter case
+            // (same normalized phrase) is fine.
+            if ($current->phrase_normalized !== $normalized
+                && SeoRankTarget::query()->where('seo_keyword_id', $current->id)->exists()) {
+                throw SeoKeywordException::rankTracked();
+            }
+
             $current->fill([
                 'business_location_id' => $newLocationId,
                 'phrase' => $typed,
@@ -267,6 +278,14 @@ final class SeoKeywordManager
         // normalized form is checked against the column width separately.
         if ($normalized === '' || mb_strlen($normalized) > self::MAX_PHRASE_LENGTH) {
             throw SeoKeywordException::invalidPhrase();
+        }
+
+        // Operators are checked on what the owner TYPED (the normalizer lowers
+        // case, which would hide "OR"). A keyword is plain words: it is matched
+        // against page text and, if tracked, sent to a paid provider that
+        // refuses operator queries.
+        if (SeoPhraseNormalizer::hasSearchOperator($typed)) {
+            throw SeoKeywordException::searchOperator();
         }
 
         return [$typed, $normalized];

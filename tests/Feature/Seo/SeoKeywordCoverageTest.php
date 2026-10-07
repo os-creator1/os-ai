@@ -147,22 +147,73 @@ class SeoKeywordCoverageTest extends TestCase
         $this->assertSame(0, $r['a|b']->bodyPages, '"|" must not act as alternation.');
     }
 
-    public function test_only_human_visible_text_counts_not_urls_labels_or_uids(): void
+    public function test_only_human_visible_text_counts_not_urls_asset_uids_or_contact_values(): void
     {
         $business = $this->business();
         $this->publishWebsite($business, [
             $this->snapshotPage('secretpageuid', 'Home', [], [
                 ['type' => 'hero', 'data' => [
                     'heading' => 'Welcome', 'background_image' => 'bakeryasset',
-                    'primary_cta' => ['label' => 'Bakery Sale', 'url' => 'https://bakery.example/'],
+                    'primary_cta' => ['label' => 'Order today', 'url' => 'https://bakery.example/'],
                 ]],
                 ['type' => 'contact_details', 'data' => ['show_phone' => true, 'show_email' => true, 'show_address' => true, 'resolved' => ['address' => '1 Bakery Lane']]],
             ], true),
         ]);
 
-        $r = $this->coverageFor($business, 'bakery', 'secretpageuid', 'bakery sale', 'bakery lane')['bakery'];
+        $r = $this->coverageFor($business, 'bakery', 'secretpageuid', 'bakery lane', 'order today');
 
-        $this->assertSame(SeoKeywordCoverageStatus::NotCovered, $r->status);
+        $this->assertSame(SeoKeywordCoverageStatus::NotCovered, $r['bakery']->status, 'A URL, an asset uid and the address are not page text.');
+        $this->assertSame(SeoKeywordCoverageStatus::NotCovered, $r['secretpageuid']->status);
+        $this->assertSame(SeoKeywordCoverageStatus::NotCovered, $r['bakery lane']->status, 'Contact values are shown or withheld by a LIVE privacy check, so the snapshot cannot prove them.');
+        $this->assertSame(SeoKeywordCoverageStatus::Covered, $r['order today']->status, 'A button\'s visible label is page text.');
+    }
+
+    public function test_text_in_every_visible_section_type_counts_so_a_phrase_there_is_not_falsely_missing(): void
+    {
+        $business = $this->business();
+        $this->publishWebsite($business, [
+            $this->snapshotPage('a', 'Home', [], [
+                ['type' => 'custom_section', 'data' => ['heading' => 'Our story', 'body' => 'We started with a vintage booth in Naperville.']],
+                ['type' => 'form', 'data' => ['heading' => 'Check availability for your wedding', 'form_uid' => 'f1']],
+                ['type' => 'backdrops', 'data' => ['heading' => 'Backdrop options', 'items' => [['name' => 'Gold sequin wall', 'description' => 'Sparkly party backdrop', 'images' => []]]]],
+                ['type' => 'cta', 'data' => ['heading' => 'Ready?', 'body' => 'Tell us the date.', 'buttons' => [['label' => 'Reserve your booth', 'url' => 'https://x.test/book']]]],
+                ['type' => 'gallery', 'data' => ['heading' => 'Recent events gallery', 'items' => []]],
+            ], true),
+        ]);
+
+        $r = $this->coverageFor($business, 'vintage booth', 'availability for your wedding', 'sequin wall', 'sparkly party backdrop', 'reserve your booth', 'recent events gallery', 'invented phrase');
+
+        foreach (['vintage booth', 'availability for your wedding', 'sequin wall', 'sparkly party backdrop', 'reserve your booth', 'recent events gallery'] as $phrase) {
+            $this->assertSame(SeoKeywordCoverageStatus::Covered, $r[$phrase]->status, "[{$phrase}] is visible text on the page.");
+        }
+
+        $this->assertSame(SeoKeywordCoverageStatus::NotCovered, $r['invented phrase']->status);
+    }
+
+    public function test_a_phrase_only_on_pages_hidden_from_search_is_not_covered(): void
+    {
+        $business = $this->business();
+        $this->publishWebsite($business, [
+            $this->snapshotPage('a', 'Home', [], [$this->textSection('We rent photo booths.')], true),
+            $this->snapshotPage('b', 'Private party packages', ['noindex' => true], [$this->textSection('Neon sign hire for parties.')]),
+            $this->snapshotPage('c', 'Gallery', ['noindex' => true], [$this->textSection('Wedding gallery.')]),
+            $this->snapshotPage('d', 'Weddings', [], [$this->textSection('Wedding gallery highlights.')]),
+        ]);
+
+        $r = $this->coverageFor($business, 'neon sign hire', 'photo booths', 'wedding gallery', 'private party packages');
+
+        $this->assertSame(SeoKeywordCoverageStatus::OnlyOnHiddenPages, $r['neon sign hire']->status);
+        $this->assertSame('Only on pages hidden from search', $r['neon sign hire']->status->label());
+        $this->assertSame([4, 0, 0, 0], [$r['neon sign hire']->pagesTotal, $r['neon sign hire']->titlePages, $r['neon sign hire']->descriptionPages, $r['neon sign hire']->bodyPages], 'Nothing a searcher can find.');
+
+        // A page title counts as text on the page too: here only the hidden page carries it.
+        $this->assertSame(SeoKeywordCoverageStatus::OnlyOnHiddenPages, $r['private party packages']->status);
+
+        $this->assertSame(SeoKeywordCoverageStatus::Covered, $r['photo booths']->status);
+
+        // On a hidden page AND a findable one: covered, and only the findable page is counted.
+        $this->assertSame(SeoKeywordCoverageStatus::Covered, $r['wedding gallery']->status);
+        $this->assertSame(1, $r['wedding gallery']->bodyPages);
     }
 
     public function test_unpublished_draft_content_never_counts(): void

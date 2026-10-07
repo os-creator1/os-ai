@@ -9,8 +9,11 @@ use App\Models\BusinessLocation;
  * Location the actor cannot access never becomes one of these, so nothing
  * here (link, ledger rows, count, Contact choices) can leak it.
  *
- * `requestCount` is a plain count of ledger rows — never a target, quota,
- * goal or ranking (§8.6 invariant 3). `contacts` and each row's `contact`
+ * `requestCount` is a plain count of ALL ledger rows, and `awaitingCount` the
+ * plain count of those still awaiting an outcome — both taken over the whole
+ * ledger, never a target, quota, goal or ranking (§8.6 invariant 3). The list
+ * `requests` is capped per Location (SeoReviewsPageReader::LEDGER_LIMIT), so
+ * requestsAreTruncated() says when it shows only the latest. `contacts` and each row's `contact`
  * are empty/null unless the actor holds the existing `view_contact`
  * capability; a row whose Contact is hidden or deleted still shows its
  * channel, status and dates, but never a name or number.
@@ -33,6 +36,13 @@ final class SeoReviewLocationSection
         public readonly int $requestCount,
         public readonly array $requests,
         public readonly array $contacts,
+        public readonly int $awaitingCount = 0,
     ) {
+    }
+
+    /** True when the list below holds only the latest requests (the count above is the whole ledger). */
+    public function requestsAreTruncated(): bool
+    {
+        return $this->requestCount > count($this->requests);
     }
 }

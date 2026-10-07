@@ -24,8 +24,9 @@ namespace App\Library\Website\Seo;
  *
  * Deliberately excluded, per the task that authorized this class and
  * Google's own structured-data policy (no fabricated/irrelevant markup):
- * `aggregateRating`, `review`, `geo`, `priceRange`, `image` — none has
- * a confirmed, non-speculative source in this codebase today.
+ * `aggregateRating`, `review`, `geo`, `priceRange` — none has a confirmed,
+ * non-speculative source in this codebase today. (`logo`/`image` are the
+ * owner's own published logo only.)
  *
  * Lives in this `Seo/` subdirectory, not directly under
  * `Library/Website/`, for a mechanical reason: schema.org's own,
@@ -49,7 +50,7 @@ final class WebsiteLocalBusinessStructuredData
      * @return ?array<string, mixed> null only when the published
      *                               snapshot carries no usable business name — schema.org requires one
      */
-    public function build(array $facts, string $canonicalUrl): ?array
+    public function build(array $facts, string $siteUrl, ?string $logoUrl = null): ?array
     {
         $name = trim((string) ($facts['name'] ?? ''));
 
@@ -60,9 +61,19 @@ final class WebsiteLocalBusinessStructuredData
         $data = [
             '@context' => 'https://schema.org',
             '@type' => 'LocalBusiness',
+            // One entity for the whole site: the same @id and the SITE's address
+            // on every page, not each page's own URL (which made one business
+            // look like many to a crawler).
+            '@id' => rtrim($siteUrl, '/').'/#business',
             'name' => $name,
-            'url' => $canonicalUrl,
+            'url' => $siteUrl,
         ];
+
+        // Only the owner's own published logo, never a platform placeholder.
+        if ($logoUrl !== null && preg_match('#^https?://#i', $logoUrl) === 1) {
+            $data['logo'] = $logoUrl;
+            $data['image'] = $logoUrl;
+        }
 
         if (! empty($facts['telephone'])) {
             $data['telephone'] = $facts['telephone'];

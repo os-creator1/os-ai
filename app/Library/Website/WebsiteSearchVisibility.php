@@ -31,6 +31,9 @@ final class WebsiteSearchVisibility
         $keptByOwner = 0;
         $keptThin = 0;
 
+        // Remembered, so a later rebuild keeps the pages open instead of re-hiding the whole site.
+        Website::whereKey($website->id)->update(['indexing_released_at' => now()]);
+
         foreach ($website->pages()->where('noindex', true)->get() as $page) {
             if ($page->noindex_explicit) {
                 $keptByOwner++;
@@ -46,26 +49,14 @@ final class WebsiteSearchVisibility
     }
 
     /**
-     * SEO Content Engine V1 — the Website-wide owner decision, as the published snapshot records it.
-     *
-     * There is no separate site-level switch: "Let search engines find these pages" (release()) and the
-     * owner's own per-page choice are both stored as the pages' `noindex` flag, and the Home page is the
-     * site. A site whose published Home page is still hidden from search is a site the owner has not
-     * opened up yet — so blog articles are held back with it, never indexed ahead of it. Blog articles
-     * and the blog index may only narrow this (an owner `noindex` on one article); they can never
-     * override it.
-     *
-     * @param  array<string, mixed>  $snapshot  the published revision snapshot
+     * SEO Content Engine V1 — has the owner released this Website for search? This is the ONE canonical answer
+     * (`websites.indexing_released_at`, set by release() — "Let search engines find these pages"; it survives a
+     * rebuild). Blog articles are held back until then, and a rebuild never changes it. An article may only narrow
+     * indexing further (an owner `noindex`); it can never widen it.
      */
-    public static function siteOpenToSearch(array $snapshot): bool
+    public static function siteOpenToSearch(Website $website): bool
     {
-        foreach ((array) ($snapshot['pages'] ?? []) as $page) {
-            if (($page['is_home'] ?? false) === true) {
-                return ! ($page['seo']['noindex'] ?? false);
-            }
-        }
-
-        return false;
+        return $website->indexing_released_at !== null;
     }
 
     private function hasContent(WebsitePage $page): bool

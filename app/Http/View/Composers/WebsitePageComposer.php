@@ -6,6 +6,8 @@ use App\Library\Website\Design\BrandColors;
 use App\Library\Website\Design\WebsiteCtaResolver;
 use App\Library\Website\Design\WebsiteDesigns;
 use App\Library\Website\Design\WebsiteNavigationBuilder;
+use App\Library\Website\Seo\WebsiteBreadcrumbStructuredData;
+use App\Library\Website\Seo\WebsiteHeadMeta;
 use Illuminate\Contracts\View\View;
 
 /**
@@ -30,7 +32,7 @@ final class WebsitePageComposer
     public function __construct(
         private readonly WebsiteNavigationBuilder $navigation,
         private readonly WebsiteCtaResolver $cta,
-        private readonly \App\Library\Website\Seo\WebsiteSocialMetadata $social,
+        private readonly WebsiteHeadMeta $headMeta,
     ) {}
 
     public function compose(View $view): void
@@ -67,10 +69,38 @@ final class WebsitePageComposer
             'logo' => $logo,
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
-            // Open Graph / Twitter extras only on a published page (Preview carries none).
-            // A blog page brings its own (og:type article, published/modified times, featured image).
-            'socialMeta' => array_key_exists('socialMetaOverride', $data) ? $data['socialMetaOverride'] : ($isPreview ? null : $this->social->build((string) ($meta['name'] ?? ''), $data['canonicalUrl'] ?? null, (array) ($data['sections'] ?? []), $assets, $theme)),
+            // A blog article's trail (Home > Blog > article) comes from the blog renderer; every other page derives its own.
+            'breadcrumbs' => $data['breadcrumbsOverride'] ?? ($currentNav !== null ? WebsiteBreadcrumbStructuredData::trail($currentNav, $pages) : []),
+            // The ONE head builder. A blog page only layers its article-specific tags over it (headExtra).
+            'head' => $this->withHeadExtra($this->headMeta->build(
+                json_decode(json_encode($page), true) ?: [],
+                $meta,
+                $data['canonicalUrl'] ?? null,
+                $assets,
+                (array) ($data['sections'] ?? []),
+                $isPreview,
+            ), $data['headExtra'] ?? null, $isPreview),
         ]);
+    }
+
+    /**
+     * SEO Content Engine V1 — an article's own social tags (og:type article, published/modified times, its featured
+     * image) laid over the canonical head. Never applied to the owner's Preview, which carries no social extras.
+     *
+     * @param  array<string, mixed>  $head
+     * @param  array{og?: array<string, string>, twitter?: array<string, string>}|null  $extra
+     * @return array<string, mixed>
+     */
+    private function withHeadExtra(array $head, ?array $extra, bool $isPreview): array
+    {
+        if ($extra === null || $isPreview) {
+            return $head;
+        }
+
+        $head['og'] = array_merge($head['og'], $extra['og'] ?? []);
+        $head['twitter'] = array_merge($head['twitter'], $extra['twitter'] ?? []);
+
+        return $head;
     }
 
     /**

@@ -94,8 +94,9 @@ class SeoOverviewTest extends TestCase
         $this->assertNull($overview->google);
 
         $this->assertStringContainsString('2 pages published', $html);
-        $this->assertStringContainsString('1 of 2 with a meta description', $html);
-        $this->assertStringContainsString('Your website is not indexed by search engines yet', $html);
+        $this->assertStringContainsString('1 of 2 with a search result description', $html);
+        // Published, but only at the platform address (no Active primary domain).
+        $this->assertStringContainsString('Your website is live, but search engines cannot find it yet', $html);
         $this->assertStringNotContainsString('data-section="google-business-profile"', $html);
     }
 
@@ -130,7 +131,7 @@ class SeoOverviewTest extends TestCase
         $this->assertStringNotContainsString('data-role="content-pages"', $html);
     }
 
-    public function test_indexability_is_a_status_never_a_finding_and_never_claims_indexing(): void
+    public function test_a_platform_path_site_is_a_status_with_a_connect_a_domain_action_and_never_claims_indexing(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $this->createLocation($business);
@@ -139,8 +140,10 @@ class SeoOverviewTest extends TestCase
 
         $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
 
-        $this->assertStringContainsString('served from the platform address', $html);
-        $this->assertStringContainsString('once it is connected to your own domain', $html);
+        $this->assertStringContainsString('only reachable at the platform address', $html);
+        $this->assertStringContainsString('Connect your own domain', $html);
+        $this->assertStringContainsString('data-action="connect_domain"', $html);
+        $this->assertMatchesRegularExpression('/data-role="indexability-tone"[^>]*>\s*Action\s*</', $html);
         $this->assertStringNotContainsString('ranked', $html);
         $this->assertStringNotContainsString('traffic', $html);
     }
@@ -153,7 +156,9 @@ class SeoOverviewTest extends TestCase
         // and look at what is actually rendered.
         $rendered = preg_replace('/\{\{--.*?--\}\}/s', '', $blade);
 
-        foreach (['score', 'grade', 'chart', 'percent', '%', 'Search Console', 'Citations', 'Reviews', 'disabled', 'Coming soon'] as $forbidden) {
+        // Search Console is not built, so its card says "Not available yet" and shows no figure:
+        // it is the one named exception (asserted in test_the_search_console_card_is_honest_*).
+        foreach (['score', 'grade', 'chart', 'percent', '%', 'Citations', 'Reviews', 'disabled', 'Coming soon'] as $forbidden) {
             $this->assertStringNotContainsStringIgnoringCase($forbidden, $rendered, "The Overview must not render [{$forbidden}].");
         }
 
@@ -206,7 +211,7 @@ class SeoOverviewTest extends TestCase
         $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
 
         $this->assertStringContainsString('Not linked to a Google listing yet', $html);
-        $this->assertStringContainsString('Google connection lost', $html);
+        $this->assertStringContainsString('Google connection is not active', $html);
     }
 
     // -----------------------------------------------------------------

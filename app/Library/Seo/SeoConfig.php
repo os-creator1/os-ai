@@ -2,6 +2,8 @@
 
 namespace App\Library\Seo;
 
+use App\Enums\Entitlement\WorkspacePlanTier;
+
 /**
  * Contract 18 §8/§11 — the single, fail-closed reader of config/seo.php.
  *
@@ -109,7 +111,32 @@ final class SeoConfig
     // reduce it. A malformed value yields the default, never "off".
     // -----------------------------------------------------------------
 
-    public const RANK_TIERS = ['trial', 'core', 'growth'];
+    public const RANK_TIER_TRIAL = 'trial';
+    public const RANK_TIER_CORE = 'core';
+    public const RANK_TIER_GROWTH = 'growth';
+
+    public const RANK_TIERS = [self::RANK_TIER_TRIAL, self::RANK_TIER_CORE, self::RANK_TIER_GROWTH];
+
+    /**
+     * The ONE mapping from an entitlement plan tier to a rank-tracking tier
+     * key. A trial is always the strictest tier. Core is Core. Growth, and an
+     * Agency-tier Workspace ("unlimited locations" never means unlimited paid
+     * queries), use the Growth limits. ANYTHING ELSE — no tier, or a tier added
+     * later that nobody has priced yet — fails CLOSED to the trial tier, never
+     * to a more generous one.
+     */
+    public function rankTierFor(?WorkspacePlanTier $planTier, bool $isTrial): string
+    {
+        if ($isTrial) {
+            return self::RANK_TIER_TRIAL;
+        }
+
+        return match ($planTier) {
+            WorkspacePlanTier::Core => self::RANK_TIER_CORE,
+            WorkspacePlanTier::Growth, WorkspacePlanTier::Agency => self::RANK_TIER_GROWTH,
+            default => self::RANK_TIER_TRIAL,
+        };
+    }
 
     /** Master switch. Only a literal true / "true" / "1" enables; anything else is OFF. */
     public function rankTrackingEnabled(): bool
@@ -138,13 +165,13 @@ final class SeoConfig
     public function rankTier(string $tier): array
     {
         $defaults = [
-            'trial' => [5, 3, 500_000],
-            'core' => [5, 1, 1_500_000],
-            'growth' => [20, 1, 4_500_000],
+            self::RANK_TIER_TRIAL => [5, 3, 500_000],
+            self::RANK_TIER_CORE => [5, 1, 1_500_000],
+            self::RANK_TIER_GROWTH => [20, 1, 4_500_000],
         ];
 
         // An unknown tier gets the most restrictive tier, never an open one.
-        $tier = array_key_exists($tier, $defaults) ? $tier : 'trial';
+        $tier = array_key_exists($tier, $defaults) ? $tier : self::RANK_TIER_TRIAL;
         [$targets, $cadence, $cap] = $defaults[$tier];
 
         return [
@@ -177,6 +204,16 @@ final class SeoConfig
     public function rankRetentionMonths(): int
     {
         return $this->lowerOnly('seo.rank_tracking.retention_months', 13, 1);
+    }
+
+    /**
+     * Days after which a stored rank position is "may be out of date".
+     * Default 7 (a trial checks every 3 days, so a healthy target is never
+     * flagged); range 2-90. A malformed value yields the default.
+     */
+    public function rankStaleAfterDays(): int
+    {
+        return $this->bounded('seo.rank_tracking.stale_after_days', 7, 2, 90);
     }
 
     public function rankMaxSubmitAttempts(): int

@@ -11,6 +11,7 @@ use App\Models\SeoKeyword;
 use App\Models\SeoRankCheckRun;
 use App\Models\SeoRankObservation;
 use App\Models\SeoRankTarget;
+use App\Library\Seo\SeoConfig;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
@@ -33,9 +34,18 @@ final class SeoRankDashboardReader
     public const STATE_UNAVAILABLE = 'unavailable';
     public const STATE_ACTIVE = 'active';
 
+    /**
+     * Why a check can never run for a Business, in the words shown to its owner.
+     * Organic rank is matched on the Website's ACTIVE PRIMARY domain only; a
+     * local check needs a domain or a business phone number (SeoRankIdentity).
+     */
+    public const NO_DOMAIN_REASON = 'Connect your website domain so we can find your site in results';
+    public const NO_IDENTITY_REASON = 'Connect your website domain or add a business phone number so we can find your business in results';
+
     public function __construct(
         private readonly SeoRankHistoryReader $history,
         private readonly SeoRankTrackingBudget $budget,
+        private readonly SeoConfig $config,
     ) {
     }
 
@@ -81,6 +91,10 @@ final class SeoRankDashboardReader
         $byKeyword = $targets->groupBy('seo_keyword_id');
         $rows = [];
 
+        // What we can match our own listing against. Only needed when something is tracked.
+        $identity = $targets->isEmpty() ? null : SeoRankIdentity::forBusiness($business);
+        $staleAfterDays = $this->config->rankStaleAfterDays();
+
         foreach ($keywords as $keyword) {
             $keywordTargets = $byKeyword->get($keyword->id, collect());
 
@@ -91,11 +105,40 @@ final class SeoRankDashboardReader
             }
 
             foreach ($keywordTargets as $target) {
-                $rows[] = $this->targetRow($keyword, $target, $summaries[$target->id] ?? [], isset($openTargetIds[$target->id]), $failedTargetIds[$target->id] ?? null, $paused, $unavailable);
+                $row = $this->targetRow($keyword, $target, $summaries[$target->id] ?? [], isset($openTargetIds[$target->id]), $failedTargetIds[$target->id] ?? null, $paused, $unavailable);
+
+                // A position is only as good as its last check: past the freshness
+                // window it is kept visible but labelled "may be out of date".
+                $row['stale_days'] = self::staleDays($target->last_checked_at, $staleAfterDays, $now);
+
+                // No Active primary domain means organic rank can never be matched
+                // (and no domain AND no phone means local can't be either): say why
+                // instead of waiting forever.
+                $row['organic_blocked'] = $identity !== null && ! $identity->canMatchOrganic();
+                $row['local_blocked'] = $identity !== null && ! $identity->canMatchLocal();
+
+                $rows[] = $row;
             }
         }
 
         return ['rows' => $rows, 'summary' => $this->summary($business, $rows, $plan)];
+    }
+
+    /**
+     * Whole days since the last completed check when that is past the freshness
+     * window (config seo.rank_tracking.stale_after_days), else null. Never
+     * called for a target that has not been checked: no date, no staleness.
+     */
+    public static function staleDays(?\DateTimeInterface $lastChecked, int $staleAfterDays, ?CarbonImmutable $now = null): ?int
+    {
+        if ($lastChecked === null) {
+            return null;
+        }
+
+        $now ??= CarbonImmutable::now('UTC');
+        $last = CarbonImmutable::instance($lastChecked);
+
+        return $last < $now->subDays($staleAfterDays) ? (int) abs($last->diffInDays($now)) : null;
     }
 
     /** @return array<string, mixed> */
@@ -111,6 +154,9 @@ final class SeoRankDashboardReader
             'change' => ['kind' => SeoRankHistoryReader::CHANGE_NONE, 'amount' => null],
             'last_checked_at' => null,
             'unavailable' => false,
+            'stale_days' => null,
+            'organic_blocked' => false,
+            'local_blocked' => false,
         ];
     }
 
@@ -158,7 +204,13 @@ final class SeoRankDashboardReader
      */
     private function summary(Business $business, array $rows, ?SeoRankPlan $plan): array
     {
-        $tracked = array_filter($rows, fn ($r) => $r['target'] !== null && $r['target']->tracking_state === SeoRankTrackingState::Tracking);
+        $trackedAll = array_filter($rows, fn ($r) => $r['target'] !== null && $r['target']->tracking_state === SeoRankTrackingState::Tracking);
+        $hasResult = fn ($r) => ($r['organic'] ?? null) !== null || ($r['local'] ?? null) !== null;
+        // The cards describe how the Business is doing NOW: a position older than the freshness
+        // window is still shown on its row (labelled), but is not averaged in as if it were current.
+        $tracked = array_filter($trackedAll, fn ($r) => ($r['stale_days'] ?? null) === null);
+        $checked = count(array_filter($trackedAll, $hasResult));
+        $fresh = count(array_filter($tracked, $hasResult));
         $organic = array_filter(array_map(fn ($r) => $r['organic'] ?? null, $tracked));
         $local = array_filter(array_map(fn ($r) => $r['local'] ?? null, $tracked));
         $foundOrganic = array_filter($organic, fn (SeoRankObservation $o) => $o->isFound());
@@ -172,6 +224,8 @@ final class SeoRankDashboardReader
             'top10' => $organic === [] ? null : count(array_filter($foundOrganic, fn ($o) => $o->position <= 10)),
             'improved' => $organic === [] ? null : count(array_filter($tracked, fn ($r) => ($r['change']['kind'] ?? null) === SeoRankHistoryReader::CHANGE_UP)),
             'local_top3' => $local === [] ? null : count(array_filter($foundLocal, fn ($o) => $o->position <= 3)),
+            // "Based on N of M keywords checked recently", only when some results are stale.
+            'basis' => $fresh < $checked ? ['fresh' => $fresh, 'checked' => $checked] : null,
         ];
     }
 }

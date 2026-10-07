@@ -99,6 +99,8 @@ trait CreatesContentFixtures
 
         $website = $this->publishWebsite($business, $this->photoBoothPages());
         $website->update(['template_key' => $templateKey, 'name' => 'Jazmin Photo Booth Co.']);
+        // The owner has released this website for search (the Website's own canonical state).
+        $website->forceFill(['indexing_released_at' => now()])->save();
 
         if ($withDomain) {
             // A domain is globally unique: the first tenant of a test gets the named one, any further tenant a prefixed one.

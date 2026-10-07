@@ -353,7 +353,10 @@ final class GuidedGenerationOutputValidator
             return;
         }
 
-        $haystack = mb_strtolower(json_encode($page));
+        // Unescaped on purpose: the default json_encode turns "/" into "\/" and every non-ASCII
+        // letter into \uXXXX, so a prohibited claim such as "24/7" or any accented term could
+        // never match its own needle.
+        $haystack = mb_strtolower((string) json_encode($page, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
         foreach ($prohibitedClaims as $claim) {
             $needle = mb_strtolower(trim((string) $claim));

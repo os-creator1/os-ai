@@ -9,15 +9,24 @@
     links to the existing Website page editor, where the customer edits and
     publishes through Website's own authorization (§8.7, §12).
 
-    Indexability is shown as a STATUS, above the findings and visually apart
-    from them. The platform-path `noindex`, the absence of canonical tags and
-    the absence of JSON-LD are properties of the platform today (§8.7
-    G-2/G-3) — never presented here as the customer's mistakes or as todo
-    items.
+    Whether search engines can find the site is shown as a STATUS, above the
+    findings and visually apart from them, in plain words (Good / Needs
+    attention / Action) — never presented here as the customer's mistake.
+
+    A check that FAILED is never shown as "nothing to fix": that sentence is
+    reserved for a completed check of the version that is published now. The
+    run shown is the one for the published revision, so after a rollback it
+    never describes another version's pages.
 --}}
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'SEO — Website check')
+
+@php
+    use App\Library\Seo\SeoAuditPage;
+
+    $state = $page->state();
+@endphp
 
 @section('content')
     <div class="row mb-2">
@@ -33,45 +42,65 @@
         </div>
     @endif
 
-    {{-- Indexability: a status about the platform, never a finding. --}}
-    <div class="card mb-2">
-        <div class="card-body">
-            <h5 class="card-title mb-50">{{ $page->indexability->label() }}</h5>
-            <p class="card-text mb-0">{{ $page->indexability->detail() }}</p>
-        </div>
-    </div>
+    {{-- Indexability: a status about how the site is set up, never a finding. --}}
+    @include('customer.business.seo._indexability', ['indexability' => $page->indexability, 'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid])
 
-    <div class="card">
+    <div class="card" data-section="audit-result" data-state="{{ $state }}">
         <div class="card-body">
             <div class="d-flex justify-content-between align-items-center flex-wrap mb-1">
                 <div>
                     <h5 class="mb-25">What we checked</h5>
                     @if ($page->hasRun())
-                        <span class="text-caption">
-                            {{ $page->latestRun->page_count }} page(s) checked
-                            {{ $page->latestRun->created_at?->diffForHumans() }}
+                        <span class="text-caption" data-role="audit-checked-at">
+                            @if ($state === SeoAuditPage::STATE_FAILED)
+                                Last attempt {{ $page->latestRun->created_at?->diffForHumans() }}
+                            @else
+                                {{ $page->latestRun->page_count }} {{ $page->latestRun->page_count === 1 ? 'page' : 'pages' }} checked
+                                {{ $page->latestRun->created_at?->diffForHumans() }}
+                            @endif
                         </span>
+                    @elseif ($state === SeoAuditPage::STATE_NOT_CHECKED)
+                        <span class="text-caption" data-role="audit-checked-at">Not checked yet for the current version.</span>
                     @else
-                        <span class="text-caption">No check has run yet.</span>
+                        <span class="text-caption" data-role="audit-checked-at">No check has run yet.</span>
                     @endif
                 </div>
 
-                @if ($canManage)
+                {{-- Only offered where a check can actually be started: a published website, and someone who may manage SEO. --}}
+                @if ($canManage && $page->hasPublishedWebsite)
                     <form method="POST"
                           action="{{ route('customer.workspaces.businesses.seo.audit.rerun', [$workspaceUid, $businessUid]) }}">
                         @csrf
-                        <button type="submit" class="btn btn-outline-primary">Check again</button>
+                        <button type="submit" class="btn btn-outline-primary" data-role="audit-rerun">Check again</button>
                     </form>
                 @endif
             </div>
 
-            @if (! $page->hasRun())
-                <p class="mb-0">Publish your website and we will check it automatically.</p>
-            @elseif ($page->findings === [])
-                <p class="mb-0">We found nothing to fix on your published pages.</p>
+            @if ($state === SeoAuditPage::STATE_NO_WEBSITE)
+                <p class="mb-0" data-role="audit-message">You have no published website yet. Publish your website and we will check it automatically.</p>
+            @elseif ($state === SeoAuditPage::STATE_NOT_CHECKED)
+                <p class="mb-0" data-role="audit-message">
+                    This version of your website has not been checked yet.
+                    @if ($canManage)
+                        Select Check again to start a check; it also runs automatically each time you publish.
+                    @else
+                        It is checked automatically each time you publish, or someone who can manage SEO can start a check.
+                    @endif
+                </p>
+            @elseif ($state === SeoAuditPage::STATE_FAILED)
+                <p class="mb-0" data-role="audit-message">
+                    We couldn't check your site this time — try again.
+                    @if ($canManage)
+                        If it keeps happening, publish your website again.
+                    @else
+                        Someone who can manage SEO can try again.
+                    @endif
+                </p>
+            @elseif ($state === SeoAuditPage::STATE_CLEAN)
+                <p class="mb-0" data-role="audit-message">We found nothing to fix on your published pages.</p>
             @else
                 <div class="mb-1">
-                    <span class="badge bg-light-danger me-50">{{ $page->latestRun->critical_count }} critical</span>
+                    <span class="badge bg-light-danger me-50">{{ $page->latestRun->critical_count }} action</span>
                     <span class="badge bg-light-warning me-50">{{ $page->latestRun->warning_count }} needs attention</span>
                     <span class="badge bg-light-info">{{ $page->latestRun->info_count }} suggestions</span>
                 </div>
@@ -119,10 +148,11 @@
                     @foreach ($page->history as $run)
                         <li class="mb-25">
                             <span class="text-caption">{{ $run->created_at?->diffForHumans() }}</span>
-                            — {{ $run->page_count }} page(s),
-                            {{ $run->totalFindings() }} finding(s)
                             @if ($run->status->value === 'failed')
-                                <span class="badge bg-light-secondary">could not be completed</span>
+                                — could not be completed
+                            @else
+                                — {{ $run->page_count }} {{ $run->page_count === 1 ? 'page' : 'pages' }},
+                                {{ $run->totalFindings() }} {{ $run->totalFindings() === 1 ? 'finding' : 'findings' }}
                             @endif
                         </li>
                     @endforeach

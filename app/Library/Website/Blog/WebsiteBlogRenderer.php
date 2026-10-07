@@ -6,7 +6,9 @@ use App\Enums\Seo\ArticleIntent;
 use App\Library\Seo\Content\ArticleMarkdown;
 use App\Library\Website\Media\WebsiteMediaPayload;
 use App\Library\Website\Seo\WebsiteArticleStructuredData;
-use App\Library\Website\Seo\WebsiteSocialMetadata;
+use App\Library\Website\Seo\WebsiteAssetUrls;
+use App\Library\Website\Seo\WebsiteBreadcrumbStructuredData;
+use App\Library\Website\Seo\WebsiteHeadMeta;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Library\Website\WebsiteSearchVisibility;
 use App\Models\Website;
@@ -48,7 +50,7 @@ class WebsiteBlogRenderer
     public function __construct(
         private readonly WebsitePublicEntitlementGate $gate,
         private readonly WebsiteMediaPayload $media,
-        private readonly WebsiteSocialMetadata $social,
+        private readonly WebsiteBreadcrumbStructuredData $breadcrumbs,
         private readonly WebsiteArticleStructuredData $schema,
     ) {
     }
@@ -57,7 +59,7 @@ class WebsiteBlogRenderer
 
     public function index(Website $website, WebsiteBlogSurface $surface, int $page = 1): Response
     {
-        $snapshot = $this->publishedSnapshotOrAbort($website);
+        $snapshot = $this->rebased($this->publishedSnapshotOrAbort($website), $surface);
 
         $query = WebsiteArticle::query()->published()->where('website_id', $website->id);
         $total = (clone $query)->count();
@@ -70,7 +72,7 @@ class WebsiteBlogRenderer
             ->orderByDesc('published_at')->orderByDesc('id')
             ->forPage($page, self::PER_PAGE)->get();
 
-        $open = WebsiteSearchVisibility::siteOpenToSearch($snapshot);
+        $open = WebsiteSearchVisibility::siteOpenToSearch($website);
         $hasIndexable = WebsiteArticle::query()->published()->where('website_id', $website->id)->where('noindex', false)->exists();
         $indexable = $surface->mayIndex() && $open && $hasIndexable;
 
@@ -86,8 +88,9 @@ class WebsiteBlogRenderer
             'noindex' => ! $indexable,
             'canonical' => $canonical,
             'indexable' => $indexable,
-            'social' => $this->social->forArticle($name, $canonical, null, null, null),
-            'jsonLd' => $indexable ? $this->schema->breadcrumbs($trail) : null,
+            'headExtra' => null,
+            'breadcrumbs' => $trail,
+            'jsonLd' => $indexable ? $this->breadcrumbs->build($trail) : null,
             'articleJsonLd' => null,
             'blog' => [
                 'mode' => 'index',
@@ -108,7 +111,7 @@ class WebsiteBlogRenderer
      */
     public function article(Website $website, WebsiteBlogSurface $surface, string $slug): Response|\Illuminate\Http\RedirectResponse
     {
-        $snapshot = $this->publishedSnapshotOrAbort($website);
+        $snapshot = $this->rebased($this->publishedSnapshotOrAbort($website), $surface);
 
         $article = WebsiteArticle::query()->published()->where('website_id', $website->id)->where('slug', $slug)->with('featuredAsset')->first();
 
@@ -140,9 +143,9 @@ class WebsiteBlogRenderer
      *
      * @return array<int, string>
      */
-    public function sitemapUrls(Website $website, WebsiteBlogSurface $surface, array $snapshot): array
+    public function sitemapUrls(Website $website, WebsiteBlogSurface $surface): array
     {
-        if (! WebsiteSearchVisibility::siteOpenToSearch($snapshot)) {
+        if (! WebsiteSearchVisibility::siteOpenToSearch($website)) {
             return [];
         }
 
@@ -172,12 +175,11 @@ class WebsiteBlogRenderer
     {
         // Publisher / author identity is the Business itself (real configuration), not the site's display name.
         $name = trim((string) $website->business?->name) !== '' ? trim((string) $website->business->name) : (string) ($snapshot['website']['name'] ?? $website->name);
-        $open = WebsiteSearchVisibility::siteOpenToSearch($snapshot);
+        $open = WebsiteSearchVisibility::siteOpenToSearch($website);
         $indexable = $surface->mayIndex() && $open && ! $article->noindex && $article->isPublished();
         $canonical = $surface->canonicalArticleUrl($article->slug);
 
-        $image = $article->featuredAsset !== null ? $this->media->forAsset($article->featuredAsset) : null;
-        $socialImage = $image;
+        $image = $article->featuredAsset !== null ? $this->rebasedPayload($this->media->forAsset($article->featuredAsset), $surface) : null;
         $logoUid = $snapshot['website']['theme']['logo_asset_uid'] ?? null;
         $logo = $logoUid !== null ? collect($snapshot['assets'] ?? [])->firstWhere('uid', $logoUid) : null;
 
@@ -189,7 +191,8 @@ class WebsiteBlogRenderer
 
         $schemaCanonical = $canonical ?? $surface->articleUrl($article->slug);
         $schemaImage = $image !== null && ! empty($image['url']) ? ['url' => (string) $image['url']] : null;
-        $schemaLogo = is_array($logo) && ! empty($logo['url']) ? ['url' => (string) $logo['url']] : null;
+        $logoUrl = is_array($logo) ? WebsiteHeadMeta::bestUrl($logo) : null;
+        $schemaLogo = $logoUrl !== null ? ['url' => $logoUrl] : null;
 
         $html = ArticleMarkdown::toHtml($article->body, $this->refResolver($website, $surface, $snapshot, $article));
 
@@ -202,8 +205,9 @@ class WebsiteBlogRenderer
             'noindex' => ! $indexable,
             'canonical' => $canonical,
             'indexable' => $indexable,
-            'social' => $this->social->forArticle($name, $canonical, $socialImage, $article->published_at?->toIso8601String(), $article->dateModified()?->toIso8601String()),
-            'jsonLd' => $indexable ? $this->schema->breadcrumbs($trail) : null,
+            'headExtra' => $this->articleHead($image, $article),
+            'breadcrumbs' => $trail,
+            'jsonLd' => $indexable ? $this->breadcrumbs->build($trail) : null,
             'articleJsonLd' => $indexable ? $this->schema->blogPosting($article, $name, $schemaCanonical, $schemaImage, $schemaLogo) : null,
             'blog' => [
                 'mode' => 'article',
@@ -256,14 +260,57 @@ class WebsiteBlogRenderer
             'canonicalUrl' => $page['canonical'],
             'localBusinessJsonLd' => null,
             'breadcrumbJsonLd' => $page['jsonLd'],
+            'breadcrumbsOverride' => $page['breadcrumbs'],
             'faqJsonLd' => null,
             'articleJsonLd' => $page['articleJsonLd'],
-            'socialMetaOverride' => $surface->isPreview() ? null : $page['social'],
+            'headExtra' => $page['headExtra'],
             'navigationPages' => $navigation,
             'blog' => $page['blog'],
         ]);
 
         return $response->header('X-Robots-Tag', $page['indexable'] ? 'index, follow' : 'noindex, follow');
+    }
+
+    /**
+     * An article's own social tags layered over the canonical head (WebsitePageComposer::withHeadExtra): og:type
+     * article, its published/modified times and its featured image (a Business-owned file) as the share image.
+     *
+     * @param  array<string, mixed>|null  $image  the featured image's media payload
+     * @return array{og: array<string, string>, twitter: array<string, string>}
+     */
+    private function articleHead(?array $image, WebsiteArticle $article): array
+    {
+        $og = ['og:type' => 'article', 'article:published_time' => (string) $article->published_at?->toIso8601String(), 'article:modified_time' => (string) $article->dateModified()?->toIso8601String()];
+        $og = array_filter($og, fn (string $v) => $v !== '');
+        $twitter = [];
+        $url = $image !== null ? WebsiteHeadMeta::bestUrl($image) : null;
+
+        if ($url !== null) {
+            $og['og:image'] = $url;
+            $twitter = ['twitter:card' => 'summary_large_image', 'twitter:image' => $url];
+
+            if (trim((string) ($image['alt_text'] ?? '')) !== '') {
+                $og['og:image:alt'] = trim((string) $image['alt_text']);
+            }
+        }
+
+        return ['og' => $og, 'twitter' => $twitter];
+    }
+
+    /** On a custom domain every Business photo URL is rewritten to the customer's own origin (the same rule the pages follow). */
+    private function rebased(array $snapshot, WebsiteBlogSurface $surface): array
+    {
+        $origin = $surface->origin();
+
+        return $origin === null ? $snapshot : WebsiteAssetUrls::rebase($snapshot, $origin);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function rebasedPayload(array $payload, WebsiteBlogSurface $surface): array
+    {
+        $origin = $surface->origin();
+
+        return $origin === null ? $payload : WebsiteAssetUrls::rebase($payload, $origin);
     }
 
     /**
@@ -368,7 +415,7 @@ class WebsiteBlogRenderer
             'url' => $surface->articleUrl($article->slug),
             'published_at' => $article->published_at,
             'intent' => ArticleIntent::tryFrom((string) $article->search_intent)?->label(),
-            'image' => $article->featuredAsset !== null ? $this->media->forAsset($article->featuredAsset) : null,
+            'image' => $article->featuredAsset !== null ? $this->rebasedPayload($this->media->forAsset($article->featuredAsset), $surface) : null,
         ];
     }
 

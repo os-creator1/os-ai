@@ -259,14 +259,42 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
 
         if ($withSitemapAndRobots) {
             $intended = array_column(array_filter($ctx->manifest, fn ($e) => ! $e['noindex']), 'url');
-            $audit->auditSitemap($crawler->get('https://' . $this->domain . '/sitemap')['body'], $intended, 'https://' . $this->domain);
-            // The robots.txt a crawler gets from the site's own host carries this site's Sitemap line; the platform host's
-            // own robots.txt stays exactly as it was, with none.
-            $audit->auditRobots($crawler->get('https://' . $this->domain . '/robots.txt')['body'], 'https://' . $this->domain . '/sitemap');
+            $audit->auditSitemap($crawler->get('https://' . $this->domain . '/sitemap.xml')['body'], $intended, 'https://' . $this->domain);
+            $audit->auditRobots($crawler->get('https://' . $this->domain . '/robots.txt')['body'], 'https://' . $this->domain . '/sitemap.xml');
+            // The platform host's own robots.txt allows everything and names no site's sitemap.
             $audit->auditRobots($crawler->get('http://127.0.0.1/robots.txt')['body']);
+            // The test client trims a trailing slash from the URL, so this request is handed to the kernel as built.
+            $audit->auditUrlSpace($crawler, $ctx, function (string $url): array {
+                $response = $this->app->make(\Illuminate\Contracts\Http\Kernel::class)->handle(\Illuminate\Http\Request::create($url, 'GET'));
+
+                return ['status' => $response->getStatusCode(), 'body' => (string) $response->getContent(), 'headers' => [], 'location' => $response->headers->get('Location')];
+            });
         }
 
         return $docs;
+    }
+
+    /**
+     * With an Active custom domain the platform path is not a second copy of the site: every page
+     * answers ONE permanent redirect to its canonical address, which then loads (no loop, no chain).
+     */
+    private function auditPlatformRedirects(string $template): void
+    {
+        $this->report->context('platform', $template);
+        $crawler = new SiteCrawler($this->fetcher());
+
+        foreach ($this->manifest('platform') as $entry) {
+            $expected = 'https://' . $this->domain . ($entry['slug'] === null ? '/' : '/' . $entry['slug']);
+            $first = $crawler->get($entry['url']);
+            $resolved = $crawler->resolve($entry['url']);
+
+            $this->report->expect(
+                $first['status'] === 301 && $first['location'] === $expected && $resolved['status'] === 200 && $resolved['hops'] === 1 && ! $resolved['loop'],
+                $entry['slug'] ?? 'home',
+                'platform_path_redirects_to_canonical',
+                'HTTP ' . $first['status'] . ' -> ' . json_encode($first['location']) . ', final ' . $resolved['status'] . ' after ' . $resolved['hops'] . ' hop(s)',
+            );
+        }
     }
 
     /**
@@ -393,9 +421,13 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
         $this->post($this->wizardUrl($this->workspace, $this->business, 'pages.allowIndexing'))->assertRedirect();
         $this->report->context('lifecycle');
         $this->report->expect($this->website->pages()->where('noindex', true)->count() === 0, 'site', 'allow_indexing_clears_every_page', 'no page is hidden from search any more');
+        // Health reads the LIVE site: until the update is published it still says pages are hidden, and says why.
         $health = app(\App\Library\Website\WebsiteHealthChecker::class)->check($this->website->fresh(), ['pages' => '/pages']);
-        $this->report->expect(collect($health['checks'])->firstWhere('key', 'indexing')['status'] === 'ok', 'site', 'health_reports_indexing_ok', 'Health: pages visible to search engines');
+        $beforePublish = collect($health['checks'])->firstWhere('key', 'indexing');
+        $this->report->expect($beforePublish['status'] === 'warn' && str_contains($beforePublish['detail'], 'publish to make that live'), 'site', 'health_does_not_call_unpublished_indexing_good', $beforePublish['detail']);
         $this->publish();
+        $health = app(\App\Library\Website\WebsiteHealthChecker::class)->check($this->website->fresh(), ['pages' => '/pages']);
+        $this->report->expect(collect($health['checks'])->firstWhere('key', 'indexing')['status'] === 'ok' && collect($health['checks'])->firstWhere('key', 'search_files')['status'] === 'ok', 'site', 'health_reports_indexing_ok', 'Health: pages visible to search engines, sitemap listed');
 
         // ---- 5. Every template: the SAME content, crawled in Preview and as the published site.
         foreach ($designs as $index => $design) {
@@ -408,7 +440,7 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
             }
 
             $publicDocs = $this->auditSurface('custom_domain', $design->label, true);
-            $this->auditSurface('platform', $design->label);
+            $this->auditPlatformRedirects($design->label);
             $this->assertPreviewMatchesPublic($design->label, $previewDocs, $publicDocs);
 
             // The template's own markup is what was rendered.

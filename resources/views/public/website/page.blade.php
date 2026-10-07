@@ -26,12 +26,14 @@
     below.
 --}}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ $head['lang'] }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ $page->seo->seo_title ?: $page->title }} — {{ $websiteMeta['name'] }}</title>
-    <meta name="description" content="{{ $page->seo->meta_description }}">
+    <title>{{ $head['title'] }}</title>
+    @if ($head['description'] !== null)
+        <meta name="description" content="{{ $head['description'] }}">
+    @endif
     {{--
         Contract §21/§40 — every Slice A page is noindex regardless of
         the per-page field, UNLESS $allowIndexing was explicitly passed
@@ -43,34 +45,12 @@
     --}}
     @php($indexable = ($allowIndexing ?? false) && ! ($page->seo->noindex ?? false))
     <meta name="robots" content="{{ $indexable ? 'index, follow' : 'noindex, follow' }}">
-    <meta property="og:title" content="{{ $page->seo->seo_title ?: $page->title }}">
-    <meta property="og:description" content="{{ $page->seo->meta_description }}">
-    @if (! empty($socialMeta))
-        {{-- Website V1 closure: og:type / site_name / url / image and the twitter card. The image is only ever a real, Business-owned file (WebsiteSocialMetadata). --}}
-        <meta property="og:type" content="{{ $socialMeta['type'] }}">
-        <meta property="og:site_name" content="{{ $socialMeta['site_name'] }}">
-        @if ($socialMeta['url'])
-            <meta property="og:url" content="{{ $socialMeta['url'] }}">
-        @endif
-        @if ($socialMeta['image'])
-            <meta property="og:image" content="{{ $socialMeta['image']['url'] }}">
-            @if ($socialMeta['image']['width'] && $socialMeta['image']['height'])
-                <meta property="og:image:width" content="{{ $socialMeta['image']['width'] }}">
-                <meta property="og:image:height" content="{{ $socialMeta['image']['height'] }}">
-            @endif
-            @if ($socialMeta['image']['alt'])
-                <meta property="og:image:alt" content="{{ $socialMeta['image']['alt'] }}">
-            @endif
-            <meta name="twitter:image" content="{{ $socialMeta['image']['url'] }}">
-        @endif
-        <meta name="twitter:card" content="{{ $socialMeta['card'] }}">
-        @if (! empty($socialMeta['published_time']))
-            <meta property="article:published_time" content="{{ $socialMeta['published_time'] }}">
-        @endif
-        @if (! empty($socialMeta['modified_time']))
-            <meta property="article:modified_time" content="{{ $socialMeta['modified_time'] }}">
-        @endif
-    @endif
+    @foreach ($head['og'] as $ogProperty => $ogContent)
+        <meta property="{{ $ogProperty }}" content="{{ $ogContent }}">
+    @endforeach
+    @foreach ($head['twitter'] as $twitterName => $twitterContent)
+        <meta name="{{ $twitterName }}" content="{{ $twitterContent }}">
+    @endforeach
     {{--
         Set only once the Website has an active custom domain — see
         Public\WebsiteController::renderPage() and
@@ -153,6 +133,7 @@
 
     @if ($design ?? null)
         @include('public.website.design.header')
+        @include('public.website.breadcrumbs')
 
         <?php
             // Template-owned order of a Home page's sections, then the
@@ -280,6 +261,7 @@
                 @endif
             </div>
         </header>
+        @include('public.website.breadcrumbs')
 
         <main class="website-main">
             <div class="website-container">

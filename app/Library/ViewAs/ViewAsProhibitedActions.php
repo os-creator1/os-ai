@@ -75,6 +75,9 @@ final class ViewAsProhibitedActions
         'customer.contact.delete-contact-field',
         'customer.workspaces.businesses.contact.delete-contact-field',
         'user.account.delete',
+        // bringing an archived SEO keyword back can put a rank-tracked keyword (and so the client's paid
+        // checks and slots) back in play; treated as spend-class like the rank routes below
+        'customer.workspaces.businesses.seo.keywords.reactivate',
         // spending the viewed client's AI allowance (AI-3, contract §15.5)
         'customer.workspaces.businesses.performance.explain',
         // funding the actor's own account
@@ -153,16 +156,27 @@ final class ViewAsProhibitedActions
     ];
 
     /**
-     * Google Ads Module V1 — EVERY non-GET route under this prefix is
+     * Google Ads Module V1 — EVERY non-GET route under the `ads.` prefix is
      * prohibited while viewing, by PATTERN rather than by listing: connect,
      * account choice, settings, refresh and every change made in the
      * Business's Google Ads account (pause/resume, add negative keyword) are
      * credential- or spend-class actions a View As actor never takes for the
      * client. A route added later under the prefix is covered the moment it
-     * is registered; the read pages (GET) stay viewable.
+     * is registered; the read pages (GET) stay viewable. SEO rank tracking
+     * (spend-class, below) is held to the same rule.
      */
     public const NON_GET_PROHIBITED_PREFIXES = [
         'customer.workspaces.businesses.ads.',
+        // SEO rank tracking is SPEND-class: starting or resuming tracking and
+        // "Check now" commit the viewed client's paid-provider allowance (budget
+        // authority SeoRankTrackingBudget), exactly like a change in the client's
+        // Ads account, so they are prohibited by PATTERN here too — keyword
+        // tracking (`...seo.keywords.rank.*`: track) and rank targets
+        // (`...seo.rank-targets.*`: stop, restart, check). The read pages (GET) and
+        // the ordinary SEO keyword edits (`...seo.keywords.*`) stay available;
+        // the add-keyword form's "track rank" box is closed in SeoKeywordsController.
+        'customer.workspaces.businesses.seo.keywords.rank.',
+        'customer.workspaces.businesses.seo.rank-targets.',
     ];
 
     /** Name suffixes that delete data (non-GET only). */

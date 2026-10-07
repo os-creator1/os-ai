@@ -35,7 +35,57 @@ final class WebsiteSlugRules
         '_website',
         // SEO Content Engine V1 — /blog and /blog/{slug} are served by the blog, never by a page.
         'blog',
+        // Real files/directories under public/: the web server answers these
+        // before PHP ever runs, so a page with one of these slugs would be
+        // unreachable yet listed in the sitemap.
+        'css',
+        'css-rtl',
+        'fonts',
+        'images',
+        'installer',
+        'js',
+        'main',
+        'vendors',
+        'voice',
+        'storage',
+        'favicon',
     ];
+
+    /** The pages the generator always names itself; a generated slug must never land on one. */
+    public const GENERATED_FIXED = ['services', 'packages', 'gallery', 'backdrops', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact'];
+
+    /**
+     * A generated slug ("service-<name>", "serving-<area>") that is always valid: lowercase,
+     * hyphenated, at most MAX_LENGTH characters, never ending in a hyphen, and never empty
+     * (a name with no letters or digits, such as an emoji, gets $fallback instead of a bare prefix).
+     * A name that makes the slug too long is cut — never allowed to fail the whole generation.
+     */
+    public static function bounded(string $prefix, string $name, string $fallback = 'page'): string
+    {
+        $part = \Illuminate\Support\Str::slug($name);
+        $slug = $prefix.($part !== '' ? $part : $fallback);
+
+        if (strlen($slug) > self::MAX_LENGTH) {
+            $slug = rtrim(substr($slug, 0, self::MAX_LENGTH), '-');
+        }
+
+        return $slug;
+    }
+
+    /**
+     * The slug of the owner's extra (custom) section page. It is derived from the owner's title, but
+     * a title such as "Gallery" or "Services" must not collide with a fixed page or a reserved word.
+     */
+    public static function customSectionSlug(string $title): string
+    {
+        $slug = self::bounded('', $title, 'more');
+
+        if (in_array($slug, self::GENERATED_FIXED, true) || ! self::isValid($slug)) {
+            $slug = self::bounded('info-', $title, 'more');
+        }
+
+        return $slug;
+    }
 
     public static function isValid(string $slug): bool
     {

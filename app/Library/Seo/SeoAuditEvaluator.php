@@ -2,6 +2,8 @@
 
 namespace App\Library\Seo;
 
+use App\Library\Website\Seo\WebsiteHeadMeta;
+
 /**
  * Contract 18 §8.7, Sub-slice G — the DETERMINISTIC evaluation half of the
  * technical audit: a parsed published snapshot in, a list of finding drafts
@@ -20,12 +22,14 @@ namespace App\Library\Seo;
  * this slice (§8.7: "never crawls, never fetches a URL").
  *
  * WHAT IT DELIBERATELY DOES NOT CHECK (§8.7, G-1/G-2/G-3):
- *   - canonical tags and JSON-LD / structured data — the platform provides
- *     no control for either, so their absence is a platform limitation, never
- *     a customer mistake;
- *   - the platform-path `noindex` every hosted site carries — reported as an
- *     indexability STATUS elsewhere, never as a finding;
- *   - sitemap scope — same reason;
+ *   - canonical tags, JSON-LD / structured data, Open Graph tags and the
+ *     sitemap — on a custom domain the platform emits all of these itself
+ *     (WebsiteHeadMeta, ResolveCustomDomainWebsite) and the customer has no
+ *     control over them, so there is nothing for them to fix; they are not
+ *     "missing", they are the platform's job;
+ *   - the platform-path `noindex` every platform-address site carries, and
+ *     whether search engines can find the site at all — reported as an
+ *     indexability STATUS (SeoIndexability) elsewhere, never as a finding;
  *   - anything Location-specific — deferred (G-1) until Website provides a
  *     canonical page<->Location association. Nothing here reads a slug, URL
  *     or page text to guess which Location a page belongs to.
@@ -63,7 +67,7 @@ final class SeoAuditEvaluator
                 continue;
             }
 
-            foreach ($this->pageDrafts($page, $uid, $maxTitle, $minDescription, $titleCounts, $descriptionCounts) as $draft) {
+            foreach ($this->pageDrafts($page, $uid, $content->siteName, $maxTitle, $minDescription, $titleCounts, $descriptionCounts) as $draft) {
                 $drafts[] = $draft;
             }
         }
@@ -94,6 +98,7 @@ final class SeoAuditEvaluator
     private function pageDrafts(
         SeoPublishedPage $page,
         string $uid,
+        string $siteName,
         int $maxTitle,
         int $minDescription,
         array $titleCounts,
@@ -103,17 +108,23 @@ final class SeoAuditEvaluator
 
         if (! $page->hasSeoTitle()) {
             $drafts[] = SeoAuditFindingDraft::make(SeoAuditRuleRegistry::SEO_TITLE_BLANK, $uid);
-        } else {
-            $length = mb_strlen(trim((string) $page->seoTitle));
+        }
 
-            if ($length > $maxTitle) {
-                $drafts[] = SeoAuditFindingDraft::make(
-                    SeoAuditRuleRegistry::SEO_TITLE_OVER_RECOMMENDED,
-                    $uid,
-                    ['length' => $length, 'recommended_max' => $maxTitle],
-                );
-            }
+        // The length that matters is the REAL <title>: the page's SEO title (or
+        // its name when none is set) plus the business name, composed by the one
+        // rule the public page itself uses. Measuring the SEO title alone would
+        // miss the " | Business name" a visitor and a search engine also get.
+        $length = mb_strlen(WebsiteHeadMeta::title((string) $page->seoTitle, $page->title, $siteName));
 
+        if ($length > $maxTitle) {
+            $drafts[] = SeoAuditFindingDraft::make(
+                SeoAuditRuleRegistry::SEO_TITLE_OVER_RECOMMENDED,
+                $uid,
+                ['length' => $length, 'recommended_max' => $maxTitle],
+            );
+        }
+
+        if ($page->hasSeoTitle()) {
             $shared = ($titleCounts[$this->normalize((string) $page->seoTitle)] ?? 1) - 1;
 
             if ($shared > 0) {

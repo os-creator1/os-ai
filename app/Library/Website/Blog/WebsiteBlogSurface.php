@@ -50,6 +50,12 @@ final class WebsiteBlogSurface
         return $this->kind === self::CUSTOM;
     }
 
+    /** The customer's own origin on a custom domain (photo URLs are rebased onto it); null elsewhere. */
+    public function origin(): ?string
+    {
+        return $this->kind === self::CUSTOM ? 'https://' . $this->domain : null;
+    }
+
     public function isPreview(): bool
     {
         return $this->kind === self::PREVIEW;

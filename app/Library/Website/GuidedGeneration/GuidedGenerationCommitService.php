@@ -207,6 +207,117 @@ final class GuidedGenerationCommitService
         });
     }
 
+    /**
+     * AI copy may describe the business, but it may never invent social proof or prices:
+     *  - a `testimonials` section carries ONLY the owner's own confirmed testimonials (verbatim),
+     *    or is dropped when there are none — an AI-written review is a fabricated review;
+     *  - a service card's `price_label` survives only when that exact label is already in the
+     *    facts the plan was built from (a catalog or service price), otherwise it is removed.
+     *
+     * @param  array<int, array<string, mixed>>  $pages  the validated, media-bound pages
+     * @param  array<int, array<string, mixed>>  $plan
+     * @return array<int, array<string, mixed>>
+     */
+    private function groundInventedFacts(array $pages, Business $business, array $plan): array
+    {
+        $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $confirmed = $profile !== null
+            && in_array(\App\Enums\Business\BusinessKnowledgeProfileFieldKey::Testimonials->value, app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->completenessCheck($business)->presentFieldKeys, true);
+        $real = $confirmed ? array_slice(array_values((array) $profile->testimonials), 0, 10) : [];
+
+        $knownPrices = [];
+        array_walk_recursive($plan, function ($value, $key) use (&$knownPrices) {
+            if ($key === 'price_label' && is_string($value) && trim($value) !== '') {
+                $knownPrices[trim($value)] = true;
+            }
+        });
+
+        foreach ($pages as $pageIndex => $page) {
+            $sections = [];
+
+            foreach ((array) ($page['sections'] ?? []) as $section) {
+                if (($section['type'] ?? null) === 'testimonials') {
+                    if ($real === []) {
+                        continue;
+                    }
+
+                    $section['data']['items'] = $real;
+                }
+
+                if (($section['type'] ?? null) === 'services') {
+                    foreach ((array) ($section['data']['items'] ?? []) as $itemIndex => $item) {
+                        $label = trim((string) ($item['price_label'] ?? ''));
+
+                        if ($label !== '' && empty($item['catalog_item_uid']) && ! isset($knownPrices[$label])) {
+                            $section['data']['items'][$itemIndex]['price_label'] = null;
+                        }
+                    }
+                }
+
+                $sections[] = $this->withoutInventedLinks($section, $business);
+            }
+
+            $pages[$pageIndex]['sections'] = $sections;
+        }
+
+        return $pages;
+    }
+
+    /**
+     * A button the AI wrote may only lead somewhere the business really is: a page of this site ("/slug"),
+     * its own phone (tel:), its own email (mailto:) or its own website's host. An invented domain or phone
+     * number would break the site's NAP coherence, so such a button is dropped (the site CTA takes over).
+     *
+     * @param  array<string, mixed>  $section
+     * @return array<string, mixed>
+     */
+    private function withoutInventedLinks(array $section, Business $business): array
+    {
+        $data = (array) ($section['data'] ?? []);
+
+        foreach (['primary_cta', 'secondary_cta'] as $key) {
+            if (isset($data[$key]) && is_array($data[$key]) && ! $this->linkIsReal((string) ($data[$key]['url'] ?? ''), $business)) {
+                unset($data[$key]);
+            }
+        }
+
+        if (isset($data['buttons']) && is_array($data['buttons'])) {
+            $data['buttons'] = array_values(array_filter($data['buttons'], fn ($button) => is_array($button) && $this->linkIsReal((string) ($button['url'] ?? ''), $business)));
+        }
+
+        $section['data'] = $data;
+
+        return $section;
+    }
+
+    private function linkIsReal(string $url, Business $business): bool
+    {
+        $url = trim($url);
+
+        if ($url === '' || $url === '#') {
+            return false;
+        }
+
+        if (str_starts_with($url, '/')) {
+            return ! str_starts_with($url, '//');
+        }
+
+        $digits = fn (?string $value) => substr((string) preg_replace('/\D+/', '', (string) $value), -10);
+
+        if (stripos($url, 'tel:') === 0) {
+            return $digits($business->phone) !== '' && $digits(substr($url, 4)) === $digits($business->phone);
+        }
+
+        if (stripos($url, 'mailto:') === 0) {
+            return trim((string) $business->email) !== '' && strcasecmp(trim(substr($url, 7)), trim((string) $business->email)) === 0;
+        }
+
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        $own = strtolower((string) parse_url((string) $business->website_url, PHP_URL_HOST));
+
+        return $host !== '' && $own !== '' && preg_replace('/^www\./', '', $host) === preg_replace('/^www\./', '', $own);
+    }
+
     private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
         $prohibitedClaims = BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
@@ -255,6 +366,7 @@ final class GuidedGenerationCommitService
             // exception left as a stuck `pending` row or a bare 500.
             $merged = $this->mergePlanWithContent($plan, $aiPages);
             $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq);
+            $bound['pages'] = $this->groundInventedFacts($bound['pages'], $business, $plan);
 
             DB::transaction(function () use ($website, $template, $bound, $attempt, $retryCount, $fenceToken) {
                 // Blocker 4 — real rebuild semantics: lock the Website
@@ -275,9 +387,19 @@ final class GuidedGenerationCommitService
                     throw new \RuntimeException('This generation was superseded before it could commit.');
                 }
 
+                // A rebuild must not undo the owner's indexing choices: once the owner has
+                // let search engines find their pages, the rebuilt pages stay open, and a
+                // page the owner hid on purpose stays hidden (matched by its address). A
+                // first generation, or a site never released, stays hidden until reviewed.
+                $previous = $locked->pages()->get(['slug', 'is_home', 'noindex', 'noindex_explicit']);
+                $ownerOpened = $locked->indexing_released_at !== null;
+                $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_explicit)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
+
                 $locked->pages()->delete();
 
                 foreach ($bound['pages'] as $page) {
+                    $hiddenByOwner = in_array($page['is_home'] ? '' : (string) $page['slug'], $ownerHidden, true);
+
                     $this->pages->createPage($locked, [
                         'title' => $page['title'],
                         'slug' => $page['slug'],
@@ -285,7 +407,8 @@ final class GuidedGenerationCommitService
                         'sections' => $page['sections'],
                         'seo_title' => $page['seo_title'] ?? null,
                         'meta_description' => $page['meta_description'] ?? null,
-                        'noindex' => true,
+                        'noindex' => $hiddenByOwner || ! $ownerOpened,
+                        'noindex_explicit' => $hiddenByOwner,
                     ]);
                 }
 

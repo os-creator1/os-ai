@@ -3,12 +3,12 @@
 namespace App\Library\Website\Seo;
 
 /**
- * Website V1 closure — FAQPage (schema.org) structured data, and only ever the FAQ a visitor can
- * actually read on that page. It is built from the very `faq` sections the page renders (the same
- * redacted array the template receives), so the markup cannot drift from the visible text: every
- * Question/Answer here is one rendered `<summary>` / `<p>` pair, verbatim. A page with no FAQ
- * section — or whose FAQ section has no complete question + answer — gets nothing, and there is no
- * site-wide FAQ block. The caller decides indexability (like every other schema block here).
+ * FAQPage (schema.org) structured data, and only ever the FAQ a visitor can actually read on that page.
+ * It is built from the very `faq` sections the page renders (the same redacted array the template
+ * receives), so the markup cannot drift from the visible text: every Question/Answer here is one
+ * rendered `<summary>` / `<p>` pair (whitespace-normalised, in page order, every visible pair exactly once). A page
+ * with no FAQ section, or whose FAQ section has no complete question + answer, gets nothing, and
+ * there is no site-wide FAQ block. The caller decides indexability (like every other schema block).
  */
 final class WebsiteFaqStructuredData
 {
@@ -25,9 +25,9 @@ final class WebsiteFaqStructuredData
                 continue;
             }
 
-            foreach ($section['data']['items'] ?? [] as $item) {
-                $question = trim((string) ($item['question'] ?? ''));
-                $answer = trim((string) ($item['answer'] ?? ''));
+            foreach ((array) ($section['data']['items'] ?? []) as $item) {
+                $question = self::text($item['question'] ?? null);
+                $answer = self::text($item['answer'] ?? null);
 
                 if ($question === '' || $answer === '') {
                     continue;
@@ -46,5 +46,10 @@ final class WebsiteFaqStructuredData
         }
 
         return ['@context' => 'https://schema.org', '@type' => 'FAQPage', 'mainEntity' => $entities];
+    }
+
+    private static function text(mixed $value): string
+    {
+        return is_string($value) ? trim((string) preg_replace('/\s+/u', ' ', $value)) : '';
     }
 }

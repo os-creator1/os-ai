@@ -3,7 +3,6 @@
 namespace App\Library\Seo;
 
 use App\DTO\GoogleBusinessProfile\GoogleLocationStatus;
-use App\Enums\Seo\SeoIndexabilityState;
 
 /**
  * Contract 18 §9.3 — what the SEO Overview shows, as plain read-only facts.
@@ -22,7 +21,7 @@ final class SeoOverview
     public function __construct(
         public readonly array $readiness,
         public readonly ?array $content,
-        public readonly SeoIndexabilityState $indexability,
+        public readonly SeoIndexability $indexability,
         public readonly ?array $google,
     ) {
     }

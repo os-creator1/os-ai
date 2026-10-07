@@ -7,14 +7,17 @@ use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesSeoBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Seo\Rank\SeoRankDashboardReader;
+use App\Library\Navigation\CustomerContext;
 use App\Library\Seo\Rank\SeoRankEntitlement;
 use App\Library\Seo\Rank\SeoRankException;
+use App\Library\Seo\Rank\SeoRankFirstCheckNotice;
 use App\Library\Seo\Rank\SeoRankLocationCatalog;
 use App\Library\Seo\Rank\SeoRankTargetManager;
 use App\Library\Seo\Rank\SeoRankTrackingBudget;
 use App\Jobs\Seo\ScheduleSeoRankChecks;
 use App\Library\Seo\SeoKeywordCoverageReader;
 use App\Library\Seo\SeoKeywordManager;
+use App\Library\Seo\SeoKeywordSuggester;
 use App\Library\Seo\SeoLocationScope;
 use App\Library\Seo\SeoPublishedContentReader;
 use App\Models\Business;
@@ -62,6 +65,8 @@ class SeoKeywordsController extends CustomerBaseController
         private readonly SeoRankEntitlement $rankEntitlement,
         private readonly SeoRankTargetManager $rankTargets,
         private readonly SeoRankTrackingBudget $rankBudget,
+        private readonly SeoRankFirstCheckNotice $firstCheckNotice,
+        private readonly SeoKeywordSuggester $suggester,
     ) {
     }
 
@@ -86,18 +91,26 @@ class SeoKeywordsController extends CustomerBaseController
         // keyword list with Website coverage, and rank columns show "—".
         $rankPlan = $this->rankEntitlement->planFor($business);
         $rank = $this->rankDashboard->build($business, $active->values(), $rankPlan);
+        $activeLocations = $accessibleLocations->filter(fn (BusinessLocation $l) => $l->isActive())->values();
 
         return view('customer.business.seo.keywords', [
             'rank' => $rank,
             'rankPlan' => $rankPlan,
             'rankUnavailable' => $rankPlan !== null && ! $this->rankBudget->enabled(),
             'rankPaused' => $rankPlan !== null && $this->rankBudget->isPausedBySpend($business),
+            // Paid rank checks are never started on a client's behalf while viewing as them.
+            'viewingAsClient' => $this->viewingAsClient(request()),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
             'keywords' => $keywords,
             'coverage' => $this->coverage->forKeywords($active, $this->publishedContent->forBusiness($business)),
-            'locations' => $accessibleLocations->filter(fn (BusinessLocation $l) => $l->isActive())->values(),
+            'locations' => $activeLocations,
+            // Ideas from the niche strategy, filled with the Business's own services and cities.
+            // Offered only to someone who can add keywords; saving one is the ordinary create POST.
+            'suggestions' => Auth::user()->can('manage_seo')
+                ? $this->suggester->suggest($business, $activeLocations, $keywords, $active->count())
+                : [],
         ]);
     }
 
@@ -118,6 +131,13 @@ class SeoKeywordsController extends CustomerBaseController
         }
 
         if (! empty($input['track_rank'])) {
+            // Tracking commits paid checks to the CLIENT's allowance, so it is
+            // never started while viewing as them (ViewAsProhibitedActions closes
+            // the rank routes; this closes the same door from the add-keyword form).
+            if ($this->viewingAsClient($request)) {
+                return $this->done($workspaceUid, $businessUid, 'Keyword added. Rank tracking was not started: it uses your client\'s paid checks, which cannot be started while you are viewing their account.');
+            }
+
             return $this->done($workspaceUid, $businessUid, $this->trackNewKeyword($actorId, $business, $keyword->uid, $input['search_location_code'] ?? null));
         }
 
@@ -170,7 +190,10 @@ class SeoKeywordsController extends CustomerBaseController
             return $this->refused($workspaceUid, $businessUid, $e);
         }
 
-        return $this->done($workspaceUid, $businessUid, 'Keyword archived.');
+        // Archiving frees the keyword's rank slot: its tracking is stopped (history kept).
+        $stopped = $this->rankTargets->stopForKeyword($actorId, $business, $keyword);
+
+        return $this->done($workspaceUid, $businessUid, $stopped > 0 ? 'Keyword archived. Rank tracking for it was stopped and its slot is free.' : 'Keyword archived.');
     }
 
     public function reactivate(string $workspaceUid, string $businessUid, string $keywordUid): RedirectResponse
@@ -189,7 +212,11 @@ class SeoKeywordsController extends CustomerBaseController
             return $this->refused($workspaceUid, $businessUid, $e);
         }
 
-        return $this->done($workspaceUid, $businessUid, 'Keyword reactivated.');
+        // Coming back from the archive never silently resumes paid checks: any tracking that
+        // survived (e.g. archived before this rule existed) is stopped; start it again on purpose.
+        $stopped = $this->rankTargets->stopForKeyword($actorId, $business, $keyword);
+
+        return $this->done($workspaceUid, $businessUid, $stopped > 0 ? 'Keyword reactivated. Rank tracking stays off until you start it again.' : 'Keyword reactivated.');
     }
 
     /**
@@ -247,7 +274,16 @@ class SeoKeywordsController extends CustomerBaseController
 
         ScheduleSeoRankChecks::dispatch($target->id);
 
-        return 'Keyword added and rank tracking started. The first check is on its way.';
+        // What happens next depends on the real state (provider, budget, what we
+        // can match against), so the sentence is chosen from it — never assumed.
+        return 'Keyword added and rank tracking started. ' . $this->firstCheckNotice->forBusiness($business);
+    }
+
+    private function viewingAsClient(Request $request): bool
+    {
+        $ctx = $request->attributes->get('customerContext');
+
+        return $ctx instanceof CustomerContext && $ctx->isViewingAsClient();
     }
 
     private function done(string $workspaceUid, string $businessUid, string $message): RedirectResponse

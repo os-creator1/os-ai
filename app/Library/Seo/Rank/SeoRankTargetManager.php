@@ -5,6 +5,7 @@ namespace App\Library\Seo\Rank;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Seo\SeoRankTrackingState;
 use App\Library\Seo\SeoKeywordManager;
+use App\Library\Seo\SeoPhraseNormalizer;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\SeoKeyword;
@@ -69,6 +70,12 @@ class SeoRankTargetManager
 
             if (! $freshKeyword->isActive()) {
                 throw SeoRankException::keywordNotActive();
+            }
+
+            // A keyword saved before operators were refused can still carry
+            // one: never take a slot for a check the provider would reject.
+            if (SeoPhraseNormalizer::hasSearchOperator((string) $freshKeyword->phrase)) {
+                throw SeoRankException::searchOperator();
             }
 
             $existing = SeoRankTarget::query()
@@ -156,6 +163,10 @@ class SeoRankTargetManager
                 throw SeoRankException::keywordNotActive();
             }
 
+            if (SeoPhraseNormalizer::hasSearchOperator((string) $target->keyword->phrase)) {
+                throw SeoRankException::searchOperator();
+            }
+
             $this->assertSlotAvailable($locked);
 
             $target->forceFill([
@@ -167,6 +178,46 @@ class SeoRankTargetManager
 
             return $target;
         });
+    }
+
+    /**
+     * Stops EVERY tracking target of one keyword, freeing their slots and keeping
+     * their history. Used when the keyword is archived or reactivated, so a keyword
+     * coming back from the archive never silently resumes paid checks (it must be
+     * started again on purpose). Returns how many targets it stopped.
+     */
+    public function stopForKeyword(int $actorUserId, Business $business, SeoKeyword $keyword): int
+    {
+        return DB::transaction(function () use ($actorUserId, $business, $keyword) {
+            $locked = $this->lockAuthorizedBusiness($actorUserId, $business);
+            $now = CarbonImmutable::now('UTC');
+            $stopped = 0;
+
+            $targets = SeoRankTarget::query()
+                ->where('business_id', $locked->id)
+                ->where('seo_keyword_id', $keyword->id)
+                ->where('tracking_state', SeoRankTrackingState::Tracking->value)
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($targets as $target) {
+                $target->forceFill([
+                    'tracking_state' => SeoRankTrackingState::Stopped->value,
+                    'stopped_at' => $now,
+                    'next_check_at' => null,
+                    'updated_by_user_id' => $actorUserId,
+                ])->save();
+                $stopped++;
+            }
+
+            return $stopped;
+        });
+    }
+
+    /** Whether the keyword has ever been rank tracked (a target exists, tracking or stopped). */
+    public function hasHistory(SeoKeyword $keyword): bool
+    {
+        return SeoRankTarget::query()->where('seo_keyword_id', $keyword->id)->exists();
     }
 
     /** A target by uid, resolved inside the Business and behind its keyword's Location ACL. */

@@ -36,11 +36,10 @@ use Illuminate\Support\Facades\Auth;
  * a foreign or unentitled resource is indistinguishable from a missing one.
  * `Auth::id()` is the capability subject and audit actor only, never tenancy.
  *
- * FAIL-CLOSED WHILE `Planned`. SeoBasicVisibility is registered Planned
- * until Sub-slice H flips it (RFC-004: a Planned feature is never
- * customer-executable). EntitlementManager therefore denies it for every
- * tier, so every route here answers 404 today — the controller is
- * unreachable by design, not by omission.
+ * ENTITLEMENT. SeoBasicVisibility is Available (Sub-slice H flipped it) for
+ * Core, Growth and Agency; any other caller, foreign Business or unentitled
+ * Business gets the same 404. The availability floor below still fails closed
+ * if the registry ever marks the feature unavailable again.
  *
  * NAMING. Everything SEO is under `customer.workspaces.businesses.seo.*` and
  * `customer.seo.*`; nothing begins with `customer.keywords.` (the legacy
@@ -68,14 +67,14 @@ class SeoController extends CustomerBaseController
      *
      * ORDER IS LOAD-BEARING. The implementation-availability floor comes
      * FIRST, before the capability check and before any Business is touched:
-     * while SeoBasicVisibility is Planned the whole surface is 404 for every
-     * caller, so neither a 200 empty state nor a different (401) response for
-     * a caller who lacks `view_seo` can reveal that the SEO surface exists
-     * (Contract 18 §14.1). The bare route has no Business yet, so
-     * EntitlementManager cannot decide anything per Business here; the
+     * should SeoBasicVisibility ever be unavailable the whole surface is 404
+     * for every caller, so neither a 200 empty state nor a different (401)
+     * response for a caller who lacks `view_seo` can reveal that the SEO
+     * surface exists (Contract 18 §14.1). The bare route has no Business yet,
+     * so EntitlementManager cannot decide anything per Business here; the
      * registry is the one implementation-availability authority and is asked
-     * directly. Only once the feature is Available do the capability check
-     * and the 0 / 1 / many selector run.
+     * directly. Only once the feature is Available (it is today) do the
+     * capability check and the 0 / 1 / many selector run.
      */
     public function entry(): View|RedirectResponse
     {
@@ -112,8 +111,7 @@ class SeoController extends CustomerBaseController
      * The implementation-availability floor for the bare entry: is
      * SeoBasicVisibility Available in PlatformFeatureRegistry? Its own
      * method, exactly like the entitlement step below, so tests can reach the
-     * post-floor selector logic without flipping the registry (Sub-slice H
-     * owns the flip). Production never overrides it.
+     * post-floor selector logic in isolation. Production never overrides it.
      */
     protected function seoIsImplementedAndAvailable(): bool
     {

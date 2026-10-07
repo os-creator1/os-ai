@@ -25,6 +25,7 @@ final class GrowthThresholds
         'failed_payment_lookback_days' => [14, 1, 90],
         'review_request_lookback_days' => [30, 1, 365],
         'citation_priority_directories' => [5, 1, 50],
+        'rank_drop_positions' => [5, 1, 50],
         'dismiss_cooldown_days' => [30, 1, 365],
         'min_sample' => [8, 1, 1000],
         'automation_failure_min' => [3, 1, 100],

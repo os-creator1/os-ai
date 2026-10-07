@@ -157,7 +157,7 @@ class ArticleOperationsTest extends TestCase
         $this->assertSame('seo.content', $definition->target);
 
         // No articles yet: the article-based rules have nothing to judge.
-        foreach ([ContentRules::nearPageOne(), ContentRules::rankDeclined(), ContentRules::stale()] as $rule) {
+        foreach ([ContentRules::stale()] as $rule) {
             $this->assertSame(S::Insufficient, $rule->evaluate($snapshot)->status, $rule->definition()->key);
         }
 
@@ -180,7 +180,7 @@ class ArticleOperationsTest extends TestCase
         $this->assertSame([$article->title], $stale->findings[0]->evidence['titles']);
 
         $keys = collect(app(GrowthRuleRegistry::class)->all())->map(fn ($rule) => $rule->definition()->key)->all();
-        foreach (['content.topics_not_covered:v1', 'content.article_near_page_one:v1', 'content.article_rank_declined:v1', 'content.article_stale:v1'] as $key) {
+        foreach (['content.topics_not_covered:v1', 'content.article_stale:v1'] as $key) {
             $this->assertContains($key, $keys);
         }
     }

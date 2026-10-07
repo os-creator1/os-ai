@@ -126,6 +126,51 @@ final class SeoCitationCatalogManager
     }
 
     /**
+     * The Blueprint-publish path for a niche recommendation: creates the row
+     * when it is missing, and otherwise NEVER reverts a Platform Owner choice.
+     * It does not re-enable a recommendation the owner disabled, never touches
+     * its order, and changes its importance / guidance only when they still
+     * equal what the PREVIOUS published version declared — i.e. nobody has
+     * edited them since — so a republish cannot undo an edit made on the Niche
+     * Recommendations screen. (The seeder keeps the owner's enable/disable
+     * choice the same way.)
+     *
+     * @param  ?array{importance: ?string, guidance: ?string}  $previouslyDeclared  what the previous published version said
+     *                                                                              about this directory; null when it did not list it
+     *
+     * @throws AuthorizationException
+     * @throws SeoCitationCatalogException
+     */
+    public function syncRecommendation(int $actorUserId, string $nicheKey, string $directoryUid, ?string $importance, ?string $guidance, ?array $previouslyDeclared = null): ?SeoNicheCitationRecommendation
+    {
+        $this->assertPlatformAdministrator($actorUserId);
+        $this->assertNiche($nicheKey);
+
+        $directory = $this->platformDirectory($directoryUid);
+
+        $row = SeoNicheCitationRecommendation::query()
+            ->where('niche_key', $nicheKey)
+            ->where('seo_citation_directory_id', $directory->id)
+            ->first();
+
+        if ($row === null) {
+            // The previous version already listed it and the row is gone: the Platform Owner removed it on
+            // purpose, and a republish must not bring it back. Only a directory new to the list is created.
+            return $previouslyDeclared !== null ? null : $this->recommend($actorUserId, $nicheKey, $directoryUid, $importance, $guidance);
+        }
+
+        if ($previouslyDeclared === null
+            || $row->importance?->value !== $this->importance($previouslyDeclared['importance'] ?? null)
+            || $this->guidance($row->guidance) !== $this->guidance($previouslyDeclared['guidance'] ?? null)) {
+            return $row;
+        }
+
+        $row->forceFill(['importance' => $this->importance($importance), 'guidance' => $this->guidance($guidance)])->save();
+
+        return $row;
+    }
+
+    /**
      * @param  array{importance?: ?string, guidance?: ?string, sort_order?: mixed, is_enabled?: mixed}  $input
      *
      * @throws AuthorizationException

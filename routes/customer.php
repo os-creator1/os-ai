@@ -563,9 +563,10 @@
     | accessible show an empty state, exactly one redirects through, several
     | show a chooser. "Accessible" includes ENTITLEMENT. Before any of that,
     | the entry checks the registry's implementation-availability floor
-    | FIRST: SeoBasicVisibility stays Planned until Sub-slice H, so today the
-    | whole route is 404 for every caller (no 200 empty state, and no 401 that
-    | would reveal the surface exists). The name is customer.seo.index —
+    | FIRST: SeoBasicVisibility is Available (Sub-slice H flipped it), and the
+    | floor still turns the whole route into a 404 for every caller if it
+    | ever stops being (no 200 empty state, and no 401 that would reveal the
+    | surface exists). The name is customer.seo.index —
     | never customer.keywords.*, the legacy inbound-SMS keyword namespace.
     | See Business\SeoController.
     |
@@ -1241,12 +1242,13 @@
         | Every action runs Workspace -> Business -> userCanAccessBusiness()
         | -> active Business -> SeoBasicVisibility entitlement -> view_seo.
         | Every tenancy/entitlement failure is 404, never 403. SeoBasicVisibility
-        | is Planned until Sub-slice H, so every route here is 404 today.
+        | is Available (Sub-slice H flipped it) for Core, Growth and Agency.
         |
-        | There is no write route in this sub-slice and no implicit route-model
-        | binding. Later sub-slices add their sections beneath this prefix
-        | (keywords, search-console, citations, reviews, site-audit); nothing
-        | here is, or may ever begin with, customer.keywords.
+        | The Overview route itself has no write route and no implicit
+        | route-model binding. The later sub-slices live beneath this prefix
+        | (keywords, citations, reviews, site-audit, rank targets); Search
+        | Console is not built. Nothing here is, or may ever begin with,
+        | customer.keywords.
         |----------------------------------------------------------------------
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/seo')->name('businesses.seo.')->group(function () {
@@ -1306,7 +1308,7 @@
             // fetches a URL, never crawls and never writes a Website table
             // (contract §8.7, §12). Reads need view_seo, the throttled manual
             // re-run needs manage_seo; both need the SeoModule entitlement
-            // (Planned until Sub-slice H, so 404 today). The re-run takes no
+            // (Growth and Agency; anything else is 404). The re-run takes no
             // input and names no revision: the server audits whichever
             // revision is published, and re-auditing one is idempotent.
             Route::get('/site-audit', 'Business\SeoAuditController@audit')->name('audit.index');

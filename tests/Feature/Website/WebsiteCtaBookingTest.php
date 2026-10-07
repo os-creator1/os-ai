@@ -103,4 +103,25 @@ class WebsiteCtaBookingTest extends TestCase
 
         $this->assertNotSame('booking', app(WebsiteCtaResolver::class)->resolve($this->business->fresh(), [])['kind'] ?? null);
     }
+    public function test_the_booking_button_on_a_custom_domain_points_at_the_platform_not_at_the_custom_domain(): void
+    {
+        // The booking page exists only on the platform host; route() used to build it on the
+        // CURRENT host, so every "Book now" on a custom domain was a dead 404.
+        $type = $this->makeBookable();
+        $website = $this->publishedSite();
+        $website->domains()->create([
+            'domain' => 'book-cta.test',
+            'is_primary' => true,
+            'status' => \App\Enums\Website\WebsiteDomainStatus::Active,
+            'verification_token' => 'token',
+            'verified_at' => now(),
+            'activated_at' => now(),
+        ]);
+
+        $html = $this->get('http://book-cta.test/')->assertOk()->getContent();
+
+        $expected = rtrim((string) config('app.url'), '/') . '/book/' . $type->public_booking_uuid;
+        $this->assertStringContainsString('href="' . $expected . '" data-testid="header-cta">Book now', $html);
+        $this->assertStringNotContainsString('book-cta.test/book/', $html);
+    }
 }

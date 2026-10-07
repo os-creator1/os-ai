@@ -35,10 +35,10 @@ use Illuminate\Validation\Rule;
  * implicit route-model binding: every uid arrives as a string and is
  * resolved through the Business.
  *
- * FAIL-CLOSED WHILE `Planned`. SeoModule is registered Planned until
- * Sub-slice H flips it (RFC-004: a Planned feature is never
- * customer-executable), so EntitlementManager denies it for every tier and
- * every route here answers 404 today — unreachable by design, not omission.
+ * ENTITLEMENT. SeoModule is Available (Sub-slice H flipped it), so the
+ * entitlement decision is made per Business: a Business whose plan does not
+ * include SeoModule gets the same 404 on every route here, and one that does
+ * reaches them. The decision is still made by EntitlementManager, never here.
  *
  * NAMING. `customer.workspaces.businesses.seo.citations.*`; nothing begins
  * with `customer.keywords.`.

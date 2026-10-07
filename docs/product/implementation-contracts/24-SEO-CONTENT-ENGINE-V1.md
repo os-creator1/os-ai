@@ -65,7 +65,7 @@ plain text — never a dead or stale link, never a Preview URL.
 - Custom domain: `/blog`, `/blog/{slug}` (`ResolveCustomDomainWebsite`). Platform path: `/sites/{public_id}/blog`,
   `/blog/{slug}` (`Public\WebsiteBlogController`). Both call `WebsiteBlogRenderer`. `blog` is a reserved page slug.
 - Only `Published` articles are ever loaded by a public path (`WebsiteArticle::published()`).
-- **Indexable** = custom domain surface AND site released for search (the Website's own state: its published Home page is not `noindex`, which is what the owner's 'Let search engines find these pages' release produces; there is no second switch) AND article not `noindex` AND published. The platform
+- **Indexable** = custom domain surface AND site released for search (the Website's own canonical state, `websites.indexing_released_at`, set by "Let search engines find these pages" and kept through a rebuild; there is no second switch) AND article not `noindex` AND published. The platform
   path and Preview are always noindex; an owner `noindex` can only narrow indexing.
 - Canonical always points at the Website's Active primary custom domain (`WebsiteBlogSurface`); none without one.
 - Social: `og:type=article`, published/modified times, featured image via `WebsiteSocialMetadata::forArticle`.
@@ -112,9 +112,9 @@ Capabilities: `view_seo` reads, `manage_seo` writes.
 `ArticleFreshness` (old > 365 days, changed/removed package, supported page gone or noindex), `ArticleRankSignals`
 (position 8–20, material decline, stale + declined, top-5 as a positive fact; linked by normalized phrase equality of
 `primary_topic` and a tracked keyword; cached observations only). Wording is "may help", never causation.
-`GrowthContentFactReader` (domain `content`, feature `SeoModule`) feeds four rules in `ContentRules`
-(`content.topics_not_covered:v1`, `content.article_near_page_one:v1`, `content.article_rank_declined:v1`,
-`content.article_stale:v1`); target `seo.content`.
+`GrowthContentFactReader` (domain `content`, feature `SeoModule`) feeds two rules in `ContentRules`
+(`content.topics_not_covered:v1`,
+`content.article_stale:v1`); target `seo.content`. Rank movement stays with the canonical `seo.*` rank rules (no duplicate).
 
 ## 9. Scheduling
 

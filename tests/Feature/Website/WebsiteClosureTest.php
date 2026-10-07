@@ -98,8 +98,9 @@ class WebsiteClosureTest extends TestCase
         $response = $this->get('http://closure-site.test/robots.txt')->assertOk();
 
         $this->assertStringStartsWith('text/plain', (string) $response->headers->get('Content-Type'));
-        $this->assertSame("User-agent: *\nDisallow:\nSitemap: https://closure-site.test/sitemap\n", $response->getContent());
-        $this->get('http://closure-site.test/sitemap')->assertOk(); // the line points at something that resolves
+        $this->assertSame("User-agent: *\nDisallow:\n\nSitemap: https://closure-site.test/sitemap.xml\n", $response->getContent());
+        $this->get('http://closure-site.test/sitemap.xml')->assertOk(); // the line points at something that resolves
+        $this->get('http://closure-site.test/sitemap')->assertStatus(301)->assertRedirect('https://closure-site.test/sitemap.xml');
     }
 
     public function test_no_robots_txt_for_an_alias_an_unpublished_site_the_platform_path_or_preview(): void
@@ -196,7 +197,7 @@ class WebsiteClosureTest extends TestCase
         $this->assertStringContainsString('<meta property="og:type" content="website">', $html);
         $this->assertStringContainsString('<meta property="og:url" content="https://social-site.test/">', $html);
         $this->assertStringContainsString('<meta property="og:site_name"', $html);
-        $this->assertStringContainsString('<meta property="og:title" content="Home seo">', $html);
+        $this->assertStringContainsString('<meta property="og:title" content="Home seo | Test Website">', $html);
         $this->assertStringContainsString('<meta name="twitter:card" content="summary_large_image">', $html);
 
         preg_match('#<meta property="og:image" content="([^"]+)">#', $html, $m);
@@ -329,7 +330,7 @@ class WebsiteClosureTest extends TestCase
         // The sitemap lists exactly the indexable pages once the owner publishes.
         app(WebsitePublisher::class)->publish($website->fresh(), $this->platformAdminId());
         $website->domains()->create(['domain' => 'visibility-site.test', 'is_primary' => true, 'status' => WebsiteDomainStatus::Active, 'verification_token' => 't', 'verified_at' => now(), 'activated_at' => now()]);
-        $xml = $this->get('http://visibility-site.test/sitemap')->getContent();
+        $xml = $this->get('http://visibility-site.test/sitemap.xml')->getContent();
         foreach (['https://visibility-site.test/', 'https://visibility-site.test/services', 'https://visibility-site.test/live'] as $listed) {
             $this->assertStringContainsString('<loc>' . $listed . '</loc>', $xml);
         }

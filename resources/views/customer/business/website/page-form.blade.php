@@ -74,7 +74,7 @@
             <div class="ds-field mb-3">
                 <div class="form-check">
                     <input type="checkbox" class="form-check-input" id="noindex" name="noindex" value="1" @checked(old('noindex', $page->noindex ?? false))>
-                    <label class="form-check-label" for="noindex">Hide from search engines (in addition to the platform-wide default)</label>
+                    <label class="form-check-label" for="noindex">Hide this page from search engines (it stays hidden even when you let search engines find your other pages)</label>
                 </div>
             </div>
         </x-card>

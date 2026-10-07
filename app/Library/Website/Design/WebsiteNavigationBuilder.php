@@ -24,6 +24,41 @@ final class WebsiteNavigationBuilder
     private const MAX_DROPDOWN_CHILDREN = 10;
 
     /**
+     * The menu / breadcrumb label of a page. Fixed pages carry a canonical label
+     * (never the AI-written page title, which may be a headline); area pages
+     * drop their "Serving ". One authority so the nav, the footer, the visible
+     * breadcrumb and the BreadcrumbList structured data always agree.
+     *
+     * @param  array{title: string, is_home?: bool, slug?: ?string}  $page
+     */
+    public static function label(array $page): string
+    {
+        $labels = ['services' => 'Services', 'packages' => 'Packages', 'gallery' => 'Gallery', 'backdrops' => 'Backdrops', 'photo-booth-about' => 'About', 'photo-booth-faq' => 'FAQ', 'photo-booth-contact' => 'Contact'];
+        $slug = (string) ($page['slug'] ?? '');
+
+        if ((bool) ($page['is_home'] ?? false)) {
+            return 'Home';
+        }
+
+        if (isset($labels[$slug])) {
+            return $labels[$slug];
+        }
+
+        if (str_starts_with($slug, 'serving-')) {
+            $title = (string) $page['title'];
+
+            // "Serving Austin" -> "Austin"; a headline such as "Photo booth rentals in Austin, TX" -> "Austin, TX".
+            if (preg_match('/^Serving\s+(.+)$/iu', $title, $match) === 1 || preg_match('/^.*\bin\s+(.+)$/iu', $title, $match) === 1) {
+                return trim($match[1]) ?: $title;
+            }
+
+            return $title;
+        }
+
+        return (string) $page['title'];
+    }
+
+    /**
      * @param  array<int, array{uid: string, title: string, is_home: bool, slug?: ?string, url: string}>  $pages
      * @return array{primary: array<int, array<string, mixed>>, footer: array<string, array<int, array{title: string, url: string}>>, has_pages: bool}
      */
@@ -42,20 +77,9 @@ final class WebsiteNavigationBuilder
         $areas = [];
         $other = [];
 
-        // Fixed pages carry a canonical menu label (never the AI-written page
-        // title, which may be a headline); area pages drop their "Serving ".
-        $labels = ['services' => 'Services', 'packages' => 'Packages', 'gallery' => 'Gallery', 'backdrops' => 'Backdrops', 'photo-booth-about' => 'About', 'photo-booth-faq' => 'FAQ', 'photo-booth-contact' => 'Contact'];
-
         foreach ($pages as $page) {
             $slug = (string) ($page['slug'] ?? '');
-
-            if ((bool) ($page['is_home'] ?? false)) {
-                $page['title'] = 'Home';
-            } elseif (isset($labels[$slug])) {
-                $page['title'] = $labels[$slug];
-            } elseif (str_starts_with($slug, 'serving-')) {
-                $page['title'] = trim((string) preg_replace('/^Serving\s+/i', '', (string) $page['title'])) ?: $page['title'];
-            }
+            $page['title'] = self::label($page);
 
             match (true) {
                 (bool) ($page['is_home'] ?? false) => $home = $page,

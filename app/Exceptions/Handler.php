@@ -98,6 +98,12 @@
                 }
 
                 if ($exception instanceof HttpException) {
+                    // A maintenance window is temporary: answering it as a 404
+                    // tells crawlers the customer's pages are gone for good.
+                    if ($exception->getStatusCode() === 503) {
+                        return response()->view('errors.404', compact('exception'), 503, $exception->getHeaders());
+                    }
+
                     return response()->view('errors.404', compact('exception'), 404);
                 }
             }

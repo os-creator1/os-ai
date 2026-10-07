@@ -82,8 +82,9 @@ class WebsiteHealthTest extends TestCase
         $this->assertStringContainsString('Home', $this->check($report, 'descriptions')['detail']);
 
         $this->homePage($website, ['slug' => 'extra', 'is_home' => false, 'title' => 'No title page', 'seo_title' => null, 'meta_description' => 'y', 'sort_order' => 9]);
+        // A page with no search title of its own still gets its page name as the title, so this is a nudge, not a failure.
         $titles = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'titles');
-        $this->assertSame('fail', $titles['status']);
+        $this->assertSame('warn', $titles['status']);
         $this->assertStringContainsString('No title page', $titles['detail']);
     }
 
@@ -145,5 +146,132 @@ class WebsiteHealthTest extends TestCase
         $packages = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh(), ['publish' => '/pub']), 'packages');
         $this->assertSame('warn', $packages['status']);
         $this->assertSame('Publish update', $packages['action']['label']);
+    }
+    private function activeDomain($website, string $host = 'health-domain.test')
+    {
+        return $website->domains()->create([
+            'domain' => $host,
+            'is_primary' => true,
+            'status' => \App\Enums\Website\WebsiteDomainStatus::Active,
+            'verification_token' => 'token',
+            'verified_at' => now(),
+            'activated_at' => now(),
+        ]);
+    }
+
+    public function test_indexing_is_counted_on_the_live_site_not_the_draft(): void
+    {
+        [, , $website] = $this->website();
+        $this->homePage($website, ['noindex' => true]);
+        $this->subPage($website, 'photo-booth-about', ['noindex' => true]);
+        $this->subPage($website, 'photo-booth-contact', ['noindex' => false]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        // The owner releases everything in the draft, but has NOT republished: the live site is unchanged.
+        $website->pages()->update(['noindex' => false]);
+
+        $indexing = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'indexing');
+
+        $this->assertSame('warn', $indexing['status']);
+        $this->assertStringContainsString('2 of 3 live pages are hidden', $indexing['detail']);
+        $this->assertStringContainsString('publish to make that live', $indexing['detail']);
+    }
+
+    public function test_unpublished_edits_are_reported_with_the_pages_that_changed(): void
+    {
+        [, , $website] = $this->website();
+        $this->homePage($website);
+        $about = $this->subPage($website, 'photo-booth-about', ['title' => 'About us']);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        $this->assertSame('ok', $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'draft_changes')['status']);
+
+        $this->travel(5)->minutes();
+        $about->update(['meta_description' => 'Freshly edited']);
+
+        $changes = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh(), ['publish' => '/pub']), 'draft_changes');
+
+        $this->assertSame('warn', $changes['status']);
+        $this->assertSame(['About us'], $changes['items']);
+        $this->assertSame('/pub', $changes['action']['url']);
+    }
+
+    public function test_a_page_must_have_exactly_one_main_heading(): void
+    {
+        [, , $website] = $this->website();
+        $this->homePage($website);
+        $this->subPage($website, 'photo-booth-about', ['title' => 'No heading', 'sections' => []]);
+        $this->subPage($website, 'photo-booth-contact', ['title' => 'Two headings', 'sections' => [$this->section('hero'), $this->section('hero')]]);
+
+        $headings = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'headings');
+
+        $this->assertSame('fail', $headings['status']);
+        $this->assertSame(['No heading (no main heading)', 'Two headings (more than one main heading)'], $headings['items']);
+    }
+
+    public function test_a_photo_that_is_no_longer_in_the_library_is_an_action(): void
+    {
+        [, , $website] = $this->website();
+        $this->homePage($website, ['sections' => [$this->section('hero'), ['type' => 'gallery', 'data' => ['heading' => 'G', 'items' => [['image' => 'deleted-asset-uid']]]]]]);
+
+        $images = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'images');
+
+        $this->assertSame('fail', $images['status']);
+        $this->assertStringContainsString('1 photo', $images['detail']);
+    }
+
+    public function test_a_button_pointing_at_a_page_that_does_not_exist_is_flagged(): void
+    {
+        [, , $website] = $this->website();
+        $this->homePage($website, ['sections' => [['type' => 'hero', 'data' => ['heading' => 'Hello', 'primary_cta' => ['label' => 'See more', 'url' => '/serving-nowhere']]]]]);
+        $this->subPage($website, 'photo-booth-about');
+
+        $links = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'links');
+
+        $this->assertSame('warn', $links['status']);
+        $this->assertSame(['Home → /serving-nowhere'], $links['items']);
+
+        $website->pages()->where('is_home', true)->first()->update(['sections' => [['type' => 'hero', 'data' => ['heading' => 'Hello', 'primary_cta' => ['label' => 'About', 'url' => '/photo-booth-about']]]]]);
+
+        $this->assertSame('ok', $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'links')['status']);
+    }
+
+    public function test_search_files_are_only_good_when_the_live_domain_actually_lists_pages(): void
+    {
+        [, , $website] = $this->website();
+        $this->homePage($website, ['noindex' => true, 'sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        $this->subPage($website, 'photo-booth-about', ['noindex' => true]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        $report = app(WebsiteHealthChecker::class)->check($website->fresh(), ['domains' => '/d', 'pages' => '/p']);
+        $this->assertSame('warn', $this->check($report, 'search_files')['status']);
+        $this->assertSame('/d', $this->check($report, 'search_files')['action']['url']);
+
+        $this->activeDomain($website);
+        $report = app(WebsiteHealthChecker::class)->check($website->fresh(), ['pages' => '/p']);
+        $this->assertSame('warn', $this->check($report, 'search_files')['status']);
+        $this->assertStringContainsString('empty', $this->check($report, 'search_files')['detail']);
+
+        $website->pages()->update(['noindex' => false]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        $report = app(WebsiteHealthChecker::class)->check($website->fresh());
+        $searchFiles = $this->check($report, 'search_files');
+        $this->assertSame('ok', $searchFiles['status']);
+        $this->assertStringContainsString('2 pages', $searchFiles['detail']);
+        $this->assertSame('ok', $this->check($report, 'indexing')['status']);
+        $this->assertSame('ok', $this->check($report, 'schema')['status']);
+    }
+
+    public function test_package_prices_are_not_called_matching_before_anything_was_published(): void
+    {
+        [, , $website] = $this->website();
+        $this->homePage($website);
+
+        $packages = $this->check(app(WebsiteHealthChecker::class)->check($website->fresh()), 'packages');
+
+        $this->assertSame('ok', $packages['status']);
+        $this->assertStringContainsString('when you publish', $packages['detail']);
+        $this->assertStringNotContainsString('match Packages', $packages['detail']);
     }
 }

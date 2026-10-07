@@ -5,7 +5,7 @@ namespace App\Library\Website\Seo;
 use App\Models\WebsiteArticle;
 
 /**
- * SEO Content Engine V1 — BlogPosting and BreadcrumbList structured data for a published article.
+ * SEO Content Engine V1 — BlogPosting structured data (the BreadcrumbList comes from the canonical WebsiteBreadcrumbStructuredData) for a published article.
  *
  * Real data only. Every value comes from a field the owner or the platform actually holds: the article's
  * own title, description, dates and image, the Business name (publisher, and author when the owner has not
@@ -55,20 +55,5 @@ final class WebsiteArticleStructuredData
         }
 
         return array_filter($data, fn ($value) => $value !== null);
-    }
-
-    /**
-     * @param  array<int, array{name: string, url: string}>  $trail  in order, ending with the current page
-     * @return array<string, mixed>
-     */
-    public function breadcrumbs(array $trail): array
-    {
-        $items = [];
-
-        foreach (array_values($trail) as $i => $crumb) {
-            $items[] = ['@type' => 'ListItem', 'position' => $i + 1, 'name' => $crumb['name'], 'item' => $crumb['url']];
-        }
-
-        return ['@context' => 'https://schema.org', '@type' => 'BreadcrumbList', 'itemListElement' => $items];
     }
 }
