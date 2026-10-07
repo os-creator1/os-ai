@@ -82,7 +82,7 @@ class WebsiteBlogRenderer
         return $this->respond($website, $snapshot, $surface, [
             'title' => 'Blog',
             'seo_title' => $name . ' Blog: guides and tips',
-            'meta_description' => 'Guides, ideas and planning advice from ' . $name . '.',
+            'meta_description' => 'Guides, ideas and planning advice from ' . rtrim($name, '.') . '.',
             'noindex' => ! $indexable,
             'canonical' => $canonical,
             'indexable' => $indexable,
@@ -92,7 +92,7 @@ class WebsiteBlogRenderer
             'blog' => [
                 'mode' => 'index',
                 'heading' => $name . ' Blog',
-                'intro' => 'Guides, ideas and planning advice from ' . $name . '.',
+                'intro' => 'Guides, ideas and planning advice from ' . rtrim($name, '.') . '.',
                 'cards' => $articles->map(fn (WebsiteArticle $a) => $this->card($a, $surface))->all(),
                 'page' => $page,
                 'last_page' => $last,
