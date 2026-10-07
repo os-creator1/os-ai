@@ -86,7 +86,8 @@ final class CustomerMenuBuilder
         'usage-billing' => 'Balance, top-ups, payment method and spending limits.',
         'plan' => 'What your plan includes and your subscription.',
         'team' => 'Who can work here, their role and what they can open.',
-        'account-details' => 'Agency account name, client accounts and who pays for each.',
+        // Clients are listed, invited and billed from Clients (each client's own page), not from this page.
+        'account-details' => 'Your agency account\'s name, status and the features included in its plan.',
         'blocked-numbers' => 'Numbers that are never messaged.',
         'messaging-provider' => 'Connect your own messaging provider.',
         'sender-ids' => 'Sender names used on outgoing messages.',
@@ -534,8 +535,10 @@ final class CustomerMenuBuilder
             $scoped = [$agency->uid, $own->uid];
 
             $items[] = MenuItem::header('own-business', 'Business');
+            // Results (and the Growth advisor) open from Business Home, which stays lit while the owner is on them —
+            // exactly as in the plain Business frame; without these prefixes nothing in the sidebar was current there.
             $items[] = $inBusinessFrame
-                ? $this->item($user, 'home', 'Business Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home'])
+                ? $this->item($user, 'home', 'Business Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.growth.', 'customer.workspaces.businesses.analytics.', 'customer.analytics.'])
                 : $this->frameMove($user, 'business-home', 'Business Home', 'home', 'customer.context.business.switch', ['workspace' => $agency->uid, 'business' => $own->uid]);
 
             $items = array_merge($items, $this->businessModuleItems($user, $scoped, $current));
@@ -552,7 +555,9 @@ final class CustomerMenuBuilder
         $items[] = $this->item($user, 'accounts', 'Clients', 'briefcase', ['access_backend'], 'customer.workspaces.clients.index', [$agency->uid], $current, [
             'customer.workspaces.clients.', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
         ]);
-        $items[] = $this->item($user, 'prospecting', 'Prospecting', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
+        // Labelled "Outreach", the same word the page, its tabs and the Account
+        // frame menu use (the key and route stay `prospecting` — URLs are stable).
+        $items[] = $this->item($user, 'prospecting', 'Outreach', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
             'customer.prospecting.', 'customer.workspaces.prospecting.',
         ]);
 

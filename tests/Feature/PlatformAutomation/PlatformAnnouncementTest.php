@@ -107,7 +107,7 @@ class PlatformAnnouncementTest extends TestCase
         [$b] = $this->tenant(WorkspacePlanTier::Growth, 'B Biz', 'B WS');
         $announcement = $this->manager()->publishNow($this->announcement());
 
-        $this->assertSame('published', $announcement->status);
+        $this->assertSame('published', $announcement->status->value);
         $this->assertSame(2, $announcement->recipients_total);
         $this->deliverAll($announcement);
         $this->deliverAll($announcement); // the same chunks run again (a retry)
@@ -167,7 +167,7 @@ class PlatformAnnouncementTest extends TestCase
         // Lapsed announcements expire on the next sweep.
         Carbon::setTestNow(now()->addDays(2));
         $this->assertSame(['published' => 0, 'expired' => 1], $this->manager()->sweep());
-        $this->assertSame('expired', $announcement->fresh()->status);
+        $this->assertSame('expired', $announcement->fresh()->status->value);
     }
 
     public function test_the_banner_disappears_the_moment_it_expires_without_waiting_for_the_sweep_and_the_feed_agrees(): void
@@ -181,7 +181,7 @@ class PlatformAnnouncementTest extends TestCase
 
         Carbon::setTestNow(now()->addMinutes(11));   // expiry passes; no sweep has run
 
-        $this->assertSame('published', $announcement->fresh()->status, 'the sweep has not touched it');
+        $this->assertSame('published', $announcement->fresh()->status->value, 'the sweep has not touched it');
         $this->assertCount(0, $this->manager()->bannersFor($a->user));
         $this->assertSame([], $this->getJson(route('customer.platform-notices.feed'))->json('banners'));
     }
@@ -209,11 +209,11 @@ class PlatformAnnouncementTest extends TestCase
         $this->manager()->schedule($announcement);
 
         $this->assertSame(['published' => 0, 'expired' => 0], $this->manager()->sweep());
-        $this->assertSame('scheduled', $announcement->fresh()->status);
+        $this->assertSame('scheduled', $announcement->fresh()->status->value);
 
         Carbon::setTestNow(now()->addHours(3));
         $this->assertSame(['published' => 1, 'expired' => 0], $this->manager()->sweep());
-        $this->assertSame('published', $announcement->fresh()->status);
+        $this->assertSame('published', $announcement->fresh()->status->value);
         $this->assertSame(['published' => 0, 'expired' => 0], $this->manager()->sweep(), 'idempotent');
     }
 

@@ -3,7 +3,6 @@
 namespace Tests\Feature\PlatformAutomation;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
-use App\Models\PlatformAnnouncement;
 use App\Models\PlatformAutomation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
@@ -94,38 +93,5 @@ class PlatformAutomationHttpTest extends TestCase
             ->post(route('admin.platform-automations.recipes.use', 'invitation_reminder'))
             ->assertSessionHasErrors('recipe');
         $this->assertSame(1, PlatformAutomation::query()->count());
-    }
-
-    public function test_announcement_journey_draft_schedule_publish_and_cancel(): void
-    {
-        $this->tenant(WorkspacePlanTier::Core, 'Biz', 'WS');
-        $this->actingAsPlatformOwner();
-        $form = fn (array $o = []) => $o + [
-            'title' => 'Heads up', 'body' => 'Maintenance Sunday.', 'severity' => 'info', 'channels' => ['banner', 'notification'],
-            'audience' => ['kind' => 'tier', 'tier' => 'core'],
-        ];
-
-        $this->get(route('admin.platform-announcements.create'))->assertOk();
-
-        $this->post(route('admin.platform-announcements.store'), $form(['mode' => 'draft']))->assertRedirect(route('admin.platform-announcements.index'));
-        $draft = PlatformAnnouncement::query()->sole();
-        $this->assertSame('draft', $draft->status);
-
-        $this->put(route('admin.platform-announcements.update', $draft), $form(['mode' => 'schedule', 'publish_at' => now()->addDay()->format('Y-m-d\TH:i')]))->assertRedirect();
-        $this->assertSame('scheduled', $draft->fresh()->status);
-
-        $this->post(route('admin.platform-announcements.store'), $form(['mode' => 'publish', 'title' => 'Now']))->assertRedirect();
-        $now = PlatformAnnouncement::query()->where('title', 'Now')->sole();
-        $this->assertSame('published', $now->status);
-        $this->assertSame(1, $now->recipients_total);
-
-        // Scheduling without a time is refused.
-        $this->from(route('admin.platform-announcements.create'))
-            ->post(route('admin.platform-announcements.store'), $form(['mode' => 'schedule', 'title' => 'No time']))
-            ->assertSessionHasErrors('publish_at');
-
-        $this->post(route('admin.platform-announcements.cancel', $now))->assertRedirect();
-        $this->assertSame('cancelled', $now->fresh()->status);
-        $this->get(route('admin.platform-announcements.index'))->assertOk()->assertSee('Heads up');
     }
 }

@@ -36,6 +36,23 @@ class TextMessagingStatusTest extends TestCase
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
 
+    /**
+     * "Ready" is the carrier-verified state: an active number AND an Approved
+     * messaging registration (MessagingReadinessReader::situation()). A number
+     * alone is the registration-required state.
+     */
+    private function approveRegistration(\App\Models\Business $business): void
+    {
+        \App\Models\BusinessMessagingRegistration::create([
+            'business_id' => $business->id, 'number_type' => 'local', 'status' => 'approved', 'approved_at' => now(),
+            'legal_business_name' => 'Status Test LLC', 'entity_type' => 'ein', 'ein' => '12-3456789',
+            'address_line_1' => '1 Main St', 'city' => 'Portland', 'region' => 'OR', 'postal_code' => '97201',
+            'website_url' => 'https://example.com', 'contact_email' => 'o@example.com', 'contact_phone' => '+15035550100',
+            'use_case' => 'customer_care', 'opt_in_method' => 'Opt in form.', 'sample_message_1' => 'Hi. Reply STOP to opt out.',
+            'sample_message_2' => 'Hello. Reply STOP to opt out.', 'privacy_policy_url' => 'https://example.com/p', 'terms_url' => 'https://example.com/t',
+        ]);
+    }
+
     // -----------------------------------------------------------------
     // 1 & 2 — Core/Growth cannot reach provider/channel configuration,
     // even holding every customer permission.
@@ -69,6 +86,7 @@ class TextMessagingStatusTest extends TestCase
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency);
         $identity = $this->attachIdentity($business);
         $this->attachNumber($identity, '+14155551234');
+        $this->approveRegistration($business);
         $this->authenticateAs($customer);
 
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
@@ -144,9 +162,13 @@ class TextMessagingStatusTest extends TestCase
 
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
 
+        // Nothing is set up: the page is the "get a number" state, which never
+        // claims texting or picture messages are available.
         $response->assertOk();
-        $response->assertSee('Setup needed');
-        $response->assertSeeInOrder(['Picture messages', 'Not available yet']);
+        $response->assertSee('Local number');
+        $response->assertSee('Toll-free number');
+        $response->assertDontSee('Picture messages');
+        $response->assertDontSee('Ready');
     }
 
     public function test_media_capability_shows_available_once_the_number_is_active(): void
@@ -154,6 +176,7 @@ class TextMessagingStatusTest extends TestCase
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $identity = $this->attachIdentity($business);
         $this->attachNumber($identity, '+14155553333');
+        $this->approveRegistration($business);
         $this->authenticateAs($customer);
 
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
@@ -173,9 +196,12 @@ class TextMessagingStatusTest extends TestCase
 
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
 
+        // resolvePrimaryNumber() fails closed, so the page is the "get a number"
+        // state: never Ready, never a number shown, never picture messages.
         $response->assertOk();
-        $response->assertSee('Issue');
-        $response->assertSee('Not available yet');
+        $response->assertSee('Local number');
+        $response->assertDontSee('Ready');
+        $response->assertDontSee('Picture messages');
     }
 
     // -----------------------------------------------------------------

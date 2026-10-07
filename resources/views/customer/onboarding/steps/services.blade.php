@@ -10,10 +10,10 @@
             <input type="hidden" name="services[{{ $index }}][id]" value="{{ $service->id }}">
             <div class="row">
                 <div class="col-md-6">
-                    <x-input name="services[{{ $index }}][name]" label="Service name" type="text" value="{{ old("services.$index.name", $service->name) }}" required />
+                    <x-input name="services[{{ $index }}][name]" label="Service name" type="text" :value="old('services.'.$index.'.name', $service->name)" required />
                 </div>
                 <div class="col-md-3">
-                    <x-input name="services[{{ $index }}][starting_price]" label="Starting price" type="number" step="0.01" value="{{ old("services.$index.starting_price", $service->starting_price) }}" />
+                    <x-input name="services[{{ $index }}][starting_price]" label="Starting price" type="number" step="0.01" :value="old('services.'.$index.'.starting_price', $service->starting_price)" />
                 </div>
                 <div class="col-md-3 mb-1 d-flex align-items-end">
                     <div class="form-check">
@@ -29,10 +29,10 @@
     <x-card class="mb-1">
         <div class="row">
             <div class="col-md-6">
-                <x-input name="services[{{ $newIndex }}][name]" label="New service name" type="text" value="{{ old("services.$newIndex.name") }}" />
+                <x-input name="services[{{ $newIndex }}][name]" label="New service name" type="text" :value="old('services.'.$newIndex.'.name')" />
             </div>
             <div class="col-md-3">
-                <x-input name="services[{{ $newIndex }}][starting_price]" label="Starting price" type="number" step="0.01" value="{{ old("services.$newIndex.starting_price") }}" />
+                <x-input name="services[{{ $newIndex }}][starting_price]" label="Starting price" type="number" step="0.01" :value="old('services.'.$newIndex.'.starting_price')" />
             </div>
             <div class="col-md-3 mb-1 d-flex align-items-end">
                 <div class="form-check">

@@ -2,7 +2,8 @@
 
 namespace App\Library\PlatformAutomation\Announcements;
 
-use App\Jobs\PlatformAutomation\DeliverPlatformAnnouncementChunk;
+use App\Enums\PlatformOwner\PlatformAnnouncementStatus;
+use App\Library\PlatformOwner\Announcements\PlatformAnnouncementDelivery;
 use App\Models\PlatformAnnouncement;
 use App\Models\PlatformAnnouncementReceipt;
 use App\Models\User;
@@ -22,6 +23,10 @@ use Illuminate\Validation\ValidationException;
 class PlatformAnnouncementManager
 {
     public const CHUNK = 200;
+
+    public function __construct(private readonly PlatformAnnouncementDelivery $delivery)
+    {
+    }
 
     /** @param array<string, mixed> $input */
     public function create(array $input, int $actorUserId, ?int $sourceRunId = null): PlatformAnnouncement
@@ -67,11 +72,17 @@ class PlatformAnnouncementManager
 
     public function cancel(PlatformAnnouncement $announcement): PlatformAnnouncement
     {
-        if (in_array($announcement->status, [PlatformAnnouncement::STATUS_EXPIRED, PlatformAnnouncement::STATUS_CANCELLED], true)) {
+        if (in_array($announcement->status, [PlatformAnnouncementStatus::Expired, PlatformAnnouncementStatus::Cancelled], true)) {
             throw ValidationException::withMessages(['announcement' => ['That announcement is already finished.']]);
         }
 
+        $wasPublished = $announcement->status === PlatformAnnouncementStatus::Published;
         $announcement->forceFill(['status' => PlatformAnnouncement::STATUS_CANCELLED])->save();
+
+        if ($wasPublished) {
+            // Banners stop at once (the feed filters on status); nothing already delivered is recalled.
+            $this->delivery->withdraw($announcement);
+        }
 
         return $announcement;
     }
@@ -90,18 +101,15 @@ class PlatformAnnouncementManager
             return $announcement;
         }
 
-        $query = PlatformAnnouncementAudience::query((array) $announcement->audience);
-        $total = 0;
+        // The status claim above is the ONE state transition; what "delivering" means is the seam
+        // (PlatformAnnouncementDelivery). The default binding fans out through the delivery runtime.
+        $ref = $this->delivery->deliver($announcement);
 
-        $query->orderBy('users.id')->chunk(self::CHUNK, function ($rows) use ($announcement, &$total) {
-            $ids = $rows->pluck('id')->map(fn ($id) => (int) $id)->all();
-            $total += count($ids);
-            DeliverPlatformAnnouncementChunk::dispatch($announcement->id, $ids);
-        });
+        if ($ref !== null) {
+            $announcement->forceFill(['delivery_ref' => $ref])->save();
+        }
 
-        $announcement->forceFill(['recipients_total' => $total])->save();
-
-        return $announcement;
+        return $announcement->refresh();
     }
 
     /** Scheduler entry point: publish what is due, expire what has lapsed. */
@@ -216,6 +224,9 @@ class PlatformAnnouncementManager
         if ($kind === 'tier') {
             $clean['tier'] = (string) $audience['tier'];
         }
+        if ($kind === 'tiers') {
+            $clean['tiers'] = array_values(array_unique(array_map('strval', (array) $audience['tiers'])));
+        }
         if (in_array($kind, ['workspaces', 'businesses', 'users'], true)) {
             $refs = $audience['refs'] ?? [];
             $refs = is_string($refs) ? (preg_split('/[\s,]+/', $refs, -1, PREG_SPLIT_NO_EMPTY) ?: []) : (array) $refs;
@@ -234,7 +245,7 @@ class PlatformAnnouncementManager
 
     private function assertEditable(PlatformAnnouncement $announcement): void
     {
-        if (! in_array($announcement->status, [PlatformAnnouncement::STATUS_DRAFT, PlatformAnnouncement::STATUS_SCHEDULED], true)) {
+        if (! in_array($announcement->status, [PlatformAnnouncementStatus::Draft, PlatformAnnouncementStatus::Scheduled], true)) {
             throw ValidationException::withMessages(['announcement' => ['Only a draft or scheduled announcement can be changed.']]);
         }
     }

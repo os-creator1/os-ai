@@ -11,6 +11,7 @@ use App\Library\Automation\Workflow\Conditions\Subjects\ContactBusinessFieldSubj
 use App\Enums\CustomFields\CustomFieldType;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\ContactGroupFields;
+use App\Models\CustomFieldDefinition;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -394,10 +395,30 @@ class WorkflowCompiler
                 continue;
             }
 
-            // B4 §7.B, carried forward: a custom field belongs to exactly one
+            // A Business custom field (canonical, by uid) is Business-wide: it needs no
+            // contact group, so it works on every trigger (form, booking, deal…). It
+            // must be one of THIS Business's active Contact fields.
+            $customFieldId = $this->positiveId($entry['config']['custom_field_id'] ?? null);
+
+            if ($customFieldId !== null) {
+                $usable = CustomFieldDefinition::query()
+                    ->where('business_id', $businessId)
+                    ->where('entity', CustomFieldDefinition::ENTITY_CONTACT)
+                    ->where('id', $customFieldId)
+                    ->whereNull('archived_at')
+                    ->exists();
+
+                if (! $usable) {
+                    $errors[$entry['key']][] = 'That custom field does not belong to this business or is archived.';
+                }
+
+                continue;
+            }
+
+            // B4 §7.B, carried forward: a per-list field belongs to exactly one
             // contact group, so a workflow whose field cannot match its audience
             // is structurally impossible and must never be accepted. That means
-            // an explicit trigger group is required for this action.
+            // an explicit trigger group is required for this legacy field.
             if ($triggerGroupId === null) {
                 $errors[$entry['key']][] = 'To update a contact field, the trigger must watch one specific contact group.';
 

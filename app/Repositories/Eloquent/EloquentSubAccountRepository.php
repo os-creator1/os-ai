@@ -113,6 +113,14 @@
 
 
         /**
+         * Sub-accounts the acting customer owns; every batch mutation must go through this.
+         */
+        private function ownedQuery()
+        {
+            return $this->query()->where('parent_id', Auth::id());
+        }
+
+        /**
          * @param User  $user
          * @param array $input
          *
@@ -142,7 +150,8 @@
         public function update(User $subAccount, array $input): User
         {
             // Fill the sub-account model with the remaining data (excluding password and permissions).
-            $subAccount->fill(Arr::except($input, ['password']));
+            // Whitelist: never mass-assign is_admin, status, parent_id, api_token, ... from the request.
+            $subAccount->fill(Arr::only($input, ['first_name', 'last_name', 'email']));
 
             if ( ! $subAccount->save()) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));
@@ -169,7 +178,7 @@
         public function batchEnable(array $ids): bool
         {
             DB::transaction(function () use ($ids) {
-                if ($this->query()->whereIn('uid', $ids)
+                if ($this->ownedQuery()->whereIn('uid', $ids)
                     ->update(['status' => true])
                 ) {
                     return true;
@@ -191,7 +200,7 @@
         public function batchDisable(array $ids): bool
         {
             DB::transaction(function () use ($ids) {
-                if ($this->query()->whereIn('uid', $ids)
+                if ($this->ownedQuery()->whereIn('uid', $ids)
                     ->update(['status' => false])
                 ) {
                     return true;
@@ -214,7 +223,7 @@
         public function batchDelete(array $ids): bool
         {
             DB::transaction(function () use ($ids) {
-                if ($this->query()->whereIn('uid', $ids)
+                if ($this->ownedQuery()->whereIn('uid', $ids)
                     ->delete()
                 ) {
                     return true;

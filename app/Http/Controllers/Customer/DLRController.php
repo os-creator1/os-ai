@@ -874,6 +874,18 @@
 
             $phone_number = $assignedMatches->count() === 1 ? $assignedMatches->first() : null;
 
+            // A customer-owned (BYO) sending server may only deliver inbound traffic for numbers that
+            // same customer owns. Its signature proves the server, not the receiving number: without
+            // this, tenant A's own Twilio account could inject messages into tenant B's inbox.
+            // Platform-owned servers (user_id 1 / null) stay allowed to receive for any assigned number.
+            if ($phone_number) {
+                $serverOwnerId = (int) ($sending_server->user_id ?? 0);
+
+                if ($serverOwnerId > 1 && $serverOwnerId !== (int) $phone_number->user_id) {
+                    $phone_number = null;
+                }
+            }
+
             if ($phone_number) {
                 $user_id = $phone_number->user_id;
                 $user    = User::find($user_id);
@@ -1100,7 +1112,7 @@ $chatBox->touch();
                     event(new MessageReceived($user, $message, $chatBox));
                     //  $user->notify(new \App\Notifications\MessageReceived($message, $to));
 
-                    if (isset($user->webhook_url)) {
+                    if (isset($user->webhook_url) && \App\Rules\PublicHttpsUrl::isSafe($user->webhook_url)) {
                         $countryName = Locale::getDisplayRegion('-' . $iso_code, 'en');
                         // Prepare data to send to the webhook
                         $webhookData = [
@@ -4267,7 +4279,7 @@ $chatBox->touch();
                 }
 
 
-                if (isset($user->webhook_url)) {
+                if (isset($user->webhook_url) && \App\Rules\PublicHttpsUrl::isSafe($user->webhook_url)) {
 
                     $to = str_replace(['(', ')', '+', '-', ' '], '', trim($to));
 

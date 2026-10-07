@@ -54,7 +54,7 @@ class ClientInvitationController extends Controller
         } catch (AgencyWorkspaceNotEligibleException) {
             return back()->with([
                 'status' => 'error',
-                'message' => 'This Agency Workspace cannot send client invitations right now.',
+                'message' => 'Your Agency account cannot send client invitations right now. Check that its plan is active in Plan & subscription.',
             ]);
         }
 

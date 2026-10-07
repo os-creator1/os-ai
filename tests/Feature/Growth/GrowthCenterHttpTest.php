@@ -307,7 +307,8 @@ class GrowthCenterHttpTest extends TestCase
 
         // the tab count is filtered first, aggregated second: it is what THIS actor can see
         preg_match('/data-role="tab-open-count">([0-9]+)</', $page->getContent(), $m);
-        $open = fn () => Opportunity::where('business_id', $this->business->id)->where('freshness', 'current')->where('status', 'open');
+        // Ad spend figures are Business-wide money data: a Location-restricted actor never sees the ads worker's findings.
+        $open = fn () => Opportunity::where('business_id', $this->business->id)->where('freshness', 'current')->where('status', 'open')->where('worker_key', '!=', 'ads');
         $visible = $open()->where(fn ($q) => $q->whereNull('location_id')->orWhere('location_id', $this->primaryLocation->id))->count();
 
         $this->assertSame($visible, (int) ($m[1] ?? 0), 'the count is what THIS actor can see');

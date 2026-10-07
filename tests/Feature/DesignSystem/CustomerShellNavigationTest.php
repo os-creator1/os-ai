@@ -111,7 +111,8 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertStringContainsString('id="customer-context-switcher-toggle"', $shell);
         $this->assertStringContainsString('aria-haspopup="menu"', $shell);
         $this->assertStringContainsString('aria-expanded="false"', $shell);
-        $this->assertStringContainsString('aria-label="Choose a client account"', $shell);
+        // In the Agency shell the switcher lists the owner's OWN Business, so that is what it says it chooses.
+        $this->assertStringContainsString('aria-label="Choose a business"', $shell);
         $this->assertStringContainsString('role="menu"', $shell);
         $this->assertStringContainsString('role="menuitem"', $shell);
         $this->assertStringContainsString('aria-labelledby="customer-context-switcher-toggle"', $shell);
@@ -126,7 +127,7 @@ class CustomerShellNavigationTest extends TestCase
 
         $this->switchTo($workspace, $clientOne);
         $selected = $this->shellHtml($this->home()->assertOk()->getContent());
-        $this->assertStringContainsString('aria-label="Current client account: Client One. Switch client account"', $selected);
+        $this->assertStringContainsString('aria-label="Current business: Client One. Switch business"', $selected);
         $this->assertSame(1, substr_count($selected, 'aria-current="true"'));
         $this->assertStringContainsString('Current', $selected);
     }

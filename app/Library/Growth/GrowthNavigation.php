@@ -21,6 +21,8 @@ final class GrowthNavigation
         'calendar' => 'customer.workspaces.businesses.calendar.index',
         'booking_types' => 'customer.workspaces.businesses.booking-types.index',
         'website' => 'customer.workspaces.businesses.website.index',
+        'ads' => 'customer.workspaces.businesses.ads.index',
+        'forms' => 'customer.workspaces.businesses.forms.index',
         'seo.keywords' => 'customer.workspaces.businesses.seo.keywords.index',
         'seo.content' => 'customer.workspaces.businesses.seo.content.plan',
         'seo.audit' => 'customer.workspaces.businesses.seo.audit.index',

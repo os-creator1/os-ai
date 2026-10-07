@@ -77,7 +77,8 @@ class SettingsHubNavigationTest extends TestCase
             $this->assertStringNotContainsString('Advisor', $this->shellText($html), 'Business Home carries the next best move; there is no separate Advisor module.');
 
             // The one expandable entry is the SEO group (its children are SEO's own pages).
-            $this->assertLessThanOrEqual(1, substr_count($sidebar, 'has-sub'), 'Nothing but the SEO group expands.');
+            // The SEO and Ads groups (Ads V1 added the second) are the only entries that expand.
+            $this->assertLessThanOrEqual(2, substr_count($sidebar, 'has-sub'), 'Nothing but the SEO and Ads groups expand.');
             $this->assertLessThanOrEqual(1, substr_count($sidebar, 'menu-content'));
             $this->assertStringNotContainsString('Messages', $this->shellText($html));
 
@@ -245,7 +246,7 @@ class SettingsHubNavigationTest extends TestCase
             ->assertRedirect($team);
     }
 
-    public function test_an_agency_assigns_client_access_from_its_team_page_and_its_overview_keeps_client_creation(): void
+    public function test_an_agency_assigns_client_access_from_its_team_page_and_its_overview_offers_no_second_business(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
@@ -260,7 +261,10 @@ class SettingsHubNavigationTest extends TestCase
         $this->assertStringNotContainsString('id="member-scope" name="business_access_scope"', $team, 'Nothing to choose between.');
 
         $overview = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
-        $this->assertStringContainsString('data-workspace-action="businesses"', $overview, 'Agency client creation remains.');
+        // An account holds ONE Business (Contract 13): clients are invited from Clients, never created here, so the
+        // overview of an Agency that already has its Business offers no Create Business form (it only ever ended in a
+        // duplicate-key 500).
+        $this->assertStringNotContainsString('data-workspace-action="businesses"', $overview, 'No second Business can be created from the Agency overview.');
         $this->assertStringNotContainsString('data-workspace-action="members"', $overview, 'Members live on Team, not twice.');
     }
 
@@ -276,7 +280,7 @@ class SettingsHubNavigationTest extends TestCase
 
         $home = $this->home()->assertOk()->getContent();
         $this->assertContains(route('customer.workspaces.settings.show', $workspace->uid), $this->menuLinks($home));
-        $this->assertLessThanOrEqual(1, substr_count($this->sidebarHtml($home), 'has-sub'), 'Nothing but the SEO group expands.');
+        $this->assertLessThanOrEqual(2, substr_count($this->sidebarHtml($home), 'has-sub'), 'Nothing but the SEO and Ads groups expand.');
 
         $html = $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent();
         $modules = $this->settingsHubModules($html);

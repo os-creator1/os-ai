@@ -31,7 +31,8 @@ class CustomerContextResolutionTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
 
-    private const BUSINESS_FRAME_KEYS = ['home', 'conversations', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'];
+    // Results is not a sidebar entry any more (Business Home's "See details" opens it), so `analytics` is not a menu key.
+    private const BUSINESS_FRAME_KEYS = ['home', 'conversations', 'contacts', 'automations', 'website', 'gbp', 'settings'];
 
     private const ACCOUNT_FRAME_ONLY_KEYS = ['accounts', 'prospecting'];
 
@@ -160,17 +161,27 @@ class CustomerContextResolutionTest extends TestCase
             $this->assertContains($expected, $accountSettings, "Agency account Settings must offer {$expected} (§8.3, §8.6).");
         }
 
-        foreach (['conversations', 'messages', 'inbox', 'send', 'contacts', 'campaigns', 'website', 'gbp', 'analytics', 'automations'] as $businessOnly) {
-            $this->assertNotContains($businessOnly, $keys, 'No Business entry before a client account is selected (§8.1).');
+        // Agency V1 final (Blueprint §28, docs/automation/AGENCY-SHELL-OWN-BUSINESS-V1.md): the Agency account
+        // frame carries the Agency's OWN Business modules beside the Agency group. Only the legacy outbound
+        // SMS entries stay out of the menu.
+        foreach (['conversations', 'contacts', 'website', 'automations', 'business-home'] as $ownBusiness) {
+            $this->assertContains($ownBusiness, $keys, 'The Agency owner keeps their own Business modules in the Agency frame.');
+        }
+
+        foreach (['messages', 'inbox', 'send', 'campaigns'] as $legacy) {
+            $this->assertNotContains($legacy, $keys, 'The legacy outbound SMS entries are not offered.');
         }
 
         $shell = $this->shellText($html);
-        $this->assertStringContainsString('Client accounts', $shell);
         $this->assertStringContainsString('Northwind Agency', $shell);
         $response->assertSee('id="customer-context-switcher-toggle"', false);
         $response->assertSee('Client One', false);
         $response->assertSee('Client Two', false);
-        $response->assertSee('View Client One as a client', false);
+        // The Businesses the switcher lists are the owner's OWN — never labelled as client accounts, and never
+        // offered "View as a client" (a managed client is reached through Clients → View As).
+        $this->assertStringContainsString('Your businesses', $shell);
+        $this->assertStringNotContainsString('Client accounts', $shell);
+        $response->assertDontSee('as a client', false);
 
         // Explicit selection enters the Business frame of that client.
         $this->switchTo($clientTwoWorkspace, $clientTwo)->assertRedirect(route('user.home'));
@@ -182,7 +193,8 @@ class CustomerContextResolutionTest extends TestCase
             $this->assertContains($expected, $afterKeys);
         }
 
-        $this->assertNotContains('accounts', $afterKeys);
+        // The Agency shell keeps its Clients entry in either frame (Blueprint §28); it is not an "account chooser" here.
+        $this->assertContains('accounts', $afterKeys);
         $this->assertStringContainsString('Client Two', $this->shellText($after->getContent()));
         $after->assertSee('aria-current="true"', false);
         $after->assertSee('All client accounts', false);
@@ -203,7 +215,7 @@ class CustomerContextResolutionTest extends TestCase
         $html = $response->getContent();
         $keys = $this->menuKeys($html);
 
-        $this->assertContains('analytics', $keys);
+        $this->assertContains('contacts', $keys);
         $this->assertContains('conversations', $keys);
         $response->assertSee('data-role="context-identity"', false);
         $response->assertDontSee('customer-context-switcher-toggle', false);
@@ -456,7 +468,8 @@ class CustomerContextResolutionTest extends TestCase
         $this->switchTo($clientTwoWorkspace, $clientTwo);
 
         $analytics = $this->get(route('customer.workspaces.businesses.analytics.overview', [$clientTwoWorkspace->uid, $clientTwo->uid]))->assertOk();
-        $this->assertSame(['analytics'], $this->activeMenuKeys($analytics->getContent()));
+        // Results opens from Business Home, which stays lit while the owner is on it.
+        $this->assertSame(['home'], $this->activeMenuKeys($analytics->getContent()));
         $this->assertNotContains('accounts', $this->menuKeys($analytics->getContent()));
         $this->assertSame(1, substr_count($this->sidebarHtml($analytics->getContent()), 'aria-current="page"'));
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Library\Growth;
 
+use App\Library\Growth\Rules\AdsRules;
 use App\Library\Growth\Rules\AutomationFailuresRule;
 use App\Library\Growth\Rules\BookingRules;
 use App\Library\Growth\Rules\CitationRules;
@@ -11,9 +12,12 @@ use App\Library\Growth\Rules\ConversationsAwaitingReplyRule;
 use App\Library\Growth\Rules\CrmStaleOpportunitiesRule;
 use App\Library\Growth\Rules\CrmUnansweredNewLeadsRule;
 use App\Library\Growth\Rules\DocumentRules;
+use App\Library\Growth\Rules\FormsQuietRule;
+use App\Library\Growth\Rules\RankRules;
 use App\Library\Growth\Rules\ReputationRules;
 use App\Library\Growth\Rules\SeoRules;
 use App\Library\Growth\Rules\WebsiteNotPublishedRule;
+use App\Library\Growth\Rules\WebsiteHiddenFromSearchRule;
 use App\Library\Growth\Rules\WebsitePackageOutOfSyncRule;
 
 /**
@@ -30,13 +34,8 @@ use App\Library\Growth\Rules\WebsitePackageOutOfSyncRule;
  * OpportunityActionRegistry read it through typeDefinitionsFor() /
  * actionDefinitions(), which keeps their own public API unchanged.
  *
- * DEFERRED (no canonical data — see the V1 doc, "Rules deferred"):
- *   seo.rank_just_outside_top_10       no rank observations
- *   seo.meaningful_rank_drop           no rank observations
- *   ads.zero_conversion_spend          no Google Ads module
- *   ads.cpl_above_target               no Google Ads module
- *   ads.budget_over_pacing             no Google Ads module
- *   ads.search_term_waste              no Google Ads module
+ * Rank and Ads rules read the SEO rank module's stored observations and the Ads modules' own
+ * recommendation facts; Search Console remains unavailable (no reader exists).
  */
 final class GrowthRuleRegistry
 {
@@ -68,6 +67,7 @@ final class GrowthRuleRegistry
             // Website / SEO / local presence
             new WebsiteNotPublishedRule(),
             new WebsitePackageOutOfSyncRule(),
+            new WebsiteHiddenFromSearchRule(),
             SeoRules::technical(),
             new SeoRules(),
             \App\Library\Growth\Rules\ContentRules::topicsNotCovered(),
@@ -79,6 +79,12 @@ final class GrowthRuleRegistry
             // Reviews
             new ReputationRules(),
             ReputationRules::noRecentRequests(),
+            // Rank tracking (stored observations)
+            ...RankRules::all(),
+            // Ads (Google + Meta, consumed from the Ads modules' own facts)
+            ...AdsRules::all(),
+            // Forms
+            new FormsQuietRule(),
             // Automations
             new AutomationFailuresRule(),
         ];

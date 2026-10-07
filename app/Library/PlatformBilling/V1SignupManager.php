@@ -5,6 +5,7 @@ namespace App\Library\PlatformBilling;
 use App\Exceptions\Entitlement\WorkspacePlanAlreadyAssignedException;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Business\BusinessManager;
+use App\Library\Business\OnboardingManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Customer;
@@ -54,6 +55,7 @@ final class V1SignupManager
         private readonly BusinessManager $businesses,
         private readonly PlatformSubscriptionManager $subscriptions,
         private readonly WorkspacePlanAssignmentRepository $assignments,
+        private readonly OnboardingManager $onboarding,
     ) {
     }
 
@@ -229,45 +231,59 @@ final class V1SignupManager
             return false;
         }
 
-        // THE CANONICAL ASSIGNMENT MUST EXIST BEFORE THE BUSINESS IS
-        // ACTIVATED. workspace_plan_assignments is the V1 entitlement/access
-        // authority (RFC-004 §14); a provider-confirmed subscription is
-        // reason to WRITE that authority, never reason to expose an Active
-        // Business on the strength of provider confirmation alone. Activating
-        // first and assigning second could leave an Active Business with no
-        // assignment behind it if the assignment write then threw — a worse,
-        // silently-inconsistent account than the Draft this fixes. So the
-        // assignment is attempted first, and an unexpected failure here
-        // propagates uncaught, leaving the Business Draft exactly as it was.
-        if ($this->assignments->findByWorkspaceId((int) $workspace->id) === null) {
-            try {
-                $this->subscriptions->assignPlanFromConfirmedSubscription(
-                    $workspace,
-                    $subscription,
-                    $catalog->tier,
-                    (int) $workspace->owner_user_id,
-                );
-            } catch (WorkspacePlanAlreadyAssignedException) {
-                // The other path won the race. One assignment, which is the point.
-            }
+        if ($this->assignments->findByWorkspaceId((int) $workspace->id) !== null) {
+            // Already assigned by an earlier call. Still hand off, so a
+            // hand-off that failed after the assignment is repaired by the
+            // next confirmation instead of stranding a paid account.
+            $this->handOffToOnboarding($workspace);
+
+            return true;
         }
 
-        // Only reached once the assignment is known to exist — either just
-        // written above, or already present from an earlier call. The
-        // Business this same provisioning step created (Contract 21 §7's
-        // "one Business per Workspace") has been sitting Draft since
-        // provision() — nothing else in the product ever activates a
-        // self-signup Business. Run every time this seam does, not only on a
-        // freshly-made assignment, so a re-delivered webhook or a repeated
-        // Checkout-return visit also repairs an account this defect left
-        // stuck before the fix.
-        $business = Business::query()->where('workspace_id', $workspace->id)->first();
-
-        if ($business !== null) {
-            $this->businesses->activateForConfirmedSignup($business);
+        try {
+            $this->subscriptions->assignPlanFromConfirmedSubscription(
+                $workspace,
+                $subscription,
+                $catalog->tier,
+                (int) $workspace->owner_user_id,
+            );
+        } catch (WorkspacePlanAlreadyAssignedException) {
+            // The other path won the race. One assignment, which is the point.
         }
+
+        $this->handOffToOnboarding($workspace);
 
         return true;
+    }
+
+    /**
+     * Step 4 — the signup's Business becomes the onboarding's Business.
+     *
+     * Provisioning already created the Workspace's one Draft Business and its
+     * initial Location before payment. Onboarding must CONTINUE that Business,
+     * never create another (one Business per Workspace), so once the provider
+     * has confirmed payment the customer's onboarding row is started and
+     * attached to it. Done here, in the one activation seam, and not at
+     * provisioning: a signup that never pays has no onboarding row and cannot
+     * be sent into the wizard instead of back to payment.
+     *
+     * Idempotent (see OnboardingManager::startForProvisionedBusiness()). A
+     * failure here is reported but never undoes the paid subscription; the
+     * wizard also adopts the Draft Business on its Business step, so the
+     * account is recoverable either way.
+     */
+    private function handOffToOnboarding(Workspace $workspace): void
+    {
+        try {
+            $customer = Customer::query()->where('user_id', $workspace->owner_user_id)->first();
+            $business = Business::query()->where('workspace_id', $workspace->id)->first();
+
+            if ($customer !== null && $business !== null) {
+                $this->onboarding->startForProvisionedBusiness($customer, $business);
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /**

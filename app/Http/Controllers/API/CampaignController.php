@@ -468,6 +468,8 @@
          */
         public function viewCampaign(Campaigns $uid): JsonResponse
         {
+            // $uid is bound by uid with no tenant scope: never describe another tenant's campaign.
+            abort_unless((int) $uid->user_id === (int) request()->user()?->id, 404);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([

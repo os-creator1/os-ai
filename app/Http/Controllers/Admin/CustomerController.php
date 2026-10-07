@@ -345,6 +345,8 @@
          */
         public function updateAvatar(User $customer, UpdateAvatarRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -414,8 +416,22 @@
         /**
          * update customer basic account information
          */
+        /**
+         * Platform admins (incl. the super admin) may only be touched by the super admin; every
+         * mutating action on a User must pass through here, not just show/activeToggle.
+         */
+        private function mayMutateAccount(User $customer): void
+        {
+            $actor = auth()->user();
+
+            abort_if($customer->is_super_admin && ! $actor->is_super_admin, 403);
+            abort_if($customer->is_admin && (int) $actor->id !== 1, 403);
+        }
+
         public function update(User $customer, UpdateCustomerRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -436,6 +452,8 @@
          */
         public function updateInformation(User $customer, UpdateInformationRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -456,6 +474,8 @@
          */
         public function permissions(User $customer, PermissionRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -602,6 +622,8 @@
             }
 
             $this->authorize('delete customer');
+
+            $this->mayMutateAccount($customer);
 
             if ($customer->is_super_admin) {
                 return response()->json([

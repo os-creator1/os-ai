@@ -330,6 +330,9 @@
 
             $this->authorize('buy_numbers');
 
+            // Only an unassigned number (or one the actor already holds, e.g. renewal) may be bought.
+            abort_unless($number->status === 'available' || (int) $number->user_id === (int) Auth::id(), 404);
+
             $pageConfigs = [
                 'bodyClass' => 'ecommerce-application',
             ];
@@ -409,6 +412,7 @@
          */
         public function payment(PhoneNumbers $number, PayPaymentRequest $request)
         {
+            abort_unless($number->status === 'available' || (int) $number->user_id === (int) Auth::id(), 404);
 
             $data = $this->numbers->payPayment($number, $request->except('_token'));
 

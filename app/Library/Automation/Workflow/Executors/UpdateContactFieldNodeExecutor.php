@@ -12,6 +12,8 @@ use App\Models\Business;
 use App\Models\ContactGroupFields;
 use App\Models\Contacts;
 use App\Models\ContactsCustomField;
+use App\Models\CustomFieldDefinition;
+use App\Library\CustomFields\CustomFieldValueService;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -67,6 +69,10 @@ class UpdateContactFieldNodeExecutor implements NodeExecutor
 
         $config = is_array($node->config) ? $node->config : [];
 
+        if ($this->positiveInt($config['custom_field_id'] ?? null) !== null) {
+            return $this->writeBusinessField($business, $contact, $config);
+        }
+
         $fieldId = $this->positiveInt($config['field_id'] ?? null);
         $value = array_key_exists('value', $config) && is_string($config['value'])
             ? $config['value']
@@ -110,6 +116,45 @@ class UpdateContactFieldNodeExecutor implements NodeExecutor
         }
 
         return NodeExecutionOutcome::succeeded('Updated field "' . $field->label . '"');
+    }
+
+    /**
+     * The canonical path: a Business custom field written through the one canonical writer
+     * (CustomFieldValueService), so the value is exactly what Forms, the Contact page and
+     * merge fields read. The definition is re-derived from real rows now — it must still be
+     * an active Contact field of THIS Business — and the value is validated by the field's
+     * own type; a value the type refuses is a skip, never a partial write. Setting a value
+     * to its configured value is idempotent, like the legacy path.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function writeBusinessField(Business $business, Contacts $contact, array $config): NodeExecutionOutcome
+    {
+        $value = is_string($config['value'] ?? null) ? mb_substr($config['value'], 0, self::MAX_VALUE_LENGTH) : null;
+
+        if ($value === null) {
+            return NodeExecutionOutcome::skipped('field_config_invalid');
+        }
+
+        $definition = CustomFieldDefinition::query()
+            ->where('business_id', $business->id)
+            ->where('entity', CustomFieldDefinition::ENTITY_CONTACT)
+            ->where('id', $this->positiveInt($config['custom_field_id']))
+            ->first();
+
+        if ($definition === null || $definition->isArchived()) {
+            return NodeExecutionOutcome::skipped('field_not_in_contact_business');
+        }
+
+        try {
+            $result = app(CustomFieldValueService::class)->applyAnswer($business, $contact, $definition, $value);
+        } catch (Throwable $exception) {
+            return NodeExecutionOutcome::failed('field_write_exception: ' . class_basename($exception));
+        }
+
+        return $result === CustomFieldValueService::APPLIED
+            ? NodeExecutionOutcome::succeeded('Updated field "' . $definition->label . '"')
+            : NodeExecutionOutcome::skipped('field_value_invalid');
     }
 
     private function positiveInt(mixed $value): ?int

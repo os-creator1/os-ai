@@ -359,12 +359,8 @@
 
             $user = Auth::user();
 
-            if ($status == 'disabled') {
-                $user->update([
-                    'two_factor' => false,
-                ]);
-            }
-
+            // Disabling is only ever done by the code-verified POST (updateTwoFactorAuthentication);
+            // a bare GET must never switch 2FA off.
             if ($user->two_factor_code == null && $user->two_factor_expires_at == null) {
                 $user->generateTwoFactorCode();
                 $user->notify(new TwoFactorCode(route('user.account.twofactor.auth', ['status' => $status])));
@@ -893,8 +889,19 @@
         /**
          * @throws Exception
          */
+        /**
+         * Legacy registration-payment return URLs name the user in the path; they may only ever
+         * act on the signed-in actor themselves, never on a user id supplied by the caller.
+         */
+        private function actorMustBe(?User $user): void
+        {
+            abort_unless($user !== null && Auth::check() && (int) Auth::id() === (int) $user->id, 404);
+        }
+
         public function successfulRegisterPayment(User $user, Plan $plan, PaymentMethods $payment_method, Request $request): RedirectResponse
         {
+            $this->actorMustBe($user);
+
             $price = Session::get('price');
             if ($price == null) {
                 $price = $plan->price;
@@ -3171,6 +3178,8 @@ POSTXML;
 
         public function cancelledRegisterPayment(User $user): RedirectResponse
         {
+            $this->actorMustBe($user);
+
             $user->delete();
 
             return redirect()->route('register')->with([
@@ -3184,6 +3193,7 @@ POSTXML;
 
             $plan = Plan::where('uid', $request->plan)->first();
             $user = User::where('uid', $request->user)->first();
+            $this->actorMustBe($user);
 
             if ( ! $plan) {
                 return redirect()->route('user.home')->with([
@@ -3322,6 +3332,7 @@ POSTXML;
 
         public function authorizeNetRegister(User $user, Request $request): RedirectResponse
         {
+            $this->actorMustBe($user);
 
             $plan = Plan::where('uid', $request->plan)->first();
 
@@ -3784,6 +3795,7 @@ POSTXML;
 
         public function vodacommpesaRegister(User $user, Request $request): RedirectResponse
         {
+            $this->actorMustBe($user);
 
             $plan = Plan::where('uid', $request->plan)->first();
 

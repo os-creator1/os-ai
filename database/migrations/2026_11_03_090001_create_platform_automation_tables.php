@@ -116,42 +116,47 @@ return new class extends Migration
             $table->foreign('run_id', 'pas_run_foreign')->references('id')->on('platform_automation_runs')->cascadeOnDelete();
         });
 
-        Schema::create('platform_announcements', function (Blueprint $table): void {
-            $table->id();
-            $table->uuid('uid')->unique();
-            $table->string('title', 160);
-            $table->text('body');
-            $table->string('severity', 12)->default('info'); // info|success|warning|critical
-            $table->json('channels'); // subset of banner|notification|email
-            $table->json('audience'); // {"kind": "everyone|workspace_owners|business_owners|tier|trial|workspaces|businesses", ...}
-            $table->string('status', 16)->default('draft'); // draft|scheduled|published|expired|cancelled
-            $table->timestamp('publish_at')->nullable();
-            $table->timestamp('expires_at')->nullable();
-            $table->timestamp('published_at')->nullable();
-            $table->unsignedInteger('recipients_total')->default(0);
-            $table->unsignedInteger('recipients_done')->default(0);
-            $table->unsignedBigInteger('created_by_user_id')->nullable();
-            $table->unsignedBigInteger('source_run_id')->nullable(); // set when an automation raised it
-            $table->timestamps();
+        if (! Schema::hasTable('platform_announcements')) {
+            Schema::create('platform_announcements', function (Blueprint $table): void {
+                $table->id();
+                $table->uuid('uid')->unique();
+                $table->string('title', 160);
+                $table->text('body');
+                $table->string('severity', 12)->default('info'); // info|success|warning|critical
+                $table->json('channels'); // subset of banner|notification|email
+                $table->json('audience'); // {"kind": "everyone|workspace_owners|business_owners|tier|trial|workspaces|businesses", ...}
+                $table->string('status', 16)->default('draft'); // draft|scheduled|published|expired|cancelled
+                $table->timestamp('publish_at')->nullable();
+                $table->timestamp('expires_at')->nullable();
+                $table->timestamp('published_at')->nullable();
+                $table->unsignedInteger('recipients_total')->default(0);
+                $table->unsignedInteger('recipients_done')->default(0);
+                $table->string('delivery_ref', 64)->nullable(); // opaque reference the delivery runtime returns
+                $table->unsignedBigInteger('created_by_user_id')->nullable();
+                $table->unsignedBigInteger('source_run_id')->nullable(); // set when an automation raised it
+                $table->timestamps();
 
-            $table->index(['status', 'publish_at'], 'pann_status_publish_index');
-            $table->foreign('created_by_user_id', 'pann_created_by_foreign')->references('id')->on('users')->nullOnDelete();
-        });
+                $table->index(['status', 'publish_at'], 'pann_status_publish_index');
+                $table->foreign('created_by_user_id', 'pann_created_by_foreign')->references('id')->on('users')->nullOnDelete();
+            });
+        }
 
-        Schema::create('platform_announcement_receipts', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('announcement_id');
-            $table->unsignedBigInteger('user_id');
-            $table->string('channel', 16); // banner|notification|email
-            $table->timestamp('delivered_at')->nullable();
-            $table->timestamp('dismissed_at')->nullable();
-            $table->timestamps();
+        if (! Schema::hasTable('platform_announcement_receipts')) {
+            Schema::create('platform_announcement_receipts', function (Blueprint $table): void {
+                $table->id();
+                $table->unsignedBigInteger('announcement_id');
+                $table->unsignedBigInteger('user_id');
+                $table->string('channel', 16); // banner|notification|email
+                $table->timestamp('delivered_at')->nullable();
+                $table->timestamp('dismissed_at')->nullable();
+                $table->timestamps();
 
-            $table->unique(['announcement_id', 'user_id', 'channel'], 'parc_unique');
-            $table->index(['user_id', 'channel'], 'parc_user_channel_index');
-            $table->foreign('announcement_id', 'parc_announcement_foreign')->references('id')->on('platform_announcements')->cascadeOnDelete();
-            $table->foreign('user_id', 'parc_user_foreign')->references('id')->on('users')->cascadeOnDelete();
-        });
+                $table->unique(['announcement_id', 'user_id', 'channel'], 'parc_unique');
+                $table->index(['user_id', 'channel'], 'parc_user_channel_index');
+                $table->foreign('announcement_id', 'parc_announcement_foreign')->references('id')->on('platform_announcements')->cascadeOnDelete();
+                $table->foreign('user_id', 'parc_user_foreign')->references('id')->on('users')->cascadeOnDelete();
+            });
+        }
 
         Schema::create('platform_account_notes', function (Blueprint $table): void {
             $table->id();

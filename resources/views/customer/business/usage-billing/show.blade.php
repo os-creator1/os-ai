@@ -143,6 +143,9 @@
                     @elseif (! $responsibility['is_agency'])
                         <p class="mb-1 fw-bolder" data-role="responsibility-statement">{{ __('locale.usage_billing.responsibility.you_pay') }}</p>
                         <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.you_pay_help') }}</p>
+                    @elseif ($ownsAgencyBusiness && $responsibility['payer_type'] === 'workspace')
+                        <p class="mb-1 fw-bolder" data-role="responsibility-statement">{{ __('locale.usage_billing.responsibility.agency_own_pays') }}</p>
+                        <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.agency_own_pays_help') }}</p>
                     @elseif ($responsibility['payer_type'] === 'workspace')
                         <p class="mb-1 fw-bolder" data-role="responsibility-statement">{{ __('locale.usage_billing.responsibility.agency_pays') }}</p>
                         <p class="text-caption mb-1">{{ __('locale.usage_billing.responsibility.agency_pays_help') }}</p>

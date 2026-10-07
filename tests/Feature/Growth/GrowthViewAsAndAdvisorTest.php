@@ -255,7 +255,7 @@ class GrowthViewAsAndAdvisorTest extends TestCase
         $this->ask('wasting_money');
         $this->get(route('customer.workspaces.businesses.growth.advisor', [$this->workspace->uid, $this->business->uid]))
             ->assertSee('Ad spend is not connected to Business OS yet')
-            ->assertSee('Google Ads');   // listed among the modules this answer could not use
+            ->assertSee('Search Console');   // listed among the modules this answer could not use
     }
 
     public function test_asking_requires_the_advisor_capability_and_a_post(): void
@@ -286,7 +286,8 @@ class GrowthViewAsAndAdvisorTest extends TestCase
 
     public function test_growth_code_never_references_a_paid_provider(): void
     {
-        $forbidden = ['DataForSeo', 'dataforseo', 'GoogleAds', 'SearchConsole', 'GoogleBusinessProfileClient', 'Http::', 'Guzzle'];
+        // Growth reads cached module facts only: no provider CLIENT, transport or HTTP call may appear.
+        $forbidden = ['DataForSeo', 'dataforseo', 'SearchConsole', 'GoogleBusinessProfileClient', 'Http::', 'Guzzle', 'ReadClient', 'MutationClient', 'AuthClient', 'GraphTransport', 'GoogleAdsHttp', 'FakeGoogleAdsClient', 'FakeMetaClient', 'GoogleAdsSyncCoordinator', 'SyncRequester', 'SyncDispatcher'];
         $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(app_path('Library/Growth'), \FilesystemIterator::SKIP_DOTS));
 
         foreach ($files as $file) {

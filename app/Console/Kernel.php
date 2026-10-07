@@ -203,6 +203,13 @@
             // overlapping tick applies nothing twice.
             $schedule->command('platform-subscriptions:apply-due-plan-changes')->hourly();
 
+            // Customer Experience Slice 5 §12.2 — "alerts before thresholds".
+            // The command was built (and tested) but nothing ever ran it, so
+            // no billing contact was ever warned before a spending limit was
+            // reached. The once-per-period marker lives in UsageWalletManager,
+            // so an overlapping or repeated tick notifies nobody twice.
+            $schedule->command('usage:spending-threshold-alerts')->hourly()->withoutOverlapping();
+
             // Lane C §C7 — the same sweep for AGENCY SaaS client downgrades,
             // on the agencies' own connected accounts. Deliberately a separate
             // command from lane A's above: different money, different accounts,

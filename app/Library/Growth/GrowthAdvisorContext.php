@@ -21,12 +21,12 @@ use App\Models\Opportunity;
  *   - the stored "what changed" and "what's working" lines
  *   - which modules are unavailable, so the answer says so instead of guessing
  *
- * PROVIDER-DATA POLICY. Facts that originate in Google Ads, Search Console,
- * Google Business Profile or a rank provider are NEVER included, today or
- * after those modules merge: their domains are listed in AI_FORBIDDEN_DOMAINS
- * and any Opportunity whose rule reads one is dropped here, before the AI
- * sees anything. (Those domains are not on main today; the filter is the
- * standing guarantee that merging them cannot widen what the AI receives.)
+ * PROVIDER-DATA POLICY. The AI only ever receives the NORMALIZED, closed evidence of a stored
+ * Opportunity (counts, figures, fixed copy) — never a provider payload, a campaign or keyword name,
+ * an account id or a token. Search Console and Google Business Profile domains stay excluded
+ * (AI_FORBIDDEN_DOMAINS): any Opportunity whose rule reads one is dropped here, before the AI sees
+ * anything. Ads and rank figures are included as the same normalized numbers every other rule
+ * contributes; the AI can explain and prioritise them but has no way to act on them.
  *
  * It also carries the set of numbers it exposed, so the AI's reply can be
  * checked: a figure the AI wrote that is not in this set is a hallucination and
@@ -37,7 +37,7 @@ final class GrowthAdvisorContext
     public const MAX_OPPORTUNITIES = 12;
 
     /** Fact domains whose data must never be sent to an AI. */
-    public const AI_FORBIDDEN_DOMAINS = ['ads', 'search_console', 'gbp', 'rank'];
+    public const AI_FORBIDDEN_DOMAINS = ['search_console', 'gbp'];
 
     /**
      * @param  array<string, mixed>  $data  the structured digest
