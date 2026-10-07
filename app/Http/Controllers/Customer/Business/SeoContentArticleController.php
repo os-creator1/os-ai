@@ -105,7 +105,8 @@ class SeoContentArticleController extends CustomerBaseController
 
         abort_if($website === null, 404);
 
-        return app(WebsiteBlogRenderer::class)->renderArticlePreview($website, $article);
+        // The owner previews what they are editing: the pending draft of a published article, never just the live one.
+        return app(WebsiteBlogRenderer::class)->renderArticlePreview($website, $article->effective());
     }
 
     /** The transparent checklist for the SAVED article, as JSON (the editor's "Re-check" button). */
@@ -117,7 +118,7 @@ class SeoContentArticleController extends CustomerBaseController
 
         $article = $this->articleOr404($business, $articleUid);
 
-        return response()->json($this->analysisFor($business, $article));
+        return response()->json($this->analysisFor($business, $article->effective()));
     }
 
     /** A safe, display-only Markdown preview of the text being typed. Nothing is stored. */
@@ -171,8 +172,15 @@ class SeoContentArticleController extends CustomerBaseController
         }
 
         return $this->toEditor($workspaceUid, $businessUid, $article, $article->isPublished()
-            ? 'Saved. Changes to a published article are live straight away.'
+            ? 'Draft saved. Your live article is unchanged until you publish the update.'
             : 'Saved.');
+    }
+
+    /** Throws away a published article's pending draft. The live article was never touched. */
+    public function discard(string $workspaceUid, string $businessUid, string $articleUid): RedirectResponse
+    {
+        return $this->lifecycle($workspaceUid, $businessUid, $articleUid, 'Draft changes discarded. Your live article is as it was.',
+            fn (int $actor, Business $business, WebsiteArticle $article) => $this->articles->discardDraft($actor, $business, $article));
     }
 
     public function publish(Request $request, string $workspaceUid, string $businessUid, string $articleUid): RedirectResponse
@@ -196,6 +204,7 @@ class SeoContentArticleController extends CustomerBaseController
         }
 
         return $this->toEditor($workspaceUid, $businessUid, $article, 'Published. Your article is on your website.');
+        // (Publishing an already-live article is "Publish update": the pending draft replaces the public version.)
     }
 
     public function schedule(Request $request, string $workspaceUid, string $businessUid, string $articleUid): RedirectResponse
@@ -440,6 +449,10 @@ class SeoContentArticleController extends CustomerBaseController
     /** @return array<string, mixed> */
     private function editorData(string $workspaceUid, string $businessUid, Business $business, ?WebsiteArticle $article): array
     {
+        $hasPendingDraft = $article?->hasPendingDraft() ?? false;
+        // Everything the owner sees in the editor is the pending draft laid over the live article.
+        $article = $article?->effective();
+
         $website = $this->websiteOf($business);
         $pages = $this->inventory->pages($business);
 
@@ -471,6 +484,7 @@ class SeoContentArticleController extends CustomerBaseController
             'businessUid' => $businessUid,
             'business' => $business,
             'article' => $article,
+            'hasPendingDraft' => $hasPendingDraft,
             'pages' => $pages,
             'assets' => $assets->map(fn (WebsiteAsset $a) => [
                 'uid' => $a->uid,

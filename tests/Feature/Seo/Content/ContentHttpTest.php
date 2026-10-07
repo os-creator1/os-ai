@@ -193,6 +193,8 @@ class ContentHttpTest extends TestCase
         $old = $article->slug;
 
         $this->post($this->url($t, 'articles.update', [$article->uid]), $this->formFor(['slug' => 'booth-space-guide']))->assertRedirect();
+        $this->get('http://' . self::DOMAIN . '/blog/' . $old)->assertOk(); // still the live address: Save changed nothing public
+        $this->post($this->url($t, 'articles.publish', [$article->uid]), $this->formFor(['slug' => 'booth-space-guide']))->assertRedirect();
 
         $this->assertSame('booth-space-guide', $article->fresh()->slug);
         $this->get('http://' . self::DOMAIN . '/blog/' . $old)->assertStatus(301);

@@ -1334,6 +1334,7 @@
                 Route::post('/articles/{articleUid}/publish', 'Business\SeoContentArticleController@publish')->middleware('throttle:30,1')->name('articles.publish');
                 Route::post('/articles/{articleUid}/schedule', 'Business\SeoContentArticleController@schedule')->middleware('throttle:30,1')->name('articles.schedule');
                 Route::post('/articles/{articleUid}/draft', 'Business\SeoContentArticleController@draft')->middleware('throttle:30,1')->name('articles.draft');
+                Route::post('/articles/{articleUid}/discard', 'Business\SeoContentArticleController@discard')->middleware('throttle:30,1')->name('articles.discard');
                 Route::post('/articles/{articleUid}/archive', 'Business\SeoContentArticleController@archive')->middleware('throttle:30,1')->name('articles.archive');
                 Route::post('/articles/{articleUid}/restore', 'Business\SeoContentArticleController@restore')->middleware('throttle:30,1')->name('articles.restore');
                 Route::post('/articles/{articleUid}/reviewed', 'Business\SeoContentArticleController@reviewed')->middleware('throttle:30,1')->name('articles.reviewed');

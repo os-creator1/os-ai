@@ -165,6 +165,7 @@ class ArticleManagerTest extends TestCase
         $published = $this->manager()->publish($actor, $business, $a);
         $old = $published->slug;
         $this->manager()->update($actor, $business, $published, ['slug' => 'space-for-a-booth']);
+        $this->manager()->publish($actor, $business, $published->fresh());
         $this->assertTrue(ArticleSlugger::isTaken($website->id, $old), 'the retired slug stays reserved');
 
         try {
@@ -175,7 +176,8 @@ class ArticleManagerTest extends TestCase
         }
 
         // It can go back to its own old slug.
-        $back = $this->manager()->update($actor, $business, $published->fresh(), ['slug' => $old]);
+        $this->manager()->update($actor, $business, $published->fresh(), ['slug' => $old]);
+        $back = $this->manager()->publish($actor, $business, $published->fresh());
         $this->assertSame($old, $back->slug);
         $this->assertFalse(ArticleSlugger::isTaken($website->id, $old, $back->id));
     }
@@ -227,13 +229,16 @@ class ArticleManagerTest extends TestCase
         $when = $published->published_at;
 
         $this->travel(3)->days();
-        $edited = $this->manager()->update($this->actor($business), $business, $published, ['body' => $this->goodBody() . "\nOne more useful paragraph for readers."]);
+        $actor = $this->actor($business);
+        $this->manager()->update($actor, $business, $published, ['body' => $this->goodBody() . "\nOne more useful paragraph for readers."]);
+        $edited = $this->manager()->publish($actor, $business, $published->fresh());
 
         $this->assertTrue($edited->published_at->equalTo($when));
         $this->assertTrue($edited->dateModified()->greaterThan($when));
 
         $this->travel(1)->days();
-        $reviewed = $this->manager()->update($this->actor($business), $business, $edited, ['noindex' => true]);
+        $this->manager()->update($actor, $business, $edited, ['noindex' => true]);
+        $reviewed = $this->manager()->publish($actor, $business, $edited->fresh());
         $this->assertTrue($reviewed->dateModified()->equalTo($edited->dateModified()), 'a settings change is not a content edit');
     }
 
@@ -287,7 +292,8 @@ class ArticleManagerTest extends TestCase
         $published = $this->publishedArticle($business, ['title' => 'Published one about booths', 'primary_topic' => 'published booths']);
         $this->assertTrue($analyzer->indexability($published)[0]);
 
-        $hidden = $this->manager()->update($this->actor($business), $business, $published, ['noindex' => true]);
+        $this->manager()->update($this->actor($business), $business, $published, ['noindex' => true]);
+        $hidden = $this->manager()->publish($this->actor($business), $business, $published->fresh());
         $this->assertFalse($analyzer->indexability($hidden)[0]);
 
         $website->domains()->delete();

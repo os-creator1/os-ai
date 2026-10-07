@@ -27,8 +27,10 @@ blog is many small documents each published, scheduled and archived on its own. 
 whole-site republish would put posts in revision history, bloat every snapshot and let a rollback silently
 unpublish posts. So an article is its own publication record, **rendered by the one Website renderer**. The published
 Website revision still decides whether the site is live at all and supplies navigation, brand and the pages an
-article may link to. Tradeoff accepted: edits to a *published* article are live immediately (the editor says so),
-unlike page edits which need a publish.
+article may link to. Editing a *published* article never changes the public page: Save writes a pending draft (website_articles.draft_payload,
+validated like any edit) that Preview shows, and **Publish update** deliberately replaces the live version (an old slug
+leaves its redirect only then). Discard removes the draft; Archive stays an explicit action. One pending draft per article,
+not a revision history.
 
 ## 2. Model
 
@@ -63,7 +65,7 @@ plain text — never a dead or stale link, never a Preview URL.
 - Custom domain: `/blog`, `/blog/{slug}` (`ResolveCustomDomainWebsite`). Platform path: `/sites/{public_id}/blog`,
   `/blog/{slug}` (`Public\WebsiteBlogController`). Both call `WebsiteBlogRenderer`. `blog` is a reserved page slug.
 - Only `Published` articles are ever loaded by a public path (`WebsiteArticle::published()`).
-- **Indexable** = custom domain surface AND site open to search AND article not `noindex` AND published. The platform
+- **Indexable** = custom domain surface AND site released for search (the Website's own state: its published Home page is not `noindex`, which is what the owner's 'Let search engines find these pages' release produces; there is no second switch) AND article not `noindex` AND published. The platform
   path and Preview are always noindex; an owner `noindex` can only narrow indexing.
 - Canonical always points at the Website's Active primary custom domain (`WebsiteBlogSurface`); none without one.
 - Social: `og:type=article`, published/modified times, featured image via `WebsiteSocialMetadata::forArticle`.

@@ -62,6 +62,13 @@
         <x-alert variant="danger" class="mb-2" data-role="editor-errors">{{ $errors->first() }}</x-alert>
     @endif
 
+    @if($published)
+        <x-alert variant="neutral" class="mb-2" data-role="published-notice">
+            This article is live. Saving here only saves a <strong>draft of your changes</strong>; your live article stays exactly as it is until you press <strong>Publish update</strong>.
+            @if($hasPendingDraft) <strong>You have unpublished draft changes.</strong> @endif
+        </x-alert>
+    @endif
+
     @if($article?->ai_generated && $status === 'draft')
         <x-alert variant="warning" class="mb-2" data-role="ai-notice">This draft was written by AI from your services, packages and prices. Read all of it, correct anything that is not true for your business, then publish when you are happy. It is not published automatically.</x-alert>
     @endif
@@ -181,7 +188,7 @@
                 </x-card>
 
                 <div class="d-flex flex-wrap gap-50" data-role="editor-actions">
-                    <button class="btn btn-primary" type="submit" data-role="save-draft">{{ $published ? 'Save changes' : 'Save draft' }}</button>
+                    <button class="btn btn-primary" type="submit" data-role="save-draft">{{ $published ? 'Save draft changes' : 'Save draft' }}</button>
                     @if($article)
                         <a class="btn btn-outline-primary" href="{{ $route('articles.preview', [$article->uid]) }}" target="_blank" rel="noopener" data-role="preview">Preview</a>
                     @endif
@@ -228,7 +235,13 @@
                         @endif
 
                         @if($published)
-                            <p class="text-caption mb-1">Published {{ $article->published_at?->copy()->setTimezone($timezone)->format('M j, Y g:i A') }}. Edits are live as soon as you save them.</p>
+                            <p class="text-caption mb-1">Published {{ $article->published_at?->copy()->setTimezone($timezone)->format('M j, Y g:i A') }}. The live article changes only when you publish an update.</p>
+                            <button class="btn btn-success w-100 mb-1" type="submit" form="article-form" formaction="{{ $route('articles.publish', [$article->uid]) }}" data-role="publish-update">Publish update</button>
+                            @if($hasPendingDraft)
+                                <form method="POST" action="{{ $route('articles.discard', [$article->uid]) }}" class="mb-1">@csrf
+                                    <button class="btn btn-outline-secondary w-100" type="submit" data-role="discard-draft">Discard draft changes</button>
+                                </form>
+                            @endif
                             <form method="POST" action="{{ $route('articles.reviewed', [$article->uid]) }}" class="mb-1">@csrf
                                 <button class="btn btn-outline-secondary w-100" type="submit" data-role="mark-reviewed">Mark as reviewed</button>
                             </form>

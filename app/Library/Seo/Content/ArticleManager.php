@@ -91,6 +91,12 @@ final class ArticleManager
         return DB::transaction(function () use ($actorId, $business, $website, $article, $attributes) {
             $article = $this->locked($business, $article);
 
+            // A PUBLISHED article is never changed by Save: edits go to its pending draft, and the public page
+            // stays exactly as it is until publish() ("Publish update") deliberately replaces it.
+            if ($article->status === ArticleStatus::Published) {
+                return $this->saveDraftChanges($actorId, $business, $website, $article, $attributes);
+            }
+
             $before = [$article->title, $article->body, $article->excerpt];
 
             if (array_key_exists('slug', $attributes)) {
@@ -123,7 +129,12 @@ final class ArticleManager
             $article = $this->locked($business, $article);
 
             $this->assertTransition($article, ArticleStatus::Published);
-            $this->assertReady($business, $article, $acknowledgeOverlap);
+            // The readiness checks judge what WILL be live: the pending draft laid over the article.
+            $this->assertReady($business, $article->effective(), $acknowledgeOverlap);
+
+            if ($article->status === ArticleStatus::Published && $article->hasPendingDraft()) {
+                $this->applyPendingDraft($business, $article);
+            }
 
             $article->status = ArticleStatus::Published;
             $article->published_at ??= now();
@@ -157,6 +168,20 @@ final class ArticleManager
         });
     }
 
+    /** Throws away a published article's pending draft; the live article was never touched. */
+    public function discardDraft(int $actorId, Business $business, WebsiteArticle $article): WebsiteArticle
+    {
+        return DB::transaction(function () use ($actorId, $business, $article) {
+            $article = $this->locked($business, $article);
+            $article->draft_payload = null;
+            $article->draft_saved_at = null;
+            $article->updated_by_user_id = $actorId;
+            $article->save();
+
+            return $article;
+        });
+    }
+
     /** Scheduled or Archived back to Draft. */
     public function backToDraft(int $actorId, Business $business, WebsiteArticle $article): WebsiteArticle
     {
@@ -183,6 +208,8 @@ final class ArticleManager
             $this->assertTransition($article, ArticleStatus::Archived);
 
             $article->status = ArticleStatus::Archived;
+            $article->draft_payload = null;
+            $article->draft_saved_at = null;
             $article->scheduled_at = null;
             $article->archived_at = now();
             $article->updated_by_user_id = $actorId;
@@ -250,6 +277,69 @@ final class ArticleManager
         $article->save();
 
         return $article;
+    }
+
+    /** Fields a pending draft may hold (everything the editor can change, plus what is derived from it). */
+    private const DRAFTABLE = [
+        'title', 'slug', 'excerpt', 'body', 'seo_title', 'meta_description', 'noindex', 'author_name', 'primary_topic',
+        'topic_signature', 'search_intent', 'supports_page_uid', 'featured_asset_id', 'business_location_id', 'referenced_catalog_uids',
+    ];
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    private function saveDraftChanges(int $actorId, Business $business, Website $website, WebsiteArticle $article, array $attributes): WebsiteArticle
+    {
+        // Start from the existing pending draft (or the live article), validate exactly as an ordinary edit would.
+        $working = clone $article->effective();
+
+        if (array_key_exists('slug', $attributes)) {
+            $new = trim((string) $attributes['slug']);
+
+            if ($new !== '' && $new !== $working->slug) {
+                $working->slug = $this->assertSlug($website, $new, $article->id);
+            }
+        }
+
+        unset($attributes['slug']);
+        $this->fill($working, $business, $website, $attributes);
+
+        // Only what differs from the live article is kept; an identical save leaves no pending draft at all.
+        $live = $article->only(self::DRAFTABLE);
+        $diff = array_filter(
+            $working->only(self::DRAFTABLE),
+            fn ($value, $key) => $value !== $live[$key],
+            ARRAY_FILTER_USE_BOTH,
+        );
+
+        $article->draft_payload = $diff === [] ? null : $diff;
+        $article->draft_saved_at = $diff === [] ? null : now();
+        $article->updated_by_user_id = $actorId;
+        $article->save();
+
+        return $article;
+    }
+
+    /** "Publish update": the pending draft becomes the live article; a changed slug leaves its redirect. */
+    private function applyPendingDraft(Business $business, WebsiteArticle $article): void
+    {
+        $website = $this->websiteOrFail($business);
+        $draft = $article->draft_payload;
+
+        if (isset($draft['slug']) && $draft['slug'] !== $article->slug) {
+            $this->assertSlug($website, (string) $draft['slug'], $article->id);
+            $this->retireSlug($article, $website, (string) $draft['slug']);
+        }
+
+        $before = [$article->title, $article->body, $article->excerpt];
+        $article->forceFill($draft);
+
+        if ($before !== [$article->title, $article->body, $article->excerpt]) {
+            $article->content_updated_at = now();
+        }
+
+        $article->draft_payload = null;
+        $article->draft_saved_at = null;
     }
 
     private function websiteOrFail(Business $business): Website

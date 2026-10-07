@@ -80,6 +80,8 @@ class WebsiteArticle extends Model
         'noindex' => 'boolean',
         'ai_generated' => 'boolean',
         'referenced_catalog_uids' => 'array',
+        'draft_payload' => 'array',
+        'draft_saved_at' => 'datetime',
         'published_at' => 'datetime',
         'scheduled_at' => 'datetime',
         'archived_at' => 'datetime',
@@ -139,6 +141,28 @@ class WebsiteArticle extends Model
     public function hasBeenPublished(): bool
     {
         return $this->published_at !== null;
+    }
+
+    public function hasPendingDraft(): bool
+    {
+        return ! empty($this->draft_payload);
+    }
+
+    /**
+     * The article as the OWNER is editing it: the live row with its pending draft laid over it. An in-memory copy —
+     * never saved, never read by the public renderer. Without a pending draft it is just the article itself.
+     */
+    public function effective(): static
+    {
+        if (! $this->hasPendingDraft()) {
+            return $this;
+        }
+
+        $copy = clone $this;
+        $copy->forceFill($this->draft_payload);
+        $copy->unsetRelation('featuredAsset');
+
+        return $copy;
     }
 
     public function dateModified(): \Illuminate\Support\Carbon

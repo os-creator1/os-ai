@@ -227,12 +227,14 @@ class PublicBlogTest extends TestCase
         $old = $article->slug;
 
         $this->manager()->update((int) $business->customer_id, $business, $article, ['slug' => 'photo-booth-space-requirements']);
+        $this->manager()->publish((int) $business->customer_id, $business, $article->fresh());
 
         $this->get(self::HOST . '/blog/' . $old)->assertStatus(301)->assertRedirect('https://' . self::DOMAIN . '/blog/photo-booth-space-requirements');
         $this->get(self::HOST . '/blog/photo-booth-space-requirements')->assertOk();
 
         // A second change chains from the ORIGINAL address too.
         $this->manager()->update((int) $business->customer_id, $business, $article->fresh(), ['slug' => 'how-much-room-for-a-booth']);
+        $this->manager()->publish((int) $business->customer_id, $business, $article->fresh());
         $this->get(self::HOST . '/blog/' . $old)->assertStatus(301)->assertRedirect('https://' . self::DOMAIN . '/blog/how-much-room-for-a-booth');
 
         $this->manager()->archive((int) $business->customer_id, $business, $article->fresh());
