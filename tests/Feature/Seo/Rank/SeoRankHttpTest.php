@@ -244,7 +244,7 @@ class SeoRankHttpTest extends TestCase
         $html = $this->index($workspace, $business);
 
         $this->assertStringContainsString('Search keywords', $html);
-        $this->assertStringContainsString('see how your visibility changes over time', (string) $this->first($html, 'page-subtitle'));
+        $this->assertStringContainsString('Track the searches that matter to your business', (string) $this->first($html, 'page-subtitle'));
         $this->assertSame('—', $this->first($html, 'summary-average'));
         $this->assertSame('—', $this->first($html, 'summary-top10'));
         $this->assertSame('—', $this->first($html, 'summary-improved'));
@@ -263,17 +263,17 @@ class SeoRankHttpTest extends TestCase
         $html = $this->index($workspace, $business);
 
         $headers = $this->texts($html, "//table[@data-role='rank-table']/thead//th");
-        $this->assertSame(['KEYWORD', 'SEARCH LOCATION', 'ORGANIC', 'LOCAL', 'CHANGE', 'WEBSITE', 'LAST CHECKED', 'ACTIONS'], array_map('mb_strtoupper', $headers));
+        $this->assertSame(['KEYWORD', 'ORGANIC', 'LOCAL', 'CHANGE', 'WEBSITE', 'ACTIONS'], array_map('mb_strtoupper', $headers));
 
         $this->assertSame('untracked', $this->rowState($html, $keyword));
         $this->assertStringContainsString('SEO target', $this->cell($html, $keyword, 'Keyword'));
-        $this->assertSame('—', $this->cell($html, $keyword, 'Search location'));
+        $this->assertSame([], $this->role($html, 'search-location'));
         $this->assertSame('—', $this->cell($html, $keyword, 'Organic'));
         $this->assertSame('—', $this->cell($html, $keyword, 'Local'));
         $this->assertSame('—', $this->cell($html, $keyword, 'Change'));
         $this->assertNotSame('—', $this->cell($html, $keyword, 'Website'), 'Website coverage is still shown for an untracked keyword.');
         $this->assertNotEmpty($this->texts($html, "//tr[@data-uid='{$keyword->uid}']//*[@data-role='keyword-coverage']"));
-        $this->assertSame('—', $this->cell($html, $keyword, 'Last checked'));
+        $this->assertSame([], $this->role($html, 'last-checked'));
         $this->assertNotEmpty($this->texts($html, "//tr[@data-uid='{$keyword->uid}']//*[@data-role='rank-start']"));
     }
 
@@ -286,14 +286,14 @@ class SeoRankHttpTest extends TestCase
         $html = $this->index($workspace, $business);
 
         $cells = $this->xpath($html)->query("//table[@data-role='rank-table']/tbody/tr/td");
-        $this->assertSame(8, $cells->length);
+        $this->assertSame(6, $cells->length);
 
         $labels = [];
         foreach ($cells as $cell) {
             $labels[] = $cell->attributes->getNamedItem('data-label')?->nodeValue;
         }
 
-        $this->assertSame(['Keyword', 'Search location', 'Organic', 'Local', 'Change', 'Website', 'Last checked', 'Actions'], $labels);
+        $this->assertSame(['Keyword', 'Organic', 'Local', 'Change', 'Website', 'Actions'], $labels);
         $this->assertStringContainsString('attr(data-label)', $html);
         $this->assertStringContainsString('max-width: 767.98px', $html);
     }
@@ -311,8 +311,7 @@ class SeoRankHttpTest extends TestCase
         $this->assertSame('Waiting for first check', $this->cell($html, $keyword, 'Organic'));
         $this->assertSame('Waiting for first check', $this->cell($html, $keyword, 'Local'));
         $this->assertSame('1 / 5', $this->first($html, 'summary-tracked'));
-        $this->assertStringStartsWith('Chicago, Illinois, United States', $this->cell($html, $keyword, 'Search location'));
-        $this->assertStringContainsString('Google · mobile', $this->cell($html, $keyword, 'Search location'));
+        $this->assertStringStartsWith('Chicago, Illinois, United States', (string) $this->first($html, 'search-location-pill'));
         $this->assertSame([], $this->role($html, 'rank-paused-notice'));
 
         // Master switch off: nothing can be checked, so the page says UNAVAILABLE — it is
@@ -322,7 +321,7 @@ class SeoRankHttpTest extends TestCase
 
         $this->assertSame('unavailable', $this->rowState($html, $keyword));
         $this->assertSame('Checks unavailable', $this->cell($html, $keyword, 'Organic'));
-        $this->assertStringContainsString('Rank checks are not available right now', (string) $this->first($html, 'rank-unavailable-notice'));
+        $this->assertStringContainsString('Rank checks are unavailable', (string) $this->first($html, 'rank-unavailable-notice'));
         $this->assertSame([], $this->role($html, 'rank-paused-notice'));
     }
 
@@ -380,7 +379,7 @@ class SeoRankHttpTest extends TestCase
         $this->assertSame('active', $this->rowState($html, $keyword));
         $this->assertSame('#7', $this->cell($html, $keyword, 'Organic'));
         $this->assertSame('Local #3', $this->cell($html, $keyword, 'Local'));
-        $this->assertSame('Today', $this->cell($html, $keyword, 'Last checked'));
+        $this->assertSame(['Checked today'], $this->role($html, 'last-checked'));
         $this->assertSame('#7', $this->first($html, 'summary-average'));
         $this->assertSame('1', $this->first($html, 'summary-top10'));
         $this->assertSame('1', $this->first($html, 'summary-local-top3'));
@@ -972,7 +971,9 @@ class SeoRankHttpTest extends TestCase
             $this->assertSame([], $this->role($html, $summaryRole), "{$summaryRole} must not render without the entitlement.");
         }
         $this->assertNotEmpty($this->role($html, 'rank-not-included'));
-        foreach (['Organic', 'Local', 'Change', 'Search location', 'Last checked'] as $rankColumn) {
+        $this->assertSame([], $this->role($html, 'search-location-pill'));
+        $this->assertSame([], $this->role($html, 'last-checked'));
+        foreach (['Organic', 'Local', 'Change'] as $rankColumn) {
             $this->assertSame([], $this->texts($html, "//tr[@data-uid='{$keyword->uid}']/td[@data-label='{$rankColumn}']"), "{$rankColumn} must not render without the entitlement.");
         }
         $this->assertNotEmpty($this->cell($html, $keyword, 'Website'));

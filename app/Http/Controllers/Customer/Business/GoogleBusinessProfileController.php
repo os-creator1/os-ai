@@ -721,6 +721,12 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 'providerAccountResourceName' => $binding->provider_account_resource_name,
                 'providerLocationResourceName' => $binding->provider_location_resource_name,
                 'mirrorIsFresh' => $binding->mirrorIsFresh(),
+                // The same pure comparison the full comparison page shows (computed at read time,
+                // never stored), so the overview can name what differs without a second click.
+                'rows' => ($location !== null && $binding->mirrorIsFresh())
+                    ? $this->comparator->compare($business, $location, $binding)
+                    : [],
+                'mirror' => $binding->mirrorIsFresh() ? $binding->freshMirror() : [],
                 // A binding whose local location row has gone is still
                 // listed (so it can be unlinked) but has no comparison.
                 'comparisonAvailable' => $location !== null,

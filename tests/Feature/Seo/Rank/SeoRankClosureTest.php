@@ -80,7 +80,7 @@ class SeoRankClosureTest extends TestCase
         $html = (string) $this->get(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
         $this->assertStringContainsString('data-position="6"', $html);
-        $this->assertStringContainsString('Rank checks are not available right now', $html);
+        $this->assertStringContainsString('Rank checks are unavailable', $html);
         $this->assertStringNotContainsString('usage period resets', $html);
 
         $this->get(route('customer.workspaces.businesses.seo.rank-targets.show', [$workspace->uid, $business->uid, $target->uid]))
