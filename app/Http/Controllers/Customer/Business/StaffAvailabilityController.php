@@ -332,8 +332,14 @@ class StaffAvailabilityController extends Controller
     /**
      * The Location's canonical hours (business_locations.hours: weekday key =>
      * [{open, close}], "24:00" the end-of-day sentinel) as editor windows, or
-     * null when the Location has none to offer. "24:00" becomes 23:59, because
-     * an availability window is a same-day H:i pair.
+     * null when the Location has none to offer.
+     *
+     * KNOWN LIMITATION: a "24:00" close becomes 23:59. The calculator can
+     * evaluate a 24:00 end, but every writer of availability rules (the editor's
+     * time inputs and H:i validation, and createRule) is a same-day H:i pair
+     * that cannot express it, and widening that is a time-model change this
+     * editor deliberately does not make. The cost is a one-minute gap, 23:59 to
+     * midnight, which only matters to an appointment ending exactly at midnight.
      *
      * @return array<int, list<array{start: string, end: string}>>|null
      */

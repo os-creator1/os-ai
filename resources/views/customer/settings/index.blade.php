@@ -54,6 +54,22 @@
                 </div>
             @endforeach
 
+            {{-- The person's own preferences, not a Business setting: their profile and the
+                 application language (users.locale). It links to the one existing Profile
+                 form rather than repeating it here, and is on every hub because it belongs
+                 to the signed-in user, whichever account or Business they are looking at. --}}
+            <div class="col-12 col-lg-6" data-role="settings-account-link">
+                <x-card title="Your account">
+                    <a href="{{ route('user.account') }}" class="d-flex align-items-start gap-1 text-body" data-role="settings-profile-language">
+                        <x-ds-icon name="user" class="mt-25 flex-shrink-0" aria-hidden="true" />
+                        <span>
+                            <span class="d-block fw-bolder">Profile &amp; language</span>
+                            <span class="d-block text-caption">Your name, email, password and the language the app is shown in.</span>
+                        </span>
+                    </a>
+                </x-card>
+            </div>
+
             @if ($featureSwitches !== null)
                 <div class="col-12" data-role="settings-section" data-section="features">
                     <x-card title="Features">
