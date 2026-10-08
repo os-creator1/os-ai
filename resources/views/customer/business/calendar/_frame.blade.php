@@ -13,6 +13,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('page-style')
+    @include('partials.section-router._styles')
     @include('customer.business.calendar._styles')
 @endsection
 
@@ -31,6 +32,7 @@
 @endsection
 
 @section('page-script')
+    @include('partials.section-router._script')
     @include('customer.business.calendar._scripts')
     {{-- Delegated copy-link buttons on Booking types. Loaded with the frame rather than by that
          one tab, so they also work when the tab is reached by a section swap. A tab view must

@@ -1638,13 +1638,24 @@ class WebsiteWizardControllerTest extends TestCase
         $this->completeAllRequiredSteps($workspace, $business);
         $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]));
 
+        // The overview offers only Preview / Publish / Edit; the management actions live under Settings.
         $this->get($this->websiteShowUrl($workspace, $business))
             ->assertOk()
-            ->assertSee('page(s) generated')
-            ->assertSee('Manage pages')
+            ->assertSee('data-testid="website-overview"', false)
+            ->assertSee('Preview')
             ->assertSee('Publish')
+            ->assertSee('Edit')
+            ->assertDontSee('data-testid="settings-pages"', false)
+            ->assertDontSee('Rebuild from setup answers')
+            ->assertDontSee('Regenerate with AI');
+
+        $this->get(route('customer.workspaces.businesses.website.studio.show', [$workspace->uid, $business->uid, 'settings']))
+            ->assertOk()
+            ->assertSee('Manage pages')
             ->assertSee('Edit setup answers')
-            ->assertSee('Rebuild from setup answers')
+            ->assertSee('Change template or rebuild')
+            ->assertSee('History')
+            ->assertSee('Domain')
             ->assertDontSee('Regenerate with AI');
 
         // Start on a generated site goes to Studio, never back into the wizard.

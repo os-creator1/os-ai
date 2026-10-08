@@ -1,8 +1,7 @@
 {{--
-    Website V1 final — Studio's compact look card: which template the website
-    uses, the one route to change it (the rebuild flow, with its layout-change
-    warning), and the safe brand tokens. Template changes never happen here
-    directly — a generated website changes layout only through the rebuild flow.
+    Website look — the owner's safe brand tokens: one colour, a logo and a hero image. The template keeps
+    layout and fonts; changing the template is its own screen (Settings -> Change template or rebuild).
+    Posts to website.look.update (WebsiteLookController), which returns here.
 --}}
 @if (! empty($currentDesign))
     @php
@@ -13,20 +12,13 @@
         $hero = isset($lookTheme['hero_asset_uid'], $lookAssets[$lookTheme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($lookAssets[$lookTheme['hero_asset_uid']]), 'alt' => $lookAssets[$lookTheme['hero_asset_uid']]->alt_text] : null;
     @endphp
     <x-card class="mb-3" data-testid="studio-look">
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-            <div>
-                <h6 class="mb-0">Your website's look</h6>
-                <div class="text-caption" data-testid="studio-template">Template {{ $currentDesign->number }} &mdash; {{ $currentDesign->label }}</div>
-            </div>
-            <x-button variant="outline" href="{{ route('customer.workspaces.businesses.website.rebuild.form', [$workspaceUid, $businessUid]) }}">Change template or rebuild</x-button>
-        </div>
+        <h6 class="mb-3">Your website's look</h6>
 
         <form method="POST" action="{{ route('customer.workspaces.businesses.website.look.update', [$workspaceUid, $businessUid]) }}" enctype="multipart/form-data">
             @csrf
             @include('customer.business.website._brand-fields')
             <div class="mt-3">
-                <button type="submit" class="btn btn-outline-primary" data-testid="look-save">Save look</button>
-                <span class="text-caption ms-2">Saved changes appear in Preview now and on your live website after you publish.</span>
+                <button type="submit" class="btn btn-primary" data-testid="look-save">Save changes</button>
             </div>
         </form>
     </x-card>

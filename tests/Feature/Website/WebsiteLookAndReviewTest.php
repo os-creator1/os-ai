@@ -242,10 +242,15 @@ class WebsiteLookAndReviewTest extends TestCase
         $this->look($workspace, $business, ['template_key' => 'photo_booth_luxury'])->assertSessionHasErrors('template_key');
         $this->assertSame('photo_booth_modern', $website->fresh()->template_key);
 
-        // The rebuild flow shows four real previews and an unmissable layout-change warning.
+        // The rebuild flow shows four real previews. The layout-change warning is not permanent page furniture:
+        // it is the confirmation dialog shown when the owner applies the change.
         $form = $this->get($this->wizardUrl($workspace, $business, 'rebuild.form'))->assertOk();
+        $form->assertDontSee("A different template changes your website's layout.", false);
+        $form->assertDontSee('published and live', false);
+        $form->assertSee('id="rebuild-confirm"', false);
         $form->assertSee('data-testid="layout-change-warning"', false);
-        $form->assertSee("A different template changes your website's layout.", false);
+        $form->assertSee('Your header, section order, fonts and footer will change.', false);
+        $form->assertSee('Every draft page will be rewritten from your current answers', false);
         foreach (WebsiteDesigns::all() as $design) {
             $form->assertSee('wd wd-' . $design->key, false);
         }
@@ -266,17 +271,22 @@ class WebsiteLookAndReviewTest extends TestCase
 
     public function test_studio_shows_the_template_the_look_card_and_website_health(): void
     {
+        // The look lives under Website -> Settings; the overview keeps the (folded) health summary.
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
         $website = app(\App\Library\Website\WebsiteStarterDraftService::class)->createShellFromTemplate($business, \App\Models\WebsiteTemplate::findActiveOrFail('photo_booth_editorial'));
         $this->homePage($website, ['seo_title' => 'Home', 'meta_description' => 'Welcome']);
 
-        $this->get($this->wizardUrl($workspace, $business, 'studio.show'))
+        $this->get($this->wizardUrl($workspace, $business, 'studio.show', ['settings']))
             ->assertOk()
             ->assertSee('data-testid="studio-look"', false)
             ->assertSee('Template 2')
             ->assertSee('Classic Gold')
             ->assertSee('Change template or rebuild')
+            ->assertSee('Save changes');
+
+        $this->get($this->wizardUrl($workspace, $business, 'studio.show'))
+            ->assertOk()
             ->assertSee('data-testid="website-health"', false)
             ->assertSee('SEO &amp; Website Health', false);
     }
