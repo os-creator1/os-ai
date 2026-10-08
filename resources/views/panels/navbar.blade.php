@@ -66,23 +66,8 @@
 
                     <ul class="nav navbar-nav align-items-center ms-auto">
 
-                        {{--Language Dropdown--}}
-                        <li class="nav-item dropdown dropdown-language">
-                            <a class="nav-link dropdown-toggle" id="dropdown-flag" href="#" data-bs-toggle="dropdown"
-                               aria-haspopup="true">
-                                <i class="flag-icon flag-icon-us"></i>
-                                <span class="selected-language">English</span>
-                            </a>
-                            <div class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-flag">
-                                @foreach(\App\Helpers\Helper::languages() as $lang)
-                                    <a class="dropdown-item" href="{{url('lang/'.$lang['code'])}}"
-                                       data-language="{{$lang['code']}}">
-                                        <i class="flag-icon flag-icon-{{$lang['iso_code']}}"></i> {{ $lang['name'] }}
-                                    </a>
-                                @endforeach
-
-                            </div>
-                        </li>
+                        {{-- The application language is chosen at sign-up and changed under
+                             Profile (users.locale); it is not a top-bar control. --}}
 
                         {{--Dark and light option. It will be theme manager option--}}
                         {{--                        <li class="nav-item d-none d-lg-block">--}}
@@ -424,7 +409,6 @@
                                     {{config('app.name')}}
                                 @endif
                             </span>
-                                    <span class="user-status">{{ __('locale.labels.available') }}</span>
                                 </div>
                                 <x-user-avatar :user="Auth::user()" />
                             </a>

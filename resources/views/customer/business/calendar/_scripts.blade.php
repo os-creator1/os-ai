@@ -601,6 +601,111 @@
         window.CalendarSections = { visibleDaysFor: visibleDaysFor, navigate: navigate };
 
         initSection();
+
+        // Landing on Booking types / Staff availability does not ship the grid
+        // library. Fetch it while the browser is idle, so switching to the
+        // Calendar view later draws the grid at once instead of showing an
+        // empty box while the script loads.
+        if (typeof FullCalendar === 'undefined') {
+            (window.requestIdleCallback || function (fn) { setTimeout(fn, 800); })(function () {
+                whenFullCalendar(function () {});
+            });
+        }
+    })();
+
+    // -------------------------------------------------------------------
+    // Weekly hours editor (Staff availability). Delegated on the document,
+    // so it keeps working after a tab swap re-renders the section.
+    // -------------------------------------------------------------------
+    (function () {
+        'use strict';
+
+        if (window.AvailabilityEditor) {
+            return;
+        }
+
+        window.AvailabilityEditor = true;
+
+        function setDay(row, open) {
+            row.classList.toggle('is-closed', !open);
+
+            // A closed day submits nothing and cannot fail validation.
+            row.querySelectorAll('[data-interval] input').forEach(function (input) {
+                input.disabled = !open;
+            });
+        }
+
+        function addInterval(row) {
+            var list = row.querySelector('[data-intervals]');
+            var template = row.querySelector('[data-interval-template]');
+            var index = parseInt(list.getAttribute('data-next-index'), 10) || 0;
+            var last = list.querySelectorAll('[data-interval]');
+            var start = '09:00';
+            var end = '17:00';
+
+            if (last.length) {
+                // Continue from where the previous set of hours ends.
+                var previousEnd = last[last.length - 1].querySelectorAll('input')[1].value;
+
+                if (previousEnd) {
+                    var hours = Math.min(parseInt(previousEnd.slice(0, 2), 10) + 2, 23);
+
+                    start = previousEnd;
+                    end = (hours < 10 ? '0' : '') + hours + ':' + (hours === 23 ? '59' : previousEnd.slice(3, 5));
+
+                    if (end <= start) {
+                        end = '23:59';
+                    }
+                }
+            }
+
+            list.setAttribute('data-next-index', String(index + 1));
+            list.insertAdjacentHTML('beforeend', template.innerHTML.replace(/__INDEX__/g, String(index)));
+
+            var inputs = list.lastElementChild.querySelectorAll('input');
+
+            inputs[0].value = start;
+            inputs[1].value = end;
+        }
+
+        document.addEventListener('change', function (event) {
+            var toggle = event.target.closest ? event.target.closest('[data-day-toggle]') : null;
+
+            if (!toggle) {
+                return;
+            }
+
+            var row = toggle.closest('[data-day]');
+
+            if (toggle.checked && !row.querySelector('[data-interval]')) {
+                addInterval(row);
+            }
+
+            setDay(row, toggle.checked);
+        });
+
+        document.addEventListener('click', function (event) {
+            var target = event.target.closest ? event.target.closest('[data-add-interval], [data-remove-interval]') : null;
+
+            if (!target) {
+                return;
+            }
+
+            var row = target.closest('[data-day]');
+
+            if (target.hasAttribute('data-add-interval')) {
+                addInterval(row);
+
+                return;
+            }
+
+            target.closest('[data-interval]').remove();
+
+            if (!row.querySelector('[data-interval]')) {
+                row.querySelector('[data-day-toggle]').checked = false;
+                setDay(row, false);
+            }
+        });
     })();
 </script>
 @endverbatim

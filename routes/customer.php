@@ -1882,6 +1882,7 @@
 
             Route::get('/availability', 'Business\StaffAvailabilityController@index')->name('availability.index');
             Route::post('/availability/rules', 'Business\StaffAvailabilityController@storeRule')->name('availability.rules.store');
+            Route::post('/availability/week', 'Business\StaffAvailabilityController@updateWeek')->name('availability.week.update');
             Route::post('/availability/rules/{ruleId}/delete', 'Business\StaffAvailabilityController@destroyRule')->whereNumber('ruleId')->name('availability.rules.destroy');
             Route::post('/availability/time-off', 'Business\StaffAvailabilityController@storeTimeOff')->name('availability.time-off.store');
             Route::post('/availability/time-off/{timeOffId}/delete', 'Business\StaffAvailabilityController@destroyTimeOff')->whereNumber('timeOffId')->name('availability.time-off.destroy');

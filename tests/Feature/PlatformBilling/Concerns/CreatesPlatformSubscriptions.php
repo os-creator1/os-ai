@@ -225,7 +225,7 @@ trait CreatesPlatformSubscriptions
     {
         $plan = [
             ['register.plan.select', ['tier' => $form['tier']], 'register.account'],
-            ['register.account.store', \Illuminate\Support\Arr::only($form, ['first_name', 'last_name', 'email', 'password', 'password_confirmation']), 'register.business'],
+            ['register.account.store', \Illuminate\Support\Arr::only($form, ['first_name', 'last_name', 'email', 'password', 'password_confirmation', 'locale']), 'register.business'],
             ['register.business.store', \Illuminate\Support\Arr::only($form, ['business_name', 'industry', 'country_code', 'timezone']), 'register.payment'],
         ];
 

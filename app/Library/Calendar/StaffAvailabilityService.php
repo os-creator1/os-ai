@@ -10,6 +10,7 @@ use App\Models\StaffTimeOff;
 use App\Models\Workspace;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Implementation Contract 15 §5.2, §5.3, §6 — recurring availability windows
@@ -162,6 +163,46 @@ class StaffAvailabilityService
     /**
      * @throws StaffAvailabilityAuthorityException
      */
+    /**
+     * The weekly-hours editor's one write: make this person's recurring
+     * windows at this Location exactly $week, in a single transaction.
+     * Nothing new is decided here — it creates and deletes the very same
+     * StaffAvailabilityRule rows createRule()/deleteRule() do, behind the
+     * very same authority check (run once for the person), so the editor can
+     * never do what the per-window writes would refuse.
+     *
+     * @param  array<int, list<array{start: string, end: string}>>  $week  day_of_week (0 = Sunday) => windows as H:i; a day with none is closed
+     */
+    public function replaceWeek(
+        Workspace $workspace,
+        Business $business,
+        BusinessLocation $location,
+        int $targetStaffUserId,
+        array $week,
+        int $actorUserId
+    ): void {
+        $this->assertMayManageAvailabilityFor($actorUserId, $targetStaffUserId, $workspace, $business, $location);
+
+        DB::transaction(function () use ($location, $targetStaffUserId, $week): void {
+            StaffAvailabilityRule::query()
+                ->where('business_location_id', $location->id)
+                ->where('staff_user_id', $targetStaffUserId)
+                ->delete();
+
+            foreach ($week as $dayOfWeek => $windows) {
+                foreach ($windows as $window) {
+                    StaffAvailabilityRule::create([
+                        'business_location_id' => $location->id,
+                        'staff_user_id' => $targetStaffUserId,
+                        'day_of_week' => (int) $dayOfWeek,
+                        'start_time' => $window['start'] . ':00',
+                        'end_time' => $window['end'] . ':00',
+                    ]);
+                }
+            }
+        });
+    }
+
     public function deleteRule(
         Workspace $workspace,
         Business $business,

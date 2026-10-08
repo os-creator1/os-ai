@@ -61,6 +61,19 @@
             </div>
         </div>
 
+        {{-- Application language (users.locale). Offered only when the install has more than one enabled language. --}}
+        @if ($languages->count() > 1)
+            <div class="mb-2">
+                <label class="form-label" for="locale">{{ __('Language') }}</label>
+                <select id="locale" name="locale" class="form-select @error('locale') is-invalid @enderror">
+                    @foreach ($languages as $language)
+                        <option value="{{ $language->code }}" @selected(old('locale', $account['locale'] ?? app()->getLocale()) === $language->code)>{{ $language->name }}</option>
+                    @endforeach
+                </select>
+                @include('auth.signup._field-error', ['field' => 'locale'])
+            </div>
+        @endif
+
         <button type="submit" class="btn btn-primary w-100">{{ __('Continue') }}</button>
     </form>
 
