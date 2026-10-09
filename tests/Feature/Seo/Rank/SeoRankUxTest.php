@@ -366,8 +366,8 @@ class SeoRankUxTest extends TestCase
         $html = $this->index($workspace, $business);
         $rows = SeoKeyword::query()->orderBy('id')->get();
 
-        $this->assertStringNotContainsString('may be out of date', $this->cell($html, $rows[0], 'Last checked'), 'Two days is inside the default 7-day window.');
-        $this->assertSame('10 days ago — may be out of date', $this->cell($html, $rows[1], 'Last checked'));
+        $this->assertSame([], $this->texts($html, "//tr[@data-uid='{$rows[0]->uid}']//*[@data-role='rank-stale']"), 'Two days is inside the default 7-day window.');
+        $this->assertSame(['10 days ago — may be out of date'], $this->texts($html, "//tr[@data-uid='{$rows[1]->uid}']//*[@data-role='rank-stale']"));
         $this->assertSame('#4', $this->cell($html, $rows[1], 'Organic'), 'The old position stays visible; it is only labelled.');
 
         $detail = (string) $this->get($this->u('rank-targets.show', $workspace, $business, $old->uid))->assertOk()->getContent();

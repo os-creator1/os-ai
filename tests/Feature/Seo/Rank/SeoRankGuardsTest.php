@@ -335,7 +335,7 @@ class SeoRankGuardsTest extends TestCase
 
         $html = $this->html($workspace, $business);
         $this->assertSame(['#4'], $this->role($html, 'summary-average'));
-        $this->assertSame(['Based on 1 of 2 keywords checked recently. Older results are shown on their rows but are not counted in these figures.'], $this->role($html, 'summary-basis'));
+        $this->assertSame(['Based on 1 of 2 keywords checked recently.'], $this->role($html, 'summary-basis'));
 
         // Everything fresh: no caveat.
         DB::table('seo_rank_targets')->where('id', $old->id)->update(['last_checked_at' => now()->subDay()]);
@@ -354,6 +354,6 @@ class SeoRankGuardsTest extends TestCase
 
         $this->assertSame(['—'], $this->role($html, 'summary-average'));
         $this->assertSame(['—'], $this->role($html, 'summary-top10'));
-        $this->assertSame(['Based on 0 of 1 keyword checked recently. Older results are shown on their rows but are not counted in these figures.'], $this->role($html, 'summary-basis'));
+        $this->assertSame(['Based on 0 of 1 keyword checked recently.'], $this->role($html, 'summary-basis'));
     }
 }

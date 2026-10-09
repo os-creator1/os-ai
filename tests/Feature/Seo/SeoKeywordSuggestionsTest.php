@@ -210,7 +210,7 @@ class SeoKeywordSuggestionsTest extends TestCase
         $this->assertStringContainsString('data-section="suggested-keywords"', $html);
         $this->assertStringContainsString('photo booth rental Naperville', $html);
         $this->assertStringContainsString('wedding photo booth Naperville', $html);
-        $this->assertStringContainsString('Nothing is added until you choose it', $html);
+        $this->assertStringContainsString('Suggested for you', $html);
         $this->assertSame(2, substr_count($html, 'data-role="suggestion-add"'));
         $this->assertSame($before, $this->dbFingerprint(['seo_keywords']), 'Rendering suggestions never writes or changes a keyword.');
     }
