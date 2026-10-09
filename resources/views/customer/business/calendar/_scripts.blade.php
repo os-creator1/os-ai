@@ -4,17 +4,13 @@
 
     1. SECTION ROUTER — plain left-clicks on `a[data-calendar-nav]` (the three
        tabs and the schedule's own Today / previous / next / Day / Week
-       links) fetch the destination with `?fragment=1`, which the SAME
-       controller action answers with just its section, and swap it into
-       #calendar-content. The Business OS shell is never touched or reloaded.
-       The real URL is kept with history.pushState, Back/Forward re-fetch the
-       section, and every failure path falls back to ordinary navigation —
-       the links remain real links with or without this script.
-         - stale protection: each navigation takes a generation number and
-           aborts the previous request; a response that is no longer the
-           latest is discarded, so the last click always wins.
-         - loading feedback: the old section stays until the new one is
-           ready; only after 150 ms is it dimmed with a small spinner.
+       links) swap only #calendar-content, through the SHARED SectionRouter
+       (partials/section-router/_script.blade.php, also used by the Website
+       module): `?fragment=1` answered by the same controller action,
+       history.pushState + Back/Forward, stale-request protection, the
+       MotionGrove loading state, and a fall-back to ordinary navigation on
+       any failure. What stays here is only what is the Calendar's own: the
+       day-count preference carried by schedule links and the grid lifecycle.
 
     2. GRID — mounts FullCalendar for the schedule section (loading its
        stylesheet/script on demand when the schedule was reached from another
@@ -62,35 +58,16 @@
             return 7;
         }
 
-        var generation = 0;
-        var inflight = null;
-        var loadingTimer = null;
         var resizeTimer = null;
         var resizeObserver = null;
         var calendar = null;
         var preferredDays = null;
         var lastReconcile = null;
-        var titleSuffix = (document.title.match(/^.*?( [·-] .*)$/) || [])[1] || '';
 
         // ---------------------------------------------------------------
-        // Section router
+        // Section router: the shared SectionRouter (partials/section-router) does the fetching,
+        // swapping, history and loading state; the Calendar only supplies what is its own.
         // ---------------------------------------------------------------
-        function setLoading(on) {
-            clearTimeout(loadingTimer);
-
-            if (on) {
-                loadingTimer = setTimeout(function () {
-                    content.classList.add('is-loading');
-                    content.setAttribute('aria-busy', 'true');
-                }, 150);
-
-                return;
-            }
-
-            content.classList.remove('is-loading');
-            content.removeAttribute('aria-busy');
-        }
-
         // The Monday on or before a YYYY-MM-DD date (calendar arithmetic only,
         // no time zone involved) — the same week start the server uses.
         function weekStartOf(isoDay) {
@@ -122,144 +99,28 @@
             return url.toString();
         }
 
-        // mode: 'push' (a click), 'replace' (the screen decided, e.g. a wider
-        // range) or 'none' (Back/Forward — the browser already moved the entry).
+        var router = window.SectionRouter.mount({
+            content: content,
+            linkSelector: 'a[data-calendar-nav]',
+            sectionAttr: 'data-calendar-section',
+            titleAttr: 'data-calendar-title',
+            linkKeyAttr: 'data-calendar-key',
+            activeClass: 'is-active',
+            liveRegion: document.getElementById('calendar-live-status'),
+            // A schedule link that does not say how many days to show inherits this screen's count.
+            transformHref: withPreferredDays,
+            beforeSwap: destroyGrid,
+            afterSwap: function () {
+                initSection();
+            },
+            onFail: function () {
+                content.classList.remove('is-reconciling');
+            }
+        });
+
         function navigate(href, mode) {
-            var target = mode === 'none' ? href : withPreferredDays(href);
-            var ticket = ++generation;
-
-            if (inflight) {
-                inflight.abort();
-            }
-
-            inflight = typeof AbortController === 'function' ? new AbortController() : null;
-            setLoading(true);
-
-            var fragmentUrl = new URL(target, window.location.href);
-            fragmentUrl.searchParams.set('fragment', '1');
-
-            var options = {
-                credentials: 'same-origin',
-                cache: 'no-store',
-                headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html' }
-            };
-
-            if (inflight) {
-                options.signal = inflight.signal;
-            }
-
-            fetch(fragmentUrl.toString(), options)
-                .then(function (response) {
-                    if (ticket !== generation) {
-                        return null;
-                    }
-
-                    // A redirect (expired session, location picker) or an error is
-                    // not a section: let the browser show the real page.
-                    if (!response.ok || response.redirected) {
-                        throw new Error('not-a-section');
-                    }
-
-                    return response.text();
-                })
-                .then(function (html) {
-                    if (html === null || ticket !== generation) {
-                        return;
-                    }
-
-                    var next = new DOMParser().parseFromString(html, 'text/html').getElementById('calendar-content');
-
-                    if (!next) {
-                        throw new Error('not-a-section');
-                    }
-
-                    swap(next, target, mode);
-                })
-                .catch(function () {
-                    if (ticket !== generation) {
-                        return;
-                    }
-
-                    setLoading(false);
-                    content.classList.remove('is-reconciling');
-                    window.location.assign(target);
-                });
+            router.navigate(href, mode);
         }
-
-        function swap(next, href, mode) {
-            destroyGrid();
-
-            var key = next.getAttribute('data-calendar-section') || '';
-            var title = next.getAttribute('data-calendar-title') || '';
-
-            content.innerHTML = next.innerHTML;
-            content.setAttribute('data-calendar-section', key);
-            content.setAttribute('data-calendar-title', title);
-
-            if (title) {
-                document.title = title + titleSuffix;
-            }
-
-            var links = document.querySelectorAll('.calendar-subnav-link[data-calendar-key]');
-
-            for (var i = 0; i < links.length; i++) {
-                var active = links[i].getAttribute('data-calendar-key') === key;
-
-                links[i].classList.toggle('is-active', active);
-
-                if (active) {
-                    links[i].setAttribute('aria-current', 'page');
-                } else {
-                    links[i].removeAttribute('aria-current');
-                }
-            }
-
-            if (mode === 'push') {
-                window.history.pushState({ calendarSection: key }, '', href);
-            } else if (mode === 'replace') {
-                window.history.replaceState({ calendarSection: key }, '', href);
-            }
-
-            setLoading(false);
-            initSection();
-
-            var status = document.getElementById('calendar-live-status');
-
-            if (status && title) {
-                status.textContent = title + ' loaded';
-            }
-        }
-
-        document.addEventListener('click', function (event) {
-            if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-                return;
-            }
-
-            var link = event.target.closest ? event.target.closest('a[data-calendar-nav]') : null;
-
-            if (!link || (link.target && link.target !== '_self') || link.hasAttribute('download')) {
-                return;
-            }
-
-            var url = new URL(link.href, window.location.href);
-
-            if (url.origin !== window.location.origin) {
-                return;
-            }
-
-            event.preventDefault();
-
-            var sameAsCurrent = url.pathname + url.search === window.location.pathname + window.location.search;
-
-            navigate(link.href, sameAsCurrent ? 'replace' : 'push');
-        });
-
-        window.addEventListener('popstate', function () {
-            navigate(window.location.href, 'none');
-        });
-
-        window.history.replaceState({ calendarSection: content.getAttribute('data-calendar-section') }, '', window.location.href);
-
         // ---------------------------------------------------------------
         // FullCalendar (v5.7.2, vendored, no CSS injection of its own)
         // ---------------------------------------------------------------

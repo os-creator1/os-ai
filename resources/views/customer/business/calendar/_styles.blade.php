@@ -390,46 +390,20 @@
     /* ---------------------------------------------------------------
        Section swap (Calendar view / Booking types / Staff availability).
        Only #calendar-content is replaced; the old section stays put until
-       the new one is ready, and a slow request just dims it.
+       the new one is ready, and a slow request just dims it and shows the shared
+       MotionGrove loader (partials/section-router).
     --------------------------------------------------------------- */
     #calendar-content {
         position: relative;
         transition: opacity .12s ease;
     }
 
-    #calendar-content.is-loading {
-        opacity: .55;
-        pointer-events: none;
-    }
-
-    #calendar-content.is-loading::after {
-        content: '';
-        position: absolute;
-        top: 3rem;
-        left: 50%;
-        width: 1.5rem;
-        height: 1.5rem;
-        margin-left: -.75rem;
-        border: 2px solid var(--color-border, #E5E1DA);
-        border-top-color: var(--color-primary, #B5524C);
-        border-radius: 50%;
-        animation: calendar-spin .7s linear infinite;
-    }
-
-    /* The grid was rendered for a different day count than this screen can
-       show; hold it invisible for the one extra request instead of flashing
-       the wrong range. */
     #calendar-content.is-reconciling {
         opacity: 0;
     }
 
-    @keyframes calendar-spin {
-        to { transform: rotate(360deg); }
-    }
-
     @media (prefers-reduced-motion: reduce) {
         #calendar-content { transition: none; }
-        #calendar-content.is-loading::after { animation: none; }
     }
 
     /* ---------------------------------------------------------------

@@ -44,7 +44,7 @@
                 @endforeach
             </div>
 
-            @include('customer.business.website._brand-fields')
+            @include('customer.business.website._brand-fields', ['lookHeading' => 'Brand colour, logo and hero image', 'withScript' => true])
 
             <div class="mt-3 d-flex gap-2">
                 <button type="submit" class="btn btn-outline-primary" data-testid="look-save">Save look</button>

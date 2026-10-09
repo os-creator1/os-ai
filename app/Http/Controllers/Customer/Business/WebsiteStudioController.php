@@ -25,10 +25,14 @@ use Illuminate\Http\RedirectResponse;
  * through the separate, explicit "Edit setup answers" action
  * (WebsiteWizardController::editSetupAnswers()).
  *
- * Four tabs, each a thin, connected view of a REAL canonical module —
- * never duplicated data:
- *  - website: today's Generate/Publish/Preview/History actions, reused
- *    verbatim (WebsiteController, unchanged).
+ * Five tabs, each a thin, connected view of a REAL canonical module —
+ * never duplicated data. The tab strip is a shared-shell region: a click on
+ * a tab swaps only the content region (`?fragment=1`, answered by THIS same
+ * action — see partials/section-router), and every tab keeps its direct URL.
+ *  - website: the overview — the live site, the draft, and the next step
+ *    (Preview / Publish / Edit). The management actions live in settings.
+ *  - settings: Website look, and the entries to the existing canonical
+ *    screens (pages, setup answers, template / rebuild, history, domains).
  *  - packages: the Business's own CatalogItem rows (the same table the
  *    wizard's package step and the standalone, separately-flagged
  *    Catalog screen both read/write — never a website-only copy).
@@ -40,7 +44,10 @@ class WebsiteStudioController extends CustomerBaseController
 {
     use ResolvesBusinessTenancy;
 
-    private const VALID_TABS = ['website', 'packages', 'forms', 'questionnaires'];
+    private const VALID_TABS = ['website', 'packages', 'forms', 'questionnaires', 'settings'];
+
+    /** The module's tab strip, in order: key => label. */
+    public const TAB_LABELS = ['website' => 'Website', 'packages' => 'Packages', 'forms' => 'Forms', 'questionnaires' => 'Questionnaires', 'settings' => 'Settings'];
 
     public function __construct(
         private readonly QuestionnaireResolver $questionnaireResolver,
@@ -119,12 +126,51 @@ class WebsiteStudioController extends CustomerBaseController
             $tab = 'website';
         }
 
-        return view('customer.business.website.studio.shell', array_merge([
+        // The tab router asks for just the content region (same action, same gates, same data).
+        $view = request()->boolean('fragment') ? 'customer.business.website.studio._fragment' : 'customer.business.website.studio.shell';
+
+        return view($view, array_merge([
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
             'tab' => $tab,
+            'tabLabels' => self::TAB_LABELS,
         ], $this->tabData($tab, $business, $website)));
+    }
+
+    /**
+     * What the overview needs to answer "what do I have live, what is my draft, what next?". Every fact
+     * comes from an existing authority: the publish state, the health check's own live-vs-draft
+     * comparison (`draft_changes`) and the catalog staleness check — nothing is recomputed here.
+     *
+     * @return array<string, mixed>
+     */
+    private function overviewData(Business $business, Website $website): array
+    {
+        $health = $this->health->check($website, $this->healthLinks($business));
+        $catalogSync = $this->catalogReferences->staleness($website);
+        $draftChanges = collect($health['checks'])->firstWhere('key', 'draft_changes');
+        $isPublished = $website->status->value === 'published' && $website->published_revision_id !== null;
+        $domain = $website->activePrimaryDomain();
+
+        return [
+            'pageCount' => $website->pages()->count(),
+            'catalogSync' => $catalogSync,
+            'mediaWarnings' => $website->guidedGenerationAttempts()->latest('id')->first()?->warnings ?? [],
+            'health' => $health,
+            'seoAuditUrl' => $this->seoAuditUrl($business),
+            'currentDesign' => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($website->template_key),
+            'isPublished' => $isPublished,
+            // Anything the owner would publish: edited pages / look since the live revision, or package changes.
+            'hasDraftChanges' => ! $isPublished || ($draftChanges !== null && $draftChanges['status'] !== 'ok') || ! empty($catalogSync['out_of_sync']),
+            // The platform address is same-origin (the preview thumbnail can frame it); a connected domain is what visitors use.
+            'liveFrameUrl' => route('public.website.home', $website->public_id),
+            'liveOpenUrl' => $domain !== null ? 'https://' . $domain->domain . '/' : route('public.website.home', $website->public_id),
+            'liveHost' => $domain?->domain,
+            'domain' => $domain,
+            // A domain that was added but is not active yet (so "connect" is really "finish connecting").
+            'pendingDomain' => $domain === null ? $website->domains()->orderBy('id')->first() : null,
+        ];
     }
 
     /**
@@ -133,13 +179,12 @@ class WebsiteStudioController extends CustomerBaseController
     private function tabData(string $tab, Business $business, Website $website): array
     {
         return match ($tab) {
-            'website' => [
+            'website' => $this->overviewData($business, $website),
+            'settings' => [
                 'pageCount' => $website->pages()->count(),
-                'catalogSync' => $this->catalogReferences->staleness($website),
-                'mediaWarnings' => $website->guidedGenerationAttempts()->latest('id')->first()?->warnings ?? [],
-                'health' => $this->health->check($website, $this->healthLinks($business)),
-                'seoAuditUrl' => $this->seoAuditUrl($business),
                 'currentDesign' => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($website->template_key),
+                'domain' => $website->activePrimaryDomain(),
+                'domainRows' => $website->domains()->count(),
             ],
             'packages' => [
                 'catalogItems' => CatalogItem::where('business_id', $business->id)

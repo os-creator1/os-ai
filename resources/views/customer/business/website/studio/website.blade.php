@@ -1,94 +1,142 @@
 {{--
-    Website Builder redesign — one cohesive view of the website's status
-    and its available actions, replacing the old two disconnected
-    "Pages"/"Publish" cards. Every action below reuses the existing,
-    unchanged WebsiteController routes verbatim.
+    Website overview — "what website do I have, what unpublished version am I working on, and what
+    should I do next?". The live site and the draft are shown as small, real previews (the same
+    renderers visitors and the owner already see, framed and scaled — no screenshot service);
+    the only actions are Preview, Publish and Edit (-> Settings). Everything else this screen used
+    to list (pages, setup answers, history, domains, rebuild) lives under Website -> Settings.
+
+    The previews are scaled client-side (studio/_scripts.blade.php); they are decorative frames around a
+    real link, so they are not focusable and are hidden from assistive technology.
 --}}
-@if ($website->status->value === 'published')
-    <x-alert variant="accent" class="mb-3">
-        Live at
-        <a href="{{ route('public.website.home', $website->public_id) }}" target="_blank" rel="noopener">{{ route('public.website.home', $website->public_id) }}</a>
-    </x-alert>
-@endif
+@php
+    $previewUrl = route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid]);
+    $settingsUrl = route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid, 'settings']);
+    $domainsUrl = route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]);
+@endphp
 
-@if ($website->presentation_changes_pending_at !== null)
-    {{--
-        Independent-review correction round 3 (item 11) — editing FAQ,
-        custom section, or gallery cover/order after the website already
-        has generated pages updates setup data and real Website-owned
-        assets, but never the generated page content itself (a targeted
-        re-synchronization without a new AI call is not safe for every
-        one of these surfaces). This banner is the honest, explicit
-        signal that the owner's own change has not yet reached the live
-        pages, and the one existing action (a deliberate rebuild) that
-        applies it — never silently implied as "already done."
-    --}}
-    <x-alert variant="warning" class="mb-3">
-        Some of your recent changes (FAQ, custom section, or photo order/cover) haven't reached your website's pages yet.
-        <form method="POST" action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="d-inline">
-            @csrf
-            <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
-            <button type="submit" class="btn btn-sm btn-warning">Rebuild now</button>
-        </form>
-    </x-alert>
-@endif
+<div class="website-overview" data-testid="website-overview">
+    <div class="website-previews">
+        {{-- LIVE --}}
+        <div class="website-preview-col" data-testid="live-column">
+            <div class="website-preview-label">
+                <span class="website-dot {{ $isPublished ? 'is-live' : '' }}" aria-hidden="true"></span>
+                <span>Live</span>
+            </div>
 
-@if (! empty($catalogSync['out_of_sync']))
-    {{--
-        Packages & Products is the one pricing truth. A published revision is
-        immutable, so when the catalog has changed since the last publish the
-        live site is honestly flagged out of sync, with the existing safe sync
-        path (publishing again re-resolves every package from the catalog).
-    --}}
-    <x-alert variant="warning" class="mb-3" data-catalog-sync>
-        Your packages changed after you last published
-        @if (! empty($catalogSync['changed']))
-            (updated: {{ implode(', ', $catalogSync['changed']) }})@endif
-        @if (! empty($catalogSync['removed']))
-            (removed: {{ implode(', ', $catalogSync['removed']) }})@endif.
-        Your live website still shows the older package details.
-        <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
-            @csrf
-            <button type="submit" class="btn btn-sm btn-warning">Publish update</button>
-        </form>
-    </x-alert>
-@endif
+            @if ($isPublished)
+                <a class="website-preview-frame" href="{{ $liveOpenUrl }}" target="_blank" rel="noopener" data-testid="live-preview" aria-label="Open your live website in a new tab">
+                    <iframe data-site-preview src="{{ $liveFrameUrl }}" title="Your live website" sandbox="allow-same-origin" tabindex="-1" aria-hidden="true" loading="lazy"></iframe>
+                </a>
+                @if ($liveHost)
+                    <a class="website-preview-meta" href="{{ $liveOpenUrl }}" target="_blank" rel="noopener">{{ $liveHost }}</a>
+                @endif
+            @else
+                <div class="website-preview-frame is-empty" data-testid="live-empty">
+                    <span class="text-caption">Not published yet</span>
+                </div>
+            @endif
+        </div>
 
-@if (! empty($mediaWarnings))
-    <x-alert variant="warning" class="mb-3">
-        <strong>Missing media checklist:</strong>
-        <ul class="mb-0">
-            @foreach ($mediaWarnings as $warning)
-                <li>{{ $warning }}</li>
-            @endforeach
-        </ul>
-    </x-alert>
-@endif
+        {{-- DRAFT / PREVIEW --}}
+        <div class="website-preview-col" data-testid="draft-column">
+            <div class="website-preview-label">
+                <span class="website-dot {{ $hasDraftChanges ? 'is-draft' : '' }}" aria-hidden="true"></span>
+                <span>Draft / Preview</span>
+                @if ($isPublished && $hasDraftChanges)
+                    <span class="website-chip" data-testid="draft-changes-chip">Unpublished changes</span>
+                @endif
+            </div>
 
-<x-card class="mb-3">
-    <p class="text-caption">{{ $pageCount }} page(s) generated.</p>
-    <div class="d-flex flex-wrap gap-2">
-        <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid]) }}">Preview</x-button>
+            @if ($hasDraftChanges)
+                <a class="website-preview-frame" href="{{ $previewUrl }}" data-testid="draft-preview" aria-label="Preview your draft website">
+                    <iframe data-site-preview src="{{ $previewUrl }}" title="Your draft website" sandbox="allow-same-origin" tabindex="-1" aria-hidden="true" loading="lazy"></iframe>
+                </a>
+            @else
+                <a class="website-preview-frame is-empty is-quiet" href="{{ $previewUrl }}" data-testid="draft-matches-live">
+                    <span class="text-caption">No unpublished changes &mdash; your draft matches what is live.</span>
+                </a>
+            @endif
+        </div>
+    </div>
+
+    <div class="website-actions">
+        <x-button variant="outline" icon="eye" href="{{ $previewUrl }}" data-testid="action-preview">Preview</x-button>
 
         @if ($pageCount > 0)
             <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
                 @csrf
-                <x-button variant="primary" type="submit">Publish</x-button>
+                <x-button variant="{{ $hasDraftChanges ? 'primary' : 'outline' }}" icon="globe" type="submit" data-testid="action-publish">{{ $isPublished ? ($hasDraftChanges ? 'Publish update' : 'Publish') : 'Publish' }}</x-button>
             </form>
         @endif
 
-        <x-button variant="ghost" href="{{ route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]) }}">Connect a domain</x-button>
-        <x-button variant="ghost" href="{{ route('customer.workspaces.businesses.website.history', [$workspaceUid, $businessUid]) }}">History</x-button>
-        <x-button variant="ghost" href="{{ route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid]) }}">Manage pages</x-button>
-        <x-button variant="ghost" href="{{ route('customer.workspaces.businesses.website.edit-setup', [$workspaceUid, $businessUid]) }}">Edit setup answers</x-button>
+        <x-button variant="ghost" icon="pencil" href="{{ $settingsUrl }}" data-testid="action-edit" data-website-go="settings">Edit</x-button>
     </div>
 
-    <form method="POST" action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="mt-3">
-        @csrf
-        <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
-        <x-button variant="outline" type="submit">Rebuild from setup answers</x-button>
-    </form>
-</x-card>
+    @if ($website->presentation_changes_pending_at !== null)
+        {{--
+            Editing the FAQ, the custom section or the photo order / cover after the pages exist updates the
+            setup data and the real assets, but never the generated page text itself; this is the one honest
+            signal that the change has not reached the pages yet, and the one existing action that applies it.
+        --}}
+        <x-alert variant="warning" class="mt-3">
+            Some recent changes (FAQ, custom section, or photo order/cover) haven't reached your pages yet.
+            <form method="POST" action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="d-inline">
+                @csrf
+                <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
+                <button type="submit" class="btn btn-sm btn-warning">Rebuild now</button>
+            </form>
+        </x-alert>
+    @endif
 
-@include('customer.business.website.studio._look')
-@include('customer.business.website.studio._health')
+    @if (! empty($catalogSync['out_of_sync']))
+        {{-- Packages & Products is the one pricing truth; a published revision is immutable, so a catalog change since the last publish is flagged, with the existing safe path (publish again). --}}
+        <x-alert variant="warning" class="mt-3" data-catalog-sync>
+            Your packages changed after you last published
+            @if (! empty($catalogSync['changed']))
+                (updated: {{ implode(', ', $catalogSync['changed']) }})@endif
+            @if (! empty($catalogSync['removed']))
+                (removed: {{ implode(', ', $catalogSync['removed']) }})@endif.
+            Your live website still shows the older package details.
+            <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
+                @csrf
+                <button type="submit" class="btn btn-sm btn-warning">Publish update</button>
+            </form>
+        </x-alert>
+    @endif
+
+    @if (! empty($mediaWarnings))
+        <x-alert variant="warning" class="mt-3">
+            <strong>Missing media checklist:</strong>
+            <ul class="mb-0">
+                @foreach ($mediaWarnings as $warning)
+                    <li>{{ $warning }}</li>
+                @endforeach
+            </ul>
+        </x-alert>
+    @endif
+
+    @if ($isPublished && $domain === null)
+        {{-- The natural next step after publishing. Gone for good once a domain is connected; the domain itself stays manageable under Settings. --}}
+        <x-card class="website-next-step mt-3" data-testid="connect-domain-card">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div>
+                    <h6 class="mb-1">{{ $pendingDomain ? 'Finish connecting your domain' : 'Connect your domain' }}</h6>
+                    <p class="text-caption mb-0">{{ $pendingDomain ? $pendingDomain->domain . ' isn\'t live yet. Finish the steps to put your website on it.' : 'Put your website on your own address, like www.yourbusiness.com.' }}</p>
+                </div>
+                <x-button variant="primary" icon="link" href="{{ $domainsUrl }}">{{ $pendingDomain ? 'Continue' : 'Connect domain' }}</x-button>
+            </div>
+        </x-card>
+    @endif
+
+    @if (! empty($health))
+        <details class="website-health-fold mt-3" data-testid="website-health-fold">
+            <summary>
+                <span>Website health</span>
+                <span class="text-caption ms-2">{{ $health['summary']['ok'] }} good @if ($health['summary']['warn'] > 0)&middot; {{ $health['summary']['warn'] }} need attention @endif @if ($health['summary']['fail'] > 0)&middot; {{ $health['summary']['fail'] }} to fix now @endif</span>
+            </summary>
+            <div class="mt-2">
+                @include('customer.business.website.studio._health')
+            </div>
+        </details>
+    @endif
+</div>

@@ -1,10 +1,12 @@
 {{--
     Website V1 final — the owner's safe look tokens: ONE brand colour, a logo
     and a hero image. Shared by the Review screen and Studio; posts to
-    website.look.update (WebsiteLookController). Expects $brandColor, $logo, $hero.
+    website.look.update (WebsiteLookController). Expects $brandColor, $logo, $hero; an optional
+    $lookHeading adds a small heading (Studio's card already has its own title).
 --}}
-<h6 class="mb-1">Brand colour, logo and hero image</h6>
-<p class="text-caption mb-3">The template keeps control of layout and fonts. Your brand colour is applied to buttons and accents, with text colours adjusted automatically so everything stays readable.</p>
+@if (! empty($lookHeading))
+    <h6 class="mb-3">{{ $lookHeading }}</h6>
+@endif
 
 <div class="row g-3 align-items-start">
     <div class="col-md-4">
@@ -13,7 +15,6 @@
             <input type="color" class="form-control form-control-color" id="look-brand-picker" value="{{ $brandColor ?: '#1a56db' }}" title="Pick a colour" aria-label="Pick a brand colour">
             <input type="text" class="form-control" id="look-brand-color" name="brand_color" value="{{ old('brand_color', $brandColor) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
         </div>
-        <div class="form-text">Leave blank to use the template's own colour.</div>
         @error('brand_color') <div class="text-danger small">{{ $message }}</div> @enderror
     </div>
 
@@ -40,18 +41,12 @@
         @if ($hero)
             <div class="form-check mt-2"><input class="form-check-input" type="checkbox" name="remove_hero" value="1" id="look-remove-hero"><label class="form-check-label" for="look-remove-hero">Remove hero image</label></div>
         @endif
-        <div class="form-text">Optional. Without one, the template shows its own designed hero.</div>
         @error('hero') <div class="text-danger small">{{ $message }}</div> @enderror
     </div>
 </div>
 
 
-<script>
-    (function () {
-        var picker = document.getElementById('look-brand-picker');
-        var text = document.getElementById('look-brand-color');
-        if (!picker || !text) { return; }
-        picker.addEventListener('input', function () { text.value = picker.value; });
-        text.addEventListener('input', function () { if (/^#[0-9a-fA-F]{6}$/.test(text.value)) { picker.value = text.value; } });
-    })();
-</script>
+{{-- Only a full page runs inline scripts; Studio (a swappable section) loads the same script from its shell. --}}
+@if (! empty($withScript))
+    @include('customer.business.website._brand-fields-script')
+@endif
