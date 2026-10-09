@@ -53,3 +53,30 @@
         });
     })();
 </script>
+<script>
+    (function () {
+        var pills = document.querySelectorAll('[data-rv-filter]');
+        if (!pills.length) { return; }
+        var rows = document.querySelectorAll('.rv-request');
+        var more = document.querySelector('.rv-more');
+        var empty = document.querySelector('[data-role="request-filter-empty"]');
+
+        function apply(mode) {
+            var shown = 0;
+            rows.forEach(function (row) {
+                var show = mode === 'all' || row.getAttribute('data-state') === mode;
+                row.hidden = !show;
+                if (show) { shown++; }
+            });
+            pills.forEach(function (pill) {
+                pill.classList.toggle('is-active', pill.getAttribute('data-rv-filter') === mode);
+            });
+            if (more && mode !== 'all') { more.open = true; }
+            if (empty) { empty.hidden = shown > 0; }
+        }
+
+        pills.forEach(function (pill) {
+            pill.addEventListener('click', function () { apply(pill.getAttribute('data-rv-filter')); });
+        });
+    })();
+</script>
