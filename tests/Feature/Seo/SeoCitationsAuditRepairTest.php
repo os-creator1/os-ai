@@ -328,8 +328,8 @@ class SeoCitationsAuditRepairTest extends TestCase
         $this->assertSame($summary['attention'], preg_match_all('/data-role="citation-row"[^>]*data-attention="1"/', $html), 'The count is the number of rows the list flags.');
         $this->assertSame($summary['needsSetup'], preg_match_all('/data-role="citation-row"[^>]*data-setup-needed="1"/', $html));
         $this->assertSame(1, preg_match('/data-stat="attention">(.*?)<\/div>/s', $html, $stat));
-        $this->assertSame('Needs attention 3 A listing that differs, was marked for correction, or is due a review', trim(preg_replace('/\s+/', ' ', strip_tags($stat[1]))));
-        $this->assertMatchesRegularExpression('/data-progress="needs-setup"><strong>Needs setup<\/strong> 10</', $html);
+        $this->assertSame('Needs attention 3 Differs, marked for correction, or due a review', trim(preg_replace('/\s+/', ' ', strip_tags($stat[1]))));
+        $this->assertMatchesRegularExpression('/data-progress="setup">10</', $html);
         $this->assertStringContainsString('data-filter="setup"', $html);
     }
 
@@ -708,7 +708,7 @@ class SeoCitationsAuditRepairTest extends TestCase
         $html = $this->page($workspace, $business, $location);
 
         $this->assertStringNotContainsString('Business OS tracks for you', $html);
-        $this->assertStringContainsString('You track them by hand', $html);
+        $this->assertStringContainsString('does not read from the directories', $html);
     }
 
     public function test_a_new_custom_directory_does_not_default_to_listed(): void

@@ -395,37 +395,23 @@ final class CustomerMenuBuilder
     }
 
     /**
-     * Contract 18 §14.2, Sub-slice H — the SEO group. The parent shows
-     * exactly when `seo_basic_visibility` is allowed and `view_seo` is
-     * held — proved by requiring the Overview item itself, never a second,
-     * hand-rolled capability check that could drift from it. Overview and
-     * Search keywords are Core+; the Growth+ children (Website SEO audit,
-     * Citations, Reviews) additionally require `seo_module`, and the
-     * folded-in "Get found" child keeps its own independent
-     * `google_business_profile_module` gate, exactly as it had as a
-     * top-level entry — deliberately NOT behind `view_seo`, since it is
-     * still GBP's own permission. A child whose route is not registered or
-     * whose gate refuses is silently absent — the SAME `item()`/
-     * `entitled()` machinery every other entry uses, so visibility here is
-     * no more an authorization boundary than anywhere else in this class.
+     * Contract 18 §14.2, Sub-slice H — the SEO group, simplified to the five
+     * places an owner actually works: Search keywords, Content, Google
+     * Business Profile, Citations, Reviews. The former Overview and Site
+     * Audit entries are gone from navigation (their routes and domain logic
+     * remain; `/seo` redirects to Search keywords, and the audit engine
+     * still feeds Website Health and Growth facts).
      *
-     * REVIEW CORRECTION: an earlier revision gated the PARENT on
-     * `seo_basic_visibility` alone and built Overview as one child among
-     * several. Because "Get found" carries its own independent gate, an
-     * actor with `google_business_profile_module` but WITHOUT `view_seo`
-     * could lose every `view_seo`-gated child yet still have a non-empty
-     * `$children` array (Get found survives alone) — so the parent
-     * rendered, pointing its own URL at the Overview route, which then
-     * refused that same actor (401) the moment they clicked it. Requiring
-     * the Overview item FIRST, and returning null for the whole group when
-     * it is null, makes the parent's existence and its landing URL
-     * inherit Overview's own route/capability/View-As/tenancy-address
-     * shape by construction — there is no second policy to drift.
-     *
-     * Built outside `item()` because `item()` has no children parameter;
-     * every child is still produced by the ordinary `item()`/`entitled()`
-     * pair so their own route/permission/View-as/active-state rules are
-     * identical to a top-level entry's.
+     * The parent shows exactly when `seo_basic_visibility` is allowed and
+     * `view_seo` is held — proved by requiring the Search keywords item
+     * itself (Core+, `view_seo`), never a second hand-rolled capability
+     * check that could drift from it, so the parent's landing URL inherits
+     * that item's route/capability/View-As/tenancy-address shape. The
+     * Growth+ children (Citations, Reviews) additionally require
+     * `seo_module`, and Google Business Profile keeps its own independent
+     * `google_business_profile_module` gate and permission. A child whose
+     * route is not registered or whose gate refuses is silently absent —
+     * the SAME `item()`/`entitled()` machinery every other entry uses.
      */
     private function seoMenuItem(User $user, array $scoped, string $current): ?MenuItem
     {
@@ -433,25 +419,19 @@ final class CustomerMenuBuilder
             return null;
         }
 
-        $overview = $this->item($user, 'seo-overview', 'Overview', 'bar-chart-2', ['view_seo'], 'customer.workspaces.businesses.seo.index', $scoped, $current, [
-            'customer.workspaces.businesses.seo.index', 'customer.seo.',
+        $keywords = $this->item($user, 'seo-keywords', 'Search keywords', 'hash', ['view_seo'], 'customer.workspaces.businesses.seo.keywords.index', $scoped, $current, [
+            'customer.workspaces.businesses.seo.index', 'customer.seo.', 'customer.workspaces.businesses.seo.keywords.',
         ]);
 
-        if ($overview === null) {
+        if ($keywords === null) {
             return null;
         }
 
         $children = array_values(array_filter([
-            $overview,
-            $this->item($user, 'seo-keywords', 'Search keywords', 'hash', ['view_seo'], 'customer.workspaces.businesses.seo.keywords.index', $scoped, $current, [
-                'customer.workspaces.businesses.seo.keywords.',
-            ]),
+            $keywords,
             $this->seoContentMenuItem($user, $scoped, $current),
-            $this->entitled('google_business_profile_module', $this->item($user, 'gbp', 'Get found', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
+            $this->entitled('google_business_profile_module', $this->item($user, 'gbp', 'Google Business Profile', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
                 'customer.workspaces.businesses.gbp.', 'customer.gbp.',
-            ])),
-            $this->entitled('seo_module', $this->item($user, 'seo-audit', 'Site Audit', 'search', ['view_seo'], 'customer.workspaces.businesses.seo.audit.index', $scoped, $current, [
-                'customer.workspaces.businesses.seo.audit.',
             ])),
             $this->entitled('seo_module', $this->item($user, 'seo-citations', 'Citations', 'list', ['view_seo'], 'customer.workspaces.businesses.seo.citations.index', $scoped, $current, [
                 'customer.workspaces.businesses.seo.citations.',
@@ -461,7 +441,7 @@ final class CustomerMenuBuilder
             ])),
         ]));
 
-        return new MenuItem('seo', 'SEO', $overview->url, 'trending-up', false, $children);
+        return new MenuItem('seo', 'SEO', $keywords->url, 'trending-up', false, $children);
     }
 
     /**

@@ -468,7 +468,6 @@ class SeoRankUxTest extends TestCase
             'app/Http/Controllers/Customer/Business/SeoAuditController.php',
             'resources/views/customer/business/seo/keywords.blade.php',
             'resources/views/customer/business/seo/rank-target.blade.php',
-            'resources/views/customer/business/seo/overview.blade.php',
             'resources/views/customer/business/seo/audit.blade.php',
             'app/Library/Seo/Rank/SeoRankEntitlement.php',
         ];

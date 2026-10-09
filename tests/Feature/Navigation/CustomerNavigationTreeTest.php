@@ -71,13 +71,13 @@ class CustomerNavigationTreeTest extends TestCase
         // The D-20 exemplar: Core's catalog excludes the GBP module.
         $this->assertNotContains('gbp', $keys, 'Core has no Get found.');
 
-        // Contract 18 §5.1 — seo_module (Site Audit, Citations, Reviews) is
-        // Growth+Agency only; Core keeps only the seo_basic_visibility
-        // children (Overview, Search keywords).
-        foreach (['seo-audit', 'seo-citations', 'seo-reviews'] as $growthOnly) {
+        // Contract 18 §5.1 — seo_module (Citations, Reviews) is Growth+Agency
+        // only; Core keeps only the seo_basic_visibility child (Search keywords).
+        // Overview and Site Audit are no longer navigation entries for anyone.
+        foreach (['seo-citations', 'seo-reviews', 'seo-overview', 'seo-audit'] as $growthOnly) {
             $this->assertNotContains($growthOnly, $keys, "Core has no [{$growthOnly}].");
         }
-        foreach (['seo-overview', 'seo-keywords'] as $basic) {
+        foreach (['seo-keywords'] as $basic) {
             $this->assertContains($basic, $keys, "Core must still offer [{$basic}].");
         }
     }
@@ -118,7 +118,7 @@ class CustomerNavigationTreeTest extends TestCase
         $this->assertNotContains('analytics', $keys, 'Results is not a top-level Business entry.');
     }
 
-    public function test_a_growth_business_gets_get_found_because_its_plan_includes_it(): void
+    public function test_a_growth_business_gets_google_business_profile_because_its_plan_includes_it(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -126,7 +126,7 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-audit', 'seo-citations', 'seo-reviews', 'ads', 'ads-google', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-citations', 'seo-reviews', 'ads', 'ads-google', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Growth Business must offer [{$expected}].");
         }
 
@@ -134,8 +134,11 @@ class CustomerNavigationTreeTest extends TestCase
             $this->assertNotContains($gone, $keys, "Conversations is the one messaging entry: no [{$gone}].");
         }
 
-        $this->assertStringContainsString('Get found', $this->shellText($html));
-        $this->assertStringContainsString('Site Audit', $this->shellText($html));
+        $this->assertStringContainsString('Google Business Profile', $this->shellText($html));
+        $this->assertStringNotContainsString('Get found', $this->shellText($html));
+        foreach (['seo-overview', 'seo-audit'] as $retired) {
+            $this->assertNotContains($retired, $keys, "[{$retired}] is no longer a navigation entry.");
+        }
     }
 
     /**
@@ -895,7 +898,7 @@ class CustomerNavigationTreeTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        foreach (['seo', 'seo-overview', 'seo-keywords', 'seo-audit', 'seo-citations', 'seo-reviews'] as $expected) {
+        foreach (['seo', 'seo-keywords', 'seo-citations', 'seo-reviews'] as $expected) {
             $this->assertContains($expected, $keys, "[{$expected}] must still render with view_seo held.");
         }
 

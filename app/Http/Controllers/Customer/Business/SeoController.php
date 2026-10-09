@@ -21,12 +21,11 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
 
 /**
- * Contract 18 Sub-slice 18A — the Business-scoped SEO Overview.
+ * Contract 18 Sub-slice 18A — the Business-scoped SEO entry.
  *
  * READ-ONLY. There is no write action anywhere in this controller: it does
  * not write Website, Business, Location or Google data, calls no provider,
- * and calls no AI. The Overview it serves is computed from platform-owned
- * tables only (SeoOverviewReader).
+ * and calls no AI. Both of its routes only redirect to Search keywords.
  *
  * Every Business-scoped action runs the mandatory chain (Contract 18 §10.1,
  * mirroring GBP §15.1): Workspace by uid → Business inside it →
@@ -55,7 +54,6 @@ class SeoController extends CustomerBaseController
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
-        private readonly SeoOverviewReader $overviewReader,
     ) {
     }
 
@@ -87,24 +85,27 @@ class SeoController extends CustomerBaseController
         if (count($accessible) === 1) {
             [$workspace, $business] = $accessible[0];
 
-            return redirect()->route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]);
+            return redirect()->route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]);
         }
 
         return view('customer.business.seo.entry', ['accessible' => $accessible]);
     }
 
-    public function overview(string $workspaceUid, string $businessUid): View
+    /**
+     * `/workspaces/{ws}/businesses/{biz}/seo` — the former Overview. There is no
+     * Overview page any more: Search keywords is the SEO results surface and
+     * cross-product recommendations live on Business Home. The route name stays
+     * (`businesses.seo.index`) so old links and bookmarks keep working, and the
+     * full tenancy / entitlement / `view_seo` chain still runs first, so a
+     * foreign or unentitled Business is still an indistinguishable 404.
+     */
+    public function overview(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        [$workspace, $business] = $this->resolveSeoTenancy($workspaceUid, $businessUid);
+        $this->resolveSeoTenancy($workspaceUid, $businessUid);
 
         $this->authorize('view_seo');
 
-        return view('customer.business.seo.overview', [
-            'workspaceUid' => $workspaceUid,
-            'businessUid' => $businessUid,
-            'business' => $business,
-            'overview' => $this->overviewReader->read($workspace, $business, Auth::user()),
-        ]);
+        return redirect()->route('customer.workspaces.businesses.seo.keywords.index', [$workspaceUid, $businessUid]);
     }
 
     /**

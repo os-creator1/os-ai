@@ -41,14 +41,14 @@ class SeoFoundationBoundaryTest extends TestCase
      * seo_basic_visibility is Core+Growth+Agency (contract §5.1), so the
      * real controller — no bypass — now reaches every tier.
      */
-    public function test_the_overview_reaches_every_tier_now_the_feature_is_available(): void
+    public function test_the_former_overview_url_redirects_to_search_keywords_for_every_tier(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$customer, $business, $workspace] = $this->entitledTenant($tier);
             $this->createLocation($business);
             $this->authenticateAsSeoCustomer($customer);
 
-            $this->get($this->seoUrl($workspace, $business))->assertOk();
+            $this->get($this->seoUrl($workspace, $business))->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
         }
     }
 
@@ -63,7 +63,7 @@ class SeoFoundationBoundaryTest extends TestCase
             // (the same zero/one/many selector proven with the bypass
             // below, now exercised through the real, Available floor).
             $this->get(route('customer.seo.index'))
-                ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
+                ->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
         }
     }
 
@@ -82,7 +82,7 @@ class SeoFoundationBoundaryTest extends TestCase
 
         $this->authenticateAsSeoCustomer($holder);
         $this->get(route('customer.seo.index'))
-            ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
+            ->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
 
         $this->authenticateAsSeoCustomer($lacking, ['view_google_business_profile', 'website']);
         $this->get(route('customer.seo.index'))->assertUnauthorized();
@@ -156,7 +156,7 @@ class SeoFoundationBoundaryTest extends TestCase
         $this->authenticateAsSeoCustomer($customer);
 
         $this->get(route('customer.seo.index'))
-            ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
+            ->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
     }
 
     public function test_once_the_floor_is_passed_several_businesses_show_a_chooser(): void
@@ -170,8 +170,8 @@ class SeoFoundationBoundaryTest extends TestCase
         $html = $this->get(route('customer.seo.index'))->assertOk()->getContent();
 
         $this->assertStringContainsString('Choose a Business to continue', $html);
-        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.index', [$firstWorkspace->uid, $first->uid]), $html);
-        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.index', [$secondWorkspace->uid, $second->uid]), $html);
+        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.keywords.index', [$firstWorkspace->uid, $first->uid]), $html);
+        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.keywords.index', [$secondWorkspace->uid, $second->uid]), $html);
     }
 
     public function test_the_selector_never_lists_a_business_the_actor_cannot_access(): void
@@ -184,9 +184,9 @@ class SeoFoundationBoundaryTest extends TestCase
         $response = $this->get(route('customer.seo.index'));
 
         // Exactly one accessible Business, so it redirects to MINE — never the foreign one.
-        $response->assertRedirect(route('customer.workspaces.businesses.seo.index', [$myWorkspace->uid, $mine->uid]));
+        $response->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$myWorkspace->uid, $mine->uid]));
         $this->assertNotSame(
-            route('customer.workspaces.businesses.seo.index', [$foreignWorkspace->uid, $foreign->uid]),
+            route('customer.workspaces.businesses.seo.keywords.index', [$foreignWorkspace->uid, $foreign->uid]),
             $response->headers->get('Location'),
         );
     }
@@ -251,7 +251,7 @@ class SeoFoundationBoundaryTest extends TestCase
         $this->createLocation($business);
         $this->authenticateAsSeoCustomer($customer);
 
-        $this->get($this->seoUrl($workspace, $business))->assertOk();
+        $this->get($this->seoUrl($workspace, $business))->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
     }
 
     // -----------------------------------------------------------------

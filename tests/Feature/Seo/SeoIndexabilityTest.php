@@ -195,7 +195,7 @@ class SeoIndexabilityTest extends TestCase
         $this->assertSame(SeoIndexabilityState::Indexable, $indexability->state);
     }
 
-    public function test_the_overview_and_the_website_check_show_the_truthful_line_with_the_right_action(): void
+    public function test_the_website_check_shows_the_truthful_line_with_the_right_action(): void
     {
         [$customer, $business, $workspace] = $this->tenant();
         $website = $this->publishWebsite($business, $this->pages(14, 5));
@@ -205,7 +205,6 @@ class SeoIndexabilityTest extends TestCase
         $pagesUrl = route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]);
 
         foreach ([
-            $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent(),
             $this->get(route('customer.workspaces.businesses.seo.audit.index', [$workspace->uid, $business->uid]))->assertOk()->getContent(),
         ] as $html) {
             $this->assertStringContainsString('Search engines can find 9 of 14 pages', $html);
@@ -223,7 +222,7 @@ class SeoIndexabilityTest extends TestCase
         $this->domain($website);
         $this->authenticateAsSeoCustomer($customer);
 
-        $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
+        $html = $this->get(route('customer.workspaces.businesses.seo.audit.index', [$workspace->uid, $business->uid]))->assertOk()->getContent();
         $this->assertStringContainsString('Your site is live but hidden from search', $html);
         $this->assertStringContainsString('data-action="allow_indexing"', $html);
 
@@ -231,7 +230,7 @@ class SeoIndexabilityTest extends TestCase
         $this->publishWebsite($otherBusiness, $this->pages(2));
         $this->authenticateAsSeoCustomer($other);
 
-        $html = $this->get($this->seoUrl($otherWorkspace, $otherBusiness))->assertOk()->getContent();
+        $html = $this->get(route('customer.workspaces.businesses.seo.audit.index', [$otherWorkspace->uid, $otherBusiness->uid]))->assertOk()->getContent();
         $this->assertStringContainsString('Your website is live, but search engines cannot find it yet', $html);
         $this->assertStringContainsString(route('customer.workspaces.businesses.website.domains.index', [$otherWorkspace->uid, $otherBusiness->uid]), $html);
     }
@@ -242,25 +241,16 @@ class SeoIndexabilityTest extends TestCase
         $this->publishWebsite($business, $this->pages(2));
         $this->authenticateAsSeoCustomer($customer, ['view_seo', 'manage_seo']);
 
-        $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
+        $html = $this->get(route('customer.workspaces.businesses.seo.audit.index', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
         $this->assertStringContainsString('Your website is live, but search engines cannot find it yet', $html);
         $this->assertStringNotContainsString('data-role="indexability-action"', $html);
     }
 
-    public function test_the_search_console_card_is_honest_and_shows_no_figures(): void
+    public function test_search_console_stays_neutral_unavailable_in_growth_facts(): void
     {
         [$customer, $business, $workspace] = $this->tenant();
         $this->authenticateAsSeoCustomer($customer);
-
-        $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
-
-        $this->assertStringContainsString('data-section="search-console"', $html);
-        $this->assertStringContainsString('Not connected', $html);
-        $this->assertStringContainsString('Not available yet', $html);
-        // No fake zeros and no metric of any kind.
-        $this->assertDoesNotMatchRegularExpression('/\b0\s+(clicks|impressions)\b/i', $html);
-        $this->assertStringNotContainsString('data-role="search-console-clicks"', $html);
 
         // Growth keeps Search Console neutral-unavailable: no reader, no fact, no provider call.
         $this->assertFalse(app(GrowthFactSnapshotBuilder::class)->build($business->fresh())->set('search_console')->isAvailable());

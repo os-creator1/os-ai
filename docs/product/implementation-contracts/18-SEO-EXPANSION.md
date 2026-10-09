@@ -1395,3 +1395,14 @@ the product has since outgrown; everything not named here is unchanged.
 - The connected Google row is a finished Essential only while the listing health is not suspended, disabled, in ownership conflict, duplicate, not verified or verification-pending. Those are "Needs attention" items (first in "What to do next", linking to Google Business Profile). Stale health is only the "may be out of date" note.
 - Reviews summary tiles count ACTIVE Locations only; archived Locations are shown separately, without an action.
 - A Blueprint republish never recreates a recommendation the Platform Owner removed: a missing row is created only for a directory the previous version did not list.
+
+---
+
+## Amendment — SEO navigation simplified (V1 UX polish)
+
+The customer SEO group is now exactly five entries: **Search keywords, Content, Google Business Profile, Citations, Reviews.** (This supersedes the Overview, Site Audit and "Get found" entries named in §14.2 above.)
+
+* **Overview is gone as a page.** `/seo` and `/workspaces/{ws}/businesses/{biz}/seo` (`customer.workspaces.businesses.seo.index`) redirect to Search keywords, after the same tenancy / entitlement / `view_seo` chain, so a foreign or unentitled Business is still an indistinguishable 404. Search keywords is the SEO results surface; cross-product recommendations belong to Business Home (Next Best Move / Growth Center). `SeoOverviewReader` and its tests remain; nothing renders it today.
+* **Site Audit has no navigation entry.** The audit engine, its routes and its findings stay: they feed Website Health, Growth facts and generation QA. An owner is not asked to repair things the generated Website controls; owner-action issues (for example a missing custom domain) surface through the Website and Home next steps. The `seo.audit.index` route is still reachable for deep links.
+* **"Get found" is renamed "Google Business Profile"** (same route, permission and entitlement gates).
+* **Citations** keeps every canonical behaviour (manual tracking, NAP comparison, Google row read from the GBP read model, niche recommendations from `seo_niche_citation_recommendations` keyed on `businesses.industry`). Only the page composition changed: four metric cards, "What to do next" beside "Business information", then the directory list with filter chips (the old progress strip's counts now live on the chips) and one primary action per row.
