@@ -175,6 +175,11 @@ return [
     */
     'content_autopilot' => [
         'max_new_articles_per_month' => (int) env('SEO_AUTOPILOT_MAX_NEW_ARTICLES_PER_MONTH', 4),
+        // Anti-burst cadence: a new article is started, and a self-publishing one scheduled, at least this many days after
+        // the previous one. Self-published articles land on weekday mornings in the Business's own time zone.
+        'min_days_between_articles' => (int) env('SEO_AUTOPILOT_MIN_DAYS_BETWEEN_ARTICLES', 5),
+        // Stop writing while this many drafts already wait for the owner (or for their slot).
+        'max_awaiting_approval' => (int) env('SEO_AUTOPILOT_MAX_AWAITING_APPROVAL', 2),
         // Deterministic opportunity score bands (0-100). >= eligible: may be written. hold..eligible: wait or ask for one
         // missing fact. Below hold: skipped.
         'eligible_score' => (int) env('SEO_AUTOPILOT_ELIGIBLE_SCORE', 70),

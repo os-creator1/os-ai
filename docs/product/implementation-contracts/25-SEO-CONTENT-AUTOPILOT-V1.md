@@ -155,3 +155,27 @@ terms. `php artisan content:autopilot-evaluate {business} [--persist]` shows the
 * **Known limit:** locations and proper nouns are not gazetteer-checked; they are controlled by the prompt, the closed fact set
   and the trust ramp. A soft-finding judge (cheap route) is *not* built: it could not remove the owner's approval, so it would
   only add cost.
+
+## 7. The daily run, cadence and self-publishing (Slice 6)
+
+`php artisan content:autopilot-tick` (daily 03:30) is free: it only queues one `RunContentAutopilotJob` per Business that is
+switched on and not owner-paused, delayed by a stable per-Business offset across the next hours. `AutopilotRunner::run()` is
+also free (no model call); the only paid step is the `WriteAutopilotArticleJob` it may queue.
+
+A run: **gates** (on · not paused · `SeoModule` in the plan · has a website — otherwise it records *why*: `plan`, `no_website`,
+`budget`; an owner pause is never overwritten by the system) → **reconcile** (decisions follow the article: published /
+scheduled / archived; a scheduled article that `publish-due` returned to Draft waits for the owner and is never re-scheduled
+on its own) → **resume** (a dead worker is released; budget-deferred work continues only once the budget period has rolled
+over; a provider outage is retried up to 3 times, 6 h apart, then given up) → **publish** → **start**.
+
+**Start** — at most one new article per run, and usually none: nothing is started while work is in flight, while
+`max_awaiting_approval` (2) drafts wait for the owner, or within `min_days_between_articles` (5) of the previous one; otherwise the
+planner may still decide *none*. The monthly maximum (4) stays a ceiling.
+
+**Self-publishing (`AutopilotPublisher`)** — a draft schedules itself only if ALL hold: validation found nothing at all · the
+niche is `standard` with `auto_publish: allowed` (unknown ⇒ no) · **trust ramp over**: the Business already has
+`ContentPolicy::TRUST_RAMP_ARTICLES` (2) Autopilot articles published, i.e. the owner approved the first ones themselves.
+Otherwise it stays an ordinary Draft awaiting approval. "Self-publishing" is `ArticleManager::schedule` at the next slot — a
+weekday 09:00–11:59 in the Business's own time zone, jittered per article, at least `min_days_between_articles` after the
+previous Autopilot article — and the existing `articles:publish-due` takes it live and **re-checks it first**. There is no second
+publishing path. `AutopilotSwitch` is the only writer of `enabled` / `paused_reason`.

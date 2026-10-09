@@ -24,7 +24,7 @@ return new class extends Migration
             $table->boolean('enabled')->default(false);
             $table->dateTime('enabled_at')->nullable();
             $table->unsignedBigInteger('enabled_by_user_id')->nullable();
-            // owner | budget | no_website | profile — why a switched-on Autopilot is not currently running.
+            // owner | budget | no_website | plan — why a switched-on Autopilot is not currently running.
             $table->string('paused_reason', 32)->nullable();
             // { common_questions: string[], emphasis: string[], avoid_topics: string[] }
             $table->json('profile')->nullable();
