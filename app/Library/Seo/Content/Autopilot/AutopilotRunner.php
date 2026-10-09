@@ -46,29 +46,10 @@ final class AutopilotRunner
     public function run(Business $business, ?CarbonInterface $now = null): array
     {
         $now ??= now();
-        $setting = ContentAutopilotSetting::query()->where('business_id', $business->id)->first();
 
-        if ($setting === null || ! $setting->enabled) {
-            return $this->skipped('off');
+        if (($why = $this->gate($business)) !== null) {
+            return $this->skipped($why);
         }
-
-        if ($setting->paused_reason === AutopilotSwitch::PAUSE_OWNER) {
-            return $this->skipped('paused_by_owner');
-        }
-
-        if (! $this->entitlements->decide($business->workspace, $business, PlatformFeature::SeoModule->value, (int) $business->customer_id)->allowed) {
-            $this->switch->markPaused($business, AutopilotSwitch::PAUSE_PLAN);
-
-            return $this->skipped('plan');
-        }
-
-        if (Website::query()->where('business_id', $business->id)->doesntExist()) {
-            $this->switch->markPaused($business, AutopilotSwitch::PAUSE_NO_WEBSITE);
-
-            return $this->skipped('no_website');
-        }
-
-        $this->switch->markPaused($business, null);
 
         $actions = [];
         $period = $now->copy()->utc()->format('Y-m');
@@ -88,10 +69,43 @@ final class AutopilotRunner
         return ['ran' => true, 'skipped' => null, 'actions' => $actions];
     }
 
+    /**
+     * Why Autopilot must do nothing for this Business right now (`off`, `paused_by_owner`, `plan`, `no_website`), or null when
+     * it may work - recording (or clearing) the reason on the setting. Shared by the daily run and the weekly maintenance.
+     */
+    public function gate(Business $business): ?string
+    {
+        $setting = ContentAutopilotSetting::query()->where('business_id', $business->id)->first();
+
+        if ($setting === null || ! $setting->enabled) {
+            return 'off';
+        }
+
+        if ($setting->paused_reason === AutopilotSwitch::PAUSE_OWNER) {
+            return 'paused_by_owner';
+        }
+
+        if (! $this->entitlements->decide($business->workspace, $business, PlatformFeature::SeoModule->value, (int) $business->customer_id)->allowed) {
+            $this->switch->markPaused($business, AutopilotSwitch::PAUSE_PLAN);
+
+            return 'plan';
+        }
+
+        if (Website::query()->where('business_id', $business->id)->doesntExist()) {
+            $this->switch->markPaused($business, AutopilotSwitch::PAUSE_NO_WEBSITE);
+
+            return 'no_website';
+        }
+
+        $this->switch->markPaused($business, null);
+
+        return null;
+    }
+
     /** Decisions follow their article: the owner may publish, schedule, un-schedule or archive it at any time. */
     private function reconcile(Business $business, CarbonInterface $now): void
     {
-        Decision::query()->where('business_id', $business->id)->whereNotNull('article_id')
+        Decision::query()->where('business_id', $business->id)->where('kind', Decision::KIND_CREATE)->whereNotNull('article_id')
             ->whereIn('state', [Decision::STATE_AWAITING_APPROVAL, Decision::STATE_SCHEDULED])->with('article')->get()
             ->each(function (Decision $decision) use ($now) {
                 $article = $decision->article;
@@ -152,7 +166,7 @@ final class AutopilotRunner
     {
         $actions = [];
 
-        Decision::query()->where('business_id', $business->id)->where('state', Decision::STATE_AWAITING_APPROVAL)
+        Decision::query()->where('business_id', $business->id)->where('kind', Decision::KIND_CREATE)->where('state', Decision::STATE_AWAITING_APPROVAL)
             ->whereNotNull('article_id')->orderBy('id')->get()
             ->each(function (Decision $decision) use (&$actions, $now) {
                 $wait = $this->publisher->scheduleIfAllowed($decision, $now);
@@ -166,7 +180,7 @@ final class AutopilotRunner
     /** @return list<string> */
     private function start(Business $business, CarbonInterface $now): array
     {
-        $inFlight = Decision::query()->where('business_id', $business->id)->whereIn('state', [
+        $inFlight = Decision::query()->where('business_id', $business->id)->where('kind', Decision::KIND_CREATE)->whereIn('state', [
             Decision::STATE_BRIEFED, Decision::STATE_DRAFTING, Decision::STATE_VALIDATING, Decision::STATE_DEFERRED_BUDGET,
         ])->exists();
 
@@ -174,7 +188,7 @@ final class AutopilotRunner
             return ['wait:in_flight'];
         }
 
-        $waiting = Decision::query()->where('business_id', $business->id)->whereIn('state', [Decision::STATE_AWAITING_APPROVAL])->count();
+        $waiting = Decision::query()->where('business_id', $business->id)->where('kind', Decision::KIND_CREATE)->whereIn('state', [Decision::STATE_AWAITING_APPROVAL])->count();
 
         if ($waiting >= max(1, (int) config('seo.content_autopilot.max_awaiting_approval', 2))) {
             return ['wait:drafts_waiting'];

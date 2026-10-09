@@ -84,6 +84,35 @@ final class AutopilotPublisher
         return null;
     }
 
+    /**
+     * A maintenance update (related links, a rewrite) waits as the article's pending draft. When every rule that lets a new
+     * article publish itself also allows this one, it is applied through the existing "Publish update" path; otherwise it stays
+     * a pending draft for the owner. Returns the reason it waits, or null once applied.
+     */
+    public function applyUpdateIfAllowed(Decision $decision): ?string
+    {
+        if (($reason = $this->approvalReason($decision)) !== null) {
+            return $reason;
+        }
+
+        $article = WebsiteArticle::query()->find($decision->article_id);
+        $business = Business::query()->find($decision->business_id);
+
+        if ($article === null || $business === null || $article->status !== ArticleStatus::Published || ! $article->hasPendingDraft()) {
+            return self::WAIT_NOT_SCHEDULABLE;
+        }
+
+        try {
+            $this->articles->publish((int) $business->customer_id, $business, $article);
+        } catch (ArticleException) {
+            return self::WAIT_NOT_SCHEDULABLE;
+        }
+
+        $decision->forceFill(['state' => Decision::STATE_RESOLVED, 'reason_code' => 'update_applied', 'resolved_at' => now()])->save();
+
+        return null;
+    }
+
     /** How many Autopilot articles this Business has had published (the trust ramp counts publications, not drafts). */
     public function publishedSoFar(Business $business): int
     {

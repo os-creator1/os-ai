@@ -11,6 +11,7 @@ use App\Library\Seo\Content\Autopilot\AutopilotOverview;
 use App\Library\Seo\Content\Autopilot\AutopilotPlanner;
 use App\Library\Seo\Content\Autopilot\AutopilotSwitch;
 use App\Library\Seo\Content\Autopilot\ContentProfile;
+use App\Models\ContentAutopilotDecision as Decision;
 use App\Models\Business;
 use App\Models\BusinessKnowledgeProfile;
 use Illuminate\Contracts\View\View;
@@ -107,6 +108,23 @@ class SeoContentAutopilotController extends CustomerBaseController
         $this->switch->resume($business);
 
         return $this->back($workspaceUid, $businessUid)->with('status', 'success')->with('message', 'Content Autopilot is running again.');
+    }
+
+    /** Dismiss a suggestion about an existing article (it is not raised again for a long while). Nothing about the article changes. */
+    public function dismissSuggestion(string $workspaceUid, string $businessUid, string $decisionUid): RedirectResponse
+    {
+        [, $business] = $this->resolveContentModuleTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('manage_seo');
+
+        $decision = Decision::query()->where('business_id', $business->id)->where('uid', $decisionUid)
+            ->where('kind', Decision::KIND_MAINTAIN)->where('decision', 'propose')->first();
+
+        abort_if($decision === null, 404);
+
+        $decision->forceFill(['state' => Decision::STATE_RESOLVED, 'resolved_at' => now()])->save();
+
+        return $this->back($workspaceUid, $businessUid)->with('status', 'success')->with('message', 'Dismissed. Your article is unchanged.');
     }
 
     /** Answer the ONE question Autopilot asked, then let it carry on. */

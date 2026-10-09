@@ -111,6 +111,37 @@
         </x-card>
     @endif
 
+    @if(count($ap['updates']) > 0)
+        <x-card :padded="true" class="mb-2" data-role="waiting-updates">
+            <h5 class="mb-50">Updates to your live articles</h5>
+            <ul class="list-unstyled mb-0">
+                @foreach($ap['updates'] as $update)
+                    <li class="mb-1" data-article="{{ $update['article_uid'] }}">
+                        <a class="fw-bold" href="{{ $route('articles.edit', [$update['article_uid']]) }}">{{ $update['title'] }}</a>
+                        <div class="text-caption">{{ $update['note'] }}</div>
+                    </li>
+                @endforeach
+            </ul>
+        </x-card>
+    @endif
+
+    @if(count($ap['suggestions']) > 0)
+        <x-card :padded="true" class="mb-2" data-role="suggestions">
+            <h5 class="mb-50">Worth a look</h5>
+            <ul class="list-unstyled mb-0">
+                @foreach($ap['suggestions'] as $suggestion)
+                    <li class="mb-1" data-kind="{{ $suggestion['kind'] }}">
+                        <a class="fw-bold" href="{{ $route('articles.edit', [$suggestion['article_uid']]) }}">{{ $suggestion['title'] }}</a>
+                        <div class="text-caption">{{ $suggestion['message'] }} Autopilot never merges or archives an article on its own.</div>
+                        <form method="POST" action="{{ $route('autopilot.suggestion.dismiss', [$suggestion['uid']]) }}" class="d-inline">@csrf
+                            <button type="submit" class="btn btn-sm btn-outline-secondary mt-50" data-role="dismiss">Dismiss</button>
+                        </form>
+                    </li>
+                @endforeach
+            </ul>
+        </x-card>
+    @endif
+
     @if(count($ap['recent']) > 0)
         <x-card :padded="true" class="mb-2" data-role="recently-published">
             <h5 class="mb-50">Recently published</h5>

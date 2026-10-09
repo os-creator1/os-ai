@@ -42,6 +42,11 @@ final class BriefPromptBuilder
             $addendum[] = '- End by pointing the reader to the next step with the allowed link "' . $brief['cta']['title'] . '" if it appears under "allowed_links".';
         }
 
+        if (! empty($brief['rewrite'])) {
+            $addendum[] = '';
+            $addendum[] = 'UPDATE: you are updating the existing article given as "current_article", not writing a new one. Keep what is still true and the structure readers know; correct what has changed using ONLY the facts; keep its useful links. Reasons it needs an update: ' . implode(' | ', array_slice((array) ($brief['rewrite']['reasons'] ?? []), 0, 3)) . '.';
+        }
+
         if ($rejectedFor !== []) {
             $addendum[] = '';
             $addendum[] = 'YOUR PREVIOUS DRAFT WAS REJECTED because it contained: ' . implode(' | ', array_slice($rejectedFor, 0, 5)) . '. Write the article again without any of these.';
@@ -57,6 +62,7 @@ final class BriefPromptBuilder
             'questions' => $brief['questions'],
             'must_not' => $brief['must_not'],
             'niche' => $brief['niche'],
+            'current_article' => $brief['rewrite']['current'] ?? null,
             'allowed_links' => array_map(fn (array $l) => [
                 'anchor' => $l['anchor'], 'reference' => $l['type'] . ':' . $l['uid'], 'what_it_is' => $l['title'],
             ], (array) ($brief['links'] ?? [])),

@@ -180,6 +180,14 @@ return [
         'min_days_between_articles' => (int) env('SEO_AUTOPILOT_MIN_DAYS_BETWEEN_ARTICLES', 5),
         // Stop writing while this many drafts already wait for the owner (or for their slot).
         'max_awaiting_approval' => (int) env('SEO_AUTOPILOT_MAX_AWAITING_APPROVAL', 2),
+        // Maintenance (weekly): an existing article is reviewed at most this often, and an outcome has its own cool-down.
+        'maintenance_review_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_REVIEW_DAYS', 60),
+        'maintenance_rewrite_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_REWRITE_DAYS', 90),
+        'maintenance_proposal_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_PROPOSAL_DAYS', 180),
+        // The only AI spend maintenance has: at most this many article rewrites per Business per month (a ceiling, never a target).
+        'maintenance_max_rewrites_per_month' => (int) env('SEO_AUTOPILOT_MAINTENANCE_MAX_REWRITES', 1),
+        'maintenance_archive_after_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_ARCHIVE_AFTER_DAYS', 540),
+        'maintenance_max_reviews_per_run' => (int) env('SEO_AUTOPILOT_MAINTENANCE_MAX_REVIEWS', 25),
         // Deterministic opportunity score bands (0-100). >= eligible: may be written. hold..eligible: wait or ask for one
         // missing fact. Below hold: skipped.
         'eligible_score' => (int) env('SEO_AUTOPILOT_ELIGIBLE_SCORE', 70),

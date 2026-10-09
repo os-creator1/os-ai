@@ -66,6 +66,8 @@ final class AutopilotOverview
             'month' => $this->month($business, $now),
             'question' => $this->question($business),
             'approval' => $this->approval($business),
+            'updates' => $this->updates($business),
+            'suggestions' => $this->suggestions($business),
             'recent' => $this->recent($business),
         ];
     }
@@ -150,6 +152,42 @@ final class AutopilotOverview
                         : (self::WAIT_TEXT[$wait ?? ''] ?? 'Ready for your OK.'),
                 ];
             })->values()->all();
+    }
+
+    /**
+     * Updates to articles that are already live (related links, a fact-driven rewrite), waiting as the article's pending draft.
+     *
+     * @return list<array{article_uid: string, title: string, note: string}>
+     */
+    private function updates(Business $business): array
+    {
+        return Decision::query()->where('business_id', $business->id)->where('kind', Decision::KIND_MAINTAIN)->where('decision', Decision::DECISION_UPDATE)
+            ->where('state', Decision::STATE_AWAITING_APPROVAL)->whereNotNull('article_id')->with('article')->orderBy('id')->get()
+            ->filter(fn (Decision $d) => $d->article !== null && $d->article->hasPendingDraft())
+            ->map(fn (Decision $d) => [
+                'article_uid' => (string) $d->article->uid,
+                'title' => (string) $d->article->title,
+                'note' => str_starts_with((string) $d->reason_code, 'links') ? 'A short "Related reading" list is ready to add.' : 'Updated to match your current facts - review it, then publish the update.',
+            ])->values()->all();
+    }
+
+    /**
+     * Suggestions about existing articles - never actions. Autopilot never merges or archives anything on its own.
+     *
+     * @return list<array{uid: string, article_uid: string, title: string, kind: string, message: string}>
+     */
+    private function suggestions(Business $business): array
+    {
+        return Decision::query()->where('business_id', $business->id)->where('kind', Decision::KIND_MAINTAIN)->where('decision', 'propose')
+            ->where('state', Decision::STATE_AWAITING_APPROVAL)->whereNotNull('article_id')->with('article')->orderBy('id')->get()
+            ->filter(fn (Decision $d) => $d->article !== null)
+            ->map(fn (Decision $d) => [
+                'uid' => (string) $d->uid,
+                'article_uid' => (string) $d->article->uid,
+                'title' => (string) $d->article->title,
+                'kind' => (string) $d->reason_code,
+                'message' => (string) ($d->needs_input['message'] ?? ''),
+            ])->values()->all();
     }
 
     /** @return list<array{uid: string, title: string, published_at: ?CarbonInterface}> */

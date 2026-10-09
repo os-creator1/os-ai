@@ -69,6 +69,13 @@ final class AutopilotArticleWriter
             return $this->finish($decision, Decision::STATE_HELD, 'no_website');
         }
 
+        // A maintenance decision rewrites an EXISTING article; it never creates one.
+        $existing = $decision->kind === Decision::KIND_MAINTAIN ? WebsiteArticle::query()->where('business_id', $business->id)->find($decision->article_id) : null;
+
+        if ($decision->kind === Decision::KIND_MAINTAIN && ($existing === null || $existing->status !== ArticleStatus::Published)) {
+            return $this->finish($decision, Decision::STATE_HELD, 'article_unavailable');
+        }
+
         if (! $this->canAffordOneArticle($business)) {
             return $this->finish($decision, Decision::STATE_DEFERRED_BUDGET, 'budget_ceiling');
         }
@@ -109,7 +116,7 @@ final class AutopilotArticleWriter
             }
 
             $body = $this->drafts->normalize((string) $parsed['body_markdown'], $allowedLinks);
-            $candidate = $this->candidate($website, $brief, $parsed, $body);
+            $candidate = $existing !== null ? $this->rewriteCandidate($existing, $parsed, $body) : $this->candidate($website, $brief, $parsed, $body);
             $result = $this->validator->validate($business, $candidate, $brief);
 
             if ($result['hard'] === []) {
@@ -126,6 +133,19 @@ final class AutopilotArticleWriter
         }
 
         [$candidate, $parsed] = $draft;
+
+        if ($existing !== null) {
+            // The update waits as the article's ONE pending draft (the live page changes only on "Publish update").
+            $this->articles->update((int) $business->customer_id, $business, $existing, [
+                'excerpt' => $candidate->excerpt,
+                'meta_description' => $candidate->meta_description,
+                'body' => $candidate->body,
+            ]);
+
+            return $this->finish($decision, Decision::STATE_AWAITING_APPROVAL, $result['ready'] ? 'rewrite_ready' : 'rewrite_needs_review', [
+                'hard' => [], 'soft' => $result['soft'], 'repaired' => $rejectedFor !== [], 'ready' => $result['ready'],
+            ]);
+        }
 
         try {
             $article = $this->articles->create((int) $business->customer_id, $business, [
@@ -158,7 +178,8 @@ final class AutopilotArticleWriter
         return DB::transaction(function () use ($decision) {
             $locked = Decision::query()->whereKey($decision->id)->lockForUpdate()->first();
 
-            if ($locked === null || ! in_array($locked->state, [Decision::STATE_BRIEFED, Decision::STATE_DEFERRED_BUDGET], true) || $locked->article_id !== null) {
+            // A create decision is done once it has its article; a maintenance rewrite always has one (the article it updates).
+            if ($locked === null || ! in_array($locked->state, [Decision::STATE_BRIEFED, Decision::STATE_DEFERRED_BUDGET], true) || ($locked->kind === Decision::KIND_CREATE && $locked->article_id !== null)) {
                 return false;
             }
 
@@ -206,6 +227,19 @@ final class AutopilotArticleWriter
         }
 
         return $allowed;
+    }
+
+    /** The existing article as it would read after the rewrite (unsaved; same id, so the overlap check ignores the article itself). */
+    private function rewriteCandidate(WebsiteArticle $existing, array $parsed, string $body): WebsiteArticle
+    {
+        $candidate = clone $existing->effective();
+        $candidate->forceFill([
+            'excerpt' => Str::limit(trim((string) ($parsed['excerpt'] ?? '')), 400, ''),
+            'meta_description' => $this->drafts->metaDescription((string) ($parsed['meta_description'] ?? '')) ?? $existing->meta_description,
+            'body' => $body,
+        ]);
+
+        return $candidate;
     }
 
     /** An UNSAVED article, shaped exactly as it would be stored, so the validator can judge it before anything is created. */

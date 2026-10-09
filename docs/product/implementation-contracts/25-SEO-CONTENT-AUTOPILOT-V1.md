@@ -204,3 +204,24 @@ the highlight on those pages. `…/autopilot*`, `…/plan` and `…/opportunitie
 **Sidebar fix (Slice 0).** The Content group is built with `active = false` like SEO and Ads; expansion comes from
 `MenuItem::hasActiveChild()` (`open`, `aria-expanded`). Checked in a real browser: parent background neutral, submenu
 expanded, only the selected child accented.
+
+## 9. Maintenance (Slice 8)
+
+`php artisan content:autopilot-maintain` (weekly, Tuesday 04:10) queues one `MaintainAutopilotArticlesJob` per switched-on Business
+(same gates as the daily run; free). `AutopilotMaintainer` reads only what the platform already holds — cached rank observations
+(`ArticleRankSignals`), the catalog and published site (`ArticleFreshness`), the existing link suggester and overlap guard. **No
+Search Console, no new rank or provider job.** It starts from *leave it alone*: an article is reviewed at most every
+`maintenance_review_days` (60), and most reviews change nothing and cost nothing. One outcome per article per review, in order:
+
+| Outcome | When | What happens |
+|---|---|---|
+| **rewrite** | an *Autopilot* article whose package/price changed, or that is stale **and** losing ground (age alone never rewrites) | the only AI spend: one strong-route rewrite from the same fact-grounded brief + the current text; capped at `maintenance_max_rewrites_per_month` (1) per Business, once per article per 90 days, and **not started** unless the Business's budget covers it. Saved as the article's pending draft — the live page changes only on "Publish update". A rewrite that is wanted but not allowed yet is not parked: it is looked at again next week. |
+| **propose** | two live articles answer the same question (the newer raises it), or an article is > 540 days old and the page it supports is gone/hidden | a **suggestion** with a Dismiss button — **never an action**. Autopilot never merges or archives anything. Not re-raised while open, nor for 180 days after dismissal. |
+| **links** | an Autopilot article links to fewer than 3 pages | a deterministic "Related reading" list (≤ 3 real, published pages/articles), free, as a pending draft |
+| **leave** | nothing to do | recorded; not reviewed again for 60 days |
+
+Only Autopilot's own articles are ever edited; an article the owner wrote is at most the subject of a suggestion. A waiting
+update (links or rewrite) is applied through the existing "Publish update" path **only** when every rule that lets a new article
+publish itself also allows it (validated clean · niche `standard` + `allowed` · trust ramp over —
+`AutopilotPublisher::applyUpdateIfAllowed`); otherwise it stays a pending draft shown under "Updates to your live articles".
+Maintenance decisions are `kind = maintain` and never count toward the monthly new-article maximum or the writing backlog.
