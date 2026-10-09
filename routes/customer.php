@@ -1323,6 +1323,12 @@
                 Route::get('/', 'Business\SeoContentController@plan')->name('plan');
                 Route::get('/articles', 'Business\SeoContentController@articles')->name('articles.index');
                 Route::get('/opportunities', 'Business\SeoContentController@opportunities')->name('opportunities');
+
+                // Content Autopilot (Contract 25) - rides SeoModule (404 without it). The Content Profile is the short
+                // first-enable flow: only what MotionGrove cannot already know.
+                Route::get('/autopilot/profile', 'Business\SeoContentAutopilotController@profile')->name('autopilot.profile');
+                Route::post('/autopilot/profile', 'Business\SeoContentAutopilotController@saveProfile')->middleware('throttle:30,1')->name('autopilot.profile.save');
+
                 Route::post('/opportunities/draft', 'Business\SeoContentArticleController@opportunityDraft')->middleware('throttle:10,1')->name('opportunities.draft');
                 Route::post('/opportunities/start', 'Business\SeoContentArticleController@opportunityStart')->middleware('throttle:30,1')->name('opportunities.start');
 

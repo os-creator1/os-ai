@@ -43,3 +43,30 @@ Cost model (list prices at `config/ai.php`; assumes ~3k input / ~2.5k output tok
 brief assist ≈ $0.0005, article write ≈ $0.033 (strong) / $0.002 (cheap), judge ≈ $0.0006, section rewrite ≈ $0.02.
 0 articles ≈ $0; 1 ≈ $0.034; 2 ≈ $0.07; 4 ≈ $0.14 (worst case with one retry each ≈ $0.27). Deterministic work
 (scoring, selection, briefs, claim and duplicate checks, link maintenance, cadence, budget enforcement) costs nothing.
+
+## 3. Fact Pack and Content Profile (Slice 2)
+
+**One canonical pack** — `ContentFactPack::forBusiness()`, read-only, deterministic, no AI, no provider/rank call. It
+composes (never copies): `ArticleGroundingFacts` (name, services, real packages and prices, service areas, site summary,
+FAQs, niche FAQ topics) + the **Business Knowledge Profile** (differentiators, ideal customers, customers' problems, brand
+voice, prohibited claims) + the Content Profile + the stored Google Business Profile mirror (category names, only while the
+mirror is fresh; never refreshed from here) + tracked keyword phrases + the Business's existing non-archived articles.
+`fact_hash` is a key-order-insensitive digest of the citable facts (existing articles excluded): an unchanged hash means
+previously built briefs/classifications are still valid, so no new AI call is needed.
+
+**Correction to the architecture report:** the Knowledge Profile already stores differentiators, years operating,
+credentials, guarantees, brand voice and prohibited claims. They are reused, not re-asked. The first-enable flow therefore
+asks only what no table holds: *what customers ask most*, *what to emphasise*, *topics to avoid* — plus *what makes you
+different* only while the Knowledge Profile's `differentiators` is empty (and that answer is written through
+`BusinessKnowledgeProfileManager`, the single authority). Every answer is optional; saving (even empty) completes the flow.
+
+**Owner-confirmed claims.** `ConfirmedBusinessClaims` is the one reader of claim-bearing Knowledge Profile facts, and only
+those whose field state is `customer_confirmed`: `years_operating` and verified `credentials`. `ArticleClaimGuard` now lets
+"N years of experience" through when N is the confirmed number ("over/more than N" when N is below it); a founding year
+("since 2009"), a different number, a guarantee, awards, review scores, counts and the rest remain hard findings. This applies
+to manual and Autopilot articles alike. A guarantee is never offered to the writer as a fact. **Reviews and testimonials are
+not part of the pack** (no canonical review-text source; the claim guard also forbids ratings).
+
+Storage: `content_autopilot_settings` — one row per Business (`enabled`, `enabled_at/by`, `paused_reason`, `profile` json
+`{common_questions, emphasis, avoid_topics}`, `profile_completed_at`). No budget column: the AI ceiling is plan policy.
+Owner page: `…/seo/content/autopilot/profile` (SeoModule, 404 without it; `view_seo` reads, `manage_seo` writes).
