@@ -199,6 +199,9 @@ final class TutoringBlueprint
                     'cost_per_lead' => 'Cost / qualified applicant',
                     'cost_per_outcome' => 'Cost / hire',
                     'pipeline_cta' => 'Review teacher applicants',
+                    // An extra KPI: how many applicants reached (or passed) this pipeline stage.
+                    'milestone_label' => 'Interviews',
+                    'milestone_stage' => 'interviewed',
                 ],
                 'guidance' => [
                     ['title' => 'Speak to teachers, not parents', 'body' => 'Recruitment ads and pages should address people who teach: the subjects you need, the schedule, whether lessons are remote or in person, and what you expect from them.'],

@@ -60,6 +60,8 @@
     @if(! $ready)
         @include('customer.business.ads._empty-state')
     @else
+        @include('customer.business.ads._decision-panel')
+
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-2" data-role="period-selector">
             <div class="btn-group" role="group" aria-label="Period">
                 @foreach($periodLabels as $key => $label)

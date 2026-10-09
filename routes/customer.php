@@ -1431,6 +1431,16 @@
             // Cross-channel Ads Overview (Meta Ads V1, contract 24 §9): per-provider cached figures, never blended.
             Route::get('/overview', 'Business\Ads\AdsOverviewController@overview')->name('overview');
 
+            // Acquisition Purpose V1: Goals & economics (what the ads are for, what a good result costs, which
+            // campaign serves which goal). GET needs a provider read capability, every POST a provider manage
+            // capability; the `ads.` prefix makes every POST View-As prohibited.
+            Route::get('/goals', 'Business\Ads\AdsGoalsController@show')->name('goals');
+            Route::post('/goals', 'Business\Ads\AdsGoalsController@store')->middleware('throttle:20,1')->name('goals.store');
+            Route::post('/goals/campaigns', 'Business\Ads\AdsGoalsController@assignCampaign')->middleware('throttle:60,1')->name('goals.campaigns');
+            Route::post('/goals/{purposeUid}/economics', 'Business\Ads\AdsGoalsController@saveEconomics')->middleware('throttle:20,1')->name('goals.economics');
+            Route::post('/goals/{purposeUid}/links', 'Business\Ads\AdsGoalsController@saveLinks')->middleware('throttle:20,1')->name('goals.links');
+            Route::post('/goals/{purposeUid}/active', 'Business\Ads\AdsGoalsController@toggle')->middleware('throttle:20,1')->name('goals.toggle');
+
             // Meta Ads (contract 24). Tenancy/entitlement 404; view_meta_ads for reads, manage_meta_ads
             // for connect/accounts/select/settings/refresh/pause/resume. Non-GET is View-As prohibited by prefix.
             Route::get('/meta', 'Business\MetaAdsController@overview')->name('meta.index');

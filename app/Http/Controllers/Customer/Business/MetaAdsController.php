@@ -53,6 +53,13 @@ class MetaAdsController extends CustomerBaseController
         $overview = $this->overviewReader->read($account, $period);
 
         return view('customer.business.ads.meta.overview', $data + [
+            // Acquisition Purpose + Ads Decisioning V1: the deterministic "What should you do now?" block.
+            'decisionView' => app(\App\Library\Ads\Decisions\AdsDecisionPresenter::class)->present(
+                app(\App\Library\Ads\Decisions\AdsDecisionPanelReader::class)->forMeta($business, $account, $period),
+                'meta',
+                $business,
+                (bool) $data['metaHasModule'],
+            ),
             'period' => $period,
             'overview' => $overview,
             'trend' => $this->trend->forPeriod($account, $period),

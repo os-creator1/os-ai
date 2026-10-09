@@ -608,6 +608,9 @@
             );
 
             $this->app->singleton(HookManager::class, fn() => new HookManager());
+
+            // Acquisition Purpose + Ads Decisioning V1 — the decision thresholds, read once from config/ads_decisions.php.
+            $this->app->singleton(\App\Library\Ads\Decisions\AdsDecisionPolicy::class, fn () => \App\Library\Ads\Decisions\AdsDecisionPolicy::fromConfig());
         }
 
         /**

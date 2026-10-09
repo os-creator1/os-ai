@@ -198,6 +198,7 @@ trait ResolvesAdsBusinessTenancy
             'leads' => ['Leads & conversions', $prefix . 'leads.index', true],
             'budget' => ['Budget', $prefix . 'budget', true],
             'recommendations' => ['Recommendations', $prefix . 'recommendations.index', true],
+            'goals' => ['Goals & economics', $prefix . 'goals', false],
             'settings' => ['Settings', $prefix . 'settings', false],
         ];
 
