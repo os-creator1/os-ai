@@ -26,6 +26,8 @@ class ContentAutopilotAiClient
 {
     private ?AiRefusalReason $lastRefusalReason = null;
 
+    private int $lastCostMicrousd = 0;
+
     public function __construct(private readonly AiGateway $gateway)
     {
     }
@@ -38,6 +40,12 @@ class ContentAutopilotAiClient
     public function assist(array $messages, Business $business, string $idempotencyKey, int $maxOutputTokens, ?int $actorUserId = null): ?string
     {
         return $this->call(AiModelRoute::Routine, $messages, $business, $idempotencyKey, $maxOutputTokens, $actorUserId);
+    }
+
+    /** What the last call actually cost (micro-USD): the provider-billed amount, 0 for a refusal. */
+    public function lastCostMicrousd(): int
+    {
+        return $this->lastCostMicrousd;
     }
 
     public function lastRefusalReason(): ?AiRefusalReason
@@ -61,6 +69,7 @@ class ContentAutopilotAiClient
     private function call(AiModelRoute $route, array $messages, Business $business, string $idempotencyKey, int $maxOutputTokens, ?int $actorUserId): ?string
     {
         $this->lastRefusalReason = null;
+        $this->lastCostMicrousd = 0;
 
         $result = $this->gateway->complete(AiRequest::forWorkspace(
             workspace: $business->workspace,
@@ -76,6 +85,7 @@ class ContentAutopilotAiClient
         ));
 
         $this->lastRefusalReason = $result->refusalReason;
+        $this->lastCostMicrousd = (int) ($result->ledgerEntry?->actual_cost_microusd ?? 0);
 
         return $result->ok ? $result->content : null;
     }

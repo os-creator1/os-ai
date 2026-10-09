@@ -36,8 +36,10 @@ Autopilot articles a month is a ceiling, never a target.
   Every call carries an explicit idempotency key derived from the decision and step, so a retried job never pays twice.
   A budget refusal means "wait for the next period", never "retry now".
 * `WebsiteAiGenerationClient` is deliberately **not** modified (a source-pinning test guards its `AiRequest` site).
-* Not changed: `enforce_budgets_for_existing_categories` still governs the pre-existing categories; the manual
-  "AI draft" button keeps using `website_generation` until Slice 5 moves it onto the Autopilot category/ceiling.
+* Not changed: `enforce_budgets_for_existing_categories` still governs the pre-existing categories. The owner's manual
+  "AI draft" button keeps using `website_generation` and `ArticleDraftGenerator` as it did (its tests pin that); only
+  Autopilot's own writing uses the `content_autopilot` category, so the per-Business ceiling counts Autopilot spend.
+  Moving the manual button onto the same category is a separate, optional change.
 
 Cost model (list prices at `config/ai.php`; assumes ~3k input / ~2.5k output tokens per article):
 brief assist ≈ $0.0005, article write ≈ $0.033 (strong) / $0.002 (cheap), judge ≈ $0.0006, section rewrite ≈ $0.02.
@@ -128,3 +130,28 @@ audience, the page it supports and the call to action, only the facts that bear 
 package topics), questions to answer (the Business's own first, then intent defaults, max 6), the allowed internal links, a
 `must_not` list (fixed rules + niche phrases + owner prohibited claims + avoided topics) and the niche risk tier / preferred
 terms. `php artisan content:autopilot-evaluate {business} [--persist]` shows the ranked topics and the decision.
+
+## 6. Writing and validation (Slice 5)
+
+`AutopilotArticleWriter::write($decision)` is the only step that spends money, run on the queue as
+`WriteAutopilotArticleJob` (unique per decision). It turns a `briefed` decision into an ordinary **Draft** through
+`ArticleManager` (`source = autopilot`, `ai_generated`) and **never publishes**:
+
+`briefed → drafting → awaiting_approval` (the article exists) · `deferred_budget` (wait for the next period) · `rejected`
+(still failing hard validation after one repair; cooled down 90 days) · `held` (no website; a paid call that lost its result)
+· back to `briefed` when the provider is unavailable (retried with a fresh key).
+
+* **Prompt** — `BriefPromptBuilder`: the Content Engine's own grounding/link/structure rules (one copy), plus the brief's
+  questions, length, niche terms and `must_not`. The model receives `brief.facts` only, never the whole Business.
+* **Spend discipline** — the Business's remaining budget is checked before any call (worst-case writer cost vs the ceiling); one
+  strong-route draft and **at most one** rewrite, only for hard findings; each call has the key
+  `content_autopilot:{decision uid}:draft:{n}`; a paid attempt is never repeated; a crashed-after-paid draft is held, not re-bought.
+* **Validation (`AutopilotArticleValidator`, deterministic — no model judges its own work).** *Hard* (stops the article): everything
+  the Content Engine already refuses to publish (unsupported price, years, award, review score, count, guarantee, celebrity —
+  the owner's confirmed years allowed), shorter than the brief, a quotation, a phrase the niche or owner prohibits, a strong
+  overlap with a page or article. *Soft* (drafted, but never self-publishing — the owner decides): a percentage or superlative,
+  a number that is in none of the brief's facts (small counts and this/next year are fine), no internal link when the brief
+  offered some. `validation.ready` = no findings at all.
+* **Known limit:** locations and proper nouns are not gazetteer-checked; they are controlled by the prompt, the closed fact set
+  and the trust ramp. A soft-finding judge (cheap route) is *not* built: it could not remove the owner's approval, so it would
+  only add cost.

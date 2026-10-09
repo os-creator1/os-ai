@@ -46,7 +46,7 @@ class ContentAutopilotDecision extends Model
 
     protected $fillable = [
         'business_id', 'kind', 'decision', 'state', 'opportunity_key', 'score', 'score_breakdown', 'reason_code',
-        'brief', 'brief_hash', 'fact_hash', 'needs_input', 'article_id', 'cost_microusd', 'period_key', 'evaluated_at', 'resolved_at',
+        'brief', 'brief_hash', 'fact_hash', 'needs_input', 'validation', 'article_id', 'cost_microusd', 'period_key', 'evaluated_at', 'resolved_at',
     ];
 
     protected $casts = [
@@ -55,6 +55,7 @@ class ContentAutopilotDecision extends Model
         'score_breakdown' => 'array',
         'brief' => 'array',
         'needs_input' => 'array',
+        'validation' => 'array',
         'article_id' => 'integer',
         'cost_microusd' => 'integer',
         'evaluated_at' => 'datetime',

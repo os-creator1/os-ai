@@ -38,6 +38,8 @@ return new class extends Migration
             $table->string('fact_hash', 64)->nullable();
             // { key: differentiators|common_questions|emphasis, prompt: string } - at most one open per Business.
             $table->json('needs_input')->nullable();
+            // { hard: string[], soft: string[], repaired: bool, ready: bool } - what validation found in the draft.
+            $table->json('validation')->nullable();
             $table->foreignId('article_id')->nullable()->constrained('website_articles')->nullOnDelete();
             $table->unsignedBigInteger('cost_microusd')->default(0);
             $table->string('period_key', 7);
