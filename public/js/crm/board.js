@@ -64,7 +64,16 @@
     var empty = list.querySelector('[data-role="crm-column-empty"]');
     var more = list.querySelector('[data-role="crm-column-more"]');
 
-    if (total) { total.textContent = Moves.totalLabel(count, value, currency); }
+    var badge = column.querySelector('[data-role="crm-column-count"]');
+    var label = Moves.totalLabel(count, value, currency);
+
+    if (badge) {
+      // The header shows the count in its own badge and the value alone beneath the name.
+      badge.textContent = String(count);
+      if (total) { total.textContent = label.indexOf(' · ') > -1 ? label.slice(label.indexOf(' · ') + 3) : ''; }
+    } else if (total) {
+      total.textContent = label;
+    }
 
     if (shown === 0 && count === 0) {
       if (!empty) {
