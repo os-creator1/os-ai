@@ -225,3 +225,33 @@ update (links or rewrite) is applied through the existing "Publish update" path 
 publish itself also allows it (validated clean · niche `standard` + `allowed` · trust ramp over —
 `AutopilotPublisher::applyUpdateIfAllowed`); otherwise it stays a pending draft shown under "Updates to your live articles".
 Maintenance decisions are `kind = maintain` and never count toward the monthly new-article maximum or the writing backlog.
+
+## 10. Ops visibility (Slice 9)
+
+`php artisan content:autopilot-report [business]` — read-only and free. Per switched-on Business: status (running / why paused),
+articles started this period by state, the AI spend this budget period, and `ok` / `over target` / `OVER CEILING` against the $0.50
+target and $1.00 hard ceiling. No notification system, no owner-visible amounts.
+
+## 11. Deliberately not built / deferred
+
+* Search Console, review ingestion, AI images, social posting, backlinks, CMS integrations, programmatic city pages, a separate
+  engine per niche, **automatic archive or consolidation**, a new notification system, agentic multi-step AI loops (out of V1).
+* **Reviews** stay out of the Fact Pack and of every prompt: there is no canonical review-text source. Google Business Profile
+  contributes category names only, only while its stored mirror is fresh.
+* The cheap-route **soft-finding judge** is not built (it could not remove the owner's approval, so it would only add cost).
+* The owner's manual **"AI draft"** button still uses `website_generation`/`ArticleDraftGenerator` (its tests pin that). Moving it
+  onto `content_autopilot` is a separate, optional change; until then the per-Business ceiling counts Autopilot's own spend only.
+* The shipped **Photo Booth Blueprint has no `content_policy` yet**, so it is `unspecified` and every article waits for the owner.
+  A platform owner opts a niche into self-publishing by publishing a Blueprint version that carries `standard` + `allowed`.
+* The rank factor uses the owner's **tracked keyword phrases**; position-based signals are used by maintenance only.
+* Locations/proper nouns are not gazetteer-checked (see §6). The ceiling check takes a `Cache::lock`, so it needs a lock-capable
+  cache store (file, database, redis, array — the platform's configured stores all qualify).
+
+## 12. Verification
+
+`tests/Feature/Seo/Content/**` (Contract 24's suite plus `Autopilot/*`, `ContentSidebarActiveStateTest`) and
+`tests/Feature/Ai/AiBusinessCategoryCeilingTest`. Pre-existing failures at the base (`agent/seo-content-engine-v1` 124a8666), all
+reproduced WITHOUT these changes: `AiRequestPlatformScopeTest::all_three_construction_sites_remain_source_unchanged` (the Content
+Engine edited `WebsiteAiGenerationClient`), the installer/CRM-menu family in `tests/Feature/NicheBlueprint`, two query-count tests in
+`tests/Feature/Navigation`, `CustomerShellNavigationTest::landmarks_and_active_state…` and
+`SettingsHubNavigationTest::core_and_growth_get_a_flat_sidebar…` (neither knows the Content entry).
