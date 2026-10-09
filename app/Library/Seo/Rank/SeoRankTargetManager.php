@@ -9,6 +9,7 @@ use App\Library\Seo\SeoPhraseNormalizer;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\SeoKeyword;
+use App\Models\SeoRankLocation;
 use App\Models\SeoRankTarget;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -40,6 +41,61 @@ class SeoRankTargetManager
         private readonly SeoRankTrackingBudget $budget,
         private readonly WorkspaceManager $workspaces,
     ) {
+    }
+
+    /**
+     * The Business's existing rank-tracking search location — no second place to store one:
+     * the location of its most recent rank target, preferring a target whose keyword sits in the
+     * same Business Location when one is given. Null until something has been tracked.
+     */
+    public function defaultLocation(Business $business, ?int $businessLocationId = null): ?SeoRankLocation
+    {
+        $base = SeoRankTarget::query()->where('business_id', $business->id)->with('searchLocation')->orderByDesc('id');
+
+        if ($businessLocationId !== null) {
+            $scoped = (clone $base)
+                ->whereHas('keyword', fn ($q) => $q->where('business_location_id', $businessLocationId))
+                ->first();
+
+            if ($scoped?->searchLocation !== null) {
+                return $scoped->searchLocation;
+            }
+        }
+
+        return $base->first()?->searchLocation;
+    }
+
+    /**
+     * defaultLocation() for the Business and for each given Business Location in two queries,
+     * so the keywords page costs the same however many Locations there are.
+     *
+     * @param  array<int, int>  $businessLocationIds
+     * @return array{business: SeoRankLocation|null, locations: array<int, SeoRankLocation|null>}
+     */
+    public function defaultLocations(Business $business, array $businessLocationIds): array
+    {
+        $targets = SeoRankTarget::query()
+            ->where('business_id', $business->id)
+            ->with(['searchLocation', 'keyword:id,business_location_id'])
+            ->orderByDesc('id')
+            ->get();
+
+        $byLocation = [];
+
+        foreach ($targets as $target) {
+            $id = $target->keyword?->business_location_id;
+
+            if ($id !== null && ! array_key_exists((int) $id, $byLocation)) {
+                $byLocation[(int) $id] = $target->searchLocation;
+            }
+        }
+
+        $business_default = $targets->first()?->searchLocation;
+
+        return [
+            'business' => $business_default,
+            'locations' => collect($businessLocationIds)->mapWithKeys(fn ($id) => [(int) $id => $byLocation[(int) $id] ?? $business_default])->all(),
+        ];
     }
 
     /**

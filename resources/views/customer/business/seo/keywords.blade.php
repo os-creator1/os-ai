@@ -62,6 +62,9 @@
         .rank-table tr[data-href] { cursor: pointer; }
         .rank-pos-bar { height: 3px; border-radius: 2px; background: var(--bs-border-color, #e5e5e5); margin-top: .35rem; max-width: 72px; overflow: hidden; }
         .rank-pos-bar > i { display: block; height: 100%; background: var(--bs-primary, #7367f0); }
+        .rank-table th, .rank-table td { padding-left: .6rem; padding-right: .6rem; }
+        .rank-table td[data-label="Keyword"] { min-width: 9rem; max-width: 15rem; overflow-wrap: anywhere; }
+        .rank-table td[data-label="Actions"] { white-space: nowrap; }
         .keyword-side { position: sticky; top: 1rem; }
         @media (max-width: 767.98px) {
             .rank-summary-card .rank-summary-value { font-size: 2.25rem; }
@@ -271,59 +274,51 @@
                                 </td>
                                 <td data-label="Actions">
                                     @can('manage_seo')
-                                        <div class="d-flex flex-wrap gap-50 align-items-start">
-                                            {{-- Starting, resuming and stopping paid rank checks is closed while viewing as a client. --}}
-                                            {{-- A keyword on an archived Location can still be STOPPED (it cannot be started, resumed or edited). --}}
-                                            @if($rankPlan !== null && ! $viewingAsClient && ($locationOpen || ! in_array($state, [SeoRankDashboardReader::STATE_UNTRACKED, SeoRankDashboardReader::STATE_PAUSED], true)))
+                                        @php
+                                            $canTrack = $rankPlan !== null && ! $viewingAsClient;
+                                            $scopeDefault = $keyword->location ? ($rankDefaults['locations'][$keyword->location->uid] ?? null) : ($rankDefaults['business'] ?? null);
+                                            $slotsSentence = $summary['slots_used'] . ' of ' . ($rankPlan?->trackedTargets) . ' rank-tracked keywords are in use.';
+                                        @endphp
+                                        <div class="d-flex align-items-center gap-50 flex-nowrap row-actions">
+                                            {{-- Starting, resuming and stopping paid rank checks is closed while viewing as a client.
+                                                 A keyword on an archived Location can still be STOPPED (not started, resumed or edited). --}}
+                                            @if($canTrack && ($locationOpen || ! in_array($state, [SeoRankDashboardReader::STATE_UNTRACKED, SeoRankDashboardReader::STATE_PAUSED], true)))
                                                 @if($state === SeoRankDashboardReader::STATE_UNTRACKED && ! $slotsFull)
-                                                    <details>
-                                                        <summary class="btn btn-sm btn-outline-primary" data-role="rank-start">Start tracking</summary>
-                                                        <form method="POST" class="mt-50" style="min-width: 240px" action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}" data-role="rank-start-form">
+                                                    @if($scopeDefault)
+                                                        <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">
                                                             @csrf
-                                                            <label class="form-label" for="loc-{{ $keyword->uid }}">Search location</label>
-                                                            @include('customer.business.seo._rank-location-field', ['url' => route('customer.workspaces.businesses.seo.keywords.rank-locations', [$workspaceUid, $businessUid]), 'fieldId' => 'loc-' . $keyword->uid])
-                                                            <button class="btn btn-sm btn-primary mt-50" type="submit">Track rank</button>
-                                                        </form>
-                                                    </details>
-                                                @elseif($state === SeoRankDashboardReader::STATE_UNTRACKED)
-                                                    <span class="text-caption" data-role="rank-slots-full">{{ $summary['slots_used'] }} of {{ $rankPlan->trackedTargets }} rank-tracked keywords are in use.</span>
-                                                @elseif($state === SeoRankDashboardReader::STATE_PAUSED)
-                                                    @if(! $slotsFull)
-                                                        <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.restart', [$workspaceUid, $businessUid, $target->uid]) }}">
-                                                            @csrf
-                                                            <button class="btn btn-sm btn-outline-primary" type="submit" data-role="rank-restart">Start tracking</button>
+                                                            <button class="btn btn-sm btn-outline-primary text-nowrap" type="submit" data-role="rank-start">Start tracking</button>
                                                         </form>
                                                     @else
-                                                        <span class="text-caption" data-role="rank-slots-full">{{ $summary['slots_used'] }} of {{ $rankPlan->trackedTargets }} rank-tracked keywords are in use.</span>
+                                                        <button class="btn btn-sm btn-outline-primary text-nowrap" type="button" data-role="rank-start" data-rank-dialog="track" data-action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">Start tracking</button>
                                                     @endif
+                                                @elseif($state === SeoRankDashboardReader::STATE_UNTRACKED || ($state === SeoRankDashboardReader::STATE_PAUSED && $slotsFull))
+                                                    <span class="text-caption" data-role="rank-slots-full" title="{{ $slotsSentence }}">Slots full<span class="visually-hidden"> — {{ $slotsSentence }}</span></span>
+                                                @elseif($state === SeoRankDashboardReader::STATE_PAUSED)
+                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.restart', [$workspaceUid, $businessUid, $target->uid]) }}">
+                                                        @csrf
+                                                        <button class="btn btn-sm btn-outline-primary text-nowrap" type="submit" data-role="rank-restart">Start tracking</button>
+                                                    </form>
                                                 @else
                                                     <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.stop', [$workspaceUid, $businessUid, $target->uid]) }}">
                                                         @csrf
-                                                        <button class="btn btn-sm btn-outline-secondary" type="submit" data-role="rank-stop">Stop tracking</button>
+                                                        <button class="btn btn-sm btn-outline-secondary text-nowrap" type="submit" data-role="rank-stop">Stop tracking</button>
                                                     </form>
                                                 @endif
                                             @endif
                                             @if($locationOpen)
-                                                <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.archive', [$workspaceUid, $businessUid, $keyword->uid]) }}">
-                                                    @csrf
-                                                    <button class="btn btn-sm btn-outline-secondary" type="submit" data-role="keyword-archive">Archive</button>
-                                                </form>
-                                                <details>
-                                                    <summary class="btn btn-sm btn-outline-secondary">Edit</summary>
-                                                    <form method="POST" class="mt-50" style="min-width: 240px" action="{{ route('customer.workspaces.businesses.seo.keywords.update', [$workspaceUid, $businessUid, $keyword->uid]) }}" data-role="keyword-edit-form">
-                                                        @csrf
-                                                        <label class="form-label" for="phrase-{{ $keyword->uid }}-{{ $loop->index }}">Keyword</label>
-                                                        <input class="form-control mb-50" type="text" id="phrase-{{ $keyword->uid }}-{{ $loop->index }}" name="phrase" maxlength="120" value="{{ $keyword->phrase }}" required>
-                                                        <label class="form-label" for="location-{{ $keyword->uid }}-{{ $loop->index }}">Scope</label>
-                                                        <select class="form-select mb-50" id="location-{{ $keyword->uid }}-{{ $loop->index }}" name="location_uid">
-                                                            <option value="">Whole business</option>
-                                                            @foreach($locations as $location)
-                                                                <option value="{{ $location->uid }}" @selected((int) $keyword->business_location_id === (int) $location->id)>{{ $location->name }}</option>
-                                                            @endforeach
-                                                        </select>
-                                                        <button class="btn btn-sm btn-primary" type="submit">Save</button>
-                                                    </form>
-                                                </details>
+                                                <div class="dropdown">
+                                                    <button class="btn btn-sm btn-outline-secondary px-75" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More actions for {{ $keyword->phrase }}" data-role="keyword-menu">&#8943;</button>
+                                                    <ul class="dropdown-menu dropdown-menu-end">
+                                                        <li><button class="dropdown-item" type="button" data-role="keyword-edit" data-edit-action="{{ route('customer.workspaces.businesses.seo.keywords.update', [$workspaceUid, $businessUid, $keyword->uid]) }}" data-phrase="{{ $keyword->phrase }}" data-location="{{ $keyword->location?->uid }}">Edit</button></li>
+                                                        <li>
+                                                            <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.archive', [$workspaceUid, $businessUid, $keyword->uid]) }}">
+                                                                @csrf
+                                                                <button class="dropdown-item" type="submit" data-role="keyword-archive">Archive</button>
+                                                            </form>
+                                                        </li>
+                                                    </ul>
+                                                </div>
                                             @endif
                                         </div>
                                     @endcan
@@ -373,10 +368,13 @@
                                     {{ $summary['slots_used'] }} of {{ $rankPlan->trackedTargets }} rank-tracked keywords are in use. Stop tracking one to free a slot.
                                 </p>
                             @else
-                                <div class="mt-50" data-role="add-location-wrap">
-                                    <label class="form-label" for="keyword-search-location">Search location</label>
-                                    @include('customer.business.seo._rank-location-field', ['url' => route('customer.workspaces.businesses.seo.keywords.rank-locations', [$workspaceUid, $businessUid]), 'fieldId' => 'keyword-search-location'])
-                                </div>
+                                {{-- The existing rank location (its keyword Location's first) is used silently; the chooser
+                                     opens only when tracking is on and there is none yet. --}}
+                                <input type="hidden" name="search_location_code" value="" data-role="add-location-code">
+                                <p class="text-caption mb-0 mt-50 d-none" data-role="add-tracking-from">
+                                    Tracking from: <span data-role="add-location-label"></span> &middot;
+                                    <button class="btn btn-link btn-sm p-0 align-baseline" type="button" data-role="change-location">Change</button>
+                                </p>
                             @endif
                         </div>
                     @endif
@@ -444,26 +442,66 @@
         </x-card>
     @endif
 
+    {{-- One chooser for every place that needs a search location (Add keyword, Start tracking). --}}
+    @can('manage_seo')
+        @if($rankPlan !== null && ! $viewingAsClient)
+            <x-dialog id="rank-location-dialog" title="Where should we track this keyword?" size="sm" data-role="rank-location-dialog">
+                @include('customer.business.seo._rank-location-field', ['url' => route('customer.workspaces.businesses.seo.keywords.rank-locations', [$workspaceUid, $businessUid]), 'fieldId' => 'rank-dialog-location'])
+                <x-slot name="footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" data-role="rank-location-confirm" disabled>Start tracking</button>
+                </x-slot>
+            </x-dialog>
+            <form method="POST" id="rank-dialog-form" class="d-none" data-role="rank-dialog-form">
+                @csrf
+                <input type="hidden" name="search_location_code" value="">
+            </form>
+        @endif
+
+        <x-dialog id="keyword-edit-dialog" title="Edit keyword" size="sm">
+            <form method="POST" id="keyword-edit-form" data-role="keyword-edit-dialog-form">
+                @csrf
+                <label class="form-label" for="keyword-edit-phrase">Keyword</label>
+                <input class="form-control mb-1" type="text" id="keyword-edit-phrase" name="phrase" maxlength="120" required>
+                <label class="form-label" for="keyword-edit-location">Scope</label>
+                <select class="form-select mb-2" id="keyword-edit-location" name="location_uid">
+                    <option value="">Whole business</option>
+                    @foreach($locations as $location)
+                        <option value="{{ $location->uid }}">{{ $location->name }}</option>
+                    @endforeach
+                </select>
+                <div class="d-grid"><button class="btn btn-primary" type="submit">Save</button></div>
+            </form>
+        </x-dialog>
+    @endcan
+
     <script>
         (function () {
+            var defaults = @json($rankDefaults);
+            var dialogEl = document.getElementById('rank-location-dialog');
+            // Bootstrap is loaded after this script, so resolve the dialog when it is first needed.
+            function dialog() { return window.bootstrap.Modal.getOrCreateInstance(dialogEl); }
+            var pending = null; // what to do once a real autocomplete result is chosen
+
             // Row click opens the keyword detail; clicks on controls are left alone.
             document.querySelectorAll('tr[data-href]').forEach(function (tr) {
                 tr.addEventListener('click', function (e) {
-                    if (e.target.closest('a, button, summary, input, select, form, details')) { return; }
+                    if (e.target.closest('a, button, summary, input, select, form, details, .dropdown')) { return; }
                     window.location.href = tr.getAttribute('data-href');
                 });
             });
 
-            // Search-location pickers: query the cached provider locations, submit the CODE.
+            // Search-location picker: query the cached provider locations; only a clicked result counts as chosen.
             document.querySelectorAll('[data-role="rank-location-field"]').forEach(function (field) {
                 var input = field.querySelector('[data-role="rank-location-input"]');
                 var code = field.querySelector('[data-role="rank-location-code"]');
                 var list = field.querySelector('[data-role="rank-location-results"]');
-                var hint = field.querySelector('[data-role="rank-location-hint"]');
                 var timer = null;
 
+                function changed() { field.dispatchEvent(new CustomEvent('rank-location-change', { bubbles: true })); }
+
                 input.addEventListener('input', function () {
-                    code.value = '';
+                    code.value = ''; changed();
                     clearTimeout(timer);
                     var q = input.value.trim();
                     if (q.length < 2) { list.classList.add('d-none'); return; }
@@ -481,7 +519,7 @@
                                     b.textContent = loc.label;
                                     b.addEventListener('click', function () {
                                         input.value = loc.label; code.value = loc.code;
-                                        list.classList.add('d-none'); hint.classList.add('d-none');
+                                        list.classList.add('d-none'); changed();
                                     });
                                     list.appendChild(b);
                                 });
@@ -490,17 +528,97 @@
                             .catch(function () { list.classList.add('d-none'); });
                     }, 250);
                 });
+                input.addEventListener('keydown', function (e) {
+                    if (e.key === 'ArrowDown' && list.firstElementChild) { e.preventDefault(); list.firstElementChild.focus(); }
+                });
+                list.addEventListener('keydown', function (e) {
+                    var t = e.target;
+                    if (e.key === 'ArrowDown' && t.nextElementSibling) { e.preventDefault(); t.nextElementSibling.focus(); }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); (t.previousElementSibling || input).focus(); }
+                });
+            });
 
-                var form = field.closest('form');
-                if (form) {
-                    form.addEventListener('submit', function (e) {
-                        var toggle = form.querySelector('[data-role="track-rank-toggle"]');
-                        var needs = toggle ? (toggle.checked && !toggle.disabled) : true;
-                        if (needs && field.offsetParent !== null && code.value === '') {
-                            e.preventDefault(); hint.classList.remove('d-none'); input.focus();
-                        }
+            // The chooser dialog: the action stays disabled until a real result is picked.
+            if (dialogEl) {
+                var dInput = dialogEl.querySelector('[data-role="rank-location-input"]');
+                var dCode = dialogEl.querySelector('[data-role="rank-location-code"]');
+                var confirmBtn = dialogEl.querySelector('[data-role="rank-location-confirm"]');
+                dialogEl.addEventListener('rank-location-change', function () { confirmBtn.disabled = !dCode.value; });
+                dialogEl.addEventListener('shown.bs.modal', function () { dInput.focus(); });
+                dialogEl.addEventListener('hidden.bs.modal', function () { dInput.value = ''; dCode.value = ''; confirmBtn.disabled = true; pending = null; });
+                confirmBtn.addEventListener('click', function () {
+                    if (!dCode.value || !pending) { return; }
+                    var chosen = { code: dCode.value, label: dInput.value };
+                    var run = pending; pending = null;
+                    dialog().hide();
+                    run(chosen);
+                });
+            }
+            function choose(then) { pending = then; dialog().show(); }
+
+            // Start tracking with no default location: choose one, then post it.
+            document.querySelectorAll('[data-rank-dialog="track"]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    choose(function (chosen) {
+                        var f = document.getElementById('rank-dialog-form');
+                        f.action = btn.getAttribute('data-action');
+                        f.querySelector('[name="search_location_code"]').value = chosen.code;
+                        f.submit();
                     });
+                });
+            });
+
+            // Add keyword: use the existing rank location silently; ask only when tracking is on and there is none.
+            var addForm = document.querySelector('[data-role=keyword-add-form]');
+            if (addForm) {
+                var toggle = addForm.querySelector('[data-role="track-rank-toggle"]');
+                var codeInput = addForm.querySelector('[data-role="add-location-code"]');
+                var from = addForm.querySelector('[data-role="add-tracking-from"]');
+                var label = addForm.querySelector('[data-role="add-location-label"]');
+                var scope = addForm.querySelector('[name="location_uid"]');
+                var chosenHere = null; // a location picked via Change / the chooser overrides the default
+
+                function effective() {
+                    if (chosenHere) { return chosenHere; }
+                    var uid = scope ? scope.value : '';
+                    return (uid && defaults.locations[uid]) || defaults.business || null;
                 }
+                function render() {
+                    if (!codeInput) { return; }
+                    var loc = effective();
+                    codeInput.value = loc ? loc.code : '';
+                    label.textContent = loc ? loc.label : '';
+                    from.classList.toggle('d-none', !loc || !(toggle && toggle.checked && !toggle.disabled));
+                }
+                if (scope) { scope.addEventListener('change', render); }
+                if (toggle) { toggle.addEventListener('change', render); }
+                var change = addForm.querySelector('[data-role="change-location"]');
+                if (change) { change.addEventListener('click', function () { choose(function (c) { chosenHere = c; render(); }); }); }
+                render();
+
+                addForm.addEventListener('submit', function (e) {
+                    if (!toggle || !codeInput || !toggle.checked || toggle.disabled || codeInput.value) { return; }
+                    e.preventDefault();
+                    choose(function (c) { chosenHere = c; render(); addForm.submit(); });
+                });
+            }
+
+            // Menus sit inside the scrolling table: position them fixed so they are never clipped.
+            window.addEventListener('load', function () {
+                document.querySelectorAll('[data-role=keyword-menu]').forEach(function (btn) {
+                    window.bootstrap.Dropdown.getOrCreateInstance(btn, { popperConfig: { strategy: 'fixed' } });
+                });
+            });
+
+            // Edit: one shared dialog, never a form inside a row.
+            document.querySelectorAll('[data-role="keyword-edit"]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var f = document.getElementById('keyword-edit-form');
+                    f.action = btn.getAttribute('data-edit-action');
+                    f.querySelector('[name="phrase"]').value = btn.getAttribute('data-phrase');
+                    f.querySelector('[name="location_uid"]').value = btn.getAttribute('data-location') || '';
+                    window.bootstrap.Modal.getOrCreateInstance(document.getElementById('keyword-edit-dialog')).show();
+                });
             });
         })();
     </script>

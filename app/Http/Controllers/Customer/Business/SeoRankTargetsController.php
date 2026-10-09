@@ -85,10 +85,20 @@ class SeoRankTargetsController extends CustomerBaseController
         [, $business] = $this->resolveRankTenancy($workspaceUid, $businessUid);
         $this->authorize('manage_seo');
 
-        $input = $request->validate(['search_location_code' => ['required', 'integer', 'min:1']]);
+        $input = $request->validate(['search_location_code' => ['nullable', 'integer', 'min:1']]);
+
+        // No code sent: use the Business's existing rank location (this keyword's Location first).
+        $code = $input['search_location_code'] ?? $this->targets->defaultLocation(
+            $business,
+            \App\Models\SeoKeyword::query()->where('business_id', $business->id)->where('uid', $keywordUid)->value('business_location_id'),
+        )?->location_code;
+
+        if ($code === null) {
+            return redirect()->route('customer.workspaces.businesses.seo.keywords.index', [$workspaceUid, $businessUid])->with('status', 'error')->with('message', 'Choose a search location to track this keyword.');
+        }
 
         try {
-            $target = $this->targets->track((int) Auth::id(), $business, $keywordUid, (int) $input['search_location_code']);
+            $target = $this->targets->track((int) Auth::id(), $business, $keywordUid, (int) $code);
         } catch (SeoRankException $e) {
             return $this->refused($workspaceUid, $businessUid, $e);
         }

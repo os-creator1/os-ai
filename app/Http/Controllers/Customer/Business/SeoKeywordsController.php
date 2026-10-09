@@ -108,10 +108,37 @@ class SeoKeywordsController extends CustomerBaseController
             'locations' => $activeLocations,
             // Ideas from the niche strategy, filled with the Business's own services and cities.
             // Offered only to someone who can add keywords; saving one is the ordinary create POST.
+            // The existing rank location, per scope: lets "Add keyword" and "Start tracking" be one click.
+            'rankDefaults' => $this->rankDefaults($business, $activeLocations),
             'suggestions' => Auth::user()->can('manage_seo')
                 ? $this->suggester->suggest($business, $activeLocations, $keywords, $active->count())
                 : [],
         ]);
+    }
+
+    /**
+     * @param  Collection<int, BusinessLocation>  $locations
+     * @return array{business: array{code: int, label: string}|null, locations: array<string, array{code: int, label: string}|null>}
+     */
+    private function rankDefaults(Business $business, $locations): array
+    {
+        $found = $this->rankTargets->defaultLocations($business, $locations->pluck('id')->map(fn ($id) => (int) $id)->all());
+
+        return [
+            'business' => $this->locationPayload($found['business']),
+            'locations' => $locations->mapWithKeys(fn (BusinessLocation $l) => [
+                $l->uid => $this->locationPayload($found['locations'][(int) $l->id] ?? null),
+            ])->all(),
+        ];
+    }
+
+    /** @return array{code: int, label: string}|null */
+    private function locationPayload(?\App\Models\SeoRankLocation $location): ?array
+    {
+        return $location === null ? null : [
+            'code' => (int) $location->location_code,
+            'label' => \App\Library\Seo\Rank\SeoRankLocationCatalog::label($location->location_name),
+        ];
     }
 
     public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
@@ -131,6 +158,10 @@ class SeoKeywordsController extends CustomerBaseController
         }
 
         if (! empty($input['track_rank'])) {
+            // No location chosen: fall back to the Business's existing rank location (the keyword's own
+            // Location first). The page asks for one only when there is none.
+            $input['search_location_code'] ??= $this->rankTargets->defaultLocation($business, $location?->id)?->location_code;
+
             // Tracking commits paid checks to the CLIENT's allowance, so it is
             // never started while viewing as them (ViewAsProhibitedActions closes
             // the rank routes; this closes the same door from the add-keyword form).
