@@ -611,6 +611,35 @@
 
             // Acquisition Purpose + Ads Decisioning V1 — the decision thresholds, read once from config/ads_decisions.php.
             $this->app->singleton(\App\Library\Ads\Decisions\AdsDecisionPolicy::class, fn () => \App\Library\Ads\Decisions\AdsDecisionPolicy::fromConfig());
+
+            // External Website Audit Mode V1 — the crawler's limits, and its DNS + transport. driver=fake serves a
+            // built-in fixture site (tests and browser acceptance only) and is refused in production, exactly like
+            // the Google and Meta Ads fake drivers.
+            $this->app->singleton(\App\Library\ExternalSite\ExternalSiteConfig::class, fn () => \App\Library\ExternalSite\ExternalSiteConfig::fromConfig());
+            $this->app->singleton(\App\Library\ExternalSite\Fixtures\FixtureHostResolver::class);
+            $this->app->singleton(\App\Library\ExternalSite\Fixtures\FixtureExternalSiteTransport::class);
+            $this->app->bind(\App\Library\ExternalSite\HostResolver::class, function ($app) {
+                if ($app->make(\App\Library\ExternalSite\ExternalSiteConfig::class)->driver() === 'fake') {
+                    if ($app->isProduction()) {
+                        throw new \RuntimeException('EXTERNAL_SITE_AUDIT_DRIVER=fake is not allowed in production.');
+                    }
+
+                    return $app->make(\App\Library\ExternalSite\Fixtures\FixtureHostResolver::class);
+                }
+
+                return new \App\Library\ExternalSite\DnsHostResolver();
+            });
+            $this->app->bind(\App\Library\ExternalSite\ExternalSiteTransport::class, function ($app) {
+                if ($app->make(\App\Library\ExternalSite\ExternalSiteConfig::class)->driver() === 'fake') {
+                    if ($app->isProduction()) {
+                        throw new \RuntimeException('EXTERNAL_SITE_AUDIT_DRIVER=fake is not allowed in production.');
+                    }
+
+                    return $app->make(\App\Library\ExternalSite\Fixtures\FixtureExternalSiteTransport::class);
+                }
+
+                return new \App\Library\ExternalSite\CurlExternalSiteTransport();
+            });
         }
 
         /**
