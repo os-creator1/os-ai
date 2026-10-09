@@ -70,3 +70,27 @@ not part of the pack** (no canonical review-text source; the claim guard also fo
 Storage: `content_autopilot_settings` — one row per Business (`enabled`, `enabled_at/by`, `paused_reason`, `profile` json
 `{common_questions, emphasis, avoid_topics}`, `profile_completed_at`). No budget column: the AI ceiling is plan policy.
 Owner page: `…/seo/content/autopilot/profile` (SeoModule, 404 without it; `view_seo` reads, `manage_seo` writes).
+
+## 4. Niche Blueprint configures ONE engine (Slice 3)
+
+There is one Autopilot engine; no niche has its own code path. The Niche Blueprint's `seo_strategy` component (read live
+through `BlueprintConfigReader::seoStrategy()`) now optionally carries:
+
+* `content_policy` — `risk_tier` (`standard|sensitive|regulated`), `auto_publish` (`allowed|approval_required|never`),
+  `prohibited_phrases[]`, `preferred_terms[]`. Validated at publish: `sensitive`/`regulated` cannot be `allowed`.
+* per-topic `months[]` (1–12, seasonality) and `stage` (`awareness|consideration|decision`). Both are optional and appear in
+  the parsed topic only when set, so existing topic shapes and form lines are unchanged. Topic families, typical questions
+  and content types are the existing `cluster`, `faq_topics` and `intent`.
+
+The Blueprint form gains four fields (risk, automatic publishing, never-write phrases, preferred terms) and two trailing
+optional topic parts (`| months | stage`). Naming phrases without a tier is stored as `sensitive`, never `standard`.
+
+**Fail closed.** `SeoStrategyComponentAdapter::contentPolicy()` returns `unspecified` + `approval_required` for no Blueprint,
+no policy, or an unreadable/invalid one. `ContentPolicy::autoPublishAllowed()` is true only for an explicit `standard` +
+`allowed`; even then the scheduler applies the trust ramp (`ContentPolicy::TRUST_RAMP_ARTICLES` = 2 approved articles per
+Business first). `ContentPolicy::prohibitedPhrases()` merges the niche's phrases with the owner's Knowledge Profile
+`prohibited_claims`; `inSeason()` opens a 2-month lead window and wraps the year end.
+
+**Not done here:** the shipped Photo Booth Blueprint declares no `content_policy` yet, so it is *unspecified* (always
+owner-approved) until a platform owner publishes a Blueprint version carrying one through the existing Blueprint workspace
+form. That is deliberate: published Blueprint versions are versioned content, not something this lane edits.
