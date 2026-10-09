@@ -94,3 +94,37 @@ Business first). `ContentPolicy::prohibitedPhrases()` merges the niche's phrases
 **Not done here:** the shipped Photo Booth Blueprint declares no `content_policy` yet, so it is *unspecified* (always
 owner-approved) until a platform owner publishes a Blueprint version carrying one through the existing Blueprint workspace
 form. That is deliberate: published Blueprint versions are versioned content, not something this lane edits.
+
+## 5. Decisions, scoring and the brief (Slice 4)
+
+Deterministic and free: no AI, no provider call, no rank job. `AutopilotPlanner::evaluate($business, persist, $now)` records
+**one** outcome per evaluation in `content_autopilot_decisions` (`--persist` off = dry run, nothing written):
+
+| Decision | Meaning |
+|---|---|
+| `create` | the best eligible topic, with its structured brief (`state=briefed`) |
+| `needs_input` | only one missing fact stands between a topic and `eligible` — ask once (one open question per Business) |
+| `hold` | topics exist but are waiting (out of season, thin facts, no page to support) |
+| `none` | nothing worth writing, the monthly maximum reached, or no website. **A successful outcome.** |
+
+An identical `hold`/`none` (same reason, topic and fact hash) is recorded once per `idle_record_days`, not every tick. A
+question closes itself when its answer exists. A topic is not selected while a decision for it is in flight, nor for
+`retry_cooldown_days` (90) after a held/rejected one.
+
+**Score (0–100, `AutopilotScorer`):** relevance 20 · usefulness 15 · support for a commercial page 15 · real gap 15 ·
+unique Business facts 15 · rank/search opportunity 10 · season 5 · link fit 5. **Disqualified (never written):** already
+covered, strong duplicate of an article, competes with a money page, a topic the owner avoids, a phrase the owner or niche
+prohibits, a cost topic with no priced package. A related article costs the gap factor. **Flags** keep a topic out of
+`eligible`: `out_of_season`, `thin_facts` (fewer than two distinct fact groups), `no_support_page`. **Bands** (config
+`seo.content_autopilot`): ≥70 and no flags eligible · 45–69 hold · <45 skip. Equal scores prefer an angle the site does not
+have yet. Matching uses a phrase's **subject** words, never its question words ("how", "cost").
+
+`max_new_articles_per_month` (4) is a **ceiling, not a target**: 0 is honoured, and nothing counts articles to reach a number.
+The rank factor currently uses the owner's tracked keyword phrases only; position-based rank signals belong to maintenance
+(Slice 8) and reuse `ArticleRankSignals` unchanged.
+
+**Brief (`ArticleBriefBuilder`, stored on the decision as JSON with a content `brief_hash`):** topic, intent, journey stage,
+audience, the page it supports and the call to action, only the facts that bear on THIS topic (real prices only for cost or
+package topics), questions to answer (the Business's own first, then intent defaults, max 6), the allowed internal links, a
+`must_not` list (fixed rules + niche phrases + owner prohibited claims + avoided topics) and the niche risk tier / preferred
+terms. `php artisan content:autopilot-evaluate {business} [--persist]` shows the ranked topics and the decision.

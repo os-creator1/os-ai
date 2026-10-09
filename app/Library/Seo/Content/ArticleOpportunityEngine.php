@@ -107,7 +107,7 @@ final class ArticleOpportunityEngine
                 'internal_links' => $this->links->forPages($business, $pages, $published, $supports['uid'] ?? null, $topic),
                 'source' => $candidate['source'],
                 'cluster' => $candidate['cluster'],
-            ];
+            ] + array_intersect_key($candidate, ['months' => true, 'stage' => true]);
 
             if (count($out) >= self::MAX) {
                 break;
@@ -172,7 +172,8 @@ final class ArticleOpportunityEngine
      */
     private function expand(array $topic, array $context): array
     {
-        $base = ['intent' => $topic['intent'], 'supports' => $topic['supports'], 'cluster' => $topic['cluster'], 'why' => $topic['why'], 'service_page' => null, 'city' => null];
+        $base = ['intent' => $topic['intent'], 'supports' => $topic['supports'], 'cluster' => $topic['cluster'], 'why' => $topic['why'], 'service_page' => null, 'city' => null]
+            + array_intersect_key($topic, ['months' => true, 'stage' => true]);
         $render = fn (array $values) => strtr($topic['title'], $values);
 
         if ($topic['per'] === 'service') {

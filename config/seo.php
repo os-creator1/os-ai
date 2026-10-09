@@ -163,4 +163,26 @@ return [
         'max_poll_hours' => env('SEO_RANK_MAX_POLL_HOURS'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Content Autopilot (Contract 25)
+    |--------------------------------------------------------------------------
+    |
+    | Product policy for the Autopilot, NOT owner settings. `max_new_articles_per_month` is a CEILING, never a quota or a
+    | target: a month may legitimately publish zero. The AI spend ceiling lives in config/ai.php
+    | (`business_category_ceilings.content_autopilot`), not here.
+    |
+    */
+    'content_autopilot' => [
+        'max_new_articles_per_month' => (int) env('SEO_AUTOPILOT_MAX_NEW_ARTICLES_PER_MONTH', 4),
+        // Deterministic opportunity score bands (0-100). >= eligible: may be written. hold..eligible: wait or ask for one
+        // missing fact. Below hold: skipped.
+        'eligible_score' => (int) env('SEO_AUTOPILOT_ELIGIBLE_SCORE', 70),
+        'hold_score' => (int) env('SEO_AUTOPILOT_HOLD_SCORE', 45),
+        // A topic whose draft was rejected or held is not tried again for this many days.
+        'retry_cooldown_days' => (int) env('SEO_AUTOPILOT_RETRY_COOLDOWN_DAYS', 90),
+        // An identical "nothing worth doing" evaluation is not recorded again within this many days.
+        'idle_record_days' => (int) env('SEO_AUTOPILOT_IDLE_RECORD_DAYS', 7),
+    ],
+
 ];
