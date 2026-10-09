@@ -9,6 +9,8 @@ use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Ai\Enums\AiScope;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\AiUsagePeriod;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Contract §10.1 — `AiGateway::complete(AiRequest): AiResult` is the
@@ -29,6 +31,7 @@ final class AiGateway
         private readonly EntitlementManager $entitlements,
         private readonly AiBusinessActivityGate $activityGate,
         private readonly PlatformAiAuthority $platformAuthority,
+        private readonly AiBusinessCategoryCeiling $categoryCeiling,
     ) {
     }
 
@@ -175,7 +178,29 @@ final class AiGateway
         }
 
         // Gate 4 (§10.1 step 4): the authoritative, locked reserve.
-        ['entry' => $entry, 'refused' => $refused] = $this->ledger->reserve($request, $policy, $estimate, $bypassCapEnforcement);
+        // A per-Business category ceiling (Content Autopilot) is checked and the reservation taken under one lock, so two
+        // concurrent calls for the same Business cannot both pass the check and overshoot it. The provider call below
+        // stays outside the lock. Categories without a ceiling take the plain path.
+        if ($this->categoryCeiling->applies($request->category, $request->business)) {
+            try {
+                $reserved = Cache::lock($this->categoryCeiling->lockKey($request->business, $request->category), 10)->block(
+                    5,
+                    fn () => $this->categoryCeiling->allows($request->business, $request->category, $policy->periodKey, $estimate->costMicrousd)
+                        ? $this->ledger->reserve($request, $policy, $estimate, $bypassCapEnforcement)
+                        : null,
+                );
+            } catch (LockTimeoutException) {
+                $reserved = null;
+            }
+
+            if ($reserved === null) {
+                return AiResult::refused(AiRefusalReason::CategoryCeilingReached);
+            }
+        } else {
+            $reserved = $this->ledger->reserve($request, $policy, $estimate, $bypassCapEnforcement);
+        }
+
+        ['entry' => $entry, 'refused' => $refused] = $reserved;
 
         if ($refused) {
             return AiResult::refused($entry->refusal_reason, $entry);

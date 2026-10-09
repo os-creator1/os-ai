@@ -73,7 +73,7 @@ final class ArticleManager
             $article->slug = $slug !== '' ? $this->assertSlug($website, $slug, null) : ArticleSlugger::unique($website->id, $article->title);
 
             $this->fill($article, $business, $website, $attributes);
-            $article->source = in_array($article->source, ['manual', 'opportunity', 'ai_draft'], true) ? $article->source : 'manual';
+            $article->source = in_array($article->source, ['manual', 'opportunity', 'ai_draft', 'autopilot'], true) ? $article->source : 'manual';
             $article->updated_by_user_id = $actorId;
             $article->save();
 

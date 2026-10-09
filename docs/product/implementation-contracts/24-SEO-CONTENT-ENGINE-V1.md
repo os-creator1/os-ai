@@ -124,7 +124,7 @@ happens without an explicit owner publish or owner-chosen schedule.
 
 ## 10. Out of scope (V1)
 
-Autonomous/mass publishing, backlinks, WordPress/external CMS, social posting, plagiarism checks, real search-volume
+Autonomous/mass publishing (Content Autopilot, Contract 25, adds validated, policy-gated self-publishing and maintenance on top of this engine, never mass publishing), backlinks, WordPress/external CMS, social posting, plagiarism checks, real search-volume
 estimates, automatic rewriting, AI case studies or reviews, programmatic city pages.
 
 ## 11. Tests

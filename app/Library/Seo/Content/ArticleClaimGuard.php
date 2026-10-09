@@ -21,7 +21,7 @@ use App\Models\Business;
  */
 final class ArticleClaimGuard
 {
-    public function __construct(private readonly ArticleCatalogFacts $catalog)
+    public function __construct(private readonly ArticleCatalogFacts $catalog, private readonly ConfirmedBusinessClaims $confirmed)
     {
     }
 
@@ -65,9 +65,15 @@ final class ArticleClaimGuard
             ['superlative', '/\b(?:#\s?1|number\s+one|the\s+best\s+in|leading|premier|unmatched|unrivaled|unrivalled)\b/i', false, 'Superlatives like "best" or "leading" are claims that need proof.'],
         ];
 
+        $confirmedYears = $this->confirmed->years($business);
+
         foreach ($rules as [$kind, $pattern, $hard, $message]) {
             if (preg_match_all($pattern, $text, $m, PREG_SET_ORDER)) {
                 foreach ($m as $hit) {
+                    if ($kind === 'years_in_business' && $this->isConfirmedYears($hit[0], $confirmedYears)) {
+                        continue;
+                    }
+
                     $add($kind, trim($hit[0]), $hard, $message);
                 }
             }
@@ -79,6 +85,22 @@ final class ArticleClaimGuard
     /**
      * Quotation blocks in the raw Markdown: a fake quote is the classic invented-testimonial shape.
      */
+    /**
+     * "15 years of experience" is allowed when 15 is the number of years the owner has confirmed in the Knowledge Profile
+     * ("over/more than N" when N is at most that). A founding year ("since 2009") is never allowed this way.
+     */
+    private function isConfirmedYears(string $phrase, ?int $confirmedYears): bool
+    {
+        if ($confirmedYears === null || preg_match('/\b(?:since|established|founded)\b/i', $phrase) === 1 || preg_match('/\d{1,3}/', $phrase, $n) !== 1) {
+            return false;
+        }
+
+        $claimed = (int) $n[0];
+
+        return $claimed === $confirmedYears
+            || ($claimed < $confirmedYears && preg_match('/\b(?:over|more\s+than)\b/i', $phrase) === 1);
+    }
+
     public function hasQuotation(?string $markdown): bool
     {
         return preg_match('/^\s*>\s+\S/m', (string) $markdown) === 1;

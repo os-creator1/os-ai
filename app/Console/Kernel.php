@@ -286,6 +286,15 @@
             // a one-minute cadence only means "at the time they chose", never "publish whatever is waiting".
             $schedule->command('articles:publish-due')->everyMinute()->withoutOverlapping();
 
+            // Content Autopilot (Contract 25) - one daily, off-peak sweep that only QUEUES a per-Business job (spread over
+            // several hours so no two Businesses ever hit the writer together). The sweep itself is deterministic and free;
+            // AI is reached only from a queued writer job, and only after the Business's budget is checked.
+            $schedule->command('content:autopilot-tick')->dailyAt('03:30')->withoutOverlapping();
+
+            // Content Autopilot - the weekly review of existing articles (related links, a rare rewrite when facts changed, owner
+            // suggestions). Only queues per-Business jobs; most reviews change nothing.
+            $schedule->command('content:autopilot-maintain')->weeklyOn(2, '04:10')->withoutOverlapping();
+
             // Google Ads Module V1 contract §5 — the daily, staggered Ads read
             // sync sweep. It only queues per-account jobs (deduplicated, behind
             // the project circuit breaker); registered unconditionally like the

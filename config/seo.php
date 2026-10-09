@@ -163,4 +163,39 @@ return [
         'max_poll_hours' => env('SEO_RANK_MAX_POLL_HOURS'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Content Autopilot (Contract 25)
+    |--------------------------------------------------------------------------
+    |
+    | Product policy for the Autopilot, NOT owner settings. `max_new_articles_per_month` is a CEILING, never a quota or a
+    | target: a month may legitimately publish zero. The AI spend ceiling lives in config/ai.php
+    | (`business_category_ceilings.content_autopilot`), not here.
+    |
+    */
+    'content_autopilot' => [
+        'max_new_articles_per_month' => (int) env('SEO_AUTOPILOT_MAX_NEW_ARTICLES_PER_MONTH', 4),
+        // Anti-burst cadence: a new article is started, and a self-publishing one scheduled, at least this many days after
+        // the previous one. Self-published articles land on weekday mornings in the Business's own time zone.
+        'min_days_between_articles' => (int) env('SEO_AUTOPILOT_MIN_DAYS_BETWEEN_ARTICLES', 5),
+        // Stop writing while this many drafts already wait for the owner (or for their slot).
+        'max_awaiting_approval' => (int) env('SEO_AUTOPILOT_MAX_AWAITING_APPROVAL', 2),
+        // Maintenance (weekly): an existing article is reviewed at most this often, and an outcome has its own cool-down.
+        'maintenance_review_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_REVIEW_DAYS', 60),
+        'maintenance_rewrite_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_REWRITE_DAYS', 90),
+        'maintenance_proposal_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_PROPOSAL_DAYS', 180),
+        // The only AI spend maintenance has: at most this many article rewrites per Business per month (a ceiling, never a target).
+        'maintenance_max_rewrites_per_month' => (int) env('SEO_AUTOPILOT_MAINTENANCE_MAX_REWRITES', 1),
+        'maintenance_archive_after_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_ARCHIVE_AFTER_DAYS', 540),
+        'maintenance_max_reviews_per_run' => (int) env('SEO_AUTOPILOT_MAINTENANCE_MAX_REVIEWS', 25),
+        // Deterministic opportunity score bands (0-100). >= eligible: may be written. hold..eligible: wait or ask for one
+        // missing fact. Below hold: skipped.
+        'eligible_score' => (int) env('SEO_AUTOPILOT_ELIGIBLE_SCORE', 70),
+        'hold_score' => (int) env('SEO_AUTOPILOT_HOLD_SCORE', 45),
+        // A topic whose draft was rejected or held is not tried again for this many days.
+        'retry_cooldown_days' => (int) env('SEO_AUTOPILOT_RETRY_COOLDOWN_DAYS', 90),
+        // An identical "nothing worth doing" evaluation is not recorded again within this many days.
+        'idle_record_days' => (int) env('SEO_AUTOPILOT_IDLE_RECORD_DAYS', 7),
+    ],
+
 ];

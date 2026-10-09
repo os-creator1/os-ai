@@ -108,7 +108,7 @@ final class ArticleDraftGenerator
     }
 
     /** @return array{title?: string, excerpt?: string, meta_description?: string, body_markdown: string}|null */
-    private function parse(string $raw): ?array
+    public function parse(string $raw): ?array
     {
         $raw = trim($raw);
         $raw = (string) preg_replace('/^```(?:json)?\s*|\s*```$/i', '', $raw);
@@ -124,7 +124,7 @@ final class ArticleDraftGenerator
     /**
      * @param  array<string, true>  $allowed  "page:<uid>" / "article:<uid>" the article may link to
      */
-    private function normalize(string $markdown, array $allowed): string
+    public function normalize(string $markdown, array $allowed): string
     {
         $markdown = str_replace(["\r\n", "\r"], "\n", $markdown);
 
@@ -153,7 +153,7 @@ final class ArticleDraftGenerator
         return trim((string) preg_replace("/\n{3,}/", "\n\n", $markdown)) . "\n";
     }
 
-    private function metaDescription(string $text): ?string
+    public function metaDescription(string $text): ?string
     {
         $text = trim((string) preg_replace('/\s+/', ' ', $text));
 

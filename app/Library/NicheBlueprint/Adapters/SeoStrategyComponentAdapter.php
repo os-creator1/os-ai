@@ -31,6 +31,17 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
 
     public const MAX_CONTENT_TOPICS = 40;
 
+    /** Content Autopilot - how risky a niche's claims are; decides how much review an article needs. */
+    public const CONTENT_RISK_TIERS = ['standard', 'sensitive', 'regulated'];
+
+    /** Content Autopilot - may it publish on its own? Only `allowed` on a `standard` niche ever does; anything else needs the owner. */
+    public const CONTENT_AUTO_PUBLISH = ['allowed', 'approval_required', 'never'];
+
+    /** Content Autopilot - where in the customer's journey a topic helps. */
+    public const JOURNEY_STAGES = ['awareness', 'consideration', 'decision'];
+
+    private const MAX_POLICY_PHRASES = 40;
+
     public function componentType(): string
     {
         return self::TYPE;
@@ -85,6 +96,7 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
             'schema_notes' => $this->optionalString($payload, 'schema_notes', 1000),
             'internal_links' => $cleanLinks,
             'content_topics' => $this->parseContentTopics($payload['content_topics'] ?? []),
+            'content_policy' => $this->parseContentPolicy($payload['content_policy'] ?? null),
         ];
 
         if ($cleanPatterns === [] && $out['faq_topics'] === [] && $out['schema_types'] === [] && $cleanLinks === [] && $out['content_topics'] === []) {
@@ -163,7 +175,7 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
             throw new InvalidArgumentException('A content topic must ask a question or offer ideas, a cost, a comparison or a how-to ("How much does ... cost", "... vs ...", "... ideas"). A plain service search belongs on a page, not an article.');
         }
 
-        return [
+        $parsed = [
             'title' => $title,
             'intent' => $intent,
             'per' => $per,
@@ -171,6 +183,119 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
             'cluster' => $this->optionalString($topic, 'cluster', 60),
             'why' => $this->optionalString($topic, 'why', 300),
         ];
+
+        // Content Autopilot - seasonality (the months the topic is useful, 1-12) and the journey stage. Both optional.
+        $months = $this->parseMonths($topic['months'] ?? null);
+
+        if ($months !== []) {
+            $parsed['months'] = $months;
+        }
+
+        $stage = strtolower((string) ($topic['stage'] ?? ''));
+
+        if ($stage !== '') {
+            if (! in_array($stage, self::JOURNEY_STAGES, true)) {
+                throw new InvalidArgumentException('A content topic\'s "stage" must be one of: '.implode(', ', self::JOURNEY_STAGES).'.');
+            }
+
+            $parsed['stage'] = $stage;
+        }
+
+        return $parsed;
+    }
+
+    /** @return list<int> sorted, unique months 1-12 */
+    private function parseMonths(mixed $months): array
+    {
+        if ($months === null || $months === '' || $months === []) {
+            return [];
+        }
+
+        if (is_string($months)) {
+            $months = preg_split('/\s*,\s*/', trim($months)) ?: [];
+        }
+
+        if (! is_array($months) || count($months) > 12) {
+            throw new InvalidArgumentException('A content topic\'s "months" must list up to 12 months, as numbers 1-12.');
+        }
+
+        $out = [];
+
+        foreach ($months as $month) {
+            if (! is_numeric($month) || (int) $month != $month || (int) $month < 1 || (int) $month > 12) {
+                throw new InvalidArgumentException('A content topic\'s "months" must be numbers from 1 (January) to 12 (December).');
+            }
+
+            $out[(int) $month] = (int) $month;
+        }
+
+        ksort($out);
+
+        return array_values($out);
+    }
+
+    /**
+     * Content Autopilot - the niche's content POLICY, validated: how risky its claims are, whether Autopilot may ever
+     * publish on its own, phrases it must never write, and the terms the niche prefers. Optional; a niche that says
+     * nothing is treated as "unknown", which never auto-publishes (see `contentPolicy()`).
+     *
+     * @return array{risk_tier: string, auto_publish: string, prohibited_phrases: list<string>, preferred_terms: list<string>}|null
+     */
+    private function parseContentPolicy(mixed $policy): ?array
+    {
+        if ($policy === null || $policy === []) {
+            return null;
+        }
+
+        if (! is_array($policy) || array_is_list($policy)) {
+            throw new InvalidArgumentException('"content_policy" must be an object.');
+        }
+
+        $tier = strtolower((string) ($policy['risk_tier'] ?? ''));
+        $auto = strtolower((string) ($policy['auto_publish'] ?? 'approval_required'));
+
+        if (! in_array($tier, self::CONTENT_RISK_TIERS, true)) {
+            throw new InvalidArgumentException('"content_policy.risk_tier" must be one of: '.implode(', ', self::CONTENT_RISK_TIERS).'.');
+        }
+
+        if (! in_array($auto, self::CONTENT_AUTO_PUBLISH, true)) {
+            throw new InvalidArgumentException('"content_policy.auto_publish" must be one of: '.implode(', ', self::CONTENT_AUTO_PUBLISH).'.');
+        }
+
+        if ($tier !== 'standard' && $auto === 'allowed') {
+            throw new InvalidArgumentException('A sensitive or regulated niche cannot allow automatic publishing; use approval_required or never.');
+        }
+
+        return [
+            'risk_tier' => $tier,
+            'auto_publish' => $auto,
+            'prohibited_phrases' => $this->stringList($policy, 'prohibited_phrases', self::MAX_POLICY_PHRASES, 160, false),
+            'preferred_terms' => $this->stringList($policy, 'preferred_terms', self::MAX_POLICY_PHRASES, 80, false),
+        ];
+    }
+
+    /**
+     * The tolerant READ of a stored strategy's content policy. FAIL CLOSED: a missing, unreadable or invalid policy
+     * (or no Blueprint at all - pass null) is `unspecified` + `approval_required`, which never publishes on its own.
+     *
+     * @param  array<string, mixed>|null  $strategy  a payload as returned by BlueprintConfigReader::seoStrategy()
+     * @return array{risk_tier: string, auto_publish: string, prohibited_phrases: list<string>, preferred_terms: list<string>}
+     */
+    public static function contentPolicy(?array $strategy): array
+    {
+        $closed = ['risk_tier' => 'unspecified', 'auto_publish' => 'approval_required', 'prohibited_phrases' => [], 'preferred_terms' => []];
+
+        $raw = $strategy['content_policy'] ?? null;
+
+        if (! is_array($raw)) {
+            return $closed;
+        }
+
+        try {
+            return (new self())->parseContentPolicy($raw) ?? $closed;
+        } catch (InvalidArgumentException) {
+            return $closed;
+        }
     }
 
     /**
@@ -238,7 +363,16 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
             ['name' => 'faq_topics', 'label' => 'FAQ topics', 'type' => 'lines', 'required' => false, 'help' => 'One topic per line.'],
             ['name' => 'content_topics', 'label' => 'Article topics', 'type' => 'lines', 'required' => false,
                 'help' => 'Blog topics a Business of this niche can write, one per line: title | intent ('.implode(', ', array_map(fn (ArticleIntent $i) => $i->value, ArticleIntent::cases())).') | per (none, service, city) | supports (page hint) | cluster | why. '
-                    .'Titles may use {service}, {city} and {business}, and must be a question, comparison, cost or ideas topic - never a plain service search. Example: How much does a photo booth rental cost in {city}? | cost | city | packages | Pricing | Pricing is the first question most buyers ask.'],
+                    .'Titles may use {service}, {city} and {business}, and must be a question, comparison, cost or ideas topic - never a plain service search. Example: How much does a photo booth rental cost in {city}? | cost | city | packages | Pricing | Pricing is the first question most buyers ask. '
+                    .'Optional trailing parts: | months (1-12, comma separated, when the topic is most useful) | stage ('.implode(', ', self::JOURNEY_STAGES).'). Example: ... | Pricing | Why | 3,4,5 | consideration'],
+            ['name' => 'content_risk_tier', 'label' => 'Content risk', 'type' => 'select', 'required' => false,
+                'options' => ['standard' => 'Standard - everyday local services', 'sensitive' => 'Sensitive - owner reviews every article', 'regulated' => 'Regulated (health, legal, financial) - owner reviews every article'],
+                'help' => 'How careful Content Autopilot must be for this niche. Leave empty if unsure: articles then always wait for the owner.'],
+            ['name' => 'content_auto_publish', 'label' => 'Automatic publishing', 'type' => 'select', 'required' => false,
+                'options' => ['approval_required' => 'Owner approves each article', 'allowed' => 'May publish itself once validated (Standard risk only)', 'never' => 'Never publish automatically'],
+                'help' => 'Even when allowed, the first articles of every Business wait for approval.'],
+            ['name' => 'content_prohibited_phrases', 'label' => 'Never write', 'type' => 'lines', 'required' => false, 'help' => 'Phrases or claims Content Autopilot must never use in this niche, one per line.'],
+            ['name' => 'content_preferred_terms', 'label' => 'Preferred terms', 'type' => 'lines', 'required' => false, 'help' => 'Words the niche prefers, one per line (for example "photo booth", not "photobooth").'],
             ['name' => 'schema_types', 'label' => 'Schema types', 'type' => 'lines', 'required' => false, 'help' => 'e.g. LocalBusiness, FAQPage, Service'],
             ['name' => 'schema_notes', 'label' => 'Schema strategy notes', 'type' => 'textarea', 'required' => false],
             ['name' => 'internal_links', 'label' => 'Internal-link defaults', 'type' => 'lines', 'required' => false, 'help' => 'One per line: from page | to page | anchor text'],
@@ -264,10 +398,10 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
         $topics = [];
 
         foreach ($this->linesOf($input['content_topics'] ?? '') as $line) {
-            [$title, $intent, $per, $supports, $cluster, $why] = $this->pipeParts($line, 6);
+            [$title, $intent, $per, $supports, $cluster, $why, $months, $stage] = $this->pipeParts($line, 8);
             $topic = ['title' => (string) $title, 'intent' => strtolower((string) $intent)];
 
-            foreach (['per' => strtolower((string) $per), 'supports' => (string) $supports, 'cluster' => (string) $cluster, 'why' => (string) $why] as $key => $value) {
+            foreach (['per' => strtolower((string) $per), 'supports' => (string) $supports, 'cluster' => (string) $cluster, 'why' => (string) $why, 'months' => (string) $months, 'stage' => strtolower((string) $stage)] as $key => $value) {
                 if ($value !== '') {
                     $topic[$key] = $value;
                 }
@@ -288,6 +422,20 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
             $payload['schema_notes'] = trim((string) $input['schema_notes']);
         }
 
+        $tier = strtolower(trim((string) ($input['content_risk_tier'] ?? '')));
+        $phrases = $this->linesOf($input['content_prohibited_phrases'] ?? '');
+        $terms = $this->linesOf($input['content_preferred_terms'] ?? '');
+
+        if ($tier !== '' || $phrases !== [] || $terms !== []) {
+            // Naming phrases or terms without a risk tier must not silently become "standard": it is recorded as unspecified-safe.
+            $payload['content_policy'] = [
+                'risk_tier' => $tier !== '' ? $tier : 'sensitive',
+                'auto_publish' => strtolower(trim((string) ($input['content_auto_publish'] ?? ''))) ?: 'approval_required',
+                'prohibited_phrases' => $phrases,
+                'preferred_terms' => $terms,
+            ];
+        }
+
         $this->parse($payload);
 
         return $payload;
@@ -298,10 +446,21 @@ final class SeoStrategyComponentAdapter extends ConfigOnlyBlueprintComponentAdap
         return [
             'keyword_patterns' => implode("\n", array_map(fn ($p) => $p['pattern'].' | '.$p['intent'], $payload['keyword_patterns'] ?? [])),
             'faq_topics' => implode("\n", $payload['faq_topics'] ?? []),
-            'content_topics' => implode("\n", array_map(
-                fn ($t) => implode(' | ', [$t['title'] ?? '', $t['intent'] ?? '', $t['per'] ?? '', $t['supports'] ?? '', $t['cluster'] ?? '', $t['why'] ?? '']),
-                $payload['content_topics'] ?? [],
-            )),
+            'content_topics' => implode("\n", array_map(function ($t) {
+                $parts = [$t['title'] ?? '', $t['intent'] ?? '', $t['per'] ?? '', $t['supports'] ?? '', $t['cluster'] ?? '', $t['why'] ?? ''];
+
+                // Months and stage are optional trailing parts; written only when present so older topics round-trip unchanged.
+                if (! empty($t['months']) || ! empty($t['stage'])) {
+                    $parts[] = implode(',', (array) ($t['months'] ?? []));
+                    $parts[] = $t['stage'] ?? '';
+                }
+
+                return implode(' | ', $parts);
+            }, $payload['content_topics'] ?? [])),
+            'content_risk_tier' => $payload['content_policy']['risk_tier'] ?? '',
+            'content_auto_publish' => $payload['content_policy']['auto_publish'] ?? '',
+            'content_prohibited_phrases' => implode("\n", $payload['content_policy']['prohibited_phrases'] ?? []),
+            'content_preferred_terms' => implode("\n", $payload['content_policy']['preferred_terms'] ?? []),
             'schema_types' => implode("\n", $payload['schema_types'] ?? []),
             'schema_notes' => $payload['schema_notes'] ?? '',
             'internal_links' => implode("\n", array_map(fn ($l) => $l['from'].' | '.$l['to'].' | '.$l['anchor'], $payload['internal_links'] ?? [])),
