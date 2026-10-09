@@ -650,6 +650,21 @@
         {
             Schema::defaultStringLength(191);
 
+            // External Website Audit Mode V1 — a Business whose primary website is external is re-checked when its
+            // website address changes, from ANY edit surface (Website settings or the Business profile). The crawl
+            // manager keeps this bounded (one active crawl per Business) and never takes a URL from the request.
+            \App\Models\Business::updated(function (\App\Models\Business $business): void {
+                if (! $business->wasChanged('website_url') || (string) $business->getAttribute('website_mode') !== 'external') {
+                    return;
+                }
+
+                try {
+                    app(\App\Library\ExternalSite\ExternalSiteCrawlManager::class)->request($business, 'url_change');
+                } catch (\Throwable) {
+                    // Nothing to crawl (cleared or invalid address): the Website screens explain it.
+                }
+            });
+
             // Blueprint Safety Mode — the Blueprint Workspace may never reach the
             // outside world. One flag (BlueprintMode), enforced at the generic
             // choke points here and by BlueprintSafetyGuard::check() at the

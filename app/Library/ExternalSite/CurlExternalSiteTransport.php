@@ -24,6 +24,9 @@ final class CurlExternalSiteTransport implements ExternalSiteTransport
 
     public function get(TransportRequest $request): TransportResponse
     {
+        // Blueprint Safety Mode: the Blueprint Workspace may never reach the outside world.
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('http_request');
+
         $target = $request->target;
         $ch = curl_init();
 

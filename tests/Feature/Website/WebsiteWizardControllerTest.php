@@ -37,10 +37,30 @@ class WebsiteWizardControllerTest extends TestCase
         $this->seed(PhotoboothWebsiteSetupQuestionnaireSeeder::class);
     }
 
-    public function test_a_business_with_no_website_sees_the_empty_state(): void
+    public function test_a_business_that_has_not_chosen_sees_the_three_website_choices(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
+
+        $this->get(route('customer.workspaces.businesses.website.show', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertSee('Build with MotionGrove')
+            ->assertSee('Create a complete website using your Business information.')
+            ->assertSee('Build my website')
+            ->assertSee('Use my existing website')
+            ->assertSee('Connect existing website')
+            ->assertSee('Do this later')
+            ->assertDontSee('Manage pages')
+            ->assertDontSee('Publish');
+    }
+
+    public function test_a_business_that_chose_to_build_sees_the_original_empty_state_and_wizard(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.website.mode.choose', [$workspace->uid, $business->uid]), ['mode' => 'hosted'])
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]));
 
         $this->get(route('customer.workspaces.businesses.website.show', [$workspace->uid, $business->uid]))
             ->assertOk()

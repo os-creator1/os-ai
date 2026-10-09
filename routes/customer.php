@@ -2044,6 +2044,19 @@
             Route::get('/setup', 'Business\WebsiteController@setup')->name('setup');
             Route::post('/', 'Business\WebsiteController@store')->name('store');
 
+            // External Website Audit Mode V1: the first-screen choice (build / use my existing website / later)
+            // and the existing-website screens. Nothing under `external` publishes, edits or rebuilds a site.
+            Route::post('/mode', 'Business\ExternalWebsiteController@chooseMode')->middleware('throttle:20,1')->name('mode.choose');
+            Route::prefix('external')->name('external.')->group(function () {
+                Route::get('/', 'Business\ExternalWebsiteController@overview')->name('overview');
+                Route::get('/audit', 'Business\ExternalWebsiteController@audit')->name('audit');
+                Route::get('/pages', 'Business\ExternalWebsiteController@pages')->name('pages');
+                Route::get('/pages/{pageId}', 'Business\ExternalWebsiteController@page')->whereNumber('pageId')->name('page');
+                Route::get('/settings', 'Business\ExternalWebsiteController@settings')->name('settings');
+                Route::post('/settings', 'Business\ExternalWebsiteController@saveSettings')->middleware('throttle:20,1')->name('settings.update');
+                Route::post('/crawl', 'Business\ExternalWebsiteController@crawl')->middleware('throttle:10,1')->name('crawl');
+            });
+
             Route::prefix('studio')->name('studio.')->group(function () {
                 Route::get('/{tab?}', 'Business\WebsiteStudioController@show')->name('show');
             });
