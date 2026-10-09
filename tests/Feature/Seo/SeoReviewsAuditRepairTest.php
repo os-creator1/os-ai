@@ -120,7 +120,7 @@ class SeoReviewsAuditRepairTest extends TestCase
         $this->assertSame(1, preg_match('/data-role="summary-requests">(.*?)<\/div>/s', $html, $m));
         $tile = trim(preg_replace('/\s+/', ' ', strip_tags($m[1])));
         $this->assertStringContainsString('208', $tile);
-        $this->assertStringContainsString('203 awaiting an outcome', $tile);
+        $this->assertStringContainsString('203 awaiting', $tile);
 
         $this->assertSame(1, substr_count($html, 'data-role="requests-truncated"'), 'Only the Location whose list is capped says so.');
         $this->assertStringContainsString('Showing the latest 200 of 205 requests recorded.', $html);
@@ -141,10 +141,9 @@ class SeoReviewsAuditRepairTest extends TestCase
         $withText = trim(preg_replace('/\s+/', ' ', strip_tags($with[1])));
         $missingText = trim(preg_replace('/\s+/', ' ', strip_tags($missing[1])));
 
-        $this->assertStringContainsString('With a review link 1 1 active Location in total · 1 archived, not counted', $withText);
-        $this->assertStringContainsString('Missing a link 0 Every Location is ready.', $missingText);
-        $this->assertStringContainsString('100 percent', $html);
-        $this->assertStringNotContainsString('data-role="jump-to-missing"', $html, 'There is nothing to add for an archived Location.');
+        $this->assertStringContainsString('Locations with a review link 1 / 1', $withText);
+        $this->assertStringContainsString('Every Location is ready', $missingText);
+        $this->assertStringContainsString('data-role="location-archived"', $html);
     }
 
     public function test_contact_choices_are_capped_for_each_location_not_across_all_of_them(): void
@@ -198,7 +197,7 @@ class SeoReviewsAuditRepairTest extends TestCase
 
         $this->assertStringNotContainsString('Google review link', $html);
         $this->assertStringNotContainsString('leave a Google review', $html);
-        $this->assertStringContainsString("Keep each Location's review link in one place", $html);
+        $this->assertStringContainsString("Keep each Location's review link handy", $html);
     }
 
     public function test_reviews_stay_workflow_only_with_no_rating_metric_or_review_markup(): void

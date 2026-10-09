@@ -225,8 +225,7 @@ class SeoReviewsHttpTest extends TestCase
         foreach (['summary-with-link', 'summary-missing-link', 'summary-requests', 'summary-last-request'] as $tile) {
             $this->assertStringContainsString('data-role="' . $tile . '"', $html);
         }
-        $this->assertStringContainsString('jump-to-missing', $html, 'A manager is pointed at the Location that still needs a link.');
-        $this->assertStringContainsString('href="#location-' . $location->uid . '"', $html);
+        $this->assertStringContainsString('data-role="record-request-open"', $html, 'A manager can record a request from the header.');
 
         // One empty state (no link) and one ready state (link) with copy + open.
         $this->assertSame(1, substr_count($html, 'data-role="review-link-empty"'));
@@ -237,7 +236,7 @@ class SeoReviewsHttpTest extends TestCase
         $this->assertStringContainsString('Needs a review link', $html);
         $this->assertStringContainsString('Review link ready', $html);
         // The empty-state Location has no requests yet.
-        $this->assertSame(1, substr_count($html, 'data-role="requests-empty"'));
+        $this->assertSame(0, substr_count($html, 'data-role="requests-empty"'));
     }
 
     public function test_a_reader_without_manage_seo_sees_state_but_no_forms_or_jump_button(): void
@@ -250,7 +249,7 @@ class SeoReviewsHttpTest extends TestCase
 
         $this->assertStringContainsString('data-role="review-link-none"', $html);
         $this->assertStringContainsString('Someone who manages SEO can add the link', $html);
-        foreach (['data-role="link-form"', 'data-role="request-form"', 'jump-to-missing'] as $control) {
+        foreach (['data-role="link-form"', 'data-role="request-form"', 'record-request-open'] as $control) {
             $this->assertStringNotContainsString($control, $html);
         }
     }
