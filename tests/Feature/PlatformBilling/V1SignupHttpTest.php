@@ -740,6 +740,43 @@ class V1SignupHttpTest extends TestCase
         $this->assertSame(0, User::query()->where('is_customer', true)->count(), 'The account step stores nothing durable.');
     }
 
+    public function test_the_account_step_offers_a_language_only_when_more_than_one_is_enabled(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        \App\Models\Language::query()->update(['status' => 0]);
+        \App\Models\Language::query()->updateOrCreate(['code' => 'en'], ['name' => 'English', 'iso_code' => 'us', 'status' => 1]);
+
+        $this->post(route('register.plan.select'), ['tier' => 'growth']);
+        $this->get(route('register.account'))->assertOk()->assertDontSee('name="locale"', false);
+
+        \App\Models\Language::query()->updateOrCreate(['code' => 'fr'], ['name' => 'French', 'iso_code' => 'fr', 'status' => 1]);
+
+        $this->get(route('register.account'))
+            ->assertOk()
+            ->assertSee('name="locale"', false)
+            ->assertSee('French');
+    }
+
+    public function test_the_chosen_language_becomes_the_users_canonical_locale(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        \App\Models\Language::query()->updateOrCreate(['code' => 'fr'], ['name' => 'French', 'iso_code' => 'fr', 'status' => 1]);
+
+        $this->signUp($this->form(['locale' => 'fr']));
+
+        $this->assertSame('fr', User::query()->where('is_customer', true)->sole()->locale);
+    }
+
+    public function test_a_language_that_is_not_enabled_is_refused_at_the_account_step(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        \App\Models\Language::query()->updateOrCreate(['code' => 'de'], ['name' => 'German', 'iso_code' => 'de', 'status' => 0]);
+
+        $this->post(route('register.plan.select'), ['tier' => 'growth']);
+        $this->post(route('register.account.store'), $this->account(['locale' => 'de']))->assertSessionHasErrors('locale');
+        $this->post(route('register.account.store'), $this->account(['locale' => 'zz']))->assertSessionHasErrors('locale');
+    }
+
     public function test_the_account_step_refuses_an_email_that_is_already_registered(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);

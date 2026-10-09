@@ -87,7 +87,3 @@
         @endif
     </x-card>
 @endsection
-
-@section('page-script')
-    @include('customer.business.calendar.booking-types._copy-link')
-@endsection

@@ -20,10 +20,10 @@
         $days = [0 => 'Sunday', 1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday'];
     @endphp
 
-    <x-card title="Weekly availability" class="mb-2" data-section="availability-rules">
+    <x-card title="Weekly hours" class="mb-2" data-section="availability-rules">
         <p class="text-caption">
             When each person is bookable at <strong>{{ $location->name ?: 'this location' }}</strong>.
-            Times are local to this business. Add more than one window on a day for a split shift.
+            Times are local to this business. Switch a day off for closed, and add another set of hours for a split day.
             @unless ($isOwner)
                 You can set your own hours here; the account owner sets everyone else's.
             @endunless
@@ -32,78 +32,106 @@
         @if ($rules->isEmpty())
             <x-empty-state icon="clock" title="No availability set for this location yet."
                             description="Nobody can be booked here until somebody has hours." />
-        @else
-            <div class="table-responsive">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Person</th>
-                            <th>Day</th>
-                            <th>From</th>
-                            <th>To</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($rules as $rule)
-                            @php
-                                $mayEdit = $isOwner || (int) $rule->staff_user_id === $actorId;
-                                $person = $nameById->get($rule->staff_user_id);
-                            @endphp
-                            <tr>
-                                <td class="text-label">{{ $person ? $staffName($person) : 'User #' . $rule->staff_user_id }}</td>
-                                <td>{{ $days[$rule->day_of_week] ?? $rule->day_of_week }}</td>
-                                <td>{{ $rule->start_time }}</td>
-                                <td>{{ $rule->end_time }}</td>
-                                <td class="text-right">
-                                    @if ($mayEdit)
-                                        <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.availability.rules.destroy', array_merge($scope, [$rule->id])) }}">
-                                            @csrf
-                                            <x-button type="submit" variant="ghost" size="sm" icon="x">Remove</x-button>
-                                        </form>
-                                    @endif
-                                </td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
         @endif
 
-        <hr class="my-2">
+        @if ($person === null)
+            <p class="text-caption mb-0">There is nobody you can set hours for at this location.</p>
+        @else
+            <div class="availability-toolbar" data-role="availability-toolbar">
+                @if ($selectable->count() > 1)
+                    <form method="GET" action="{{ route('customer.workspaces.businesses.calendar.availability.index', $scope) }}" class="availability-person">
+                        <label for="availability_person" class="form-label mb-0">Person</label>
+                        <select id="availability_person" name="person" class="form-select form-select-sm" onchange="this.form.submit()">
+                            @foreach ($selectable as $candidate)
+                                <option value="{{ $candidate->id }}" @selected((int) $candidate->id === (int) $person->id)>{{ $staffName($candidate) }}</option>
+                            @endforeach
+                        </select>
+                        <noscript><x-button type="submit" variant="secondary" size="sm">Show</x-button></noscript>
+                    </form>
+                @else
+                    <span class="text-label" data-role="availability-person-name">{{ $staffName($person) }}</span>
+                @endif
 
-        <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.availability.rules.store', $scope) }}">
-            @csrf
-            <div class="form-row align-items-end">
-                <div class="form-group col-md-4">
-                    <label for="rule_staff_user_id">Person</label>
-                    <select id="rule_staff_user_id" name="staff_user_id" class="form-control" required>
-                        @foreach ($selectable as $candidate)
-                            <option value="{{ $candidate->id }}">{{ $staffName($candidate) }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div class="form-group col-md-3">
-                    <label for="day_of_week">Day</label>
-                    <select id="day_of_week" name="day_of_week" class="form-control" required>
-                        @foreach ($days as $value => $label)
-                            <option value="{{ $value }}">{{ $label }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div class="form-group col-md-2">
-                    <label for="start_time">From</label>
-                    <input type="time" id="start_time" name="start_time" class="form-control" required>
-                </div>
-                <div class="form-group col-md-2">
-                    <label for="end_time">To</label>
-                    <input type="time" id="end_time" name="end_time" class="form-control" required>
-                </div>
-                <div class="form-group col-md-1">
-                    <x-button type="submit" variant="primary" icon="plus">Add</x-button>
-                </div>
+                @if ($hasBusinessHours)
+                    <a class="btn btn-sm btn-outline-secondary" data-role="use-business-hours"
+                       href="{{ route('customer.workspaces.businesses.calendar.availability.index', $scope) }}?person={{ $person->id }}&amp;prefill=business">
+                        Use business hours
+                    </a>
+                @endif
             </div>
-        </form>
+
+            @if ($prefilled)
+                <x-alert variant="neutral" class="mb-1" role="status" data-role="availability-prefill-note">
+                    These are this location's business hours. Adjust them if you need to, then save — nothing changes until you do.
+                </x-alert>
+            @endif
+
+            @if ($errors->any())
+                <x-alert variant="danger" class="mb-1" role="alert">
+                    @foreach ($errors->all() as $message)
+                        <div>{{ $message }}</div>
+                    @endforeach
+                </x-alert>
+            @endif
+
+            <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.availability.week.update', $scope) }}" data-availability-editor>
+                @csrf
+                <input type="hidden" name="staff_user_id" value="{{ $person->id }}">
+
+                <div class="availability-week" data-role="availability-week">
+                    @foreach ($editorDays as $day)
+                        @php
+                            $windows = $week[$day] ?? [];
+                            $isOpen = $windows !== [];
+                        @endphp
+                        <div class="availability-day {{ $isOpen ? '' : 'is-closed' }}" data-day="{{ $day }}" data-role="availability-day">
+                            <div class="availability-day-name form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="open-{{ $day }}" name="open[{{ $day }}]" value="1"
+                                       data-day-toggle @checked($isOpen)>
+                                <label class="form-check-label" for="open-{{ $day }}">{{ $days[$day] }}</label>
+                            </div>
+
+                            <div class="availability-day-body">
+                                <span class="availability-closed" data-role="availability-closed">Closed</span>
+                                <div class="availability-intervals" data-intervals data-next-index="{{ count($windows) }}">
+                                    @foreach ($windows as $i => $window)
+                                        <div class="availability-interval" data-interval>
+                                            <input type="time" class="form-control form-control-sm" name="days[{{ $day }}][{{ $i }}][start]" value="{{ $window['start'] }}"
+                                                   aria-label="{{ $days[$day] }} opening time" required>
+                                            <span class="availability-to" aria-hidden="true">to</span>
+                                            <input type="time" class="form-control form-control-sm" name="days[{{ $day }}][{{ $i }}][end]" value="{{ $window['end'] }}"
+                                                   aria-label="{{ $days[$day] }} closing time" required>
+                                            <button type="button" class="btn btn-sm btn-icon btn-flat-secondary availability-remove" data-remove-interval
+                                                    aria-label="Remove these hours from {{ $days[$day] }}"><x-ds-icon name="x" size="14" aria-hidden="true" /></button>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </div>
+
+                            <div class="availability-day-actions">
+                                <button type="button" class="btn btn-sm btn-flat-primary" data-add-interval aria-label="Add another set of hours on {{ $days[$day] }}">
+                                    <x-ds-icon name="plus" size="14" aria-hidden="true" /> Add hours
+                                </button>
+                            </div>
+
+                            <template data-interval-template>
+                                <div class="availability-interval" data-interval>
+                                    <input type="time" class="form-control form-control-sm" name="days[{{ $day }}][__INDEX__][start]" aria-label="{{ $days[$day] }} opening time" required>
+                                    <span class="availability-to" aria-hidden="true">to</span>
+                                    <input type="time" class="form-control form-control-sm" name="days[{{ $day }}][__INDEX__][end]" aria-label="{{ $days[$day] }} closing time" required>
+                                    <button type="button" class="btn btn-sm btn-icon btn-flat-secondary availability-remove" data-remove-interval
+                                            aria-label="Remove these hours from {{ $days[$day] }}"><x-ds-icon name="x" size="14" aria-hidden="true" /></button>
+                                </div>
+                            </template>
+                        </div>
+                    @endforeach
+                </div>
+
+                <div class="d-flex justify-content-end mt-2">
+                    <x-button type="submit" variant="primary" icon="save" data-role="save-weekly-hours">Save hours</x-button>
+                </div>
+            </form>
+        @endif
     </x-card>
 
     <x-card title="Time off" class="mb-2" data-section="availability-time-off">

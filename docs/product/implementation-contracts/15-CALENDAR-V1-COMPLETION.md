@@ -99,3 +99,8 @@ event or domain model changed.
   browser pass at 1024, 1440, 1920 and 2560 px (live swap, rapid clicks with a
   deliberately late response, Back/Forward, direct URLs, lazy FullCalendar load).
   Test database: the disposable `ultimatesms_testing_calendar_polish`.
+* **Weekly-hours editor, "Use business hours".** A business-hours close of `24:00` is
+  pre-filled as `23:59`: availability windows are same-day `H:i` pairs everywhere they are
+  written, so end-of-day cannot be entered. The result is a one-minute gap before midnight,
+  which only affects an appointment ending exactly at midnight. Changing it would be a
+  time-model change and is not part of the editor.

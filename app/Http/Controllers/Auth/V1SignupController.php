@@ -10,6 +10,7 @@ use App\Library\PlatformBilling\PlatformPlanPresenter;
 use App\Library\PlatformBilling\V1SignupDraft;
 use App\Library\PlatformBilling\V1SignupManager;
 use App\Models\Customer;
+use App\Models\Language;
 use App\Models\PlatformSubscription;
 use App\Models\User;
 use App\Models\Workspace;
@@ -161,6 +162,7 @@ class V1SignupController extends Controller
             'step' => 2,
             'plan' => $this->sellablePlan((string) $draft->tier()),
             'account' => $draft->account() ?? [],
+            'languages' => $this->enabledLanguages(),
         ]);
     }
 
@@ -181,6 +183,9 @@ class V1SignupController extends Controller
             'last_name' => ['nullable', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
+            // The canonical application language (users.locale): only an enabled
+            // Language may be chosen; omitted, the install default applies.
+            'locale' => ['nullable', 'string', Rule::in($this->enabledLanguages()->pluck('code')->all())],
         ]);
 
         if ($validator->fails()) {
@@ -196,6 +201,7 @@ class V1SignupController extends Controller
             'last_name' => $data['last_name'] ?? null,
             'email' => $data['email'],
             'password' => $data['password'],
+            'locale' => $data['locale'] ?? null,
         ]);
 
         return redirect()->route('register.business');
@@ -370,6 +376,13 @@ class V1SignupController extends Controller
             'is_customer' => true,
         ], true);
 
+        // The chosen application language (users.locale, the one canonical
+        // preference). UserRepository::store() always applies the install
+        // default, so the choice is saved here.
+        if (! empty($account['locale']) && $account['locale'] !== $user->locale) {
+            $user->forceFill(['locale' => $account['locale']])->save();
+        }
+
         $customer = Customer::query()->where('user_id', $user->id)->firstOrFail();
 
         // The account is durable from here on; the draft (and the password it
@@ -378,6 +391,8 @@ class V1SignupController extends Controller
         $draft->forget();
 
         Auth::login($user, true);
+        // Apply the chosen language to this very session (LocaleMiddleware reads it).
+        session(['locale' => $user->locale]);
         $request->session()->regenerate();
 
         $this->sendVerificationEmail($user);
@@ -543,6 +558,12 @@ class V1SignupController extends Controller
     // =================================================================
     // Helpers
     // =================================================================
+
+    /** @return \Illuminate\Support\Collection<int, Language> */
+    private function enabledLanguages(): \Illuminate\Support\Collection
+    {
+        return Language::query()->where('status', 1)->orderBy('name')->get(['code', 'name']);
+    }
 
     private function draft(Request $request): V1SignupDraft
     {

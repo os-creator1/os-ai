@@ -32,4 +32,9 @@
 
 @section('page-script')
     @include('customer.business.calendar._scripts')
+    {{-- Delegated copy-link buttons on Booking types. Loaded with the frame rather than by that
+         one tab, so they also work when the tab is reached by a section swap. A tab view must
+         not define its own page-script section: it would replace this one and the tab router
+         would never load. --}}
+    @include('customer.business.calendar.booking-types._copy-link')
 @endsection

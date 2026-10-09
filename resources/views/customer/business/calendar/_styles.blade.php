@@ -432,6 +432,114 @@
         #calendar-content.is-loading::after { animation: none; }
     }
 
+    /* ---------------------------------------------------------------
+       Weekly hours editor (Staff availability): one row per day — an
+       open/closed switch, its hours, and an "Add hours" action.
+    --------------------------------------------------------------- */
+    .availability-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .75rem;
+        margin-bottom: 1rem;
+    }
+
+    .availability-person {
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+    }
+
+    .availability-person select {
+        width: auto;
+        min-width: 12rem;
+    }
+
+    .availability-week {
+        border: 1px solid var(--color-border, #E5E1DA);
+        border-radius: .5rem;
+        overflow: hidden;
+    }
+
+    .availability-day {
+        display: grid;
+        grid-template-columns: 9.5rem minmax(0, 1fr) auto;
+        align-items: start;
+        gap: .5rem 1rem;
+        padding: .75rem 1rem;
+    }
+
+    .availability-day + .availability-day {
+        border-top: 1px solid var(--color-border-subtle, #F2F0ED);
+    }
+
+    .availability-day-name {
+        margin: 0;
+        padding-top: .25rem;
+        font-weight: 500;
+    }
+
+    .availability-intervals {
+        display: flex;
+        flex-direction: column;
+        gap: .5rem;
+    }
+
+    .availability-interval {
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+    }
+
+    .availability-interval input[type="time"] {
+        width: 8rem;
+    }
+
+    .availability-to {
+        color: var(--color-text-muted, #6F6D67);
+    }
+
+    /* The first set of hours has no remove control (switch the day off
+       instead); it keeps its space so every row lines up. */
+    .availability-interval:first-child .availability-remove {
+        visibility: hidden;
+    }
+
+    .availability-closed {
+        display: none;
+        padding-top: .25rem;
+        color: var(--color-text-muted, #6F6D67);
+    }
+
+    .availability-day.is-closed .availability-closed {
+        display: block;
+    }
+
+    .availability-day.is-closed .availability-intervals,
+    .availability-day.is-closed [data-add-interval] {
+        display: none;
+    }
+
+    @media (max-width: 575.98px) {
+        .availability-day {
+            grid-template-columns: 1fr auto;
+        }
+
+        .availability-day-body {
+            grid-column: 1 / -1;
+            order: 3;
+        }
+
+        .availability-interval input[type="time"] {
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            padding-left: .5rem;
+            padding-right: .25rem;
+            font-size: .8125rem;
+        }
+    }
+
     .calendar-sr-only {
         position: absolute;
         width: 1px;

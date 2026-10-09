@@ -75,6 +75,7 @@ final class V1SignupDraft
             'first_name' => (string) ($account['first_name'] ?? ''),
             'last_name' => $account['last_name'] ?? null,
             'email' => (string) $account['email'],
+            'locale' => $account['locale'] ?? null,
         ];
     }
 
@@ -86,6 +87,7 @@ final class V1SignupDraft
             'first_name' => $account['first_name'],
             'last_name' => $account['last_name'] ?? null,
             'email' => $account['email'],
+            'locale' => $account['locale'] ?? null,
             'password_encrypted' => Crypt::encryptString($account['password']),
         ];
         $this->save($draft);

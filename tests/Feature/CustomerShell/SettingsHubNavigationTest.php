@@ -51,6 +51,19 @@ class SettingsHubNavigationTest extends TestCase
         $this->get($automationsUrl)->assertOk()->assertSee('data-role="wf-list-header"', false);
     }
 
+    public function test_the_settings_hub_links_to_the_profile_page_where_the_language_is_changed(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->hub($workspace, $business)->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-role="settings-profile-language"', $html);
+        $this->assertStringContainsString('href="' . route('user.account') . '"', $html);
+        // Language is not a top-bar control.
+        $this->assertStringNotContainsString('dropdown-language', $html);
+    }
+
     public function test_core_and_growth_get_a_flat_sidebar_with_one_direct_settings_destination(): void
     {
         // The Opportunity engine is on, so an Advisor entry would render if
