@@ -224,6 +224,8 @@ class ExternalWebsiteController extends CustomerBaseController
             return back()->withInput()->with(['status' => 'error', 'message' => 'Enter your website address, for example example.com. It must be a public website.']);
         }
 
+        $addressChanged = false;
+
         if ($address !== $current && $input !== '') {
             if (! $this->isAccountOwner($business)) {
                 return back()->with(['status' => 'error', 'message' => 'Only the account owner can change the website address.']);
@@ -234,18 +236,25 @@ class ExternalWebsiteController extends CustomerBaseController
             } catch (\Throwable) {
                 return back()->with(['status' => 'error', 'message' => 'We could not save the address. Please try again.']);
             }
+
+            $addressChanged = true;
         }
 
         if ($choosing) {
             $this->modes->set($business, WebsiteMode::External);
         }
 
-        $started = false;
+        // A changed address on an already-external Business is re-checked by the Business update listener (any edit
+        // surface); asking again here would only duplicate it. Choosing the mode (the listener did not fire: the mode
+        // was not external when the address was saved) and re-saving an unchanged address ask here.
+        $started = $addressChanged && ! $choosing;
 
-        try {
-            $started = $this->crawls->request($business, 'url_change')['state'] === ExternalSiteCrawlManager::STATE_QUEUED;
-        } catch (ExternalSiteException) {
-            // Nothing to crawl yet; the screens explain it.
+        if (! $started) {
+            try {
+                $started = $this->crawls->request($business, $choosing ? 'manual' : 'url_change')['state'] === ExternalSiteCrawlManager::STATE_QUEUED;
+            } catch (ExternalSiteException) {
+                // Nothing to crawl yet; the screens explain it.
+            }
         }
 
         return redirect()->route($redirectTo, [$workspaceUid, $businessUid])->with([

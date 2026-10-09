@@ -192,6 +192,16 @@ components) → `blueprint:seed-photo-booth-v2` (this configuration; idempotent;
 * Packages — Classic and Premium package templates, Custom backdrop and Extra
   hour add-ons. **No prices.**
 
+## 10b. Acquisition goals and the education / kids niches (contract 25)
+
+A new component type `acquisition_purpose` (surface `acquisition`, install rank 10 – after CRM and Forms, whose pipeline and form it references by component key) turns
+one component into one Business-owned `acquisition_purposes` row: name, outcome noun, a **code-owned economics calculator** chosen by key, the *wording* of the economics
+questions (never a number), strategy guidance, website intent and the pipeline / form references. The `form` component gained an optional `pipeline_component_key`
+(resolved through the installation records to the existing `opportunity_pipeline_id`), so a niche can route each form into its own pipeline. Two niches use it:
+`tutoring_exam_prep` (Student Enrollment + Teacher Recruitment) and `kids_ceramics` (Class Enrollment) — see `NICHE-TUTORING-EXAM-PREP.md` and `NICHE-KIDS-CERAMICS.md`.
+The component authors like any other in the Workspace (form fields plus a JSON definition for questions / labels / guidance / website intent, which round-trip intact).
+`blueprint:seed-niche {tutoring_exam_prep|kids_ceramics}` publishes them. `BusinessIndustry` gained `tutoring_education` and `kids_activities` so a Business resolves its Blueprint by broad industry.
+
 ## 11. Deferred / not built (deliberate)
 
 * **Growth thresholds.** `config/growth.php` and the Growth contract state V1

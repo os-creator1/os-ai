@@ -303,6 +303,37 @@ class AdsDecisionEngineTest extends TestCase
         $this->assertSame(AdsDecisionState::KeepRunning, $d->state);
     }
 
+    public function test_the_business_outcome_kpi_row_is_in_order_and_never_shows_a_fake_zero_or_a_doubled_word(): void
+    {
+        $d = $this->engine()->decide($this->input(['spendMicros' => 20 * self::EUR, 'inquiries' => 0, 'qualified' => 0, 'outcomes' => 0]));
+
+        $this->assertSame(['Spend', 'Qualified student inquiries', 'Cost / qualified lead', 'Enrolled students', 'Student CAC'], array_column($d->kpis, 'label'));
+        $this->assertSame('—', $d->kpis[2]['value'], 'No qualified lead: the cost is unknown, not 0.');
+        $this->assertSame('—', $d->kpis[4]['value']);
+        $this->assertSame('Not enough data', $d->kpis[4]['note']);
+    }
+
+    public function test_sentences_use_the_right_article_for_the_outcome_noun(): void
+    {
+        $d = $this->engine()->decide($this->input(['spendMicros' => (int) (14 * 4.7 * self::EUR), 'inquiries' => 18, 'qualified' => 14, 'outcomes' => 1]));
+
+        $this->assertStringContainsString('became an enrolled student', implode(' ', $d->reasons));
+        $this->assertStringNotContainsString('qualified qualified', strtolower(implode(' ', $d->reasons).' '.implode(' ', array_column($d->kpis, 'label'))));
+    }
+
+    public function test_the_teacher_goal_adds_an_interviews_kpi_between_cost_and_hires(): void
+    {
+        $economics = (new RecruitmentCalculator)->profile(['target_qualified_cpl' => 12, 'hard_cpl' => 20], []);
+        $d = $this->engine()->decide($this->input([
+            'economics' => $economics, 'milestone' => 3,
+            'labels' => ['person' => 'teacher', 'lead' => 'qualified applicant', 'leads' => 'qualified applicants', 'outcome' => 'hired teacher', 'outcomes' => 'hired teachers',
+                'cost_per_lead' => 'Cost / qualified applicant', 'cost_per_outcome' => 'Cost / hire', 'milestone_label' => 'Interviews'],
+            'spendMicros' => 40 * self::EUR, 'inquiries' => 4, 'qualified' => 3,
+        ]));
+
+        $this->assertSame(['Spend', 'Qualified applicants', 'Cost / qualified applicant', 'Interviews', 'Hired teachers', 'Cost / hire'], array_column($d->kpis, 'label'));
+    }
+
     public function test_the_default_policy_is_pinned(): void
     {
         $p = AdsDecisionPolicy::fromConfig();

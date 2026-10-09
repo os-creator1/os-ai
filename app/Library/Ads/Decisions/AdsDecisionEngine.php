@@ -150,7 +150,7 @@ final class AdsDecisionEngine
         if ($leadsAreFine) {
             return $this->make($in, AdsDecisionState::FixTheFunnel, 'The ads are bringing cost-effective leads; too few become ' . $outcomes . '.', [
                 ucfirst($in->label('leads', 'qualified inquiries')) . ' cost ' . $this->money($cpl) . ' each, below your ' . $this->money($targetCpl) . ' target.',
-                'But only ' . $in->outcomes . ' of ' . $in->qualified . ' became a ' . $outcome . ', so each ' . $outcome . ' costs ' . $this->money($cac) . ', above your ' . $this->money($ceiling) . ' limit.',
+                'But only ' . $in->outcomes . ' of ' . $in->qualified . ' became ' . self::article($outcome) . ', so each ' . $outcome . ' costs ' . $this->money($cac) . ', above your ' . $this->money($ceiling) . ' limit.',
                 'The acquisition problem is after the lead, not before it.',
             ], $evidence, doNotChange: 'Do not change the ads.', nextReview: null,
                 cta: [AdsDecisionCtaKind::OpenPipeline, $in->label('pipeline_cta', 'Open pipeline')], diagnosis: 'Sales, follow-up or qualification after the lead');
@@ -195,7 +195,7 @@ final class AdsDecisionEngine
 
         $reasons = [
             ucfirst($in->label('leads', 'qualified inquiries')) . ' cost ' . $this->money($cpl) . ' each, below your ' . $this->money($targetCpl) . ' target.',
-            'Only ' . $in->outcomes . ' of ' . $in->qualified . ' became a ' . $outcome . ($expected !== null ? ' (' . number_format($actual * 100, 0) . '% against the ' . number_format($expected * 100, 0) . '% you expected)' : '') . '.',
+            'Only ' . $in->outcomes . ' of ' . $in->qualified . ' became ' . self::article($outcome) . ($expected !== null ? ' (' . number_format($actual * 100, 0) . '% against the ' . number_format($expected * 100, 0) . '% you expected)' : '') . '.',
             'The acquisition problem is currently after the lead, not before it.',
         ];
 
@@ -269,7 +269,7 @@ final class AdsDecisionEngine
 
         if ($few) {
             return $this->make($in, AdsDecisionState::NotEnoughData, 'Not enough data to say whether these ads got worse.', [
-                'Qualified ' . $leads . ' cost ' . $this->money($cpl) . ', above your ' . $this->money($targetCpl) . ' target, but only ' . $in->qualified . ' ' . ($in->qualified === 1 ? 'has' : 'have') . ' been recorded.',
+                ucfirst($leads) . ' cost ' . $this->money($cpl) . ', above your ' . $this->money($targetCpl) . ' target, but only ' . $in->qualified . ' ' . ($in->qualified === 1 ? 'has' : 'have') . ' been recorded.',
                 'There is not enough evidence to conclude performance has deteriorated. Wait.',
             ], $evidence, doNotChange: 'Avoid changing the ads on this little evidence.', nextReview: $this->nextReview($in, $targetCpl),
                 cta: [AdsDecisionCtaKind::OpenCampaign, 'Open campaign']);
@@ -411,7 +411,7 @@ final class AdsDecisionEngine
             ['label' => $in->label('cost_per_outcome', 'Cost per customer'), 'value' => $cac === null ? 'Not enough data' : $this->money($cac)],
             ['label' => 'Target ' . strtolower($in->label('cost_per_outcome', 'cost per customer')), 'value' => $targetCac === null ? 'Not set' : $this->money($targetCac)],
             ['label' => 'Inquiries recorded', 'value' => (string) $in->inquiries],
-            ['label' => 'Qualified ' . $in->label('leads', 'inquiries'), 'value' => (string) $in->qualified],
+            ['label' => ucfirst($in->label('leads', 'qualified inquiries')), 'value' => (string) $in->qualified],
             ['label' => ucfirst($in->label('outcomes', 'customers')), 'value' => (string) $in->outcomes],
             ['label' => 'Tracking health', 'value' => $tracking],
         ];
@@ -431,7 +431,7 @@ final class AdsDecisionEngine
         $dash = '—';
         $rows = [
             ['label' => 'Spend', 'value' => $this->money($in->spendMicros), 'note' => null],
-            ['label' => 'Qualified ' . $in->label('leads', 'inquiries'), 'value' => number_format($in->qualified), 'note' => $in->inquiries . ' ' . ($in->inquiries === 1 ? 'inquiry' : 'inquiries') . ' in total'],
+            ['label' => ucfirst($in->label('leads', 'qualified inquiries')), 'value' => number_format($in->qualified), 'note' => $in->inquiries . ' ' . ($in->inquiries === 1 ? 'inquiry' : 'inquiries') . ' in total'],
             ['label' => $in->label('cost_per_lead', 'Cost / qualified lead'), 'value' => $cpl === null ? $dash : $this->money($cpl), 'note' => $cpl === null ? 'Not enough data' : ($targetCpl === null ? null : 'Target ' . $this->money($targetCpl))],
         ];
 
