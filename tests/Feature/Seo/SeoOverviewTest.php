@@ -10,6 +10,7 @@ use App\Library\Seo\SeoOverview;
 use App\Library\Seo\SeoOverviewReader;
 use App\Models\Business;
 use App\Models\BusinessLocation;
+use App\Models\Customer;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -22,11 +23,13 @@ use Tests\Support\Seo\EntitlementBypassSeoController;
 use Tests\TestCase;
 
 /**
- * Contract 18 Sub-slice 18A §5.2 / §6 / §9.3 / §11.4 — the SEO Overview,
- * exercised over HTTP through the entitlement-bypass controller (the real
- * controller is fail-closed while the feature is Planned; that is proven in
- * SeoFoundationBoundaryTest). Everything behind the entitlement step runs
- * as production code.
+ * Contract 18 Sub-slice 18A §5.2 / §6 / §9.3 / §11.4 — the SEO Overview READER.
+ *
+ * The standalone Overview page no longer exists: `/seo` and the Business-scoped
+ * `…/seo` URL redirect to Search keywords, and cross-product recommendations
+ * live on Business Home. The reader (and its Location-filtering, zero-provider
+ * and query-budget guarantees) stays, so these tests drive it directly instead
+ * of through a page. The redirect itself is pinned in SeoFoundationBoundaryTest.
  */
 class SeoOverviewTest extends TestCase
 {
@@ -40,9 +43,12 @@ class SeoOverviewTest extends TestCase
         $this->bypassSeoEntitlementForTest();
     }
 
-    private function overviewOf($response): SeoOverview
+    /** What the reader returns for the actor, with that actor signed in (as the controller had it). */
+    private function overviewFor(Customer $customer, Workspace $workspace, Business $business): SeoOverview
     {
-        return $response->viewData('overview');
+        $this->authenticateAsSeoCustomer($customer);
+
+        return app(SeoOverviewReader::class)->read($workspace, $business, $customer->user);
     }
 
     /** A Business whose website URL, phone and GBP URL are set or cleared. */
@@ -66,7 +72,7 @@ class SeoOverviewTest extends TestCase
     // What Core sees.
     // -----------------------------------------------------------------
 
-    public function test_a_core_owner_sees_the_platform_derived_overview_with_no_google_section(): void
+    public function test_a_core_owner_reads_the_platform_derived_overview_with_no_google_section(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Core);
         $this->setBusinessFacts($business, ['google_business_profile_url' => null]);
@@ -75,13 +81,10 @@ class SeoOverviewTest extends TestCase
             $this->snapshotPage('a', 'Home', ['seo_title' => 'Best Bakery', 'meta_description' => 'Fresh bread.'], [], true),
             $this->snapshotPage('b', 'About'),
         ]);
+
         // Holds the GBP capability too: Core is still not entitled to GBP,
         // so capability alone must never produce a Google section.
-        $this->authenticateAsSeoCustomer($customer);
-
-        $response = $this->get($this->seoUrl($workspace, $business))->assertOk();
-        $html = $response->getContent();
-        $overview = $this->overviewOf($response);
+        $overview = $this->overviewFor($customer, $workspace, $business);
 
         $states = collect($overview->readiness)->mapWithKeys(fn ($i) => [$i->key => $i->state->value]);
         $this->assertSame('met', $states['website_url_set']);
@@ -92,100 +95,27 @@ class SeoOverviewTest extends TestCase
 
         $this->assertSame(['pages' => 2, 'with_meta_description' => 1, 'with_seo_title' => 1, 'marked_noindex' => 0], $overview->content);
         $this->assertNull($overview->google);
-
-        $this->assertStringContainsString('2 pages published', $html);
-        $this->assertStringContainsString('1 of 2 with a search result description', $html);
-        // Published, but only at the platform address (no Active primary domain).
-        $this->assertStringContainsString('Your website is live, but search engines cannot find it yet', $html);
-        $this->assertStringNotContainsString('data-section="google-business-profile"', $html);
     }
 
-    public function test_the_readiness_items_render_with_a_word_for_each_state(): void
-    {
-        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Core);
-        $this->setBusinessFacts($business, ['phone' => null, 'website_url' => null]);
-        $this->createLocation($business);
-        $this->authenticateAsSeoCustomer($customer);
-
-        $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
-
-        $this->assertMatchesRegularExpression('/data-key="website_url_set" data-state="not_met"/', $html);
-        $this->assertMatchesRegularExpression('/data-key="business_phone_set" data-state="not_met"/', $html);
-        $this->assertStringContainsString('To do', $html);
-        $this->assertStringContainsString('Done', $html);
-        $this->assertStringContainsString('Open Business settings', $html);
-    }
-
-    public function test_with_no_published_website_the_page_says_so_honestly(): void
+    public function test_with_no_published_website_there_is_no_content_summary(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Core);
         $this->createLocation($business);
-        $this->authenticateAsSeoCustomer($customer);
 
-        $response = $this->get($this->seoUrl($workspace, $business))->assertOk();
-        $html = $response->getContent();
-
-        $this->assertNull($this->overviewOf($response)->content);
-        $this->assertStringContainsString('You have no published website yet.', $html);
-        $this->assertStringContainsString('No published website yet', $html);
-        $this->assertStringNotContainsString('data-role="content-pages"', $html);
-    }
-
-    public function test_a_platform_path_site_is_a_status_with_a_connect_a_domain_action_and_never_claims_indexing(): void
-    {
-        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
-        $this->createLocation($business);
-        $this->publishWebsite($business, [$this->snapshotPage('a', 'Home', [], [], true)]);
-        $this->authenticateAsSeoCustomer($customer);
-
-        $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
-
-        $this->assertStringContainsString('only reachable at the platform address', $html);
-        $this->assertStringContainsString('Connect your own domain', $html);
-        $this->assertStringContainsString('data-action="connect_domain"', $html);
-        $this->assertMatchesRegularExpression('/data-role="indexability-tone"[^>]*>\s*Action\s*</', $html);
-        $this->assertStringNotContainsString('ranked', $html);
-        $this->assertStringNotContainsString('traffic', $html);
-    }
-
-    public function test_the_page_has_no_score_grade_chart_or_placeholder_sections(): void
-    {
-        $blade = file_get_contents(resource_path('views/customer/business/seo/overview.blade.php'));
-
-        // The header comment states the rule in prose; strip Blade comments
-        // and look at what is actually rendered.
-        $rendered = preg_replace('/\{\{--.*?--\}\}/s', '', $blade);
-
-        // Search Console is not built, so its card says "Not available yet" and shows no figure:
-        // it is the one named exception (asserted in test_the_search_console_card_is_honest_*).
-        foreach (['score', 'grade', 'chart', 'percent', '%', 'Citations', 'Reviews', 'disabled', 'Coming soon'] as $forbidden) {
-            $this->assertStringNotContainsStringIgnoringCase($forbidden, $rendered, "The Overview must not render [{$forbidden}].");
-        }
-
-        $this->assertStringNotContainsString('{!!', $rendered, 'Raw, unescaped output is forbidden in this view.');
-        $this->assertStringNotContainsString('<form', $rendered);
+        $this->assertNull($this->overviewFor($customer, $workspace, $business)->content);
     }
 
     // -----------------------------------------------------------------
     // The Google section is GBP's own entitlement AND capability.
     // -----------------------------------------------------------------
 
-    public function test_a_growth_owner_with_the_gbp_capability_sees_the_google_section(): void
+    public function test_a_growth_owner_with_the_gbp_capability_reads_the_google_section(): void
     {
         [$customer, $business, $workspace, $location] = $this->growthTenantWithLocation();
         $connection = $this->activeConnection($business);
         $this->bindGoogleLocation($business, $location, $connection, true, ['title' => 'Different'], GoogleLocationHealth::Verified);
-        $this->authenticateAsSeoCustomer($customer);
 
-        $response = $this->get($this->seoUrl($workspace, $business))->assertOk();
-        $html = $response->getContent();
-
-        $this->assertCount(1, $this->overviewOf($response)->google);
-        $this->assertStringContainsString('data-section="google-business-profile"', $html);
-        $this->assertStringContainsString($location->name, $html);
-        $this->assertStringContainsString('Linked', $html);
-        $this->assertStringContainsString('1 detail differs from your Google listing', $html);
-        $this->assertStringContainsString(route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $business->uid]), $html);
+        $this->assertCount(1, $this->overviewFor($customer, $workspace, $business)->google);
     }
 
     public function test_the_google_section_needs_the_gbp_capability_even_for_a_growth_business(): void
@@ -194,48 +124,14 @@ class SeoOverviewTest extends TestCase
         $this->bindGoogleLocation($business, $location, $this->activeConnection($business), true);
         $this->authenticateAsSeoCustomer($customer, ['view_seo', 'manage_seo']);
 
-        $response = $this->get($this->seoUrl($workspace, $business))->assertOk();
-
-        $this->assertNull($this->overviewOf($response)->google);
-        $this->assertStringNotContainsString('data-section="google-business-profile"', $response->getContent());
-    }
-
-    public function test_an_unlinked_location_and_a_lost_connection_are_stated_plainly(): void
-    {
-        [$customer, $business, $workspace, $bound] = $this->growthTenantWithLocation();
-        $unbound = $this->extraLocation($business, 'Unlinked Site');
-        $connection = $this->activeConnection($business, ['state' => \App\Enums\GoogleBusinessProfile\GoogleConnectionState::Revoked, 'revoked_at' => now()]);
-        $this->bindGoogleLocation($business, $bound, $connection, false);
-        $this->authenticateAsSeoCustomer($customer);
-
-        $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
-
-        $this->assertStringContainsString('Not linked to a Google listing yet', $html);
-        $this->assertStringContainsString('Google connection is not active', $html);
-    }
-
-    // -----------------------------------------------------------------
-    // Output safety.
-    // -----------------------------------------------------------------
-
-    public function test_customer_supplied_strings_are_escaped(): void
-    {
-        [$customer, $business, $workspace, $location] = $this->growthTenantWithLocation();
-        DB::table('business_locations')->where('id', $location->id)->update(['name' => '<script>alert("loc")</script>']);
-        $this->bindGoogleLocation($business, $location->fresh(), $this->activeConnection($business), true);
-        $this->authenticateAsSeoCustomer($customer);
-
-        $html = $this->get($this->seoUrl($workspace, $business))->assertOk()->getContent();
-
-        $this->assertStringNotContainsString('<script>alert("loc")</script>', $html);
-        $this->assertStringContainsString('&lt;script&gt;alert(&quot;loc&quot;)&lt;/script&gt;', $html);
+        $this->assertNull(app(SeoOverviewReader::class)->read($workspace, $business, $customer->user)->google);
     }
 
     // -----------------------------------------------------------------
     // Zero external calls, zero writes, zero side effects.
     // -----------------------------------------------------------------
 
-    public function test_the_overview_makes_no_external_call_no_dispatch_and_no_write(): void
+    public function test_the_overview_reader_makes_no_external_call_no_dispatch_and_no_write(): void
     {
         [$customer, $business, $workspace, $location] = $this->growthTenantWithLocation();
         $this->bindGoogleLocation($business, $location, $this->activeConnection($business), true);
@@ -252,21 +148,20 @@ class SeoOverviewTest extends TestCase
 
         $before = $this->dbFingerprint($this->seoProtectedTables());
 
-        $this->get($this->seoUrl($workspace, $business))->assertOk();
+        app(SeoOverviewReader::class)->read($workspace, $business, $customer->user);
 
         Http::assertNothingSent();
         Queue::assertNothingPushed();
         $this->assertSame($before, $this->dbFingerprint($this->seoProtectedTables()), 'The Overview must not write Website, Business, Location or Google data.');
     }
 
-    public function test_repeated_views_are_idempotent(): void
+    public function test_repeated_reads_are_idempotent(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Core);
         $this->createLocation($business);
-        $this->authenticateAsSeoCustomer($customer);
 
-        $first = $this->overviewOf($this->get($this->seoUrl($workspace, $business))->assertOk());
-        $second = $this->overviewOf($this->get($this->seoUrl($workspace, $business))->assertOk());
+        $first = $this->overviewFor($customer, $workspace, $business);
+        $second = $this->overviewFor($customer, $workspace, $business);
 
         $this->assertEquals($first, $second);
     }
@@ -286,33 +181,27 @@ class SeoOverviewTest extends TestCase
         }
 
         // The owner sees all three: 1 of 3 ready.
-        $this->authenticateAsSeoCustomer($owner);
-        $ownerOverview = $this->overviewOf($this->get($this->seoUrl($workspace, $business))->assertOk());
-        $ownerItem = collect($ownerOverview->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
+        $ownerItem = collect($this->overviewFor($owner, $workspace, $business)->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
         $this->assertSame('1 of 3 locations are ready. Add an address or a service area to the rest.', $ownerItem->detail);
 
         // A member granted only the READY Location sees a clean 1 of 1 —
         // nothing that betrays two further, unready Locations.
         $onlyReady = $this->selectedScopeMember($workspace, [$first]);
-        $this->authenticateAsSeoCustomer($onlyReady);
-        $response = $this->get($this->seoUrl($workspace, $business))->assertOk();
-        $item = collect($this->overviewOf($response)->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
+        $overview = $this->overviewFor($onlyReady, $workspace, $business);
+        $item = collect($overview->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
         $this->assertSame('met', $item->state->value);
         $this->assertSame('1 of 1 location', $item->detail);
-        $html = $response->getContent();
-        $this->assertStringNotContainsString('Secret Second Site', $html);
-        $this->assertStringNotContainsString('Secret Third Site', $html);
-        $this->assertCount(1, $this->overviewOf($response)->google);
+        $this->assertCount(1, $overview->google);
+        $this->assertStringNotContainsString('Secret', json_encode($overview));
 
         // A member granted only an UNREADY Location sees 0 of 1 — and never the ready one.
         $onlySecond = $this->selectedScopeMember($workspace, [$second]);
-        $this->authenticateAsSeoCustomer($onlySecond);
-        $response = $this->get($this->seoUrl($workspace, $business))->assertOk();
-        $item = collect($this->overviewOf($response)->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
+        $overview = $this->overviewFor($onlySecond, $workspace, $business);
+        $item = collect($overview->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
         $this->assertSame('not_met', $item->state->value);
         $this->assertSame('0 of 1 locations are ready. Add an address or a service area to the rest.', $item->detail);
-        $this->assertStringNotContainsString($first->name, $response->getContent());
-        $this->assertStringNotContainsString('Secret Third Site', $response->getContent());
+        $this->assertStringNotContainsString($first->name, json_encode($overview));
+        $this->assertStringNotContainsString('Secret Third Site', json_encode($overview));
     }
 
     public function test_an_actor_with_no_location_grant_learns_nothing_about_locations(): void
@@ -322,17 +211,14 @@ class SeoOverviewTest extends TestCase
         $this->bindGoogleLocation($business, $location, $this->activeConnection($business), true);
 
         $none = $this->selectedScopeMember($workspace, []);
-        $this->authenticateAsSeoCustomer($none);
-
-        $response = $this->get($this->seoUrl($workspace, $business))->assertOk();
-        $overview = $this->overviewOf($response);
+        $overview = $this->overviewFor($none, $workspace, $business);
 
         $item = collect($overview->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
         $this->assertSame('not_applicable', $item->state->value);
         $this->assertNull($item->detail);
         $this->assertSame([], $overview->google);
-        $this->assertStringNotContainsString('Hidden Site Alpha', $response->getContent());
-        $this->assertStringNotContainsString($location->name, $response->getContent());
+        $this->assertStringNotContainsString('Hidden Site Alpha', json_encode($overview));
+        $this->assertStringNotContainsString($location->name, json_encode($overview));
     }
 
     public function test_archived_locations_do_not_count_toward_readiness(): void
@@ -341,10 +227,8 @@ class SeoOverviewTest extends TestCase
         $this->createLocation($business);
         $archived = $this->storefront($business, 'Old Site', false);
         DB::table('business_locations')->where('id', $archived->id)->update(['lifecycle_state' => 'archived', 'archived_at' => now()]);
-        $this->authenticateAsSeoCustomer($customer);
 
-        $item = collect($this->overviewOf($this->get($this->seoUrl($workspace, $business))->assertOk())->readiness)
-            ->firstWhere('key', 'locations_have_address_or_service_area');
+        $item = collect($this->overviewFor($customer, $workspace, $business)->readiness)->firstWhere('key', 'locations_have_address_or_service_area');
 
         $this->assertSame('1 of 1 location', $item->detail);
     }
@@ -441,23 +325,5 @@ class SeoOverviewTest extends TestCase
         $measure(3); // warm-up
 
         $this->assertSame($measure(3), $measure(25), 'A Selected-scope actor must cost the same at 3 and 25 Locations.');
-    }
-
-    public function test_the_http_request_costs_the_same_for_1_and_25_locations(): void
-    {
-        [$warmCustomer, $warmBusiness, $warmWorkspace] = $this->growthBusinessWithLocations(2, true);
-        $this->authenticateAsSeoCustomer($warmCustomer);
-        $this->get($this->seoUrl($warmWorkspace, $warmBusiness))->assertOk();
-
-        [$smallCustomer, $smallBusiness, $smallWorkspace] = $this->growthBusinessWithLocations(1, true);
-        [$largeCustomer, $largeBusiness, $largeWorkspace] = $this->growthBusinessWithLocations(25, true);
-
-        $this->authenticateAsSeoCustomer($smallCustomer);
-        $small = $this->capturedQueries(fn () => $this->get($this->seoUrl($smallWorkspace, $smallBusiness))->assertOk());
-
-        $this->authenticateAsSeoCustomer($largeCustomer);
-        $large = $this->capturedQueries(fn () => $this->get($this->seoUrl($largeWorkspace, $largeBusiness))->assertOk());
-
-        $this->assertSame(count($small), count($large), 'The whole request (tenancy chain, shell and Overview) must not grow with Locations.');
     }
 }

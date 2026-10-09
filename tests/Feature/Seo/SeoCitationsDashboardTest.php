@@ -67,6 +67,15 @@ class SeoCitationsDashboardTest extends TestCase
         return $m[1];
     }
 
+    /** One directory's ROW markup (not its drawer). */
+    private function rowHtml(string $html, string $directory): string
+    {
+        $start = strpos($html, 'data-role="citation-row" data-directory="' . $directory . '"');
+        $this->assertNotFalse($start);
+
+        return substr($html, $start, strpos($html, 'data-role="citation-drawer"', $start) - $start);
+    }
+
     /** The data-result of one field in one directory's ROW (not its drawer). */
     private function rowFieldResult(string $html, string $directory, string $field): string
     {
@@ -131,9 +140,8 @@ class SeoCitationsDashboardTest extends TestCase
         foreach (['bing_places', 'facebook_pages'] as $directory) {
             $this->assertSame('not_started', $this->rowState($html, $directory));
 
-            foreach (['name', 'phone', 'address'] as $field) {
-                $this->assertSame('unchecked', $this->rowFieldResult($html, $directory, $field));
-            }
+            // Nothing recorded: the row says so once instead of repeating "Not checked" per field.
+            $this->assertStringContainsString('data-role="nap-empty"', $this->rowHtml($html, $directory));
         }
 
         $this->assertStringContainsString('Not checked', $html);
@@ -155,7 +163,7 @@ class SeoCitationsDashboardTest extends TestCase
         $this->assertSame('listed', $this->rowState($html, 'bing_places'), 'Partly checked is "Listed", not "Needs attention".');
         $this->assertStringNotContainsString('data-result="mismatch"', $html);
         // 1 of the 1 field that has BOTH values; the two unchecked fields are not in the denominator.
-        $this->assertStringContainsString('1 / 1 match', $this->stat($html, 'nap-consistency'));
+        $this->assertStringContainsString('1 of 1 match', $this->stat($html, 'nap-consistency'));
     }
 
     // -----------------------------------------------------------------
@@ -180,7 +188,7 @@ class SeoCitationsDashboardTest extends TestCase
         $this->assertStringContainsString('+1 (555) 010-1234', $html);
         $this->assertSame('needs_attention', $this->rowState($html, 'bing_places'));
         $this->assertStringContainsString('Address differs from your business profile.', $html);
-        $this->assertStringContainsString('2 / 3', $this->stat($html, 'nap-consistency'));
+        $this->assertStringContainsString('2 of 3', $this->stat($html, 'nap-consistency'));
     }
 
     public function test_a_phone_mismatch_is_detected_and_the_stored_status_is_not_changed(): void
@@ -215,7 +223,7 @@ class SeoCitationsDashboardTest extends TestCase
 
         $this->assertSame('accurate', $this->rowState($html, 'bing_places'));
         $this->assertStringContainsString('Sep 1, 2026', $html);
-        $this->assertStringContainsString('3 / 3', $this->stat($html, 'nap-consistency'));
+        $this->assertStringContainsString('3 of 3', $this->stat($html, 'nap-consistency'));
     }
 
     public function test_summary_cards_count_only_stored_rows(): void
@@ -235,11 +243,11 @@ class SeoCitationsDashboardTest extends TestCase
         // a tracked listing too.
         // 15 offered directories (10 core + 5 Photo Booth) + the Google row.
         $this->assertSame('Listings tracked 16 Directories for this location', $this->stat($html, 'tracked'));
-        $this->assertSame('Completed 1 Listed with details recorded, or connected', $this->stat($html, 'linked'));
+        $this->assertSame('Completed 1 of 16 Listed with details recorded, or connected', $this->stat($html, 'linked'));
         // Untouched directories are NOT problems: "Needs attention" counts real
         // problems only, and "Needs setup" counts the unfinished work.
-        $this->assertSame('Needs attention 0 A listing that differs, was marked for correction, or is due a review', $this->stat($html, 'attention'));
-        $this->assertMatchesRegularExpression('/data-progress="needs-setup"><strong>Needs setup<\/strong> 14</', $html);
+        $this->assertSame('Needs attention 0 Differs, marked for correction, or due a review', $this->stat($html, 'attention'));
+        $this->assertMatchesRegularExpression('/data-progress="setup">14</', $html);
     }
 
     // -----------------------------------------------------------------
@@ -322,7 +330,7 @@ class SeoCitationsDashboardTest extends TestCase
         $this->assertStringNotContainsString('javascript:alert', $html);
         // Claim/update is the directory's own page, separate from the listing link.
         // 8 core + 5 Photo Booth directories carry a verified claim link.
-        $this->assertSame(13, substr_count($html, 'data-role="claim-link"'));
+        $this->assertSame(13, substr_count($html, 'data-role="drawer-claim-link"'));
         $this->assertStringContainsString('Claim or update', $html);
     }
 

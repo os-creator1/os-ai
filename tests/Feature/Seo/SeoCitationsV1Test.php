@@ -464,7 +464,9 @@ class SeoCitationsV1Test extends TestCase
         SeoCitationDirectory::query()->update(['is_active' => false]);
 
         $this->assertSame([], $this->section($customer, $workspace, $business, $location)->attentionItems());
-        $this->assertStringNotContainsString('data-section="citation-actions"', $this->page($workspace, $business, $location));
+        $html = $this->page($workspace, $business, $location);
+        $this->assertStringContainsString('data-role="action-empty"', $html);
+        $this->assertStringNotContainsString('data-role="action-center"', $html);
     }
 
     public function test_a_manual_listing_past_the_review_window_says_review_recommended_and_a_fresh_one_does_not(): void
@@ -528,7 +530,10 @@ class SeoCitationsV1Test extends TestCase
 
         $this->assertMatchesRegularExpression('/data-directory="bing_places".*?data-role="citation-status"[^>]*>.*?Listed/s', $html);
         $this->assertMatchesRegularExpression('/data-directory="bing_places".*?data-role="nap-status"[^>]*>.*?Phone differs/s', $html);
-        $this->assertSame(1, preg_match('/data-directory="mapquest".*?data-role="nap-status"[^>]*>.*?Not checked/s', $html));
+        // Nothing recorded for MapQuest: no NAP badge, the last-checked column already says "Not checked".
+        $mapquestRow = explode('data-role="citation-row"', explode('data-directory="mapquest"', $html)[1])[0];
+        $this->assertStringNotContainsString('data-role="nap-status"', $mapquestRow);
+        $this->assertStringContainsString('Not checked', $mapquestRow);
     }
 
     // -----------------------------------------------------------------

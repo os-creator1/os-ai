@@ -96,127 +96,150 @@
             $groupTitles = [
                 SeoCitationLocationSection::GROUP_ESSENTIAL => ['Essential listings', 'The places most worth getting right first.'],
                 SeoCitationLocationSection::GROUP_RECOMMENDED => ['Recommended' . ($nicheName ? ' · incl. ' . $nicheName . ' picks' : ''), 'Worth setting up once the essentials are done.'],
-                SeoCitationLocationSection::GROUP_OPTIONAL => ['Optional', 'Useful in some cases; skip any that do not fit.'],
-                SeoCitationLocationSection::GROUP_CUSTOM => ['Your custom directories', 'Added by you. Manually tracked.'],
+                SeoCitationLocationSection::GROUP_OPTIONAL => ['Optional', 'Skip any that do not fit.'],
+                SeoCitationLocationSection::GROUP_CUSTOM => ['Your custom directories', 'Added by you.'],
             ];
         @endphp
 
         <div data-section="citation-location" data-location="{{ $location->uid }}">
-            <div class="cz-note mb-2" data-role="citations-note">
-                <x-ds-icon name="clipboard-list" size="16" />
-                <span>
-                    <strong>Manually tracked.</strong> You record what each directory shows and when you last checked; Business OS compares it with your business profile below but does not read from the directories, and a difference never changes a status.
-                    @if($googleState !== null) Google's status{{ $section->googleCheckedAutomatically() ? ' and details are checked automatically from' : ' comes from' }} your Google Business Profile connection.@endif
-                    Consistent business information helps customers and platforms identify your business correctly.
-                    @unless($section->writable)
-                        <span class="d-block mt-25" data-role="location-archived">Archived location — read only.</span>
-                    @endunless
-                </span>
-            </div>
+            @php
+                $completedPct = $summary['tracked'] > 0 ? (int) round($summary['completed'] / $summary['tracked'] * 100) : 0;
+                $napPct = $summary['napCompared'] > 0 ? (int) round($summary['napMatched'] / $summary['napCompared'] * 100) : 0;
+                // The old progress strip's counts now live on the filter chips, once.
+                $filterCounts = [
+                    'essential' => $summary['essentialDone'] . '/' . $summary['essentialTotal'],
+                    'recommended' => $summary['recommendedDone'] . '/' . $summary['recommendedTotal'],
+                    'setup' => $summary['needsSetup'],
+                    'notchecked' => $summary['notChecked'],
+                ];
+            @endphp
 
-            {{-- Summary: counts of stored rows only. No score, no visibility %. --}}
-            <div class="cz-stats mb-1" data-role="citation-summary">
+            {{-- Metrics: counts of stored rows only. No score, no visibility %. --}}
+            <div class="cz-stats mb-2" data-role="citation-summary">
                 <div class="cz-stat" data-stat="tracked">
-                    <p class="cz-stat-label"><x-ds-icon name="list-checks" size="14" />Listings tracked</p>
-                    <p class="cz-stat-value">{{ $summary['tracked'] }}</p>
-                    <p class="cz-stat-sub">{{ $summary['notApplicable'] > 0 ? $summary['notApplicable'] . ' marked not applicable' : 'Directories for this location' }}</p>
+                    <p class="cz-stat-label">Listings tracked</p>
+                    <div>
+                        <p class="cz-stat-value">{{ $summary['tracked'] }}</p>
+                        <p class="cz-stat-sub">{{ $summary['notApplicable'] > 0 ? $summary['notApplicable'] . ' marked not applicable' : 'Directories for this location' }}</p>
+                    </div>
                 </div>
                 <div class="cz-stat cz-stat--ok" data-stat="linked">
-                    <p class="cz-stat-label"><x-ds-icon name="circle-check" size="14" />Completed</p>
-                    <p class="cz-stat-value">{{ $summary['completed'] }}</p>
-                    <p class="cz-stat-sub">Listed with details recorded, or connected</p>
+                    <p class="cz-stat-label">Completed</p>
+                    <div>
+                        <p class="cz-stat-value">{{ $summary['completed'] }} <small>of {{ $summary['tracked'] }}</small></p>
+                        <span class="cz-meter" role="presentation"><i style="width: {{ $completedPct }}%"></i></span>
+                        <p class="cz-stat-sub">Listed with details recorded, or connected</p>
+                    </div>
                 </div>
                 <div class="cz-stat {{ $summary['attention'] > 0 ? 'cz-stat--warn' : '' }}" data-stat="attention">
-                    <p class="cz-stat-label"><x-ds-icon name="triangle-alert" size="14" />Needs attention</p>
-                    <p class="cz-stat-value">{{ $summary['attention'] }}</p>
-                    <p class="cz-stat-sub">A listing that differs, was marked for correction, or is due a review</p>
+                    <p class="cz-stat-label">Needs attention</p>
+                    <div>
+                        <p class="cz-stat-value">{{ $summary['attention'] }}</p>
+                        <p class="cz-stat-sub">Differs, marked for correction, or due a review</p>
+                    </div>
                 </div>
                 <div class="cz-stat" data-stat="nap-consistency">
-                    <p class="cz-stat-label"><x-ds-icon name="shield-check" size="14" />NAP matches</p>
+                    <p class="cz-stat-label">NAP matches</p>
                     @if($napFraction !== null)
-                        <p class="cz-stat-value">{{ $napFraction }} <small>match</small></p>
-                        <p class="cz-stat-sub">Recorded details vs. your profile</p>
+                        <div>
+                            <p class="cz-stat-value">{{ $summary['napMatched'] }} <small>of {{ $summary['napCompared'] }} match</small></p>
+                            <span class="cz-meter" role="presentation"><i style="width: {{ $napPct }}%"></i></span>
+                            <p class="cz-stat-sub">Recorded details vs. your profile</p>
+                        </div>
                     @else
-                        <p class="cz-stat-value cz-muted" style="font-size:1.125rem">Not checked yet</p>
-                        <p class="cz-stat-sub">Record what a directory shows to compare</p>
+                        <div>
+                            <p class="cz-stat-value cz-stat-value--text cz-muted">Not checked yet</p>
+                            <p class="cz-stat-sub">Record what a directory shows to compare</p>
+                        </div>
                     @endif
                 </div>
             </div>
-            <div class="cz-progress mb-2" data-role="citation-progress">
-                <span data-progress="essential"><strong>Essential</strong> {{ $summary['essentialDone'] }} / {{ $summary['essentialTotal'] }} completed</span>
-                <span data-progress="recommended"><strong>Recommended</strong> {{ $summary['recommendedDone'] }} / {{ $summary['recommendedTotal'] }} completed</span>
-                <span data-progress="needs-setup"><strong>Needs setup</strong> {{ $summary['needsSetup'] }}</span>
-                <span data-progress="not-checked"><strong>Not checked</strong> {{ $summary['notChecked'] }}</span>
-            </div>
 
-            {{-- Canonical business profile: the data directories SHOULD match. --}}
-            <x-card :padded="true" class="mb-2" data-section="business-profile">
-                <div class="d-flex justify-content-between align-items-start flex-wrap gap-1 mb-1">
-                    <div>
-                        <p class="text-section-heading mb-0">Business information</p>
-                        <p class="text-caption mb-0">Directory listings should match this information. Edit it once in your business profile — it is not copied into Citations.</p>
+            <div class="cz-split mb-3">
+                {{-- "What should I do next?": the real actions, most important first. --}}
+                <x-card :padded="true" data-section="citation-actions">
+                    <div class="cz-card-head">
+                        <p class="text-section-heading mb-0">What to do next</p>
+                        <span class="cz-card-meta" data-role="next-meta">{{ $summary['needsSetup'] }} need setup · {{ $summary['notChecked'] }} not checked</span>
                     </div>
-                    @can('access_backend')
-                        <x-button :href="$settingsUrl" variant="secondary" size="sm" icon="pencil" data-role="edit-business-profile">Edit business profile</x-button>
-                    @endcan
-                </div>
-                <dl class="cz-profile" data-role="canonical-nap">
-                    <div><dt><x-ds-icon name="building-2" size="12" />Name</dt><dd data-canonical="name">{{ $canonical['name'] ?? 'Not set' }}</dd></div>
-                    <div>
-                        <dt><x-ds-icon name="phone" size="12" />{{ $section->phoneComparable ? 'Phone' : 'Business phone' }}</dt>
-                        <dd data-canonical="phone">{{ $canonical['phone'] ?? 'Not set' }}</dd>
-                        @unless($section->phoneComparable)
-                            <dd class="cz-muted" data-role="phone-not-compared">One number for the whole business, so it is not compared with this location's listings.</dd>
-                        @endunless
-                    </div>
-                    <div>
-                        <dt><x-ds-icon name="map-pin" size="12" />Address</dt>
-                        @if($section->addressPermitted)
-                            <dd data-canonical="address">{{ $canonical['address'] ?? 'Not set' }}</dd>
-                        @else
-                            <dd class="cz-muted" data-role="address-withheld">Not published for this location, so it is not compared.</dd>
+                    @if(count($next) > 0)
+                        <ul class="cz-actions" data-role="action-center">
+                            @foreach(array_slice($next, 0, 5) as $item)
+                                @include('customer.business.seo._citation_next_item', ['item' => $item])
+                            @endforeach
+                        </ul>
+                        @if(count($next) > 5)
+                            <details class="cz-more" data-role="action-more">
+                                <summary>Show {{ count($next) - 5 }} more</summary>
+                                <ul class="cz-actions">
+                                    @foreach(array_slice($next, 5) as $item)
+                                        @include('customer.business.seo._citation_next_item', ['item' => $item])
+                                    @endforeach
+                                </ul>
+                            </details>
                         @endif
-                    </div>
-                    <div>
-                        <dt><x-ds-icon name="globe" size="12" />Website</dt>
-                        <dd data-canonical="website">
-                            @if($safeWebsite !== null)
-                                <a href="{{ $safeWebsite }}" target="_blank" rel="{{ $rel }}">{{ $websiteUrl }}</a>
-                            @else
-                                {{ $websiteUrl ?: 'Not set' }}
-                            @endif
-                        </dd>
-                    </div>
-                </dl>
-            </x-card>
-
-            {{-- "What should I do next?": the real actions, most important first; absent when none. --}}
-            @if(count($next) > 0)
-                <x-card :padded="true" class="mb-2" data-section="citation-actions">
-                    <p class="text-section-heading mb-0">What to do next</p>
-                    <ul class="cz-actions" data-role="action-center">
-                        @foreach(array_slice($next, 0, 5) as $item)
-                            @include('customer.business.seo._citation_next_item', ['item' => $item])
-                        @endforeach
-                    </ul>
-                    @if(count($next) > 5)
-                        <details class="cz-more" data-role="action-more">
-                            <summary>Show {{ count($next) - 5 }} more</summary>
-                            <ul class="cz-actions">
-                                @foreach(array_slice($next, 5) as $item)
-                                    @include('customer.business.seo._citation_next_item', ['item' => $item])
-                                @endforeach
-                            </ul>
-                        </details>
+                    @else
+                        <p class="cz-empty" data-role="action-empty"><x-ds-icon name="circle-check" size="16" />Nothing needs your attention right now.</p>
                     @endif
                 </x-card>
-            @endif
+
+                <div class="d-grid gap-1">
+                    {{-- Canonical business profile: the data directories SHOULD match. --}}
+                    <x-card :padded="true" data-section="business-profile">
+                        <p class="text-section-heading mb-0">Business information</p>
+                        <dl class="cz-profile" data-role="canonical-nap">
+                            <div><dt>Name</dt><dd data-canonical="name">{{ $canonical['name'] ?? 'Not set' }}</dd></div>
+                            <div>
+                                <dt>{{ $section->phoneComparable ? 'Phone' : 'Business phone' }}</dt>
+                                <dd data-canonical="phone">{{ $canonical['phone'] ?? 'Not set' }}</dd>
+                                @unless($section->phoneComparable)
+                                    <dd class="cz-muted" data-role="phone-not-compared">One number for the whole business, so it is not compared with this location's listings.</dd>
+                                @endunless
+                            </div>
+                            <div>
+                                <dt>Address</dt>
+                                @if($section->addressPermitted)
+                                    <dd data-canonical="address">{{ $canonical['address'] ?? 'Not set' }}</dd>
+                                @else
+                                    <dd class="cz-muted" data-role="address-withheld">Not published for this location, so it is not compared.</dd>
+                                @endif
+                            </div>
+                            <div>
+                                <dt>Website</dt>
+                                <dd data-canonical="website">
+                                    @if($safeWebsite !== null)
+                                        <a href="{{ $safeWebsite }}" target="_blank" rel="{{ $rel }}">{{ $websiteUrl }}</a>
+                                    @elseif($websiteUrl)
+                                        {{ $websiteUrl }}
+                                    @else
+                                        <x-badge variant="neutral">Not set</x-badge>
+                                    @endif
+                                </dd>
+                            </div>
+                        </dl>
+                        @can('access_backend')
+                            <x-button :href="$settingsUrl" variant="secondary" size="sm" icon="pencil" class="w-100" data-role="edit-business-profile">Edit business profile</x-button>
+                        @endcan
+                    </x-card>
+
+                    <div class="cz-note" data-role="citations-note">
+                        <x-ds-icon name="clipboard-list" size="16" />
+                        <span>
+                            <strong>Manually tracked.</strong> You record what each directory shows and when you last checked it. Business OS compares it with your business profile but does not read from the directories.
+                            @if($googleState !== null) Google is the exception: it is checked automatically through your Google Business Profile connection.@endif
+                            @unless($section->writable)
+                                <span class="d-block mt-25" data-role="location-archived">Archived location — read only.</span>
+                            @endunless
+                        </span>
+                    </div>
+                </div>
+            </div>
 
             {{-- Directory listings --}}
             <div class="d-flex justify-content-between align-items-end flex-wrap gap-1 mb-1">
                 <div>
                     <p class="text-section-heading mb-0">Directory listings</p>
-                    <p class="text-caption mb-0">Directories worth checking for your business{{ $nicheName ? ', including ' . $nicheName . ' picks' : '' }}. You track them by hand: record what each one shows to compare it.</p>
+                    <p class="text-caption mb-0">Directories worth checking for your business{{ $nicheName ? ', including ' . $nicheName . ' picks' : '' }}.</p>
                 </div>
                 @if($canAdd)
                     <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-50" data-bs-toggle="offcanvas" data-bs-target="#citation-drawer-new-custom" data-role="add-custom">
@@ -228,7 +251,7 @@
             <div class="cz-toolbar mb-1" data-role="citation-filters">
                 <div class="cz-filters" role="group" aria-label="Filter listings">
                     @foreach(['all' => 'All', 'essential' => 'Essential', 'recommended' => 'Recommended', 'setup' => 'Needs setup', 'attention' => 'Needs attention', 'notchecked' => 'Not checked', 'accurate' => 'Accurate', 'custom' => 'Custom'] as $filterKey => $filterLabel)
-                        <button type="button" class="cz-filter @if($filterKey === 'all') is-active @endif" data-filter="{{ $filterKey }}">{{ $filterLabel }}</button>
+                        <button type="button" class="cz-filter @if($filterKey === 'all') is-active @endif" data-filter="{{ $filterKey }}">{{ $filterLabel }}@if(isset($filterCounts[$filterKey]))<span class="cz-count" data-progress="{{ $filterKey }}">{{ $filterCounts[$filterKey] }}</span>@endif</button>
                     @endforeach
                 </div>
                 <input type="search" class="form-control form-control-sm cz-search" placeholder="Search directories" aria-label="Search directories" data-role="citation-search">
@@ -236,8 +259,8 @@
 
             <div class="cz-list mb-2" data-role="citation-list">
                 <div class="cz-row cz-row--head" aria-hidden="true">
-                    <div class="cz-c-dir">Directory</div><div class="cz-c-status">Status</div><div class="cz-c-name">Name</div>
-                    <div class="cz-c-phone">Phone</div><div class="cz-c-addr">Address</div><div class="cz-c-checked">Last checked</div><div class="cz-c-actions"></div>
+                    <div class="cz-c-dir">Directory</div><div class="cz-c-status">Status</div><div class="cz-c-nap">Name · Phone · Address</div>
+                    <div class="cz-c-checked">Last checked</div><div class="cz-c-actions"></div>
                 </div>
 
                 @foreach($groups as $groupKey => $groupRows)
@@ -265,7 +288,7 @@
                                 $gDataState = $gAccurate ? 'accurate' : ($gAttention ? 'needs_attention' : ($googleState === SeoCitationLocationSection::GOOGLE_NOT_LINKED ? 'not_started' : 'listed'));
                                 $gAsOf = $google?->healthAsOf;
                             @endphp
-                            <div class="cz-row cz-row--wide" data-role="google-row" data-google-state="{{ $googleState }}" data-importance="essential" data-custom="0" data-notchecked="{{ $googleNap === null ? '1' : '0' }}" data-attention="{{ $gAttention ? '1' : '0' }}" data-setup-needed="0" data-state="{{ $gDataState }}" data-name="google business profile">
+                            <div class="cz-row" data-role="google-row" data-google-state="{{ $googleState }}" data-importance="essential" data-custom="0" data-notchecked="{{ $googleNap === null ? '1' : '0' }}" data-attention="{{ $gAttention ? '1' : '0' }}" data-setup-needed="0" data-state="{{ $gDataState }}" data-name="google business profile">
                                 <div class="cz-c-dir cz-dir">
                                     <span class="cz-dir-icon"><x-ds-icon name="map-pin" size="18" /></span>
                                     <span>
@@ -304,11 +327,13 @@
                                                 <span class="text-caption d-block" data-role="google-differing-fields">Differs: {{ implode(', ', $gDiffering) }}.</span>
                                             @endif
                                             @if($gAsOf !== null)
-                                                <span class="text-caption d-block" data-role="google-details-as-of">Google details as of {{ $gAsOf->format('M j, Y') }}.</span>
                                             @endif
                                         @endif
-                                        <span class="text-caption d-block">Read-only. Managed in Google Business Profile. Street address is not compared.</span>
                                     @endif
+                                </div>
+                                <div class="cz-c-checked cz-checked" data-role="google-checked">
+                                    <span class="cz-label">Last checked</span>
+                                    @if($googleNap !== null && $gAsOf !== null)<span>{{ $gAsOf->format('M j, Y') }}</span>@elseif($section->googleCheckedAutomatically())<span>Automatically</span>@else<span class="cz-muted">Not checked</span>@endif
                                 </div>
                                 <div class="cz-c-actions cz-row-actions">
                                     <x-button :href="$gbpUrl" variant="{{ $googleState === SeoCitationLocationSection::GOOGLE_CONNECTED ? 'secondary' : 'outline' }}" size="sm" data-role="google-action">

@@ -6,14 +6,18 @@
 
     Inputs: $row, $section, $canManage, $workspaceUid, $businessUid.
 
-    Two separate badges: the SETUP badge is the owner's own progress; the NAP
-    badge says whether what they recorded matches the business profile. They
-    are never merged into one word.
+    The SETUP badge is the owner's own progress; the NAP badge says whether
+    what they recorded matches the business profile, and appears only once
+    something has been recorded (a directory with nothing recorded is simply
+    "Not checked" in the last-checked column). They are never merged into one
+    word. Each row has ONE primary action; the directory's own claim link
+    lives in the drawer it opens.
 
     Rendered values are escaped. External links come ONLY from SeoLinkSafety
     results and always carry rel="noopener noreferrer nofollow".
 --}}
 @php
+    use App\Enums\Seo\SeoCitationDisplayState;
     use App\Library\Seo\SeoLinkSafety;
 
     $directory = $row->directory;
@@ -27,6 +31,15 @@
     $canEdit = $canManage && $row->writable;
     $notApplicable = $row->isNotApplicable();
     $mode = $row->trackingMode();
+
+    $primaryLabel = match (true) {
+        ! $canEdit => 'Details',
+        $row->needsAttention() => 'Review',
+        $state === SeoCitationDisplayState::InProgress => 'Update',
+        $row->hasRecordedDetails() => 'Edit',
+        $claimUrl !== null => 'Claim',
+        default => 'Record details',
+    };
 @endphp
 <div class="cz-row @if($notApplicable) cz-row--muted @endif" data-role="citation-row" data-directory="{{ $directory->key }}" data-status="{{ $row->status->value }}" data-state="{{ $state->value }}" data-setup="{{ $row->status->value }}" data-importance="{{ $importance->value }}" data-custom="{{ $row->isCustom() ? '1' : '0' }}" data-notchecked="{{ $row->isNotChecked() ? '1' : '0' }}" data-attention="{{ $row->needsAttention() ? '1' : '0' }}" data-setup-needed="{{ $row->needsSetup() ? '1' : '0' }}" data-name="{{ \Illuminate\Support\Str::lower($directory->name) }}" data-drawer="#{{ $drawerId }}">
     <div class="cz-c-dir cz-dir">
@@ -48,19 +61,23 @@
 
     <div class="cz-c-status">
         <x-badge :variant="$setup['variant']" class="cz-badge" data-role="citation-status" data-setup-label="{{ $setup['label'] }}"><x-ds-icon :name="$setup['icon']" size="12" />{{ $setup['label'] }}</x-badge>
-        @unless($notApplicable)
+        @if(! $notApplicable && $row->hasRecordedDetails())
             <x-badge :variant="$nap['variant']" class="cz-badge mt-25" data-role="nap-status"><x-ds-icon :name="$nap['icon']" size="12" />{{ $nap['label'] }}</x-badge>
-        @endunless
+        @endif
         <p class="cz-helper" data-role="citation-helper">{{ $row->helperText() }}</p>
     </div>
 
-    <div class="cz-c-name">@include('customer.business.seo._citation_field', ['label' => 'Name', 'field' => 'name', 'row' => $row, 'value' => $row->listedName])</div>
-    <div class="cz-c-phone">@include('customer.business.seo._citation_field', ['label' => 'Phone', 'field' => 'phone', 'row' => $row, 'value' => $row->listedPhone])</div>
-    <div class="cz-c-addr">
+    <div class="cz-c-nap">
+        @if(! $row->hasRecordedDetails())
+            <span class="cz-muted" data-role="nap-empty" aria-label="Nothing recorded yet">—</span>
+        @else
+        @include('customer.business.seo._citation_field', ['label' => 'Name', 'field' => 'name', 'row' => $row, 'value' => $row->listedName])
+        @include('customer.business.seo._citation_field', ['label' => 'Phone', 'field' => 'phone', 'row' => $row, 'value' => $row->listedPhone])
         @if($section->addressPermitted)
             @include('customer.business.seo._citation_field', ['label' => 'Address', 'field' => 'address', 'row' => $row, 'value' => $row->listedAddress])
         @else
             <div class="cz-field cz-field--none" data-field="address" data-result="not_comparable"><span class="cz-label">Address</span><x-ds-icon name="minus" size="14" /><span>Not published</span></div>
+        @endif
         @endif
     </div>
 
@@ -68,7 +85,6 @@
         <span class="cz-label">Last checked</span>
         @if($verified !== null)
             <span>{{ $verified->format('M j, Y') }}</span>
-            <span class="d-block text-caption">by you, manually</span>
             @if($row->reviewDue)
                 <x-badge variant="warning" class="mt-25" data-role="review-due">Review recommended</x-badge>
             @endif
@@ -78,22 +94,11 @@
     </div>
 
     <div class="cz-c-actions cz-row-actions">
-        @if($canEdit)
-            <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center justify-content-center gap-50" data-role="citation-edit" data-bs-toggle="offcanvas" data-bs-target="#{{ $drawerId }}">
-                <x-ds-icon name="pencil" size="14" />{{ $row->hasRecordedDetails() ? 'Edit' : 'Record details' }}
-            </button>
-        @else
-            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="offcanvas" data-bs-target="#{{ $drawerId }}">Details</button>
-        @endif
         @if($row->safeListingUrl !== null)
-            <a class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center gap-50" href="{{ $row->safeListingUrl }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="listing-link">
-                <x-ds-icon name="external-link" size="14" />Open listing
+            <a class="btn btn-sm btn-flat-secondary btn-icon" href="{{ $row->safeListingUrl }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="listing-link" aria-label="Open {{ $directory->name }} listing" title="Open listing">
+                <x-ds-icon name="external-link" size="14" />
             </a>
         @endif
-        @if($claimUrl !== null && ! $notApplicable)
-            <a class="btn btn-sm btn-flat-secondary d-inline-flex align-items-center justify-content-center gap-50" href="{{ $claimUrl }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="claim-link">
-                <x-ds-icon name="external-link" size="14" />{{ $row->hasRecordedDetails() ? 'Claim or update' : 'Claim listing' }}
-            </a>
-        @endif
+        <button type="button" class="btn btn-sm {{ $row->needsAttention() && $canEdit ? 'btn-primary' : 'btn-outline-primary' }}" data-role="{{ $canEdit ? 'citation-edit' : 'citation-details' }}" data-bs-toggle="offcanvas" data-bs-target="#{{ $drawerId }}">{{ $primaryLabel }}</button>
     </div>
 </div>
