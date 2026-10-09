@@ -338,6 +338,30 @@ class DocumentEditorUiTest extends TestCase
         $this->assertStringNotContainsString('<option value="proposal">', $html, 'the classic proposal creation path is replaced');
     }
 
+    public function test_new_proposal_cta_is_wired_to_a_real_bundle_and_the_template_card_to_the_library(): void
+    {
+        $tenant = $this->editorTenant();
+        $html = $this->get($this->docsUrl($tenant))->assertOk()->getContent();
+
+        // The CTA only works if the page loads a NON-EMPTY new-document bundle that exposes the initialiser
+        // (a blanked built file made the button do nothing).
+        $this->assertStringContainsString('js/documents/new-document.js', $html);
+        $bundle = public_path('js/documents/new-document.js');
+        $this->assertFileExists($bundle);
+        $this->assertGreaterThan(1000, filesize($bundle), 'the built new-document bundle is empty');
+        $this->assertStringContainsString('DocumentNewProposal', (string) file_get_contents($bundle));
+        $this->assertStringContainsString('window.DocumentNewProposal.init', $html);
+        $this->assertGreaterThan(1000, filesize(public_path('js/documents/editor.js')), 'the built editor bundle is empty');
+
+        // "Use a template" goes to the existing template library.
+        $library = route('customer.workspaces.businesses.document-templates.index', [$tenant['workspace']->uid, $tenant['business']->uid]);
+        $this->assertSame(1, preg_match('#<a [^>]*href="' . preg_quote($library, '#') . '"[^>]*data-role="templates-link"#', $html));
+
+        // The kind filter is server-side; an unknown value means All.
+        $this->get($this->docsUrl($tenant, '?kind=invoice'))->assertOk()->assertSee('data-filter="invoice"', false);
+        $this->get($this->docsUrl($tenant, '?kind=nonsense'))->assertOk()->assertSee('data-filter="all"', false);
+    }
+
     public function test_choosing_a_contact_creates_a_block_ready_draft_and_opens_the_editor(): void
     {
         $tenant = $this->editorTenant();

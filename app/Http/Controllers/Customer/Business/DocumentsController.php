@@ -54,9 +54,12 @@ class DocumentsController extends CustomerBaseController
     {
         $business = $this->business($workspaceUid, $businessUid);
         $ids = $this->locations->accessibleLocationIdsForBusiness((int) Auth::id(), $business);
-        $documents = BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids)->with(['businessLocation', 'currentVersion'])->latest()->paginate(25);
+        // Server-side All / Proposals / Invoices filter; anything else means All.
+        $kindFilter = in_array(request()->query('kind'), ['proposal', 'invoice'], true) ? (string) request()->query('kind') : '';
+        $documents = BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids)->when($kindFilter !== '', fn ($q) => $q->where('kind', $kindFilter))->with(['businessLocation', 'currentVersion'])->latest()->paginate(25)->withQueryString();
         return view('customer.business.documents.index', [
             'documents' => $documents,
+            'kindFilter' => $kindFilter,
             // Contract 17B — block / new proposal drafts open in the visual editor; issued and legacy documents keep the classic page.
             'editorUids' => $this->editorDraftUids($documents->getCollection()),
             // Contract 17B §6 — step 2 of New proposal: own ACTIVE templates + recommended platform templates (empty until niche blueprints supply them).
