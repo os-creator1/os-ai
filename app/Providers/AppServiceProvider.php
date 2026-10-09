@@ -600,6 +600,9 @@
                     $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\SeoStrategyComponentAdapter::class));
                     $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CitationRecommendationsComponentAdapter::class));
 
+                    // Acquisition Purpose V1 — one goal (pipeline + form + economics questions) per component.
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\AcquisitionPurposeComponentAdapter::class));
+
                     return $registry;
                 },
             );

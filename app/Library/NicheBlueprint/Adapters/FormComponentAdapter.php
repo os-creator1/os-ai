@@ -3,11 +3,13 @@
 namespace App\Library\NicheBlueprint\Adapters;
 
 use App\Enums\Forms\FormFieldType;
+use App\Enums\NicheBlueprint\BlueprintComponentInstallationState;
 use App\Enums\NicheBlueprint\BlueprintUpdatePolicy;
 use App\Library\CustomFields\CustomFieldDefinitionManager;
 use App\Library\Forms\FormManager;
 use App\Library\NicheBlueprint\Workspace\BlueprintChecksum;
 use App\Models\Business;
+use App\Models\BusinessBlueprintComponentInstallation;
 use App\Models\Form;
 use InvalidArgumentException;
 
@@ -69,6 +71,9 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
             'fields' => $fields,
             'design' => $parsed['design'],
             'create_opportunity' => $parsed['create_opportunity'],
+            'opportunity_pipeline_id' => $parsed['pipeline_component_key'] === null
+                ? null
+                : $this->installedPipelineId($business, $parsed['pipeline_component_key']),
         ], $owner === null ? null : (int) $owner);
 
         return new InstalledComponentReference('form', (int) $form->id);
@@ -83,6 +88,25 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
         }
 
         return BlueprintChecksum::of([$form->name, (int) $form->current_version]);
+    }
+
+    /**
+     * The Business's pipeline that THIS Business already received from the
+     * named `crm_pipeline` component. Pipelines install first (CRM surface
+     * precedes Forms), so by the time a form installs the record exists; if it
+     * does not (component skipped or failed) the form still installs and simply
+     * routes to the Business's first pipeline, exactly like a hand-made form.
+     */
+    private function installedPipelineId(Business $business, string $componentKey): ?int
+    {
+        $id = BusinessBlueprintComponentInstallation::query()
+            ->where('business_id', $business->id)
+            ->where('component_type', CrmPipelineComponentAdapter::TYPE)
+            ->where('component_key', $componentKey)
+            ->where('state', BlueprintComponentInstallationState::Installed->value)
+            ->value('installed_record_id');
+
+        return $id === null ? null : (int) $id;
     }
 
     /** @return array<string, mixed> */
@@ -162,6 +186,9 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
             'fields' => $fields,
             'design' => $design,
             'create_opportunity' => (bool) ($payload['create_opportunity'] ?? false),
+            // The key of the crm_pipeline component this form's responses open an
+            // Opportunity in (null = the Business's first pipeline, as before).
+            'pipeline_component_key' => $this->optionalString($payload, 'pipeline_component_key', 120),
         ];
     }
 
@@ -203,6 +230,8 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
             ['name' => 'background', 'label' => 'Background colour', 'type' => 'text', 'required' => false, 'help' => '#RRGGBB'],
             ['name' => 'create_opportunity', 'label' => 'Create an opportunity from each response', 'type' => 'select', 'required' => false,
                 'options' => ['0' => 'No', '1' => 'Yes (needs a phone question)']],
+            ['name' => 'pipeline_component_key', 'label' => 'Pipeline component key', 'type' => 'text', 'required' => false,
+                'help' => 'Optional. The key of a CRM pipeline component of this Blueprint; responses open their Opportunity in that pipeline instead of the first one.'],
         ];
     }
 
@@ -253,6 +282,10 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
 
         $payload['create_opportunity'] = (string) ($input['create_opportunity'] ?? '0') === '1';
 
+        if (trim((string) ($input['pipeline_component_key'] ?? '')) !== '') {
+            $payload['pipeline_component_key'] = trim((string) $input['pipeline_component_key']);
+        }
+
         $this->parse($payload);
 
         return $payload;
@@ -285,6 +318,7 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
             'accent' => $payload['design']['accent'] ?? '',
             'background' => $payload['design']['background'] ?? '',
             'create_opportunity' => ! empty($payload['create_opportunity']) ? '1' : '0',
+            'pipeline_component_key' => $payload['pipeline_component_key'] ?? '',
         ];
     }
 }
