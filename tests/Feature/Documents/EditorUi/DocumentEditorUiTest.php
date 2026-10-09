@@ -351,7 +351,12 @@ class DocumentEditorUiTest extends TestCase
         $this->assertGreaterThan(1000, filesize($bundle), 'the built new-document bundle is empty');
         $this->assertStringContainsString('DocumentNewProposal', (string) file_get_contents($bundle));
         $this->assertStringContainsString('window.DocumentNewProposal.init', $html);
-        $this->assertGreaterThan(1000, filesize(public_path('js/documents/editor.js')), 'the built editor bundle is empty');
+        $editorBundle = public_path('js/documents/editor.js');
+        $this->assertFileExists($editorBundle);
+        $this->assertGreaterThan(1000, filesize($editorBundle), 'the built editor bundle is empty');
+        $editorJs = (string) file_get_contents($editorBundle);
+        $this->assertStringContainsString('DocumentEditor', $editorJs, 'the editor bundle no longer exposes window.DocumentEditor');
+        $this->assertStringContainsString('document-editor-bootstrap', $editorJs, 'the editor bundle no longer reads its bootstrap JSON');
 
         // "Use a template" goes to the existing template library.
         $library = route('customer.workspaces.businesses.document-templates.index', [$tenant['workspace']->uid, $tenant['business']->uid]);
