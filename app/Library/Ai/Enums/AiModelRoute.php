@@ -25,4 +25,11 @@ enum AiModelRoute: string
      * `routine`/`compaction`.
      */
     case WebsiteGeneration = 'website_generation';
+
+    /**
+     * Content Autopilot — the stronger route used ONLY for the article draft and meaningful rewrites. Small steps
+     * (outline help, classification, the soft-finding judge) use `routine`. Like `website_generation`, no downgrade
+     * path targets it: an unaffordable request is refused, never silently written by a weaker model.
+     */
+    case ContentWriter = 'content_writer';
 }

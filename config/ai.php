@@ -237,6 +237,21 @@ return [
             'max_request_cost_microusd' => (int) env('AI_ROUTE_WEBSITE_GENERATION_MAX_REQUEST_COST_MICROUSD', 6_700),
             'price_version' => (int) env('AI_ROUTE_WEBSITE_GENERATION_PRICE_VERSION', 1),
         ],
+        // Content Autopilot — the stronger route for the article draft and meaningful rewrites only (small steps use
+        // `routine`). The envelope bounds one article: ~9,000 input tokens (fact pack + brief + link list) and 4,500
+        // output tokens. At the prices below the worst case is 9,000 x $2.50/M + 4,500 x $10/M = $0.0675; the real
+        // cost of a typical article is far lower. max_request_cost_microusd carries a small margin over that worst case.
+        'content_writer' => [
+            'provider' => 'openai',
+            'model' => env('AI_ROUTE_CONTENT_WRITER_MODEL', 'gpt-4o'),
+            'input_price_microusd_per_mtok' => (int) env('AI_ROUTE_CONTENT_WRITER_INPUT_PRICE_MICROUSD_PER_MTOK', 2_500_000),
+            'cached_input_price_microusd_per_mtok' => (int) env('AI_ROUTE_CONTENT_WRITER_CACHED_INPUT_PRICE_MICROUSD_PER_MTOK', 1_250_000),
+            'output_price_microusd_per_mtok' => (int) env('AI_ROUTE_CONTENT_WRITER_OUTPUT_PRICE_MICROUSD_PER_MTOK', 10_000_000),
+            'max_input_tokens' => (int) env('AI_ROUTE_CONTENT_WRITER_MAX_INPUT_TOKENS', 9000),
+            'max_output_tokens' => (int) env('AI_ROUTE_CONTENT_WRITER_MAX_OUTPUT_TOKENS', 4500),
+            'max_request_cost_microusd' => (int) env('AI_ROUTE_CONTENT_WRITER_MAX_REQUEST_COST_MICROUSD', 70_000),
+            'price_version' => (int) env('AI_ROUTE_CONTENT_WRITER_PRICE_VERSION', 1),
+        ],
         'reasoning' => [
             'provider' => 'openai',
             'model' => env('AI_ROUTE_REASONING_MODEL', 'gpt-4o'),
@@ -272,6 +287,29 @@ return [
         'website_generation' => 'website_generation',
         'campaign_message_draft' => 'routine',
         'agency_prospect_reply' => 'routine',
+        // Content Autopilot's DEFAULT route is the cheap one; the article draft/rewrite call names `content_writer`
+        // explicitly (WebsiteAiGenerationClient::complete(route: ...)).
+        'content_autopilot' => 'routine',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Per-Business category ceilings (Content Autopilot)
+    |--------------------------------------------------------------------------
+    |
+    | A SAFETY ceiling on what one category may spend for ONE Business in ONE budget period, on top of (never
+    | instead of) the Workspace cap. `target_microusd` is what normal use is designed to stay under; it is
+    | informational (presentation, reports) and never refuses anything. `hard_ceiling_microusd` is enforced by
+    | AiGateway for the category: a call whose reservation would push the Business past it is refused with
+    | `category_ceiling_reached` before anything is reserved. The ceiling is NOT a spending target and is NOT
+    | owner-editable. Spend is read from ai_usage_ledger (committed + billed failures + live reservations).
+    |
+    */
+    'business_category_ceilings' => [
+        'content_autopilot' => [
+            'target_microusd' => (int) env('AI_CONTENT_AUTOPILOT_TARGET_MICROUSD', 500_000),
+            'hard_ceiling_microusd' => (int) env('AI_CONTENT_AUTOPILOT_HARD_CEILING_MICROUSD', 1_000_000),
+        ],
     ],
 
     /*
