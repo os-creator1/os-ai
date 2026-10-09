@@ -32,7 +32,11 @@ final class KidsCeramicsBlueprint
 
     public const NAME = 'Kids Ceramics Studio / Classes';
 
-    public const BROAD_INDUSTRY = 'kids_activities';
+    /** The vertical (operator catalog `business_verticals`) this Blueprint is bound to; see TutoringBlueprint::VERTICAL_KEY. */
+    public const VERTICAL_KEY = self::KEY;
+
+    /** The existing broad-industry bucket; the BusinessIndustry enum is locked and has no kids-activities case. */
+    public const BROAD_INDUSTRY = 'other';
 
     public const PIPELINE = 'ceramics_class_pipeline';
 

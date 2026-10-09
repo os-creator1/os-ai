@@ -10,8 +10,6 @@ enum BusinessIndustry: string
     case WeddingVendor = 'wedding_vendor';
     case HomeServices = 'home_services';
     case ProfessionalServices = 'professional_services';
-    case TutoringEducation = 'tutoring_education';
-    case KidsActivities = 'kids_activities';
     case Other = 'other';
 
     /** Owner-facing niche name (e.g. "Recommended for Photo booth"). */
@@ -24,8 +22,6 @@ enum BusinessIndustry: string
             self::WeddingVendor => 'Wedding',
             self::HomeServices => 'Home services',
             self::ProfessionalServices => 'Professional services',
-            self::TutoringEducation => 'Tutoring & exam preparation',
-            self::KidsActivities => 'Kids classes & activities',
             self::Other => 'Other',
         };
     }

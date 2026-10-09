@@ -6,6 +6,7 @@ use App\Library\NicheBlueprint\Niches\KidsCeramicsBlueprint;
 use App\Library\NicheBlueprint\Niches\TutoringBlueprint;
 use App\Library\NicheBlueprint\NicheBlueprintPublisher;
 use App\Library\NicheBlueprint\Workspace\BlueprintWorkspaceService;
+use App\Models\BusinessVertical;
 use App\Models\NicheBlueprint;
 use App\Models\NicheBlueprintComponent;
 use App\Models\User;
@@ -16,6 +17,12 @@ use RuntimeException;
  * Creates and publishes one of the education/kids niche Blueprints through the
  * ONE existing authoring seam (NicheBlueprintPublisher + the Workspace draft
  * service) — no second niche framework.
+ *
+ * VERTICAL-BOUND, never a new industry enum case. Each niche is a row of the operator-controlled
+ * `business_verticals` catalog (Knowledge Profile contract §6: the BusinessIndustry set is locked), and the
+ * Blueprint is bound to it by `vertical_key`; a Business receives the Blueprint when its Knowledge Profile's
+ * vertical is that key. This command ensures the catalog row exists (created active, an existing row's name and
+ * activity are left as the operator set them).
  *
  * Idempotent: a published version that already carries every seeded component
  * key does nothing; an existing draft is resumed, never replaced; components a
@@ -37,7 +44,7 @@ class SeedNicheBlueprintCommand extends Command
         {--actor= : Platform administrator user id to publish as; defaults to the first admin user found}
         {--draft-only : Leave the result as a draft instead of publishing}';
 
-    protected $description = 'Create and publish the Tutoring & Exam Preparation or Kids Ceramics niche Blueprint.';
+    protected $description = 'Create and publish the Tutoring & Exam Preparation or Kids Ceramics niche Blueprint (vertical-bound).';
 
     public function handle(NicheBlueprintPublisher $publisher, BlueprintWorkspaceService $workspace): int
     {
@@ -57,8 +64,13 @@ class SeedNicheBlueprintCommand extends Command
             throw new RuntimeException('No platform administrator exists to publish as. Pass --actor=<user id>.');
         }
 
+        BusinessVertical::query()->firstOrCreate(
+            ['key' => $niche],
+            ['display_name' => $displayName, 'broad_industry' => $industry, 'is_active' => true],
+        );
+
         $blueprint = NicheBlueprint::query()->where('key', $niche)->first()
-            ?? $publisher->createBlueprint($actor, $niche, $displayName, null, $industry);
+            ?? $publisher->createBlueprint($actor, $niche, $displayName, $niche, $industry);
 
         $hadDraft = $workspace->existingDraft($blueprint) !== null;
         $draft = $workspace->draftFor($blueprint, $actor);

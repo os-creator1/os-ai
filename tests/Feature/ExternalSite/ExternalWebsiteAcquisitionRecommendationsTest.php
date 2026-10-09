@@ -31,7 +31,7 @@ class ExternalWebsiteAcquisitionRecommendationsTest extends TestCase
     public function test_each_goal_without_a_landing_page_is_recommended_separately_and_never_called_an_error(): void
     {
         $this->seedNiche('tutoring_exam_prep');
-        [$customer, $business, $workspace] = $this->businessInstalledFrom('tutoring_education');
+        [$customer, $business, $workspace] = $this->businessInstalledFrom('tutoring_exam_prep');
         DB::table('businesses')->where('id', $business->id)->update(['website_mode' => 'external', 'website_url' => 'https://studio-fixture.example/']);
         $customer->user->email_verified_at = now();
         $customer->user->save();

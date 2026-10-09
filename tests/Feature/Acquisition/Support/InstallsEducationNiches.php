@@ -28,19 +28,21 @@ trait InstallsEducationNiches
     }
 
     /**
-     * A fresh Business of the given industry that has received the niche
-     * Blueprint. The fixture Business is created before the industry is set so
-     * the plan-assignment listener cannot install anything early; the explicit
-     * installer run is the one under test.
+     * A fresh Business whose Knowledge Profile names the given VERTICAL and that has
+     * received the niche Blueprint. The fixture Business is created first so the
+     * plan-assignment listener cannot install anything early; the explicit installer
+     * run is the one under test.
      *
      * @return array{0: \App\Models\Customer, 1: Business, 2: \App\Models\Workspace}
      */
-    protected function businessInstalledFrom(string $industry, WorkspacePlanTier $tier = WorkspacePlanTier::Growth): array
+    protected function businessInstalledFrom(string $verticalKey, WorkspacePlanTier $tier = WorkspacePlanTier::Growth): array
     {
         [$customer, $business, $workspace] = $this->tenant($tier);
 
-        DB::table('businesses')->where('id', $business->id)->update(['industry' => $industry, 'currency_code' => 'EUR']);
+        DB::table('businesses')->where('id', $business->id)->update(['currency_code' => 'EUR']);
         $business = $business->fresh();
+        app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->getOrCreate($business);
+        DB::table('business_knowledge_profiles')->where('business_id', $business->id)->update(['vertical_key' => $verticalKey]);
 
         app(NicheBlueprintInstaller::class)->installForBusiness($business);
 

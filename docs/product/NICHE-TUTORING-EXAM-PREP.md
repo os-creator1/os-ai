@@ -1,7 +1,9 @@
 # Niche Blueprint — Tutoring & Exam Preparation
 
-Key `tutoring_exam_prep`, broad industry `tutoring_education`. Seeded with `php artisan blueprint:seed-niche tutoring_exam_prep`
-(idempotent; goes through the one `NicheBlueprintPublisher`/Workspace authoring path – there is no second niche framework).
+Key and **vertical** `tutoring_exam_prep` (Education / tutoring). It is a row of the operator-controlled `business_verticals` catalog, bound to the Blueprint by `vertical_key`;
+its existing broad-industry bucket is `professional_services`. The `BusinessIndustry` enum is **locked** (Knowledge Profile contract §6: no per-trade case is ever added), so no
+"education" enum case exists. A Business receives this Blueprint when its Knowledge Profile's vertical is `tutoring_exam_prep` (the existing installer resolves vertical first).
+Seeded with `php artisan blueprint:seed-niche tutoring_exam_prep` (idempotent; it ensures the vertical row, then goes through the one `NicheBlueprintPublisher`/Workspace authoring path – there is no second niche framework).
 Definition: `App\Library\NicheBlueprint\Niches\TutoringBlueprint`. Contracts: 25 (goals, economics, Ads decisions), 26 (external website).
 
 **Two funnels, never mixed:** Student Enrollment and Teacher Recruitment. Teacher recruitment exists **only** in this Blueprint.

@@ -18,7 +18,7 @@ class TutoringBlueprintInstallTest extends TestCase
     public function test_install_into_a_fresh_business_creates_two_pipelines_and_two_separate_purposes(): void
     {
         $this->seedNiche('tutoring_exam_prep');
-        [, $business] = $this->businessInstalledFrom('tutoring_education');
+        [, $business] = $this->businessInstalledFrom('tutoring_exam_prep');
 
         $records = $this->installationRecords($business);
         $this->assertSame('installed', $records->get('tutoring_student_pipeline')?->state->value, json_encode($records->map(fn ($r) => [$r->component_key => $r->state->value.' '.$r->error_code])->values()->all()));
@@ -44,7 +44,7 @@ class TutoringBlueprintInstallTest extends TestCase
     public function test_each_form_opens_opportunities_in_its_own_pipeline(): void
     {
         $this->seedNiche('tutoring_exam_prep');
-        [, $business] = $this->businessInstalledFrom('tutoring_education');
+        [, $business] = $this->businessInstalledFrom('tutoring_exam_prep');
 
         $student = AcquisitionPurpose::query()->where('business_id', $business->id)->where('purpose_key', 'student_enrollment')->firstOrFail();
         $teacher = AcquisitionPurpose::query()->where('business_id', $business->id)->where('purpose_key', 'teacher_recruitment')->firstOrFail();
@@ -61,7 +61,7 @@ class TutoringBlueprintInstallTest extends TestCase
     public function test_the_pipelines_use_canonical_crm_semantics(): void
     {
         $this->seedNiche('tutoring_exam_prep');
-        [, $business] = $this->businessInstalledFrom('tutoring_education');
+        [, $business] = $this->businessInstalledFrom('tutoring_exam_prep');
 
         foreach (CrmPipeline::query()->where('business_id', $business->id)->get() as $pipeline) {
             $first = $pipeline->stages()->first();

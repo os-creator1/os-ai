@@ -53,7 +53,7 @@ final class WebsiteModeManager
 
     /**
      * Normalises what the owner typed into a public website address, or refuses.
-     * Syntactic only (the crawler's UrlGuard re-validates, with DNS, at fetch
+     * Syntactic only (the crawler's UrlGuard re-validates, with name resolution, at fetch
      * time): http(s), a real hostname, no credentials, no IP literal, no private
      * naming.
      *

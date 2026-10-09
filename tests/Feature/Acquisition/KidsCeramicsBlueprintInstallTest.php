@@ -24,7 +24,7 @@ class KidsCeramicsBlueprintInstallTest extends TestCase
     public function test_a_fresh_ceramics_business_gets_one_pipeline_one_purpose_and_a_routed_form(): void
     {
         $this->seedNiche('kids_ceramics');
-        [, $business] = $this->businessInstalledFrom('kids_activities');
+        [, $business] = $this->businessInstalledFrom('kids_ceramics');
 
         $pipelines = CrmPipeline::query()->where('business_id', $business->id)->get();
         $this->assertSame(['Class Enrollment'], $pipelines->pluck('name')->all(), 'Exactly one customer pipeline.');
@@ -46,7 +46,7 @@ class KidsCeramicsBlueprintInstallTest extends TestCase
     public function test_nothing_about_teachers_or_recruitment_exists_for_ceramics(): void
     {
         $this->seedNiche('kids_ceramics');
-        [, $business] = $this->businessInstalledFrom('kids_activities');
+        [, $business] = $this->businessInstalledFrom('kids_ceramics');
 
         $purpose = AcquisitionPurpose::query()->where('business_id', $business->id)->firstOrFail();
         $everything = strtolower(json_encode([$purpose->toArray(), CrmPipeline::query()->where('business_id', $business->id)->with('stages')->get()->toArray()]));
@@ -63,7 +63,7 @@ class KidsCeramicsBlueprintInstallTest extends TestCase
     public function test_the_niche_carries_local_orientation_booking_and_seo_guidance(): void
     {
         $this->seedNiche('kids_ceramics');
-        [, $business] = $this->businessInstalledFrom('kids_activities');
+        [, $business] = $this->businessInstalledFrom('kids_ceramics');
         $purpose = AcquisitionPurpose::query()->where('business_id', $business->id)->firstOrFail();
 
         $pages = collect($purpose->website_intent['pages'])->pluck('page_key')->all();
@@ -86,7 +86,7 @@ class KidsCeramicsBlueprintInstallTest extends TestCase
     public function test_a_ceramics_business_is_asked_for_the_missing_landing_pages_through_the_shared_seam(): void
     {
         $this->seedNiche('kids_ceramics');
-        [, $business] = $this->businessInstalledFrom('kids_activities');
+        [, $business] = $this->businessInstalledFrom('kids_ceramics');
 
         $missing = app(PurposeWebsiteIntents::class)->withoutDestination($business);
 

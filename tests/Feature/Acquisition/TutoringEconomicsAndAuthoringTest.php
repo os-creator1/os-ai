@@ -30,7 +30,7 @@ class TutoringEconomicsAndAuthoringTest extends TestCase
     private function tutoring(): array
     {
         $this->seedNiche('tutoring_exam_prep');
-        [, $business] = $this->businessInstalledFrom('tutoring_education');
+        [, $business] = $this->businessInstalledFrom('tutoring_exam_prep');
 
         return [
             $business,

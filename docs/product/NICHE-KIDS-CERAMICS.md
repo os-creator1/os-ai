@@ -1,6 +1,7 @@
 # Niche Blueprint — Kids Ceramics Studio / Kids Ceramics Classes
 
-Key `kids_ceramics`, broad industry `kids_activities`. Seeded with `php artisan blueprint:seed-niche kids_ceramics`.
+Key and **vertical** `kids_ceramics`, an `business_verticals` catalog row bound to the Blueprint by `vertical_key` (broad-industry bucket `other`; the `BusinessIndustry` enum is locked and has no kids-activities case).
+A Business receives it when its Knowledge Profile's vertical is `kids_ceramics`. Seeded with `php artisan blueprint:seed-niche kids_ceramics` (it ensures the vertical row first).
 Definition: `App\Library\NicheBlueprint\Niches\KidsCeramicsBlueprint`. Contracts: 25, 26.
 
 A **local, physical** Business: **one** customer pipeline and **one** acquisition purpose (Class Enrollment). There is **no** teacher or recruitment

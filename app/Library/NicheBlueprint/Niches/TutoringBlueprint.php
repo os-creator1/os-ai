@@ -33,7 +33,15 @@ final class TutoringBlueprint
 
     public const NAME = 'Tutoring & Exam Preparation';
 
-    public const BROAD_INDUSTRY = 'tutoring_education';
+    /**
+     * The vertical (operator catalog `business_verticals`, never an enum case — the BusinessIndustry set is locked
+     * by the Knowledge Profile contract §6) this Blueprint is bound to. A Business receives it when its Knowledge
+     * Profile's vertical is this key.
+     */
+    public const VERTICAL_KEY = self::KEY;
+
+    /** The existing broad-industry bucket the vertical sits in. There is no "education" enum case and none may be added. */
+    public const BROAD_INDUSTRY = 'professional_services';
 
     public const STUDENT_PIPELINE = 'tutoring_student_pipeline';
 

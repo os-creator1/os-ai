@@ -200,7 +200,8 @@ questions (never a number), strategy guidance, website intent and the pipeline /
 (resolved through the installation records to the existing `opportunity_pipeline_id`), so a niche can route each form into its own pipeline. Two niches use it:
 `tutoring_exam_prep` (Student Enrollment + Teacher Recruitment) and `kids_ceramics` (Class Enrollment) — see `NICHE-TUTORING-EXAM-PREP.md` and `NICHE-KIDS-CERAMICS.md`.
 The component authors like any other in the Workspace (form fields plus a JSON definition for questions / labels / guidance / website intent, which round-trip intact).
-`blueprint:seed-niche {tutoring_exam_prep|kids_ceramics}` publishes them. `BusinessIndustry` gained `tutoring_education` and `kids_activities` so a Business resolves its Blueprint by broad industry.
+`blueprint:seed-niche {tutoring_exam_prep|kids_ceramics}` publishes them. They are **vertical-bound** (rows of the `business_verticals` catalog, resolved through the Business's Knowledge Profile `vertical_key`):
+the `BusinessIndustry` enum is locked by the Knowledge Profile contract §6 and was deliberately **not** extended (a boundary test pins its 7 cases).
 
 ## 11. Deferred / not built (deliberate)
 
