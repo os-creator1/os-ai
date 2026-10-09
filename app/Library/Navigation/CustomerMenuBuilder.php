@@ -499,7 +499,7 @@ final class CustomerMenuBuilder
             return $landing;
         }
 
-        return new MenuItem('seo-content', 'Content', $landing->url, 'file-text', $landing->active, $children);
+        return new MenuItem('seo-content', 'Content', $landing->url, 'file-text', false, $children);
     }
 
     /**
