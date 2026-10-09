@@ -134,6 +134,30 @@ class ContentProfile
     }
 
     /**
+     * Answer ONE first-enable question without touching the others (the "needs your input" card). Content Profile lists are
+     * added to; the differentiators go through the Knowledge Profile like everywhere else.
+     *
+     * @throws ValidationException
+     */
+    public function answer(Business $business, int $actorUserId, string $key, string $answer): void
+    {
+        if (! in_array($key, ['common_questions', 'emphasis', 'differentiators'], true)) {
+            throw ValidationException::withMessages(['key' => ['That is not something we can ask.']]);
+        }
+
+        if ($key === 'differentiators') {
+            $this->save($business, $actorUserId, ['differentiators' => $answer] + $this->get($business));
+
+            return;
+        }
+
+        $current = $this->get($business);
+        $current[$key] = array_merge($current[$key], $this->stringList($answer));
+
+        $this->save($business, $actorUserId, $current);
+    }
+
+    /**
      * @return string[]
      *
      * @throws ValidationException

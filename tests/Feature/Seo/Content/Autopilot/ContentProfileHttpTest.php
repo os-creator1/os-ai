@@ -55,7 +55,7 @@ class ContentProfileHttpTest extends TestCase
             'common_questions' => "How much space do you need?\nDo you travel?",
             'emphasis' => 'Weddings',
             'avoid_topics' => '',
-        ])->assertRedirect($this->url($t, 'autopilot.profile'));
+        ])->assertRedirect($this->url($t, 'autopilot'));
 
         $setting = ContentAutopilotSetting::query()->where('business_id', $t[1]->id)->firstOrFail();
         $this->assertSame(['How much space do you need?', 'Do you travel?'], $setting->profile['common_questions']);

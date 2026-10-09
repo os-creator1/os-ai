@@ -1326,6 +1326,12 @@
 
                 // Content Autopilot (Contract 25) - rides SeoModule (404 without it). The Content Profile is the short
                 // first-enable flow: only what MotionGrove cannot already know.
+                Route::get('/autopilot', 'Business\SeoContentAutopilotController@show')->name('autopilot');
+                Route::post('/autopilot/enable', 'Business\SeoContentAutopilotController@enable')->middleware('throttle:20,1')->name('autopilot.enable');
+                Route::post('/autopilot/disable', 'Business\SeoContentAutopilotController@disable')->middleware('throttle:20,1')->name('autopilot.disable');
+                Route::post('/autopilot/pause', 'Business\SeoContentAutopilotController@pause')->middleware('throttle:20,1')->name('autopilot.pause');
+                Route::post('/autopilot/resume', 'Business\SeoContentAutopilotController@resume')->middleware('throttle:20,1')->name('autopilot.resume');
+                Route::post('/autopilot/answer', 'Business\SeoContentAutopilotController@answer')->middleware('throttle:20,1')->name('autopilot.answer');
                 Route::get('/autopilot/profile', 'Business\SeoContentAutopilotController@profile')->name('autopilot.profile');
                 Route::post('/autopilot/profile', 'Business\SeoContentAutopilotController@saveProfile')->middleware('throttle:30,1')->name('autopilot.profile.save');
 

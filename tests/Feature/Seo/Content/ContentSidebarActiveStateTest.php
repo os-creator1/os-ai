@@ -41,7 +41,7 @@ class ContentSidebarActiveStateTest extends TestCase
         $tenant = $this->photoBoothContentTenant(withBlueprint: true);
         $this->authenticateAsSeoCustomer($tenant[0]);
 
-        foreach (['articles.index' => '/seo/content/articles', 'opportunities' => '/seo/content/opportunities', 'plan' => '/seo/content'] as $name => $needle) {
+        foreach (['articles.index' => '/seo/content/articles', 'autopilot' => '/seo/content/autopilot', 'opportunities' => '/seo/content/autopilot', 'plan' => '/seo/content/autopilot'] as $name => $needle) {
             $html = $this->get(route('customer.workspaces.businesses.seo.content.' . $name, [$tenant[2]->uid, $tenant[1]->uid]))->assertOk()->getContent();
             [$group, $xpath] = $this->contentGroup($html);
 

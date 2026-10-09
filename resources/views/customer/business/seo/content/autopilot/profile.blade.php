@@ -68,6 +68,6 @@
         </x-card>
 
         <button type="submit" class="btn btn-primary" data-role="save-profile">{{ $completed ? 'Save' : 'Save and continue' }}</button>
-        <a class="btn btn-outline-secondary ms-50" href="{{ $route('plan') }}">Back to Content</a>
+        <a class="btn btn-outline-secondary ms-50" href="{{ $route('autopilot') }}">Back to Content</a>
     </form>
 @endsection

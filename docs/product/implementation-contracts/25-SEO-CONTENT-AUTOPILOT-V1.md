@@ -179,3 +179,28 @@ Otherwise it stays an ordinary Draft awaiting approval. "Self-publishing" is `Ar
 weekday 09:00–11:59 in the Business's own time zone, jittered per article, at least `min_days_between_articles` after the
 previous Autopilot article — and the existing `articles:publish-due` takes it live and **re-checks it first**. There is no second
 publishing path. `AutopilotSwitch` is the only writer of `enabled` / `paused_reason`.
+
+## 8. Owner experience (Slice 7)
+
+**Content → Autopilot** (`…/seo/content/autopilot`) is the owner's home for Content; with the SEO module it is the Content
+group's landing. Ordinary owners never choose from a list of SEO topics.
+
+* **Switch** — ON / PAUSED / OFF with Turn on · Pause · Resume · Turn off (`AutopilotSwitch`; off never touches an article).
+  Turning on the first time offers the short, optional profile (a skip is fine). A pause by the system says why in plain
+  words (this month's allowance used, waiting for the website, not in the plan) and never shows an amount.
+* **Next up** — the one thing happening: scheduled (with its date in the Business's time zone), being written, waiting for
+  next month's allowance, ready to review, or an honest "nothing worth writing right now".
+* **This month** — "X published · Y planned", with "Up to N a month — and fewer is perfectly fine".
+* **Needs your input** — only when Autopilot genuinely needs one fact; one question, one box. Answering adds to the Content
+  Profile (never replaces it), closes the question and queues a free run.
+* **Awaiting your approval** — drafts with the reason each is not publishing itself (first articles, niche policy, or "worth a
+  quick look: …"), a Preview and the ordinary editor. **Recently published** — what went live.
+* **Manual path** — "Browse topic ideas" (Opportunities) and "Content plan" stay one quiet link away and as muted page tabs.
+
+**Navigation decision.** Sidebar: `Content → Autopilot · Articles` (Core: a single `Content` link to Articles). The Content
+Plan and Opportunities are no longer sidebar entries; the routes, pages and AI-draft flow are unchanged, and Autopilot owns
+the highlight on those pages. `…/autopilot*`, `…/plan` and `…/opportunities` all select the Autopilot child.
+
+**Sidebar fix (Slice 0).** The Content group is built with `active = false` like SEO and Ads; expansion comes from
+`MenuItem::hasActiveChild()` (`open`, `aria-expanded`). Checked in a real browser: parent background neutral, submenu
+expanded, only the selected child accented.

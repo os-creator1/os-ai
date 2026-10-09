@@ -475,7 +475,20 @@ final class CustomerMenuBuilder
      */
     private function seoContentMenuItem(User $user, array $scoped, string $current): ?MenuItem
     {
-        $landing = $this->item($user, 'seo-content', 'Content', 'file-text', ['view_seo'], 'customer.workspaces.businesses.seo.content.plan', $scoped, $current, [
+        // Content Autopilot: with the SEO module the entry opens into Autopilot (the owner's home for content) and
+        // Articles. The Content Plan and the topic Opportunities are still reachable (Autopilot's "topic ideas" links
+        // and the Content tabs) but are no longer two more things to choose between in the sidebar. Autopilot owns those
+        // routes' highlight so the selected child is always visible.
+        $autopilot = $this->entitled('seo_module', $this->item($user, 'seo-content-autopilot', 'Autopilot', 'sparkles', ['view_seo'], 'customer.workspaces.businesses.seo.content.autopilot', $scoped, $current, [
+            'customer.workspaces.businesses.seo.content.autopilot',
+            'customer.workspaces.businesses.seo.content.autopilot.',
+            'customer.workspaces.businesses.seo.content.plan',
+            'customer.workspaces.businesses.seo.content.opportunities',
+        ]));
+
+        $landing = $this->item($user, 'seo-content', 'Content', 'file-text', ['view_seo'], $autopilot !== null
+            ? 'customer.workspaces.businesses.seo.content.autopilot'
+            : 'customer.workspaces.businesses.seo.content.articles.index', $scoped, $current, [
             'customer.workspaces.businesses.seo.content.',
         ]);
 
@@ -483,17 +496,11 @@ final class CustomerMenuBuilder
             return null;
         }
 
-        $plan = $this->entitled('seo_module', $this->item($user, 'seo-content-plan', 'Content Plan', 'layout-list', ['view_seo'], 'customer.workspaces.businesses.seo.content.plan', $scoped, $current, [
-            'customer.workspaces.businesses.seo.content.plan',
-        ]));
         $articles = $this->item($user, 'seo-content-articles', 'Articles', 'file-text', ['view_seo'], 'customer.workspaces.businesses.seo.content.articles.index', $scoped, $current, [
             'customer.workspaces.businesses.seo.content.articles.',
         ]);
-        $opportunities = $this->entitled('seo_module', $this->item($user, 'seo-content-opportunities', 'Opportunities', 'lightbulb', ['view_seo'], 'customer.workspaces.businesses.seo.content.opportunities', $scoped, $current, [
-            'customer.workspaces.businesses.seo.content.opportunities',
-        ]));
 
-        $children = array_values(array_filter([$plan, $articles, $opportunities]));
+        $children = array_values(array_filter([$autopilot, $articles]));
 
         if (count($children) <= 1) {
             return $landing;

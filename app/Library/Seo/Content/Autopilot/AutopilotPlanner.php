@@ -212,6 +212,12 @@ final class AutopilotPlanner
         return null;
     }
 
+    /** Close an open question whose answer now exists (the owner just gave it); the next evaluation re-scores with the new fact. */
+    public function closeAnsweredQuestions(Business $business, ?CarbonInterface $now = null): void
+    {
+        $this->resolveAnsweredQuestions($business, $now ?? now());
+    }
+
     /** An open question whose answer now exists is closed; the next evaluation re-scores with the new fact. */
     private function resolveAnsweredQuestions(Business $business, CarbonInterface $now): void
     {
