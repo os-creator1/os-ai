@@ -469,6 +469,39 @@ class SeoRankHttpTest extends TestCase
     // add keyword / track / stop / restart
     // ------------------------------------------------------------------
 
+    public function test_the_existing_rank_location_is_reused_so_no_location_is_sent_again(): void
+    {
+        [$owner, $business, $workspace] = $this->coreTenant();
+        $this->authenticateAsSeoCustomer($owner);
+        FakeSeoRankProvider::$completeImmediately = false;
+
+        // Nothing tracked yet: there is no default, so no one-click "Start tracking" form is offered.
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'first keyword', 'track_rank' => '0']);
+        $first = SeoKeyword::query()->where('phrase', 'first keyword')->firstOrFail();
+        $html = $this->index($workspace, $business);
+        $this->assertSame([], $this->texts($html, "//form//button[@data-role='rank-start']"));
+        $this->assertNotEmpty($this->texts($html, "//button[@data-role='rank-start' and @data-rank-dialog='track']"));
+        $this->post($this->u('keywords.rank.track', $workspace, $business, $first->uid), [])
+            ->assertSessionHas('message', 'Choose a search location to track this keyword.');
+        $this->assertSame(0, SeoRankTarget::query()->count());
+
+        // Choosing one once makes it the Business's default.
+        $this->post($this->u('keywords.rank.track', $workspace, $business, $first->uid), ['search_location_code' => self::CHICAGO]);
+        $this->assertSame(1, SeoRankTarget::query()->count());
+
+        // Add with tracking on and no location: the existing one is used.
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'second keyword', 'track_rank' => '1']);
+        $second = SeoKeyword::query()->where('phrase', 'second keyword')->firstOrFail();
+        $this->assertSame(self::CHICAGO, (int) SeoRankTarget::query()->where('seo_keyword_id', $second->id)->firstOrFail()->search_location_code);
+
+        // Start tracking on an untracked keyword is now a plain one-click form.
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'third keyword', 'track_rank' => '0']);
+        $third = SeoKeyword::query()->where('phrase', 'third keyword')->firstOrFail();
+        $this->assertNotEmpty($this->texts($this->index($workspace, $business), "//form//button[@data-role='rank-start']"));
+        $this->post($this->u('keywords.rank.track', $workspace, $business, $third->uid), []);
+        $this->assertSame(self::CHICAGO, (int) SeoRankTarget::query()->where('seo_keyword_id', $third->id)->firstOrFail()->search_location_code);
+    }
+
     public function test_adding_a_keyword_with_rank_tracking_starts_tracking_and_queues_the_first_check(): void
     {
         [$owner, $business, $workspace] = $this->coreTenant();
@@ -751,7 +784,8 @@ class SeoRankHttpTest extends TestCase
         }
 
         $this->post($this->u('keywords.rank.track', $workspace, $business, $keyword->uid), ['search_location_code' => 'Chicago'])->assertSessionHasErrors('search_location_code');
-        $this->post($this->u('keywords.rank.track', $workspace, $business, $keyword->uid), [])->assertSessionHasErrors('search_location_code');
+        // No code and no existing rank location: nothing is tracked and the owner is asked to choose one.
+        $this->post($this->u('keywords.rank.track', $workspace, $business, $keyword->uid), [])->assertSessionHas('message', 'Choose a search location to track this keyword.');
 
         $this->assertSame(0, SeoRankTarget::query()->count());
         $this->assertSame([0, 0, 0], $this->counts());
