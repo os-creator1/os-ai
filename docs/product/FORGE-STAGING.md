@@ -215,14 +215,14 @@ crashes with `Attempt to read property "value" on null` (the helper is now toler
 configured). On a fresh, empty database this is safe: the only truncating seeders (`AppConfigSeeder`,
 `PaymentMethodsSeeder`) have nothing of value to lose, and every other step is idempotent.
 
-**Then, before the first owner login, the licence gate:** the seeded `app_config.license` is an empty string, and the
-`ValidProduct` middleware on every admin and customer route sends a signed-in user to the legacy `/verify-purchase-code`
-screen (a vendored CodeCanyon licence checker) while it is empty. That is a decision for the owner: either enter a valid
-purchase code on that screen, or (the way the local RC environment was set up) store a non-empty value once:
+**Then, the inherited licence gate (do NOT work around it).** The seeded `app_config.license` is an empty string, and the
+`ValidProduct` middleware on the admin and customer route groups sends every signed-in user to the vendor's
+`/verify-purchase-code` screen while it is empty. That screen validates an Envato purchase code against the original
+product vendor's server. It is a **third-party licence check, not a configuration value**: do not store a placeholder
+licence and do not invent a purchase code. (An earlier version of this runbook suggested a placeholder; that is withdrawn.)
+Read [`LICENSING-LEGACY-GATE.md`](LICENSING-LEGACY-GATE.md): either activate with a real purchase code for the right
+licence (Extended, for a charged SaaS) or obtain written permission and have the gate replaced properly.
 
-```
-php8.3 artisan tinker --execute="App\Models\AppConfig::where('setting','license')->update(['value'=>'staging-placeholder']); echo App\Models\AppConfig::where('setting','license')->value('value');"
-```
 Then check `SELECT count(*) FROM currencies;` = 12, `workspace_plan_catalog` has `core`, `growth`, `agency`, one
 `is_admin` user, and the legacy-gateway query in section 5.2 returns no rows; sign in at `/login` as the owner.
 
