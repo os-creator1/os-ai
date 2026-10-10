@@ -498,7 +498,7 @@ class SeoCitationsAuditRepairTest extends TestCase
 
         $this->assertSame(['City', 'Country'], $section->googleOtherDifferences());
         $this->assertFalse($section->googleNeedsAttention(), 'These are not NAP details.');
-        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">2 details differ from Google\./', $html);
+        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">2 details differ from Google</', $html);
         $this->assertMatchesRegularExpression('/data-role="google-differing-fields">Differs: City, Country\./', $html);
         $this->assertSame(3, preg_match_all('/data-google-field="[a-z]+" data-result="consistent"/', $html), 'The three shown details all match, and the row says which others differ.');
     }
@@ -511,8 +511,10 @@ class SeoCitationsAuditRepairTest extends TestCase
 
         $html = $this->page($workspace, $business, $location);
 
-        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">1 detail differs from Google\./', $html);
-        $this->assertMatchesRegularExpression('/data-role="google-differing-fields">Differs: Name\./', $html);
+        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">1 detail differs from Google</', $html);
+        // Name is already named by its own "Name differs" line, so "Differs:" lists only what the three lines cannot.
+        $this->assertMatchesRegularExpression('/data-google-field="name" data-result="mismatch"/', $html);
+        $this->assertStringNotContainsString('data-role="google-differing-fields"', $html);
     }
 
     // -----------------------------------------------------------------

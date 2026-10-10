@@ -62,6 +62,7 @@ final class SeoCitationLocationSection
 
     /** Page groups, in display order. */
     public const GROUP_ESSENTIAL = 'essential';
+    public const GROUP_SETUP = 'setup';
     public const GROUP_RECOMMENDED = 'recommended';
     public const GROUP_OPTIONAL = 'optional';
     public const GROUP_CUSTOM = 'custom';
@@ -207,9 +208,14 @@ final class SeoCitationLocationSection
     }
 
     /**
-     * Rows by page group. Custom directories are their own group regardless
-     * of importance; everything else groups by its effective importance.
-     * Empty groups are omitted.
+     * Rows by page group, a PRESENTATION split of the same rows (no classification,
+     * status or record changes): Essential listings are the essential directories that
+     * already have details recorded (Google's own row is drawn there too); every
+     * non-custom directory with NO recorded details is "Needs setup", whatever its
+     * importance; configured non-essential directories keep their Recommended / Optional
+     * group; Custom directories stay their own group. A configured listing that needs
+     * attention therefore stays in its importance group. Order inside a group is the
+     * rows' own canonical order. Empty groups are omitted.
      *
      * @return array<string, array<int, SeoCitationRow>>
      */
@@ -217,6 +223,7 @@ final class SeoCitationLocationSection
     {
         $groups = [
             self::GROUP_ESSENTIAL => [],
+            self::GROUP_SETUP => [],
             self::GROUP_RECOMMENDED => [],
             self::GROUP_OPTIONAL => [],
             self::GROUP_CUSTOM => [],
@@ -225,11 +232,13 @@ final class SeoCitationLocationSection
         foreach ($this->rows as $row) {
             $key = $row->isCustom()
                 ? self::GROUP_CUSTOM
-                : match ($row->importance()) {
+                : (! $row->hasRecordedDetails() && ! $row->isNotApplicable()
+                    ? self::GROUP_SETUP
+                    : match ($row->importance()) {
                     SeoDirectoryImportance::Essential => self::GROUP_ESSENTIAL,
                     SeoDirectoryImportance::Recommended => self::GROUP_RECOMMENDED,
                     SeoDirectoryImportance::Optional => self::GROUP_OPTIONAL,
-                };
+                });
 
             $groups[$key][] = $row;
         }
