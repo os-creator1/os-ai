@@ -127,6 +127,7 @@ Rule order (first applying wins):
 | 1 | ad account currency ≠ Business currency | NOT ENOUGH DATA (no silent conversion) | Review goal setup |
 | 2 | goal has no CRM pipeline | NOT ENOUGH DATA | Finish goal setup |
 | 3 | spend, ≥ `min_clicks_for_tracking_check` clicks (or provider results) but **no** inquiry from this provider recorded recently | **CHECK TRACKING** – "do not pause or edit the ads until tracking is confirmed" | Check tracking |
+| 3b | the provider reports ≥ `tracking_mismatch_min_provider_results` results but fewer than `tracking_mismatch_recorded_share` of them were recorded as inquiries (inconsistent tracking) | **CHECK TRACKING** – "do not pause or edit the ads until tracking is confirmed"; evidence row *Tracking health: Inconsistent* | Check tracking |
 | 4 | no CPL/CAC target set | NOT ENOUGH DATA | Set your targets |
 | 5 | ≥ `min_outcomes_for_cac` outcomes: cost per outcome ≤ ceiling | **KEEP RUNNING** even when the provider CPL is above target; "not a reason to pause" | Open campaign |
 | 5 | … cost per outcome > ceiling and leads are cheap | **FIX THE FUNNEL** – "Do not change the ads" | Open … pipeline |
@@ -134,16 +135,18 @@ Rule order (first applying wins):
 | 6 | inquiries exist but none past the first stage | **FIX THE FUNNEL** (follow-up) | Open … pipeline |
 | 6 | ≥ `min_qualified_for_funnel_judgement` qualified at/under target CPL and outcomes 0 or < `weak_conversion_share_of_expected` x the owner's expected rate | **FIX THE FUNNEL** – "the problem is after the lead, not before it" | Open … pipeline |
 | 7 | zero qualified: spend < `zero_result_watch_from_multiple` x target | WAIT | Open campaign |
-| 7 | … ≥ watch multiple, < `zero_result_act_at_multiple` | WATCH | Open campaign |
-| 7 | … ≥ act multiple | **ACT** (tracking already healthy) | by diagnosis |
+| 7 | … ≥ watch multiple, < `zero_result_act_at_multiple`, **or** ≥ act multiple but fewer than `min_clicks_for_zero_result_act` clicks are known | WATCH ("too few clicks to say the ads are at fault") | Open campaign |
+| 7 | … ≥ act multiple with enough clicks | **ACT** – an *investigation* trigger, never a pause: "Do not pause or delete the ads on this signal alone" (tracking already healthy) | by diagnosis |
 | 7 | qualified > 0, CPL ≤ target | KEEP RUNNING ("not enough evidence to change" when below `min_qualified_for_cost_judgement`) | Open campaign |
 | 7 | … above target, small sample | NOT ENOUGH DATA ("wait") | Open campaign |
 | 7 | … above target, within the hard maximum | WATCH | Open campaign |
 | 7 | … above the hard maximum (or tolerance x target) | **ACT** | by diagnosis |
 
-Defaults (`ads_decisions.decision`): watch from 1.0x target, act at 2.5x, 10 qualified for a cost verdict, 10 for a funnel verdict,
+Defaults (`ads_decisions.decision`): watch from 1.0x target, act at 3.0x (the agreed ~3× "spent three leads' worth with none" investigation trigger; example: target 5.00, spend 15.00, no lead, healthy tracking, ≥ 30 clicks ⇒ ACT, still no automatic pause), 10 qualified for a cost verdict, 10 for a funnel verdict,
 2 outcomes before a cost per outcome is trusted, expected-rate share 0.5, 30 clicks before "tracking" is suspected, tolerance 1.25x,
-re-review after 4 more qualified leads or 1.0x target of further spend, Google search-term waste ≥ 25% of spend.
+Teacher Recruitment (outcome type `hire`) uses its own thinner-market multiples (`recruitment_zero_result_watch_from_multiple` 1.5, `recruitment_zero_result_act_at_multiple` 5.0) so the student threshold is never applied blindly to applicants; ≥ 30 clicks (`min_clicks_for_zero_result_act`) before no-lead spend is blamed on the ads; tracking is called inconsistent when the provider reports ≥ 10 results but < 25% were recorded as inquiries; re-review after 4 more qualified leads or 1.0x target of further spend, Google search-term waste ≥ 25% of spend.
+
+**Evidence scope.** Every ACT verdict says the figures cover all of the provider's campaigns assigned to the goal together: MotionGrove has no per-ad lead results (contract 24 §10), so it never names a specific campaign, ad set or ad as the culprit. The evidence list also shows cost per inquiry, the inquiry→outcome rate and (non-recruitment only) the expected contribution per outcome ("Not known yet" when any input is unknown). Every verdict, including NOT ENOUGH DATA and CHECK TRACKING, carries a *Next review* stated as evidence, not days.
 
 **Diagnosis → CTA (ACT only)**, because the ads themselves are the cause: Google search-term waste ≥ threshold ⇒ *Review search terms*
 (Google only); very low click-through ⇒ creative may be weak (*Review ad* / *Open campaign*); many clicks, almost no inquiries ⇒

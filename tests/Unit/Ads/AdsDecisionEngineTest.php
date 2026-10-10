@@ -117,14 +117,14 @@ class AdsDecisionEngineTest extends TestCase
 
         $this->assertSame(AdsDecisionState::Act, $d->state);
         $this->assertStringContainsString('3.2× your target', $this->text($d));
-        $this->assertNull($d->doNotChange);
+        $this->assertStringContainsString('do not pause or delete the ads on this signal alone', strtolower((string) $d->doNotChange));
     }
 
     public function test_zero_result_thresholds_are_evidence_multiples_not_days(): void
     {
         $wait = $this->engine()->decide($this->input(['spendMicros' => 3 * self::EUR]));
         $watch = $this->engine()->decide($this->input(['spendMicros' => 10 * self::EUR]));
-        $act = $this->engine()->decide($this->input(['spendMicros' => 17 * self::EUR]));
+        $act = $this->engine()->decide($this->input(['spendMicros' => 19.5 * self::EUR]));
 
         $this->assertSame(AdsDecisionState::Wait, $wait->state);
         $this->assertSame(AdsDecisionState::Watch, $watch->state);
@@ -229,7 +229,7 @@ class AdsDecisionEngineTest extends TestCase
     public function test_8_meta_never_gets_google_only_search_term_advice(): void
     {
         $d = $this->engine()->decide($this->input([
-            'provider' => 'meta', 'spendMicros' => 20 * self::EUR, 'searchTermWasteMicros' => 12 * self::EUR, 'clicks' => 20,
+            'provider' => 'meta', 'spendMicros' => 20 * self::EUR, 'searchTermWasteMicros' => 12 * self::EUR, 'clicks' => 30,
         ]));
 
         $this->assertSame(AdsDecisionState::Act, $d->state);
@@ -339,7 +339,12 @@ class AdsDecisionEngineTest extends TestCase
         $p = AdsDecisionPolicy::fromConfig();
 
         $this->assertSame(1.0, $p->zeroResultWatchFromMultiple());
-        $this->assertSame(2.5, $p->zeroResultActAtMultiple());
+        $this->assertSame(3.0, $p->zeroResultActAtMultiple());
+        $this->assertSame(1.5, $p->recruitmentZeroResultWatchFromMultiple());
+        $this->assertSame(5.0, $p->recruitmentZeroResultActAtMultiple());
+        $this->assertSame(30, $p->minClicksForZeroResultAct());
+        $this->assertSame(10, $p->trackingMismatchMinProviderResults());
+        $this->assertSame(0.25, $p->trackingMismatchRecordedShare());
         $this->assertSame(10, $p->minQualifiedForCostJudgement());
         $this->assertSame(10, $p->minQualifiedForFunnelJudgement());
         $this->assertSame(2, $p->minOutcomesForCac());

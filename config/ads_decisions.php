@@ -25,8 +25,32 @@ return [
         //   below `watch_from`  -> WAIT   (too early for the result to be missing)
         //   [watch_from, act_at) -> WATCH
         //   at/above `act_at`   -> ACT    (only with healthy tracking)
+        //
+        // `act_at` is an INVESTIGATION trigger (about 3x the target cost of one
+        // lead with none to show for it), NEVER an automatic pause: the verdict
+        // asks the owner to look at the ads, says what not to touch, and is
+        // withheld while tracking is unhealthy or there have been too few clicks
+        // to blame the ads (see `min_clicks_for_zero_result_act`).
         'zero_result_watch_from_multiple' => 1.0,
-        'zero_result_act_at_multiple' => 2.5,
+        'zero_result_act_at_multiple' => 3.0,
+
+        // Teacher Recruitment is a thinner market than student inquiries: a
+        // tutor applicant is rarer and costs more, so the same "3x with nothing"
+        // reading would raise false alarms. Recruitment goals (outcome type
+        // `hire`) use these multiples instead, with the same WAIT/WATCH/ACT shape.
+        'recruitment_zero_result_watch_from_multiple' => 1.5,
+        'recruitment_zero_result_act_at_multiple' => 5.0,
+
+        // Fewest clicks before "spent a lot, no qualified lead" may be blamed on
+        // the ads. Fewer known clicks means the spend has not delivered enough
+        // visitors to judge: WATCH instead of ACT. Unknown clicks do not block.
+        'min_clicks_for_zero_result_act' => 30,
+
+        // Tracking consistency: when the provider reports at least this many
+        // results but MotionGrove recorded fewer than this share of them as
+        // inquiries, the conversion tracking is suspected before the ads are.
+        'tracking_mismatch_min_provider_results' => 10,
+        'tracking_mismatch_recorded_share' => 0.25,
 
         // Fewest qualified leads before a cost-per-qualified-lead verdict
         // (good OR bad) is allowed to change what the owner does. Below it the

@@ -70,14 +70,14 @@ final class AdsDecisionEngine
             return $this->make($in, AdsDecisionState::NotEnoughData, 'Your ad account bills in a different currency from your business.', [
                 'This ad account uses ' . strtoupper($in->currency) . ' and your business uses ' . strtoupper($in->businessCurrency) . ', and your targets are in ' . strtoupper($in->businessCurrency) . '.',
                 'MotionGrove will not guess an exchange rate, so it cannot judge this goal against your targets yet.',
-            ], $evidence, doNotChange: null, nextReview: null, cta: [AdsDecisionCtaKind::FinishGoalSetup, 'Review goal setup']);
+            ], $evidence, doNotChange: null, nextReview: 'After the currency difference is resolved in your goal setup.', cta: [AdsDecisionCtaKind::FinishGoalSetup, 'Review goal setup']);
         }
 
         // 2. Without a pipeline there is nothing downstream to measure.
         if (! $in->pipelineLinked) {
             return $this->make($in, AdsDecisionState::NotEnoughData, 'This goal is not connected to a pipeline yet.', [
                 'MotionGrove can only judge ads by what happens to the people they bring. Connect ' . $in->purposeName . ' to the pipeline where its ' . $in->label('leads', 'inquiries') . ' arrive.',
-            ], $evidence, doNotChange: null, nextReview: null, cta: [AdsDecisionCtaKind::FinishGoalSetup, 'Finish goal setup']);
+            ], $evidence, doNotChange: null, nextReview: 'After this goal is connected to a pipeline.', cta: [AdsDecisionCtaKind::FinishGoalSetup, 'Finish goal setup']);
         }
 
         // 3. Clicks but never an inquiry from this provider: look at tracking BEFORE the ads.
@@ -85,7 +85,15 @@ final class AdsDecisionEngine
             return $this->make($in, AdsDecisionState::CheckTracking, 'Check that your inquiries are being tracked before judging these ads.', [
                 'These ads received ' . number_format((int) $in->clicks) . ' clicks, but MotionGrove has not recorded a single inquiry that came from ' . $in->providerName() . ' recently.',
                 'That usually means the tracking is missing or broken, not that the ads failed. Checking the ads now could lead you to change something that is working.',
-            ], $evidence, doNotChange: 'Do not pause or edit the ads until tracking is confirmed.', nextReview: null, cta: [AdsDecisionCtaKind::FixTracking, 'Check tracking']);
+            ], $evidence, doNotChange: 'Do not pause or edit the ads until tracking is confirmed.', nextReview: 'After one inquiry from ' . $in->providerName() . ' shows up in your pipeline.', cta: [AdsDecisionCtaKind::FixTracking, 'Check tracking']);
+        }
+
+        // 3b. The provider reports plenty of results but MotionGrove recorded few inquiries: the tracking is inconsistent.
+        if ($this->trackingInconsistent($in)) {
+            return $this->make($in, AdsDecisionState::CheckTracking, 'Check that every ' . $in->label('lead', 'inquiry') . ' is being tracked before judging these ads.', [
+                $in->providerName() . ' reports ' . $this->count((float) $in->providerResults) . ' results for these ads, but MotionGrove recorded only ' . $in->inquiries . ' ' . ($in->inquiries === 1 ? 'inquiry' : 'inquiries') . ' from ' . $in->providerName() . '.',
+                'Some of those results may be calls, messages or form entries that never reach your pipeline, or the form is not tagged. Until that is clear, the cost per ' . $in->label('lead', 'inquiry') . ' on this page is not reliable.',
+            ], $evidence, doNotChange: 'Do not pause or edit the ads until tracking is confirmed.', nextReview: 'After the gap between ' . $in->providerName() . "'s results and your recorded inquiries is explained.", cta: [AdsDecisionCtaKind::FixTracking, 'Check tracking']);
         }
 
         // 4. No agreed target: MotionGrove can show facts but not judge them.
@@ -93,7 +101,7 @@ final class AdsDecisionEngine
             return $this->make($in, AdsDecisionState::NotEnoughData, 'Tell MotionGrove what a good result costs you.', [
                 'Set the most you are happy to pay for one ' . $in->label('lead', 'qualified inquiry') . ' or for one ' . $in->label('outcome', 'customer') . ', and MotionGrove will tell you whether to keep these ads running.',
                 $in->qualified > 0 ? 'So far ' . $in->qualified . ' qualified ' . $in->label('leads', 'inquiries') . ' came from ' . $in->providerName() . ' at ' . $this->money($cpl) . ' each.' : 'No qualified ' . $in->label('leads', 'inquiries') . ' from ' . $in->providerName() . ' yet.',
-            ], $evidence, doNotChange: null, nextReview: null, cta: [AdsDecisionCtaKind::SetTargets, 'Set your targets']);
+            ], $evidence, doNotChange: null, nextReview: 'After you have saved a target cost.', cta: [AdsDecisionCtaKind::SetTargets, 'Set your targets']);
         }
 
         // 5. The cost of an actual outcome is known: it outranks every surface metric.
@@ -106,7 +114,7 @@ final class AdsDecisionEngine
         if ($funnel !== null) {
             return $this->make($in, AdsDecisionState::FixTheFunnel, $funnel['headline'], $funnel['reasons'], $evidence,
                 doNotChange: 'Do not change the ads. The ads are doing their job; the loss happens after the ' . $in->label('lead', 'inquiry') . ' arrives.',
-                nextReview: null, cta: [AdsDecisionCtaKind::OpenPipeline, $in->label('pipeline_cta', 'Open pipeline')], diagnosis: 'Sales, follow-up or qualification after the lead');
+                nextReview: 'After the next ' . $this->policy->reviewAfterMoreQualified() . ' ' . $in->label('leads', 'qualified inquiries') . ' have been followed up: check how many become ' . $in->label('outcomes', 'customers') . '.', cta: [AdsDecisionCtaKind::OpenPipeline, $in->label('pipeline_cta', 'Open pipeline')], diagnosis: 'Sales, follow-up or qualification after the lead');
         }
 
         // 7. Judge the ads by the cost of a qualified lead.
@@ -152,7 +160,7 @@ final class AdsDecisionEngine
                 ucfirst($in->label('leads', 'qualified inquiries')) . ' cost ' . $this->money($cpl) . ' each, below your ' . $this->money($targetCpl) . ' target.',
                 'But only ' . $in->outcomes . ' of ' . $in->qualified . ' became ' . self::article($outcome) . ', so each ' . $outcome . ' costs ' . $this->money($cac) . ', above your ' . $this->money($ceiling) . ' limit.',
                 'The acquisition problem is after the lead, not before it.',
-            ], $evidence, doNotChange: 'Do not change the ads.', nextReview: null,
+            ], $evidence, doNotChange: 'Do not change the ads.', nextReview: 'After the next ' . $this->policy->reviewAfterMoreQualified() . ' ' . $in->label('leads', 'qualified inquiries') . ' have been followed up: check how many become ' . $in->label('outcomes', 'customers') . '.',
                 cta: [AdsDecisionCtaKind::OpenPipeline, $in->label('pipeline_cta', 'Open pipeline')], diagnosis: 'Sales, follow-up or qualification after the lead');
         }
 
@@ -216,14 +224,17 @@ final class AdsDecisionEngine
         if ($targetCpl === null) {
             return $this->make($in, AdsDecisionState::NotEnoughData, 'Add a target cost per ' . $lead . ' or your expected conversion rate.', [
                 'You set a target cost for a finished ' . $in->label('outcome', 'customer') . ', but there are not enough finished outcomes yet to judge by, and no target for the step before.',
-            ], $evidence, doNotChange: null, nextReview: null, cta: [AdsDecisionCtaKind::SetTargets, 'Set your targets']);
+            ], $evidence, doNotChange: null, nextReview: 'After you add a target cost per ' . $lead . ' or your expected conversion rate.', cta: [AdsDecisionCtaKind::SetTargets, 'Set your targets']);
         }
 
         if ($in->qualified === 0) {
             $multiple = $in->spendMicros / $targetCpl;
+            $watchAt = $this->zeroResultWatchMultiple($in);
+            $actAt = $this->zeroResultActMultiple($in);
+            $fewClicks = $in->clicks !== null && $in->clicks < $this->policy->minClicksForZeroResultAct();
 
-            if ($multiple < $this->policy->zeroResultWatchFromMultiple()) {
-                $remaining = max(0, (int) ceil($targetCpl * $this->policy->zeroResultWatchFromMultiple()) - $in->spendMicros);
+            if ($multiple < $watchAt) {
+                $remaining = max(0, (int) ceil($targetCpl * $watchAt) - $in->spendMicros);
 
                 return $this->make($in, AdsDecisionState::Wait, 'Wait: it is too early to expect a ' . $lead . '.', [
                     $in->spendMicros === 0 ? 'These ads have not spent anything in this period.' : 'These ads have spent ' . $this->money($in->spendMicros) . ', less than one ' . $lead . ' should cost you (' . $this->money($targetCpl) . ').',
@@ -232,21 +243,28 @@ final class AdsDecisionEngine
                     cta: [AdsDecisionCtaKind::OpenCampaign, 'Open campaign']);
             }
 
-            if ($multiple < $this->policy->zeroResultActAtMultiple()) {
-                $until = max(0, (int) ceil($targetCpl * $this->policy->zeroResultActAtMultiple()) - $in->spendMicros);
-
-                return $this->make($in, AdsDecisionState::Watch, 'Watch: no qualified ' . $lead . ' yet, and spend is building.', [
+            if ($multiple < $actAt || $fewClicks) {
+                $until = max(0, (int) ceil($targetCpl * $actAt) - $in->spendMicros);
+                $reasons = [
                     'These ads have spent ' . $this->money($in->spendMicros) . ' (' . $this->multiple($multiple) . ' your ' . $this->money($targetCpl) . ' target) without a qualified ' . $lead . '.',
-                    'This is not yet enough to conclude the ads are failing.',
-                ], $evidence, doNotChange: 'Avoid changing the ads for now.',
-                    nextReview: 'After ' . $this->money($until) . ' more spend, or the first qualified ' . $lead . '.',
+                    $multiple >= $actAt
+                        ? 'Only ' . number_format((int) $in->clicks) . ' people have clicked so far, which is too few to say the ads are at fault. A handful of clicks can easily miss.'
+                        : 'This is not yet enough to conclude the ads are failing.',
+                ];
+
+                return $this->make($in, AdsDecisionState::Watch, 'Watch: no qualified ' . $lead . ' yet, and spend is building.', $reasons, $evidence,
+                    doNotChange: 'Avoid changing the ads for now.',
+                    nextReview: $multiple >= $actAt
+                        ? 'After ' . $this->policy->minClicksForZeroResultAct() . ' clicks in total, or the first qualified ' . $lead . '.'
+                        : 'After ' . $this->money($until) . ' more spend, or the first qualified ' . $lead . '.',
                     cta: [AdsDecisionCtaKind::OpenCampaign, 'Open campaign']);
             }
 
+            // An investigation trigger, not a pause: nothing here switches an ad off.
             return $this->actionOnAds($in, 'Review these ads: they have spent ' . $this->multiple($multiple) . ' your target without a qualified ' . $lead . '.', [
                 'These ads have spent ' . $this->money($in->spendMicros) . ' without a qualified ' . $lead . '. Your target is ' . $this->money($targetCpl) . ' for one.',
                 $in->attributedTouches > 0 || $in->inquiries > 0 ? 'Inquiries from ' . $in->providerName() . ' are being recorded, so this points at the ads rather than a missing connection.' : 'Nothing suggests a tracking fault, so this points at the ads.',
-            ], $evidence, $targetCpl);
+            ], $evidence, $targetCpl, doNotChange: 'Do not pause or delete the ads on this signal alone. MotionGrove never pauses anything for you: look at the campaign first, then decide.');
         }
 
         $multiple = $cpl / $targetCpl;
@@ -296,7 +314,7 @@ final class AdsDecisionEngine
      * @param  list<string>  $reasons
      * @param  list<array{label: string, value: string}>  $evidence
      */
-    private function actionOnAds(AdsDecisionInput $in, string $headline, array $reasons, array $evidence, ?int $targetCost): AdsDecision
+    private function actionOnAds(AdsDecisionInput $in, string $headline, array $reasons, array $evidence, ?int $targetCost, ?string $doNotChange = null): AdsDecision
     {
         [$kind, $label, $diagnosis, $notes] = $this->actionTarget($in, $targetCost);
 
@@ -304,8 +322,11 @@ final class AdsDecisionEngine
             $reasons[] = $diagnosis;
         }
 
+        // Evidence scope: results are read for the goal as a whole, never per ad, so no single ad may be named as the culprit.
+        $notes[] = 'These figures cover every ' . $in->providerName() . ' campaign assigned to this goal together. MotionGrove does not receive lead results per ad, so it cannot say which campaign, ad set or ad is responsible: compare them in ' . $in->providerName() . ' before changing anything.';
+
         return $this->make($in, AdsDecisionState::Act, $headline, $reasons, $evidence,
-            doNotChange: null, nextReview: $this->nextReview($in, $targetCost, 'After you have made a change, check again'),
+            doNotChange: $doNotChange, nextReview: $this->nextReview($in, $targetCost, 'After you have made a change, check again'),
             cta: [$kind, $label], diagnosis: $diagnosis, notes: $notes);
     }
 
@@ -364,6 +385,32 @@ final class AdsDecisionEngine
         return $enoughClicks || $providerSaysResults;
     }
 
+    /** Plenty of provider-reported results, far fewer recorded inquiries: tracking is suspect, not the ads. */
+    private function trackingInconsistent(AdsDecisionInput $in): bool
+    {
+        if ($in->spendMicros <= 0 || $in->providerResults === null || $in->providerResults < $this->policy->trackingMismatchMinProviderResults()) {
+            return false;
+        }
+
+        return $in->inquiries < $in->providerResults * $this->policy->trackingMismatchRecordedShare();
+    }
+
+    private function count(float $n): string
+    {
+        return number_format($n, floor($n) === $n ? 0 : 1);
+    }
+
+    /** Teacher Recruitment is judged on its own, thinner-market multiples. */
+    private function zeroResultWatchMultiple(AdsDecisionInput $in): float
+    {
+        return $in->outcomeType === 'hire' ? $this->policy->recruitmentZeroResultWatchFromMultiple() : $this->policy->zeroResultWatchFromMultiple();
+    }
+
+    private function zeroResultActMultiple(AdsDecisionInput $in): float
+    {
+        return $in->outcomeType === 'hire' ? $this->policy->recruitmentZeroResultActAtMultiple() : $this->policy->zeroResultActAtMultiple();
+    }
+
     /** The only place the profit question is answered: honest about what is not known. */
     private function profitNote(AdsDecisionInput $in): string
     {
@@ -399,6 +446,7 @@ final class AdsDecisionEngine
         $costPerProviderResult = $in->providerResults !== null && $in->providerResults > 0 ? $this->money((int) round($in->spendMicros / $in->providerResults)) : 'Not available';
 
         $tracking = match (true) {
+            $this->trackingInconsistent($in) => 'Inconsistent',
             $in->inquiries > 0 || $in->attributedTouches > 0 => 'Good',
             $this->trackingBroken($in) => 'Missing',
             default => 'Nothing recorded yet',
@@ -411,10 +459,19 @@ final class AdsDecisionEngine
             ['label' => $in->label('cost_per_outcome', 'Cost per customer'), 'value' => $cac === null ? 'Not enough data' : $this->money($cac)],
             ['label' => 'Target ' . strtolower($in->label('cost_per_outcome', 'cost per customer')), 'value' => $targetCac === null ? 'Not set' : $this->money($targetCac)],
             ['label' => 'Inquiries recorded', 'value' => (string) $in->inquiries],
+            ['label' => 'Cost per inquiry', 'value' => $in->inquiries > 0 ? $this->money(intdiv($in->spendMicros, $in->inquiries)) : 'Not enough data'],
             ['label' => ucfirst($in->label('leads', 'qualified inquiries')), 'value' => (string) $in->qualified],
             ['label' => ucfirst($in->label('outcomes', 'customers')), 'value' => (string) $in->outcomes],
-            ['label' => 'Tracking health', 'value' => $tracking],
+            ['label' => 'Inquiry to ' . $in->label('outcome', 'customer') . ' rate', 'value' => $in->inquiries > 0 ? number_format($in->outcomes / $in->inquiries * 100, 0) . '%' : 'Not enough data'],
         ];
+
+        // Only when every input of the owner's lifetime contribution was answered; unknown stays unknown, never 0.
+        $ltv = $in->economics?->contributionLtvMicros;
+        if ($in->outcomeType !== 'hire') {
+            $rows[] = ['label' => 'Expected contribution per ' . $in->label('outcome', 'customer'), 'value' => $ltv === null ? 'Not known yet' : $this->money($ltv)];
+        }
+
+        $rows[] = ['label' => 'Tracking health', 'value' => $tracking];
 
         return $rows;
     }

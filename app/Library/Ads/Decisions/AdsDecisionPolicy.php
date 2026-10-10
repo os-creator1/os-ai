@@ -26,7 +26,33 @@ final class AdsDecisionPolicy
 
     public function zeroResultActAtMultiple(): float
     {
-        return (float) ($this->values['zero_result_act_at_multiple'] ?? 2.5);
+        return (float) ($this->values['zero_result_act_at_multiple'] ?? 3.0);
+    }
+
+    /** Recruitment goals use their own multiples: applicants are rarer than student inquiries. */
+    public function recruitmentZeroResultWatchFromMultiple(): float
+    {
+        return (float) ($this->values['recruitment_zero_result_watch_from_multiple'] ?? 1.5);
+    }
+
+    public function recruitmentZeroResultActAtMultiple(): float
+    {
+        return (float) ($this->values['recruitment_zero_result_act_at_multiple'] ?? 5.0);
+    }
+
+    public function minClicksForZeroResultAct(): int
+    {
+        return (int) ($this->values['min_clicks_for_zero_result_act'] ?? 30);
+    }
+
+    public function trackingMismatchMinProviderResults(): int
+    {
+        return (int) ($this->values['tracking_mismatch_min_provider_results'] ?? 10);
+    }
+
+    public function trackingMismatchRecordedShare(): float
+    {
+        return (float) ($this->values['tracking_mismatch_recorded_share'] ?? 0.25);
     }
 
     public function minQualifiedForCostJudgement(): int
