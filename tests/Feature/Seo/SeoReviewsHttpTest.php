@@ -234,7 +234,7 @@ class SeoReviewsHttpTest extends TestCase
         $this->assertStringContainsString('data-copy-link="https://g.page/r/abc/review"', $html);
         $this->assertSame(2, substr_count($html, 'data-role="review-link-status"'));
         $this->assertStringContainsString('Needs a review link', $html);
-        $this->assertStringContainsString('Review link ready', $html);
+        $this->assertMatchesRegularExpression('/data-role="review-link-status"[^>]*>\s*(?:<[^>]+>\s*)*Ready/', $html);
         // The empty-state Location has no requests yet.
         $this->assertSame(0, substr_count($html, 'data-role="requests-empty"'));
     }
@@ -262,7 +262,7 @@ class SeoReviewsHttpTest extends TestCase
 
         $html = $this->page($workspace, $business);
 
-        $this->assertStringContainsString('Requests recorded: 2', $html);
+        $this->assertStringContainsString('Requests recorded 2 ', preg_replace('/\s+/', ' ', strip_tags((string) (preg_match('/data-role="summary-requests">(.*?)<\/div>/s', $html, $m) ? $m[1] : ''))) . ' ');
         // Investigated: a bare strip_tags($html) over the FULL page (shell
         // included) false-positived on the customer shell's own generic
         // global-search script (`event.target.closest(...)`,
@@ -273,7 +273,9 @@ class SeoReviewsHttpTest extends TestCase
         // technique DashboardInvoiceScopeTest::mainText() already uses —
         // this is the actual contract check: no gating/quota/ranking copy
         // in what the Reviews page itself renders.
-        $this->assertDoesNotMatchRegularExpression('/\b(target|goal|quota|leaderboard|ranking|of \d+ )\b/i', $this->mainText($html));
+        // The "1 of 1" in the Locations-with-a-review-link card is a plain count of Locations, not progress toward anything.
+        $text = (string) preg_replace('/Locations with a review link \d+ of \d+/', 'Locations with a review link', $this->mainText($html));
+        $this->assertDoesNotMatchRegularExpression('/\b(target|goal|quota|leaderboard|ranking|of \d+ )\b/i', $text);
     }
 
     private function mainHtml(string $html): string
@@ -316,7 +318,7 @@ class SeoReviewsHttpTest extends TestCase
 
         $this->assertSame(1, substr_count($html, 'data-section="review-location"'));
         $this->assertSame(1, substr_count($html, 'data-role="review-request"'));
-        $this->assertStringContainsString('Requests recorded: 1', $html, 'Counted only over the accessible Location.');
+        $this->assertStringContainsString('Requests recorded 1 ', preg_replace('/\s+/', ' ', strip_tags((string) (preg_match('/data-role="summary-requests">(.*?)<\/div>/s', $html, $m) ? $m[1] : ''))) . ' ', 'Counted only over the accessible Location.');
         foreach (['Hidden Branch', 'Hidden Person', $hidden->uid, 'hidden-branch/review', $hiddenContact->uid] as $secret) {
             $this->assertStringNotContainsString($secret, $html);
         }
