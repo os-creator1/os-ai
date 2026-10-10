@@ -244,7 +244,7 @@ class CrmBoardMoveContractTest extends TestCase
         $html = $this->get($this->crmRoute('board', $workspace, $business))->assertOk()->getContent();
 
         $this->assertStringContainsString('data-value-minor="250000"', $html);
-        $this->assertMatchesRegularExpression('/data-column="' . preg_quote($this->stageKeyed($pipeline, 'new_inquiry')->uid, '/') . '"\s+data-count="2" data-value-minor="300000"/', $html);
+        $this->assertMatchesRegularExpression('/data-column="' . preg_quote($this->stageKeyed($pipeline, 'new_inquiry')->uid, '/') . '"(?:\s+data-tone="\d+")?\s+data-count="2" data-value-minor="300000"/', $html);
         $this->assertSame(1, substr_count($html, 'data-uid="' . $deal->uid . '"'), 'exactly one card per opportunity');
         $this->assertStringContainsString('js/crm/board-moves.js', $html);
         $this->assertStringContainsString('js/crm/board.js', $html);
