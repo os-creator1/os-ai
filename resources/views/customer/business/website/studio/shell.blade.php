@@ -43,4 +43,5 @@
     @include('partials.section-router._script')
     @include('customer.business.website._brand-fields-script')
     @include('customer.business.website.studio._scripts')
+    @include('customer.business.website._generation-progress')
 @endsection

@@ -780,7 +780,7 @@ final class WebsiteStarterDraftService
      */
     public static function ensurePhotoBoothQuoteForm(Website $website): WebsiteForm
     {
-        return $website->forms()->firstOrCreate(
+        $form = $website->forms()->firstOrCreate(
             ['type' => WebsiteForm::TYPE_QUOTE_REQUEST],
             [
                 'business_id' => $website->business_id,
@@ -794,6 +794,14 @@ final class WebsiteStarterDraftService
                 'location_id' => \App\Models\Contacts::singleActiveLocationIdFor($website->business_id),
             ],
         );
+
+        // A form made before the Business had exactly one Active Location (the wizard creates it first) is connected
+        // now, so a published site never ships a form that turns every visitor away. Never replaces a chosen Location.
+        if ($form->location_id === null && ($locationId = \App\Models\Contacts::singleActiveLocationIdFor($website->business_id)) !== null) {
+            $form->forceFill(['location_id' => $locationId])->save();
+        }
+
+        return $form;
     }
 
     private function pricingAnswer(BusinessPricingMethod $method): string

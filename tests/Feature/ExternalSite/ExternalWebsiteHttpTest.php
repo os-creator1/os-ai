@@ -271,6 +271,17 @@ class ExternalWebsiteHttpTest extends TestCase
         $response->assertDontSee('Use my existing website');
     }
 
+    public function test_an_external_business_cannot_start_the_hosted_setup_by_address(): void
+    {
+        [$business, $workspace] = $this->crawledExternalBusiness();
+
+        $this->get($this->url('setup.start', $workspace, $business))->assertRedirect($this->url('external.overview', $workspace, $business));
+
+        $this->assertSame(0, \App\Models\Website::where('business_id', $business->id)->count(), 'no hosted shell is created');
+        $this->assertSame(0, \App\Models\QuestionnaireResponse::where('business_id', $business->id)->count(), 'no setup session is created');
+        $this->assertSame('external', $business->fresh()->website_mode);
+    }
+
     public function test_an_external_business_never_reaches_the_hosted_settings_redesign(): void
     {
         [$business, $workspace] = $this->crawledExternalBusiness();

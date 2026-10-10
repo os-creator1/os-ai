@@ -487,8 +487,13 @@ final class WebsiteSetupAnswerApplier
             ->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)
             ->first();
 
+        // Forms V1 fails closed: a form with no Location accepts nothing. The only Location knowable here is the
+        // Business's single Active one (never a guess among several); a multi-Location Business chooses it on the
+        // Forms screen, and Website Health says so until it has.
+        $locationId = \App\Models\Contacts::singleActiveLocationIdFor($business->id);
+
         if ($form !== null) {
-            $form->update(['fields' => $fields]);
+            $form->update(['fields' => $fields] + ($form->location_id === null && $locationId !== null ? ['location_id' => $locationId] : []));
 
             return;
         }
@@ -500,6 +505,7 @@ final class WebsiteSetupAnswerApplier
             'name' => 'Photo Booth Quote Request',
             'fields' => $fields,
             'submit_label' => 'Request a quote',
+            'location_id' => $locationId,
         ]);
     }
 

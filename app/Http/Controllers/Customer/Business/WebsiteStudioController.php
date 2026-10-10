@@ -72,6 +72,8 @@ class WebsiteStudioController extends CustomerBaseController
             'domains' => route('customer.workspaces.businesses.website.domains.index', $params),
             'photos' => route('customer.workspaces.businesses.website.photos.index', $params),
             'pages' => route('customer.workspaces.businesses.website.pages.index', $params),
+            'forms' => route('customer.workspaces.businesses.website.forms.index', $params),
+            'rebuild' => route('customer.workspaces.businesses.website.rebuild.form', $params),
             'answers' => route('customer.workspaces.businesses.website.edit-setup', $params),
         ];
     }

@@ -2,6 +2,10 @@
 
 @section('title', $editMode ? 'Save your updated answers' : 'Review your answers')
 
+@section('page-style')
+    @include('partials.section-router._styles')
+@endsection
+
 @section('content')
     <div class="row justify-content-center">
         <div class="col-lg-7">
@@ -92,7 +96,7 @@
                         <span></span>
                     @endif
 
-                    <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.generate', [$workspaceUid, $businessUid]) }}">
+                    <form method="POST" data-generation-form action="{{ route('customer.workspaces.businesses.website.setup.generate', [$workspaceUid, $businessUid]) }}">
                         @csrf
                         <input type="hidden" name="answers_revision" value="{{ $answersRevision }}">
                         <x-button type="submit" variant="primary">{{ $lastAttemptFailed ? 'Try again' : 'Generate my website' }}</x-button>
@@ -101,4 +105,6 @@
             @endif
         </div>
     </div>
+
+    @include('customer.business.website._generation-progress')
 @endsection
