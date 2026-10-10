@@ -47,6 +47,7 @@ final class AdsDecisionInput
         public readonly ?string $purposeUid = null,
         public readonly string $businessCurrency = '',
         public readonly ?int $milestone = null,
+        public readonly ?string $providerResultType = null,
     ) {
     }
 

@@ -26,7 +26,30 @@ final class AdsDecisionPolicy
 
     public function zeroResultActAtMultiple(): float
     {
-        return (float) ($this->values['zero_result_act_at_multiple'] ?? 2.5);
+        return (float) ($this->values['zero_result_act_at_multiple'] ?? 3.0);
+    }
+
+    /** @return list<string> Meta result action types that count the same thing as a recorded inquiry. */
+    public function inquiryComparableResultTypes(): array
+    {
+        $types = $this->values['inquiry_comparable_result_types'] ?? ['offsite_conversion.fb_pixel_lead'];
+
+        return array_values(array_filter((array) $types, 'is_string'));
+    }
+
+    public function minClicksForZeroResultAct(): int
+    {
+        return (int) ($this->values['min_clicks_for_zero_result_act'] ?? 30);
+    }
+
+    public function trackingMismatchMinProviderResults(): int
+    {
+        return (int) ($this->values['tracking_mismatch_min_provider_results'] ?? 10);
+    }
+
+    public function trackingMismatchRecordedShare(): float
+    {
+        return (float) ($this->values['tracking_mismatch_recorded_share'] ?? 0.25);
     }
 
     public function minQualifiedForCostJudgement(): int
