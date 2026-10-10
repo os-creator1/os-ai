@@ -1,236 +1,271 @@
-# MotionGrove staging on Laravel Forge
+# MotionGrove staging on Laravel Forge (zero-downtime deployments)
 
-First real staging server: `motiongrove-staging` (DigitalOcean NYC1, Ubuntu 24.04, PHP 8.3,
-MySQL 8.4, 4 GB / 2 vCPU), site `staging.getmotiongrove.com`, deployed from the `staging` branch.
+First real staging server: `motiongrove-staging` (DigitalOcean NYC1, Ubuntu 24.04, PHP 8.3, MySQL 8.4,
+4 GB / 2 vCPU), site `staging.getmotiongrove.com`, deployed from the **`staging`** branch with Forge
+**zero-downtime deployments** enabled.
 
-**Status: nothing here has been deployed or exercised on the server.** This document is the
-repository-side preparation and the exact procedure. Section 8 lists the acceptance flows; every
-row there starts as "not run" and must be marked only after it has actually been exercised.
+**Status: nothing here has been deployed or exercised on the server.** Section 11 lists the acceptance flows;
+every row starts as "not run" and may be marked only after it has been exercised.
 
-Companion docs (read these, they are the measured detail): [`DEPLOYMENT-READINESS.md`](DEPLOYMENT-READINESS.md)
-(env audit, scheduler, queue, web server, storage, checklist), [`production.env.example`](production.env.example)
-(every variable), [`FRESH-INSTALL.md`](FRESH-INSTALL.md), [`PAYMENTS-LIVE-ACCEPTANCE.md`](PAYMENTS-LIVE-ACCEPTANCE.md).
+Companion docs: [`DEPLOYMENT-READINESS.md`](DEPLOYMENT-READINESS.md) (env audit, scheduler, queue, web server,
+storage, checklist), [`production.env.example`](production.env.example) (every variable),
+[`FRESH-INSTALL.md`](FRESH-INSTALL.md), [`PAYMENTS-LIVE-ACCEPTANCE.md`](PAYMENTS-LIVE-ACCEPTANCE.md).
+
+## 0. The three settings to get right before the first deploy
+
+1. **Frontend build: OFF.** Do not run `npm run build` (the script does not exist; see section 8). Delete any
+   `npm ci` / `npm run build` lines from Forge's pre-filled deployment script and switch off any "build frontend
+   assets" option Forge offers for the site. Compiled assets are committed.
+2. **Deployment script:** replace Forge's script with [`deploy/forge/deploy.sh`](../../deploy/forge/deploy.sh),
+   keeping its three macro lines (`$CREATE_RELEASE()`, `$ACTIVATE_RELEASE()`, `$RESTART_QUEUES()`).
+3. **Environment:** set `APP_KEY` (once) and the staging values in section 3 *before* the first deploy; the
+   script refuses to deploy without an `APP_KEY`.
 
 ## 1. What ships and from where
 
-- Repository `os-creator1/os-ai`. **The Forge site tracks branch `staging` only.** `main` is not a deploy
-  source and automatic deploys from it must stay off. Quick-deploy on `staging` is the user's call; the
-  script below is safe to run on every push, but is also fine to trigger by hand.
-- Compiled CSS/JS are committed (Laravel Mix output); **no Node build runs on the server.**
-- Laravel 12, PHP `^8.2` (8.3 on the server). Required extensions (all present on a Forge PHP 8.3 server;
-  confirm with `php -m` once): `ctype curl dom exif fileinfo gd intl json libxml mbstring openssl pcntl pdo
-  pdo_mysql posix simplexml zip`.
+- Repository `os-creator1/os-ai`. **The site tracks branch `staging` only.** `main` is never a deploy source;
+  keep automatic deployment from `main` off.
+- Laravel 12, PHP `^8.2` (8.3 on the server). Extensions (present on a Forge PHP 8.3 server; confirm once with
+  `php -m`): `ctype curl dom exif fileinfo gd intl json libxml mbstring openssl pcntl pdo pdo_mysql posix
+  simplexml zip`.
+- Layout under zero-downtime: `/home/forge/staging.getmotiongrove.com/{current,releases/<id>,storage,.env}`;
+  nginx root is `.../current/public`. `storage/` and `.env` are shared across releases by Forge.
 
-## 2. One-time Forge site setup
+## 2. One-time Forge setup
 
-1. **New site**: root domain `staging.getmotiongrove.com`, project type *General PHP / Laravel*, web directory
-   `/public`, PHP 8.3. Install the repo `os-creator1/os-ai`, branch **`staging`**, no composer install at creation
-   (the deploy script does it), "Create database" off (we create it below).
-2. **Database**: create a new empty `utf8mb4` / `utf8mb4_unicode_ci` database (e.g. `motiongrove_staging`) and a
-   dedicated user. Never a name containing `testing`: the deploy script refuses those.
-3. **Environment** (Forge -> Environment): start from [`production.env.example`](production.env.example) and apply
-   section 3 below. `.env` must stay writable by the site user: the Platform Owner Settings screens write to it.
-4. **DNS + TLS**: point `staging` A record at the server, then Forge -> SSL -> LetsEncrypt.
-5. **Nginx**: apply section 4 (the `robots.txt` block). This is required, not optional.
-6. **Deployment script**: paste [`deploy/forge/deploy.sh`](../../deploy/forge/deploy.sh) into Forge -> Deployments.
-7. **Scheduler**: Forge -> Scheduler -> command `php8.3 /home/forge/staging.getmotiongrove.com/artisan schedule:run`,
-   frequency every minute, user `forge`. The app's queue consumer *is* a scheduled `queue:work` line
-   (DEPLOYMENT-READINESS section 5.1), so the scheduler is mandatory.
-8. **Queue worker** (recommended, in addition to the scheduler, never instead of it): Forge -> Queue -> connection
-   `database`, queue `automation,default,batch`, tries `1`, timeout `900`, max-time `3600`, one worker.
-9. **First install**, once, over SSH as `forge`, from the site directory, after the first deploy has run:
-   ```
-   php artisan platform:install --owner-email=<you@getmotiongrove.com>
-   ```
-   (enter the owner password at the concealed prompt; it is never an argument). It is idempotent but must not be
-   part of the deploy script. Then `php artisan config:cache`.
-10. Register the Stripe webhooks and provider callbacks (DEPLOYMENT-READINESS section 8 steps 12-13) using the
-    **test-mode** dashboard.
+1. **Site** (already created): root domain `staging.getmotiongrove.com`, web directory `/public`, PHP 8.3,
+   repo `os-creator1/os-ai`, branch **`staging`**.
+2. **Database:** a new empty `utf8mb4` / `utf8mb4_unicode_ci` database (e.g. `motiongrove_staging`) with its own
+   user. Never a name containing `testing`; the deploy script refuses those.
+3. **Environment** (Forge -> Environment): from [`production.env.example`](production.env.example) plus section 3.
+   Generate the key **once**, on any machine with the repo: `php artisan key:generate --show`, paste the value
+   as `APP_KEY`, and never rotate it (stored webhook payloads are encrypted with it). `.env` must stay writable
+   by the site user: Platform Owner Settings screens rewrite it (it is a shared file, so those writes survive
+   deploys; they also delete the config cache, so run `php artisan config:cache` in `current` afterwards).
+4. **DNS + TLS:** A record for `staging`, then Forge -> SSL -> LetsEncrypt.
+5. **Nginx:** apply section 4 (robots.txt block, body size). Required.
+6. **Deployment script:** section 0 item 2.
+7. **Scheduler** (mandatory; the app's queue consumer is a scheduled `queue:work` line): Forge -> Scheduler ->
+   `php8.3 /home/forge/staging.getmotiongrove.com/current/artisan schedule:run`, every minute, user `forge`.
+   Point it at **`current`**, not at a release directory.
+8. **Queue worker** (recommended in addition to the scheduler): Forge -> Queue -> connection `database`, queues
+   `automation,default,batch`, tries `1`, timeout `900`, max-time `3600`, one worker, directory `current`.
+   `$RESTART_QUEUES()` in the deploy script restarts it after every activation.
+9. **First deploy**, then the **first install** (section 7). Install is *not* part of the deploy script.
+10. Register the Stripe **test-mode** webhooks and provider callbacks (DEPLOYMENT-READINESS section 8 steps 12-13).
 
 ## 3. Staging environment (deltas from `production.env.example`)
 
-Secrets are supplied by the owner in Forge only. They are never committed, pasted into chat or logs.
+Secrets are supplied by the owner in Forge only; never committed, pasted into chat, or logged.
 
 | Variable | Staging value | Why |
 |---|---|---|
-| `APP_ENV` | `production` | the Google/Meta `fake` drivers throw in production; staging is a real server |
+| `APP_ENV` | `production` | the Google/Meta `fake` drivers throw in production |
 | `APP_DEBUG` | `false` | the deploy script refuses `true` |
 | `APP_URL` | `https://staging.getmotiongrove.com` | exact origin; `TrustHosts` and OAuth/Stripe return URLs depend on it |
-| `APP_KEY` | generated once on the server (`php artisan key:generate --force`, first install only) | **never** the key in `.env.example` (it is committed and public) |
-| `APP_NAME` | `MotionGrove` | platform name shown on login/register/navigation |
-| `APP_TITLE` | `MotionGrove` | page-title suffix (the local preview still says "Test Title") |
+| `APP_KEY` | generated once (section 2.3) | **never** the key in `.env.example` (committed and public); the script refuses an empty key |
+| `APP_NAME`, `APP_TITLE` | `MotionGrove` | platform name; `APP_TITLE` is the page-title suffix |
 | `DB_*` | the staging database/user | |
 | `QUEUE_CONNECTION` | `database` | never `sync` |
-| `CACHE_DRIVER`, `SESSION_DRIVER` | `file` | one server |
+| `CACHE_DRIVER`, `SESSION_DRIVER` | `file` | one server; shared `storage/` |
 | `SESSION_SECURE_COOKIE` | `true` | |
 | `LOG_CHANNEL` / `LOG_LEVEL` | `daily` / `warning` | |
-| `MAIL_*` | a **sandbox** SMTP (Mailtrap/Mailpit-style or a verified sender), never real customers | `MAIL_MAILER=smtp`; the app reads `MAIL_MAILER`, not `MAIL_DRIVER` |
-| `ACCOUNT_VERIFICATION` | `true` for the real signup flow (needs working mail); `false` only to skip the email step | the local preview has `false`, which is why two signup tests fail there |
+| `MAIL_*` | a **sandbox** SMTP, never real customers | `MAIL_MAILER=smtp` (the app reads `MAIL_MAILER`, not `MAIL_DRIVER`) |
+| `ACCOUNT_VERIFICATION` | `true` for the real signup flow (needs working mail); `false` only to skip the email step | the local preview has `false`, which fails two signup tests there |
 | `ACCOUNT_CAN_REGISTER` | `true` | sellable plans are still required (section 5.1) |
-| `STRIPE_MODE` | `test` | no live charges |
-| `STRIPE_KEY`, `STRIPE_SECRET` | **owner supplies test keys** | needed before a plan can be sold or a webhook endpoint can be built |
+| `STRIPE_MODE` | `test` | **the deploy script refuses `live` mode and any `sk_live_/pk_live_/rk_live_` key** |
+| `STRIPE_KEY`, `STRIPE_SECRET` | owner-supplied **test** keys | needed to sell a plan or build a webhook gateway |
 | `STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`, `STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET`, `STRIPE_WEBHOOK_SECRET` | the four test-mode signing secrets | four lanes, four endpoints, four different secrets |
 | `GOOGLE_ADS_DRIVER`, `META_ADS_DRIVER` | `http` (or unset) | `fake` is refused in production |
 | `EXTERNAL_SITE_AUDIT_DRIVER` | unset (`http`) | `fake` is a fixture driver |
 | `SEO_RANK_TRACKING_ENABLED` | `false` | paid provider, fail-closed |
 | `OPENAI_ACTIVE` / `OPENAI_API_KEY` | `false` / empty until section 5.4 | AI kill switch |
-| `BUSINESS_ONBOARDING_ENABLED`, `BUSINESS_ONBOARDING_REQUIRE_NEW_CUSTOMERS` | decide deliberately: `true` for the onboarding acceptance | default off; the scheduled sweeps no-op while off |
-| `OPPORTUNITY_ENGINE_ENABLED`, `DOCUMENTS_ENABLED` | optional; they gate scheduled sweeps/reminders, not the pages | default off |
+| `BUSINESS_ONBOARDING_ENABLED`, `BUSINESS_ONBOARDING_REQUIRE_NEW_CUSTOMERS` | `true` for the onboarding acceptance | default off |
+| `OPPORTUNITY_ENGINE_ENABLED`, `DOCUMENTS_ENABLED` | optional; gate scheduled sweeps/reminders, not the pages | default off |
 | `USAGE_BILLING_WEBHOOK_RETENTION_DAYS` | `90` | unset means webhook payloads are never purged |
-| `FORGE_*` | leave blank for now | custom-domain TLS automation is unproven (DEPLOYMENT-READINESS 1.2 C) |
+| `FORGE_*` | blank for now | custom-domain TLS automation is unproven (DEPLOYMENT-READINESS 1.2 C) |
 
-## 4. Nginx: `/robots.txt` must reach Laravel (required)
+## 4. Nginx (Forge -> Site -> Files -> Edit Nginx Configuration)
 
-Forge's default site template contains
-
-```
-location = /robots.txt  { access_log off; log_not_found off; }
-```
-
-With no `try_files`, nginx answers that from disk and returns **404** (there is deliberately no
-`public/robots.txt`), which silently removes the app's dynamic robots and every customer's `Sitemap:` line.
-In Forge -> Site -> Edit Files -> Edit Nginx Configuration, replace that block with:
+The root is `/home/forge/staging.getmotiongrove.com/current/public` (Forge manages this line; check it ends in
+`current/public`). Two edits are required:
 
 ```
+# 1. REPLACE Forge's default robots block:
+#      location = /robots.txt  { access_log off; log_not_found off; }
+#    which answers from disk and returns 404 (there is deliberately no public/robots.txt), silently removing
+#    the app's dynamic robots and every customer's Sitemap line. Use:
 location = /robots.txt { try_files /dev/null /index.php?$query_string; }
+
+# 2. Website images are capped at 8 MB:
+client_max_body_size 10m;
 ```
 
-Also set `client_max_body_size 10m;` (website images are capped at 8 MB) and keep `upload_max_filesize >= 8M`,
-`post_max_size >= 10M` in the server's PHP settings. Verify with `deploy/forge/post-deploy-check.sh` after deploy.
+Keep `upload_max_filesize >= 8M` and `post_max_size >= 10M` in the server's PHP settings. Never add a static
+robots file or a CDN/server robots rule. Verify with `deploy/forge/post-deploy-check.sh`.
 
-## 5. Feature gates: authoritative configuration path and what is code vs configuration
+## 5. Feature gates: authoritative configuration path (all configuration; no code change needed)
 
-Verified by reading the code and by focused tests (section 7). **No code change was needed for any gate**; each
-is configuration or an owner-supplied credential.
+### 5.1 Registration and sellable plans
+- `ACCOUNT_CAN_REGISTER` (env; also Platform Owner -> Settings -> Security) turns the registration route on. A plan
+  must also be **sellable** (`WorkspacePlanCatalog::isSellable()`): `is_active`, `available_for_signup`, a `price`,
+  a `currency_id` **and** a `provider_price_id` (Stripe Price ID). Nothing sellable shows the closed signup state.
+- The authoritative UI is **Platform Owner -> Platform plans** (`admin/platform-plans`): display name, active,
+  *available for signup*, price, currency, cycle, trial, **Stripe Price ID**, with audited price history and a
+  per-plan **blockers** list. Saving a Price ID verifies price/currency/cycle against Stripe, so **real test prices
+  and Stripe test credentials are both required** first. No price or Price ID is hardcoded or invented.
 
-### 5.1 Registration and sellable plans: configuration only
+### 5.2 Stripe (test mode only)
+- `STRIPE_MODE=test`, test `STRIPE_KEY`/`STRIPE_SECRET`, and one signing secret per lane (section 3).
+- Webhooks (test-mode dashboard): `/stripe/webhook/platform-subscriptions` (Core/Growth checkout needs this one),
+  `/stripe/webhook/business-payments` and `/stripe/webhook/agency-subscriptions` (Connect),
+  `/stripe/webhook/usage-billing`. Events: DEPLOYMENT-READINESS section 8 step 12.
+- An **unsigned** POST must return `400`. With no `STRIPE_SECRET`, `usage-billing` answers 500 ("services.stripe.secret
+  must not be empty"); with the secret set it refuses with 400.
+- **Committed demonstration credential, fixed:** `database/seeders/PaymentMethodsSeeder.php` seeded an upstream
+  demo Stripe test key pair into the legacy `payment_methods` table. Those literals are now blank, a regression test
+  (`NoHardcodedGatewayCredentialsTest::test_no_stripe_key_literal_is_committed_in_application_code`) fails if any
+  `sk_/pk_/rk_(test|live)_...` literal returns to `app/`, `config/`, `database/`, `routes/` or `resources/views/`, and the
+  deploy script refuses live Stripe mode or live keys. V1 platform billing never reads that table (it uses `STRIPE_*`).
+  Other legacy gateway rows (PayPal, Braintree, Razorpay, PayHere, EasyPay, Selcom) still seed upstream demo values;
+  they are disabled and not Stripe, so they were left alone. After first install confirm none is enabled:
+  `SELECT name, status FROM payment_methods WHERE status = 1;` must return no rows, and do not enable legacy gateways.
 
-- `ACCOUNT_CAN_REGISTER` (env, also writable from Platform Owner -> Settings -> Security) turns the registration
-  *route* on. A plan must additionally be **sellable**: `WorkspacePlanCatalog::isSellable()` requires
-  `is_active`, `available_for_signup`, a `price`, a `currency_id` **and** a `provider_price_id` (Stripe Price ID).
-  If nothing is sellable the signup controller shows the closed state.
-- The authoritative UI is **Platform Owner -> Platform plans** (`admin/platform-plans`, `PlatformPlansController`
-  -> `PlatformPlanAdministrator`). It edits display name, active, *available for signup*, price, currency, billing
-  cycle, trial, **Stripe Price ID** and the slot-price ratio, with audited price history. Each plan card lists its
-  **blockers** (`PlatformPlanPresenter::blockers`), so the owner sees exactly why a tier is not sellable. Nothing
-  is hardcoded; no seeder supplies prices.
-- When a Stripe Price ID is saved the administrator verifies it against price, currency and billing cycle through
-  `PlatformPriceVerifier` using the configured Stripe secret (`provider_price_id` validation error otherwise). So
-  **real test prices and test Stripe credentials are both required before Core or Growth can be switched on.**
-  This task did not and must not invent prices, Price IDs or keys.
+### 5.3 Branding
+Login and registration render through `AuthBrandPresenter` (authorised Agency brand for the host, else the
+Platform Owner name/illustration, else the neutral fallback); navigation uses `x-branding-logo` / `x-branding-favicon`;
+Agency white-label resolves first. Set `APP_NAME` and `APP_TITLE`. Remaining hard-coded product copy ("Setting up
+your Business OS...", "Business OS leads / outcomes", "AI Business Advisor recommendations", the neutral "AI
+Business OS" fallback) is a copy decision, unchanged.
 
-### 5.2 Stripe checkout and webhooks: configuration only
+### 5.4 AI generation
+- Kill switch `OPENAI_ACTIVE` (default `false`; also Platform Owner -> Settings), key `OPENAI_API_KEY`, model
+  `OPENAI_MODEL` (default `gpt-4o`). Per-plan monthly workspace caps in `config/ai.php` (Core $5, Growth $10, Agency
+  $25, trial $1.50) plus a platform cap `AI_PLATFORM_MONTHLY_CAP_MICROUSD` (default $20); a workspace without a valid
+  plan has a zero cap.
+- **Smallest safe real-AI smoke test** (needs owner approval and a key; none was used): set
+  `AI_BUDGET_CORE_WORKSPACE_CAP_MICROUSD=500000` and `AI_PLATFORM_MONTHLY_CAP_MICROUSD=1000000`, then
+  `OPENAI_API_KEY`, `OPENAI_ACTIVE=true`, `config:cache`; run **one** generation as a test Core account; read
+  Platform Owner -> AI usage; set `OPENAI_ACTIVE=false` again. The owner pastes the key into Forge; never copy the
+  developer machine's key.
 
-- Needs `STRIPE_KEY` + `STRIPE_SECRET` (test), `STRIPE_MODE=test`, and one signing secret per lane (section 3).
-- Webhook endpoints on the staging host (create them in the **test-mode** dashboard):
-  `/stripe/webhook/platform-subscriptions` (signup/plan subscriptions, the one the Core/Growth checkout needs),
-  `/stripe/webhook/business-payments` (Connect), `/stripe/webhook/agency-subscriptions` (Connect),
-  `/stripe/webhook/usage-billing`. Events per DEPLOYMENT-READINESS section 8 step 12.
-- Readiness check: an **unsigned** POST to each must return `400`. On a host with no `STRIPE_SECRET` the
-  `usage-billing` endpoint currently answers `500` ("services.stripe.secret must not be empty") instead of a 4xx
-  because its gateway cannot be built; with the secret set it refuses with 400. Not a blocker; noted so the
-  readiness script's expectation is understood.
-- Local Stripe CLI exists on the owner's machine (`stripe listen`), but staging uses real dashboard webhooks.
+## 6. Deployment lifecycle and safety (what `deploy.sh` does, in order)
 
-### 5.3 Branding: wired; one setting and some copy to know about
+1. `$CREATE_RELEASE()`: Forge clones branch `staging` into a **new** release directory and links the shared `.env`
+   and `storage/`. There is no `git pull` and no assumption about a mutable checkout; the live release is untouched.
+2. Guards (refuse before building anything): not the `staging` branch; `.env` missing; a `*_testing` database;
+   `APP_DEBUG=true`; empty `APP_KEY`; Stripe live mode or live keys; a static `public/robots.txt`.
+3. `composer install --no-dev --prefer-dist --optimize-autoloader` (runs package discovery inside the release).
+4. Shared state: creates the `storage/` skeleton and **links customer upload directories into shared storage**
+   (below), then `storage:link --relative`.
+5. `config:cache`, `route:cache`, `view:cache`, `event:cache`, built inside the new release.
+6. `migrate --force`: additive migrations only, against the live DB **while the previous release still serves**
+   (so every migration must be backward compatible; drop/rename in a later release). That is also what makes a Forge
+   rollback safe.
+7. `$ACTIVATE_RELEASE()`: Forge atomically repoints `current` and reloads PHP-FPM. Only now does traffic move.
+8. `$RESTART_QUEUES()`: restarts the Forge queue daemons onto the new release. Scheduler-driven workers pick up new
+   code on their next minutely run.
 
-- Login and registration render through `AuthBrandPresenter` (an authorised Agency brand for the request host,
-  else the Platform Owner's configured name/illustration, else the neutral fallback). The sidebar and favicon use
-  the `x-branding-logo` / `x-branding-favicon` components. Agency white-label resolves first
-  (`AgencyBrandResolver`), so an Agency override takes precedence over the platform brand.
-- Verified on the running preview: `/login` and `/register` titles and body say **MotionGrove**; the navigation
-  logo `alt` is MotionGrove. The platform name comes from `APP_NAME`/Platform Settings.
-- **Not wired to the platform name:** `APP_TITLE` is the page-title suffix on application pages (the preview
-  shows "Test Title"): set it in Platform Settings or env. Several customer-facing strings are hard-coded product
-  copy rather than the platform name: "Setting up your Business OS..." (signup provisioning screen), "Business OS
-  leads / outcomes" (Ads leads pages), "AI Business Advisor recommendations" (Analytics), and the neutral
-  "AI Business OS" fallback panel. These are copy decisions, left unchanged (tests may pin them); decide whether
-  they should read as the platform name.
+**Never in the script:** `platform:install`, any seeder, `migrate:fresh/refresh`, `db:wipe`, `key:generate`,
+`git clean`, `rsync --delete`, npm/mix.
 
-### 5.4 AI generation: the kill switch, key and budget
+**Persistence across releases and rollbacks.** `public/` belongs to one release, but the app writes uploads there:
+`images/websites` (including responsive `v/` derivatives), `images/business`, `images/branding/{logo,logo_compact,
+logo_dark,favicon,auth_illustration,installer_illustration,agency}`, `images/logo`, `mms`, `voice`, `senderid_docs`.
+`deploy.sh` replaces each with a symlink to `storage/app/shared-public/<same path>` (inside the shared `storage/`),
+copying files a release ships (demo logos, sample voice XML) in once without overwriting. A deploy or Forge
+rollback therefore never loses an upload. `storage/` (sessions, cache, logs, `storage/app`) and `.env` are shared by
+Forge; the app writes `.env` through the symlink with `file_put_contents`, so Settings saves persist.
+Uploads exist **only on disk**: include `storage/app/shared-public` in backups.
+**Verify on the server after the second deploy:** `bash /home/forge/staging.getmotiongrove.com/current/deploy/forge/verify-uploads.sh /home/forge/staging.getmotiongrove.com`
+(it checks every link, writes a probe through `current`, and reads it from the previous release).
 
-- Gate 1 is `OPENAI_ACTIVE` (default `false`): `AiGateway` returns `AiDisabled` and spends nothing. It is also
-  switchable from Platform Owner -> Settings (written to `.env` by `PlatformSettingsEnvWriter`). The key is
-  `OPENAI_API_KEY`; model `OPENAI_MODEL` (default `gpt-4o`).
-- Gate 2 is the per-plan monthly **workspace cap** (config/ai.php, micro-USD): Core `5_000_000` ($5), Growth
-  `10_000_000` ($10), Agency `25_000_000`, trial `1_500_000`; plus a platform cap `AI_PLATFORM_MONTHLY_CAP_MICROUSD`
-  (default `20_000_000`) and per-category Business ceilings. A workspace with no valid plan resolves to a **zero cap**
-  and is refused (`BudgetExhausted`).
-- **Smallest safe real-AI smoke test** (needs the owner's approval and key; none was used here):
-  1. In Forge env set a deliberately tiny cap first, e.g. `AI_BUDGET_CORE_WORKSPACE_CAP_MICROUSD=500000`
-     (50 cents) and `AI_PLATFORM_MONTHLY_CAP_MICROUSD=1000000` ($1), then `OPENAI_API_KEY=<owner's key>`.
-  2. `OPENAI_ACTIVE=true`, `php artisan config:cache`.
-  3. As a *test* Core account, run **one** website generation (or one service description) and read
-     Platform Owner -> AI usage for the recorded cost.
-  4. Set `OPENAI_ACTIVE=false` again unless continuing acceptance.
-  Do not copy the key that exists on the developer machine; the owner pastes a key into Forge directly.
+**Assumptions to confirm in the first deployment log** (Forge's zero-downtime internals are not testable from the
+repository): `$FORGE_SITE_PATH` is the site root containing `current/` and the shared `storage/`/`.env`;
+`$FORGE_RELEASE_DIRECTORY` is the new release; `.env` and `storage` appear as links inside it. If a variable
+differs, adjust only those lines.
 
-## 6. Deployment safety
+Other: no dedicated health route; `GET /login` -> 200 and `GET /` -> 302 are the readiness signals.
+`bootstrap/cache/packages.php`/`services.php` are no longer tracked (stale; they fought package discovery).
 
-- The deploy script is the standard in-place Forge `git pull`. It never runs `platform:install`, a seeder,
-  `migrate:fresh/refresh`, `db:wipe`, `git clean`, `key:generate`, `rsync --delete` or a Node build, so a deploy
-  cannot reset customer data or delete uploads. Migrations are additive (`migrate --force`).
-- **Uploads** (`public/images/websites/**`, `public/images/business/**`, `public/images/branding/**` except the
-  three tracked `default-*.svg`, `public/mms`) and `storage/app` are untracked on disk. An in-place `git pull`
-  leaves them alone. They are now git-ignored so they cannot be committed by accident. They are **not** in the
-  database or repository: include them in backups. Never switch this site to zero-downtime/release-directory
-  deployment without first symlinking those paths to shared storage (DEPLOYMENT-READINESS section 7).
-- `bootstrap/cache/packages.php` and `services.php` were committed (stale, without Blade Icons) and fought every
-  `composer install`/`package:discover`. They are untracked and the directory is kept with a `.gitignore`.
-- 30 test-residue images under `public/images/websites/<uuid>/` (about 5 MB, from one earlier commit) are removed
-  from the tree and ignored.
-- Readiness probe: there is no dedicated health route; `GET /login` -> `200` and `GET /` -> `302` are the safe
-  existing signals. `APP_STAGE=new` would make `/` answer 503.
-- Sessions, cache and queue use `file`/`file`/`database` on this single server.
+## 7. First installation (separate, once, never from a deploy)
 
-## 7. Verification performed in the repository (isolated test database only)
+After the first successful deploy, over SSH as `forge`:
 
-Passing: `V1SignupTest` (11), `PlatformOwnerControlsTest` (17), `WebhookActivationTest` (14), `AiGatewayTest` (20),
-`AiGatewayPlatformScopeTest` (16), `AiBudgetPolicyResolverPlatformTest` (8), `AuthBrandPresenterTest` (7),
-`BrandingPresenterFallbackTest` (9), and the document/invoice UI set.
+```
+cd /home/forge/staging.getmotiongrove.com/current
+php artisan platform:install --owner-email=<you@getmotiongrove.com>   # owner password at the concealed prompt
+php artisan config:cache
+```
+Then check `SELECT count(*) FROM currencies;` = 12, `workspace_plan_catalog` has `core`, `growth`, `agency`, one
+`is_admin` user, and the legacy-gateway query in section 5.2 returns no rows.
 
-Failing, none caused by the deployment changes:
-- `V1SignupHttpTest`: 2 failures (`...sends_the_email_verification_notification`,
-  `...success_endpoint_activates_from_provider_truth_and_hands_off_to_verification`) because the local
-  preview `.env` has `ACCOUNT_VERIFICATION=false`; they expect it on (default `true`).
-- `AuthBrandTenantIsolationTest`: 1 error, a stale fixture (adds a second Business to one Workspace, which
-  Contract 13 forbids).
-- `PaymentsContractsAcceptanceTest`: fails at the email-send token step, identically on the unchanged preview.
+**Do not re-run `platform:install` on a live instance.** It is idempotent for catalogs, but `db:seed` includes
+`PaymentMethodsSeeder`, which **truncates `payment_methods`** and re-seeds it. Upgrades are deploys only.
 
-Not verifiable without a server: `composer install --no-dev` (no Composer on the build machine; nothing in
-`app/`, `config/`, `routes/` references the dev-only packages), PHP-FPM/Nginx behaviour, real cron/queue, MySQL
-8.4 on Linux, any live provider.
+## 8. Frontend assets and npm (the Forge "Missing script: build" error)
 
-## 8. End-to-end staging acceptance (procedure; all rows start "not run")
+- `package.json` defines Laravel Mix scripts only: `development`, `watch`, `watch-poll`, `hot`, `production`
+  (`mix --production`). **There is no `build` script**, and none should be invented. `webpack.mix.js` is the whole asset
+  pipeline; there is no Vite.
+- Compiled CSS/JS/vendors/fonts and `public/mix-manifest.json` are **committed**. Verified: all 95 `mix('...')`
+  references in views resolve to a manifest entry and a file on disk. **No frontend build is needed or wanted on the
+  server**; a build there would rewrite committed assets inside the release.
+- **Forge setting:** frontend build **off**; no `npm` line in the deployment script. (If assets ever change:
+  `npm ci && npm run production` locally, commit the output, deploy.)
+- **`npm audit` (49 findings: 2 critical, 22 high, 18 moderate, 7 low)** was read from the lockfile only
+  (`npm audit --package-lock-only`); nothing was installed, upgraded or fixed. Node is **never run in production**
+  (no Node server), so findings in build tooling are not exposed to users:
+  - the 2 criticals are `proxy-addr` and `shell-quote`, transitive packages of the dev server / `browser-sync`;
+  - 48 of the 49 arise only from `devDependencies` (laravel-mix/webpack/sass/browser-sync/imagemin/...);
+  - the one finding in the production-dependency tree (`brace-expansion`, high) comes via `glob`, which only
+    `webpack.mix.js` uses at build time;
+  - `axios` (high) is a devDependency and is **not** bundled into the shipped JS (`echo.js` only checks for a global).
+  No dependency changes were made. Not covered by `npm audit`: third-party libraries copied into the committed
+  `public/vendors/**`; review those separately if desired.
 
-Run after sections 2-3 are done, using throwaway accounts and Stripe **test** cards (`4242 4242 4242 4242`).
-First: `bash deploy/forge/post-deploy-check.sh https://staging.getmotiongrove.com` (readiness only).
+## 9. Validation performed in the repository (isolated test databases only)
+
+Passing: `NoHardcodedGatewayCredentialsTest` (3, including the new Stripe-literal guard, shown to fail when a key is
+reintroduced), `WebsiteInstallationSeedingTest` (2), `QuestionnaireV2ProvisioningTest` (6), `V1SignupTest` (11),
+`PlatformOwnerControlsTest` (17), `WebhookActivationTest` (14), AI gateway/budget tests (44), brand presenter/fallback (16).
+`deploy.sh` was exercised with stubbed Forge macros: syntax valid; every guard refused its case (debug, test DB, live
+mode, live key, empty key, wrong branch) and a normal run completes in order. **Not exercised:** the symlink and
+persistence logic (the build machine is Windows without symlink rights or WSL), Forge's real macros, `composer --no-dev`
+(no Composer here), FPM/Nginx, cron, MySQL 8.4 on Linux, any live provider. `verify-uploads.sh` exists for that.
+
+Known failures unrelated to this work: `V1SignupHttpTest` x2 (the local preview `.env` has `ACCOUNT_VERIFICATION=false`);
+`AuthBrandTenantIsolationTest` x1 (stale Contract 13 fixture); `PaymentsContractsAcceptanceTest` (email-send token step;
+identical on the unchanged preview).
+
+## 10. Readiness check (after each deploy)
+
+`bash deploy/forge/post-deploy-check.sh https://staging.getmotiongrove.com` (read-only GETs and unsigned webhook POSTs).
+Readiness only; it is not acceptance.
+
+## 11. End-to-end staging acceptance (all rows start "not run")
+
+Use throwaway accounts and Stripe **test** cards (`4242 4242 4242 4242`).
 
 | # | Flow | How | Needs from the owner | Status |
 |---|---|---|---|---|
-| 1 | Public registration | open `/register`; with no sellable plan it must show the closed state; after step 2 it must open | none | not run |
-| 2 | Core/Growth selectable | Platform Owner -> Platform plans: set price, currency, cycle, Stripe Price ID, *available for signup*; blockers list must be empty | real test prices, Stripe test keys and Price IDs | not run |
-| 3 | Sandbox checkout + webhook | sign up on Growth with a test card; confirm `checkout.session.completed` reaches `/stripe/webhook/platform-subscriptions` (Stripe dashboard: delivered 2xx), the account activates, `jobs` drains, `failed_jobs` stays 0 | the four webhook secrets | not run |
-| 4 | Onboarding + Location | finish onboarding; confirm one Business and one Location exist | `BUSINESS_ONBOARDING_ENABLED=true` | not run |
-| 5 | Hosted website setup | choose "Build with MotionGrove", complete the wizard | none | not run |
-| 6 | AI generation | one generation under the tiny cap (section 5.4) | owner-approved OpenAI key | not run |
-| 7 | Edit + staging publish | edit in Studio, publish, open the published URL; `robots.txt` carries the `Sitemap:` line | none | not run |
+| 1 | Public registration | `/register` shows the closed state with no sellable plan; opens after step 2 | none | not run |
+| 2 | Core/Growth selectable | Platform plans: price, currency, cycle, Stripe Price ID, *available for signup*; blockers empty | real test prices, Stripe test keys, Price IDs | not run |
+| 3 | Sandbox checkout + webhook | sign up on Growth with a test card; `checkout.session.completed` delivered 2xx; account activates; `jobs` drains; `failed_jobs` = 0 | the four webhook secrets | not run |
+| 4 | Onboarding + Location | finish onboarding; one Business and one Location exist | `BUSINESS_ONBOARDING_ENABLED=true` | not run |
+| 5 | Hosted website setup | "Build with MotionGrove" wizard | none | not run |
+| 6 | AI generation | one generation under the tiny cap (5.4) | approved OpenAI key | not run |
+| 7 | Edit + staging publish | Studio edit, publish, open the URL; robots carries the `Sitemap:` line | none | not run |
 | 8 | Inquiry form | submit the published site's form | none | not run |
-| 9 | Contact + CRM opportunity | the submission creates a Contact and an Opportunity in the right pipeline/Location | none | not run |
+| 9 | Contact + CRM opportunity | submission creates a Contact and an Opportunity in the right pipeline/Location | none | not run |
 | 10 | Queue + scheduler | `schedule:list` shows 53 entries; `storage/cronJobAvailable` exists; a queued job drains in ~1 min | none | not run |
-| 11 | Isolation | with two Businesses/Locations, confirm each sees only its own contacts, opportunities, forms and website | two test accounts | not run |
-| 12 | Uploads survive a deploy | upload a logo and a website image, redeploy once, confirm both still load | none | not run |
+| 11 | Isolation | two Businesses/Locations each see only their own data | two test accounts | not run |
+| 12 | Uploads survive deploy and rollback | upload a logo and a site image; deploy again; roll back once; both still load; `verify-uploads.sh` passes | none | not run |
 
-## 9. Blockers and approvals needed from the owner
+## 12. Blockers and approvals needed from the owner
 
-1. Forge access or a server shell to run sections 2 and 8 (not available to this task).
-2. Stripe **test** keys, the four webhook signing secrets, and test **Price IDs** for Core and Growth with the
-   chosen prices/currency (nothing was invented).
-3. A sandbox SMTP, or `ACCOUNT_VERIFICATION=false` for the first pass.
-4. Approval and a key for the one real OpenAI smoke test, and the tiny caps.
-5. A decision on the hard-coded "Business OS" copy (section 5.3), and awareness of one tracked key-like string:
-   `database/seeders/PaymentMethodsSeeder.php` contains an upstream demo Stripe **test** secret/publishable pair.
-   `platform:install` seeds it into `payment_methods` as a **disabled, sandbox** legacy row (`status=false`). It is not
-   read by the V1 platform billing (which uses `STRIPE_*` env). Leave that legacy row disabled, and consider
-   removing the literal from the seeder in a later change; the string is already in the repository history.
-6. Pushing the `staging` branch: see the delivery report; the remote branch needs the owner's decision.
+1. First deployment approval, and confirmation of the section 6 assumptions from its log.
+2. Stripe **test** keys, the four webhook secrets, real test Price IDs and prices for Core and Growth.
+3. Sandbox SMTP, or `ACCOUNT_VERIFICATION=false` for the first pass.
+4. Approval and a key for the single OpenAI smoke test.
+5. Decision on the hard-coded "Business OS" copy (5.3) and on the other legacy gateway demo values (5.2).
