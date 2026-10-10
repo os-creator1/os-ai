@@ -56,10 +56,19 @@ class DocumentsController extends CustomerBaseController
         $ids = $this->locations->accessibleLocationIdsForBusiness((int) Auth::id(), $business);
         // Server-side All / Proposals / Invoices filter; anything else means All.
         $kindFilter = in_array(request()->query('kind'), ['proposal', 'invoice'], true) ? (string) request()->query('kind') : '';
-        $documents = BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids)->when($kindFilter !== '', fn ($q) => $q->where('kind', $kindFilter))->with(['businessLocation', 'currentVersion'])->latest()->paginate(25)->withQueryString();
+        // Sent = already issued to the customer (sent_at set); Drafts = still private. Only ever one of kind / state applies.
+        $stateFilter = $kindFilter === '' && in_array(request()->query('state'), ['sent', 'draft'], true) ? (string) request()->query('state') : '';
+        $visible = BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids);
+        $documentCounts = ['all' => (clone $visible)->count(), 'sent' => (clone $visible)->whereNotNull('sent_at')->count()];
+        $documents = (clone $visible)->when($kindFilter !== '', fn ($q) => $q->where('kind', $kindFilter))
+            ->when($stateFilter === 'sent', fn ($q) => $q->whereNotNull('sent_at'))
+            ->when($stateFilter === 'draft', fn ($q) => $q->where('status', 'draft'))
+            ->with(['businessLocation', 'currentVersion'])->latest()->paginate(25)->withQueryString();
         return view('customer.business.documents.index', [
             'documents' => $documents,
             'kindFilter' => $kindFilter,
+            'currentFilter' => $kindFilter !== '' ? $kindFilter : $stateFilter,
+            'documentCounts' => $documentCounts,
             // Contract 17B — block / new proposal drafts open in the visual editor; issued and legacy documents keep the classic page.
             'editorUids' => $this->editorDraftUids($documents->getCollection()),
             // Contract 17B §6 — step 2 of New proposal: own ACTIVE templates + recommended platform templates (empty until niche blueprints supply them).
