@@ -668,6 +668,59 @@
             inputs[1].value = end;
         }
 
+        // Time off: "Add time off" reveals the inline editor; Cancel hides it and
+        // clears what was typed, so reopening starts clean.
+        function timeOffPanel(open) {
+            var editor = document.querySelector('[data-timeoff-editor]');
+            var footer = document.querySelector('[data-timeoff-footer]');
+
+            if (!editor || !footer) {
+                return;
+            }
+
+            editor.hidden = !open;
+            footer.hidden = open;
+
+            var trigger = footer.querySelector('[data-timeoff-open]');
+
+            if (trigger) {
+                trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+            }
+
+            if (open) {
+                var first = editor.querySelector('select, input');
+
+                if (first) {
+                    first.focus();
+                }
+            } else {
+                editor.reset();
+                // reset() restores any values the server re-rendered after a refusal; a cancel
+                // must leave nothing behind.
+                editor.querySelectorAll('input[type="datetime-local"], input[type="text"]').forEach(function (field) { field.value = ''; });
+                editor.querySelectorAll('.is-invalid').forEach(function (field) { field.classList.remove('is-invalid'); });
+                editor.querySelectorAll('.invalid-feedback').forEach(function (note) { note.remove(); });
+
+                if (trigger) {
+                    trigger.focus();
+                }
+            }
+        }
+
+        document.addEventListener('click', function (event) {
+            var control = event.target.closest ? event.target.closest('[data-timeoff-open], [data-timeoff-cancel]') : null;
+
+            if (control) {
+                timeOffPanel(control.hasAttribute('data-timeoff-open'));
+            }
+        });
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && event.target.closest && event.target.closest('[data-timeoff-editor]')) {
+                timeOffPanel(false);
+            }
+        });
+
         document.addEventListener('change', function (event) {
             var toggle = event.target.closest ? event.target.closest('[data-day-toggle]') : null;
 

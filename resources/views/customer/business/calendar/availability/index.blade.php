@@ -20,6 +20,12 @@
         $days = [0 => 'Sunday', 1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday'];
     @endphp
 
+    @foreach (['flash_success' => 'success', 'flash_info' => 'neutral', 'flash_error' => 'danger'] as $flashKey => $flashVariant)
+        @if (session($flashKey))
+            <x-alert :variant="$flashVariant" class="mb-2" role="status">{{ session($flashKey) }}</x-alert>
+        @endif
+    @endforeach
+
     <x-card title="Weekly hours" class="mb-2" data-section="availability-rules">
         <p class="text-caption">
             When each person is bookable at <strong>{{ $location->name ?: 'this location' }}</strong>.
@@ -66,9 +72,12 @@
                 </x-alert>
             @endif
 
-            @if ($errors->any())
+            @php
+                $weekProblems = collect($errors->getMessages())->filter(fn ($messages, $key) => str_starts_with($key, 'days'))->flatten();
+            @endphp
+            @if ($weekProblems->isNotEmpty())
                 <x-alert variant="danger" class="mb-1" role="alert">
-                    @foreach ($errors->all() as $message)
+                    @foreach ($weekProblems as $message)
                         <div>{{ $message }}</div>
                     @endforeach
                 </x-alert>
@@ -134,82 +143,109 @@
         @endif
     </x-card>
 
-    <x-card title="Time off" class="mb-2" data-section="availability-time-off">
-        {{-- §5.3/§6 condition 3: the User-global scope must be stated plainly to the actor. --}}
-        <x-alert variant="neutral" class="mb-2">
-            <strong>Time off applies everywhere, not just this location.</strong>
-            A person on time off is unavailable at every location they work at, for the whole period.
-        </x-alert>
+    @php
+        // Re-open the editor, with the typed values, after a refused submit.
+        $timeOffFields = ['staff_user_id', 'start_at', 'end_at', 'reason'];
+        $timeOffOpen = collect($timeOffFields)->contains(fn ($field) => $errors->has($field));
+        $formatMoment = static fn ($moment) => $moment->format('M j, Y') . ' · ' . $moment->format('g:i A');
+    @endphp
 
-        @if ($timeOff->isEmpty())
-            <p class="text-caption">No time off recorded.</p>
-        @else
-            <div class="table-responsive">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Person</th>
-                            <th>From</th>
-                            <th>To</th>
-                            <th>Reason</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($timeOff as $entry)
-                            @php
-                                $mayEdit = $isOwner || (int) $entry->staff_user_id === $actorId;
-                                $person = $nameById->get($entry->staff_user_id);
-                            @endphp
-                            <tr>
-                                <td class="text-label">{{ $person ? $staffName($person) : 'User #' . $entry->staff_user_id }}</td>
-                                <td>{{ $entry->start_at }}</td>
-                                <td>{{ $entry->end_at }}</td>
-                                <td>{{ $entry->reason ?: '—' }}</td>
-                                <td class="text-right">
-                                    @if ($mayEdit)
-                                        <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.availability.time-off.destroy', array_merge($scope, [$entry->id])) }}">
-                                            @csrf
-                                            <x-button type="submit" variant="ghost" size="sm" icon="x">Remove</x-button>
-                                        </form>
-                                    @endif
-                                </td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+    <x-card title="Time off" class="mb-2" data-section="availability-time-off">
+        {{-- §5.3/§6 condition 3: the User-global scope is stated plainly to the actor — as
+             ordinary helper text, not a warning. --}}
+        <p class="text-caption" data-role="time-off-scope">
+            Time off applies across all locations where this person works, for the whole period.
+        </p>
+
+        @if ($timeOff->isNotEmpty())
+            <div class="timeoff-list" data-role="time-off-list">
+                @foreach ($timeOff as $entry)
+                    @php
+                        $mayEdit = $isOwner || (int) $entry->staff_user_id === $actorId;
+                        $who = $nameById->get($entry->staff_user_id);
+                    @endphp
+                    <div class="timeoff-row" data-role="time-off-row" data-time-off="{{ $entry->id }}">
+                        <div class="timeoff-person text-label">{{ $who ? $staffName($who) : 'User #' . $entry->staff_user_id }}</div>
+                        <div class="timeoff-range">
+                            <span>{{ $formatMoment($entry->start_at) }}</span>
+                            <span class="availability-to" aria-hidden="true">→</span>
+                            <span class="visually-hidden">to</span>
+                            <span>{{ $formatMoment($entry->end_at) }}</span>
+                        </div>
+                        <div class="timeoff-reason text-caption">{{ $entry->reason ?: '' }}</div>
+                        <div class="timeoff-actions">
+                            @if ($mayEdit)
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.availability.time-off.destroy', array_merge($scope, [$entry->id])) }}">
+                                    @csrf
+                                    <button type="submit" class="btn btn-sm btn-flat-secondary"
+                                            aria-label="Delete time off for {{ $who ? $staffName($who) : 'this person' }}, {{ $formatMoment($entry->start_at) }}">Delete</button>
+                                </form>
+                            @endif
+                        </div>
+                    </div>
+                @endforeach
             </div>
         @endif
 
-        <hr class="my-2">
+        <div class="timeoff-footer {{ $timeOff->isEmpty() ? 'is-empty' : '' }}" data-timeoff-footer @if ($timeOffOpen) hidden @endif>
+            @if ($timeOff->isEmpty())
+                <span class="text-caption" data-role="time-off-empty">No time off scheduled.</span>
+            @endif
+            @if ($selectable->isNotEmpty())
+                <button type="button" class="btn btn-sm btn-flat-primary" data-timeoff-open data-role="add-time-off"
+                        aria-controls="timeoff-editor" aria-expanded="{{ $timeOffOpen ? 'true' : 'false' }}">
+                    <x-ds-icon name="plus" size="14" aria-hidden="true" /> Add time off
+                </button>
+            @endif
+        </div>
 
-        <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.availability.time-off.store', $scope) }}">
-            @csrf
-            <div class="form-row align-items-end">
-                <div class="form-group col-md-3">
-                    <label for="time_off_staff_user_id">Person</label>
-                    <select id="time_off_staff_user_id" name="staff_user_id" class="form-control" required>
-                        @foreach ($selectable as $candidate)
-                            <option value="{{ $candidate->id }}">{{ $staffName($candidate) }}</option>
-                        @endforeach
-                    </select>
+        @if ($selectable->isNotEmpty())
+            <form method="POST" id="timeoff-editor" class="timeoff-editor" data-timeoff-editor data-role="time-off-editor"
+                  action="{{ route('customer.workspaces.businesses.calendar.availability.time-off.store', $scope) }}"
+                  @unless ($timeOffOpen) hidden @endunless>
+                @csrf
+                <div class="timeoff-fields">
+                    <div class="timeoff-field">
+                        <label for="time_off_staff_user_id" class="form-label">Person</label>
+                        <select id="time_off_staff_user_id" name="staff_user_id" class="form-select form-select-sm @error('staff_user_id') is-invalid @enderror"
+                                @error('staff_user_id') aria-describedby="time_off_staff_user_id_error" @enderror required>
+                            @foreach ($selectable as $candidate)
+                                <option value="{{ $candidate->id }}" @selected((int) old('staff_user_id', $person?->id) === (int) $candidate->id)>{{ $staffName($candidate) }}</option>
+                            @endforeach
+                        </select>
+                        @error('staff_user_id')<div class="invalid-feedback d-block" id="time_off_staff_user_id_error">{{ $message }}</div>@enderror
+                    </div>
+
+                    <div class="timeoff-field">
+                        <label for="start_at" class="form-label">From</label>
+                        <input type="datetime-local" id="start_at" name="start_at" value="{{ old('start_at') }}"
+                               class="form-control form-control-sm @error('start_at') is-invalid @enderror"
+                               @error('start_at') aria-describedby="start_at_error" @enderror required>
+                        @error('start_at')<div class="invalid-feedback d-block" id="start_at_error">{{ $message }}</div>@enderror
+                    </div>
+
+                    <div class="timeoff-field">
+                        <label for="end_at" class="form-label">To</label>
+                        <input type="datetime-local" id="end_at" name="end_at" value="{{ old('end_at') }}"
+                               class="form-control form-control-sm @error('end_at') is-invalid @enderror"
+                               @error('end_at') aria-describedby="end_at_error" @enderror required>
+                        @error('end_at')<div class="invalid-feedback d-block" id="end_at_error">{{ $message }}</div>@enderror
+                    </div>
+
+                    <div class="timeoff-field">
+                        <label for="reason" class="form-label">Reason <span class="text-caption">(optional)</span></label>
+                        <input type="text" id="reason" name="reason" value="{{ old('reason') }}" maxlength="255"
+                               class="form-control form-control-sm @error('reason') is-invalid @enderror"
+                               @error('reason') aria-describedby="reason_error" @enderror>
+                        @error('reason')<div class="invalid-feedback d-block" id="reason_error">{{ $message }}</div>@enderror
+                    </div>
                 </div>
-                <div class="form-group col-md-3">
-                    <label for="start_at">From</label>
-                    <input type="datetime-local" id="start_at" name="start_at" class="form-control" required>
+
+                <div class="timeoff-editor-actions">
+                    <button type="button" class="btn btn-sm btn-flat-secondary" data-timeoff-cancel>Cancel</button>
+                    <x-button type="submit" variant="primary" size="sm" data-role="save-time-off">Add time off</x-button>
                 </div>
-                <div class="form-group col-md-3">
-                    <label for="end_at">To</label>
-                    <input type="datetime-local" id="end_at" name="end_at" class="form-control" required>
-                </div>
-                <div class="form-group col-md-2">
-                    <label for="reason">Reason</label>
-                    <input type="text" id="reason" name="reason" class="form-control" maxlength="255">
-                </div>
-                <div class="form-group col-md-1">
-                    <x-button type="submit" variant="primary" icon="plus">Add</x-button>
-                </div>
-            </div>
-        </form>
+            </form>
+        @endif
     </x-card>
 @endsection

@@ -540,6 +540,118 @@
         }
     }
 
+    /* ---------------------------------------------------------------
+       Time off (Staff availability): the same list-of-rows look as the
+       weekly hours, with a quiet "Add time off" that opens an inline editor.
+    --------------------------------------------------------------- */
+    .timeoff-list {
+        border: 1px solid var(--color-border, #E5E1DA);
+        border-radius: .5rem;
+        overflow: hidden;
+    }
+
+    .timeoff-row {
+        display: grid;
+        grid-template-columns: minmax(8rem, 12rem) minmax(0, 1.4fr) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: .25rem 1rem;
+        padding: .75rem 1rem;
+    }
+
+    .timeoff-row + .timeoff-row {
+        border-top: 1px solid var(--color-border-subtle, #F2F0ED);
+    }
+
+    .timeoff-range {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .25rem .5rem;
+    }
+
+    .timeoff-reason {
+        overflow-wrap: anywhere;
+    }
+
+    .timeoff-footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 1rem;
+        margin-top: .75rem;
+    }
+
+    .timeoff-footer[hidden] {
+        display: none;
+    }
+
+    .timeoff-footer.is-empty {
+        justify-content: space-between;
+        padding: .75rem 1rem;
+        border: 1px solid var(--color-border, #E5E1DA);
+        border-radius: .5rem;
+    }
+
+    .timeoff-editor {
+        margin-top: .75rem;
+        padding: 1rem;
+        border: 1px solid var(--color-border, #E5E1DA);
+        border-radius: .5rem;
+        background: var(--color-surface-secondary, #FBFAF7);
+    }
+
+    .timeoff-editor[hidden] {
+        display: none;
+    }
+
+    .timeoff-fields {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
+        gap: .75rem 1rem;
+    }
+
+    .timeoff-field .form-label {
+        margin-bottom: .25rem;
+        font-size: .75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .03em;
+        color: var(--color-text-muted, #6F6D67);
+    }
+
+    .timeoff-editor-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: .5rem;
+        margin-top: 1rem;
+    }
+
+    @media (max-width: 991.98px) {
+        .timeoff-fields {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .timeoff-row {
+            grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        .timeoff-range,
+        .timeoff-reason {
+            grid-column: 1 / -1;
+            order: 3;
+        }
+    }
+
+    @media (max-width: 575.98px) {
+        .timeoff-fields {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .timeoff-footer.is-empty {
+            flex-wrap: wrap;
+        }
+    }
+
     .calendar-sr-only {
         position: absolute;
         width: 1px;

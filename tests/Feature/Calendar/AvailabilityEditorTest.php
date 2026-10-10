@@ -275,4 +275,138 @@ class AvailabilityEditorTest extends TestCase
         $this->assertStringContainsString('dropdown-user', $html);
         $this->assertStringContainsString('dropdown-notification', $html);
     }
+
+    // -----------------------------------------------------------------
+    // Time off (presentation over the existing create/delete endpoints)
+    // -----------------------------------------------------------------
+
+    private function editorIsHidden(string $html): bool
+    {
+        return preg_match('/<form[^>]*id="timeoff-editor"[^>]*\shidden/s', $html) === 1;
+    }
+
+    public function test_the_empty_time_off_section_is_calm_and_keeps_the_form_closed(): void
+    {
+        $this->authenticate($this->owner->user);
+
+        $html = $this->get($this->url('availability.index'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-role="time-off-empty"', $html);
+        $this->assertStringContainsString('No time off scheduled.', $html);
+        $this->assertStringContainsString('data-role="add-time-off"', $html);
+        $this->assertStringContainsString('Time off applies across all locations where this person works', $html);
+        $this->assertStringNotContainsString('Time off applies everywhere, not just this location', $html, 'the scope is helper text, not a warning strip');
+        $this->assertTrue($this->editorIsHidden($html), 'the editor stays closed until Add time off is pressed');
+        // Real labels on the editor's controls.
+        foreach (['time_off_staff_user_id', 'start_at', 'end_at', 'reason'] as $id) {
+            $this->assertStringContainsString('for="' . $id . '"', $html);
+        }
+    }
+
+    public function test_creating_time_off_adds_one_clean_row_with_a_delete_action(): void
+    {
+        $staff = $this->bookableStaff($this->locationA);
+        $this->authenticate($this->owner->user);
+
+        $this->post($this->url('availability.time-off.store'), [
+            'staff_user_id' => $staff->id,
+            'start_at' => '2027-03-02T09:00',
+            'end_at' => '2027-03-04T18:00',
+            'reason' => 'Vacation',
+        ])->assertRedirect()->assertSessionHas('flash_success');
+
+        $this->assertSame(1, DB::table('staff_time_off')->where('staff_user_id', $staff->id)->count());
+
+        $html = $this->get($this->url('availability.index'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($html, 'data-role="time-off-row"'));
+        $this->assertStringContainsString('Mar 2, 2027 · 9:00 AM', $html);
+        $this->assertStringContainsString('Mar 4, 2027 · 6:00 PM', $html);
+        $this->assertStringContainsString('Vacation', $html);
+        $this->assertStringNotContainsString('data-role="time-off-empty"', $html);
+        $this->assertStringContainsString('availability-time-off', $html);
+        $this->assertTrue($this->editorIsHidden($html));
+        $this->assertMatchesRegularExpression('#action="[^"]*/availability/time-off/\d+/delete"#', $html);
+    }
+
+    public function test_a_refused_time_off_reopens_the_editor_with_values_and_field_errors(): void
+    {
+        $staff = $this->bookableStaff($this->locationA);
+        $this->authenticate($this->owner->user);
+
+        $response = $this->from($this->url('availability.index'))->post($this->url('availability.time-off.store'), [
+            'staff_user_id' => $staff->id,
+            'start_at' => '2027-03-04T09:00',
+            'end_at' => '2027-03-02T09:00',
+            'reason' => 'Backwards',
+        ]);
+        $response->assertRedirect($this->url('availability.index'))->assertSessionHasErrors('end_at');
+        $this->assertSame(0, DB::table('staff_time_off')->count());
+
+        $html = $this->get($this->url('availability.index'))->assertOk()->getContent();
+
+        $this->assertFalse($this->editorIsHidden($html), 'the editor stays open after a refusal');
+        $this->assertStringContainsString('value="2027-03-04T09:00"', $html);
+        $this->assertStringContainsString('value="Backwards"', $html);
+        $this->assertStringContainsString('id="end_at_error"', $html);
+        $this->assertMatchesRegularExpression('/id="end_at"[^>]*aria-describedby="end_at_error"/s', $html);
+        // The Weekly hours card must not borrow a time-off error.
+        $this->assertStringNotContainsString('role="alert"', $html);
+    }
+
+    public function test_time_off_is_user_global_and_still_removes_the_person_from_availability_everywhere(): void
+    {
+        $staff = $this->bookableStaff($this->locationA);
+        $this->giveMondayAvailability((int) $staff->id, $this->locationB);
+        $calculator = app(\App\Library\Calendar\StaffAvailabilityCalculator::class);
+        $start = $this->slotStart('10:00:00');
+        $end = $start->copy()->addHour();
+        $this->authenticate($this->owner->user);
+
+        $this->assertTrue($calculator->isAvailable((int) $staff->id, $this->locationA, $start, $end));
+        $this->assertTrue($calculator->isAvailable((int) $staff->id, $this->locationB, $start, $end));
+
+        $this->post($this->url('availability.time-off.store'), [
+            'staff_user_id' => $staff->id,
+            'start_at' => '2027-03-01T00:00',
+            'end_at' => '2027-03-02T00:00',
+        ])->assertRedirect();
+
+        // Created through Location A, it applies at Location B too.
+        $this->assertFalse($calculator->isAvailable((int) $staff->id, $this->locationA, $start, $end));
+        $this->assertFalse($calculator->isAvailable((int) $staff->id, $this->locationB, $start, $end));
+
+        // And the row is listed from the other Location's page as well.
+        $this->get($this->url('availability.index', [], $this->locationB))->assertOk()->assertSee('data-role="time-off-row"', false);
+
+        // Deleting it restores availability.
+        $id = (int) DB::table('staff_time_off')->value('id');
+        $this->post(route('customer.workspaces.businesses.calendar.availability.time-off.destroy', array_merge($this->scopeFor($this->locationA), [$id])))->assertRedirect();
+        $this->assertSame(0, DB::table('staff_time_off')->count());
+        $this->assertTrue($calculator->isAvailable((int) $staff->id, $this->locationA, $start, $end));
+    }
+
+    public function test_time_off_keeps_the_per_person_authority_and_the_location_gate(): void
+    {
+        $staff = $this->memberWithFullReach(WorkspaceMembershipRole::Staff);
+        $other = $this->bookableStaff($this->locationA);
+        $this->authenticate($staff);
+
+        $payload = fn (int $id) => ['staff_user_id' => $id, 'start_at' => '2027-03-02T09:00', 'end_at' => '2027-03-03T09:00'];
+
+        $this->post($this->url('availability.time-off.store'), $payload((int) $staff->id))->assertRedirect();
+        $this->assertSame(1, DB::table('staff_time_off')->where('staff_user_id', $staff->id)->count());
+
+        $this->post($this->url('availability.time-off.store'), $payload((int) $other->id))->assertStatus(401);
+        $this->assertSame(0, DB::table('staff_time_off')->where('staff_user_id', $other->id)->count());
+
+        // A non-owner's page offers only themselves, and no delete for someone else's entry.
+        DB::table('staff_time_off')->insert(['staff_user_id' => $other->id, 'start_at' => '2027-04-01 09:00:00', 'end_at' => '2027-04-02 09:00:00', 'created_at' => now(), 'updated_at' => now()]);
+        $html = $this->get($this->url('availability.index'))->assertOk()->getContent();
+        $this->assertSame(2, substr_count($html, 'data-role="time-off-row"'));
+        $this->assertSame(1, preg_match_all('#availability/time-off/\d+/delete#', $html));
+
+        [, $foreignLocation] = $this->foreignBusinessWithLocation();
+        $this->post($this->url('availability.time-off.store', [], $foreignLocation), $payload((int) $staff->id))->assertNotFound();
+    }
 }
