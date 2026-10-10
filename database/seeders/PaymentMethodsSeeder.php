@@ -43,8 +43,11 @@
                     'name'    => 'Stripe',
                     'type'    => 'stripe',
                     'options' => json_encode([
-                        'publishable_key' => 'pk_test_AnS4Ov8GS92XmHeVCDRPIZF4',
-                        'secret_key'      => 'sk_test_iS0xwfgzBF6cmPBBkgO13sjd',
+                        // Deliberately blank: a seeder must not ship a working gateway credential. An owner who
+                        // enables this legacy gateway has to enter their own keys. (V1 platform billing does not
+                        // use this row; it reads STRIPE_* from the environment.)
+                        'publishable_key' => '',
+                        'secret_key'      => '',
                         'environment'     => 'sandbox',
                     ]),
                     'status'  => false,
