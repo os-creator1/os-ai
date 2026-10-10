@@ -32,6 +32,8 @@ class TutoringAdsDecisionAcceptanceTest extends TestCase
 {
     private const EUR = 1_000_000;
 
+    private const WEBSITE_LEAD = 'offsite_conversion.fb_pixel_lead';
+
     private function engine(): AdsDecisionEngine
     {
         return new AdsDecisionEngine(AdsDecisionPolicy::fromConfig());
@@ -223,7 +225,7 @@ class TutoringAdsDecisionAcceptanceTest extends TestCase
     public function test_check_tracking_when_the_provider_reports_far_more_results_than_were_recorded(): void
     {
         // Meta says 24 results, MotionGrove recorded 3 inquiries (12.5% < 25%).
-        $d = $this->engine()->decide($this->studentInput(['spendMicros' => 90 * self::EUR, 'providerResults' => 24.0, 'inquiries' => 3, 'qualified' => 3]));
+        $d = $this->engine()->decide($this->studentInput(['spendMicros' => 90 * self::EUR, 'providerResults' => 24.0, 'providerResultType' => self::WEBSITE_LEAD, 'inquiries' => 3, 'qualified' => 3]));
 
         $this->assertSame(AdsDecisionState::CheckTracking, $d->state);
         $this->assertStringContainsString('reports 24 results', $this->text($d));
@@ -233,9 +235,61 @@ class TutoringAdsDecisionAcceptanceTest extends TestCase
         $this->assertSame('Inconsistent', $rows['Tracking health']);
 
         // Roughly consistent numbers are not a tracking problem.
-        $ok = $this->engine()->decide($this->studentInput(['spendMicros' => 90 * self::EUR, 'providerResults' => 24.0, 'inquiries' => 18, 'qualified' => 12]));
+        $ok = $this->engine()->decide($this->studentInput(['spendMicros' => 90 * self::EUR, 'providerResults' => 24.0, 'providerResultType' => self::WEBSITE_LEAD, 'inquiries' => 18, 'qualified' => 12]));
         $this->assertNotSame(AdsDecisionState::CheckTracking, $ok->state);
     }
+
+    /** @return array<string, array{0: string, 1: ?string}> */
+    public static function nonComparableResults(): array
+    {
+        return [
+            'Meta landing page views' => ['meta', 'landing_page_view'],
+            'Meta link clicks' => ['meta', 'link_click'],
+            'Meta messaging conversations' => ['meta', 'onsite_conversion.messaging_conversation_started_7d'],
+            'Meta lead (mixes in on-Facebook forms)' => ['meta', 'lead'],
+            'Meta on-Facebook lead forms' => ['meta', 'onsite_conversion.lead_grouped'],
+            'Meta unknown result type' => ['meta', null],
+            'Google conversions (no type metadata)' => ['google', null],
+            'Google even with a lead-like type string' => ['google', self::WEBSITE_LEAD],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('nonComparableResults')]
+    public function test_provider_results_that_are_not_comparable_never_claim_a_tracking_mismatch(string $provider, ?string $type): void
+    {
+        // 40 provider "results", 2 recorded inquiries: a loud mismatch IF the numbers meant the same thing.
+        $d = $this->engine()->decide($this->studentInput([
+            'provider' => $provider, 'spendMicros' => 90 * self::EUR, 'providerResults' => 40.0, 'providerResultType' => $type,
+            'inquiries' => 2, 'qualified' => 2,
+        ]));
+
+        $this->assertNotSame(AdsDecisionState::CheckTracking, $d->state);
+        $this->assertStringNotContainsString('reports 40 results', $this->text($d));
+        $rows = array_column($d->evidence, 'value', 'label');
+        $this->assertNotSame('Inconsistent', $rows['Tracking health']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('nonComparableResults')]
+    public function test_non_comparable_results_with_no_inquiry_do_not_stand_in_for_tracking_evidence(string $provider, ?string $type): void
+    {
+        // Results exist, no inquiry and only 5 clicks: nothing proves tracking is broken.
+        $d = $this->engine()->decide($this->studentInput([
+            'provider' => $provider, 'spendMicros' => 4 * self::EUR, 'clicks' => 5, 'providerResults' => 40.0, 'providerResultType' => $type,
+            'attributedTouches' => 0,
+        ]));
+
+        $this->assertNotSame(AdsDecisionState::CheckTracking, $d->state);
+    }
+
+    public function test_the_zero_inquiry_safeguards_still_work_for_comparable_results_and_for_clicks(): void
+    {
+        $byResults = $this->engine()->decide($this->studentInput(['spendMicros' => 4 * self::EUR, 'clicks' => 5, 'providerResults' => 6.0, 'providerResultType' => self::WEBSITE_LEAD, 'attributedTouches' => 0]));
+        $byClicks = $this->engine()->decide($this->studentInput(['provider' => 'google', 'spendMicros' => 50 * self::EUR, 'clicks' => 120, 'providerResults' => 9.0, 'attributedTouches' => 0]));
+
+        $this->assertSame(AdsDecisionState::CheckTracking, $byResults->state);
+        $this->assertSame(AdsDecisionState::CheckTracking, $byClicks->state);
+    }
+
 
     public function test_act_when_qualified_leads_cost_more_than_the_most_the_owner_would_pay(): void
     {
@@ -354,6 +408,22 @@ class TutoringAdsDecisionAcceptanceTest extends TestCase
         $this->assertStringContainsString('30 clicks in total', (string) $d->nextReview);
     }
 
+    public function test_unknown_clicks_are_not_sufficient_evidence_and_the_three_times_rule_stays_a_watch(): void
+    {
+        $economics = $this->student(['target_cac' => null, 'hard_cac' => null, 'target_qualified_cpl' => 5, 'hard_cpl' => 9]);
+
+        $unknown = $this->engine()->decide($this->studentInput(['economics' => $economics, 'spendMicros' => 15 * self::EUR, 'clicks' => null]));
+        $enough = $this->engine()->decide($this->studentInput(['economics' => $economics, 'spendMicros' => 15 * self::EUR, 'clicks' => 30]));
+        $short = $this->engine()->decide($this->studentInput(['economics' => $economics, 'spendMicros' => 15 * self::EUR, 'clicks' => 29]));
+
+        $this->assertSame(AdsDecisionState::Act, $enough->state, 'known, sufficient clicks');
+        $this->assertSame(AdsDecisionState::Watch, $short->state, 'known, insufficient clicks');
+        $this->assertSame(AdsDecisionState::Watch, $unknown->state, 'unknown clicks');
+        $this->assertStringContainsString('does not have a click count', $this->text($unknown));
+        $this->assertStringContainsString('reports clicks', (string) $unknown->nextReview);
+        $this->assertNotSame(AdsDecisionCtaKind::ReviewLandingPage, $unknown->ctaKind);
+    }
+
     public function test_the_multiple_never_fires_when_tracking_is_unhealthy(): void
     {
         $economics = $this->student(['target_cac' => null, 'hard_cac' => null, 'target_qualified_cpl' => 5, 'hard_cpl' => 9]);
@@ -362,20 +432,62 @@ class TutoringAdsDecisionAcceptanceTest extends TestCase
         $this->assertSame(AdsDecisionState::CheckTracking, $d->state);
     }
 
-    public function test_recruitment_uses_its_own_multiple_not_the_student_one(): void
+    public function test_recruitment_with_a_hard_maximum_is_investigated_only_at_the_owners_own_number(): void
     {
-        // Same 5.00 target and 15.00 spend as the student example: 3x. A student goal acts; a teacher goal only watches.
+        // Target 5.00, owner's hard maximum 9.00 per qualified applicant. No multiple is invented.
+        $below = $this->engine()->decide($this->teacherInput(['spendMicros' => 8 * self::EUR]));
+        $at = $this->engine()->decide($this->teacherInput(['spendMicros' => 9 * self::EUR]));
+        $thin = $this->engine()->decide($this->teacherInput(['spendMicros' => 9 * self::EUR, 'clicks' => 12]));
+        $unknownClicks = $this->engine()->decide($this->teacherInput(['spendMicros' => 9 * self::EUR, 'clicks' => null]));
+
+        $this->assertSame(AdsDecisionState::Watch, $below->state);
+        $this->assertSame(AdsDecisionState::Act, $at->state);
+        $this->assertStringContainsString('qualified applicant', $this->text($at));
+        $this->assertStringContainsString('never pauses anything for you', (string) $at->doNotChange);
+        $this->assertSame(AdsDecisionState::Watch, $thin->state);
+        $this->assertSame(AdsDecisionState::Watch, $unknownClicks->state);
+        $this->assertStringNotContainsString('student', $this->text($at) . $this->text($below));
+    }
+
+    public function test_recruitment_without_a_hard_maximum_never_reaches_act_and_asks_for_one(): void
+    {
+        $economics = $this->teacher(['hard_cpl' => null]);
+        $this->assertNull($economics->hardCplMicros);
+
+        foreach ([15, 100, 1000] as $spend) {
+            $d = $this->engine()->decide($this->teacherInput(['economics' => $economics, 'spendMicros' => $spend * self::EUR]));
+
+            $this->assertSame(AdsDecisionState::Watch, $d->state, "spend {$spend}");
+            $this->assertStringContainsString('no agreed point', $this->text($d));
+            $this->assertStringContainsString('set a highest cost per qualified applicant', strtolower((string) $d->nextReview));
+        }
+    }
+
+    public function test_recruitment_with_unknown_targets_asks_for_them_instead_of_judging(): void
+    {
+        $economics = $this->teacher(['target_qualified_cpl' => null, 'hard_cpl' => null, 'target_cac' => 80, 'screened_to_interview_pct' => null, 'interview_to_hire_pct' => null]);
+        $this->assertNull($economics->targetCplMicros);
+
+        $d = $this->engine()->decide($this->teacherInput(['economics' => $economics, 'spendMicros' => 200 * self::EUR, 'inquiries' => 4, 'qualified' => 2]));
+
+        $this->assertSame(AdsDecisionState::NotEnoughData, $d->state);
+        $this->assertSame(AdsDecisionCtaKind::SetTargets, $d->ctaKind);
+        $this->assertStringNotContainsString('student', $this->text($d));
+    }
+
+    public function test_the_student_and_teacher_policies_do_not_share_state(): void
+    {
+        // A student goal with a 9.00 hard maximum and a teacher goal with none, same spend: each uses only its own economics.
         $student = $this->engine()->decide($this->studentInput([
             'economics' => $this->student(['target_cac' => null, 'hard_cac' => null, 'target_qualified_cpl' => 5, 'hard_cpl' => 9]),
             'spendMicros' => 15 * self::EUR,
         ]));
-        $teacher = $this->engine()->decide($this->teacherInput(['spendMicros' => 15 * self::EUR]));
-        $teacherLater = $this->engine()->decide($this->teacherInput(['spendMicros' => 25 * self::EUR]));
+        $teacher = $this->engine()->decide($this->teacherInput(['economics' => $this->teacher(['hard_cpl' => null]), 'spendMicros' => 15 * self::EUR]));
 
         $this->assertSame(AdsDecisionState::Act, $student->state);
         $this->assertSame(AdsDecisionState::Watch, $teacher->state);
-        $this->assertSame(AdsDecisionState::Act, $teacherLater->state, '5x the target with no qualified applicant');
-        $this->assertStringContainsString('qualified applicant', $this->text($teacherLater));
+        $this->assertSame('purpose-student', $student->purposeUid);
+        $this->assertSame('purpose-teacher', $teacher->purposeUid);
     }
 
     // ----------------------------------------------- recruitment is its own funnel
@@ -429,7 +541,7 @@ class TutoringAdsDecisionAcceptanceTest extends TestCase
             'funnel' => $this->studentInput(['spendMicros' => 60 * self::EUR, 'inquiries' => 18, 'qualified' => 12]),
             'keep' => $this->studentInput(['spendMicros' => 100 * self::EUR, 'inquiries' => 30, 'qualified' => 20, 'outcomes' => 4]),
             'tracking' => $this->studentInput(['spendMicros' => 50 * self::EUR, 'attributedTouches' => 0]),
-            'mismatch' => $this->studentInput(['spendMicros' => 90 * self::EUR, 'providerResults' => 24.0, 'inquiries' => 3, 'qualified' => 3]),
+            'mismatch' => $this->studentInput(['spendMicros' => 90 * self::EUR, 'providerResults' => 24.0, 'providerResultType' => self::WEBSITE_LEAD, 'inquiries' => 3, 'qualified' => 3]),
             'no data' => $this->studentInput(['spendMicros' => 40 * self::EUR, 'inquiries' => 4, 'qualified' => 3]),
             'no target' => $this->studentInput(['economics' => $this->student([], ['target_cac', 'hard_cac', 'qualified_to_customer_pct']), 'spendMicros' => 40 * self::EUR]),
             'no pipeline' => $this->studentInput(['pipelineLinked' => false]),

@@ -29,15 +29,12 @@ final class AdsDecisionPolicy
         return (float) ($this->values['zero_result_act_at_multiple'] ?? 3.0);
     }
 
-    /** Recruitment goals use their own multiples: applicants are rarer than student inquiries. */
-    public function recruitmentZeroResultWatchFromMultiple(): float
+    /** @return list<string> Meta result action types that count the same thing as a recorded inquiry. */
+    public function inquiryComparableResultTypes(): array
     {
-        return (float) ($this->values['recruitment_zero_result_watch_from_multiple'] ?? 1.5);
-    }
+        $types = $this->values['inquiry_comparable_result_types'] ?? ['offsite_conversion.fb_pixel_lead'];
 
-    public function recruitmentZeroResultActAtMultiple(): float
-    {
-        return (float) ($this->values['recruitment_zero_result_act_at_multiple'] ?? 5.0);
+        return array_values(array_filter((array) $types, 'is_string'));
     }
 
     public function minClicksForZeroResultAct(): int

@@ -139,6 +139,7 @@ final class AdsDecisionPanelReader
                 purposeUid: (string) $purpose->uid,
                 businessCurrency: $businessCurrency,
                 milestone: $facts['milestone'],
+                providerResultType: $d['result_type'] ?? null,
             ));
         }
 

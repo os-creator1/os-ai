@@ -100,6 +100,7 @@ final class ProviderPurposeDeliveryReader
             'impressions' => (int) ($row->impressions ?? 0),
             'clicks' => (int) ($row->clicks ?? 0),
             'results' => $results,
+            'result_type' => $results === null ? null : $type,
         ];
     }
 

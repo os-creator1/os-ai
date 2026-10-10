@@ -229,9 +229,10 @@ final class AdsDecisionEngine
 
         if ($in->qualified === 0) {
             $multiple = $in->spendMicros / $targetCpl;
-            $watchAt = $this->zeroResultWatchMultiple($in);
-            $actAt = $this->zeroResultActMultiple($in);
-            $fewClicks = $in->clicks !== null && $in->clicks < $this->policy->minClicksForZeroResultAct();
+            $watchAt = $this->policy->zeroResultWatchFromMultiple();
+            $actSpend = $this->zeroResultActSpend($in, $targetCpl);
+            // Unknown clicks are NOT enough evidence: only a known, sufficient count lets the ads be blamed.
+            $enoughClicks = $in->clicks !== null && $in->clicks >= $this->policy->minClicksForZeroResultAct();
 
             if ($multiple < $watchAt) {
                 $remaining = max(0, (int) ceil($targetCpl * $watchAt) - $in->spendMicros);
@@ -243,20 +244,27 @@ final class AdsDecisionEngine
                     cta: [AdsDecisionCtaKind::OpenCampaign, 'Open campaign']);
             }
 
-            if ($multiple < $actAt || $fewClicks) {
-                $until = max(0, (int) ceil($targetCpl * $actAt) - $in->spendMicros);
-                $reasons = [
-                    'These ads have spent ' . $this->money($in->spendMicros) . ' (' . $this->multiple($multiple) . ' your ' . $this->money($targetCpl) . ' target) without a qualified ' . $lead . '.',
-                    $multiple >= $actAt
-                        ? 'Only ' . number_format((int) $in->clicks) . ' people have clicked so far, which is too few to say the ads are at fault. A handful of clicks can easily miss.'
-                        : 'This is not yet enough to conclude the ads are failing.',
-                ];
+            $reachedAct = $actSpend !== null && $in->spendMicros >= $actSpend;
+
+            if (! $reachedAct || ! $enoughClicks) {
+                $reasons = ['These ads have spent ' . $this->money($in->spendMicros) . ' (' . $this->multiple($multiple) . ' your ' . $this->money($targetCpl) . ' target) without a qualified ' . $lead . '.'];
+
+                if ($actSpend === null) {
+                    $reasons[] = 'There is no agreed point at which this much spend should be investigated. Set the most you would pay for one ' . $lead . ' and MotionGrove can tell you when to look at the ads.';
+                    $review = 'After you set a highest cost per ' . $lead . ', or the first qualified ' . $lead . '.';
+                } elseif (! $reachedAct) {
+                    $reasons[] = 'This is not yet enough to conclude the ads are failing.';
+                    $review = 'After ' . $this->money(max(0, $actSpend - $in->spendMicros)) . ' more spend, or the first qualified ' . $lead . '.';
+                } elseif ($in->clicks === null) {
+                    $reasons[] = 'MotionGrove does not have a click count for these ads, so it cannot tell whether enough people visited to judge them.';
+                    $review = 'After the ad platform reports clicks for these ads, or the first qualified ' . $lead . '.';
+                } else {
+                    $reasons[] = 'Only ' . number_format($in->clicks) . ' people have clicked so far, which is too few to say the ads are at fault. A handful of clicks can easily miss.';
+                    $review = 'After ' . $this->policy->minClicksForZeroResultAct() . ' clicks in total, or the first qualified ' . $lead . '.';
+                }
 
                 return $this->make($in, AdsDecisionState::Watch, 'Watch: no qualified ' . $lead . ' yet, and spend is building.', $reasons, $evidence,
-                    doNotChange: 'Avoid changing the ads for now.',
-                    nextReview: $multiple >= $actAt
-                        ? 'After ' . $this->policy->minClicksForZeroResultAct() . ' clicks in total, or the first qualified ' . $lead . '.'
-                        : 'After ' . $this->money($until) . ' more spend, or the first qualified ' . $lead . '.',
+                    doNotChange: 'Avoid changing the ads for now.', nextReview: $review,
                     cta: [AdsDecisionCtaKind::OpenCampaign, 'Open campaign']);
             }
 
@@ -380,7 +388,7 @@ final class AdsDecisionEngine
         }
 
         $enoughClicks = $in->clicks !== null && $in->clicks >= $this->policy->minClicksForTrackingCheck();
-        $providerSaysResults = $in->providerResults !== null && $in->providerResults > 0;
+        $providerSaysResults = $this->resultsComparableToInquiries($in) && $in->providerResults !== null && $in->providerResults > 0;
 
         return $enoughClicks || $providerSaysResults;
     }
@@ -388,7 +396,7 @@ final class AdsDecisionEngine
     /** Plenty of provider-reported results, far fewer recorded inquiries: tracking is suspect, not the ads. */
     private function trackingInconsistent(AdsDecisionInput $in): bool
     {
-        if ($in->spendMicros <= 0 || $in->providerResults === null || $in->providerResults < $this->policy->trackingMismatchMinProviderResults()) {
+        if ($in->spendMicros <= 0 || ! $this->resultsComparableToInquiries($in) || $in->providerResults === null || $in->providerResults < $this->policy->trackingMismatchMinProviderResults()) {
             return false;
         }
 
@@ -400,15 +408,34 @@ final class AdsDecisionEngine
         return number_format($n, floor($n) === $n ? 0 : 1);
     }
 
-    /** Teacher Recruitment is judged on its own, thinner-market multiples. */
-    private function zeroResultWatchMultiple(AdsDecisionInput $in): float
+    /**
+     * A provider result may be set against recorded inquiries only when it IS an inquiry
+     * measured the way MotionGrove measures one. Meta: only a result type the policy lists
+     * (a website lead; on-Facebook form leads never pass through a MotionGrove form, and page
+     * views or link clicks are not inquiries). Google: the cached `conversions` are the account's
+     * primary-action conversions with no type attached, so they are never comparable. Unknown
+     * type, no comparison.
+     */
+    private function resultsComparableToInquiries(AdsDecisionInput $in): bool
     {
-        return $in->outcomeType === 'hire' ? $this->policy->recruitmentZeroResultWatchFromMultiple() : $this->policy->zeroResultWatchFromMultiple();
+        return ! $in->isGoogle()
+            && $in->providerResultType !== null
+            && in_array($in->providerResultType, $this->policy->inquiryComparableResultTypes(), true);
     }
 
-    private function zeroResultActMultiple(AdsDecisionInput $in): float
+    /**
+     * The spend with no qualified lead at which the ads are worth investigating. A student goal
+     * uses the policy multiple of its target. A recruitment goal has NO policy multiple (none
+     * was approved): it uses only the hard maximum the owner set per qualified applicant, and
+     * null when they set none, so it can never reach ACT on a number MotionGrove made up.
+     */
+    private function zeroResultActSpend(AdsDecisionInput $in, int $targetCpl): ?int
     {
-        return $in->outcomeType === 'hire' ? $this->policy->recruitmentZeroResultActAtMultiple() : $this->policy->zeroResultActAtMultiple();
+        if ($in->outcomeType === 'hire') {
+            return $in->economics?->hardCplMicros;
+        }
+
+        return (int) ceil($targetCpl * $this->policy->zeroResultActAtMultiple());
     }
 
     /** The only place the profit question is answered: honest about what is not known. */

@@ -340,8 +340,7 @@ class AdsDecisionEngineTest extends TestCase
 
         $this->assertSame(1.0, $p->zeroResultWatchFromMultiple());
         $this->assertSame(3.0, $p->zeroResultActAtMultiple());
-        $this->assertSame(1.5, $p->recruitmentZeroResultWatchFromMultiple());
-        $this->assertSame(5.0, $p->recruitmentZeroResultActAtMultiple());
+        $this->assertSame(['offsite_conversion.fb_pixel_lead'], $p->inquiryComparableResultTypes());
         $this->assertSame(30, $p->minClicksForZeroResultAct());
         $this->assertSame(10, $p->trackingMismatchMinProviderResults());
         $this->assertSame(0.25, $p->trackingMismatchRecordedShare());

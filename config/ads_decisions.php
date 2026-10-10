@@ -34,16 +34,14 @@ return [
         'zero_result_watch_from_multiple' => 1.0,
         'zero_result_act_at_multiple' => 3.0,
 
-        // Teacher Recruitment is a thinner market than student inquiries: a
-        // tutor applicant is rarer and costs more, so the same "3x with nothing"
-        // reading would raise false alarms. Recruitment goals (outcome type
-        // `hire`) use these multiples instead, with the same WAIT/WATCH/ACT shape.
-        'recruitment_zero_result_watch_from_multiple' => 1.5,
-        'recruitment_zero_result_act_at_multiple' => 5.0,
+        // Teacher Recruitment has NO multiple here on purpose: none was approved.
+        // A recruitment goal reaches the investigation verdict only when its
+        // zero-result spend passes the owner's own hard maximum per qualified
+        // applicant; with none set it stays WATCH and asks for one.
 
         // Fewest clicks before "spent a lot, no qualified lead" may be blamed on
-        // the ads. Fewer known clicks means the spend has not delivered enough
-        // visitors to judge: WATCH instead of ACT. Unknown clicks do not block.
+        // the ads. Fewer clicks, or an unknown click count, means the spend has
+        // not been shown to deliver enough visitors to judge: WATCH instead of ACT.
         'min_clicks_for_zero_result_act' => 30,
 
         // Tracking consistency: when the provider reports at least this many
@@ -51,6 +49,14 @@ return [
         // inquiries, the conversion tracking is suspected before the ads are.
         'tracking_mismatch_min_provider_results' => 10,
         'tracking_mismatch_recorded_share' => 0.25,
+
+        // Meta result action types that measure the same thing as a recorded
+        // inquiry (a lead from the owner's own website form). Only these may be
+        // set against CRM inquiries: `lead` and on-Facebook lead forms include
+        // leads that never reach a MotionGrove pipeline, and page views, link
+        // clicks or messaging events are not inquiries at all. Google's cached
+        // conversions carry no type, so Google is never compared.
+        'inquiry_comparable_result_types' => ['offsite_conversion.fb_pixel_lead'],
 
         // Fewest qualified leads before a cost-per-qualified-lead verdict
         // (good OR bad) is allowed to change what the owner does. Below it the
