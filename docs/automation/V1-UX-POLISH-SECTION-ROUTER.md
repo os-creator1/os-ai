@@ -39,10 +39,11 @@ Behaviour: `pushState` on click, `popstate` for Back/Forward, newest request win
 `AbortController`), modified clicks / `target` / downloads / cross-origin links are left to the browser,
 and a `section-router:updated` event fires after each swap so a page can re-initialise its own widgets.
 
-Only two surfaces opt in; there is **no global link interception**:
+Only three surfaces opt in; there is **no global link interception**:
 
 - Calendar internal tabs (`a[data-calendar-nav]`)
 - Website internal tabs (`a[data-website-nav]`), plus in-page shortcuts marked `data-website-go="<tab>"`
+- Content tabs (`a[data-content-nav]`) and in-section links (`a[data-content-local]`) - see "Content" below
 
 ## MotionGrove loader
 
@@ -69,6 +70,31 @@ child of the swapped region, centred, only after **150 ms** (fast responses neve
 - **Template / rebuild** keeps its title, *Choose a template*, the cards and the mode choice. The standing
   warning banners are replaced by a confirmation dialog at the moment of action. The server still refuses an
   unconfirmed request (`confirm_rebuild`).
+
+## Content (SEO -> Content)
+
+Content is the third module on the same mechanism (no second router):
+
+- Shell: `seo/content/_frame.blade.php` (title, subtitle, header action, tab strip, `#seo-content-region`) and
+  `_fragment.blade.php` (the region alone, with the header action in an inert `<template data-content-action>`). A section view
+  picks one with `request()->query('fragment') === '1'`, exactly like Calendar, and supplies `content-active`,
+  `content-subtitle`, optional `content-action` and `content-section`.
+- Tabs: `a[data-content-nav]` with `data-content-key` (`autopilot|articles|plan|opportunities`); in-section links that should stay
+  in the region (Articles filter pills, "Browse topic ideas", "Content plan") carry `data-content-local`. The Articles search is
+  a GET form marked `data-content-form`; `_scripts.blade.php` turns its submit into the same navigation and restores the caret.
+- `beforeSwap` lifts the incoming subtitle and header action into the stable header; the title and tabs are never replaced, no
+  scroll is touched, and Back/Forward re-fetch the region. The router is mounted once (`region.__contentRouterBound`).
+- Sections must not define their own `page-script` / `page-style`, and pagination links must not carry `fragment=1`
+  (`SeoContentController::articlesView` appends everything but `page` and `fragment`).
+- Sidebar: one `Content` leaf under SEO; the four sections are tabs only.
+
+## Website Settings (hosted)
+
+`studio/settings.blade.php` is the Domain callout (state from `Website::activePrimaryDomain()` and the domain rows: *Live* or
+*Not live yet*) above two columns: *Manage your website* (page count, setup answers, current template, History - all links to
+the canonical screens) and *Your website's look* (`studio/_look.blade.php`: brand colour, logo, hero, alt text and *Save changes*
+to `website.look.update`, the same media pipeline as the Review screen). External-mode Businesses never reach it: the Studio
+redirects them to the external overview.
 
 ## Deliberately not changed
 

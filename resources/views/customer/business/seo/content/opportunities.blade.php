@@ -4,22 +4,13 @@
     not have that data, so we do not show it. "Create AI draft" is a POST the owner submits; opening this page
     never calls the AI. Escaped Blade output only.
 --}}
-@extends('layouts/contentLayoutMaster')
+@extends(request()->query('fragment') === '1' ? 'customer.business.seo.content._fragment' : 'customer.business.seo.content._frame')
 
 @section('title', 'Content opportunities')
+@section('content-active', 'opportunities')
+@section('content-subtitle', 'Topics that support your service pages and answer what customers ask before they book.')
 
-@section('content')
-    <div class="row mb-1">
-        <div class="col-12">
-            <h4 class="mb-25">Content</h4>
-            <p class="text-caption mb-0">Topics that support your service pages and answer what customers ask before they book.</p>
-        </div>
-    </div>
-
-    @include('customer.business.seo.content._nav', ['active' => 'opportunities', 'withModule' => true])
-
-    <x-flash-alert class="mb-2" />
-
+@section('content-section')
     @if(count($opportunities) === 0)
         <x-card :padded="true" data-role="opportunities-empty">
             <h5 class="mb-50">Publish your website to see topic ideas</h5>

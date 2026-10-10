@@ -333,4 +333,70 @@ class WebsiteStudioNavigationTest extends TestCase
         $this->assertStringContainsString('window.SectionRouter.mount', $calendar);
         $this->assertStringNotContainsString("searchParams.set('fragment'", $calendar);
     }
+
+    // ------------------------------------------- settings: the target layout, from canonical state
+
+    public function test_settings_shows_the_domain_callout_and_the_two_card_layout_from_the_websites_own_state(): void
+    {
+        [, $business, $workspace, $website] = $this->generatedWebsite();
+        $params = [$workspace->uid, $business->uid];
+
+        $html = $this->get($this->url($workspace, $business, 'settings'))->assertOk()->getContent();
+
+        // Domain callout: no domain row at all -> "Not live yet" and "Set up domain" pointing at the canonical Domains screen.
+        $this->assertStringContainsString('data-testid="settings-domain-card"', $html);
+        $this->assertMatchesRegularExpression('#data-testid="settings-domain-state">\s*Not live yet\s*<#', $html);
+        $this->assertStringContainsString('Connect your own domain so customers can reach your site at your address.', $html);
+        $this->assertMatchesRegularExpression('#href="' . preg_quote(route('customer.workspaces.businesses.website.domains.index', $params), '#') . '" data-testid="settings-domain">Set up domain#', $html);
+
+        // Left card: real page count, the actual template, the canonical History route.
+        $this->assertMatchesRegularExpression('#settings-pages".*?website-settings-meta">\s*<span>' . $website->pages()->count() . ' (page|pages)</span>#s', $html);
+        $this->assertMatchesRegularExpression('#settings-template".*?<span>Template 1</span>#s', $html);
+        $this->assertStringContainsString('href="' . route('customer.workspaces.businesses.website.history', $params) . '" data-testid="settings-history"', $html);
+        $this->assertStringContainsString('Update what you told us about your business', $html);
+
+        // Right card: the look, with the "nothing yet" upload states and the alt-text fields; no hard-coded colour.
+        $this->assertStringContainsString('No logo yet', $html);
+        $this->assertStringContainsString('No hero image yet', $html);
+        $this->assertStringContainsString('Upload an image file', $html);
+        $this->assertStringContainsString('The large photo at the top of your home page', $html);
+        $this->assertStringContainsString('placeholder="Alt text (e.g. Your business logo)"', $html);
+        $this->assertStringContainsString('placeholder="Alt text (describe the photo)"', $html);
+        $this->assertStringContainsString('id="look-brand-color" name="brand_color" value=""', $html);
+        $this->assertStringNotContainsString('#9a35cd', $html);
+    }
+
+    public function test_the_domain_callout_follows_the_real_domain_state(): void
+    {
+        [, $business, $workspace, $website] = $this->generatedWebsite();
+
+        $domain = $website->domains()->create(['domain' => 'www.example-booth.test', 'is_primary' => true, 'status' => WebsiteDomainStatus::PendingVerification, 'verification_token' => 't']);
+        $pending = $this->get($this->url($workspace, $business, 'settings'))->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('#settings-domain-state">\s*Not live yet\s*<#', $pending);
+        $this->assertStringContainsString('Finish setup', $pending);
+
+        $domain->update(['status' => WebsiteDomainStatus::Active, 'verified_at' => now(), 'activated_at' => now()]);
+        $live = $this->get($this->url($workspace, $business, 'settings'))->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('#settings-domain-state">\s*Live\s*<#', $live);
+        $this->assertStringContainsString('Your website is reachable at www.example-booth.test.', $live);
+        $this->assertStringContainsString('Manage domain', $live);
+        $this->assertStringNotContainsString('Connect your own domain', $live);
+    }
+
+    public function test_the_look_card_shows_the_saved_brand_colour_and_persists_a_change(): void
+    {
+        [, $business, $workspace, $website] = $this->generatedWebsite();
+        $settings = $this->url($workspace, $business, 'settings');
+        $website->forceFill(['theme' => array_merge($website->theme ?? [], ['brand_color' => '#93a5cd'])])->save();
+
+        $html = $this->get($settings)->assertOk()->getContent();
+        $this->assertStringContainsString('id="look-brand-picker" value="#93a5cd"', $html);
+        $this->assertStringContainsString('id="look-brand-color" name="brand_color" value="#93a5cd"', $html);
+
+        $this->from($settings)->post(route('customer.workspaces.businesses.website.look.update', [$workspace->uid, $business->uid]), ['brand_color' => '#224466'])
+            ->assertRedirect($settings);
+
+        $this->assertStringContainsString('id="look-brand-color" name="brand_color" value="#224466"', $this->get($settings)->getContent());
+        $this->assertSame('#224466', $website->fresh()->theme['brand_color']);
+    }
 }

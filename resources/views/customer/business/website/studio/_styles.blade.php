@@ -114,26 +114,122 @@
 
     .website-health-fold > summary::-webkit-details-marker { display: none; }
 
-    /* Settings: one calm list of the existing screens */
-    .website-settings-row {
+    /* Settings: the Domain callout, then "Manage your website" | "Your website's look" */
+    .website-domain-card {
         display: flex;
         align-items: center;
-        gap: .75rem;
+        gap: .85rem;
         padding: .9rem 1.1rem;
+        border: 1px solid var(--color-status-warning-border, #EBD9A8);
+        border-radius: .75rem;
+        background: var(--color-status-warning-soft-bg, #FDF6E3);
+    }
+
+    .website-domain-icon,
+    .website-settings-icon,
+    .website-look-upload-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 2rem;
+        height: 2rem;
+        border-radius: .5rem;
+        color: var(--color-primary, #B5524C);
+        background: var(--color-primary-soft-bg, #F4E6E4);
+    }
+
+    .website-domain-icon { background: var(--color-surface, #fff); width: 1.75rem; height: 1.75rem; }
+    .website-domain-body { flex: 1 1 auto; min-width: 0; }
+    .website-domain-action { flex: 0 0 auto; white-space: nowrap; }
+
+    .website-settings-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 1.25rem;
+        align-items: start;
+    }
+
+    .website-settings-heading { margin: 0; padding: 1rem 1.25rem .75rem; }
+
+    a.website-settings-row {
+        display: flex;
+        align-items: center;
+        gap: .85rem;
+        padding: .85rem 1.25rem;
         color: var(--color-text-primary, #262522);
         text-decoration: none;
     }
 
-    .website-settings-list li + li .website-settings-row { border-top: 1px solid var(--color-border, #E5E1DA); }
+    .website-settings-list li { border-top: 1px solid var(--color-border, #E5E1DA); }
 
-    .website-settings-row:hover,
-    .website-settings-row:focus-visible { background: var(--color-row-hover, var(--color-primary-soft-bg)); }
+    a.website-settings-row:hover,
+    a.website-settings-row:focus-visible { color: var(--color-text-primary, #262522); text-decoration: none; background: var(--color-row-hover, var(--color-primary-soft-bg)); }
 
-    .website-settings-title { font-weight: 600; }
-    .website-settings-meta { margin-left: auto; }
-    .website-settings-row > .website-settings-chevron { color: var(--color-text-muted, #6F6D67); }
-    .website-settings-title + .website-settings-chevron { margin-left: auto; }
-    .website-settings-meta + .website-settings-chevron { margin-left: .25rem; }
+    .website-settings-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+    .website-settings-title { font-weight: 600; font-size: .875rem; }
+    .website-settings-sub { font-size: .75rem; color: var(--color-text-muted, #6F6D67); }
+
+    .website-settings-meta {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        flex: 0 0 auto;
+        font-size: .75rem;
+        color: var(--color-text-secondary, #4A4843);
+        text-align: right;
+    }
+
+    .website-settings-chevron { flex: 0 0 auto; color: var(--color-text-muted, #6F6D67); }
+
+    /* Your website's look */
+    .website-look-field { margin-bottom: 1.25rem; }
+    .website-look-label { display: block; margin-bottom: .35rem; font-size: .75rem; font-weight: 600; color: var(--color-text-secondary, #4A4843); }
+
+    .website-look-color { display: flex; align-items: center; gap: .6rem; max-width: 14rem; }
+
+    .website-look-swatch {
+        flex: 0 0 auto;
+        width: 2.5rem;
+        height: 2.5rem;
+        padding: 0;
+        border: 1px solid var(--color-border, #E5E1DA);
+        border-radius: .5rem;
+        background: none;
+        cursor: pointer;
+    }
+
+    .website-look-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    .website-look-swatch::-webkit-color-swatch { border: 0; border-radius: .45rem; }
+    .website-look-swatch::-moz-color-swatch { border: 0; border-radius: .45rem; }
+
+    .website-look-upload {
+        display: flex;
+        align-items: center;
+        gap: .75rem;
+        padding: .7rem .85rem;
+        border: 1px dashed var(--color-border-strong, #D6D1C7);
+        border-radius: .6rem;
+        background: var(--color-surface-secondary, #FBFAF7);
+    }
+
+    .website-look-upload-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; font-size: .8125rem; }
+    .website-look-upload-text .text-caption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .website-look-choose { flex: 0 0 auto; }
+    .website-look-thumb { flex: 0 0 auto; width: 3rem; height: 2.25rem; object-fit: cover; border-radius: .4rem; }
+    .website-look-thumb--logo { object-fit: contain; }
+
+    @media (max-width: 991.98px) {
+        .website-settings-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    @media (max-width: 575.98px) {
+        .website-domain-card { flex-wrap: wrap; }
+        .website-domain-body { flex-basis: calc(100% - 3rem); }
+        .website-domain-action { width: 100%; justify-content: center; }
+        .website-look-upload { flex-wrap: wrap; }
+        .website-look-upload-text { flex-basis: calc(100% - 4rem); }
+    }
 
     @media (max-width: 767.98px) {
         .website-previews { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }

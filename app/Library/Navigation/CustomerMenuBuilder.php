@@ -445,48 +445,22 @@ final class CustomerMenuBuilder
     }
 
     /**
-     * SEO Content Engine V1 — SEO → Content. The landing is the Content Plan route; on a Business without
-     * `seo_module` that route renders the Articles list (so Core is never sent to a 404). With `seo_module`
-     * the entry opens into Content Plan / Articles / Opportunities; without it, Articles is the only child,
-     * so a single "Content" link is emitted instead of a one-item group. Same `item()`/`entitled()` rules
-     * as every sibling: this is presentation, not authorization — the routes enforce the gates themselves.
+     * SEO Content Engine V1 — SEO → Content, ONE sidebar entry with no children. Autopilot, Articles, Content Plan
+     * and Opportunities are the horizontal tabs inside the Content module (seo/content/_nav), so every
+     * `seo.content.*` route keeps this single item selected. The landing is Autopilot with the SEO module and Articles
+     * without it (so Core is never sent to a 404). Presentation only: the routes enforce the gates themselves.
      *
      * @param  array<int, string|null>  $scoped
      */
     private function seoContentMenuItem(User $user, array $scoped, string $current): ?MenuItem
     {
-        // Content Autopilot: with the SEO module the entry opens into Autopilot (the owner's home for content) and
-        // Articles. The Content Plan and the topic Opportunities are still reachable (Autopilot's "topic ideas" links
-        // and the Content tabs) but are no longer two more things to choose between in the sidebar. Autopilot owns those
-        // routes' highlight so the selected child is always visible.
-        $autopilot = $this->entitled('seo_module', $this->item($user, 'seo-content-autopilot', 'Autopilot', 'sparkles', ['view_seo'], 'customer.workspaces.businesses.seo.content.autopilot', $scoped, $current, [
-            'customer.workspaces.businesses.seo.content.autopilot',
-            'customer.workspaces.businesses.seo.content.autopilot.',
-            'customer.workspaces.businesses.seo.content.plan',
-            'customer.workspaces.businesses.seo.content.opportunities',
-        ]));
+        $withModule = $this->entitlements->allows('seo_module');
 
-        $landing = $this->item($user, 'seo-content', 'Content', 'file-text', ['view_seo'], $autopilot !== null
+        return $this->item($user, 'seo-content', 'Content', 'file-text', ['view_seo'], $withModule
             ? 'customer.workspaces.businesses.seo.content.autopilot'
             : 'customer.workspaces.businesses.seo.content.articles.index', $scoped, $current, [
             'customer.workspaces.businesses.seo.content.',
         ]);
-
-        if ($landing === null) {
-            return null;
-        }
-
-        $articles = $this->item($user, 'seo-content-articles', 'Articles', 'file-text', ['view_seo'], 'customer.workspaces.businesses.seo.content.articles.index', $scoped, $current, [
-            'customer.workspaces.businesses.seo.content.articles.',
-        ]);
-
-        $children = array_values(array_filter([$autopilot, $articles]));
-
-        if (count($children) <= 1) {
-            return $landing;
-        }
-
-        return new MenuItem('seo-content', 'Content', $landing->url, 'file-text', false, $children);
     }
 
     /**

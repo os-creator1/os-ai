@@ -197,13 +197,14 @@ group's landing. Ordinary owners never choose from a list of SEO topics.
   quick look: …"), a Preview and the ordinary editor. **Recently published** — what went live.
 * **Manual path** — "Browse topic ideas" (Opportunities) and "Content plan" stay one quiet link away and as muted page tabs.
 
-**Navigation decision.** Sidebar: `Content → Autopilot · Articles` (Core: a single `Content` link to Articles). The Content
-Plan and Opportunities are no longer sidebar entries; the routes, pages and AI-draft flow are unchanged, and Autopilot owns
-the highlight on those pages. `…/autopilot*`, `…/plan` and `…/opportunities` all select the Autopilot child.
+**Navigation decision (superseded by the Content tab-shell polish).** Sidebar: `SEO → Content`, ONE leaf entry with no
+children (Core and Growth alike). Autopilot, Articles, Content Plan and Opportunities are the horizontal tabs inside the
+Content module (`seo/content/_nav`), so every `seo.content.*` route keeps that single sidebar row selected with SEO expanded.
+The routes, pages and AI-draft flow are unchanged. The tab shell, its stable header and the in-place tab swap are described in
+`docs/automation/V1-UX-POLISH-SECTION-ROUTER.md` ("Content").
 
-**Sidebar fix (Slice 0).** The Content group is built with `active = false` like SEO and Ads; expansion comes from
-`MenuItem::hasActiveChild()` (`open`, `aria-expanded`). Checked in a real browser: parent background neutral, submenu
-expanded, only the selected child accented.
+**Sidebar fix (Slice 0).** The SEO group is built with `active = false`; expansion comes from `MenuItem::hasActiveChild()`
+(`open`, `aria-expanded`). With the Content entry now a leaf, the Content row itself carries the selected state.
 
 ## 9. Maintenance (Slice 8)
 

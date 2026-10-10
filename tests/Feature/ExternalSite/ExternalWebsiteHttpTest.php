@@ -270,4 +270,19 @@ class ExternalWebsiteHttpTest extends TestCase
         $this->assertNotSame(404, $response->getStatusCode());
         $response->assertDontSee('Use my existing website');
     }
+
+    public function test_an_external_business_never_reaches_the_hosted_settings_redesign(): void
+    {
+        [$business, $workspace] = $this->crawledExternalBusiness();
+
+        // The hosted Studio (and its Settings tab) is not an external screen: it hands the owner to the external overview.
+        $this->get(route('customer.workspaces.businesses.website.studio.show', [$workspace->uid, $business->uid, 'settings']))
+            ->assertRedirect($this->url('external.overview', $workspace, $business));
+
+        $html = $this->get($this->url('external.settings', $workspace, $business))->assertOk()->getContent();
+
+        foreach (['data-testid="studio-look"', 'data-testid="settings-domain"', 'data-testid="settings-template"', 'data-testid="settings-domain-card"', 'Your website\'s look', 'Change template or rebuild', 'Manage your website'] as $hostedOnly) {
+            $this->assertStringNotContainsString($hostedOnly, $html, $hostedOnly);
+        }
+    }
 }

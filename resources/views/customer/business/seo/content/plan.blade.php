@@ -3,22 +3,13 @@
     nothing supporting them yet, and articles worth a second look. Wording is deliberately modest: "may help",
     never a promise about rankings. Escaped Blade output only.
 --}}
-@extends('layouts/contentLayoutMaster')
+@extends(request()->query('fragment') === '1' ? 'customer.business.seo.content._fragment' : 'customer.business.seo.content._frame')
 
 @section('title', 'Content plan')
+@section('content-active', 'plan')
+@section('content-subtitle', 'How your articles support the pages that bring in customers.')
 
-@section('content')
-    <div class="row mb-1">
-        <div class="col-12">
-            <h4 class="mb-25">Content</h4>
-            <p class="text-caption mb-0">How your articles support the pages that bring in customers.</p>
-        </div>
-    </div>
-
-    @include('customer.business.seo.content._nav', ['active' => 'plan', 'withModule' => true])
-
-    <x-flash-alert class="mb-2" />
-
+@section('content-section')
     @php($route = fn (string $name, array $extra = []) => route('customer.workspaces.businesses.seo.content.' . $name, array_merge([$workspaceUid, $businessUid], $extra)))
 
     @if(count($needsReview) + count($rankSignals) > 0)
