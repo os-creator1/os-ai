@@ -2187,6 +2187,10 @@ render only the first or the last of a Business's bindings. Where a state
 above says "one card per binding", a Business holding three bindings shows
 three cards, each with actions addressed to that binding's own uid.
 
+### 25.5a Overview presentation (UI polish, no behaviour change)
+
+The §25.5 card is presented as a profile card (header with connection state/account/age and a Connection settings link; ON GOOGLE title, Verified / Updated chips; Phone, Website, Category, Location summary; a "Show all details" disclosure) followed by a "N fields differ from Google" card with Stored here / On Google rows and a **View full comparison** link, or an "Everything matches Google" card when there are no differences. `GoogleBusinessProfileOverviewPresenter` only splits the comparator's own rows (Mismatch / Not set on one side = differs; Match = matches) and reads the bounded mirror; it adds no comparison logic, no write control, and no provider identifiers on the page. Locality/country appear only when the read mask permits the address (§23.4). An absent or expired mirror shows "Refresh required" instead of stale values.
+
 ### 25.9 Required consent disclosure — exact obligation
 
 Before redirecting to Google, the UI must state, in the user's own view:

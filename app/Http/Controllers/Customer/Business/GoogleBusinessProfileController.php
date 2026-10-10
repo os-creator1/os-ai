@@ -23,6 +23,7 @@ use App\Library\GoogleBusinessProfile\GoogleBusinessProfileComparator;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileEnumerator;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileMirrorService;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOverviewPresenter;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
 use App\Library\GoogleBusinessProfile\GoogleOAuthStateSigner;
 use App\Library\Workspace\BusinessRouteAccess;
@@ -87,6 +88,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
         private readonly GoogleBusinessProfileMirrorService $mirror,
         private readonly GoogleBusinessProfileComparator $comparator,
         private readonly GoogleBusinessProfileReadMask $readMask,
+        private readonly GoogleBusinessProfileOverviewPresenter $overviewPresenter,
         private readonly GoogleOAuthStateSigner $stateSigner,
         private readonly GoogleBusinessProfileCandidateTokenSigner $candidateTokens,
     ) {
@@ -721,12 +723,8 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 'providerAccountResourceName' => $binding->provider_account_resource_name,
                 'providerLocationResourceName' => $binding->provider_location_resource_name,
                 'mirrorIsFresh' => $binding->mirrorIsFresh(),
-                // The same pure comparison the full comparison page shows (computed at read time,
-                // never stored), so the overview can name what differs without a second click.
-                'rows' => ($location !== null && $binding->mirrorIsFresh())
-                    ? $this->comparator->compare($business, $location, $binding)
-                    : [],
-                'mirror' => $binding->mirrorIsFresh() ? $binding->freshMirror() : [],
+                // Presentation split of the comparator's own rows (no new comparison logic).
+                'profile' => $this->overviewPresenter->present($business, $binding),
                 // A binding whose local location row has gone is still
                 // listed (so it can be unlinked) but has no comparison.
                 'comparisonAvailable' => $location !== null,

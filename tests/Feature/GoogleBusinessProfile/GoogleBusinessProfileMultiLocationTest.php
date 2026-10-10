@@ -66,7 +66,6 @@ class GoogleBusinessProfileMultiLocationTest extends TestCase
             // Its Google identity, its LOCAL location, and a comparison
             // link addressed to this exact binding.
             $response->assertSee('Downtown ' . ($index + 1), false);
-            $response->assertSee($binding->provider_location_resource_name, false);
             $response->assertSee(
                 route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]),
                 false,
@@ -252,7 +251,7 @@ class GoogleBusinessProfileMultiLocationTest extends TestCase
         $overview->assertOk();
         $overview->assertSee('Downtown 1', false);
         $overview->assertSee('Downtown 3', false);
-        $overview->assertDontSee('locations/L2', false);
+        $overview->assertDontSee($middle->uid, false);
     }
 
     // -----------------------------------------------------------------

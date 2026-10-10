@@ -11,6 +11,10 @@
     Layout: not connected = one short connect card (the §25.9 permission
     wording sits behind a disclosure, never removed); connected = the
     linked profile first (name, status, key facts), then only what differs.
+    The profile card and the "fields differ" cards are PRESENTATION ONLY:
+    every value and every difference comes from
+    GoogleBusinessProfileOverviewPresenter, which re-uses the comparator's
+    own rows. Nothing is compared in this view.
 
     Every Google-supplied value is rendered with escaped Blade output. Raw,
     unescaped Blade output is forbidden in every GBP view (contract §14.5,
@@ -20,24 +24,37 @@
 
 @section('title', 'Google Business Profile')
 
-@section('content')
-    <style>
-        .gbp-connect { max-width: 34rem; margin: 1rem auto; text-align: center; }
-        .gbp-connect-icon { width: 4rem; height: 4rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--bs-primary-bg-subtle, #f1eefe); color: var(--bs-primary, #7367f0); margin-bottom: 1rem; }
-        .gbp-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1rem 1.5rem; }
-        .gbp-fact-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-secondary-color, #6e6b7b); margin-bottom: .125rem; }
-        .gbp-fact-value { font-weight: 600; overflow-wrap: anywhere; }
-        .gbp-diff { border: 1px solid var(--bs-warning-border-subtle, #ffe2a8); background: var(--bs-warning-bg-subtle, #fff7e6); border-radius: .5rem; padding: .75rem 1rem; }
-        .gbp-diff + .gbp-diff { margin-top: .5rem; }
-        .gbp-diff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
-        @media (max-width: 575.98px) { .gbp-diff-grid { grid-template-columns: 1fr; gap: .25rem; } }
-    </style>
+@section('page-style')
+    @include('customer.business.googleBusinessProfile._overview-style')
+@endsection
 
-    <div class="row mb-2">
-        <div class="col-12 d-flex justify-content-between align-items-center flex-wrap">
-            <h4 class="mb-0">Google Business Profile</h4>
-            <span class="text-caption">{{ $business->name }}</span>
+@section('content')
+    @php
+        $isActive = $connection && $connection->state->value === 'active';
+    @endphp
+
+    <div class="gbp-header mb-2">
+        <div>
+            <h1 class="h3 mb-25">Google Business Profile</h1>
+            @if($isActive)
+                <p class="gbp-connection mb-0">
+                    <x-badge variant="success"><span class="gbp-dot" aria-hidden="true"></span>Connected &middot; read-only</x-badge>
+                    @if($connection->google_account_email)
+                        <span class="text-caption">{{ $connection->google_account_email }}</span>
+                    @endif
+                    @if($connection->connected_at)
+                        <span class="text-caption">&middot; connected {{ $connection->connected_at->diffForHumans() }}</span>
+                    @endif
+                </p>
+            @else
+                <p class="text-caption mb-0">{{ $business->name }}</p>
+            @endif
         </div>
+        @if($isActive)
+            <a class="btn btn-outline-secondary" href="{{ route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]) }}">
+                <x-ds-icon name="settings" :size="16" /> Connection settings
+            </a>
+        @endif
     </div>
 
     <x-flash-alert class="mb-2" />
@@ -99,15 +116,7 @@
         </x-card>
     @endif
 
-    @if($connection && $connection->state->value === 'active')
-        <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-2" data-role="gbp-connection">
-            <span class="text-caption">
-                {{ $connection->google_account_email ?? 'Google account connected' }}
-                @if($connection->connected_at) &middot; connected {{ $connection->connected_at->diffForHumans() }}@endif
-            </span>
-            <x-badge variant="success">Connected &middot; read-only</x-badge>
-        </div>
-
+    @if($isActive)
         @if(count($bindings) === 0)
             {{-- Contract §25.3 — connected but not bound. --}}
             <x-card :padded="true" class="gbp-connect">
@@ -127,97 +136,150 @@
             @foreach($bindings as $item)
                 @php
                     $binding = $item['binding'];
-                    $mirror = $item['mirror'];
-                    $rows = collect($item['rows']);
-                    // A difference is a mismatch, or a value present on one side only; 'Not set' on both sides is nothing to act on.
-                    $differs = $rows->filter(fn ($r) => $r->status->value === 'mismatch' || (in_array($r->status->value, ['not_set_on_platform', 'not_set_on_google'], true) && ($r->platformValue !== null || $r->googleValue !== null)))->values();
-                    $matches = $rows->filter(fn ($r) => $r->status->value === 'match')->count();
-                    $category = $mirror['primary_category_name'] ?? null;
-                    $place = collect([$mirror['locality'] ?? null, $binding->bound_region_code_snapshot])->filter()->implode(', ');
+                    $profile = $item['profile'];
+                    $differences = $profile['differences'];
+                    $diffCount = count($differences);
+                    $verified = $binding->verification_state && $binding->verification_state->value === 'verified';
+                    $subtitle = $item['location']?->name;
                 @endphp
-                <x-card :padded="true" class="mb-2" data-role="gbp-binding">
-                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-1">
-                        <div>
-                            <h5 class="mb-25">{{ $binding->bound_title_snapshot ?? 'Google location' }}</h5>
-                            <span class="text-caption">{{ $item['location']?->name ?? '—' }}</span>
+
+                <x-card :padded="false" class="gbp-card mb-2">
+                    <div class="gbp-card-body">
+                        <div class="gbp-profile-head">
+                            <div class="gbp-profile-title">
+                                <span class="gbp-profile-icon" aria-hidden="true"><x-ds-icon name="map-pin" :size="18" /></span>
+                                <div class="min-w-0">
+                                    <p class="gbp-eyebrow mb-25">On Google</p>
+                                    <h2 class="h5 mb-25">{{ $profile['title'] ?? 'Google Business Profile' }}</h2>
+                                    <p class="text-caption mb-0">{{ $subtitle ?? 'Google Business Profile' }}</p>
+                                </div>
+                            </div>
+                            <div class="gbp-chips">
+                                @if($binding->verification_state)
+                                    <x-badge :variant="$verified ? 'success' : 'warning'">
+                                        @if($verified)<x-ds-icon name="check" :size="12" />@endif
+                                        {{ $binding->verification_state->label() }}
+                                    </x-badge>
+                                @endif
+                                @if($item['mirrorIsFresh'] && $binding->mirror_fetched_at)
+                                    <x-badge>Updated {{ $binding->mirror_fetched_at->diffForHumans() }}</x-badge>
+                                @endif
+                            </div>
                         </div>
-                        <div class="d-flex gap-50 flex-wrap">
-                            @if($binding->verification_state)
-                                <x-badge :variant="$binding->verification_state->value === 'verified' ? 'success' : 'warning'">
-                                    {{ $binding->verification_state->label() }}
-                                </x-badge>
-                            @endif
-                            @if($item['mirrorIsFresh'] && $binding->mirror_fetched_at)
-                                {{-- Contract §25.10 — refresh status, per binding. --}}
-                                <x-badge variant="neutral">Updated {{ $binding->mirror_fetched_at->diffForHumans() }}</x-badge>
-                            @else
-                                <x-badge variant="warning">Refresh required</x-badge>
-                            @endif
-                        </div>
+
+                        @if($profile['fresh'])
+                            <dl class="gbp-summary">
+                                <div><dt>Phone</dt><dd>{{ $profile['phone'] ?? '—' }}</dd></div>
+                                <div><dt>Website</dt><dd class="gbp-break">{{ $profile['website'] ?? '—' }}</dd></div>
+                                <div><dt>Category</dt><dd>{{ $profile['category'] ?? '—' }}</dd></div>
+                                <div><dt>Location</dt><dd>{{ $profile['location'] ?? '—' }}</dd></div>
+                            </dl>
+
+                            <details class="gbp-more">
+                                <summary><x-ds-icon name="chevron-down" :size="14" /> <span>Show all details</span></summary>
+                                <dl class="gbp-summary gbp-summary-flat">
+                                    <div><dt>Platform location</dt><dd>{{ $item['location']?->name ?? '—' }}</dd></div>
+                                    <div><dt>Verification</dt><dd>{{ $binding->verification_state?->label() ?? '—' }}</dd></div>
+                                    @if($binding->mirror_fetched_at)
+                                        <div><dt>Last refreshed</dt><dd>{{ $binding->mirror_fetched_at->diffForHumans() }}</dd></div>
+                                    @endif
+                                    @foreach($profile['details'] as $detail)
+                                        <div><dt>{{ $detail['label'] }}</dt><dd>{{ $detail['value'] }}</dd></div>
+                                    @endforeach
+                                </dl>
+                            </details>
+                        @else
+                            {{-- Contract §25.10 — refresh status, per binding. --}}
+                            <p class="text-caption mb-0">
+                                Refresh required &mdash; Google data is not available or has passed its retention window.
+                            </p>
+                        @endif
+
+                        @if($binding->has_pending_edits)
+                            <x-alert variant="info" class="mt-2 mb-0">This Google listing has edits pending review.</x-alert>
+                        @endif
+
+                        @if($binding->duplicate_of_resource_name)
+                            <x-alert variant="warning" class="mt-2 mb-0">
+                                Google reports this listing as a duplicate of another location. Resolve it in Google; this platform never merges listings.
+                            </x-alert>
+                        @endif
+
+                        @if($binding->open_status && $binding->open_status !== 'OPEN')
+                            <x-alert variant="warning" class="mt-2 mb-0">
+                                Google shows this location as
+                                {{ $binding->open_status === 'CLOSED_PERMANENTLY' ? 'permanently closed' : 'temporarily closed' }}.
+                            </x-alert>
+                        @endif
+
+                        {{-- Contract §23.6 — the storefront/consent contradiction is
+                             SURFACED, never silently resolved in either direction. --}}
+                        @if($item['addressContradiction'])
+                            <x-alert variant="warning" class="mt-2 mb-0">
+                                This location is marked as a storefront, but its address is set to stay private.
+                                The address is not sent to or read from Google while that is the case.
+                            </x-alert>
+                        @endif
                     </div>
+                </x-card>
 
-                    @if($item['mirrorIsFresh'])
-                        <div class="gbp-facts mt-2" data-role="gbp-facts">
-                            <div><div class="gbp-fact-label">Phone</div><div class="gbp-fact-value">{{ $mirror['phone_primary'] ?? '—' }}</div></div>
-                            <div><div class="gbp-fact-label">Website</div><div class="gbp-fact-value">{{ $mirror['website_uri'] ?? '—' }}</div></div>
-                            <div><div class="gbp-fact-label">Category</div><div class="gbp-fact-value">{{ $category ?? '—' }}</div></div>
-                            <div><div class="gbp-fact-label">Location</div><div class="gbp-fact-value">{{ $place !== '' ? $place : '—' }}</div></div>
-                        </div>
-                    @endif
+                @if($profile['fresh'] && $item['comparisonAvailable'])
+                    @if($diffCount > 0)
+                        <x-card :padded="false" class="gbp-card mb-2">
+                            <div class="gbp-card-body">
+                                <div class="gbp-diff-head">
+                                    <div>
+                                        <h2 class="h5 mb-25">{{ $diffCount }} {{ $diffCount === 1 ? 'field differs' : 'fields differ' }} from Google</h2>
+                                        <p class="text-caption mb-0">
+                                            {{ $profile['matchCount'] }} {{ $profile['matchCount'] === 1 ? 'field matches' : 'fields match' }}.
+                                            Nothing here changes your Google listing.
+                                        </p>
+                                    </div>
+                                    <a class="btn btn-outline-primary" href="{{ $item['comparisonUrl'] }}">
+                                        View full comparison <x-ds-icon name="arrow-right" :size="14" />
+                                    </a>
+                                </div>
 
-                    <details class="mt-1"><summary class="text-caption">Details</summary><p class="text-caption mb-0 mt-50">{{ $item['providerLocationResourceName'] }} &middot; {{ $item['providerAccountResourceName'] }}</p></details>
-
-                    @if($binding->has_pending_edits)
-                        <x-alert variant="info" class="mt-2 mb-0">Google is reviewing edits to this listing.</x-alert>
-                    @endif
-
-                    @if($binding->duplicate_of_resource_name)
-                        <x-alert variant="warning" class="mt-2 mb-0">
-                            Google lists this location as a duplicate. Resolve it in Google; this platform never merges listings.
-                        </x-alert>
-                    @endif
-
-                    @if($binding->open_status && $binding->open_status !== 'OPEN')
-                        <x-alert variant="warning" class="mt-2 mb-0">
-                            Google shows this location as
-                            {{ $binding->open_status === 'CLOSED_PERMANENTLY' ? 'permanently closed' : 'temporarily closed' }}.
-                        </x-alert>
-                    @endif
-
-                    {{-- Contract §23.6 — the storefront/consent contradiction is
-                         SURFACED, never silently resolved in either direction. --}}
-                    @if($item['addressContradiction'])
-                        <x-alert variant="warning" class="mt-2 mb-0">
-                            This location is marked as a storefront, but its address stays private, so it is not sent to or read from Google.
-                        </x-alert>
-                    @endif
-
-                    @if($item['mirrorIsFresh'])
-                        <div class="mt-2" data-role="gbp-differences">
-                            @if($differs->isEmpty())
-                                <p class="mb-0 text-success fw-bold">{{ $matches }} {{ $matches === 1 ? 'field matches' : 'fields match' }} Google.</p>
-                            @else
-                                <p class="mb-1 fw-bold">{{ $differs->count() }} {{ $differs->count() === 1 ? 'field differs' : 'fields differ' }} from Google <span class="text-muted fw-normal">@if($matches > 0)&middot; {{ $matches }} match @endif</span></p>
-                                @foreach($differs as $row)
-                                    <div class="gbp-diff" data-role="gbp-diff">
-                                        <div class="fw-bold mb-25">{{ $row->field }}</div>
-                                        <div class="gbp-diff-grid">
-                                            <div><span class="gbp-fact-label d-block">Stored here</span>{{ $row->platformValue ?? 'Not set' }}</div>
-                                            <div><span class="gbp-fact-label d-block">On Google</span>{{ $row->googleValue ?? 'Not set' }}</div>
+                                @foreach($differences as $row)
+                                    <div class="gbp-diff">
+                                        <p class="gbp-diff-field">{{ $row->field }}</p>
+                                        <div class="gbp-diff-pair">
+                                            <div class="gbp-value">
+                                                <span class="gbp-eyebrow">Stored here</span>
+                                                <span class="{{ $row->platformValue === null ? 'gbp-unset' : 'gbp-break' }}">{{ $row->platformValue ?? 'Not set' }}</span>
+                                            </div>
+                                            <span class="gbp-swap" aria-hidden="true"><x-ds-icon name="arrow-left-right" :size="14" /></span>
+                                            <div class="gbp-value">
+                                                <span class="gbp-eyebrow">On Google</span>
+                                                <span class="{{ $row->googleValue === null ? 'gbp-unset' : 'gbp-break' }}">{{ $row->googleValue ?? 'Not set' }}</span>
+                                            </div>
                                         </div>
                                     </div>
                                 @endforeach
-                            @endif
-                        </div>
+                            </div>
+                        </x-card>
+                    @else
+                        <x-card :padded="false" class="gbp-card mb-2">
+                            <div class="gbp-card-body gbp-diff-head">
+                                <div class="gbp-match">
+                                    <span class="gbp-match-icon" aria-hidden="true"><x-ds-icon name="check" :size="16" /></span>
+                                    <div>
+                                        <h2 class="h5 mb-25">Everything matches Google</h2>
+                                        <p class="text-caption mb-0">
+                                            {{ $profile['matchCount'] }} {{ $profile['matchCount'] === 1 ? 'field matches' : 'fields match' }}.
+                                            Nothing here changes your Google listing.
+                                        </p>
+                                    </div>
+                                </div>
+                                <a class="btn btn-outline-primary" href="{{ $item['comparisonUrl'] }}">
+                                    View full comparison <x-ds-icon name="arrow-right" :size="14" />
+                                </a>
+                            </div>
+                        </x-card>
                     @endif
-
-                    {{-- The comparison action is scoped to THIS binding. --}}
-                    @if($item['comparisonAvailable'] && $item['mirrorIsFresh'])
-                        <a class="btn btn-outline-primary mt-2" href="{{ $item['comparisonUrl'] }}">View full comparison</a>
-                    @elseif($item['comparisonAvailable'])
-                        <a class="btn btn-outline-primary mt-2" href="{{ $item['comparisonUrl'] }}">View comparison</a>
-                    @endif
-                </x-card>
+                @elseif($item['comparisonAvailable'])
+                    <a class="btn btn-outline-primary mb-2" href="{{ $item['comparisonUrl'] }}">View comparison</a>
+                @endif
             @endforeach
 
             <div class="d-flex gap-1 flex-wrap">
@@ -232,9 +294,6 @@
                         Link another location
                     </a>
                 @endcan
-                <a class="btn btn-outline-secondary" href="{{ route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]) }}">
-                    Connection settings
-                </a>
             </div>
         @endif
     @endif
