@@ -601,6 +601,12 @@ count of requests, never a target, leaderboard or per-staff ranking.
 
 ### 8.7 Website SEO / technical audit (Sub-slice G)
 
+> **Amended by contract 26 (External Website Audit Mode V1).** The HOSTED audit below is unchanged: it reads **only** the immutable
+> `website_revisions.snapshot`, never crawls and never fetches a URL, and its evaluator (`SeoAuditEvaluator`) is still pure. A Business whose
+> primary website is *external* is now audited by the **same evaluator and registry** from a separate, SSRF-safe, bounded crawler that lives
+> outside `app/Library/Seo` (`app/Library/ExternalSite`) and feeds the evaluator normalised facts (`SeoAuditSiteFacts`). The hosted rule set
+> (`ruleKeys()`, rule-set version 1) is unchanged; the external-only rules are additive and cannot fire for a hosted site.
+
 Reads **only** the immutable `website_revisions.snapshot` of the published
 revision. It never crawls, never fetches a URL, and never audits an external
 site (no crawler exists and server-side fetching is forbidden). For a Business

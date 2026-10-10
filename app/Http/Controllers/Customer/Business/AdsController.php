@@ -115,6 +115,13 @@ class AdsController extends CustomerBaseController
         }
 
         return view('customer.business.ads.overview', $data + [
+            // Acquisition Purpose + Ads Decisioning V1: the deterministic "What should you do now?" block.
+            'decisionView' => app(\App\Library\Ads\Decisions\AdsDecisionPresenter::class)->present(
+                app(\App\Library\Ads\Decisions\AdsDecisionPanelReader::class)->forGoogle($business, $account, $period),
+                'google',
+                $business,
+                (bool) $data['adsHasModule'],
+            ),
             'period' => $period,
             'overview' => $overview,
             'trend' => $this->trend->forPeriod($account, $period),

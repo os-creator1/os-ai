@@ -1444,6 +1444,16 @@
             // Cross-channel Ads Overview (Meta Ads V1, contract 24 §9): per-provider cached figures, never blended.
             Route::get('/overview', 'Business\Ads\AdsOverviewController@overview')->name('overview');
 
+            // Acquisition Purpose V1: Goals & economics (what the ads are for, what a good result costs, which
+            // campaign serves which goal). GET needs a provider read capability, every POST a provider manage
+            // capability; the `ads.` prefix makes every POST View-As prohibited.
+            Route::get('/goals', 'Business\Ads\AdsGoalsController@show')->name('goals');
+            Route::post('/goals', 'Business\Ads\AdsGoalsController@store')->middleware('throttle:20,1')->name('goals.store');
+            Route::post('/goals/campaigns', 'Business\Ads\AdsGoalsController@assignCampaign')->middleware('throttle:60,1')->name('goals.campaigns');
+            Route::post('/goals/{purposeUid}/economics', 'Business\Ads\AdsGoalsController@saveEconomics')->middleware('throttle:20,1')->name('goals.economics');
+            Route::post('/goals/{purposeUid}/links', 'Business\Ads\AdsGoalsController@saveLinks')->middleware('throttle:20,1')->name('goals.links');
+            Route::post('/goals/{purposeUid}/active', 'Business\Ads\AdsGoalsController@toggle')->middleware('throttle:20,1')->name('goals.toggle');
+
             // Meta Ads (contract 24). Tenancy/entitlement 404; view_meta_ads for reads, manage_meta_ads
             // for connect/accounts/select/settings/refresh/pause/resume. Non-GET is View-As prohibited by prefix.
             Route::get('/meta', 'Business\MetaAdsController@overview')->name('meta.index');
@@ -2046,6 +2056,19 @@
             Route::get('/', 'Business\WebsiteStudioController@show')->name('show');
             Route::get('/setup', 'Business\WebsiteController@setup')->name('setup');
             Route::post('/', 'Business\WebsiteController@store')->name('store');
+
+            // External Website Audit Mode V1: the first-screen choice (build / use my existing website / later)
+            // and the existing-website screens. Nothing under `external` publishes, edits or rebuilds a site.
+            Route::post('/mode', 'Business\ExternalWebsiteController@chooseMode')->middleware('throttle:20,1')->name('mode.choose');
+            Route::prefix('external')->name('external.')->group(function () {
+                Route::get('/', 'Business\ExternalWebsiteController@overview')->name('overview');
+                Route::get('/audit', 'Business\ExternalWebsiteController@audit')->name('audit');
+                Route::get('/pages', 'Business\ExternalWebsiteController@pages')->name('pages');
+                Route::get('/pages/{pageId}', 'Business\ExternalWebsiteController@page')->whereNumber('pageId')->name('page');
+                Route::get('/settings', 'Business\ExternalWebsiteController@settings')->name('settings');
+                Route::post('/settings', 'Business\ExternalWebsiteController@saveSettings')->middleware('throttle:20,1')->name('settings.update');
+                Route::post('/crawl', 'Business\ExternalWebsiteController@crawl')->middleware('throttle:10,1')->name('crawl');
+            });
 
             Route::prefix('studio')->name('studio.')->group(function () {
                 Route::get('/{tab?}', 'Business\WebsiteStudioController@show')->name('show');

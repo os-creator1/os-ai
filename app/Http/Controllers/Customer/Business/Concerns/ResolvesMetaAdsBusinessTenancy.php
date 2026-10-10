@@ -179,6 +179,7 @@ trait ResolvesMetaAdsBusinessTenancy
             'ads' => ['Ads', $prefix . 'ads.index', true],
             'recommendations' => ['Recommendations', $prefix . 'recommendations.index', true],
             'leads' => ['Leads', $prefix . 'leads.index', true],
+            'goals' => ['Goals & economics', 'customer.workspaces.businesses.ads.goals', false],
             'settings' => ['Settings', $prefix . 'settings', false],
         ];
 

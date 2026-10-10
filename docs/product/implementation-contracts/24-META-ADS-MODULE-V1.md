@@ -123,6 +123,9 @@ Lead Ads retrieval needs `leads_retrieval`, Page permissions (`pages_show_list`,
 
 ## 12. Recommendations (facts, not a second product)
 
+> **Extended by contract 25.** Business-outcome decisions (keep running / act / fix the funnel / check tracking …) are made per *Acquisition Purpose* by the
+> deterministic `AdsDecisionEngine` and shown first on this page; the fact readers below are unchanged and still feed Growth.
+
 `MetaAdsRecommendationFactReader` returns `MetaAdsRecommendationFact` DTOs from deterministic rules; nothing is stored, nothing has a lifecycle (Opportunity Engine owns that later). Thresholds in `config/meta_ads.php` (money in account-currency micros). A rule fires only with enough evidence and never asserts causation. Result-based rules require a chosen result type.
 
 | Type | Rule |

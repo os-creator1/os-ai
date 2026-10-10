@@ -101,6 +101,24 @@ class WebsiteStudioController extends CustomerBaseController
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::WebsiteGeneration->value);
 
+        // External Website Audit Mode V1: the Business's PRIMARY website source decides what this entry shows.
+        // A Business that already has a hosted Website (or chose to build one) is untouched: the code below is
+        // exactly the pre-existing hosted flow.
+        $mode = app(\App\Library\Website\WebsiteModeManager::class)->resolve($business);
+
+        if ($mode === \App\Enums\Website\WebsiteMode::External) {
+            return redirect()->route('customer.workspaces.businesses.website.external.overview', [$workspaceUid, $businessUid]);
+        }
+
+        if ($mode === null || $mode === \App\Enums\Website\WebsiteMode::None) {
+            return view('customer.business.website.choose', [
+                'workspaceUid' => $workspaceUid,
+                'businessUid' => $businessUid,
+                'business' => $business,
+                'mode' => $mode?->value,
+            ]);
+        }
+
         $state = $this->creationState->resolve($business);
 
         // THE ENTRY INVARIANT (WebsiteCreationStateResolver): Studio is

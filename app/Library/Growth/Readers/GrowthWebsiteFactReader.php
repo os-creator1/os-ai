@@ -37,6 +37,14 @@ use Illuminate\Support\Facades\DB;
  * published snapshot. Starter pages are generated hidden by design, so only a hidden HOME page is a
  * finding; the platform-path noindex is a status, never counted.
  *
+ * External Website Audit Mode V1 adds, additively:
+ *   mode            string|null  hosted | external | none (the Business's primary website source; null = not chosen)
+ *   external        array|null   for an `external` Business with a finished crawl: critical, issues (warning + info),
+ *                                broken_links, indexability, pages, checked_at; null otherwise
+ *   missing_landing int          active goals whose website intent has no landing destination chosen — an ACQUISITION
+ *                                recommendation seam, never a technical finding
+ * Growth reads these stored values only; it fetches nothing and the external site is audited by the one SEO engine.
+ *
  * DEFERRED: "high-priority service area page not published" (no canonical seam).
  */
 final class GrowthWebsiteFactReader implements GrowthFactReader
@@ -81,7 +89,26 @@ final class GrowthWebsiteFactReader implements GrowthFactReader
             $staleness = $model !== null ? $this->catalogReferences->staleness($model) : $staleness;
         }
 
+        $mode = app(\App\Library\Website\WebsiteModeManager::class)->resolve($business);
+        $external = null;
+
+        if ($mode === \App\Enums\Website\WebsiteMode::External) {
+            $crawl = app(\App\Library\ExternalSite\ExternalWebsiteReader::class)->latestCompleted($business);
+
+            $external = $crawl === null ? null : [
+                'critical' => (int) $crawl->critical_count,
+                'issues' => (int) $crawl->warning_count + (int) $crawl->info_count,
+                'broken_links' => (int) $crawl->broken_links,
+                'indexability' => (string) $crawl->indexability,
+                'pages' => (int) $crawl->pages_fetched,
+                'checked_at' => $crawl->finished_at?->toIso8601String(),
+            ];
+        }
+
         return GrowthFactSet::available($this->domain(), [
+            'mode' => $mode?->value,
+            'external' => $external,
+            'missing_landing' => app(\App\Library\Acquisition\PurposeWebsiteIntents::class)->withoutDestination($business)->count(),
             'has_external_site' => trim((string) $business->website_url) !== '',
             'exists' => $website !== null,
             'status' => $website?->status,

@@ -308,6 +308,11 @@
             // with its own call budget, breaker and quota.
             $schedule->job(new SweepMetaAdsSyncs())->dailyAt('03:10')->withoutOverlapping();
 
+            // External Website Audit Mode V1 — queue the weekly re-check of every Business that keeps its
+            // existing website. It only queues jobs (one active crawl per Business, a per-run limit, the
+            // cadence from config/external_site_audit.php); the crawl itself runs on the queue.
+            $schedule->command('website:recrawl-external')->dailyAt('04:20')->withoutOverlapping();
+
             // PR #295 Correction Round 1, item 6 — the one canonical
             // mechanism that advances a submitted carrier registration.
             // Never on a page render; 15 minutes is far more responsive

@@ -600,11 +600,46 @@
                     $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\SeoStrategyComponentAdapter::class));
                     $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CitationRecommendationsComponentAdapter::class));
 
+                    // Acquisition Purpose V1 — one goal (pipeline + form + economics questions) per component.
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\AcquisitionPurposeComponentAdapter::class));
+
                     return $registry;
                 },
             );
 
             $this->app->singleton(HookManager::class, fn() => new HookManager());
+
+            // Acquisition Purpose + Ads Decisioning V1 — the decision thresholds, read once from config/ads_decisions.php.
+            $this->app->singleton(\App\Library\Ads\Decisions\AdsDecisionPolicy::class, fn () => \App\Library\Ads\Decisions\AdsDecisionPolicy::fromConfig());
+
+            // External Website Audit Mode V1 — the crawler's limits, and its DNS + transport. driver=fake serves a
+            // built-in fixture site (tests and browser acceptance only) and is refused in production, exactly like
+            // the Google and Meta Ads fake drivers.
+            $this->app->singleton(\App\Library\ExternalSite\ExternalSiteConfig::class, fn () => \App\Library\ExternalSite\ExternalSiteConfig::fromConfig());
+            $this->app->singleton(\App\Library\ExternalSite\Fixtures\FixtureHostResolver::class);
+            $this->app->singleton(\App\Library\ExternalSite\Fixtures\FixtureExternalSiteTransport::class);
+            $this->app->bind(\App\Library\ExternalSite\HostResolver::class, function ($app) {
+                if ($app->make(\App\Library\ExternalSite\ExternalSiteConfig::class)->driver() === 'fake') {
+                    if ($app->isProduction()) {
+                        throw new \RuntimeException('EXTERNAL_SITE_AUDIT_DRIVER=fake is not allowed in production.');
+                    }
+
+                    return $app->make(\App\Library\ExternalSite\Fixtures\FixtureHostResolver::class);
+                }
+
+                return new \App\Library\ExternalSite\DnsHostResolver();
+            });
+            $this->app->bind(\App\Library\ExternalSite\ExternalSiteTransport::class, function ($app) {
+                if ($app->make(\App\Library\ExternalSite\ExternalSiteConfig::class)->driver() === 'fake') {
+                    if ($app->isProduction()) {
+                        throw new \RuntimeException('EXTERNAL_SITE_AUDIT_DRIVER=fake is not allowed in production.');
+                    }
+
+                    return $app->make(\App\Library\ExternalSite\Fixtures\FixtureExternalSiteTransport::class);
+                }
+
+                return new \App\Library\ExternalSite\CurlExternalSiteTransport();
+            });
         }
 
         /**
@@ -614,6 +649,21 @@
         public function boot()
         {
             Schema::defaultStringLength(191);
+
+            // External Website Audit Mode V1 — a Business whose primary website is external is re-checked when its
+            // website address changes, from ANY edit surface (Website settings or the Business profile). The crawl
+            // manager keeps this bounded (one active crawl per Business) and never takes a URL from the request.
+            \App\Models\Business::updated(function (\App\Models\Business $business): void {
+                if (! $business->wasChanged('website_url') || (string) $business->getAttribute('website_mode') !== 'external') {
+                    return;
+                }
+
+                try {
+                    app(\App\Library\ExternalSite\ExternalSiteCrawlManager::class)->request($business, 'url_change');
+                } catch (\Throwable) {
+                    // Nothing to crawl (cleared or invalid address): the Website screens explain it.
+                }
+            });
 
             // Blueprint Safety Mode — the Blueprint Workspace may never reach the
             // outside world. One flag (BlueprintMode), enforced at the generic

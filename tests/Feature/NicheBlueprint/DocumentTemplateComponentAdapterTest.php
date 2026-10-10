@@ -54,7 +54,7 @@ class DocumentTemplateComponentAdapterTest extends TestCase
         $this->assertTrue($registry->has('document_template'));
         $this->assertInstanceOf(DocumentTemplateComponentAdapter::class, $registry->adapterFor('document_template'));
         $this->assertSame('document_template', $this->adapter()->componentType());
-        $this->assertSame(['crm_pipeline', 'document_template', 'crm_tag_set', 'crm_custom_field', 'automation_workflow', 'form', 'booking_type', 'package_template', 'website_config', 'seo_strategy', 'citation_recommendations'], $registry->registeredComponentTypes());
+        $this->assertSame(['crm_pipeline', 'document_template', 'crm_tag_set', 'crm_custom_field', 'automation_workflow', 'form', 'booking_type', 'package_template', 'website_config', 'seo_strategy', 'citation_recommendations', 'acquisition_purpose'], $registry->registeredComponentTypes());
         $this->assertSame('payments_contracts', DocumentTemplateComponentAdapter::FEATURE_KEY);
         $this->assertSame(\App\Enums\Entitlement\PlatformFeature::PaymentsContracts->value, DocumentTemplateComponentAdapter::FEATURE_KEY);
     }

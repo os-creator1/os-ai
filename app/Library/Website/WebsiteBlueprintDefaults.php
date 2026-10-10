@@ -34,8 +34,10 @@ class WebsiteBlueprintDefaults
     private const MAX_PROMPTS = 10;
     private const MAX_PROMPT_LENGTH = 500;
 
-    public function __construct(private readonly BlueprintConfigReader $reader)
-    {
+    public function __construct(
+        private readonly BlueprintConfigReader $reader,
+        private readonly ?\App\Library\Acquisition\PurposeWebsiteIntents $intents = null,
+    ) {
     }
 
     /**
@@ -75,9 +77,15 @@ class WebsiteBlueprintDefaults
     {
         $config = $this->reader->websiteConfig($business);
 
-        if ($config === null) {
+        // Acquisition Purpose V1: each goal's website intent (a student page and a separate teacher page for
+        // tutoring) guides generation too. A Business with no goals is byte-for-byte unaffected.
+        $intentPrompts = ($this->intents ?? app(\App\Library\Acquisition\PurposeWebsiteIntents::class))->generationPrompts($business);
+
+        if ($config === null && $intentPrompts === []) {
             return null;
         }
+
+        $config ??= [];
 
         $prompts = [];
         foreach ((array) ($config['content_prompts'] ?? []) as $prompt) {
@@ -86,6 +94,10 @@ class WebsiteBlueprintDefaults
                 $prompts[] = mb_substr($prompt, 0, self::MAX_PROMPT_LENGTH);
             }
         }
+        foreach ($intentPrompts as $prompt) {
+            $prompts[] = $prompt;
+        }
+
         $prompts = array_slice($prompts, 0, self::MAX_PROMPTS);
 
         $bySection = [];

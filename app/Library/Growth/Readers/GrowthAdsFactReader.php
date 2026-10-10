@@ -45,6 +45,10 @@ use Carbon\CarbonImmutable;
  *   stale       bool   a ready provider's sync is stale
  *   counts      array<string, int>   zero_spend | cpl_above | pacing_over | term_waste | delivery_issue | fatigue | strong
  *   money       array<string, array{minor: int, currency: string}|null>   zero_spend | cpl_above | term_waste
+ *   decisions   array<string, int>   Acquisition Purpose + Ads Decisioning V1 verdicts, counted by state across the settled
+ *               providers' goals: act | fix_the_funnel | check_tracking | watch | wait | not_enough_data | keep_running,
+ *               plus `unassigned_campaigns` (live campaigns with no goal). A READ of AdsDecisionPanelReader's deterministic
+ *               states: Growth adds no scoring or lifecycle of its own, and every CTA still points at the Ads module.
  */
 final class GrowthAdsFactReader implements GrowthFactReader
 {
@@ -58,6 +62,7 @@ final class GrowthAdsFactReader implements GrowthFactReader
         private readonly MetaAdsRecommendationFactReader $metaFacts,
         private readonly GoogleAdsFreshness $googleFreshness,
         private readonly MetaAdsFreshness $metaFreshness,
+        private readonly ?\App\Library\Ads\Decisions\AdsDecisionPanelReader $decisionPanels = null,
     ) {
     }
 
@@ -178,6 +183,20 @@ final class GrowthAdsFactReader implements GrowthFactReader
             }
         }
 
+        $decisions = array_fill_keys(array_map(fn (\App\Library\Ads\Decisions\AdsDecisionState $s): string => $s->value, \App\Library\Ads\Decisions\AdsDecisionState::cases()), 0) + ['unassigned_campaigns' => 0];
+        $panels = $this->decisionPanels ?? app(\App\Library\Ads\Decisions\AdsDecisionPanelReader::class);
+
+        foreach (array_filter([
+            $sufficientBy['google'] && $googleAccount !== null ? $panels->forGoogle($business, $googleAccount, \App\Library\GoogleAds\Reporting\GoogleAdsPeriod::resolve(null, $googleAccount, $now)) : null,
+            $sufficientBy['meta'] && $metaAccount !== null ? $panels->forMeta($business, $metaAccount, \App\Library\MetaAds\Reporting\MetaAdsPeriod::resolve(null, $metaAccount, $now)) : null,
+        ]) as $panel) {
+            foreach ($panel->decisions as $decision) {
+                $decisions[$decision->state->value]++;
+            }
+
+            $decisions['unassigned_campaigns'] += count($panel->unassigned);
+        }
+
         return GrowthFactSet::available($this->domain(), [
             'providers' => $providers,
             'connected' => in_array('ready', $providers, true),
@@ -186,6 +205,7 @@ final class GrowthAdsFactReader implements GrowthFactReader
             'stale' => $stale,
             'counts' => $counts,
             'money' => array_map(fn (array $byCurrency) => $this->money($byCurrency), $spend),
+            'decisions' => $decisions,
         ]);
     }
 

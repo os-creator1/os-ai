@@ -21,6 +21,8 @@ final class BlueprintSurfaces
         'website' => ['label' => 'Website', 'rank' => 7],
         'seo' => ['label' => 'SEO', 'rank' => 8],
         'citations' => ['label' => 'Citations', 'rank' => 9],
+        // After CRM and Forms: a goal references the pipeline and form this Blueprint installed.
+        'acquisition' => ['label' => 'Goals', 'rank' => 10],
     ];
 
     /** @return list<string> */
