@@ -207,11 +207,24 @@ After the first successful deploy, over SSH as `forge`:
 
 ```
 cd /home/forge/staging.getmotiongrove.com/current
-php artisan platform:install --owner-email=<you@getmotiongrove.com>   # owner password at the concealed prompt
-php artisan config:cache
+php8.3 artisan platform:install --owner-email=<you@getmotiongrove.com>   # needs a real SSH terminal: the owner password is a concealed prompt
+```
+**Why this is required:** a deploy only runs migrations. The `app_config` settings rows (about 76, including
+`custom_script` and `license`) are seeded by `platform:install` (its `db:seed` step). Before it has run, the login page
+crashes with `Attempt to read property "value" on null` (the helper is now tolerant, but the platform is still not
+configured). On a fresh, empty database this is safe: the only truncating seeders (`AppConfigSeeder`,
+`PaymentMethodsSeeder`) have nothing of value to lose, and every other step is idempotent.
+
+**Then, before the first owner login, the licence gate:** the seeded `app_config.license` is an empty string, and the
+`ValidProduct` middleware on every admin and customer route sends a signed-in user to the legacy `/verify-purchase-code`
+screen (a vendored CodeCanyon licence checker) while it is empty. That is a decision for the owner: either enter a valid
+purchase code on that screen, or (the way the local RC environment was set up) store a non-empty value once:
+
+```
+php8.3 artisan tinker --execute="App\Models\AppConfig::where('setting','license')->update(['value'=>'staging-placeholder']); echo App\Models\AppConfig::where('setting','license')->value('value');"
 ```
 Then check `SELECT count(*) FROM currencies;` = 12, `workspace_plan_catalog` has `core`, `growth`, `agency`, one
-`is_admin` user, and the legacy-gateway query in section 5.2 returns no rows.
+`is_admin` user, and the legacy-gateway query in section 5.2 returns no rows; sign in at `/login` as the owner.
 
 **Do not re-run `platform:install` on a live instance.** It is idempotent for catalogs, but `db:seed` includes
 `PaymentMethodsSeeder`, which **truncates `payment_methods`** and re-seeds it. Upgrades are deploys only.
