@@ -134,11 +134,25 @@ final class WebsiteHealthChecker
         $ctaLabel = ['booking' => 'online booking', 'form' => 'your quote form', 'contact_page' => 'your contact page', 'phone' => 'your phone number', 'email' => 'your email'][$cta['kind'] ?? ''] ?? null;
         $add('cta', $cta === null ? self::FAIL : self::OK, 'Main button', $cta === null ? 'There is no way for a visitor to book or contact you from the main button.' : 'Your main button leads to '.$ctaLabel.'.', $cta === null ? 'Edit your answers' : null, $cta === null ? ($links['answers'] ?? null) : null);
 
+        // 10b. The quote form must be connected to a Location, or every inquiry is turned away.
+        $this->quoteFormCheck($add, $website, $pages, $links);
+
         // 11. Service pages.
         $services = $this->strategy->eligibleServices($business);
         $servicePageSlugs = $pages->pluck('slug')->filter(fn ($slug) => str_starts_with((string) $slug, 'service-'))->all();
         $withoutPage = $services->filter(fn ($service) => ! in_array(WebsiteSlugRules::bounded('service-', (string) ($service->slug ?: $service->name), 'page'), $servicePageSlugs, true))->pluck('name')->all();
-        $add('service_pages', $withoutPage === [] ? self::OK : self::WARN, 'Service pages', $withoutPage === [] ? 'Every service has its own page.' : count($withoutPage).' service(s) have no page of their own: '.implode(', ', array_slice($withoutPage, 0, 5)).'. A website has room for at most '.WebsitePageStrategy::MAX_TOTAL_PAGES.' pages; they are still listed on your Services page.');
+        // A service added after the pages were written is on no page at all (page copy is written once, from the answers):
+        // say so and offer the one action that puts it there, instead of claiming it is listed.
+        $siteText = mb_strtolower(json_encode($pages->pluck('sections')->all(), JSON_UNESCAPED_UNICODE));
+        $generatedAt = $website->guidedGenerationAttempts()->where('status', 'succeeded')->latest('id')->value('completed_at');
+        $addedLater = $generatedAt === null ? [] : $services->filter(fn ($service) => $service->created_at !== null && $service->created_at->gte(\Illuminate\Support\Carbon::parse($generatedAt)))->pluck('name')->all();
+        $notOnSite = array_values(array_filter($withoutPage, fn ($name) => in_array($name, $addedLater, true) && ! str_contains($siteText, mb_strtolower(trim(json_encode((string) $name, JSON_UNESCAPED_UNICODE), '"')))));
+
+        if ($notOnSite !== []) {
+            $add('service_pages', self::WARN, 'Service pages', count($notOnSite).' service(s) are not on your website yet: '.implode(', ', array_slice($notOnSite, 0, 5)).'. Rebuild your pages from your answers to add them.', 'Rebuild pages', $links['rebuild'] ?? null, $notOnSite);
+        } else {
+            $add('service_pages', $withoutPage === [] ? self::OK : self::WARN, 'Service pages', $withoutPage === [] ? 'Every service has its own page.' : count($withoutPage).' service(s) have no page of their own: '.implode(', ', array_slice($withoutPage, 0, 5)).'. A website has room for at most '.WebsitePageStrategy::MAX_TOTAL_PAGES.' pages; they are still listed on your Services page.');
+        }
 
         // 12. Prices match Packages & Products. Nothing is copied before the first publish.
         if ($revision === null) {
@@ -175,6 +189,46 @@ final class WebsiteHealthChecker
         $counts = array_count_values(array_column($checks, 'status'));
 
         return ['checks' => $checks, 'summary' => ['ok' => $counts[self::OK] ?? 0, 'warn' => $counts[self::WARN] ?? 0, 'fail' => $counts[self::FAIL] ?? 0]];
+    }
+
+    /**
+     * A quote form on a page only works when the form is switched on AND connected to one of this Business's active
+     * Locations (Forms V1 fails closed and never guesses among several). A site that shows such a form while refusing
+     * its visitors is the worst kind of "published": nobody is told, and the lead is gone.
+     */
+    private function quoteFormCheck(callable $add, Website $website, Collection $pages, array $links): void
+    {
+        $placed = $pages->flatMap(fn ($page) => collect($page->sections ?? [])
+            ->filter(fn ($section) => ($section['type'] ?? null) === 'form')
+            ->map(fn ($section) => $section['data']['form_uid'] ?? null))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($placed === []) {
+            return;
+        }
+
+        $forms = $website->forms()->whereIn('uid', $placed)->get();
+        $locations = $website->business->locations()->whereIn('id', $forms->pluck('location_id')->filter()->all())->get()->keyBy('id');
+
+        $turnedOff = $forms->filter(fn ($form) => ! $form->is_active)->pluck('name')->all();
+        $unconnected = $forms->filter(fn ($form) => $form->is_active && ($form->location_id === null || ! ($locations[$form->location_id] ?? null)?->isActive()))->pluck('name')->all();
+
+        if ($unconnected !== []) {
+            $add('quote_form_location', self::FAIL, 'Quote form', 'Your quote form is not connected to a location, so visitors who fill it in are turned away and you receive nothing. Choose the location these requests belong to.', 'Choose a location', $links['forms'] ?? null, $unconnected);
+
+            return;
+        }
+
+        if ($turnedOff !== []) {
+            $add('quote_form_location', self::FAIL, 'Quote form', 'Your quote form is switched off, so visitors who fill it in are turned away. Switch it back on in your forms.', 'Open forms', $links['forms'] ?? null, $turnedOff);
+
+            return;
+        }
+
+        $add('quote_form_location', self::OK, 'Quote form', 'Your quote form is connected to a location and accepts requests.');
     }
 
     private function indexingCheck(callable $add, Collection $pages, array $livePages, bool $published, array $links): void

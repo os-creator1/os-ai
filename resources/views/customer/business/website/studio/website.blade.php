@@ -80,7 +80,7 @@
         --}}
         <x-alert variant="warning" class="mt-3">
             Some recent changes (FAQ, custom section, or photo order/cover) haven't reached your pages yet.
-            <form method="POST" action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="d-inline">
+            <form method="POST" data-generation-form action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="d-inline">
                 @csrf
                 <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
                 <button type="submit" class="btn btn-sm btn-warning">Rebuild now</button>
@@ -129,7 +129,8 @@
     @endif
 
     @if (! empty($health))
-        <details class="website-health-fold mt-3" data-testid="website-health-fold">
+        {{-- Open by default only when something needs fixing now (e.g. a quote form that turns visitors away): never hidden. --}}
+        <details class="website-health-fold mt-3" data-testid="website-health-fold" @if (($health['summary']['fail'] ?? 0) > 0) open @endif>
             <summary>
                 <span>Website health</span>
                 <span class="text-caption ms-2">{{ $health['summary']['ok'] }} good @if ($health['summary']['warn'] > 0)&middot; {{ $health['summary']['warn'] }} need attention @endif @if ($health['summary']['fail'] > 0)&middot; {{ $health['summary']['fail'] }} to fix now @endif</span>

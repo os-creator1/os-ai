@@ -110,6 +110,12 @@ class WebsiteWizardController extends CustomerBaseController
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
+        // A Business that keeps its own website has no hosted site to build: the entry is refused BEFORE it can
+        // create a shell Website or a setup session, however the address was reached (a bookmark, a stale link).
+        if (app(\App\Library\Website\WebsiteModeManager::class)->resolve($business) === \App\Enums\Website\WebsiteMode::External) {
+            return redirect()->route('customer.workspaces.businesses.website.external.overview', [$workspaceUid, $businessUid]);
+        }
+
         $definition = $this->questionnaireResolver->resolveForBusiness($business);
         if ($definition === null) {
             return $this->unavailableView($workspaceUid, $businessUid);

@@ -399,7 +399,9 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
         // Generated pages start hidden from search (documented), and Studio Health says so.
         $this->report->expect($this->website->pages()->where('noindex', false)->count() === 0, 'site', 'generated_pages_start_noindex', 'every generated page is noindex until the owner reviews');
         $studio = $this->get($this->wizardUrl($this->workspace, $this->business, 'studio.show'))->assertOk()->getContent();
-        $this->report->expect(str_contains($studio, 'Pages visible to search engines') && str_contains($studio, 'Template 1'), 'site', 'studio_and_health_render', 'Studio shows the look card and the search-visibility health check');
+        // The overview keeps the (folded) health summary; the look card and the template name live under Website -> Settings.
+        $settings = $this->get($this->wizardUrl($this->workspace, $this->business, 'studio.show', ['settings']))->assertOk()->getContent();
+        $this->report->expect(str_contains($studio, 'Pages visible to search engines') && str_contains($settings, 'Template 1') && str_contains($settings, 'data-testid="studio-look"'), 'site', 'studio_and_health_render', 'Studio shows the search-visibility health check; Settings shows the look card and the template');
         $pagesScreen = $this->get($this->wizardUrl($this->workspace, $this->business, 'pages.index'))->assertOk()->getContent();
         $this->report->expect(str_contains($pagesScreen, 'data-testid="allow-indexing"'), 'site', 'owner_can_allow_indexing_in_one_step', 'the Pages screen offers the one-step action');
 

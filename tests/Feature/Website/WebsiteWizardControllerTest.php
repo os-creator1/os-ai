@@ -1588,6 +1588,10 @@ class WebsiteWizardControllerTest extends TestCase
             ->assertSee('Playful &amp; fun', false)
             ->assertDontSee('quote_request')
             ->assertSee('Generate my website')
+            // Generation runs inside one request: the button switches to a visible "building" state and cannot be fired twice.
+            ->assertSee('data-generation-form', false)
+            ->assertSee('id="generation-progress-template"', false)
+            ->assertSee('Building your website', false)
             ->assertSee('Back and edit')
             ->assertDontSee('Manage pages');
     }

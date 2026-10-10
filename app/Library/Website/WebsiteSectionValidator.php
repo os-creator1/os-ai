@@ -235,8 +235,11 @@ final class WebsiteSectionValidator
 
             [$group, $key] = explode('.', $field);
 
-            if (isset($data[$group][$key]) && ! WebsiteUrlRules::isValid((string) $data[$group][$key])) {
-                $errors[$field][] = 'The URL must be https, tel:, or mailto: only.';
+            // A hero button is the most common "go to my contact page" link an owner edits, and the designed
+            // templates already resolve a same-site path to the real page address (WebsiteCtaResolver::sectionCta),
+            // so it accepts the same bounded root-relative path a `cta` button does - never a raw internal URL.
+            if (isset($data[$group][$key]) && ! WebsiteUrlRules::isValid((string) $data[$group][$key], allowInternalPath: true)) {
+                $errors[$field][] = 'The URL must be https, tel:, mailto:, or a same-site path only.';
             }
         }
 

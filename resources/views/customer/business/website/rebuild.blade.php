@@ -2,6 +2,10 @@
 
 @section('title', 'Change template or rebuild')
 
+@section('page-style')
+    @include('partials.section-router._styles')
+@endsection
+
 @section('content')
     <div class="row mb-3">
         <div class="col-12 d-flex justify-content-between align-items-center gap-2">
@@ -76,6 +80,8 @@
         </x-slot:footer>
     </x-dialog>
 
+    @include('customer.business.website._generation-progress')
+
     <script>
         (function () {
             function fit(frame) { frame.style.transform = 'scale(' + (frame.parentElement.clientWidth / 1280) + ')'; }
@@ -102,6 +108,17 @@
 
             function submitConfirmed() {
                 confirmField.value = '1';
+
+                // Only a full rebuild calls the AI (a look-only change is instant): show it is working, below the form.
+                var mode = form.querySelector('input[name="mode"]:checked');
+                if (mode && mode.value === 'full' && window.WebsiteGenerationProgress) {
+                    if (window.bootstrap && window.bootstrap.Modal && window.bootstrap.Modal.getInstance(dialogEl)) {
+                        window.bootstrap.Modal.getInstance(dialogEl).hide();
+                    }
+
+                    window.WebsiteGenerationProgress.start(form);
+                }
+
                 form.submit();
             }
 
