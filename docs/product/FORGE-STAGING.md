@@ -16,8 +16,12 @@ storage, checklist), [`production.env.example`](production.env.example) (every v
 1. **Frontend build: OFF.** Do not run `npm run build` (the script does not exist; see section 8). Delete any
    `npm ci` / `npm run build` lines from Forge's pre-filled deployment script and switch off any "build frontend
    assets" option Forge offers for the site. Compiled assets are committed.
-2. **Deployment script:** replace Forge's script with [`deploy/forge/deploy.sh`](../../deploy/forge/deploy.sh),
-   keeping its three macro lines (`$CREATE_RELEASE()`, `$ACTIVATE_RELEASE()`, `$RESTART_QUEUES()`).
+2. **Deployment script:** replace the **entire** contents of Forge's deployment editor with the 9 lines of
+   [`deploy/forge/deploy.sh`](../../deploy/forge/deploy.sh), exactly as they are. It holds only Forge's three
+   macros (each alone on its own line) plus `bash deploy/forge/release-build.sh`; all real logic is in
+   [`release-build.sh`](../../deploy/forge/release-build.sh), a normal file that Forge never rewrites. **Never put a
+   macro name in a comment or anywhere else in that editor:** Forge expands macros as text, so each extra mention is
+   rewritten too (this is what broke the first version, which mentioned each macro three times).
 3. **Environment:** set `APP_KEY` (once) and the staging values in section 3 *before* the first deploy; the
    script refuses to deploy without an `APP_KEY`.
 
@@ -149,7 +153,12 @@ Business OS" fallback) is a copy decision, unchanged.
   Platform Owner -> AI usage; set `OPENAI_ACTIVE=false` again. The owner pastes the key into Forge; never copy the
   developer machine's key.
 
-## 6. Deployment lifecycle and safety (what `deploy.sh` does, in order)
+## 6. Deployment lifecycle and safety (what `deploy.sh` + `release-build.sh` do, in order)
+
+Forge variables (from Forge's docs): `FORGE_SITE_ROOT` = `/home/forge/<site>` (holds `current/`, `releases/`, the shared
+`storage/` and `.env`); `FORGE_SITE_PATH` = `<site root>/current` (does **not** exist on a first deploy, so it is never
+used); `FORGE_RELEASE_DIRECTORY` = the new release. Forge itself adds `cd $FORGE_RELEASE_DIRECTORY` after the create-release
+macro; `deploy.sh` repeats it explicitly.
 
 1. `$CREATE_RELEASE()`: Forge clones branch `staging` into a **new** release directory and links the shared `.env`
    and `storage/`. There is no `git pull` and no assumption about a mutable checkout; the live release is untouched.
@@ -180,10 +189,14 @@ Uploads exist **only on disk**: include `storage/app/shared-public` in backups.
 **Verify on the server after the second deploy:** `bash /home/forge/staging.getmotiongrove.com/current/deploy/forge/verify-uploads.sh /home/forge/staging.getmotiongrove.com`
 (it checks every link, writes a probe through `current`, and reads it from the previous release).
 
-**Assumptions to confirm in the first deployment log** (Forge's zero-downtime internals are not testable from the
-repository): `$FORGE_SITE_PATH` is the site root containing `current/` and the shared `storage/`/`.env`;
-`$FORGE_RELEASE_DIRECTORY` is the new release; `.env` and `storage` appear as links inside it. If a variable
-differs, adjust only those lines.
+**Confirm in the first deployment log:** that the build prints "Release <id> built; ready to activate." before
+activation, and (on the server) that `releases/<id>/.env` and `releases/<id>/storage` are links into the site root. The
+build script links them itself if Forge has not, so persistence does not depend on Forge's Shared Paths setting. If a
+deployment fails with an error naming a variable, send the first 20 lines of the deployment output.
+
+**If Forge reports a syntax error in the generated script:** it is raised by Forge's expansion of the deployment
+editor, not by `release-build.sh` (which is plain bash and can be tested alone). The editor must contain only the 9
+lines of `deploy.sh`: macros alone on their own lines, no comments that name a macro, no `set` options.
 
 Other: no dedicated health route; `GET /login` -> 200 and `GET /` -> 302 are the readiness signals.
 `bootstrap/cache/packages.php`/`services.php` are no longer tracked (stale; they fought package discovery).
@@ -229,8 +242,11 @@ Then check `SELECT count(*) FROM currencies;` = 12, `workspace_plan_catalog` has
 Passing: `NoHardcodedGatewayCredentialsTest` (3, including the new Stripe-literal guard, shown to fail when a key is
 reintroduced), `WebsiteInstallationSeedingTest` (2), `QuestionnaireV2ProvisioningTest` (6), `V1SignupTest` (11),
 `PlatformOwnerControlsTest` (17), `WebhookActivationTest` (14), AI gateway/budget tests (44), brand presenter/fallback (16).
-`deploy.sh` was exercised with stubbed Forge macros: syntax valid; every guard refused its case (debug, test DB, live
-mode, live key, empty key, wrong branch) and a normal run completes in order. **Not exercised:** the symlink and
+`release-build.sh` was exercised with stubbed composer/php on a model of a brand-new site (no `current/`, no shared
+storage): it does not create `current/`, builds the shared storage at the site root, and every guard refuses its case
+(debug, test DB, live mode, live key, empty key, wrong branch, static robots.txt, missing Forge variable). `deploy.sh`
+contains each macro exactly once, alone on its line. Forge's real expansion is not available outside Forge, so the
+generated-script syntax is **not** verified here. **Not exercised:** the symlink and
 persistence logic (the build machine is Windows without symlink rights or WSL), Forge's real macros, `composer --no-dev`
 (no Composer here), FPM/Nginx, cron, MySQL 8.4 on Linux, any live provider. `verify-uploads.sh` exists for that.
 
