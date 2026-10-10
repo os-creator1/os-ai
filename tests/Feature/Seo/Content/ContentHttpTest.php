@@ -84,7 +84,8 @@ class ContentHttpTest extends TestCase
 
         $html = $this->get($this->url($t, 'articles.index'))->assertOk()->getContent();
 
-        $this->assertStringContainsString('Start with topics your customers already search for', $html);
+        $this->assertStringContainsString('No articles yet.', $html);
+        $this->assertStringContainsString('Topics your customers already search for', $html);
         $this->assertStringContainsString('data-role="recommended-opportunities"', $html);
         $this->assertStringContainsString('How much does a photo booth rental cost in Chicago?', $html);
         $this->assertStringNotContainsString('No records found', $html);

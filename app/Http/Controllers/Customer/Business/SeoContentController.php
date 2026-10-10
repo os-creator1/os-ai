@@ -13,6 +13,8 @@ use App\Library\Seo\Content\ArticleOpportunityEngine;
 use App\Library\Seo\Content\ArticleRankSignals;
 use App\Library\Seo\Content\ArticleSiteInventory;
 use App\Models\Business;
+use App\Library\Seo\SeoPhraseNormalizer;
+use App\Models\SeoKeyword;
 use App\Models\WebsiteArticle;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
@@ -105,6 +107,31 @@ class SeoContentController extends CustomerBaseController
         ]);
     }
 
+    /**
+     * The tracked search keyword each listed article supports, by article uid. The relation is the canonical one: "Track this
+     * topic" creates a keyword from the article's primary topic, so an article supports the Business's active keyword whose
+     * normalized phrase equals its normalized topic. No match (or no topic) means no entry - nothing is inferred beyond that.
+     *
+     * @param  \Illuminate\Support\Collection<int, WebsiteArticle>  $articles
+     * @return array<string, string>
+     */
+    private function keywordsFor(Business $business, \Illuminate\Support\Collection $articles): array
+    {
+        $normalized = $articles
+            ->mapWithKeys(fn (WebsiteArticle $a) => [$a->uid => SeoPhraseNormalizer::normalize(trim((string) $a->primary_topic))])
+            ->filter(fn (string $n) => $n !== '');
+
+        if ($normalized->isEmpty()) {
+            return [];
+        }
+
+        $phrases = SeoKeyword::query()->active()->where('business_id', $business->id)
+            ->whereIn('phrase_normalized', $normalized->unique()->values()->all())
+            ->pluck('phrase', 'phrase_normalized');
+
+        return $normalized->map(fn (string $n) => $phrases[$n] ?? null)->filter()->all();
+    }
+
     private function articlesView(Request $request, string $workspaceUid, string $businessUid, Business $business, bool $withOpportunities): View
     {
         $status = ArticleStatus::tryFrom((string) $request->query('status', ''));
@@ -123,7 +150,7 @@ class SeoContentController extends CustomerBaseController
             ->orderByDesc('updated_at')
             ->orderByDesc('id')
             ->paginate(self::PER_PAGE)
-            ->withQueryString();
+            ->appends($request->except(["page", "fragment"]));
 
         $recommended = $withOpportunities && (int) array_sum($counts) === 0
             ? array_slice(array_values(array_filter(
@@ -142,6 +169,8 @@ class SeoContentController extends CustomerBaseController
             'status' => $status,
             'search' => $search,
             'pages' => collect($this->inventory->pages($business))->keyBy('uid'),
+            'keywords' => $this->keywordsFor($business, $articles->getCollection()),
+            'website' => $this->websiteOf($business),
             'withOpportunities' => $withOpportunities,
             'recommended' => $recommended,
         ]);

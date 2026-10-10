@@ -1,39 +1,41 @@
 {{--
-    SEO → Content → Autopilot. The owner's home for Content: one switch, what is next, this month, the one thing needed (only
+    SEO -> Content -> Autopilot. The owner's home for Content: one switch, what is next, this month, the one thing needed (only
     when it is), what waits for approval, and what went live. No SEO topic list: Autopilot decides what is worth writing, and the
-    manual topic ideas stay one quiet link away. Escaped Blade output only.
+    manual topic ideas stay one quiet link away. Every value is the canonical AutopilotOverview; nothing is invented for the
+    layout. Escaped Blade output only.
 
     Expects: $workspaceUid, $businessUid, $business, $autopilot (AutopilotOverview::forBusiness()).
 --}}
-@extends('layouts/contentLayoutMaster')
+@extends(request()->query('fragment') === '1' ? 'customer.business.seo.content._fragment' : 'customer.business.seo.content._frame')
 
 @section('title', 'Content Autopilot')
+@section('content-active', 'autopilot')
+@section('content-subtitle', 'Let MotionGrove decide when a useful article is worth writing, write it from your real business facts, and keep it up to date.')
 
-@section('content')
+@section('content-section')
     @php($route = fn (string $name, array $extra = []) => route('customer.workspaces.businesses.seo.content.' . $name, array_merge([$workspaceUid, $businessUid], $extra)))
     @php($ap = $autopilot)
-
-    <div class="row mb-1">
-        <div class="col-12">
-            <h4 class="mb-25">Content</h4>
-            <p class="text-caption mb-0">Let MotionGrove decide when a useful article is worth writing, write it from your real business facts, and keep it up to date.</p>
-        </div>
-    </div>
-
-    @include('customer.business.seo.content._nav', ['active' => 'autopilot', 'withModule' => true])
-
-    <x-flash-alert class="mb-2" />
+    @php($filled = min($ap['month']['max'], $ap['month']['published'] + $ap['month']['planned']))
 
     <x-card :padded="true" class="mb-2" data-role="autopilot-switch" data-state="{{ $ap['enabled'] ? ($ap['paused'] ? 'paused' : 'on') : 'off' }}">
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-1">
-            <div>
-                <h5 class="mb-25">Content Autopilot <span class="badge {{ $ap['running'] ? 'bg-success' : 'bg-secondary' }} ms-50" data-role="autopilot-badge">{{ $ap['running'] ? 'ON' : ($ap['enabled'] ? 'PAUSED' : 'OFF') }}</span></h5>
-                <p class="mb-0 text-caption" data-role="autopilot-status">{{ $ap['statusText'] }}</p>
+        <div class="autopilot-hero">
+            <div class="autopilot-hero-main">
+                <span class="content-icon-tile content-icon-tile--neutral" aria-hidden="true"><x-ds-icon name="sparkles" size="16" /></span>
+                <div>
+                    <h5 class="mb-25">Content Autopilot <span class="content-chip {{ $ap['running'] ? 'is-success' : '' }} ms-50" data-role="autopilot-badge">{{ $ap['running'] ? 'On' : ($ap['enabled'] ? 'Paused' : 'Off') }}</span></h5>
+                    <p class="mb-0 text-caption" data-role="autopilot-status">
+                        @if($ap['enabled'])
+                            {{ $ap['statusText'] }}
+                        @else
+                            Nothing is being written right now. Turn it on and it will decide, day by day, whether something useful is worth writing.
+                        @endif
+                    </p>
+                </div>
             </div>
-            <div class="d-flex gap-50">
+            <div class="d-flex flex-wrap gap-50">
                 @if(! $ap['enabled'])
                     <form method="POST" action="{{ $route('autopilot.enable') }}">@csrf
-                        <button type="submit" class="btn btn-primary" data-role="turn-on">Turn on</button>
+                        <button type="submit" class="btn btn-primary" data-role="turn-on"><x-ds-icon name="power" size="15" aria-hidden="true" /> Turn on Autopilot</button>
                     </form>
                 @else
                     @if($ap['paused'] === 'owner')
@@ -51,6 +53,12 @@
                 @endif
             </div>
         </div>
+
+        <div class="autopilot-steps" data-role="autopilot-steps">
+            <div class="autopilot-step"><span class="autopilot-step-num">1</span><span><strong>Decides</strong>Checks whether a useful article is worth writing.</span></div>
+            <div class="autopilot-step"><span class="autopilot-step-num">2</span><span><strong>Writes</strong>Uses your real business facts.</span></div>
+            <div class="autopilot-step"><span class="autopilot-step-num">3</span><span><strong>Keeps it current</strong>Updates articles so they stay accurate.</span></div>
+        </div>
     </x-card>
 
     @if($ap['question'])
@@ -66,34 +74,45 @@
         </x-card>
     @endif
 
-    <div class="row">
-        <div class="col-md-8 mb-2">
-            <x-card :padded="true" class="h-100" data-role="next-up" data-kind="{{ $ap['next']['kind'] }}">
-                <h5 class="mb-50">Next up</h5>
-                @if($ap['next']['title'])
-                    <p class="fw-bold mb-25">
-                        @if($ap['next']['article_uid'])
-                            <a href="{{ $route('articles.edit', [$ap['next']['article_uid']]) }}">{{ $ap['next']['title'] }}</a>
-                        @else
-                            {{ $ap['next']['title'] }}
-                        @endif
-                    </p>
-                @endif
+    <div class="autopilot-grid">
+        <x-card :padded="true" class="h-100" data-role="next-up" data-kind="{{ $ap['next']['kind'] }}">
+            <h5 class="mb-1">Next up</h5>
+            @if($ap['next']['title'])
+                <p class="fw-bold mb-25">
+                    @if($ap['next']['article_uid'])
+                        <a href="{{ $route('articles.edit', [$ap['next']['article_uid']]) }}">{{ $ap['next']['title'] }}</a>
+                    @else
+                        {{ $ap['next']['title'] }}
+                    @endif
+                </p>
                 <p class="mb-0 text-caption">
                     {{ $ap['next']['detail'] }}
                     @if($ap['next']['at'])
                         {{ $ap['next']['at']->timezone($business->timezone ?: config('app.timezone'))->format('l, F j \a\t g:i A') }}.
                     @endif
                 </p>
-            </x-card>
-        </div>
-        <div class="col-md-4 mb-2">
-            <x-card :padded="true" class="h-100" data-role="this-month">
-                <h5 class="mb-50">This month</h5>
-                <p class="fw-bold mb-25" data-role="month-counts">{{ $ap['month']['published'] }} published &middot; {{ $ap['month']['planned'] }} planned</p>
-                <p class="mb-0 text-caption">Up to {{ $ap['month']['max'] }} a month - and fewer is perfectly fine. Autopilot writes only when there is something worth saying.</p>
-            </x-card>
-        </div>
+            @else
+                <div class="autopilot-empty" data-role="next-up-empty">
+                    <x-ds-icon name="file-text" size="18" class="text-muted" aria-hidden="true" />
+                    <strong class="text-body">No articles planned</strong>
+                    <span class="text-caption">{{ $ap['enabled'] ? $ap['next']['detail'] : 'Planned articles will show here once Autopilot is on.' }}</span>
+                </div>
+            @endif
+        </x-card>
+
+        <x-card :padded="true" class="h-100" data-role="this-month">
+            <h5 class="mb-0">This month</h5>
+            <div class="autopilot-month" data-role="month-counts">
+                <div><span class="num">{{ $ap['month']['published'] }}</span><span class="content-label">Published</span></div>
+                <div><span class="num">{{ $ap['month']['planned'] }}</span><span class="content-label">Planned</span></div>
+            </div>
+            @if($ap['month']['max'] > 0)
+                <div class="autopilot-meter" aria-hidden="true">
+                    @for($i = 1; $i <= $ap['month']['max']; $i++)<i class="{{ $i <= $filled ? 'is-filled' : '' }}"></i>@endfor
+                </div>
+            @endif
+            <p class="mb-0 text-caption">Up to {{ $ap['month']['max'] }} a month - and fewer is perfectly fine. Autopilot writes only when there is something worth saying.</p>
+        </x-card>
     </div>
 
     @if(count($ap['approval']) > 0)
@@ -158,9 +177,9 @@
         </x-card>
     @endif
 
-    <p class="text-caption" data-role="secondary-links">
-        <a href="{{ $route('autopilot.profile') }}">{{ $ap['profileCompleted'] ? 'Edit what Autopilot knows about you' : 'Tell Autopilot a little about you' }}</a>
-        &middot; <a href="{{ $route('opportunities') }}">Browse topic ideas</a>
-        &middot; <a href="{{ $route('plan') }}">Content plan</a>
-    </p>
+    <div class="autopilot-quick" data-role="secondary-links">
+        <a href="{{ $route('autopilot.profile') }}" data-role="quick-profile"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="user" size="15" /></span>{{ $ap['profileCompleted'] ? 'Edit what Autopilot knows about you' : 'Tell Autopilot a little about you' }}<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
+        <a href="{{ $route('opportunities') }}" data-content-local data-role="quick-topics"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="lightbulb" size="15" /></span>Browse topic ideas<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
+        <a href="{{ $route('plan') }}" data-content-local data-role="quick-plan"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="calendar" size="15" /></span>Content plan<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
+    </div>
 @endsection

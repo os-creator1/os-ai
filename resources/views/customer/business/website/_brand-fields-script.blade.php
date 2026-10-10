@@ -20,6 +20,18 @@
                 picker.value = text.value;
             }
         });
+
+        // Shows the chosen file's name beside a styled "Choose file" button (Website Settings look card).
+        document.addEventListener('change', function (event) {
+            var input = event.target;
+
+            if (!input || !input.hasAttribute || !input.hasAttribute('data-look-file')) { return; }
+
+            var row = input.closest('.website-look-upload');
+            var label = row ? row.querySelector('[data-look-filename]') : null;
+
+            if (label && input.files && input.files[0]) { label.textContent = input.files[0].name; }
+        });
     })();
 </script>
 @endverbatim

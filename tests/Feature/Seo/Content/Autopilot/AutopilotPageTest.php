@@ -62,7 +62,10 @@ class AutopilotPageTest extends TestCase
         $this->assertStringContainsString('data-state="off"', $html);
         $this->assertStringContainsString('data-role="next-up"', $html);
         $this->assertStringContainsString('data-role="this-month"', $html);
-        $this->assertStringContainsString('0 published', $html);
+        $this->assertMatchesRegularExpression('#data-role="month-counts".*?<span class="num">0</span><span class="content-label">Published#s', $html);
+        $this->assertMatchesRegularExpression('#<span class="num">0</span><span class="content-label">Planned#', $html);
+        $this->assertStringContainsString('Planned articles will show here once Autopilot is on.', $html);
+        $this->assertStringContainsString('Turn on Autopilot', $html);
         $this->assertStringContainsString('fewer is perfectly fine', $html);
         $this->assertStringNotContainsString('data-role="needs-input"', $html, 'only shown when something is needed');
         $this->assertStringNotContainsString('data-role="awaiting-approval"', $html);
@@ -163,8 +166,8 @@ class AutopilotPageTest extends TestCase
         $this->assertStringContainsString('Articles in your field are always reviewed by you', $html, 'why it is not publishing itself (the niche declares no policy yet)');
         $this->assertStringContainsString('data-role="recently-published"', $html);
         $this->assertStringContainsString('Already live article', $html);
-        $this->assertStringContainsString('1 published', $html);
-        $this->assertStringContainsString('1 planned', $html);
+        $this->assertMatchesRegularExpression('#<span class="num">1</span><span class="content-label">Published#', $html);
+        $this->assertMatchesRegularExpression('#<span class="num">1</span><span class="content-label">Planned#', $html);
     }
 
     public function test_a_budget_pause_is_explained_in_plain_words_without_amounts(): void
@@ -180,14 +183,15 @@ class AutopilotPageTest extends TestCase
         $this->assertStringNotContainsString('$', $status, 'no dollar amounts');
     }
 
-    public function test_the_sidebar_leads_with_autopilot_and_articles_and_the_manual_pages_stay_reachable(): void
+    public function test_the_sidebar_has_one_content_entry_and_the_four_sections_are_top_tabs_only(): void
     {
         $t = $this->owner();
 
         $html = $this->get($this->url($t, 'autopilot'))->assertOk()->getContent();
 
-        $this->assertStringContainsString('data-nav-key="seo-content-autopilot"', $html);
-        $this->assertStringContainsString('data-nav-key="seo-content-articles"', $html);
+        $this->assertSame(1, substr_count($html, 'data-nav-key="seo-content"'));
+        $this->assertStringNotContainsString('data-nav-key="seo-content-autopilot"', $html);
+        $this->assertStringNotContainsString('data-nav-key="seo-content-articles"', $html);
         $this->assertStringNotContainsString('data-nav-key="seo-content-plan"', $html);
         $this->assertStringNotContainsString('data-nav-key="seo-content-opportunities"', $html);
 
