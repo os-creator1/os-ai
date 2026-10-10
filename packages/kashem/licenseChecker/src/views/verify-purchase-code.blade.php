@@ -4,7 +4,7 @@
 
 @extends('layouts/fullLayoutMaster')
 
-@section('title', __('locale.auth.login'))
+@section('title', 'Product activation')
 
 @section('page-style')
     {{-- Page Css files --}}
@@ -32,7 +32,8 @@
             <!-- Login-->
             <div class="col-lg-8 d-flex align-items-center auth-bg px-2 px-sm-3 px-lg-5 ">
                 <div class="width-700 mx-auto card px-2 py-2">
-                    <h2 class="card-title fw-bold mb-1">Verify Product code</h2>
+                    <h2 class="card-title fw-bold mb-1">Activate {{ config('app.name') }}</h2>
+                    <p class="card-text mb-1">This installation includes third-party licensed software. Enter the purchase code for your licence to continue.</p>
                     <p class="card-text mb-2">To get your purchase code please check this <a href="https://help.market.envato.com/hc/en-us/articles/202822600-Where-Is-My-Purchase-Code-" target="_blank">Where Is My Purchase Code?</a> </p>
 
                     <form class="auth-login-form" action="{{route('verify.license')}}" method="post">

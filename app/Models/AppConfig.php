@@ -55,7 +55,7 @@
                 ],
                 [
                     'setting' => 'app_keyword',
-                    'value'   => 'business operations, automation, ai business os, workspace, crm, messaging',
+                    'value'   => 'business operations, automation, workspace, crm, messaging',
                 ],
                 [
                     'setting' => 'license',

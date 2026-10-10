@@ -41,7 +41,7 @@
         |
         */
 
-        'keyword'       => env('APP_KEYWORD', 'business operations, automation, ai business os, workspace, crm, messaging'),
+        'keyword'       => env('APP_KEYWORD', 'business operations, automation, workspace, crm, messaging'),
 
 
         /*
@@ -318,7 +318,7 @@
 
         'admin_path' => env('ADMIN_PATH', 'admin'),
 
-        // The inherited Ultimate SMS gateway surfaces (sending servers, sender IDs,
+        // The inherited legacy messaging gateway surfaces (sending servers, sender IDs,
         // SMS plans/reports, legacy customers/subscriptions/invoices, blacklists).
         // The routes stay registered; the Platform Owner sidebar hides them unless
         // this is switched on.
