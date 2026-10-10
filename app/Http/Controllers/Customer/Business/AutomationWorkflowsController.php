@@ -76,7 +76,31 @@ class AutomationWorkflowsController extends CustomerBaseController
                 fn () => $this->locationAuthority->restrictListing($visible, (int) Auth::id(), $business),
             );
 
-            $page = $visible
+            $filter = $this->requestedFilter();
+            $term = trim((string) request()->query('q', ''));
+            $like = '%' . addcslashes(mb_substr($term, 0, 100), '%_\\') . '%';
+
+            // ONE grouped statement answers both questions the page needs: how many
+            // workflows exist per state (the summary, banner and filter chips count the
+            // WHOLE visible set, so they stay true while a filter or search narrows the
+            // list), and how many of them match the search (the list's own total, so
+            // pagination needs no second count).
+            [$counts, $matching] = $this->statusCounts($visible, $term === '' ? null : $like);
+
+            $filtered = clone $visible;
+
+            if ($filter !== null) {
+                $filtered->where('automation_workflows.status', $filter->value);
+            }
+
+            if ($term !== '') {
+                $filtered->where('automation_workflows.name', 'like', $like);
+            }
+
+            $total = $filter !== null ? $matching[$filter->value] : array_sum($matching);
+            $currentPage = max(1, \Illuminate\Pagination\LengthAwarePaginator::resolveCurrentPage());
+
+            $rows = $total === 0 ? collect() : $filtered
                 ->withExists(['versions as has_open_draft' => fn ($query) => $query
                     ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)])
                 // Where each LIVE version applies, as a subselect on the page query
@@ -92,7 +116,13 @@ class AutomationWorkflowsController extends CustomerBaseController
                 ))
                 ->orderByDesc('updated_at')
                 ->orderByDesc('id')
-                ->paginate(self::PAGE_SIZE);
+                ->forPage($currentPage, self::PAGE_SIZE)
+                ->get();
+
+            $page = new \Illuminate\Pagination\LengthAwarePaginator($rows, $total, self::PAGE_SIZE, $currentPage, [
+                'path' => \Illuminate\Pagination\LengthAwarePaginator::resolveCurrentPath(),
+                'query' => request()->query(),
+            ]);
 
             if (! request()->wantsJson()) {
                 return view('customer.Automations.Workflows.index', [
@@ -100,6 +130,11 @@ class AutomationWorkflowsController extends CustomerBaseController
                     'businessUid' => $businessUid,
                     'basePath' => $this->basePath($workspaceUid, $businessUid),
                     'workflows' => $page,
+                    'counts' => $counts,
+                    'activeFilter' => $filter?->value,
+                    'searchTerm' => $term,
+                    'issueCounts' => $this->publishIssueCounts($business, $page->items()),
+                    'timezone' => (string) ($business->timezone ?: config('app.timezone', 'UTC')),
                 ]);
             }
 
@@ -345,6 +380,84 @@ class AutomationWorkflowsController extends CustomerBaseController
             ->where('workflow_id', (int) $workflow->id)
             ->whereKey((int) $workflow->published_version_id)
             ->first();
+    }
+
+    /**
+     * Workflows by lifecycle state over everything this actor may see (not one page),
+     * and, in the same statement, how many of each state match the name search.
+     *
+     * @return array{0: array<string, int>, 1: array<string, int>}
+     *         [counts keyed by every WorkflowStatus value plus `total`, matches keyed by status value]
+     */
+    private function statusCounts(\Illuminate\Database\Eloquent\Builder $visible, ?string $like): array
+    {
+        $rows = (clone $visible)
+            ->reorder()
+            ->selectRaw(
+                'automation_workflows.status as status, COUNT(*) as aggregate, SUM(' . ($like === null ? '1' : 'automation_workflows.name LIKE ?') . ') as matching',
+                $like === null ? [] : [$like],
+            )
+            ->groupBy('automation_workflows.status')
+            ->get()
+            ->keyBy('status');
+
+        $counts = [];
+        $matching = [];
+
+        foreach (WorkflowStatus::cases() as $status) {
+            $counts[$status->value] = (int) ($rows[$status->value]->aggregate ?? 0);
+            $matching[$status->value] = (int) ($rows[$status->value]->matching ?? 0);
+        }
+
+        $counts['total'] = array_sum($counts);
+
+        return [$counts, $matching];
+    }
+
+    /** The `?status=` filter, only when it names a real lifecycle state. */
+    private function requestedFilter(): ?WorkflowStatus
+    {
+        return WorkflowStatus::tryFrom((string) request()->query('status', ''));
+    }
+
+    /**
+     * How many things stop each never-published draft from publishing, from the same
+     * WorkflowCompiler::validate() that publish and the builder use — never
+     * recalculated in the view. One read for the page's drafts, one catalog for all.
+     *
+     * @param array<int, AutomationWorkflow> $workflows
+     * @return array<int, int> workflow id => issue count (only where it is above zero)
+     */
+    private function publishIssueCounts(\App\Models\Business $business, array $workflows): array
+    {
+        $draftIds = [];
+
+        foreach ($workflows as $workflow) {
+            if ($workflow->status === WorkflowStatus::Draft) {
+                $draftIds[] = (int) $workflow->id;
+            }
+        }
+
+        if ($draftIds === []) {
+            return [];
+        }
+
+        $catalog = $this->catalogs->forBusiness($business);
+        $issues = [];
+
+        AutomationWorkflowVersion::query()
+            ->whereIn('workflow_id', $draftIds)
+            ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)
+            ->get()
+            ->each(function (AutomationWorkflowVersion $draft) use ($catalog, &$issues): void {
+                $count = array_sum(array_map('count', $this->compiler->validate($draft, $catalog)));
+
+                if ($count > 0) {
+                    $issues[(int) $draft->workflow_id] = $count;
+                }
+            });
+
+        return $issues;
     }
 
     /**

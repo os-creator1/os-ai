@@ -1528,6 +1528,16 @@ rule as follows.
 | Workflow list — page and JSON | **≤ 2**, for any page size |
 | Builder load | **≤ 4**, independent of node count and of how many contact groups and fields the draft references |
 
+**List page — card layout (polish).** The list page shows each workflow as a card with the
+live/draft counts, the "nothing is running yet" guidance and Live / Drafts filters, plus a
+name search (`?status=` and `?q=`). The two budgeted statements are the page and one grouped
+status-count statement, which also supplies the paginator's total, so a list of any size stays
+at **2**, as does the JSON. The card's "N issues to fix before publishing" badge is the same
+`WorkflowCompiler::validate()` the Builder and Publish use; it is read only for the
+never-published drafts on the page and adds exactly **two** statements (those drafts, one
+reference catalog) however many drafts there are — a page holding a draft is therefore ≤ 4.
+This is pinned by `WorkflowIndexPageTest`.
+
 **Shared platform request overhead is measured independently and is NOT charged
 against these budgets.** It includes: authentication and the resolved customer
 context; Account/Business authorization (`ResolvesBusinessTenancy`,
