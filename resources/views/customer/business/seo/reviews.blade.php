@@ -13,7 +13,7 @@
     or number is rendered only when the reader supplied it, which it does
     only for a user who can already see Contacts.
 
-    Layout: header -> four plain-fact tiles (derived only from the sections
+    Layout: header -> four compact fact cards (derived only from the sections
     already read; nothing new is queried) -> the request ledger (all
     Locations, newest first) beside one review-link card per Location. The
     link card comes first in the markup so it also comes first on a phone.
@@ -64,23 +64,33 @@
         ->values();
     $visibleRequests = 8;
 
-    $channelIcon = ['sms' => 'message-square', 'email' => 'mail', 'in_person' => 'users'];
     $statusVariant = ['requested' => 'warning', 'reviewed' => 'success', 'declined' => 'neutral'];
 
+    // The bar under "Requests recorded". Segment sizes are the ledger's own counts; when a Location's
+    // list is capped only the whole-ledger awaiting / done split is exact, so the bar uses that.
     if (! $anyTruncated) {
         $reviewedCount = $allRows->where('status', 'reviewed')->count();
         $declinedCount = $allRows->where('status', 'declined')->count();
         $requestsSub = $totalRequests === 0 ? 'Nothing recorded yet' : $reviewedCount . ' reviewed · ' . $awaitingOutcome . ' awaiting · ' . $declinedCount . ' declined';
+        $barParts = ['ok' => $reviewedCount, 'wait' => $awaitingOutcome, 'off' => $declinedCount];
     } else {
         $requestsSub = $awaitingOutcome . ' awaiting · ' . $doneCount . ' done';
+        $barParts = ['ok' => $doneCount, 'wait' => $awaitingOutcome, 'off' => 0];
     }
+
+    // "MB" for Marcus Bell; a Contact with only a number, or none, gets the person icon instead.
+    $initials = function (?string $name): ?string {
+        $words = preg_split('/\s+/u', trim((string) $name), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return $words === [] ? null : mb_strtoupper(mb_substr($words[0], 0, 1) . (count($words) > 1 ? mb_substr(end($words), 0, 1) : ''));
+    };
 @endphp
 
 @section('content')
     <div class="rv-header mb-2">
         <div>
             <h1 class="h3 mb-25">Reviews</h1>
-            <p class="text-caption mb-0">Keep each Location's review link handy and note who you have asked.</p>
+            <p class="rv-sub mb-0">Keep each Location's review link in one place and note who you have asked.</p>
         </div>
         @if($writableSections->isNotEmpty())
             <div class="rv-header-actions">
@@ -94,28 +104,35 @@
     @if(count($sections) > 0)
         <div class="rv-stats mb-2" data-section="review-summary">
             <div class="rv-stat" data-role="summary-requests">
-                <p class="rv-stat-label"><x-ds-icon name="clipboard-list" size="16" /> Requests recorded</p>
+                <p class="rv-stat-label">Requests recorded</p>
                 <p class="rv-stat-value">{{ $totalRequests }}</p>
+                @if($totalRequests > 0)
+                    <span class="rv-bar" aria-hidden="true">
+                        @foreach($barParts as $part => $count)
+                            @if($count > 0)<span class="rv-bar-{{ $part }}" style="flex-grow: {{ $count }}"></span>@endif
+                        @endforeach
+                    </span>
+                @endif
                 <p class="rv-stat-sub">{{ $requestsSub }}</p>
             </div>
-            <div class="rv-stat" data-role="summary-awaiting">
-                <p class="rv-stat-label"><x-ds-icon name="hourglass" size="16" /> Awaiting an outcome</p>
-                <p class="rv-stat-value">{{ $awaitingOutcome }}</p>
-                <p class="rv-stat-sub">{{ $awaitingOutcome === 0 ? 'All outcomes noted' : 'No outcome noted yet' }}</p>
+            <div class="rv-stat {{ $awaitingOutcome > 0 ? 'rv-stat-warm' : '' }}" data-role="summary-awaiting">
+                <p class="rv-stat-label">Awaiting an outcome</p>
+                <p class="rv-stat-value {{ $awaitingOutcome > 0 ? 'rv-stat-value-warn' : '' }}">{{ $awaitingOutcome }}</p>
+                <p class="rv-stat-sub">{{ $awaitingOutcome === 0 ? 'All outcomes noted' : 'Asked, no answer noted yet' }}</p>
             </div>
             <div class="rv-stat" data-role="summary-last-request">
-                <p class="rv-stat-label"><x-ds-icon name="clock" size="16" /> Last request</p>
+                <p class="rv-stat-label">Last request</p>
                 @if($lastRequestAt !== null)
                     <p class="rv-stat-value rv-stat-value-text">{{ $lastRequestAt->diffForHumans() }}</p>
-                    <p class="rv-stat-sub">{{ $lastRequestAt->format('Y-m-d') }}</p>
+                    <p class="rv-stat-sub">{{ $lastRequestAt->format('M j, Y') }}</p>
                 @else
                     <p class="rv-stat-value rv-stat-value-text">None yet</p>
                     <p class="rv-stat-sub">Record one after you ask</p>
                 @endif
             </div>
             <div class="rv-stat" data-role="summary-with-link">
-                <p class="rv-stat-label"><x-ds-icon name="link" size="16" /> Locations with a review link</p>
-                <p class="rv-stat-value">{{ $withLink }}<small> / {{ $locationCount }}</small></p>
+                <p class="rv-stat-label">Locations with a review link</p>
+                <p class="rv-stat-value {{ $missingLink === 0 && $locationCount > 0 ? 'rv-stat-value-ok' : '' }}">{{ $withLink }}<small> of {{ $locationCount }}</small></p>
                 <p class="rv-stat-sub" data-role="summary-missing-link">{{ $missingLink === 0 ? 'Every Location is ready' : $missingLink . ($missingLink === 1 ? ' still needs a link' : ' still need a link') }}</p>
             </div>
         </div>
@@ -181,7 +198,16 @@
                                 <span class="rv-location-icon"><x-ds-icon name="map-pin" size="16" /></span>
                                 <div class="min-w-0">
                                     <p class="rv-section-label mb-0">{{ $location->name }}</p>
-                                    <p class="rv-stat-sub mb-0" data-role="request-count">Requests recorded: {{ $section->requestCount }}</p>
+                                    <p class="rv-stat-sub mb-0" data-role="review-link-source">
+                                        @if($section->effectiveLink === null)
+                                            Review link
+                                        @else
+                                            Review link · {{ $section->linkSource === 'manual' ? 'added by you' : 'from your linked Google Business Profile' }}
+                                        @endif
+                                    </p>
+                                    @if($manyLocations)
+                                        <p class="rv-stat-sub mb-0" data-role="request-count">Requests recorded: {{ $section->requestCount }}</p>
+                                    @endif
                                 </div>
                             </div>
                             <div class="rv-location-badges">
@@ -189,18 +215,20 @@
                                     <x-badge variant="neutral" data-role="location-archived">Archived — read only</x-badge>
                                 @endunless
                                 @if($section->effectiveLink !== null)
-                                    <x-badge variant="success" data-role="review-link-status"><x-ds-icon name="circle-check" size="14" /> Review link ready</x-badge>
+                                    <x-badge variant="success" data-role="review-link-status"><x-ds-icon name="check" size="12" /> Ready</x-badge>
                                 @else
-                                    <x-badge variant="warning" data-role="review-link-status"><x-ds-icon name="link-2-off" size="14" /> Needs a review link</x-badge>
+                                    <x-badge variant="warning" data-role="review-link-status"><x-ds-icon name="link-2-off" size="12" /> Needs a review link</x-badge>
                                 @endif
                             </div>
                         </div>
 
                         <div data-role="review-link">
                             @if($section->effectiveLink !== null)
-                                <p class="rv-stat-sub" data-role="review-link-source">{{ $section->linkSource === 'manual' ? 'Added by you' : 'From your linked Google Business Profile' }}</p>
                                 <div class="rv-link-row">
-                                    <input type="text" class="form-control rv-link-field" value="{{ $section->effectiveLink }}" readonly aria-label="Review link for {{ $location->name }}" data-role="review-link-field">
+                                    <div class="rv-link-box">
+                                        <input type="text" class="rv-link-field" value="{{ $section->effectiveLink }}" readonly aria-label="Review link for {{ $location->name }}" data-role="review-link-field">
+                                        <button type="button" class="rv-link-copy" data-copy-link="{{ $section->effectiveLink }}" aria-label="Copy link"><x-ds-icon name="copy" size="14" /></button>
+                                    </div>
                                     <div class="rv-link-actions">
                                         <x-button variant="primary" size="sm" icon="copy" data-copy-link="{{ $section->effectiveLink }}" data-role="copy-link"><span data-copy-label>Copy link</span></x-button>
                                         <a class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-1 transition-fast" href="{{ $section->effectiveLink }}" target="_blank" rel="{{ $rel }}" data-role="review-link-url" data-source="{{ $section->linkSource }}"><x-ds-icon name="external-link" size="16" /> Open link</a>
@@ -226,8 +254,8 @@
 
                             @if($canWrite)
                                 <details class="rv-panel" @if($section->effectiveLink === null) open @endif>
-                                    <summary class="btn btn-flat-secondary btn-sm d-inline-flex align-items-center gap-1 transition-fast">
-                                        <x-ds-icon name="{{ $section->manualLink !== null ? 'pencil' : 'plus' }}" size="16" />
+                                    <summary class="rv-change">
+                                        <x-ds-icon name="{{ $section->manualLink !== null ? 'pencil' : 'plus' }}" size="14" />
                                         {{ $section->manualLink !== null ? 'Change link' : 'Add link' }}
                                     </summary>
                                     <div class="rv-panel-body">
@@ -256,18 +284,21 @@
 
                 <div class="rv-note" data-role="reviews-note">
                     <x-ds-icon name="info" size="16" />
-                    <p class="mb-0">This page does not send anything. Use Conversations or an Automation to contact customers.</p>
+                    <p class="mb-0"><strong>This page does not send anything.</strong> Keep the link where customers can leave a review, and note who you have asked. To contact someone, use Conversations or an Automation.</p>
                 </div>
             </div>
 
             <div class="col-lg-8 order-lg-1 mb-2">
                 <x-card :padded="false" class="rv-ledger" data-section="review-requests">
                     <div class="rv-ledger-head">
-                        <h2 class="text-section-heading mb-0">Requests</h2>
+                        <div>
+                            <h2 class="text-section-heading mb-0">Requests</h2>
+                            <p class="rv-stat-sub mb-0">{{ $manyLocations ? 'All Locations' : $sections[0]->location->name }}</p>
+                        </div>
                         <div class="rv-pills" role="group" aria-label="Show requests" data-role="request-pills">
-                            <button type="button" class="rv-pill is-active" data-rv-filter="all">All <span>{{ $totalRequests }}</span></button>
-                            <button type="button" class="rv-pill" data-rv-filter="awaiting">Awaiting <span>{{ $awaitingOutcome }}</span></button>
-                            <button type="button" class="rv-pill" data-rv-filter="done">Done <span>{{ $doneCount }}</span></button>
+                            <button type="button" class="rv-pill is-active" data-rv-filter="all">All</button>
+                            <button type="button" class="rv-pill" data-rv-filter="awaiting">Awaiting</button>
+                            <button type="button" class="rv-pill" data-rv-filter="done">Done</button>
                         </div>
                     </div>
 
@@ -286,58 +317,65 @@
                                     <details class="rv-more">
                                         <summary class="text-label">Show {{ $allRows->count() - $visibleRequests }} earlier {{ $allRows->count() - $visibleRequests === 1 ? 'request' : 'requests' }}</summary>
                                 @endif
-                                <div class="rv-request" data-role="review-request" data-status="{{ $row['status'] }}" data-state="{{ $row['status'] === 'requested' ? 'awaiting' : 'done' }}" data-request="{{ $row['uid'] }}">
-                                    <span class="rv-request-icon"><x-ds-icon name="{{ $channelIcon[$row['channel']] ?? 'ellipsis' }}" size="16" /></span>
+                                @php
+                                    $isAwaiting = $row['status'] === 'requested';
+                                    $badge = $row['contact'] !== null ? $initials($row['contact']['name']) : null;
+                                @endphp
+                                <div class="rv-request {{ $isAwaiting ? 'is-awaiting' : '' }}" data-role="review-request" data-status="{{ $row['status'] }}" data-state="{{ $isAwaiting ? 'awaiting' : 'done' }}" data-request="{{ $row['uid'] }}">
+                                    <span class="rv-avatar" aria-hidden="true">
+                                        @if($badge !== null){{ $badge }}@else<x-ds-icon name="user" size="16" />@endif
+                                    </span>
                                     <div class="rv-request-main">
-                                        <div class="rv-request-top">
-                                            <span class="rv-request-who">
-                                                @if($row['contact'] !== null)
-                                                    <strong data-role="request-contact">{{ $row['contact']['name'] ?? $row['contact']['phone'] }}</strong>
-                                                    @if($row['contact']['name'] !== null)
-                                                        <span class="text-caption" data-role="request-contact-phone">{{ $row['contact']['phone'] }}</span>
-                                                    @endif
-                                                @elseif($row['has_contact'])
-                                                    <strong data-role="request-contact-hidden">Contact on file</strong>
-                                                @else
-                                                    <strong data-role="request-no-contact">No contact recorded</strong>
-                                                @endif
-                                            </span>
-                                            <x-badge :variant="$statusVariant[$row['status']] ?? 'neutral'" data-role="request-status">{{ $row['status_label'] }}</x-badge>
-                                        </div>
-                                        <span class="text-caption d-block">
-                                            {{ $row['channel_label'] }} · {{ $row['requested_at']?->format('Y-m-d') }}
-                                            @if($manyLocations) · {{ $row['location_name'] }} @endif
-                                            @if($row['resolved_at'] !== null) · outcome noted {{ $row['resolved_at']->format('Y-m-d') }} @endif
-                                        </span>
-
-                                        <div class="rv-request-foot">
-                                            @if($canManage && $row['can_resolve'])
-                                                <div class="rv-request-actions">
-                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.reviews.requests.reviewed', [$workspaceUid, $businessUid, $row['uid']]) }}" data-role="mark-reviewed-form">
-                                                        @csrf
-                                                        <x-button type="submit" variant="secondary" size="sm" icon="check">They say they reviewed</x-button>
-                                                    </form>
-                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.reviews.requests.declined', [$workspaceUid, $businessUid, $row['uid']]) }}" data-role="mark-declined-form">
-                                                        @csrf
-                                                        <x-button type="submit" variant="ghost" size="sm" icon="x">Declined</x-button>
-                                                    </form>
-                                                </div>
+                                        <p class="rv-request-who mb-0">
+                                            @if($row['contact'] !== null)
+                                                <strong data-role="request-contact">{{ $row['contact']['name'] ?? $row['contact']['phone'] }}</strong>
+                                            @elseif($row['has_contact'])
+                                                <strong data-role="request-contact-hidden">Contact on file</strong>
+                                            @else
+                                                <strong data-role="request-no-contact">No contact recorded</strong>
                                             @endif
-                                            <div class="rv-request-links text-caption" data-role="request-links">
-                                                @if($row['contact'] !== null)
-                                                    @can('view_contact')
-                                                        <a href="{{ route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $row['contact']['uid']]) }}" data-role="deep-link-contact">Open contact</a>
-                                                    @endcan
-                                                @endif
-                                                @can('chat_box')
-                                                    <a href="{{ route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid]) }}" data-role="deep-link-conversations">Open conversation</a>
+                                        </p>
+                                        <p class="rv-request-meta mb-0">
+                                            @if($row['contact'] !== null && $row['contact']['name'] !== null)
+                                                <span data-role="request-contact-phone">{{ $row['contact']['phone'] }}</span> ·
+                                            @endif
+                                            {{ $row['channel_label'] }} · {{ $row['requested_at']?->format('M j, Y') }}
+                                            @if($manyLocations) · {{ $row['location_name'] }} @endif
+                                        </p>
+                                        <div class="rv-request-links" data-role="request-links">
+                                            @if($row['contact'] !== null)
+                                                @can('view_contact')
+                                                    <a href="{{ route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $row['contact']['uid']]) }}" data-role="deep-link-contact">Open contact</a>
                                                 @endcan
-                                                @can('automations')
-                                                    <a href="{{ route('customer.workspaces.businesses.automations.index', [$workspaceUid, $businessUid]) }}" data-role="deep-link-automations">Open automation</a>
-                                                @endcan
-                                            </div>
+                                            @endif
+                                            @can('chat_box')
+                                                <a href="{{ route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid]) }}" data-role="deep-link-conversations">Open Conversations</a>
+                                            @endcan
+                                            @can('automations')
+                                                <a href="{{ route('customer.workspaces.businesses.automations.index', [$workspaceUid, $businessUid]) }}" data-role="deep-link-automations">Open Automations</a>
+                                            @endcan
                                         </div>
                                     </div>
+                                    <div class="rv-request-state">
+                                        <x-badge :variant="$statusVariant[$row['status']] ?? 'neutral'" data-role="request-status">
+                                            @if($row['status'] === 'reviewed')<x-ds-icon name="check" size="12" /> @endif{{ $row['status_label'] }}
+                                        </x-badge>
+                                        @if($row['resolved_at'] !== null)
+                                            <span class="rv-request-note">Outcome noted {{ $row['resolved_at']->format('M j, Y') }}</span>
+                                        @endif
+                                    </div>
+                                    @if($canManage && $row['can_resolve'])
+                                        <div class="rv-request-actions">
+                                            <form method="POST" action="{{ route('customer.workspaces.businesses.seo.reviews.requests.reviewed', [$workspaceUid, $businessUid, $row['uid']]) }}" data-role="mark-reviewed-form">
+                                                @csrf
+                                                <x-button type="submit" variant="secondary" size="sm" icon="check">They say they reviewed</x-button>
+                                            </form>
+                                            <form method="POST" action="{{ route('customer.workspaces.businesses.seo.reviews.requests.declined', [$workspaceUid, $businessUid, $row['uid']]) }}" data-role="mark-declined-form">
+                                                @csrf
+                                                <x-button type="submit" variant="secondary" size="sm" icon="x">Declined</x-button>
+                                            </form>
+                                        </div>
+                                    @endif
                                 </div>
                                 @if($loop->last && $allRows->count() > $visibleRequests)
                                     </details>

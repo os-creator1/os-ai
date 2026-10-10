@@ -141,7 +141,7 @@ class SeoReviewsAuditRepairTest extends TestCase
         $withText = trim(preg_replace('/\s+/', ' ', strip_tags($with[1])));
         $missingText = trim(preg_replace('/\s+/', ' ', strip_tags($missing[1])));
 
-        $this->assertStringContainsString('Locations with a review link 1 / 1', $withText);
+        $this->assertStringContainsString('Locations with a review link 1 of 1', $withText);
         $this->assertStringContainsString('Every Location is ready', $missingText);
         $this->assertStringContainsString('data-role="location-archived"', $html);
     }
@@ -197,7 +197,7 @@ class SeoReviewsAuditRepairTest extends TestCase
 
         $this->assertStringNotContainsString('Google review link', $html);
         $this->assertStringNotContainsString('leave a Google review', $html);
-        $this->assertStringContainsString("Keep each Location's review link handy", $html);
+        $this->assertStringContainsString("Keep each Location's review link in one place", $html);
     }
 
     public function test_reviews_stay_workflow_only_with_no_rating_metric_or_review_markup(): void
