@@ -444,6 +444,11 @@ class TutoringAdsDecisionAcceptanceTest extends TestCase
         $this->assertSame(AdsDecisionState::Act, $at->state);
         $this->assertStringContainsString('qualified applicant', $this->text($at));
         $this->assertStringContainsString('never pauses anything for you', (string) $at->doNotChange);
+        $this->assertStringContainsString('highest cost you set for one qualified applicant', $this->text($at));
+        $this->assertStringContainsString('not proof that the ads are failing', $this->text($at));
+        $this->assertStringContainsString('worth investigating', $this->text($at));
+        $this->assertStringNotContainsString('failing.', str_replace('not proof that the ads are failing.', '', $this->text($at)));
+        $this->assertContains($at->ctaKind, [AdsDecisionCtaKind::OpenCampaign, AdsDecisionCtaKind::ReviewAd, AdsDecisionCtaKind::ReviewLandingPage], 'ACT links to a screen; it mutates nothing.');
         $this->assertSame(AdsDecisionState::Watch, $thin->state);
         $this->assertSame(AdsDecisionState::Watch, $unknownClicks->state);
         $this->assertStringNotContainsString('student', $this->text($at) . $this->text($below));

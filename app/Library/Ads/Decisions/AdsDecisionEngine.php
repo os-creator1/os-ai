@@ -271,7 +271,8 @@ final class AdsDecisionEngine
             // An investigation trigger, not a pause: nothing here switches an ad off.
             return $this->actionOnAds($in, 'Review these ads: they have spent ' . $this->multiple($multiple) . ' your target without a qualified ' . $lead . '.', [
                 'These ads have spent ' . $this->money($in->spendMicros) . ' without a qualified ' . $lead . '. Your target is ' . $this->money($targetCpl) . ' for one.',
-                $in->attributedTouches > 0 || $in->inquiries > 0 ? 'Inquiries from ' . $in->providerName() . ' are being recorded, so this points at the ads rather than a missing connection.' : 'Nothing suggests a tracking fault, so this points at the ads.',
+                $in->attributedTouches > 0 || $in->inquiries > 0 ? 'Inquiries from ' . $in->providerName() . ' are being recorded, so a missing connection looks less likely and these ads are worth investigating.' : 'Nothing suggests a tracking fault, so these ads are worth investigating.',
+                ($in->outcomeType === 'hire' && $actSpend !== null ? 'That is at or above the highest cost you set for one ' . $lead . ' (' . $this->money($actSpend) . '). ' : '') . 'This is a reason to look closely, not proof that the ads are failing.',
             ], $evidence, $targetCpl, doNotChange: 'Do not pause or delete the ads on this signal alone. MotionGrove never pauses anything for you: look at the campaign first, then decide.');
         }
 
