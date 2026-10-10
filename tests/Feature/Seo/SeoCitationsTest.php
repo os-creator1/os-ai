@@ -640,7 +640,7 @@ class SeoCitationsTest extends TestCase
         $this->assertStringContainsString('data-role="google-row"', $html);
         $this->assertStringContainsString('Connected', $html);
         // The mismatch count is GBP's own comparator's, delivered by the reader.
-        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">1 detail differs from Google\./', $html);
+        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">1 detail differs from Google</', $html);
 
         $this->assertSame(0, SeoCitation::query()->count(), 'The Google row is synthetic and must never be stored.');
         $this->assertSame([], $this->fakeGoogle->calls, 'No provider call: the row comes from the read model only.');

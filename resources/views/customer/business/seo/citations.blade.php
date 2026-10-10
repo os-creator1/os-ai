@@ -95,6 +95,7 @@
             $nicheName = $section->nicheLabel;
             $groupTitles = [
                 SeoCitationLocationSection::GROUP_ESSENTIAL => ['Essential listings', 'The places most worth getting right first.'],
+                SeoCitationLocationSection::GROUP_SETUP => ['Needs setup', 'No details recorded for these yet.'],
                 SeoCitationLocationSection::GROUP_RECOMMENDED => ['Recommended' . ($nicheName ? ' · incl. ' . $nicheName . ' picks' : ''), 'Worth setting up once the essentials are done.'],
                 SeoCitationLocationSection::GROUP_OPTIONAL => ['Optional', 'Skip any that do not fit.'],
                 SeoCitationLocationSection::GROUP_CUSTOM => ['Your custom directories', 'Added by you.'],
@@ -251,7 +252,7 @@
             <div class="cz-toolbar mb-1" data-role="citation-filters">
                 <div class="cz-filters" role="group" aria-label="Filter listings">
                     @foreach(['all' => 'All', 'essential' => 'Essential', 'recommended' => 'Recommended', 'setup' => 'Needs setup', 'attention' => 'Needs attention', 'notchecked' => 'Not checked', 'accurate' => 'Accurate', 'custom' => 'Custom'] as $filterKey => $filterLabel)
-                        <button type="button" class="cz-filter @if($filterKey === 'all') is-active @endif" data-filter="{{ $filterKey }}">{{ $filterLabel }}@if(isset($filterCounts[$filterKey]))<span class="cz-count" data-progress="{{ $filterKey }}">{{ $filterCounts[$filterKey] }}</span>@endif</button>
+                        <button type="button" class="cz-filter @if($filterKey === 'all') is-active @endif" data-filter="{{ $filterKey }}">{{ $filterLabel }}@if(isset($filterCounts[$filterKey]))<span class="cz-count visually-hidden" data-progress="{{ $filterKey }}">{{ $filterCounts[$filterKey] }}</span>@endif</button>
                     @endforeach
                 </div>
                 <input type="search" class="form-control form-control-sm cz-search" placeholder="Search directories" aria-label="Search directories" data-role="citation-search">
@@ -276,7 +277,7 @@
                                 [$gLabel, $gVariant, $gIcon, $gCopy] = match ($googleState) {
                                     SeoCitationLocationSection::GOOGLE_CONNECTED => $section->googleHealthProblem() !== null
                                         ? ['Needs attention', 'warning', 'triangle-alert', $section->googleHealthProblem()]
-                                        : ['Connected', 'success', 'circle-check', $section->googleCheckedAutomatically() ? 'Checked automatically from your Google connection.' : 'Linked to your Google listing.'],
+                                        : ['Connected', 'success', 'circle-check', $section->googleCheckedAutomatically() ? 'Checked automatically' : 'Linked to your Google listing.'],
                                     SeoCitationLocationSection::GOOGLE_CONNECTION_LOST => ['Needs attention', 'warning', 'triangle-alert', 'The Google connection is not active.'],
                                     default => ['Not linked', 'neutral', 'circle-dashed', 'Not linked to a Google listing yet. Nothing to do if this business has no Google listing.'],
                                 };
@@ -293,7 +294,7 @@
                                     <span class="cz-dir-icon"><x-ds-icon name="map-pin" size="18" /></span>
                                     <span>
                                         <span class="cz-dir-name" style="cursor:default">Google Business Profile</span>
-                                        <span class="cz-dir-kind"><x-badge variant="accent">Essential</x-badge> <span class="cz-mode" data-role="tracking-mode">{{ $section->googleCheckedAutomatically() ? 'Checked automatically' : ($googleState === SeoCitationLocationSection::GOOGLE_CONNECTED ? 'Connected' : 'Not connected') }}</span></span>
+                                        <span class="cz-dir-kind"><x-badge variant="accent">Essential</x-badge></span>
                                     </span>
                                 </div>
                                 <div class="cz-c-status">
@@ -304,31 +305,48 @@
                                     @if($googleState === SeoCitationLocationSection::GOOGLE_NOT_LINKED)
                                         <span class="cz-muted">Connect to link this location to Google Business Profile.</span>
                                     @else
-                                        @if($google->health !== null)
-                                            <span class="d-block" data-role="google-health">{{ $google->health->label() }}@if($gAsOf !== null) <span class="text-caption" data-role="google-health-as-of">as of {{ $gAsOf->format('M j, Y') }}</span>@endif</span>
-                                        @endif
                                         @if($google->healthIsStale)
                                             <span class="text-caption d-block text-warning" data-role="google-stale">Google data may be out of date. Reconnect or refresh it on the Google Business Profile page.</span>
                                         @endif
                                         @if($googleNap !== null)
-                                            <span class="d-flex flex-wrap gap-1 mt-25" data-role="google-nap">
-                                                @foreach(['name' => 'Name', 'phone' => 'Phone', 'website' => 'Website'] as $gField => $gLabelField)
-                                                    @php $gResult = $googleNap[$gField]; @endphp
-                                                    <span class="cz-field cz-field--{{ $gResult === SeoNapFieldResult::Consistent ? 'ok' : ($gResult === SeoNapFieldResult::Mismatch ? 'diff' : 'none') }}" data-google-field="{{ $gField }}" data-result="{{ $gResult->value }}">
-                                                        <x-ds-icon :name="$gResult === SeoNapFieldResult::Consistent ? 'circle-check' : ($gResult === SeoNapFieldResult::Mismatch ? 'triangle-alert' : 'circle-dashed')" size="14" />
-                                                        {{ $gLabelField }}: {{ match ($gResult) { SeoNapFieldResult::Consistent => 'matches', SeoNapFieldResult::Mismatch => 'differs', default => 'not compared' } }}
+                                            @php
+                                                $gChip = function (string $gField, string $gLabelField) use ($googleNap) {
+                                                    $gResult = $googleNap[$gField];
+                                                    $cls = $gResult === SeoNapFieldResult::Consistent ? 'ok' : ($gResult === SeoNapFieldResult::Mismatch ? 'diff' : 'none');
+                                                    $icon = $gResult === SeoNapFieldResult::Consistent ? 'circle-check' : ($gResult === SeoNapFieldResult::Mismatch ? 'triangle-alert' : 'circle-dashed');
+                                                    $word = match ($gResult) { SeoNapFieldResult::Consistent => 'matches', SeoNapFieldResult::Mismatch => 'differs', default => 'not compared' };
+
+                                                    return ['cls' => $cls, 'icon' => $icon, 'text' => $gLabelField . ' ' . $word, 'field' => $gField, 'result' => $gResult->value];
+                                                };
+                                                $gChips = [$gChip('name', 'Name'), $gChip('phone', 'Phone'), $gChip('website', 'Website')];
+                                                // Name and Phone share a line ("Name differs · Phone matches"); Website sits on its own.
+                                                $gLines = [[$gChips[0], $gChips[1]], [$gChips[2]]];
+                                                $gExtra = array_values(array_diff($gDiffering, ['Name', 'Phone', 'Website']));
+                                            @endphp
+                                            <span class="d-block" data-role="google-nap">
+                                                @foreach($gLines as $gLine)
+                                                    <span class="d-flex flex-wrap align-items-center column-gap-1 mt-25">
+                                                        @foreach($gLine as $gC)
+                                                            @if(! $loop->first)<span class="cz-muted" aria-hidden="true">&middot;</span>@endif
+                                                            <span class="cz-field cz-field--{{ $gC['cls'] }}" data-google-field="{{ $gC['field'] }}" data-result="{{ $gC['result'] }}">
+                                                                <x-ds-icon :name="$gC['icon']" size="14" />
+                                                                {{ $gC['text'] }}
+                                                            </span>
+                                                        @endforeach
                                                     </span>
                                                 @endforeach
                                             </span>
                                         @endif
-                                        @if($googleNap !== null)
-                                            <span class="text-caption d-block" data-role="google-mismatch-count">{{ count($gDiffering) }} {{ count($gDiffering) === 1 ? 'detail differs' : 'details differ' }} from Google.</span>
-                                            @if($gDiffering !== [])
-                                                <span class="text-caption d-block" data-role="google-differing-fields">Differs: {{ implode(', ', $gDiffering) }}.</span>
-                                            @endif
-                                            @if($gAsOf !== null)
+                                        @if($google->health !== null || $googleNap !== null)
+                                            <span class="text-caption d-block mt-25" data-role="google-verification">
+                                                @if($google->health !== null)<span data-role="google-health">{{ $google->health->label() }}@if($gAsOf !== null) <span data-role="google-health-as-of">as of {{ $gAsOf->format('M j, Y') }}</span>@endif</span>@endif
+                                                @if($googleNap !== null)@if($google->health !== null) &middot; @endif<span data-role="google-mismatch-count">{{ count($gDiffering) }} {{ count($gDiffering) === 1 ? 'detail differs' : 'details differ' }} from Google</span>@endif
+                                            </span>
+                                            @if($googleNap !== null && $gExtra !== [])
+                                                <span class="text-caption d-block" data-role="google-differing-fields">Differs: {{ implode(', ', $gExtra) }}.</span>
                                             @endif
                                         @endif
+
                                     @endif
                                 </div>
                                 <div class="cz-c-checked cz-checked" data-role="google-checked">

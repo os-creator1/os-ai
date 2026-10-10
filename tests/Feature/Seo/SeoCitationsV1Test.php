@@ -106,15 +106,36 @@ class SeoCitationsV1Test extends TestCase
 
         $html = $this->page($workspace, $business, $location);
 
-        $this->assertStringContainsString('data-group="essential"', $html);
-        $this->assertStringContainsString('data-group="recommended"', $html);
-        $this->assertStringContainsString('data-group="optional"', $html);
-        $this->assertStringContainsString('Essential listings', $html);
-        $this->assertStringContainsString('incl. Photo booth picks', $html);
+        // Nothing is recorded yet, so every directory is "Needs setup" whatever its importance
+        // (the importance badge on each row is unchanged).
+        $this->assertStringContainsString('data-group="setup"', $html);
+        $this->assertStringContainsString('Needs setup', $html);
+        $this->assertStringContainsString('No details recorded for these yet.', $html);
+        $this->assertStringNotContainsString('data-group="recommended"', $html);
+        $this->assertStringNotContainsString('data-group="optional"', $html);
         $this->assertMatchesRegularExpression('/data-directory="apple_business"[^>]*data-importance="essential"/', $html);
         $this->assertMatchesRegularExpression('/data-directory="gigsalad"[^>]*data-importance="recommended"/', $html);
         $this->assertMatchesRegularExpression('/data-directory="bark"[^>]*data-importance="optional"/', $html);
         $this->assertStringContainsString('data-role="niche-badge"', $html);
+    }
+
+    public function test_configured_directories_keep_their_importance_group_and_only_unrecorded_ones_need_setup(): void
+    {
+        [, $business, $workspace, $location] = $this->tenant();
+        $this->makeCitation($business, $location, $this->directory('apple_business'), ['listed_name' => 'Acme Photo Booth']);
+        $this->makeCitation($business, $location, $this->directory('gigsalad'), ['listed_name' => 'Acme Photo Booth']);
+
+        $html = $this->page($workspace, $business, $location);
+
+        $this->assertStringContainsString('Essential listings', $html);
+        $this->assertMatchesRegularExpression('/data-group="essential".*?data-directory="apple_business"/s', $html);
+        $this->assertMatchesRegularExpression('/data-group="recommended".*?data-directory="gigsalad"/s', $html);
+        // An unrecorded essential directory is "Needs setup", ahead of the configured Recommended group.
+        $this->assertMatchesRegularExpression('/data-group="setup".*?data-directory="bing_places"/s', $html);
+        $this->assertLessThan(strpos($html, 'data-group="recommended"'), strpos($html, 'data-group="setup"'));
+        $this->assertStringContainsString('No listing details recorded yet', $html);
+        // The chips show names only; the real counts stay in the page for the filter script.
+        $this->assertMatchesRegularExpression('/data-filter="setup">Needs setup<span class="cz-count visually-hidden" data-progress="setup">\d+<\/span>/', $html);
     }
 
     public function test_a_niche_never_shows_another_niches_directories(): void

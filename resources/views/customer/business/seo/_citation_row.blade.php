@@ -31,6 +31,8 @@
     $canEdit = $canManage && $row->writable;
     $notApplicable = $row->isNotApplicable();
     $mode = $row->trackingMode();
+    // An unrecorded listing says so in the details column, once, not under the status badge too.
+    $noDetailsYet = ! $notApplicable && ! $row->hasRecordedDetails() && $state === SeoCitationDisplayState::NotStarted;
 
     $primaryLabel = match (true) {
         ! $canEdit => 'Details',
@@ -64,12 +66,18 @@
         @if(! $notApplicable && $row->hasRecordedDetails())
             <x-badge :variant="$nap['variant']" class="cz-badge mt-25" data-role="nap-status"><x-ds-icon :name="$nap['icon']" size="12" />{{ $nap['label'] }}</x-badge>
         @endif
-        <p class="cz-helper" data-role="citation-helper">{{ $row->helperText() }}</p>
+        @unless($noDetailsYet)
+            <p class="cz-helper" data-role="citation-helper">{{ $row->helperText() }}</p>
+        @endunless
     </div>
 
     <div class="cz-c-nap">
         @if(! $row->hasRecordedDetails())
-            <span class="cz-muted" data-role="nap-empty" aria-label="Nothing recorded yet">—</span>
+            @if($noDetailsYet)
+                <span class="cz-muted" data-role="nap-empty">{{ $row->helperText() }}</span>
+            @else
+                <span class="cz-muted" data-role="nap-empty" aria-label="Nothing recorded yet">—</span>
+            @endif
         @else
         @include('customer.business.seo._citation_field', ['label' => 'Name', 'field' => 'name', 'row' => $row, 'value' => $row->listedName])
         @include('customer.business.seo._citation_field', ['label' => 'Phone', 'field' => 'phone', 'row' => $row, 'value' => $row->listedPhone])
