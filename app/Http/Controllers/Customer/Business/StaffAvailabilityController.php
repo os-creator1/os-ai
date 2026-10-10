@@ -241,6 +241,11 @@ class StaffAvailabilityController extends Controller
             'start_at' => ['required', 'date'],
             'end_at' => ['required', 'date', 'after:start_at'],
             'reason' => ['nullable', 'string', 'max:255'],
+        ], [
+            'end_at.after' => 'The end must be after the start.',
+        ], [
+            'start_at' => 'start',
+            'end_at' => 'end',
         ]);
 
         $this->attempt(fn () => $this->availability->createTimeOff(
