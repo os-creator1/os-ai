@@ -893,6 +893,46 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertFileExists(base_path('.env.example'));
     }
 
+    public function test_interrupted_quarantine_is_reconnected_by_the_next_run(): void
+    {
+        $c = $this->customer();
+        [$a, $path, $url] = $this->legacyRow($c, 'senderid_1700000070.php', '<?php echo 1;', 'QRN1');
+        $b = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'QRN2', 'status' => 'pending', 'document' => $url]);
+
+        // The process dies right after the file reaches quarantine, before the rows are updated.
+        $mock = File::partialMock();
+        $mock->shouldReceive('move')->once()->andReturnUsing(function ($from, $to) {
+            rename($from, $to);
+            throw new \RuntimeException('process killed');
+        });
+        $mock->shouldReceive('move')->andReturnUsing(fn ($from, $to) => rename($from, $to));
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $a->id)->value('document'));   // dangling reference
+        $this->assertCount(1, Storage::disk('local')->allFiles('senderid-quarantine'));
+        $this->assertCount(1, $this->pendingFiles());
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->expectsOutputToContain('1 resumed')->assertSuccessful();
+
+        $this->assertNull($a->fresh()->document);
+        $this->assertNull($b->fresh()->document);
+        $this->assertSame([], $this->pendingFiles());
+        $this->assertCount(1, Storage::disk('local')->allFiles('senderid-quarantine'));            // still preserved, never deleted
+    }
+
+    public function test_quarantine_record_is_dropped_when_the_move_never_happened(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000071.php', '<?php echo 1;', 'QRN3');
+
+        File::partialMock()->shouldReceive('move')->once()->andReturn(false);   // move fails: record written, file stays
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $row->id)->value('document'));
+        $this->assertSame([], $this->pendingFiles());
+    }
+
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void
     {
         $owner = $this->customer();

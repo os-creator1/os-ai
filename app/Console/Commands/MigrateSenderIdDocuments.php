@@ -155,8 +155,21 @@ class MigrateSenderIdDocuments extends Command
                             return;
                         }
 
-                        $quarantinePath = $disk->path('senderid-quarantine/row-' . $row->id . '-' . Str::random(16) . '.bin');
+                        $quarantineRel = 'senderid-quarantine/row-' . $row->id . '-' . Str::random(16) . '.bin';
+                        $quarantinePath = $disk->path($quarantineRel);
+                        $recordPath = $this->quarantineRecordPath($name);
+
+                        // Recovery record BEFORE the move: if the process dies between the move and the row update,
+                        // the next run reconnects the rows to the quarantine instead of leaving them "missing".
+                        if (! $this->writePending($disk, $recordPath, $name, $quarantineRel, $path, 'quarantine')) {
+                            $failed++;
+                            $this->error("Could not write the recovery record for #{$ids}; original file and database rows preserved.");
+
+                            return;
+                        }
+
                         if (! File::move($path, $quarantinePath)) {
+                            $disk->delete($recordPath);
                             $failed++;
                             $this->error("Cannot move #{$ids} into quarantine; original file and database rows preserved.");
 
@@ -168,6 +181,7 @@ class MigrateSenderIdDocuments extends Command
                         } catch (\Throwable $e) {
                             $failed++;
                             if (File::move($quarantinePath, $path)) {
+                                $disk->delete($recordPath);
                                 $this->error("Database update failed for #{$ids} ({$e->getMessage()}); file restored to its original location, rows unchanged.");
                             } else {
                                 $this->error("Database update failed for #{$ids} AND the file could not be restored. Recover it from: {$quarantinePath} (original: {$path}).");
@@ -175,6 +189,10 @@ class MigrateSenderIdDocuments extends Command
 
                             return;
                         }
+                    }
+
+                    if ($apply) {
+                        $disk->delete($recordPath); // best effort; a stale record is cleaned up next run
                     }
 
                     $quarantined++;
@@ -194,7 +212,7 @@ class MigrateSenderIdDocuments extends Command
 
                     // Durable recovery record, written BEFORE the rows change: if the process dies after the commit
                     // but before the public original is removed, the next run can finish the job from this.
-                    if (! $this->writePending($disk, $name, $relative, $path)) {
+                    if (! $this->writePending($disk, self::PENDING_DIR . '/' . $name . '.json', $name, $relative, $path, 'move')) {
                         $disk->delete($relative);
                         $failed++;
                         $this->error("Could not write the recovery record for #{$ids}; original file and database rows preserved.");
@@ -280,8 +298,13 @@ class MigrateSenderIdDocuments extends Command
         return false;
     }
 
-    /** Record what is needed to finish (or safely abandon) a move: legacy name, private path, size and checksum. */
-    private function writePending($disk, string $name, string $relative, string $publicPath): bool
+    private function quarantineRecordPath(string $name): string
+    {
+        return self::PENDING_DIR . '/q-' . md5($name) . '.json';
+    }
+
+    /** Record what is needed to finish (or safely abandon) a move: legacy name, target path, size and checksum. */
+    private function writePending($disk, string $recordPath, string $name, string $relative, string $publicPath, string $kind): bool
     {
         $sha1 = @hash_file('sha1', $publicPath);
         $size = @filesize($publicPath);
@@ -290,7 +313,7 @@ class MigrateSenderIdDocuments extends Command
         }
 
         try {
-            return $disk->put(self::PENDING_DIR . '/' . $name . '.json', json_encode(['name' => $name, 'private' => $relative, 'size' => $size, 'sha1' => $sha1])) === true;
+            return $disk->put($recordPath, json_encode(['kind' => $kind, 'name' => $name, 'private' => $relative, 'size' => $size, 'sha1' => $sha1])) === true;
         } catch (\Throwable $e) {
             return false;
         }
@@ -308,6 +331,13 @@ class MigrateSenderIdDocuments extends Command
 
         foreach ($disk->files(self::PENDING_DIR) as $recordPath) {
             $record = json_decode((string) $disk->get($recordPath), true);
+
+            if (is_array($record) && ($record['kind'] ?? null) === 'quarantine') {
+                $resumed += $this->finishQuarantine($disk, $apply, $failed, $recordPath, $record);
+
+                continue;
+            }
+
             $name = is_array($record) ? ($record['name'] ?? null) : null;
             $private = is_array($record) ? ($record['private'] ?? null) : null;
 
@@ -358,6 +388,59 @@ class MigrateSenderIdDocuments extends Command
         }
 
         return $resumed;
+    }
+
+    /**
+     * Finish an interrupted quarantine: the public file is gone and sits in quarantine, but rows may still point at it.
+     * Rows are cleared only when the quarantined file is present and matches the recorded checksum.
+     */
+    private function finishQuarantine($disk, bool $apply, int &$failed, string $recordPath, array $record): int
+    {
+        $name = $record['name'] ?? null;
+        $rel = $record['private'] ?? null;
+
+        if (! is_string($name) || $name === '' || $name !== basename($name) || str_contains($name, "\0")
+            || $recordPath !== $this->quarantineRecordPath($name)
+            || ! is_string($rel) || ! preg_match('#^senderid-quarantine/row-[0-9]+-[A-Za-z0-9]{16}\.bin$#', $rel)
+            || ! is_string($record['sha1'] ?? null)) {
+            $this->error("Ignoring malformed recovery record {$recordPath}.");
+            $failed++;
+
+            return 0;
+        }
+
+        $public = public_path(SenderIdDocumentStore::LEGACY_DIR . '/' . $name);
+        $full = $disk->path($rel);
+
+        if (is_file($public) || ! is_file($full) || @hash_file('sha1', $full) !== $record['sha1']) {
+            $apply && $disk->delete($recordPath);   // the move never happened, or there is nothing safe to reconnect
+
+            return 0;
+        }
+
+        $siblings = Senderid::query()->where('document', 'like', '%' . $name)->where('document', 'not like', SenderIdDocumentStore::PREFIX . '%')->get()
+            ->filter(fn (Senderid $r) => basename((string) parse_url($r->document, PHP_URL_PATH)) === $name)->keyBy('id');
+
+        if ($siblings->isEmpty()) {
+            $apply && $disk->delete($recordPath);
+
+            return 0;
+        }
+
+        $this->line("resume      {$name}: file is in quarantine, clearing its dangling references");
+        if ($apply) {
+            try {
+                $this->repoint($siblings, null);
+            } catch (\Throwable $e) {
+                $failed++;
+                $this->error("Could not clear references for {$name} ({$e->getMessage()}); will retry on the next run.");
+
+                return 0;
+            }
+            $disk->delete($recordPath);
+        }
+
+        return 1;
     }
 
     /** Update every sibling row atomically; any failure rolls all of them back. */
