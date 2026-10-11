@@ -40,7 +40,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         parent::tearDown();
     }
 
-    private function customer(array $permissions = ['create_sender_id']): Customer
+    private function customer(array $permissions = ['create_sender_id', 'view_sender_id']): Customer
     {
         $this->ensureRequiredAppConfigRowsExist();
         $customer = $this->createCustomer();
@@ -282,6 +282,35 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
 
         $this->customer(['view_sender_id']); // a second tenant
         $this->get(route('customer.senderid.document', $senderid->uid))->assertNotFound();
+    }
+
+    public function test_owner_without_view_sender_id_permission_cannot_download(): void
+    {
+        $owner = $this->customer(['create_sender_id', 'view_sender_id']);
+        $value = SenderIdDocumentStore::store($this->realUpload('proof.pdf', self::PDF));
+        $senderid = Senderid::create(['user_id' => $owner->user_id, 'sender_id' => 'ACME', 'status' => 'pending', 'document' => $value]);
+
+        $this->get(route('customer.senderid.document', $senderid->uid))->assertOk();
+
+        // Same owner, permission revoked.
+        $this->withSession(['permissions' => collect(['access_backend', 'create_sender_id'])]);
+        $this->get(route('customer.senderid.document', $senderid->uid))->assertUnauthorized(); // app maps authorisation denial to 401
+    }
+
+    public function test_database_failure_after_quarantine_move_restores_the_file_and_keeps_the_row(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000036.php', '<?php echo 1;', 'DBF');
+
+        Senderid::updating(function () {
+            throw new \RuntimeException('simulated database failure');
+        });
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);                                   // file restored to the exact original path
+        $this->assertSame('<?php echo 1;', file_get_contents($path));
+        $this->assertSame($url, \Illuminate\Support\Facades\DB::table('senderid')->where('id', $row->id)->value('document'));
+        $this->assertSame([], Storage::disk('local')->allFiles('senderid-quarantine'));
     }
 
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void

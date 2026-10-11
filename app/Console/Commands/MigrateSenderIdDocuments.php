@@ -72,15 +72,28 @@ class MigrateSenderIdDocuments extends Command
                             return;
                         }
 
-                        if (! File::move($path, $disk->path('senderid-quarantine/row-' . $row->id . '-' . Str::random(16) . '.bin'))) {
+                        $quarantinePath = $disk->path('senderid-quarantine/row-' . $row->id . '-' . Str::random(16) . '.bin');
+                        if (! File::move($path, $quarantinePath)) {
                             $failed++;
                             $this->error("Cannot move #{$row->id} into quarantine; original file and database row preserved.");
 
                             return;
                         }
 
-                        // Never detach a record from its original file unless the private move succeeded.
-                        $row->forceFill(['document' => null])->save();
+                        // Never detach a record from its original file unless the private move succeeded,
+                        // and never leave the file moved if the row could not be updated.
+                        try {
+                            $row->forceFill(['document' => null])->save();
+                        } catch (\Throwable $e) {
+                            $failed++;
+                            if (File::move($quarantinePath, $path)) {
+                                $this->error("Database update failed for #{$row->id} ({$e->getMessage()}); file restored to its original location, row unchanged.");
+                            } else {
+                                $this->error("Database update failed for #{$row->id} AND the file could not be restored. Recover it from: {$quarantinePath} (original: {$path}).");
+                            }
+
+                            return;
+                        }
                         $done[$name] = ['value' => null];
                     }
 

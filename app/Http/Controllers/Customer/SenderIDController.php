@@ -206,6 +206,7 @@
 
         public function document(Senderid $senderid)
         {
+            $this->authorize('view_sender_id');
             abort_unless((int) $senderid->user_id === (int) Auth::id(), 404);
 
             return \App\Library\Uploads\SenderIdDocumentStore::response($senderid);
