@@ -116,7 +116,7 @@ class MigrateSenderIdDocuments extends Command
                 $this->line("move        #{$ids} {$name} -> private ({$ext})");
                 if ($apply) {
                     $relative = SenderIdDocumentStore::DIR . '/' . Str::random(40) . '.' . $ext;
-                    if ($disk->put($relative, File::get($path)) !== true) {
+                    if (! $this->copyToPrivate($disk, $path, $relative)) {
                         $failed++;
                         $this->error("Private storage write failed for #{$ids}; original file and database rows preserved.");
 
@@ -155,6 +155,46 @@ class MigrateSenderIdDocuments extends Command
         $this->info(($apply ? 'Applied' : 'Dry run') . ": {$moved} moved, {$quarantined} quarantined, {$missing} missing, {$failed} failed.");
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * Stream the public original into private storage (never loading it into memory), close the handle on
+     * every path, and confirm the stored size before anything else is changed. A partial copy is removed.
+     */
+    private function copyToPrivate($disk, string $path, string $relative): bool
+    {
+        $stream = @fopen($path, 'rb');
+        if ($stream === false) {
+            return false;
+        }
+
+        try {
+            $written = $disk->put($relative, $stream) === true;
+        } catch (\Throwable $e) {
+            $written = false;
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
+
+        if ($written) {
+            try {
+                if ($disk->size($relative) === filesize($path)) {
+                    return true;
+                }
+            } catch (\Throwable $e) {
+                // fall through to cleanup
+            }
+        }
+
+        try {
+            $disk->delete($relative);
+        } catch (\Throwable $e) {
+            // best effort: the original is untouched either way
+        }
+
+        return false;
     }
 
     /** Update every sibling row atomically; any failure rolls all of them back. */

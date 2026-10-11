@@ -433,6 +433,58 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertCount(1, Storage::disk('local')->allFiles('senderid-quarantine'));
     }
 
+    public function test_migration_streams_the_original_and_closes_the_handle_even_when_the_write_fails(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000041.pdf', self::PDF, 'STRM');
+
+        $captured = null;
+        $wasStream = false;
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturnUsing(function ($relative, $contents) use (&$captured, &$wasStream) {
+            $captured = $contents;
+            $wasStream = is_resource($contents) && get_resource_type($contents) === 'stream'; // open stream, not a string
+
+            return false;
+        });
+        $disk->shouldReceive('delete')->zeroOrMoreTimes();
+        Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertTrue($wasStream, 'storage must receive an open stream, never the file contents as a string');
+        $this->assertSame('Unknown', get_resource_type($captured), 'the read handle must be closed after a failed write');
+        $this->assertFileExists($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $row->id)->value('document'));
+    }
+
+    public function test_streamed_migration_copies_content_exactly_and_leaves_no_open_handle(): void
+    {
+        $body = self::PDF . str_repeat('A', 300000); // ~300 KB: multi-buffer, still tiny
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000042.pdf', $body, 'BIG');
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+
+        $value = $row->fresh()->document;
+        $this->assertSame($body, Storage::disk('local')->get(substr($value, strlen(SenderIdDocumentStore::PREFIX))));
+        $this->assertFileDoesNotExist($path);
+    }
+
+    public function test_size_mismatch_after_write_is_treated_as_failure_and_keeps_original(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000043.pdf', self::PDF, 'SIZE');
+
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturn(true);
+        $disk->shouldReceive('size')->once()->andReturn(1);
+        $disk->shouldReceive('delete')->once();
+        Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $row->id)->value('document'));
+    }
+
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void
     {
         $owner = $this->customer();
