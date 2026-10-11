@@ -25,22 +25,30 @@
     $currencyProviderLabel = $provider === 'meta' ? 'Meta ad account' : 'Google Ads account';
 @endphp
 
-<div class="row mb-1">
-    <div class="col-12 d-flex justify-content-between align-items-start flex-wrap gap-1">
-        <div>
-            <h1 class="h3 mb-0" data-role="ads-title">{{ $title }}</h1>
-            @if($subtitle)
-                <p class="text-caption text-muted mb-0" data-role="ads-subtitle">{{ $subtitle }}</p>
-            @endif
-        </div>
-        <div class="text-end">
-            <span class="text-caption d-block" data-role="ads-business">{{ $business->name }}</span>
+@include('partials.cx._styles')
+@include('customer.business.ads._dashboard-styles')
+
+<header class="ads-head">
+    <div class="ads-head-main">
+        <h1 class="cx-page-title" data-role="ads-title">{{ $title }}</h1>
+        @if($subtitle)
+            <p class="cx-page-sub" data-role="ads-subtitle">{{ $subtitle }}</p>
+        @endif
+    </div>
+    <div class="ads-head-meta">
+        <span class="ads-account-chip">
+            <span class="ads-account-name">
+                <span data-role="ads-business">{{ $business->name }}</span>@if($account !== null && filled($account->name ?? null)) <span aria-hidden="true">—</span> <span data-role="ads-account-name">{{ $account->name }}</span>@endif
+            </span>
             @if($account !== null && $account->currency_code)
                 <x-badge variant="neutral" data-role="ads-currency" title="Amounts are shown in your {{ $currencyProviderLabel }} currency">{{ $account->currency_code }}</x-badge>
             @endif
-        </div>
+        </span>
+        @if($showFreshness && $account !== null && $freshness !== null)
+            @include($provider === 'meta' ? 'customer.business.ads.meta._freshness' : 'customer.business.ads._freshness', ['freshness' => $freshness, 'part' => 'line'])
+        @endif
     </div>
-</div>
+</header>
 
 {{-- Provider switcher (Meta Ads V1, contract 24 §8): Overview | Google | Meta, each only when its
      route exists. `$provider` (include variable, default 'google') marks the active one; Meta pages
@@ -49,33 +57,29 @@
     $adsProviders = $adsProviders ?? [];
 @endphp
 @if(count($adsProviders) > 1)
-    <nav aria-label="Ads channels" class="mb-1" data-role="ads-provider-nav">
-        <div class="d-flex gap-1 flex-nowrap overflow-auto pb-50">
-            @foreach($adsProviders as $providerItem)
-                <a href="{{ $providerItem['url'] }}"
-                   class="btn btn-sm {{ $providerItem['key'] === $provider ? 'btn-primary' : 'btn-flat-secondary' }} text-nowrap flex-shrink-0"
-                   @if($providerItem['key'] === $provider) aria-current="page" @endif
-                   data-provider="{{ $providerItem['key'] }}">{{ $providerItem['label'] }}</a>
-            @endforeach
-        </div>
+    <nav aria-label="Ads channels" class="ads-provider-nav mb-1" data-role="ads-provider-nav">
+        @foreach($adsProviders as $providerItem)
+            <a href="{{ $providerItem['url'] }}"
+               class="btn btn-sm {{ $providerItem['key'] === $provider ? 'btn-primary' : 'btn-flat-secondary' }} text-nowrap flex-shrink-0"
+               @if($providerItem['key'] === $provider) aria-current="page" @endif
+               data-provider="{{ $providerItem['key'] }}">{{ $providerItem['label'] }}</a>
+        @endforeach
     </nav>
 @endif
 
 @if(count($subNav) > 1)
-    <nav aria-label="Ads sections" class="mb-2" data-role="ads-nav">
-        <div class="d-flex gap-1 flex-nowrap overflow-auto pb-50">
-            @foreach($subNav as $navItem)
-                <a href="{{ $navItem['url'] }}"
-                   class="btn btn-sm {{ $navItem['active'] ? 'btn-primary' : 'btn-flat-secondary' }} text-nowrap flex-shrink-0"
-                   @if($navItem['active']) aria-current="page" @endif
-                   data-nav="{{ $navItem['key'] }}">{{ $navItem['label'] }}</a>
-            @endforeach
-        </div>
+    <nav aria-label="Ads sections" class="cx-tabs" data-role="ads-nav">
+        @foreach($subNav as $navItem)
+            <a href="{{ $navItem['url'] }}"
+               class="{{ $navItem['active'] ? 'is-active' : '' }}"
+               @if($navItem['active']) aria-current="page" @endif
+               data-nav="{{ $navItem['key'] }}">{{ $navItem['label'] }}</a>
+        @endforeach
     </nav>
 @endif
 
 @if($showFreshness && $account !== null && $freshness !== null)
-    @include($provider === 'meta' ? 'customer.business.ads.meta._freshness' : 'customer.business.ads._freshness', ['freshness' => $freshness])
+    @include($provider === 'meta' ? 'customer.business.ads.meta._freshness' : 'customer.business.ads._freshness', ['freshness' => $freshness, 'part' => 'warning'])
 @endif
 
 {{-- Compact data tables: Ads tables carry up to ten numeric columns, so tighten padding and let headers wrap

@@ -6,13 +6,16 @@
     (provider = 'meta'); takes a MetaAdsFreshnessSnapshot as $freshness.
 --}}
 @php
+    // $part: 'line' (the compact status line), 'warning' (the calm warning only) or null for both.
+    $part = $part ?? null;
     use App\Library\MetaAds\Sync\MetaAdsFreshnessState;
 
     $lastSync = $freshness->lastSuccessfulSyncAt;
     $through = $freshness->dataThroughDate;
 @endphp
 
-<div class="mb-2" data-role="ads-freshness" data-state="{{ $freshness->state->value }}">
+@if($part !== 'warning')
+<div class="{{ $part === 'line' ? 'ads-freshness-line' : 'mb-2' }}" data-role="ads-freshness" data-state="{{ $freshness->state->value }}">
     <p class="text-caption text-muted mb-0">
         @if($freshness->state === MetaAdsFreshnessState::Running)
             <span data-role="freshness-running">Refreshing now.</span>
@@ -27,7 +30,12 @@
             <span data-role="freshness-never">Waiting for the first update from Meta.</span>
         @endif
     </p>
-
+@if($part === 'line')
+</div>
+@endif
+@endif
+@if($part === null || ($part === 'warning' && $freshness->shouldWarn()))
+    @if($part === 'warning')<div class="mb-2" data-role="ads-freshness-warning-wrap">@endif
     @if($freshness->shouldWarn())
         <x-alert variant="warning" icon="alert-triangle" role="status" class="mt-1 mb-0" data-role="freshness-warning">
             Showing your last successful update.
@@ -38,4 +46,8 @@
             @endif
         </x-alert>
     @endif
+    @if($part === 'warning')</div>@endif
+@endif
+@if($part === null)
 </div>
+@endif

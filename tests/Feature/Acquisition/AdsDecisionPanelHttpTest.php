@@ -108,6 +108,11 @@ class AdsDecisionPanelHttpTest extends TestCase
         }
         $this->assertStringContainsString('Why am I seeing this?', $html);
         $this->assertSame(0, $this->fakeMeta->callCount(), 'The panel reads cached data only.');
+
+        // The secondary "What needs attention" panel never contradicts the decision with an all-clear.
+        $attention = substr($html, (int) strpos($html, 'data-role="attention"'));
+        $this->assertStringNotContainsString('Nothing stands out right now.', $attention);
+        $this->assertLessThan(strpos($html, 'data-role="attention"'), strpos($html, 'data-role="decision-panel"'));
     }
 
     public function test_a_campaign_without_a_goal_asks_the_owner_to_assign_one(): void

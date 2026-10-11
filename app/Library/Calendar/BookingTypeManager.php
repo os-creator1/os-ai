@@ -253,7 +253,7 @@ class BookingTypeManager
             ->map(static fn ($id): int => (int) $id)
             ->all();
         if ($eligibleIds === []) {
-            return ['ready' => false, 'reason' => 'No one is assigned. Add staff under "Who offers this".'];
+            return ['ready' => false, 'reason' => 'No one is assigned. Tick at least one person under Team and save.'];
         }
 
         $hasHours = StaffAvailabilityRule::query()

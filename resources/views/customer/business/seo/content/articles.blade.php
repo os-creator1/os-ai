@@ -90,8 +90,7 @@
                     <span class="content-icon-tile {{ $isPublished ? '' : 'content-icon-tile--neutral' }}" aria-hidden="true"><x-ds-icon name="file-text" size="16" /></span>
                     <div class="article-row-main">
                         <a class="article-row-title" href="{{ $editUrl($article) }}">{{ $article->title }}</a>
-                        @if($article->ai_generated)<span class="badge bg-light-primary" title="Started with an AI draft">AI draft</span>@endif
-                        <span class="article-row-slug">/blog/{{ $article->slug }}</span>
+                        <span class="article-row-slug">/blog/{{ $article->slug }}@if($article->ai_generated)<span class="cx-pill is-accent article-ai" title="Started with an AI draft">AI draft</span>@endif</span>
                     </div>
                     <div class="article-row-meta">
                         <div>
@@ -119,7 +118,7 @@
                         @if($isDraft)
                             <a class="btn btn-primary" href="{{ $editUrl($article) }}" data-role="continue-editing">Continue editing</a>
                         @else
-                            <a class="btn btn-outline-secondary btn-sm" href="{{ $editUrl($article) }}" data-role="edit-article">Edit</a>
+                            <a class="btn btn-outline-primary btn-sm" href="{{ $editUrl($article) }}" data-role="edit-article">Edit</a>
                             @if($isPublished && $website)
                                 <a class="btn btn-outline-secondary btn-sm" href="{{ route('public.website.blog.show', [$website->public_id, $article->slug]) }}" target="_blank" rel="noopener" aria-label="Open {{ $article->title }} on your website" data-role="open-live"><x-ds-icon name="external-link" size="14" aria-hidden="true" /></a>
                             @endif

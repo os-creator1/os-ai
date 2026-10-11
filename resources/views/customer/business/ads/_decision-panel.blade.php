@@ -21,67 +21,73 @@
 @endphp
 
 @if($view !== null)
-<style>
-    .decision-panel { background: var(--color-surface, #fff); border: 1px solid var(--color-border, #e7e2d9); border-radius: var(--radius-lg, 12px); padding: 1.25rem 1.5rem; }
-    .decision-panel .decision-kicker { letter-spacing: .08em; text-transform: uppercase; font-size: .75rem; color: var(--color-text-muted, #6b6b6b); margin: 0 0 .5rem; }
-    .decision-panel .decision-state { font-weight: 700; letter-spacing: .04em; }
-    .decision-panel .decision-headline { font-size: 1.25rem; line-height: 1.35; margin: .5rem 0 .75rem; color: var(--color-text-primary, #1c1c1c); }
-    .decision-panel .decision-meta { border-top: 1px solid var(--color-border-subtle, #eee9df); margin-top: .75rem; padding-top: .75rem; }
-    .decision-panel dl { margin: 0; }
-    .decision-panel dt { font-weight: 600; color: var(--color-text-secondary, #444); }
-    .decision-panel dd { margin: 0 0 .5rem; }
-    .decision-panel details summary { cursor: pointer; font-weight: 600; }
-    .decision-other { border-top: 1px solid var(--color-border-subtle, #eee9df); padding: .75rem 0 0; margin-top: .75rem; }
-    @media (max-width: 575.98px) { .decision-panel { padding: 1rem; } .decision-panel .decision-headline { font-size: 1.1rem; } }
-</style>
+@include('customer.business.ads._dashboard-styles')
+@php
+    $panelTone = $primary !== null ? $tone($primary['decision']) : 'neutral';
+@endphp
 
-<section class="decision-panel mb-2" data-role="decision-panel" aria-labelledby="decision-kicker">
+<section class="decision-panel tone-{{ $panelTone }}" data-role="decision-panel" aria-labelledby="decision-kicker">
     <p class="decision-kicker" id="decision-kicker">What should you do now?</p>
 
     @if($primary !== null)
         @php
             $d = $primary['decision'];
         @endphp
-        <div class="d-flex align-items-center flex-wrap gap-1" data-role="decision-primary" data-state="{{ $d->state->value }}">
-            <x-badge :variant="$tone($d)" class="decision-state" data-role="decision-state">{{ strtoupper($d->state->label()) }}</x-badge>
-            <span class="text-muted" data-role="decision-goal">{{ $d->purposeName }}</span>
-        </div>
-
-        <h2 class="decision-headline" data-role="decision-headline">{{ $d->headline }}</h2>
-
-        @foreach($d->reasons as $reason)
-            <p class="mb-50" data-role="decision-reason">{{ $reason }}</p>
-        @endforeach
-
-        <div class="decision-meta">
-            <dl>
-                @if($d->doNotChange)
-                    <dt>What not to change</dt>
-                    <dd data-role="decision-do-not-change">{{ $d->doNotChange }}</dd>
-                @endif
-                @if($d->nextReview)
-                    <dt>Next review</dt>
-                    <dd data-role="decision-next-review">{{ $d->nextReview }}</dd>
-                @endif
-            </dl>
-
-            @foreach($d->notes as $note)
-                <p class="text-caption text-muted mb-50" data-role="decision-note">{{ $note }}</p>
-            @endforeach
-
-            @if($primary['cta'] !== null)
-                <div class="mt-1" data-role="decision-cta">
-                    @if($primary['cta']['url'])
-                        <a href="{{ $primary['cta']['url'] }}" class="btn btn-primary"
-                           @if($primary['cta']['external']) target="_blank" rel="noopener noreferrer" @endif>{{ $primary['cta']['label'] }}</a>
-                    @else
-                        <p class="mb-0 text-muted" data-role="decision-cta-instruction">Next step: {{ strtolower($primary['cta']['label']) }} in your ad account.</p>
-                    @endif
+        <div class="decision-grid">
+            <div>
+                <div class="d-flex align-items-center flex-wrap gap-1" data-role="decision-primary" data-state="{{ $d->state->value }}">
+                    <x-badge :variant="$tone($d)" class="decision-state" data-role="decision-state">{{ strtoupper($d->state->label()) }}</x-badge>
+                    <span class="text-caption" data-role="decision-goal">{{ $d->purposeName }}</span>
                 </div>
-            @endif
+
+                <h2 class="decision-headline" data-role="decision-headline">{{ $d->headline }}</h2>
+
+                <div class="decision-reasons">
+                    @foreach($d->reasons as $reason)
+                        <p data-role="decision-reason">{{ $reason }}</p>
+                    @endforeach
+                </div>
+
+                @if($primary['cta'] !== null)
+                    <div class="decision-cta" data-role="decision-cta">
+                        @if($primary['cta']['url'])
+                            <a href="{{ $primary['cta']['url'] }}" class="btn btn-primary d-inline-flex align-items-center gap-1"
+                               @if($primary['cta']['external']) target="_blank" rel="noopener noreferrer" @endif>{{ $primary['cta']['label'] }}
+                                <x-ds-icon :name="$primary['cta']['external'] ? 'external-link' : 'arrow-right'" size="15" aria-hidden="true" /></a>
+                        @else
+                            <p class="mb-0 text-caption" data-role="decision-cta-instruction">Next step: {{ strtolower($primary['cta']['label']) }} in your ad account.</p>
+                        @endif
+                    </div>
+                @endif
+
+                @foreach($d->notes as $note)
+                    <p class="decision-note" data-role="decision-note">{{ $note }}</p>
+                @endforeach
+            </div>
+
+            <aside class="decision-side" aria-label="Evidence and next review">
+                @if($d->evidence !== [])
+                    <p class="decision-kicker mb-50">Evidence</p>
+                    <ul class="decision-evidence">
+                        @foreach(array_slice($d->evidence, 0, 4) as $row)
+                            <li><span>{{ $row['label'] }}</span><span>{{ $row['value'] }}</span></li>
+                        @endforeach
+                    </ul>
+                @endif
+                <dl>
+                    @if($d->doNotChange)
+                        <dt>What not to change</dt>
+                        <dd data-role="decision-do-not-change">{{ $d->doNotChange }}</dd>
+                    @endif
+                    @if($d->nextReview)
+                        <dt>Next review</dt>
+                        <dd data-role="decision-next-review">{{ $d->nextReview }}</dd>
+                    @endif
+                </dl>
+            </aside>
         </div>
 
-        <details class="mt-1" data-role="decision-why">
+        <details data-role="decision-why">
             <summary>Why am I seeing this?</summary>
             <dl class="row mt-1 mb-0">
                 @foreach($d->evidence as $row)
@@ -89,9 +95,12 @@
                     <dd class="col-sm-6" data-evidence="{{ \Illuminate\Support\Str::slug($row['label']) }}">{{ $row['value'] }}</dd>
                 @endforeach
             </dl>
-            <p class="text-caption text-muted mb-0">A deterministic rule produced this from your own numbers. It is not an AI opinion and it does not change unless the numbers do.</p>
+            <p class="text-caption mb-0">A deterministic rule produced this from your own numbers. It is not an AI opinion and it does not change unless the numbers do.</p>
         </details>
 
+        @if($others !== [])
+            <p class="decision-others-title">Your other goals</p>
+        @endif
         @foreach($others as $other)
             @php
                 $od = $other['decision'];
@@ -109,15 +118,19 @@
         @endforeach
     @elseif(! ($view['hasGoals'] ?? false))
         <h2 class="decision-headline" data-role="decision-headline">Tell MotionGrove what these ads are for.</h2>
-        <p class="mb-1" data-role="decision-reason">Ads Manager shows numbers. MotionGrove can tell you what to do next, but only once it knows the goal these ads serve (for example, enrolling students), where those leads go, and what a good result costs you.</p>
+        <div class="decision-reasons">
+            <p data-role="decision-reason">Ads Manager shows numbers. MotionGrove can tell you what to do next, but only once it knows the goal these ads serve (for example, enrolling students), where those leads go, and what a good result costs you.</p>
+        </div>
         @if($goalsUrl)
-            <a href="{{ $goalsUrl }}" class="btn btn-primary" data-role="decision-cta">Set up a goal</a>
+            <div class="decision-cta"><a href="{{ $goalsUrl }}" class="btn btn-primary" data-role="decision-cta">Set up a goal</a></div>
         @endif
     @else
         <h2 class="decision-headline" data-role="decision-headline">Assign a goal to your campaigns.</h2>
-        <p class="mb-1" data-role="decision-reason">You have goals set up, but none of this provider's campaigns is assigned to one, so MotionGrove cannot judge them yet.</p>
+        <div class="decision-reasons">
+            <p data-role="decision-reason">You have goals set up, but none of this provider's campaigns is assigned to one, so MotionGrove cannot judge them yet.</p>
+        </div>
         @if($goalsUrl)
-            <a href="{{ $goalsUrl }}" class="btn btn-primary" data-role="decision-cta">Assign campaigns to a goal</a>
+            <div class="decision-cta"><a href="{{ $goalsUrl }}" class="btn btn-primary" data-role="decision-cta">Assign campaigns to a goal</a></div>
         @endif
     @endif
 
@@ -138,19 +151,17 @@
 
 {{-- The Business-outcome KPI row of the primary goal: spend, qualified leads, cost per qualified lead, outcomes, cost per outcome. A dash is "not enough data", never zero. --}}
 @if($primary !== null && $primary['decision']->kpis !== [])
-    <div class="row" data-role="outcome-kpis">
+    <div class="outcome-kpis" data-role="outcome-kpis">
         @foreach($primary['decision']->kpis as $kpi)
-            <div class="col-6 col-lg mb-2">
-                <x-card class="h-100" data-kpi="{{ \Illuminate\Support\Str::slug($kpi['label']) }}">
-                    <p class="text-label mb-1">{{ $kpi['label'] }}</p>
-                    <p class="h3 mb-0">{{ $kpi['value'] }}</p>
-                    @if($kpi['note'])
-                        <p class="text-caption text-muted mb-0">{{ $kpi['note'] }}</p>
-                    @endif
-                </x-card>
+            <div class="outcome-kpi" data-kpi="{{ \Illuminate\Support\Str::slug($kpi['label']) }}">
+                <p class="label">{{ $kpi['label'] }}</p>
+                <p class="value">{{ $kpi['value'] }}</p>
+                @if($kpi['note'])
+                    <p class="note">{{ $kpi['note'] }}</p>
+                @endif
             </div>
         @endforeach
     </div>
-    <p class="text-caption text-muted mb-2" data-role="outcome-kpi-caption">Business outcomes for {{ $primary['decision']->purposeName }}. The provider's own figures follow below.</p>
+    <p class="text-caption mb-2" data-role="outcome-kpi-caption">Business outcomes for {{ $primary['decision']->purposeName }}. The provider's own figures follow below.</p>
 @endif
 @endif

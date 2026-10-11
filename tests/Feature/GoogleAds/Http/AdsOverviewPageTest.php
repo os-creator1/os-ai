@@ -47,7 +47,8 @@ class AdsOverviewPageTest extends TestCase
 
         $this->assertStringContainsString('Connect Google Ads to see where your ad budget is generating results.', $html);
         $this->assertStringContainsString('data-role="connect-google-ads"', $html);
-        $this->assertStringContainsString('See where your budget is turning into leads — and what is wasting money.', $html);
+        $this->assertStringContainsString('See where your Google Ads budget is turning into Google conversions, and what needs attention.', $html);
+        $this->assertStringNotContainsString('turning into leads', $html, 'Google conversions are never presented as leads');
         $this->assertStringContainsString('name="_token"', $html, 'the connect control is a CSRF-protected POST');
         $this->assertSame(0, $this->fakeAds->callCount());
     }

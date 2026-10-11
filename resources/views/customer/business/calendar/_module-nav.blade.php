@@ -46,6 +46,15 @@
                 <p class="text-caption mb-0">Choose a location to see its schedule.</p>
             @endif
         </div>
+        @if ($calendarScope)
+            {{-- Shown only while Booking types is the active tab; the tab router re-checks it after a swap. --}}
+            <div class="calendar-module-head-actions" data-calendar-head-action="booking-types" @if ($active !== 'booking-types') hidden @endif>
+                <x-button variant="primary" size="sm" icon="plus" data-role="add-booking-type"
+                          :href="route('customer.workspaces.businesses.calendar.booking-types.create', $calendarScope)">
+                    Add booking type
+                </x-button>
+            </div>
+        @endif
     </div>
 
     @if ($calendarScope)
