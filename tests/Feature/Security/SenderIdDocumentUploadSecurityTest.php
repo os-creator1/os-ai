@@ -185,7 +185,9 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
     {
         [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000030.pdf', self::PDF, 'DRY');
 
-        $this->artisan('senderid:migrate-documents')->assertSuccessful();
+        Senderid::create(['user_id' => $row->user_id, 'sender_id' => 'DRY2', 'status' => 'pending', 'document' => $url]);
+
+        $this->artisan('senderid:migrate-documents')->expectsOutputToContain('Dry run: 1 moved, 0 quarantined, 0 missing, 0 failed')->assertSuccessful();
 
         $this->assertSame($url, $row->fresh()->document);
         $this->assertFileExists($path);
@@ -406,6 +408,29 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertSame($url, DB::table('senderid')->where('id', $first->id)->value('document'));
         $this->assertSame($url, DB::table('senderid')->where('id', $second->id)->value('document'));
         $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR));
+    }
+
+    public function test_shared_rows_in_one_chunk_are_not_falsely_reported_missing_or_double_processed(): void
+    {
+        $c = $this->customer();
+        [$a, $path, $url] = $this->legacyRow($c, 'senderid_1700000039.pdf', self::PDF, 'CH1');
+        $b = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'CH2', 'status' => 'pending', 'document' => $url]);
+        $d = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'CH3', 'status' => 'pending', 'document' => $url]);
+        [$bad1, , $badUrl] = $this->legacyRow($c, 'senderid_1700000040.php', '<?php echo 1;', 'CH4');
+        $bad2 = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'CH5', 'status' => 'pending', 'document' => $badUrl]);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])
+            ->expectsOutputToContain('1 moved, 1 quarantined, 0 missing, 0 failed')
+            ->assertSuccessful();
+
+        $private = $a->fresh()->document;
+        $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX, $private);
+        $this->assertSame($private, $b->fresh()->document);
+        $this->assertSame($private, $d->fresh()->document);
+        $this->assertCount(1, Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR)); // one copy, not three
+        $this->assertNull($bad1->fresh()->document);
+        $this->assertNull($bad2->fresh()->document);
+        $this->assertCount(1, Storage::disk('local')->allFiles('senderid-quarantine'));
     }
 
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void

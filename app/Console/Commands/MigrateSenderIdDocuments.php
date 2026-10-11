@@ -34,11 +34,26 @@ class MigrateSenderIdDocuments extends Command
     {
         $apply = (bool) $this->option('apply');
         $moved = $quarantined = $missing = $failed = 0;
+        $seen = []; // dry-run only: a dry run changes nothing, so count each shared file once
 
         Senderid::query()->whereNotNull('document')->where('document', 'not like', SenderIdDocumentStore::PREFIX . '%')
-            ->eachById(function (Senderid $row) use ($apply, &$moved, &$quarantined, &$missing, &$failed) {
+            ->eachById(function (Senderid $row) use ($apply, &$moved, &$quarantined, &$missing, &$failed, &$seen) {
+                // eachById() may have loaded this row before an earlier callback migrated or quarantined the
+                // file it shares; re-read it and skip anything already handled (no false "missing", no duplicate work).
+                $row = $row->fresh();
+                if ($row === null || $row->document === null || str_starts_with($row->document, SenderIdDocumentStore::PREFIX)) {
+                    return;
+                }
+
                 $name = basename((string) parse_url($row->document, PHP_URL_PATH));
                 $path = public_path(SenderIdDocumentStore::LEGACY_DIR . '/' . $name);
+
+                if (! $apply) {
+                    if (isset($seen[$name])) {
+                        return;
+                    }
+                    $seen[$name] = true;
+                }
 
                 if (! is_file($path)) {
                     $missing++;
