@@ -1170,7 +1170,7 @@
         |
         | The OAuth callback is registered HERE, inside the authenticated
         | group, so it inherits ['web','auth','can:access_backend',
-        | 'ValidProduct','twofactor']. It is deliberately NOT in
+        | 'twofactor']. It is deliberately NOT in
         | routes/auth.php: it must never authenticate or create a User.
         |
         | No route accepts a redirect_to/return/next/url parameter — there

@@ -108,7 +108,7 @@ clears the config cache — re-run `php artisan config:cache` after changing set
 | `SESSION_SECURE_COOKIE` | optional | Set `true` in production. |
 | `SESSION_DOMAIN`, `SESSION_LIFETIME` | optional | |
 | `LOG_CHANNEL`, `LOG_LEVEL` | optional | `daily` recommended (§9). |
-| `SUPER_ADMIN_EMAIL`, `ADMIN_PATH`, `PURCHASE_CODE`, `LEGACY_MESSAGING_MENU`, `ULANDING_ENABLED`, `USUPPORT_ENABLED` | optional | Inherited upstream switches. |
+| `SUPER_ADMIN_EMAIL`, `ADMIN_PATH`, `LEGACY_MESSAGING_MENU` | optional | Inherited upstream switches. (`PURCHASE_CODE`, `ULANDING_ENABLED` and `USUPPORT_ENABLED` were removed with the retired licence gate and unused vendor configs; they are ignored if still set.) |
 | `BUSINESS_ONBOARDING_ENABLED`, `BUSINESS_ONBOARDING_REQUIRE_NEW_CUSTOMERS`, `OPPORTUNITY_ENGINE_ENABLED`, `DOCUMENTS_ENABLED` | optional | All **default off**. Decide deliberately; the scheduled sweeps no-op while off. |
 | `APP_LOCALE`, `APP_TIMEZONE`, `APP_COUNTRY`, `APP_DATE_FORMAT`, `APP_TIME_FORMAT`, `APP_KEYWORD`, `APP_FOOTER_*`, `APP_*_LOGO`, `THEME_*` | optional | UI-writable branding/locale. |
 
