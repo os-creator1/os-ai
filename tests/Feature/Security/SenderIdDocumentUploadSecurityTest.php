@@ -208,6 +208,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
     public function test_private_upload_rejects_a_failed_storage_write(): void
     {
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturn(false);
         Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
 
@@ -230,6 +231,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         ]);
 
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturn(false);
         Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
 
@@ -352,6 +354,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
     public function test_failed_private_storage_write_on_upload_throws_and_cleans_up(): void
     {
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturn(false);
         $disk->shouldReceive('delete')->once();
         Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
@@ -366,6 +369,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $upload = $this->realUpload('proof.pdf', self::PDF);
         $removed = [];
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturn(true);   // the filesystem claims success
         match ($mode) {
             'truncated' => $disk->shouldReceive('size')->once()->andReturn(strlen(self::PDF) - 5),
@@ -398,6 +402,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
     public function test_cleanup_failure_after_a_partial_write_still_reports_the_original_error(): void
     {
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturn(true);
         $disk->shouldReceive('size')->once()->andReturn(1);
         $disk->shouldReceive('delete')->once()->andThrow(new \RuntimeException('cannot delete'));
@@ -414,6 +419,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $plan = $this->plan();
 
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturn(true);
         $disk->shouldReceive('size')->once()->andReturn(3);
         $disk->shouldReceive('delete')->once();
@@ -601,6 +607,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $captured = null;
         $wasStream = false;
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturnUsing(function ($relative, $contents) use (&$captured, &$wasStream) {
             $captured = $contents;
             $wasStream = is_resource($contents) && get_resource_type($contents) === 'stream'; // open stream, not a string
@@ -635,6 +642,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000043.pdf', self::PDF, 'SIZE');
 
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('files')->zeroOrMoreTimes()->andReturn([]);   // resume phase finds nothing pending
         $disk->shouldReceive('put')->once()->andReturn(true);
         $disk->shouldReceive('size')->once()->andReturn(1);
         $disk->shouldReceive('delete')->once();
@@ -762,6 +770,127 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertNull($bad->fresh()->document);                    // not a GIF => quarantined, never public
         $this->assertFileDoesNotExist($badPath);
         $this->assertNotEmpty(Storage::disk('local')->allFiles('senderid-quarantine'));
+    }
+
+    /** Simulate the process dying right after the DB commit, before the public original is removed. */
+    private function interruptedRun(): void
+    {
+        $mock = File::partialMock();
+        $mock->shouldReceive('delete')->once()->andThrow(new \RuntimeException('process killed'));
+        $mock->shouldReceive('delete')->andReturnUsing(fn ($p) => @unlink($p));   // every later call behaves normally
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+    }
+
+    private function pendingFiles(): array
+    {
+        return Storage::disk('local')->files('senderid-pending');
+    }
+
+    public function test_interrupted_migration_is_finished_by_the_next_run(): void
+    {
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000060.pdf', self::PDF, 'RES1');
+
+        $this->interruptedRun();
+
+        $private = $row->fresh()->document;
+        $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX, $private);      // committed
+        $this->assertFileExists($path);                                               // public original left behind
+        $this->assertCount(1, $this->pendingFiles());                                 // durable recovery record
+        $this->get(route('customer.senderid.document', $row->uid))->assertOk();       // document stays available
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->expectsOutputToContain('1 resumed')->assertSuccessful();
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame([], $this->pendingFiles());
+        $this->assertSame($private, $row->fresh()->document);                         // reference untouched
+        Storage::disk('local')->assertExists(substr($private, strlen(SenderIdDocumentStore::PREFIX)));
+        $this->get(route('customer.senderid.document', $row->uid))->assertOk();
+    }
+
+    public function test_interrupted_migration_of_a_shared_legacy_file_is_finished_for_every_row(): void
+    {
+        $c = $this->customer();
+        [$a, $path, $url] = $this->legacyRow($c, 'senderid_1700000061.pdf', self::PDF, 'RES2');
+        $b = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'RES3', 'status' => 'pending', 'document' => $url]);
+
+        $this->interruptedRun();
+        $this->assertSame($a->fresh()->document, $b->fresh()->document);
+        $this->assertFileExists($path);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertSame([], $this->pendingFiles());
+        $this->get(route('customer.senderid.document', $b->uid))->assertOk();
+    }
+
+    public function test_cleanup_never_deletes_a_public_file_that_differs_from_what_was_copied(): void
+    {
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000062.pdf', self::PDF, 'RES4');
+        $this->interruptedRun();
+        file_put_contents($path, self::PDF . 'a different file that happens to share the name');
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+
+        $this->assertFileExists($path);
+        $this->assertSame([], $this->pendingFiles());
+    }
+
+    public function test_cleanup_never_deletes_the_public_file_when_the_private_copy_is_missing_or_corrupt(): void
+    {
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000063.pdf', self::PDF, 'RES5');
+        $this->interruptedRun();
+        $rel = substr($row->fresh()->document, strlen(SenderIdDocumentStore::PREFIX));
+
+        Storage::disk('local')->put($rel, 'corrupted');
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+        $this->assertFileExists($path);                                    // the only intact copy survives
+
+        Storage::disk('local')->delete($rel);
+    }
+
+    public function test_cleanup_never_deletes_the_public_file_while_a_row_still_references_it(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000064.pdf', self::PDF, 'RES6');
+        $this->interruptedRun();
+        DB::table('senderid')->where('id', $row->id)->update(['document' => $url]);   // e.g. rows rolled back / restored
+
+        // Phase 0 must not remove the file (a row still points at it); the ordinary pass then migrates it afresh.
+        $this->artisan('senderid:migrate-documents')->assertSuccessful();   // dry run: nothing may be touched
+        $this->assertFileExists($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $row->id)->value('document'));
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->expectsOutputToContain('0 resumed')->assertSuccessful();
+        $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX, DB::table('senderid')->where('id', $row->id)->value('document'));
+        $this->get(route('customer.senderid.document', $row->uid))->assertOk();   // never left without a usable copy
+    }
+
+    public function test_dry_run_reports_but_does_not_perform_the_cleanup(): void
+    {
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000065.pdf', self::PDF, 'RES7');
+        $this->interruptedRun();
+
+        $this->artisan('senderid:migrate-documents')->expectsOutputToContain('1 resumed')->assertSuccessful();
+
+        $this->assertFileExists($path);
+        $this->assertCount(1, $this->pendingFiles());
+    }
+
+    public function test_malformed_or_hostile_recovery_records_are_ignored_and_delete_nothing(): void
+    {
+        $this->customer();
+        File::ensureDirectoryExists(public_path('senderid_docs'));
+        File::put(public_path('senderid_docs/innocent.pdf'), self::PDF);
+        $sha = sha1(self::PDF);
+        Storage::disk('local')->put('senderid-pending/evil.json', json_encode(['name' => '../../.env', 'private' => 'senderid-docs/' . str_repeat('a', 40) . '.pdf', 'size' => 1, 'sha1' => $sha]));
+        Storage::disk('local')->put('senderid-pending/innocent.pdf.json', json_encode(['name' => 'innocent.pdf', 'private' => '../../etc/passwd', 'size' => strlen(self::PDF), 'sha1' => $sha]));
+        Storage::disk('local')->put('senderid-pending/garbage.json', 'not json');
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists(public_path('senderid_docs/innocent.pdf'));
+        $this->assertFileExists(base_path('.env.example'));
     }
 
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void

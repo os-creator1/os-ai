@@ -28,6 +28,8 @@ class MigrateSenderIdDocuments extends Command
 {
     protected $signature = 'senderid:migrate-documents {--apply : Actually move files and update rows}';
 
+    private const PENDING_DIR = 'senderid-pending';
+
     protected $description = 'Move legacy public sender-ID documents into private storage (dry-run by default)';
 
     public function handle(): int
@@ -88,10 +90,16 @@ class MigrateSenderIdDocuments extends Command
         }
     }
 
+    private $disk;
+
     private function migrate(bool $apply): int
     {
+        $this->disk = Storage::disk('local');
         $moved = $quarantined = $missing = $failed = 0;
         $seen = []; // dry-run only: a dry run changes nothing, so count each shared file once
+
+        // Finish anything an interrupted earlier run left behind (rows already on the private copy, public original still there).
+        $resumed = $this->finishInterrupted($this->disk, $apply, $failed);
 
         Senderid::query()->whereNotNull('document')->where('document', 'not like', SenderIdDocumentStore::PREFIX . '%')
             ->eachById(function (Senderid $row) use ($apply, &$moved, &$quarantined, &$missing, &$failed, &$seen) {
@@ -135,7 +143,7 @@ class MigrateSenderIdDocuments extends Command
 
                 $upload = new UploadedFile($path, $name, null, null, true);
                 $ext = preg_match('/^[A-Za-z0-9_\-]+\.(pdf|jpg|jpeg|png|gif|doc|docx)$/i', $name) ? SenderIdDocumentStore::legacyExtension($upload) : null;
-                $disk = Storage::disk('local');
+                $disk = $this->disk;
 
                 if ($ext === null) {
                     $this->warn("quarantine  #{$ids} {$name}");
@@ -184,11 +192,22 @@ class MigrateSenderIdDocuments extends Command
                         return;
                     }
 
+                    // Durable recovery record, written BEFORE the rows change: if the process dies after the commit
+                    // but before the public original is removed, the next run can finish the job from this.
+                    if (! $this->writePending($disk, $name, $relative, $path)) {
+                        $disk->delete($relative);
+                        $failed++;
+                        $this->error("Could not write the recovery record for #{$ids}; original file and database rows preserved.");
+
+                        return;
+                    }
+
                     try {
                         $this->repoint($siblings, SenderIdDocumentStore::PREFIX . $relative);
                     } catch (\Throwable $e) {
                         // The transaction rolled every row back; the public original was never touched.
                         $disk->delete($relative);
+                        $disk->delete(self::PENDING_DIR . '/' . $name . '.json');
                         $failed++;
                         $this->error("Database update failed for #{$ids} ({$e->getMessage()}); rolled back, original and rows preserved.");
 
@@ -200,6 +219,7 @@ class MigrateSenderIdDocuments extends Command
                         try {
                             $this->restore($siblings, $originals);
                             $disk->delete($relative);
+                            $disk->delete(self::PENDING_DIR . '/' . $name . '.json');
                             $this->error("Could not delete public original for #{$ids}: {$path}. Rolled back; rows still on their legacy references.");
                         } catch (\Throwable $e) {
                             $this->error("Could not delete public original for #{$ids}: {$path}, and rollback failed ({$e->getMessage()}). Rows point at the private copy {$relative}; delete the public file manually.");
@@ -208,12 +228,14 @@ class MigrateSenderIdDocuments extends Command
 
                         return;
                     }
+
+                    $disk->delete(self::PENDING_DIR . '/' . $name . '.json'); // best effort; a stale record is cleaned up next run
                 }
 
                 $moved++;
             });
 
-        $this->info(($apply ? 'Applied' : 'Dry run') . ": {$moved} moved, {$quarantined} quarantined, {$missing} missing, {$failed} failed.");
+        $this->info(($apply ? 'Applied' : 'Dry run') . ": {$moved} moved, {$quarantined} quarantined, {$missing} missing, {$failed} failed, {$resumed} resumed.");
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
     }
@@ -256,6 +278,86 @@ class MigrateSenderIdDocuments extends Command
         }
 
         return false;
+    }
+
+    /** Record what is needed to finish (or safely abandon) a move: legacy name, private path, size and checksum. */
+    private function writePending($disk, string $name, string $relative, string $publicPath): bool
+    {
+        $sha1 = @hash_file('sha1', $publicPath);
+        $size = @filesize($publicPath);
+        if ($sha1 === false || $size === false) {
+            return false;
+        }
+
+        try {
+            return $disk->put(self::PENDING_DIR . '/' . $name . '.json', json_encode(['name' => $name, 'private' => $relative, 'size' => $size, 'sha1' => $sha1])) === true;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Resume interrupted moves. A public original is removed ONLY when: the record is well-formed; the private copy
+     * exists and matches the recorded checksum; no row still references the legacy file; at least one row references
+     * the private copy; and the public file is byte-identical to what was copied (so an unrelated file that merely
+     * shares the name is never touched). Otherwise the public file is left alone and the record is dropped.
+     */
+    private function finishInterrupted($disk, bool $apply, int &$failed): int
+    {
+        $resumed = 0;
+
+        foreach ($disk->files(self::PENDING_DIR) as $recordPath) {
+            $record = json_decode((string) $disk->get($recordPath), true);
+            $name = is_array($record) ? ($record['name'] ?? null) : null;
+            $private = is_array($record) ? ($record['private'] ?? null) : null;
+
+            if (! is_string($name) || ! preg_match('/^[A-Za-z0-9_\-]+\.(pdf|jpg|jpeg|png|gif|doc|docx)$/i', $name)
+                || $recordPath !== self::PENDING_DIR . '/' . $name . '.json'
+                || ! is_string($private) || ! preg_match('#^' . SenderIdDocumentStore::DIR . '/[A-Za-z0-9]{40}\.(pdf|jpg|png|gif|doc|docx)$#', $private)
+                || ! is_string($record['sha1'] ?? null) || ! is_int($record['size'] ?? null)) {
+                $this->error("Ignoring malformed recovery record {$recordPath}.");
+                $failed++;
+
+                continue;
+            }
+
+            $public = public_path(SenderIdDocumentStore::LEGACY_DIR . '/' . $name);
+            $privateFull = $disk->path($private);
+            $stillLegacy = Senderid::query()->where('document', 'like', '%' . $name)->where('document', 'not like', SenderIdDocumentStore::PREFIX . '%')->get()
+                ->contains(fn (Senderid $r) => basename((string) parse_url($r->document, PHP_URL_PATH)) === $name);
+
+            if (! is_file($public)) {
+                $apply && $disk->delete($recordPath);   // already cleaned up
+
+                continue;
+            }
+
+            $safeToDelete = ! $stillLegacy
+                && is_file($privateFull) && @hash_file('sha1', $privateFull) === $record['sha1']
+                && Senderid::query()->where('document', SenderIdDocumentStore::PREFIX . $private)->exists()
+                && @hash_file('sha1', $public) === $record['sha1'] && @filesize($public) === $record['size'];
+
+            if (! $safeToDelete) {
+                // Not an interrupted-after-commit state (rolled back, still legacy, or a different file): leave the public file.
+                $apply && $disk->delete($recordPath);
+
+                continue;
+            }
+
+            $this->line("resume      {$name}: private copy verified, removing leftover public original");
+            if ($apply) {
+                if (! File::delete($public)) {
+                    $failed++;
+                    $this->error("Could not delete leftover public original {$public}; will retry on the next run.");
+
+                    continue;
+                }
+                $disk->delete($recordPath);
+            }
+            $resumed++;
+        }
+
+        return $resumed;
     }
 
     /** Update every sibling row atomically; any failure rolls all of them back. */
