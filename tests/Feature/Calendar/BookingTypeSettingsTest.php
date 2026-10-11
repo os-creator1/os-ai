@@ -413,6 +413,41 @@ class BookingTypeSettingsTest extends TestCase
             ->assertDontSee('data-role="copy-public-link"', false);
     }
 
+    public function test_stale_assignments_can_still_be_cleared_when_nobody_is_eligible(): void
+    {
+        $type = $this->bookingType(null, ['name' => 'Orphaned']);
+        $former = $this->memberWithFullReach(WorkspaceMembershipRole::Staff);
+        $type->staff()->attach($former->id);
+        DB::table('workspace_memberships')->where('user_id', $former->id)->update(['is_active' => false]);
+
+        // Nobody is eligible at this Location any more; everything else (tenancy, Location gate) stays real.
+        $nobodyEligible = new class(
+            app(\App\Repositories\Contracts\BusinessLocationRepository::class),
+            app(\App\Repositories\Contracts\WorkspaceMembershipRepository::class),
+            app(\App\Library\Workspace\LocationAccessGuard::class),
+        ) extends \App\Library\Calendar\CalendarLocationResolver {
+            public function eligibleStaff(\App\Models\Workspace $workspace, \App\Models\Business $business, \App\Models\BusinessLocation $location): \Illuminate\Support\Collection
+            {
+                return new \Illuminate\Support\Collection();
+            }
+        };
+        $this->instance(\App\Library\Calendar\CalendarLocationResolver::class, $nobodyEligible);
+        $this->authenticate($this->owner->user);
+
+        $html = $this->get($this->editUrl('edit', $type))->assertOk()->getContent();
+        $this->assertStringContainsString('no longer authorized for this location', $html);
+        $this->assertStringContainsString('Nobody is currently authorized for this location.', $html);
+        $this->assertStringContainsString('data-role="save-staff"', $html, 'the stale names must stay clearable');
+        $this->assertStringContainsString('action="' . $this->editUrl('staff', $type) . '"', $html);
+
+        // Submitting that form sends only the empty placeholder, which clears the stale row.
+        $this->post($this->editUrl('staff', $type), ['staff_user_ids' => ['']])->assertRedirect();
+        $this->assertSame(0, $type->staff()->count());
+
+        // With nothing configured and nobody eligible there is nothing to save, so no button.
+        $this->assertStringNotContainsString('data-role="save-staff"', $this->get($this->editUrl('edit', $type))->assertOk()->getContent());
+    }
+
     public function test_a_forged_staff_or_location_id_fails_closed(): void
     {
         $type = $this->type();

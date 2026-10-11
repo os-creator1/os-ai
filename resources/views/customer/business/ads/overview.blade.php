@@ -45,7 +45,7 @@
 @section('content')
     @include('customer.business.ads._header', [
         'title' => 'Google Ads',
-        'subtitle' => 'See where your budget is turning into leads — and what is wasting money.',
+        'subtitle' => 'See where your Google Ads budget is turning into Google conversions, and what needs attention.',
     ])
 
     <x-flash-alert class="mb-2" />

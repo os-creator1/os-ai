@@ -7,6 +7,7 @@ use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Contacts\ContactDirectory;
+use App\Library\Crm\CrmLocationScope;
 use App\Library\CustomFields\CustomFieldRuleException;
 use App\Library\CustomFields\CustomFieldValueService;
 use App\Library\Workspace\LocationAccessGuard;
@@ -56,12 +57,28 @@ class ContactDirectoryController extends CustomerBaseController
 
         $search = mb_substr(trim((string) $request->query('q', '')), 0, 100);
 
-        // The group filter offers this Business's own groups only; an unknown
-        // or foreign uid is ignored rather than widening or erroring.
-        $groups = ContactGroups::query()
-            ->where('business_id', $business->id)
-            ->orderBy('name')
-            ->get(['id', 'uid', 'name']);
+        // The group filter is offered only to an actor who may view groups
+        // (the same view_contact_group the Groups tab requires), and only
+        // lists groups holding at least one contact this actor may already
+        // see under the CRM Location scope — so it never discloses an empty
+        // group, or one whose contacts are all at unreachable Locations. A
+        // uid outside that list (unknown, foreign, hidden) is ignored rather
+        // than widening or erroring.
+        $groups = collect();
+
+        if (Gate::allows('view_contact_group')) {
+            $visibleContacts = Contacts::query()
+                ->where('business_id', $business->id)
+                ->whereNotNull('group_id');
+            app(CrmLocationScope::class)->restrict($visibleContacts, $business, (int) Auth::id(), 'contacts.location_id');
+
+            $groups = ContactGroups::query()
+                ->where('business_id', $business->id)
+                ->whereIn('id', $visibleContacts->select('group_id'))
+                ->orderBy('name')
+                ->get(['id', 'uid', 'name']);
+        }
+
         $group = $groups->firstWhere('uid', (string) $request->query('group', ''));
 
         return view('customer.people.index', [

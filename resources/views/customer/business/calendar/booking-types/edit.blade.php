@@ -136,7 +136,12 @@
                                     </li>
                                 @endforeach
                             </ul>
-                            <x-button type="submit" variant="primary" icon="check" class="w-100 justify-content-center">Save staff</x-button>
+                        @endif
+
+                        {{-- Shown whenever there is something to save or to clear: with nobody eligible left,
+                             saving submits only the empty placeholder above and removes the stale names. --}}
+                        @if ($eligibleStaff->isNotEmpty() || $configuredStaff !== [])
+                            <x-button type="submit" variant="primary" icon="check" class="w-100 justify-content-center" data-role="save-staff">Save staff</x-button>
                         @endif
                     </form>
 
