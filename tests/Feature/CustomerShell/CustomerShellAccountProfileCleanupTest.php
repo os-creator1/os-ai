@@ -30,7 +30,7 @@ use Tests\TestCase;
  *  2. Core and Growth work inside their Business: no Account Home that asks
  *     them to choose their only Business, the account is Settings → Account,
  *     and legitimate multi-account switching still works. Agency unchanged.
- *  3. The user dropdown is Profile, Product updates, Sign out.
+ *  3. The user dropdown is Profile, Settings, Product updates, Sign out.
  *  4. Product updates is read-only and shows only this person's updates.
  *  5. Team is under Settings, for the account holder only.
  *  6. The footer names the active brand with normal copyright wording.
@@ -202,19 +202,27 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
     // 3. The user dropdown
     // =================================================================
 
-    public function test_the_user_dropdown_is_profile_product_updates_and_sign_out(): void
+    public function test_the_user_dropdown_is_profile_settings_product_updates_and_sign_out(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
         $dropdown = $this->userDropdownHtml($html);
 
+        // Settings is the Business's own Settings hub — the very entry the
+        // sidebar offers this owner, never a second destination.
+        $hub = route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]);
+        $this->assertContains($hub, $this->menuLinks($html));
+
         preg_match_all('/<a class="dropdown-item"[^>]*href="([^"]+)"/', $dropdown, $links);
-        $this->assertSame([route('user.account'), route('user.account.announcement'), route('logout')], $links[1]);
+        $this->assertSame([route('user.account'), $hub, route('user.account.announcement')], $links[1]);
+
+        // Sign out is a POST carrying the CSRF token, not a GET link.
+        $this->assertMatchesRegularExpression('/<form id="logout-form"[^>]*action="' . preg_quote(route('logout'), '/') . '"[^>]*method="POST">\s*<input type="hidden" name="_token"[^>]*>\s*<button type="submit" class="dropdown-item mg-account-signout"/', $dropdown);
 
         $text = html_entity_decode(strip_tags($dropdown));
-        foreach (['Profile', 'Product updates', 'Sign out'] as $label) {
+        foreach (['Profile', 'Settings', 'Product updates', 'Sign out'] as $label) {
             $this->assertStringContainsString($label, $text);
         }
         foreach (['Plan & subscription', 'Team members', 'Announcements'] as $moved) {
@@ -464,7 +472,7 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
 
     private function avatarHtml(string $html): string
     {
-        return $this->between($html, 'data-role="user-avatar"', '</a>');
+        return $this->between($html, 'data-role="user-avatar"', '</button>');
     }
 
     private function copyrightLine(TestResponse $response): string

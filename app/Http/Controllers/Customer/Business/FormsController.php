@@ -48,14 +48,33 @@ class FormsController extends Controller
     {
         [$workspace, $business] = $this->formsScope($workspaceUid, $businessUid);
 
+        $forms = Form::query()
+            ->where('business_id', $business->id)
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get();
+
+        // Direct links that would actually open: an enabled deployment at an
+        // active Location this actor may reach, for a form that is Active. The
+        // same conditions FormDeploymentResolver re-checks on every public hit.
+        $openLocationIds = collect($this->reader->visibleLocations($business, (int) Auth::id()))
+            ->filter(static fn ($location) => $location->isActive())
+            ->keys()
+            ->all();
+        $activeFormIds = $forms->filter(static fn (Form $form) => $form->isActive())->pluck('id')->all();
+
         return view('customer.business.forms.index', [
             'workspace' => $workspace,
             'business' => $business,
-            'forms' => Form::query()
-                ->where('business_id', $business->id)
-                ->orderByDesc('id')
-                ->limit(200)
-                ->get(),
+            'forms' => $forms,
+            'liveLinks' => $activeFormIds === [] || $openLocationIds === [] ? collect() : FormDeployment::query()
+                ->whereIn('form_id', $activeFormIds)
+                ->where('source', FormDeploymentSource::DirectLink->value)
+                ->where('is_enabled', true)
+                ->whereIn('business_location_id', $openLocationIds)
+                ->orderBy('id')
+                ->get()
+                ->groupBy('form_id'),
         ]);
     }
 

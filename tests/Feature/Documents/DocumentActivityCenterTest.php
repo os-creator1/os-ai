@@ -194,7 +194,7 @@ class DocumentActivityCenterTest extends TestCase
         $this->authenticateAs($staff);
         $html = $this->get(route('user.home'))->assertOk()->getContent();
 
-        $this->assertStringNotContainsString('badge-up">1<', $html);
+        $this->assertStringNotContainsString('data-role="notification-unread-count" data-count="1"', $html);
     }
 
     public function test_the_owner_sees_the_count_and_item_rendered_in_the_navbar(): void
@@ -224,7 +224,7 @@ class DocumentActivityCenterTest extends TestCase
         $html = $this->get(route('user.home'))->assertOk()->getContent();
 
         $this->assertStringContainsString('New Inbox Message', $html);
-        $this->assertStringContainsString('badge-up">1<', $html);
+        $this->assertStringContainsString('data-role="notification-unread-count" data-count="1"', $html);
     }
 
     public function test_written_through_platform_database_notifications_not_the_legacy_table(): void

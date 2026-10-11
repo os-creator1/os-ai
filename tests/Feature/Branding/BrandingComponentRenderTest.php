@@ -50,6 +50,42 @@ class BrandingComponentRenderTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/<img[^>]+src=["\']\s*["\']/', $html);
     }
 
+    /**
+     * The authentication shell shares one responsive branding layout across
+     * login, registration, and recovery. Owner-uploaded source dimensions
+     * must never dictate the on-screen dimensions, especially on phones.
+     * This asserts both the rendered assets and viewport-relative CSS hooks.
+     */
+    public function test_auth_shell_bounds_uploaded_branding_to_the_viewport(): void
+    {
+        $logo = 'images/branding/logo/responsive-auth-logo.png';
+        $illustration = 'images/branding/auth_illustration/responsive-auth-illustration.png';
+        $this->writeTemporaryPublicPng($logo);
+        $this->writeTemporaryPublicPng($illustration);
+
+        config([
+            'app.name' => 'MotionGrove',
+            'app.logo' => $logo,
+            'app.auth_illustration' => $illustration,
+        ]);
+        Cache::forget(BrandingPresenter::CACHE_KEY);
+
+        $response = $this->get(route('login'));
+        $response->assertOk();
+        $html = $response->getContent();
+
+        $this->assertStringContainsString(asset($logo), $html);
+        $this->assertStringContainsString(asset($illustration), $html);
+        $this->assertStringContainsString('auth-brand-media', $html);
+        $this->assertStringContainsString('.auth-wrapper.auth-cover > .auth-inner > .brand-logo img', $html);
+        $this->assertStringContainsString('max-block-size: 7dvh;', $html);
+        $this->assertStringContainsString('max-block-size: min(56dvh, 100%);', $html);
+        $this->assertStringContainsString('object-fit: contain;', $html);
+        $this->assertStringContainsString('@media (max-width: 991.98px)', $html);
+        $this->assertStringContainsString('max-inline-size: min(74vw, calc(100vw - 3rem));', $html);
+        $this->assertStringContainsString('padding-top: max(5rem, 12dvh) !important;', $html);
+    }
+
     public function test_login_page_renders_clean(): void
     {
         $response = $this->get(route('login'));

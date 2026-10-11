@@ -3,7 +3,11 @@
 namespace Tests\Feature\Contacts;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\LocationAccessScope;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Campaigns;
 use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
@@ -14,6 +18,7 @@ use App\Models\Customer;
 use App\Models\Plan;
 use App\Models\Subscription;
 use App\Models\Workspace;
+use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -115,6 +120,87 @@ class ContactsPersonFirstTest extends TestCase
         }
 
         $this->get($this->peopleUrl($workspace, $business) . '?q=nobody')->assertOk()->assertSee('No contacts match');
+    }
+
+    public function test_the_group_filter_narrows_the_list_combines_with_search_and_ignores_foreign_groups(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $customers = $this->group($business, 'Customers');
+        $leads = $this->group($business, 'Leads');
+        $this->person($customers, ['FIRST_NAME' => 'Ana', 'COMPANY' => 'Harbor Bakery']);
+        $this->person($customers, ['FIRST_NAME' => 'Cleo', 'COMPANY' => 'Dock Works']);
+        $this->person($leads, ['FIRST_NAME' => 'Ben', 'COMPANY' => 'Harbor Hardware']);
+        $foreign = $this->group($this->otherBusinessOf($owner)['business'], 'Elsewhere');
+        $this->authenticateAs($owner);
+        $url = $this->peopleUrl($workspace, $business);
+
+        $page = $this->get($url . '?group=' . $leads->uid)->assertOk();
+        $page->assertSee('Harbor Hardware')->assertDontSee('Harbor Bakery')->assertDontSee('Dock Works');
+        $page->assertSee('value="' . $leads->uid . '" selected', false);
+        $page->assertDontSee('Elsewhere');
+
+        $this->get($url . '?group=' . $customers->uid . '&q=harbor')->assertOk()
+            ->assertSee('Harbor Bakery')->assertDontSee('Dock Works')->assertDontSee('Harbor Hardware');
+
+        // Another Business's group never narrows (or widens) this list.
+        $this->get($url . '?group=' . $foreign->uid)->assertOk()
+            ->assertSee('Harbor Bakery')->assertSee('Harbor Hardware');
+    }
+
+    public function test_the_group_filter_is_not_offered_without_the_group_viewing_permission(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $customers = $this->group($business, 'Customers');
+        $leads = $this->group($business, 'Leads');
+        $this->person($customers, ['FIRST_NAME' => 'Ana', 'COMPANY' => 'Harbor Bakery']);
+        $this->person($leads, ['FIRST_NAME' => 'Ben', 'COMPANY' => 'Dock Works']);
+        $this->authenticateAs($owner, array_values(array_diff($this->allCustomerPermissions(), ['view_contact_group'])));
+        $url = $this->peopleUrl($workspace, $business);
+
+        $page = $this->get($url)->assertOk();
+        $page->assertDontSee('data-role="contacts-group-filter"', false);
+        $page->assertDontSee('Group: Customers')->assertDontSee('Group: Leads');
+        $page->assertDontSee($customers->uid)->assertDontSee($leads->uid);
+
+        // A hand-written group uid neither narrows the list nor confirms the group exists.
+        $this->get($url . '?group=' . $leads->uid)->assertOk()
+            ->assertSee('Harbor Bakery')->assertSee('Dock Works')
+            ->assertDontSee('data-role="contacts-group-filter"', false);
+    }
+
+    public function test_the_group_filter_lists_only_groups_holding_contacts_the_actor_may_see(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $downtown = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Downtown', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $uptown = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Uptown', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $shared = $this->group($business, 'Shared list');
+        $uptownOnly = $this->group($business, 'Uptown VIPs');
+        $empty = $this->group($business, 'Empty list');
+        $this->person($shared, ['FIRST_NAME' => 'Ana', 'COMPANY' => 'Harbor Bakery'])->forceFill(['location_id' => $downtown->id])->save();
+        $this->person($uptownOnly, ['FIRST_NAME' => 'Cleo', 'COMPANY' => 'Hilltop Florist'])->forceFill(['location_id' => $uptown->id])->save();
+
+        // The owner reaches both Locations: groups with contacts are offered, the empty one is not.
+        $this->authenticateAs($owner);
+        $ownerPage = $this->get($this->peopleUrl($workspace, $business))->assertOk();
+        $ownerPage->assertSee('Group: Shared list')->assertSee('Group: Uptown VIPs');
+        $ownerPage->assertDontSee('Group: Empty list')->assertDontSee($empty->uid);
+
+        // A member limited to Downtown never learns the Uptown-only group exists.
+        $staff = $this->createCustomer();
+        $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $downtown);
+        $this->authenticateAs($staff, ['view_contact', 'view_contact_group']);
+
+        $url = $this->peopleUrl($workspace, $business);
+        $page = $this->get($url)->assertOk();
+        $page->assertSee('Group: Shared list')->assertSee('Harbor Bakery');
+        $page->assertDontSee('Uptown VIPs')->assertDontSee($uptownOnly->uid)->assertDontSee('Hilltop Florist');
+        $page->assertDontSee('Group: Empty list');
+
+        // Naming the hidden group by uid is ignored: no narrowing, no disclosure.
+        $this->get($url . '?group=' . $uptownOnly->uid)->assertOk()
+            ->assertSee('Harbor Bakery')->assertDontSee('Hilltop Florist')->assertDontSee('Uptown VIPs');
     }
 
     public function test_add_contact_goes_straight_to_the_only_group_and_offers_a_choice_between_several(): void
