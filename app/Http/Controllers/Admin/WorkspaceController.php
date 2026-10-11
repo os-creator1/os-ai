@@ -82,7 +82,7 @@ class WorkspaceController extends AdminBaseController
         // Private Offers for this Workspace (explicit, audited billing-change
         // workflow and special pricing). Read model only; every mutation is on
         // the owner's offer screens.
-        if (Gate::allows('view workspace plans')) {
+        if (Gate::allows('view workspace plans') && \App\Library\PlatformBilling\Offers\PrivateOffersFeature::enabled()) {
             $viewData['workspaceOffers'] = app(\App\Library\PlatformBilling\Offers\PrivateOfferManager::class)
                 ->overview((int) $workspace->id, 20);
         }

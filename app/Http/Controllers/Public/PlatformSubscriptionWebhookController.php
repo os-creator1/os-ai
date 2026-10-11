@@ -143,7 +143,12 @@ class PlatformSubscriptionWebhookController extends Controller
             return self::stringField($object, 'id');
         }
 
-        return self::stringField($object, 'subscription');
+        // Older API versions put the reference at the top level of an invoice;
+        // newer ones (2025-03-31 onwards) moved it under
+        // `parent.subscription_details`. Both are read, so a webhook endpoint
+        // created on either version is understood.
+        return self::stringField($object, 'subscription')
+            ?? self::stringField($object['parent']['subscription_details'] ?? [], 'subscription');
     }
 
     /**

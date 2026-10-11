@@ -37,6 +37,10 @@ trait CreatesPlatformSubscriptions
         // the setting they need explicitly.
         config(['platform_billing.allow_public_trials' => true]);
 
+        // Private Offers are off in production by default; their suites turn
+        // them on, and PrivateOffersFeatureFlagTest pins the off behaviour.
+        config(['platform_billing.private_offers_enabled' => true]);
+
         return $this->stripe;
     }
 

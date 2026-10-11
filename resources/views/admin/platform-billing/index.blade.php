@@ -80,12 +80,14 @@
             </div>
         </div>
 
+        @if (config('platform_billing.private_offers_enabled'))
         <div class="mb-2">
             <a class="btn btn-outline-primary" href="{{ route('admin.platform-billing.offers.index') }}" data-role="private-offers-link">
                 Private Offers
             </a>
             <span class="text-muted ms-1">Special terms for one customer: a trial, a negotiated price or a discount.</span>
         </div>
+        @endif
 
         {{-- ---------------------------------------------------------------
              Commercial configuration, per tier.

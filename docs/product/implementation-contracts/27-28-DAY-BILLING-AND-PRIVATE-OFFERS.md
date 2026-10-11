@@ -27,6 +27,15 @@ Builds on the existing lane-A platform subscription infrastructure
 Platform Owner → Billing & Revenue → **Private Offers** → Create Offer → Copy Link.
 Also on the Workspace details screen (card "Private offers").
 
+**Off by default.** `config('platform_billing.private_offers_enabled')`
+(`PLATFORM_PRIVATE_OFFERS_ENABLED`, default `false`) is enforced on the server by the
+`private.offers` route middleware and by the offer services. While off, no new offer
+can be created, re-linked, viewed, accepted or applied, owner screens and offer links
+answer 404, and the navigation entries are hidden. It never touches an agreement
+already in force: webhooks, renewals, schedule reconciliation, cancel / resume and
+*revoke* keep working, so existing subscribers keep their original contractual
+billing terms with the switch on or off.
+
 | Term | Behaviour |
 |---|---|
 | Plan | Core / Growth / Agency |
@@ -101,33 +110,59 @@ frozen on the redemption.
 
 ## 4. Verification status (Stripe)
 
-**Real Stripe test mode has NOT been exercised** (no test credentials and no route
-to api.stripe.com from the build environment). What *is* established:
+**Exercised against real Stripe TEST mode** (sandbox account, `sk_test_` key, Stripe
+CLI webhook forwarding with real signed deliveries, test clocks; no mocked gateway,
+no live key). The same scenarios were run on two API versions and on final code:
 
-* **Official docs (search of docs.stripe.com):** `from_subscription` on schedule
-  create is documented; phases are sequential and one phase's `end_date` equals the
-  next `start_date`; `end_behavior` is `release|cancel`; **`iterations` was removed
-  from schedule create/update in API version 2025-09-30 and now errors** (use
-  `duration`). The gateway therefore never sends `iterations`: every phase, including
-  the last, ends at an explicit `end_date` (the last one a single period after it
-  starts), and `end_behavior=release` leaves the subscription on that Price.
-* **stripe-php v7.128.0:** the services (`subscriptionSchedules` create / retrieve /
-  update / release, `products`, `prices`) and the fields used (`Subscription.schedule`,
-  `trial_end`, schedule `status`, `end_behavior`, Checkout `expires_at`) exist.
-* **Wire contract (`StripeWireContractTest`):** the REAL gateway and REAL SDK with
-  only the HTTP transport recorded prove the exact parameters sent: Price
-  `recurring[interval]=day`, `interval_count=28`; schedule create `{from_subscription}`
-  then update with `end_behavior=release`, per-phase `end_date`, first-phase
-  `start_date` and `trial_end`, `proration_behavior=none`, **no `iterations`, no
-  coupon**; Checkout `payment_method_collection=always`, `expires_at`,
-  `subscription_data.metadata`, and no trial parameters when there is no trial.
+| Run | Requests carried `Stripe-Version` | Webhook event payload |
+|---|---|---|
+| Account default | `2023-08-16` | `2023-08-16` |
+| Newer API | `2026-08-26.dahlia` (header injected on every SDK request, in the test process **and** the webhook server; every response echoed that version) | `2026-09-30.endive` (`stripe listen --latest`) |
 
-Still BLOCKED until run in test mode (test clocks) — see the acceptance checklist
-in the PR: that Stripe *accepts* those parameters on the account's API version;
-the promotion boundary lands on the 28-day period boundary and the next invoice is
-the reverted amount; trial → first paid invoice; billing-change timing with no
-proration line; webhook retry/replay delivery; invoice amounts.
+> `Stripe::setApiVersion()` does **not** reach `StripeClient` in stripe-php 7.128, so a
+> header injected through the HTTP client is the only reliable pin. PHP's built-in
+> server also does not run `auto_prepend_file` when a router script is used; a pin
+> installed that way is silently absent. A run is only counted when the response's
+> own `Stripe-Version` header was logged.
 
+Scenarios that passed on both versions: public signup sends **no** trial and always
+collects a payment method; paid subscription bills a **28-day** interval and renews
+exactly 28 days later with no proration; entitlement only after provider-confirmed
+payment (real webhook); a declined first payment leaves the subscription incomplete
+and un-entitled; private offer 50 % for 2 periods → promotional Price, schedule
+phases at start + 2 × 28 d then + 28 d with `end_behavior=release`, billing
+49.50 / 49.50 / 99.00 with no proration line, release leaves the standard Price;
+28-day trial offer (trialing, first charge at the boundary, then every 28 days);
+trial + one-period promotion; billing change (permanent 99 → 79, and 30 % off for 2
+periods then 99) starting at the current period end with nothing charged today;
+upgrade during a promotion (acknowledgement required, schedule released first);
+signature rejection and replay idempotency; a foreign subscription fails closed;
+revoked / bogus links reveal no terms.
+
+**Bug found and fixed by this run.** Stripe refuses to change cancelation behaviour on
+a subscription a Subscription Schedule manages ("updating any cancelation behavior
+directly is not allowed"), which is exactly what a Private Offer promotion or billing
+change is. Cancelling at period end during one failed. `OfferReconciler::withScheduleSuspended()`
+now releases the agreement's own schedule first (a schedule MotionGrove did not
+create is never touched and the call fails closed), keeps the redemption `redeemed`
+with its schedule `pending`, and `restoreAfterResume()` puts the agreed Price path
+back with the same boundaries when the customer resumes; the sweep does not re-apply
+while the cancellation stands. Verified on real Stripe: cancel → resume → 49.50,
+49.50, 99.00 (and 99, 79, 79 for a billing change), no proration.
+
+**Newer API webhook shape.** From API version 2025-03-31 an `invoice` event no longer
+carries `subscription` at the top level; it is under `parent.subscription_details`.
+Both the webhook intake and the event job now read either shape (before this, a
+`subscription_create` `invoice.paid` on a newer-version endpoint was recorded without
+its subscription id and failed `no_matching_local_record`).
+
+**Version-mixing hazard (test environment only).** A subscription created on a newer
+API version has `billing_mode.type=flexible`, and Stripe refuses schedule calls on it
+from a request pinned to an older version. In production every request uses the one
+version the account / SDK uses, so this cannot arise; do not pin different versions
+for different processes.
+
+Private Offers are additionally behind the server-side switch in section 6.
 ## 5. Known limitations
 * **Email-bound offers require real email verification.** With
   `ACCOUNT_VERIFICATION=false` every new account is stamped verified at creation
@@ -161,6 +196,8 @@ proration line; webhook retry/replay delivery; invoice amounts.
 3. Save each plan with *Available to new signups* ticked (verifies the Price again).
 4. Test-mode signup end to end; then repeat with live keys only when approved.
 5. Ensure the scheduler runs (`platform-offers:sweep`).
+6. Private Offers stay hidden until `PLATFORM_PRIVATE_OFFERS_ENABLED=true` is set
+   deliberately (it is `false` unless set).
 
 Until step 3 signups are closed ("not ready to be purchased") and existing monthly
 subscribers cannot self-serve a plan change onto 28-day plans (billing schedules are

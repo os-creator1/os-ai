@@ -101,9 +101,9 @@
             | return URLs carry the redemption uid, never the secret.
             */
             $offerToken = '[A-Za-z0-9_-]{32,64}';
-            Route::get('offers/{token}', 'PrivateOfferController@show')->where('token', $offerToken)->middleware('throttle:60,1')->name('offers.show');
-            Route::get('offers/{token}/signup', 'PrivateOfferController@signup')->where('token', $offerToken)->middleware(['guest', 'throttle:20,1'])->name('offers.signup');
-            Route::post('offers/{token}/accept', 'PrivateOfferController@accept')->where('token', $offerToken)->middleware(['auth', 'throttle:10,1'])->name('offers.accept');
+            Route::get('offers/{token}', 'PrivateOfferController@show')->where('token', $offerToken)->middleware(['private.offers', 'throttle:60,1'])->name('offers.show');
+            Route::get('offers/{token}/signup', 'PrivateOfferController@signup')->where('token', $offerToken)->middleware(['private.offers', 'guest', 'throttle:20,1'])->name('offers.signup');
+            Route::post('offers/{token}/accept', 'PrivateOfferController@accept')->where('token', $offerToken)->middleware(['private.offers', 'auth', 'throttle:10,1'])->name('offers.accept');
             Route::get('offers/return/{redemption}', 'PrivateOfferController@checkoutReturn')->whereUuid('redemption')->middleware('auth')->name('offers.return');
             Route::get('offers/cancelled/{redemption}', 'PrivateOfferController@checkoutCancelled')->whereUuid('redemption')->middleware('auth')->name('offers.cancelled');
 

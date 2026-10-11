@@ -54,6 +54,7 @@ final class PrivateOfferManager
     public function create(array $data, int $actorUserId): array
     {
         $this->authority->assertAdministrator($actorUserId);
+        $this->assertEnabled();
 
         $reason = trim((string) ($data['reason'] ?? ''));
 
@@ -160,6 +161,7 @@ final class PrivateOfferManager
     public function rotateLink(PlatformPrivateOffer $offer, int $actorUserId, string $reason): string
     {
         $this->authority->assertAdministrator($actorUserId);
+        $this->assertEnabled();
 
         [$token, $hash] = PlatformPrivateOffer::mintToken();
 
@@ -357,6 +359,14 @@ final class PrivateOfferManager
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** New offers and links only while the platform has Private Offers switched on. */
+    private function assertEnabled(): void
+    {
+        if (! PrivateOffersFeature::enabled()) {
+            throw ValidationException::withMessages(['offer' => __('Private Offers are not enabled on this platform.')]);
+        }
+    }
 
     private function resolveWorkspace(mixed $uid): ?Workspace
     {

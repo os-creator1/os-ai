@@ -3,6 +3,7 @@
 namespace App\Library\PlatformBilling\Offers;
 
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
+use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\PlatformBilling\BillingCycle;
 use App\Library\PlatformBilling\PlatformStripeGateway;
 use App\Library\PlatformBilling\PlatformSubscriptionSnapshot;
@@ -15,6 +16,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -255,10 +257,14 @@ final class OfferReconciler
     public function driveSchedule(PlatformPrivateOfferRedemption $redemption): void
     {
         if ($redemption->state !== PlatformPrivateOfferRedemption::STATE_REDEEMED
-            || $redemption->schedule_state !== PlatformPrivateOfferRedemption::SCHEDULE_PENDING
-            || $redemption->offer?->isBillingChange()) {
+            || $redemption->schedule_state !== PlatformPrivateOfferRedemption::SCHEDULE_PENDING) {
             return;
         }
+
+        // A billing change reaches `pending` only when a cancellation released
+        // its schedule and the customer then kept the subscription (see
+        // suspendForCancellation); the initial push is PrivateOfferRedemptionManager's.
+        $isChange = (bool) $redemption->offer?->isBillingChange();
 
         $subscription = PlatformSubscription::query()->find($redemption->platform_subscription_id);
 
@@ -271,7 +277,11 @@ final class OfferReconciler
 
         $paid = array_values(array_filter($redemption->phases(), static fn (array $p): bool => $p['kind'] !== 'trial'));
 
-        if (count($paid) < 2 || empty($paid[0]['price_id']) || empty($paid[1]['price_id']) || $redemption->promo_ends_at === null) {
+        $malformed = $isChange
+            ? $paid === [] || in_array(true, array_map(static fn (array $p): bool => empty($p['price_id']), $paid), true)
+            : count($paid) < 2 || empty($paid[0]['price_id']) || empty($paid[1]['price_id']) || $redemption->promo_ends_at === null;
+
+        if ($malformed) {
             $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_FAILED);
 
             return;
@@ -309,6 +319,36 @@ final class OfferReconciler
                 return;
             }
 
+            // The customer has asked to leave at the end of this period. The
+            // agreement stays on file and is put back if they change their mind
+            // (restoreAfterResume), so there is nothing to schedule now — and
+            // a schedule would stop the cancellation being undone or enforced.
+            if ($current->cancelAtPeriodEnd) {
+                return;
+            }
+
+            // A schedule this redemption already had once is being put back, so
+            // its first idempotency key (and the schedule Stripe answered with,
+            // now released) must not be replayed.
+            $attemptKey = 'offer-schedule:' . $redemption->uid . ($redemption->provider_schedule_id !== null ? ':r' . Str::random(10) : '');
+
+            if ($isChange) {
+                $phases = $this->billingChangePhases($redemption, $paid, $current);
+
+                if ($phases === null) {
+                    // Not on any Price the agreement contains: do not fight it.
+                    $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_FAILED);
+                } elseif ($phases === []) {
+                    // Already on its final agreed Price: nothing left to schedule.
+                    $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
+                } else {
+                    $snapshot = $this->gateway->applyPriceSchedule((string) $subscription->provider_subscription_id, $phases, $attemptKey);
+                    $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $snapshot->scheduleId, $subscription);
+                }
+
+                return;
+            }
+
             if ($redemption->promo_ends_at->lessThanOrEqualTo(now())) {
                 // The promotion's window closed before we could schedule it
                 // (a long outage): go straight to the standard price, without
@@ -334,7 +374,7 @@ final class OfferReconciler
                         BillingCycle::addPeriods($redemption->promo_ends_at, (string) ($redemption->terms_snapshot['cycle'] ?? BillingCycle::EVERY_28_DAYS), 1),
                     ),
                 ],
-                'offer-schedule:' . $redemption->uid,
+                $attemptKey,
             );
             $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $snapshot->scheduleId, $subscription);
         } catch (Throwable $e) {
@@ -344,6 +384,132 @@ final class OfferReconciler
             ]);
         } finally {
             $lock->release();
+        }
+    }
+
+    /**
+     * The Price sequence still owed to a BILLING CHANGE, measured against the
+     * live billing period rather than against the day it was first accepted.
+     *
+     * @param  array<int, array<string, mixed>>  $paid  the agreement's non-trial phases
+     * @return array<int, SchedulePhase>|null  null when the subscription is on a Price
+     *                                         the agreement does not contain; [] when
+     *                                         it is already on its final agreed Price
+     */
+    private function billingChangePhases(PlatformPrivateOfferRedemption $redemption, array $paid, PlatformSubscriptionSnapshot $live): ?array
+    {
+        if ($live->periodStart === null || blank($live->providerPriceId)) {
+            throw new \RuntimeException('The live billing period is not known yet.');
+        }
+
+        $cycle = (string) ($redemption->terms_snapshot['cycle'] ?? BillingCycle::EVERY_28_DAYS);
+        $periodStart = CarbonImmutable::instance($live->periodStart);
+
+        // A phase that ended before this period began is history.
+        $ahead = array_values(array_filter($paid, static fn (array $p): bool => $p['ends_at'] === null
+            || CarbonImmutable::parse((string) $p['ends_at'])->greaterThan($periodStart->addHour())));
+
+        if ($ahead === []) {
+            return [];
+        }
+
+        $firstStart = CarbonImmutable::parse((string) $ahead[0]['starts_at']);
+        $sequence = [];
+
+        if ($firstStart->greaterThan($periodStart->addHour())) {
+            // The agreement has not begun: the subscription stays on the Price
+            // it is on until the moment the agreed terms start.
+            $sequence[] = new SchedulePhase((string) $live->providerPriceId, $firstStart);
+        } elseif ((string) $live->providerPriceId !== (string) $ahead[0]['price_id']) {
+            return null;
+        } elseif (count($ahead) === 1 && $ahead[0]['ends_at'] === null) {
+            return [];
+        }
+
+        foreach ($ahead as $phase) {
+            $start = CarbonImmutable::parse((string) $phase['starts_at']);
+
+            // The open-ended final phase is given one billing period; the
+            // schedule then releases and the subscription stays on that Price.
+            $sequence[] = new SchedulePhase(
+                (string) $phase['price_id'],
+                $phase['ends_at'] === null ? BillingCycle::addPeriods($start, $cycle, 1) : CarbonImmutable::parse((string) $phase['ends_at']),
+            );
+        }
+
+        return $sequence;
+    }
+
+    /**
+     * Runs a provider call that edits the subscription directly — a cancellation
+     * is one — while the agreement's own schedule is out of the way.
+     *
+     * Stripe refuses to change cancelation behaviour on a subscription a
+     * Subscription Schedule manages ("updating any cancelation behavior
+     * directly is not allowed"), so that schedule is released first. The
+     * agreement itself is KEPT: the redemption stays `redeemed`, the
+     * subscription stays linked to it, and the schedule is marked `pending`
+     * so that it is put back — by restoreAfterResume() if the customer keeps
+     * the subscription, or by the sweep if the provider call that follows
+     * fails. A schedule MotionGrove did not create is never touched; the
+     * provider then refuses the call and the caller fails closed as before.
+     *
+     * Holds the same lock as driveSchedule(), so a webhook cannot put the
+     * schedule back between the release and the call.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $call
+     * @return T
+     */
+    public function withScheduleSuspended(PlatformSubscription $subscription, callable $call): mixed
+    {
+        $redemption = $subscription->offer_redemption_id === null
+            ? null
+            : PlatformPrivateOfferRedemption::query()->find($subscription->offer_redemption_id);
+
+        if ($redemption === null || $redemption->state !== PlatformPrivateOfferRedemption::STATE_REDEEMED) {
+            return $call();
+        }
+
+        $lock = Cache::lock('offer-schedule:' . $redemption->id, 60);
+
+        if (! $lock->block(10)) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_IN_PROGRESS);
+        }
+
+        try {
+            $live = $this->gateway->retrieveSubscription((string) $subscription->provider_subscription_id);
+
+            if ($live->scheduleId !== null && $live->scheduleId === $redemption->provider_schedule_id) {
+                $this->gateway->releaseSchedule($live->scheduleId);
+
+                DB::transaction(function () use ($redemption, $subscription): void {
+                    PlatformPrivateOfferRedemption::query()->whereKey($redemption->id)->update([
+                        'schedule_state' => PlatformPrivateOfferRedemption::SCHEDULE_PENDING,
+                        'last_reconciled_at' => now(),
+                    ]);
+                    PlatformSubscription::query()->whereKey($subscription->id)->update(['provider_schedule_id' => null]);
+                });
+            }
+
+            return $call();
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /** The customer kept the subscription after all: put the agreed pricing back. */
+    public function restoreAfterResume(PlatformSubscription $subscription): void
+    {
+        if ($subscription->offer_redemption_id === null) {
+            return;
+        }
+
+        $redemption = PlatformPrivateOfferRedemption::query()->find($subscription->offer_redemption_id);
+
+        if ($redemption !== null) {
+            $this->driveSchedule($redemption);
         }
     }
 

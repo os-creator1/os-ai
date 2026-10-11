@@ -537,6 +537,79 @@ class PrivateOfferRedemptionTest extends TestCase
         $this->assertCount(2, $this->stripe->callsOf('applyPriceSchedule'));
     }
 
+    public function test_cancelling_during_a_promotion_then_resuming_keeps_the_agreed_price_path(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
+            'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 3,
+        ]);
+        [$redemption, $providerSubscriptionId] = $this->redeem($customer, $created['offer']);
+        $manager = app(PlatformSubscriptionManager::class);
+        $promoPriceId = (string) $redemption->initial_price_id;
+        $promoEnd = $redemption->promo_ends_at->toIso8601String();
+
+        // Stripe refuses to change cancelation behaviour under a schedule, so the
+        // customer's cancellation releases it — keeping the agreement on file.
+        $subscription = $manager->requestCancellation($customer['workspace']);
+
+        $this->assertTrue((bool) $subscription->cancel_at_period_end);
+        $this->assertCount(1, $this->stripe->callsOf('releaseSchedule'));
+        $this->assertSame('pending', $redemption->refresh()->schedule_state);
+        $this->assertNotNull($subscription->offer_redemption_id);
+        $this->assertNull($subscription->provider_schedule_id);
+
+        // The customer changes their mind: the same promotion, to the same end.
+        $subscription = $manager->resumeSubscription($customer['workspace']);
+
+        $this->assertFalse((bool) $subscription->cancel_at_period_end);
+        $this->assertSame('applied', $redemption->refresh()->schedule_state);
+        $calls = $this->stripe->callsOf('applyPriceSchedule');
+        $this->assertCount(2, $calls);
+        $phases = $calls[1]['args']['phases'];
+        $this->assertSame($promoPriceId, $phases[0]['price']);
+        $this->assertSame($promoEnd, $phases[0]['ends_at']);
+        $this->assertSame('price_fake_growth', $phases[1]['price']);
+        $this->assertNotSame($calls[0]['args']['key'], $calls[1]['args']['key']);
+
+        // Billing is exactly as agreed: three promotional periods (the checkout
+        // charge plus two renewals), then the normal price, and it stays there.
+        foreach (range(1, 4) as $i) {
+            $this->stripe->advancePeriod($providerSubscriptionId);
+            $manager->applyProviderSubscription($subscription->refresh(), $providerSubscriptionId, 'evt_after_resume_' . $i, now());
+        }
+
+        $this->assertSame([7000, 7000, 7000, 10000, 10000], array_column($this->stripe->charges, 'amount'));
+        $this->assertSame('100.00', (string) $subscription->refresh()->price_snapshot);
+    }
+
+    public function test_resuming_after_the_promotion_window_closed_goes_straight_to_the_standard_price(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
+            'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 2,
+        ]);
+        [$redemption, $providerSubscriptionId] = $this->redeem($customer, $created['offer']);
+        $manager = app(PlatformSubscriptionManager::class);
+
+        $manager->requestCancellation($customer['workspace']);
+        // While the customer was on notice the promotion's window ran out.
+        $redemption->forceFill(['promo_ends_at' => now()->subDay()])->save();
+
+        $manager->resumeSubscription($customer['workspace']);
+
+        // No schedule is possible for a window that has closed, and no proration line:
+        // the subscription simply moves to the standard price they agreed to revert to.
+        $this->assertCount(1, $this->stripe->callsOf('applyPriceSchedule'), 'only the original push');
+        $change = $this->stripe->callsOf('changeSubscriptionPrice');
+        $this->assertCount(1, $change);
+        $this->assertSame('price_fake_growth', $change[0]['args']['price']);
+        $this->assertFalse($change[0]['args']['prorate']);
+        $this->assertSame('none', $redemption->refresh()->schedule_state);
+        $this->assertSame('100.00', (string) $this->subscriptionOf($customer['workspace'])->price_snapshot);
+    }
+
     // =================================================================
     // Free trials happen once
     // =================================================================

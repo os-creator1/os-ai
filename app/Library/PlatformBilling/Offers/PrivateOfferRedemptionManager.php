@@ -86,7 +86,7 @@ final class PrivateOfferRedemptionManager
     {
         // A token is 43 URL-safe characters. Anything else cannot be one, and
         // is refused before it touches the database.
-        if (! preg_match('/\A[A-Za-z0-9_-]{32,64}\z/', $token)) {
+        if (! PrivateOffersFeature::enabled() || ! preg_match('/\A[A-Za-z0-9_-]{32,64}\z/', $token)) {
             return null;
         }
 
@@ -124,7 +124,7 @@ final class PrivateOfferRedemptionManager
             'redemption' => null, 'message' => null, 'requires_acceptance' => true,
         ];
 
-        if ($offer->isRevoked() || $offer->isExpired()) {
+        if (! PrivateOffersFeature::enabled() || $offer->isRevoked() || $offer->isExpired()) {
             return $view;
         }
 
@@ -616,6 +616,11 @@ final class PrivateOfferRedemptionManager
     /** @throws PlatformBillingException */
     private function assertRedeemable(PlatformPrivateOffer $offer): void
     {
+        // The one gate every NEW acceptance or owner-applied change passes.
+        if (! PrivateOffersFeature::enabled()) {
+            throw PlatformBillingException::because(PlatformBillingException::OFFER_UNAVAILABLE);
+        }
+
         if ($offer->isRevoked() || $offer->isExpired()) {
             throw PlatformBillingException::because(PlatformBillingException::OFFER_UNAVAILABLE);
         }

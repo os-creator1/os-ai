@@ -39,7 +39,11 @@
             @if ($subscription->offerRedemption)
                 <dt class="col-sm-3">Private offer</dt>
                 <dd class="col-sm-9" data-testid="po-subscription-offer">
-                    <a href="{{ route('admin.platform-billing.offers.show', [$subscription->offerRedemption->offer->uid]) }}">{{ $subscription->offerRedemption->offer->label }}</a>
+                    @if (config('platform_billing.private_offers_enabled'))
+                        <a href="{{ route('admin.platform-billing.offers.show', [$subscription->offerRedemption->offer->uid]) }}">{{ $subscription->offerRedemption->offer->label }}</a>
+                    @else
+                        {{ $subscription->offerRedemption->offer->label }}
+                    @endif
                     · {{ $subscription->offerRedemption->state }}
                     @if ($subscription->offerRedemption->promo_ends_at) · promotion ends {{ $subscription->offerRedemption->promo_ends_at->toFormattedDateString() }} @endif
                     · reconciliation: {{ $subscription->offerRedemption->reconcile_state }}

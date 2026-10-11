@@ -803,12 +803,12 @@
         | Offer → Copy Link. The owner never opens Stripe: the Prices are
         | created and verified by MotionGrove.
         */
-        Route::get('platform-billing/offers', 'PlatformPrivateOffersController@index')->name('platform-billing.offers.index');
-        Route::post('platform-billing/offers', 'PlatformPrivateOffersController@store')->name('platform-billing.offers.store');
-        Route::get('platform-billing/offers/{offer}', 'PlatformPrivateOffersController@show')->whereUuid('offer')->name('platform-billing.offers.show');
+        Route::get('platform-billing/offers', 'PlatformPrivateOffersController@index')->middleware('private.offers')->name('platform-billing.offers.index');
+        Route::post('platform-billing/offers', 'PlatformPrivateOffersController@store')->middleware('private.offers')->name('platform-billing.offers.store');
+        Route::get('platform-billing/offers/{offer}', 'PlatformPrivateOffersController@show')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.show');
         Route::post('platform-billing/offers/{offer}/revoke', 'PlatformPrivateOffersController@revoke')->whereUuid('offer')->name('platform-billing.offers.revoke');
-        Route::post('platform-billing/offers/{offer}/link', 'PlatformPrivateOffersController@newLink')->whereUuid('offer')->name('platform-billing.offers.new-link');
-        Route::post('platform-billing/offers/{offer}/apply', 'PlatformPrivateOffersController@applyChange')->whereUuid('offer')->name('platform-billing.offers.apply');
+        Route::post('platform-billing/offers/{offer}/link', 'PlatformPrivateOffersController@newLink')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.new-link');
+        Route::post('platform-billing/offers/{offer}/apply', 'PlatformPrivateOffersController@applyChange')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.apply');
 
         /*
         | Platform Owner V1 final — Plans: the one plan authority. Edit name,

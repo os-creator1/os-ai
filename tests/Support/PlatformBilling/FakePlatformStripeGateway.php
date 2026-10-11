@@ -511,6 +511,14 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             'cancel_at_period_end' => $cancelAtPeriodEnd,
         ]);
 
+        // Observed against real Stripe test mode: "The subscription is managed
+        // by the subscription schedule `sub_sched_...`, and updating any
+        // cancelation behavior directly is not allowed. Please update the
+        // schedule instead." The caller must release the schedule first.
+        if (($this->subscriptions[$providerSubscriptionId]['schedule'] ?? null) !== null) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
         $this->subscriptions[$providerSubscriptionId]['cancel_at_period_end'] = $cancelAtPeriodEnd;
 
         return $this->subscriptionSnapshot($providerSubscriptionId);

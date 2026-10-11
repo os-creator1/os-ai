@@ -118,6 +118,7 @@
             'throttle'         => ThrottleRequests::class,
             'verified'         => EnsureEmailIsVerified::class,
             'auth.session'     => AuthenticateSession::class,
+            'private.offers'   => \App\Http\Middleware\EnsurePrivateOffersEnabled::class,
             'password.confirm' => RequirePassword::class,
 
             /*

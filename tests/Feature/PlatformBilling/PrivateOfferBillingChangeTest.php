@@ -366,7 +366,119 @@ class PrivateOfferBillingChangeTest extends TestCase
         $subscription = app(PlatformSubscriptionManager::class)->requestCancellation($this->fixture['workspace']);
 
         $this->assertTrue((bool) $subscription->cancel_at_period_end);
-        $this->assertNotNull($subscription->offer_redemption_id);
+        $this->assertNotNull($subscription->offer_redemption_id, 'the agreement stays on file');
+
+        // Real Stripe refuses to change cancelation behaviour on a subscription a
+        // schedule manages ("updating any cancelation behavior directly is not
+        // allowed"), so the agreement's schedule is released first and owed back.
+        $this->assertCount(1, $this->stripe->callsOf('releaseSchedule'));
+        $redemption = PlatformPrivateOfferRedemption::query()->sole();
+        $this->assertSame('redeemed', $redemption->state);
+        $this->assertSame('pending', $redemption->schedule_state);
+        $this->assertNull($subscription->provider_schedule_id);
+    }
+
+    public function test_the_provider_refuses_to_cancel_a_subscription_a_schedule_manages(): void
+    {
+        // The fake must be as strict as Stripe here, or no suite can see this bug.
+        $this->redeemedCustomPricing();
+        $subscription = $this->subscription();
+
+        $this->expectException(PlatformBillingException::class);
+        $this->stripe->setCancelAtPeriodEnd((string) $subscription->provider_subscription_id, true);
+    }
+
+    public function test_resuming_after_cancelling_puts_the_agreed_billing_change_back(): void
+    {
+        $this->redeemedCustomPricing();
+        $manager = app(PlatformSubscriptionManager::class);
+        $workspace = $this->fixture['workspace'];
+        $providerId = $this->fixture['provider_subscription_id'];
+        $periodEnd = $this->subscription()->current_period_end;
+
+        $manager->requestCancellation($workspace);
+        $subscription = $manager->resumeSubscription($workspace);
+
+        $this->assertFalse((bool) $subscription->cancel_at_period_end);
+        $redemption = PlatformPrivateOfferRedemption::query()->sole();
+        $this->assertSame('applied', $redemption->schedule_state);
+        $this->assertNotNull($subscription->provider_schedule_id);
+
+        // The same agreement, measured from the live period: today's Price until
+        // the change starts, the 2 promotional periods, then the agreed ongoing price.
+        $calls = $this->stripe->callsOf('applyPriceSchedule');
+        $this->assertCount(2, $calls);
+        $phases = $calls[1]['args']['phases'];
+        $this->assertCount(3, $phases);
+        $this->assertSame('price_fake_growth', $phases[0]['price']);
+        $this->assertSame($periodEnd->toIso8601String(), $phases[0]['ends_at']);
+        $this->assertNotSame($calls[0]['args']['key'], $calls[1]['args']['key'], 'a put-back must not replay the first schedule\'s idempotency key');
+
+        // …and the customer is billed exactly as agreed.
+        $this->stripe->advancePeriod($providerId);
+        $manager->applyProviderSubscription($subscription->refresh(), $providerId, 'evt_after_resume', now());
+        $this->assertSame(6000, end($this->stripe->charges)['amount'], 'the promotional price starts at the boundary');
+    }
+
+    public function test_a_subscription_that_is_leaving_is_not_given_its_schedule_back_by_the_sweep(): void
+    {
+        $this->redeemedCustomPricing();
+        app(PlatformSubscriptionManager::class)->requestCancellation($this->fixture['workspace']);
+
+        $this->artisan('platform-offers:sweep')->assertExitCode(0);
+
+        $this->assertCount(1, $this->stripe->callsOf('applyPriceSchedule'), 'only the original push');
+        $this->assertSame('pending', PlatformPrivateOfferRedemption::query()->sole()->schedule_state);
+        $this->assertTrue((bool) $this->subscription()->cancel_at_period_end);
+    }
+
+    public function test_a_failed_cancellation_leaves_the_schedule_owed_not_lost(): void
+    {
+        $this->redeemedCustomPricing();
+        $this->stripe->hooks['setCancelAtPeriodEnd'] = function (): void {
+            throw new \RuntimeException('Stripe is down');
+        };
+
+        try {
+            app(PlatformSubscriptionManager::class)->requestCancellation($this->fixture['workspace']);
+            $this->fail('The provider failure must surface.');
+        } catch (\RuntimeException) {
+        }
+
+        $this->assertSame('pending', PlatformPrivateOfferRedemption::query()->sole()->schedule_state);
+        $this->assertFalse((bool) $this->subscription()->cancel_at_period_end);
+
+        // The customer is NOT leaving, so the sweep gives the agreed schedule back.
+        $this->stripe->hooks = [];
+        $this->artisan('platform-offers:sweep')->assertExitCode(0);
+
+        $this->assertSame('applied', PlatformPrivateOfferRedemption::query()->sole()->schedule_state);
+        $this->assertCount(2, $this->stripe->callsOf('applyPriceSchedule'));
+    }
+
+    public function test_a_schedule_we_did_not_create_is_never_released_by_a_cancellation(): void
+    {
+        $this->redeemedCustomPricing();
+        // Something else (an operator in the Dashboard, say) now manages the subscription.
+        $this->stripe->subscriptions[$this->fixture['provider_subscription_id']]['schedule'] = 'sub_sched_foreign';
+
+        try {
+            app(PlatformSubscriptionManager::class)->requestCancellation($this->fixture['workspace']);
+            $this->fail('The provider refuses; the cancellation must fail closed.');
+        } catch (PlatformBillingException $e) {
+            $this->assertSame(PlatformBillingException::PROVIDER_FAILED, $e->reason);
+        }
+
+        $this->assertSame([], $this->stripe->callsOf('releaseSchedule'));
+        $this->assertSame('applied', PlatformPrivateOfferRedemption::query()->sole()->schedule_state);
+        $this->assertFalse((bool) $this->subscription()->cancel_at_period_end);
+    }
+
+    public function test_cancelling_a_plain_subscription_is_unchanged(): void
+    {
+        $subscription = app(PlatformSubscriptionManager::class)->requestCancellation($this->fixture['workspace']);
+
+        $this->assertTrue((bool) $subscription->cancel_at_period_end);
         $this->assertSame([], $this->stripe->callsOf('releaseSchedule'));
     }
 

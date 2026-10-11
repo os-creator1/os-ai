@@ -803,7 +803,14 @@ final class PlatformSubscriptionManager
     {
         $subscription = $this->liveSubscriptionFor($workspace);
 
-        $snapshot = $this->gateway->setCancelAtPeriodEnd((string) $subscription->provider_subscription_id, true);
+        // Stripe will not change cancelation behaviour on a subscription that a
+        // Subscription Schedule manages, and a Private Offer promotion or
+        // billing change IS such a schedule. The agreement's schedule is
+        // released first (and put back if the customer resumes).
+        $snapshot = $this->offers->withScheduleSuspended(
+            $subscription,
+            fn () => $this->gateway->setCancelAtPeriodEnd((string) $subscription->provider_subscription_id, true),
+        );
         $this->finalizer->apply($subscription, $snapshot);
 
         return $subscription->refresh();
@@ -824,6 +831,10 @@ final class PlatformSubscriptionManager
 
         $snapshot = $this->gateway->setCancelAtPeriodEnd((string) $subscription->provider_subscription_id, false);
         $this->finalizer->apply($subscription, $snapshot);
+
+        // A cancellation released the agreement's schedule; the customer is
+        // staying, so the agreed pricing goes back on.
+        $this->offers->restoreAfterResume($subscription->refresh());
 
         return $subscription->refresh();
     }
