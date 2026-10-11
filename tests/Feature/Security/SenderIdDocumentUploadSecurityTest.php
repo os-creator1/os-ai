@@ -638,6 +638,59 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $other->selectOne('SELECT RELEASE_LOCK(?) AS l', [$this->lockName()]);
     }
 
+    private const GIF = "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xFF\xFF\xFF!\xF9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+
+    public function test_new_gif_uploads_stay_blocked(): void
+    {
+        $this->customer();
+
+        $this->submit($this->realUpload('anim.gif', self::GIF))->assertSessionHasErrors('document');
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR));
+        $this->assertNull(SenderIdDocumentStore::safeExtension($this->realUpload('anim.gif', self::GIF)));
+    }
+
+    public function test_genuine_legacy_gif_remains_downloadable_with_safe_headers_and_for_the_owner_only(): void
+    {
+        $owner = $this->customer();
+        [$row] = $this->legacyRow($owner, 'senderid_1700000050.gif', self::GIF, 'GIF1');
+
+        $ok = $this->get(route('customer.senderid.document', $row->uid));
+        $ok->assertOk();
+        $this->assertStringContainsString('image/gif', $ok->headers->get('Content-Type'));
+        $this->assertStringContainsString('attachment', $ok->headers->get('Content-Disposition'));
+        $ok->assertHeader('X-Content-Type-Options', 'nosniff');
+
+        $this->customer(); // another tenant
+        $this->get(route('customer.senderid.document', $row->uid))->assertNotFound();
+    }
+
+    public function test_disguised_legacy_gif_is_not_served(): void
+    {
+        $owner = $this->customer();
+        [$row] = $this->legacyRow($owner, 'senderid_1700000051.gif', '<html><script>alert(1)</script></html>', 'GIF2');
+
+        $this->get(route('customer.senderid.document', $row->uid))->assertNotFound();
+    }
+
+    public function test_migration_moves_genuine_gifs_and_quarantines_disguised_ones(): void
+    {
+        $c = $this->customer();
+        [$good, $goodPath] = $this->legacyRow($c, 'senderid_1700000052.gif', self::GIF, 'GIF3');
+        [$bad, $badPath] = $this->legacyRow($c, 'senderid_1700000053.gif', '<?php echo 1; ?>', 'GIF4');
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+
+        $value = $good->fresh()->document;
+        $this->assertMatchesRegularExpression('#^private:senderid-docs/[A-Za-z0-9]{40}\.gif$#', $value);
+        $this->assertSame(self::GIF, Storage::disk('local')->get(substr($value, strlen(SenderIdDocumentStore::PREFIX))));
+        $this->assertFileDoesNotExist($goodPath);
+        $this->get(route('customer.senderid.document', $good->uid))->assertOk();
+
+        $this->assertNull($bad->fresh()->document);                    // not a GIF => quarantined, never public
+        $this->assertFileDoesNotExist($badPath);
+        $this->assertNotEmpty(Storage::disk('local')->allFiles('senderid-quarantine'));
+    }
+
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void
     {
         $owner = $this->customer();

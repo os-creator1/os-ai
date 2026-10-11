@@ -134,7 +134,7 @@ class MigrateSenderIdDocuments extends Command
                 $ids = $siblings->keys()->implode(',');
 
                 $upload = new UploadedFile($path, $name, null, null, true);
-                $ext = preg_match('/^[A-Za-z0-9_\-]+\.(pdf|jpg|jpeg|png|doc|docx)$/i', $name) ? SenderIdDocumentStore::safeExtension($upload) : null;
+                $ext = preg_match('/^[A-Za-z0-9_\-]+\.(pdf|jpg|jpeg|png|gif|doc|docx)$/i', $name) ? SenderIdDocumentStore::legacyExtension($upload) : null;
                 $disk = Storage::disk('local');
 
                 if ($ext === null) {

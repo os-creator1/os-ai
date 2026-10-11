@@ -30,6 +30,7 @@ final class SenderIdDocumentStore
         'pdf'  => 'application/pdf',
         'jpg'  => 'image/jpeg',
         'png'  => 'image/png',
+        'gif'  => 'image/gif', // legacy documents only; new uploads never produce it (see legacyExtension)
         'doc'  => 'application/msword',
         'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ];
@@ -63,6 +64,32 @@ final class SenderIdDocumentStore
         }
 
         return null;
+    }
+
+    /**
+     * Extension for an EXISTING legacy document (migration only). Everything safeExtension() accepts, plus
+     * genuine GIFs the old implementation allowed: declared .gif, sniffed as gif and starting GIF87a/GIF89a.
+     * New uploads must keep using safeExtension() - GIF stays disabled for them.
+     */
+    public static function legacyExtension(UploadedFile $file): ?string
+    {
+        $safe = self::safeExtension($file);
+        if ($safe !== null) {
+            return $safe;
+        }
+
+        $path = $file->getRealPath();
+        if (strtolower($file->getClientOriginalExtension()) === 'gif' && strtolower((string) $file->guessExtension()) === 'gif'
+            && $path !== false && self::isGif($path)) {
+            return 'gif';
+        }
+
+        return null;
+    }
+
+    public static function isGif(string $path): bool
+    {
+        return in_array(self::magic($path, 6), ['GIF87a', 'GIF89a'], true);
     }
 
     /** A genuine OOXML Word package: ZIP magic + required parts, no macro project. Nothing is extracted. */
@@ -149,7 +176,7 @@ final class SenderIdDocumentStore
     {
         if ($value !== null && str_starts_with($value, self::PREFIX)) {
             $relative = substr($value, strlen(self::PREFIX));
-            if (preg_match('#^' . self::DIR . '/[A-Za-z0-9]{40}\.(pdf|jpg|png|doc|docx)$#', $relative)) {
+            if (preg_match('#^' . self::DIR . '/[A-Za-z0-9]{40}\.(pdf|jpg|png|gif|doc|docx)$#', $relative)) {
                 Storage::disk('local')->delete($relative);
             }
         }
@@ -164,7 +191,7 @@ final class SenderIdDocumentStore
 
         if (str_starts_with($value, self::PREFIX)) {
             $relative = substr($value, strlen(self::PREFIX));
-            if (! preg_match('#^' . self::DIR . '/[A-Za-z0-9]{40}\.(pdf|jpg|png|doc|docx)$#', $relative)) {
+            if (! preg_match('#^' . self::DIR . '/[A-Za-z0-9]{40}\.(pdf|jpg|png|gif|doc|docx)$#', $relative)) {
                 return null;
             }
             $full = Storage::disk('local')->path($relative);
@@ -174,12 +201,21 @@ final class SenderIdDocumentStore
 
         // Legacy public URL: only the bare file name under public/senderid_docs counts.
         $name = basename((string) parse_url($value, PHP_URL_PATH));
-        if (! preg_match('/^[A-Za-z0-9_\-]+\.(pdf|jpg|jpeg|png|doc|docx)$/i', $name)) {
+        if (! preg_match('/^[A-Za-z0-9_\-]+\.(pdf|jpg|jpeg|png|gif|doc|docx)$/i', $name)) {
             return null;
         }
         $full = public_path(self::LEGACY_DIR . '/' . $name);
 
-        return is_file($full) ? $full : null;
+        if (! is_file($full)) {
+            return null;
+        }
+
+        // A legacy ".gif" is only served if it really is a GIF.
+        if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) === 'gif' && ! self::isGif($full)) {
+            return null;
+        }
+
+        return $full;
     }
 
     /** Forced-download response for a sender ID's document (caller has authorised). */
