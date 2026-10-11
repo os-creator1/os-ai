@@ -97,7 +97,48 @@ final class CustomerSubscriptionPresenter
             // can set back to false while the period is still running.
             'can_resume' => (bool) ($subscription?->cancel_at_period_end ?? false),
             'can_manage_payment_method' => $subscription !== null && ! blank($subscription->provider_customer_id),
+            'private_pricing' => $this->privatePricing($subscription),
         ];
+    }
+
+    /**
+     * The customer's private-offer agreement, in their own words — read from the
+     * terms they ACCEPTED (frozen on the redemption), never from the offer,
+     * which the owner may since have revoked.
+     *
+     * @return array{summary: string}|null
+     */
+    private function privatePricing(?\App\Models\PlatformSubscription $subscription): ?array
+    {
+        if ($subscription === null || $subscription->offer_redemption_id === null) {
+            return null;
+        }
+
+        $redemption = \App\Models\PlatformPrivateOfferRedemption::query()->find($subscription->offer_redemption_id);
+
+        if ($redemption === null || $redemption->state !== \App\Models\PlatformPrivateOfferRedemption::STATE_REDEEMED) {
+            return null;
+        }
+
+        $terms = \App\Library\PlatformBilling\Offers\OfferTerms::fromArray($redemption->terms_snapshot);
+        $code = $terms->currencyCode();
+        $label = mb_strtolower((string) $terms->get('cycle_label'));
+        $promotion = $terms->promotion();
+        $standard = \App\Library\PlatformBilling\Offers\PlatformMoney::display($terms->standardPriceMinor(), $code);
+
+        if ($promotion !== null && $terms->hasPromotionEnd() && $redemption->promo_ends_at !== null) {
+            $summary = __(':promo :label until :date, then :standard :label', [
+                'promo' => \App\Library\PlatformBilling\Offers\PlatformMoney::display((int) $promotion['price_minor'], $code),
+                'label' => $label,
+                'date' => $redemption->promo_ends_at->toFormattedDateString(),
+                'standard' => $standard,
+            ]);
+        } else {
+            $recurring = \App\Library\PlatformBilling\Offers\PlatformMoney::display((int) $terms->get('recurring_after_promotion_minor'), $code);
+            $summary = __(':price :label (agreed price)', ['price' => $recurring, 'label' => $label]);
+        }
+
+        return ['summary' => $summary];
     }
 
     /**

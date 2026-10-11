@@ -80,6 +80,13 @@
             </div>
         </div>
 
+        <div class="mb-2">
+            <a class="btn btn-outline-primary" href="{{ route('admin.platform-billing.offers.index') }}" data-role="private-offers-link">
+                Private Offers
+            </a>
+            <span class="text-muted ms-1">Special terms for one customer: a trial, a negotiated price or a discount.</span>
+        </div>
+
         {{-- ---------------------------------------------------------------
              Commercial configuration, per tier.
         ---------------------------------------------------------------- --}}
@@ -116,8 +123,8 @@
 
                         <label for="cycle_{{ $plan['tier_value'] }}">Billing cycle</label>
                         <select id="cycle_{{ $plan['tier_value'] }}" name="billing_cycle" required>
-                            @foreach (['monthly', 'yearly'] as $cycle)
-                                <option value="{{ $cycle }}" @selected($plan['billing_cycle'] === $cycle)>{{ $cycle }}</option>
+                            @foreach (array_unique([...\App\Library\PlatformBilling\BillingCycle::configurable(), $plan['billing_cycle']]) as $cycle)
+                                <option value="{{ $cycle }}" @selected($plan['billing_cycle'] === $cycle)>{{ \App\Library\PlatformBilling\BillingCycle::label($cycle) }}</option>
                             @endforeach
                         </select>
 
@@ -153,6 +160,22 @@
 
                         <button type="submit">Save {{ $plan['display_name'] }}</button>
                     </form>
+
+                    @if ($plan['price'] !== null && $plan['provider_price_id'] === null)
+                        {{-- MotionGrove makes (and verifies) the Price; no trip to Stripe. --}}
+                        <form method="POST" class="mt-1" data-role="provision-price-{{ $plan['tier_value'] }}"
+                              action="{{ route('admin.platform-billing.provision-price', [$plan['tier_value']]) }}">
+                            @csrf
+                            <p class="mb-50">
+                                Save the price and currency above, then let MotionGrove create the
+                                <strong>{{ $plan['billing_cycle_label'] }}</strong> Stripe Price for you. It is verified
+                                against Stripe before it is attached to the plan.
+                            </p>
+                            <label for="provision_reason_{{ $plan['tier_value'] }}">Reason</label>
+                            <input id="provision_reason_{{ $plan['tier_value'] }}" name="reason" type="text" required value="Create standard Stripe Price">
+                            <button type="submit">Create {{ $plan['billing_cycle_label'] }} Stripe Price</button>
+                        </form>
+                    @endif
                 </div>
             </div>
         @endforeach
@@ -213,7 +236,7 @@
                             <td>{{ $row['workspace_name'] }}</td>
                             <td>{{ $row['tier_name'] }}</td>
                             <td>{{ $row['status'] }}</td>
-                            <td>{{ $row['price_snapshot'] }} {{ $row['currency_code'] }} / {{ $row['billing_cycle_snapshot'] }}</td>
+                            <td>{{ $row['price_snapshot'] }} {{ $row['currency_code'] }} / {{ \App\Library\PlatformBilling\BillingCycle::perLabel((string) $row['billing_cycle_snapshot']) }}</td>
                             <td>{{ $row['trial_ends_at'] }}</td>
                             <td>{{ $row['current_period_end'] }}</td>
                             <td>{{ $row['cancel_at_period_end'] ? 'yes' : 'no' }}</td>

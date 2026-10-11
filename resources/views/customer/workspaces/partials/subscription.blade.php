@@ -39,7 +39,14 @@
             @if ($subscription['price'] !== null)
                 <dt class="col-sm-5">{{ __('Price') }}</dt>
                 <dd class="col-sm-7" data-role="subscription-price">
-                    {{ $subscription['price'] }} {{ $subscription['currency_code'] }} / {{ $subscription['billing_cycle'] }}
+                    {{ $subscription['price'] }} {{ $subscription['currency_code'] }} / {{ \App\Library\PlatformBilling\BillingCycle::perLabel((string) $subscription['billing_cycle']) }}
+                </dd>
+            @endif
+
+            @if ($subscription['private_pricing'] !== null)
+                <dt class="col-sm-5">{{ __('Private pricing') }}</dt>
+                <dd class="col-sm-7" data-role="subscription-private-pricing">
+                    {{ $subscription['private_pricing']['summary'] }}
                 </dd>
             @endif
 
@@ -106,7 +113,7 @@
                     @foreach ($subscription['resubscribe_plans'] as $plan)
                         <label>
                             <input type="radio" name="tier" value="{{ $plan['tier_value'] }}" required>
-                            {{ $plan['display_name'] }} — {{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle'] }}
+                            {{ $plan['display_name'] }} — {{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle_per'] }}
                         </label>
                     @endforeach
                     <label>
@@ -128,7 +135,7 @@
                     @foreach ($subscription['available_plans'] as $plan)
                         <label>
                             <input type="radio" name="tier" value="{{ $plan['tier_value'] }}" required>
-                            {{ $plan['display_name'] }} — {{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle'] }}
+                            {{ $plan['display_name'] }} — {{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle_per'] }}
                             <span data-role="plan-direction-{{ $plan['tier_value'] }}">
                                 @if ($plan['direction'] === 'upgrade')
                                     {{ __('Upgrade — takes effect immediately, and you are billed the difference now.') }}
@@ -138,6 +145,12 @@
                             </span>
                         </label>
                     @endforeach
+                    @if ($subscription['private_pricing'] !== null)
+                        <label data-role="subscription-ends-private-pricing">
+                            <input type="checkbox" name="confirm_ends_private_pricing" value="1" required>
+                            {{ __('I understand this ends my private pricing: I will move to the standard price of the plan I choose.') }}
+                        </label>
+                    @endif
                     <label>
                         <input type="checkbox" name="confirm" value="1" required>
                         {{ __('I understand what this change does.') }}

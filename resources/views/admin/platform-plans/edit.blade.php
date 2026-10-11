@@ -58,8 +58,11 @@
                         <div class="col-md-3 mb-1">
                             <label class="form-label" for="billing_cycle">Billing cycle</label>
                             <select class="form-select" id="billing_cycle" name="billing_cycle">
-                                <option value="monthly" @selected(old('billing_cycle', $catalog->billing_cycle) === 'monthly')>Monthly</option>
+                                <option value="every_28_days" @selected(old('billing_cycle', $catalog->billing_cycle) === 'every_28_days')>Every 28 days</option>
                                 <option value="yearly" @selected(old('billing_cycle', $catalog->billing_cycle) === 'yearly')>Yearly</option>
+                                @if ($catalog->billing_cycle === 'monthly')
+                                    <option value="monthly" selected>Monthly (legacy &mdash; not an exact 28-day cadence)</option>
+                                @endif
                             </select>
                         </div>
                         <div class="col-md-3 mb-1">

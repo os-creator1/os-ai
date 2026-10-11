@@ -29,6 +29,23 @@
             <dt class="col-sm-3">Tier</dt>
             <dd class="col-sm-9">{{ $subscription->catalog?->display_name ?? '—' }}</dd>
 
+            <dt class="col-sm-3">Billing</dt>
+            <dd class="col-sm-9" data-testid="po-subscription-billing">
+                {{ $subscription->price_snapshot }} {{ $subscription->currency_code }}
+                · {{ \App\Library\PlatformBilling\BillingCycle::label((string) $subscription->billing_cycle_snapshot) }}
+                @if ($subscription->trial_days_snapshot) · {{ $subscription->trial_days_snapshot }}-day trial @endif
+            </dd>
+
+            @if ($subscription->offerRedemption)
+                <dt class="col-sm-3">Private offer</dt>
+                <dd class="col-sm-9" data-testid="po-subscription-offer">
+                    <a href="{{ route('admin.platform-billing.offers.show', [$subscription->offerRedemption->offer->uid]) }}">{{ $subscription->offerRedemption->offer->label }}</a>
+                    · {{ $subscription->offerRedemption->state }}
+                    @if ($subscription->offerRedemption->promo_ends_at) · promotion ends {{ $subscription->offerRedemption->promo_ends_at->toFormattedDateString() }} @endif
+                    · reconciliation: {{ $subscription->offerRedemption->reconcile_state }}
+                </dd>
+            @endif
+
             <dt class="col-sm-3">Provider customer</dt>
             <dd class="col-sm-9"><code>{{ $subscription->provider_customer_id ?? '—' }}</code></dd>
 

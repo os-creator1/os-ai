@@ -28,9 +28,12 @@ use App\Library\Money\StripeMinorUnits;
  *   4. currency equals the selected V1 currency;
  *   5. amount equals the submitted catalog amount EXACTLY, in the smallest
  *      currency unit, using Stripe's own zero-decimal rules;
- *   6. monthly maps to interval `month`, yearly to `year`;
- *   7. `interval_count` is exactly 1 — an `interval=month, interval_count=3`
- *      Price bills quarterly, which is not what a "monthly" catalog row says;
+ *   6. the cycle maps to its Stripe recurrence (BillingCycle): every_28_days is
+ *      `day`, yearly is `year`, legacy monthly is `month`;
+ *   7. `interval_count` matches that recurrence exactly — 28 for every_28_days,
+ *      1 otherwise. An `interval=month, interval_count=3` Price bills
+ *      quarterly, and an `interval=month` Price is NOT an exact 28-day cadence
+ *      (a month is 28 to 31 days), so neither can stand in for the other;
  *   8. livemode matches the platform's configured mode, so a test Price can
  *      never be put on sale against a live key or the reverse.
  *
@@ -48,7 +51,7 @@ final class PlatformPriceVerifier
     /**
      * @param  string  $amount        the submitted catalog price, as a decimal string
      * @param  string  $currencyCode  the selected V1 currency's ISO code
-     * @param  string  $billingCycle  `monthly` or `yearly`
+     * @param  string  $billingCycle  a BillingCycle value
      * @return array<int, string>     the reasons it does NOT match; empty means it does
      *
      * @throws PlatformBillingException when the Price cannot be retrieved at all
@@ -93,24 +96,23 @@ final class PlatformPriceVerifier
             );
         }
 
-        $expectedInterval = $this->intervalFor($billingCycle);
+        $recurrence = BillingCycle::stripeRecurrence($billingCycle);
 
-        if ($expectedInterval === null) {
+        if ($recurrence === null) {
             $reasons[] = 'That billing cycle is not supported.';
-        } elseif ($price->recurring && $price->interval !== $expectedInterval) {
-            $reasons[] = sprintf(
-                'That Stripe Price bills every %s, but this plan is %s.',
-                (string) $price->interval,
-                $billingCycle,
-            );
-        }
+        } elseif ($price->recurring) {
+            [$expectedInterval, $expectedCount] = $recurrence;
 
-        if ($price->recurring && $price->intervalCount !== null && $price->intervalCount !== 1) {
-            $reasons[] = sprintf(
-                'That Stripe Price bills every %d intervals, which is not a plain %s plan.',
-                $price->intervalCount,
-                $billingCycle,
-            );
+            if ($price->interval !== $expectedInterval || ($price->intervalCount ?? 1) !== $expectedCount) {
+                $reasons[] = sprintf(
+                    'That Stripe Price bills every %d %s(s), but this plan is %s (every %d %s(s)).',
+                    $price->intervalCount ?? 1,
+                    (string) $price->interval,
+                    BillingCycle::label($billingCycle),
+                    $expectedCount,
+                    $expectedInterval,
+                );
+            }
         }
 
         $mode = $this->gateway->configurationStatus()['mode'];
@@ -126,15 +128,6 @@ final class PlatformPriceVerifier
         }
 
         return $reasons;
-    }
-
-    private function intervalFor(string $billingCycle): ?string
-    {
-        return match (mb_strtolower(trim($billingCycle))) {
-            'monthly' => 'month',
-            'yearly' => 'year',
-            default => null,
-        };
     }
 
     /** Operator-facing, and deliberately never a raw provider string. */

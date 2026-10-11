@@ -108,6 +108,12 @@ class PlatformSubscription extends Model
         return $this->belongsTo(WorkspacePlanCatalog::class, 'pending_plan_catalog_id');
     }
 
+    /** The Private Offer agreement this subscription currently sits on, if any. */
+    public function offerRedemption(): BelongsTo
+    {
+        return $this->belongsTo(PlatformPrivateOfferRedemption::class, 'offer_redemption_id');
+    }
+
     public function events(): HasMany
     {
         return $this->hasMany(PlatformSubscriptionEvent::class, 'platform_subscription_id');

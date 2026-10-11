@@ -84,6 +84,29 @@
                 Route::post('/sub-account/accept/{token}', 'VerificationController@subAccountAcceptSubmit')->name('sub_account.accept.submit');
             }
 
+            /*
+            |------------------------------------------------------------
+            | Private Offers — the customer's side of a unique offer link.
+            |------------------------------------------------------------
+            |
+            | Registered whether or not public signup is open: an offer is a
+            | private commercial agreement, not a signup page.
+            |
+            | GET on the link is a pure read. Only the authenticated POST in
+            | which the customer ticks "I accept these terms" can start a
+            | Checkout, and nothing is paid or entitled until the provider
+            | confirms it. The token is a 256-bit random secret whose SHA-256 is
+            | all that is stored; the route constraint rejects anything that
+            | could not be one before it reaches the database. The Checkout
+            | return URLs carry the redemption uid, never the secret.
+            */
+            $offerToken = '[A-Za-z0-9_-]{32,64}';
+            Route::get('offers/{token}', 'PrivateOfferController@show')->where('token', $offerToken)->middleware('throttle:60,1')->name('offers.show');
+            Route::get('offers/{token}/signup', 'PrivateOfferController@signup')->where('token', $offerToken)->middleware(['guest', 'throttle:20,1'])->name('offers.signup');
+            Route::post('offers/{token}/accept', 'PrivateOfferController@accept')->where('token', $offerToken)->middleware(['auth', 'throttle:10,1'])->name('offers.accept');
+            Route::get('offers/return/{redemption}', 'PrivateOfferController@checkoutReturn')->whereUuid('redemption')->middleware('auth')->name('offers.return');
+            Route::get('offers/cancelled/{redemption}', 'PrivateOfferController@checkoutCancelled')->whereUuid('redemption')->middleware('auth')->name('offers.cancelled');
+
             // Authentication Routes...
             Route::get('login', 'LoginController@showLoginForm')->name('login');
             Route::post('login', 'LoginController@login')->middleware('throttle:10,1');

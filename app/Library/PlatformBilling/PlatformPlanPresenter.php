@@ -108,6 +108,9 @@ final class PlatformPlanPresenter
             'currency_id' => $catalog->currency_id,
             'currency_code' => $catalog->currency_id === null ? null : ($currencies[$catalog->currency_id] ?? null),
             'billing_cycle' => (string) $catalog->billing_cycle,
+            // "Every 28 days" — never "monthly" for the 28-day cycle.
+            'billing_cycle_label' => BillingCycle::label((string) $catalog->billing_cycle),
+            'billing_cycle_per' => BillingCycle::perLabel((string) $catalog->billing_cycle),
             'trial_enabled' => (bool) $catalog->trial_enabled,
             'trial_days' => $trialDays,
             'available_for_signup' => (bool) $catalog->available_for_signup,

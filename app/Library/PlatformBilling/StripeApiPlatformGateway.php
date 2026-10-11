@@ -65,6 +65,7 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
         string $customerEmail,
         ?int $trialDays,
         ?string $existingCustomerId = null,
+        ?CheckoutOptions $options = null,
     ): CheckoutSessionResult {
         // Verified against Stripe's current Checkout Session reference:
         // mode=subscription is the documented way to set up a fixed-price
@@ -76,11 +77,34 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
             'client_reference_id' => mb_substr($clientReferenceId, 0, 200),
             'success_url' => $successUrl,
             'cancel_url' => $cancelUrl,
+            // A payment method is ALWAYS collected, including for a free trial,
+            // so the first renewal after the trial can be charged
+            // automatically. Stated explicitly rather than relying on the
+            // provider default, because `if_required` would let a trial start
+            // with nothing on file.
+            'payment_method_collection' => 'always',
             'subscription_data' => [
                 // Read back by the finalizer to prove operation identity.
                 'metadata' => ['app_operation_id' => $clientReferenceId],
             ],
         ];
+
+        if ($options !== null) {
+            if ($options->expiresAt !== null) {
+                $params['expires_at'] = $options->expiresAt;
+            }
+
+            if ($options->subscriptionMetadata !== []) {
+                $params['subscription_data']['metadata'] = array_merge(
+                    $options->subscriptionMetadata,
+                    $params['subscription_data']['metadata'],
+                );
+            }
+
+            if ($options->sessionMetadata !== []) {
+                $params['metadata'] = $options->sessionMetadata;
+            }
+        }
 
         if ($existingCustomerId !== null) {
             $params['customer'] = $existingCustomerId;
@@ -161,7 +185,166 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
             interval: $recurring->interval ?? null,
             intervalCount: isset($recurring->interval_count) ? (int) $recurring->interval_count : null,
             livemode: (bool) ($price->livemode ?? false),
+            productId: $this->productIdOf($price),
         );
+    }
+
+    public function ensureProduct(string $name, ?string $existingProductId, string $idempotencyKey): string
+    {
+        try {
+            if ($existingProductId !== null && $existingProductId !== '') {
+                try {
+                    $product = $this->client()->products->retrieve($existingProductId, []);
+
+                    if ((bool) ($product->active ?? false)) {
+                        return (string) $product->id;
+                    }
+                } catch (ApiErrorException) {
+                    // Not retrievable on THIS account: fall through and create
+                    // a fresh product rather than trusting a foreign id.
+                }
+            }
+
+            $product = $this->client()->products->create(
+                ['name' => mb_substr($name, 0, 250), 'metadata' => ['app_scope' => 'platform_plan']],
+                ['idempotency_key' => $idempotencyKey],
+            );
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        return (string) $product->id;
+    }
+
+    public function createRecurringPrice(
+        string $productId,
+        int $unitAmountMinor,
+        string $currencyCode,
+        string $interval,
+        int $intervalCount,
+        string $nickname,
+        array $metadata,
+        string $idempotencyKey,
+    ): ProviderPriceSnapshot {
+        try {
+            $price = $this->client()->prices->create([
+                'product' => $productId,
+                'unit_amount' => $unitAmountMinor,
+                'currency' => mb_strtolower($currencyCode),
+                'recurring' => ['interval' => $interval, 'interval_count' => $intervalCount],
+                'nickname' => mb_substr($nickname, 0, 250),
+                'metadata' => $metadata,
+            ], ['idempotency_key' => $idempotencyKey]);
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        $recurring = $price->recurring ?? null;
+
+        return new ProviderPriceSnapshot(
+            id: (string) $price->id,
+            active: (bool) ($price->active ?? false),
+            currency: mb_strtoupper((string) ($price->currency ?? '')),
+            unitAmount: isset($price->unit_amount) ? (int) $price->unit_amount : null,
+            recurring: ((string) ($price->type ?? '')) === 'recurring',
+            interval: $recurring->interval ?? null,
+            intervalCount: isset($recurring->interval_count) ? (int) $recurring->interval_count : null,
+            livemode: (bool) ($price->livemode ?? false),
+            productId: $this->productIdOf($price),
+        );
+    }
+
+    public function applyPriceSchedule(string $providerSubscriptionId, array $phases, string $idempotencyKey): PlatformSubscriptionSnapshot
+    {
+        if (count($phases) < 2) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        try {
+            $current = $this->client()->subscriptions->retrieve($providerSubscriptionId, []);
+
+            // The schedule begins as an exact copy of the live subscription, so
+            // its first phase carries the real start (and any running trial).
+            //
+            // A schedule that an earlier, interrupted attempt already created
+            // (its idempotency key may have aged out) is re-used rather than
+            // fought with: a subscription can sit under only one.
+            $existingScheduleId = self::scheduleIdOf($current);
+            $schedule = $existingScheduleId !== null
+                ? $this->client()->subscriptionSchedules->retrieve($existingScheduleId, [])
+                : $this->client()->subscriptionSchedules->create(
+                    ['from_subscription' => $providerSubscriptionId],
+                    ['idempotency_key' => $idempotencyKey . ':create'],
+                );
+
+            $trialEnd = $current->trial_end ?? null;
+            $stillTrialing = is_int($trialEnd) && $trialEnd > time();
+            $startDate = $schedule->phases[0]->start_date ?? ($current->start_date ?? null);
+
+            $payload = [];
+            $last = count($phases) - 1;
+
+            foreach ($phases as $index => $phase) {
+                $entry = ['items' => [['price' => $phase->priceId, 'quantity' => 1]]];
+
+                if ($index === 0) {
+                    if (is_int($startDate)) {
+                        $entry['start_date'] = $startDate;
+                    }
+
+                    if ($stillTrialing) {
+                        $entry['trial_end'] = $trialEnd;
+                    }
+                }
+
+                if ($index === $last) {
+                    // One iteration of the final price, after which the schedule
+                    // releases and the subscription simply carries on at it.
+                    $entry['iterations'] = 1;
+                } else {
+                    $entry['end_date'] = (int) $phase->endsAt?->getTimestamp();
+                }
+
+                // Moving between phases never creates a proration line or an
+                // unplanned charge: the Prices are agreed in advance.
+                $entry['proration_behavior'] = 'none';
+                $payload[] = $entry;
+            }
+
+            $this->client()->subscriptionSchedules->update($schedule->id, [
+                'end_behavior' => 'release',
+                'phases' => $payload,
+            ], ['idempotency_key' => $idempotencyKey . ':phases']);
+
+            $subscription = $this->client()->subscriptions->retrieve($providerSubscriptionId, []);
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        return $this->subscriptionSnapshot($subscription);
+    }
+
+    public function releaseSchedule(string $providerScheduleId): void
+    {
+        try {
+            $schedule = $this->client()->subscriptionSchedules->retrieve($providerScheduleId, []);
+
+            if (in_array((string) ($schedule->status ?? ''), ['released', 'completed', 'canceled'], true)) {
+                return;
+            }
+
+            $this->client()->subscriptionSchedules->release($providerScheduleId, []);
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+    }
+
+    /** The product a Price hangs off, whether the API answered an id or an expanded object. */
+    private function productIdOf(object $price): ?string
+    {
+        $product = $price->product ?? null;
+
+        return is_string($product) ? $product : (isset($product->id) ? (string) $product->id : null);
     }
 
     public function retrieveSubscription(string $providerSubscriptionId): PlatformSubscriptionSnapshot
@@ -324,7 +507,19 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
             canceledAt: self::timestamp($subscription->canceled_at ?? null),
             endedAt: self::timestamp($subscription->ended_at ?? null),
             operationId: $subscription->metadata->app_operation_id ?? null,
+            scheduleId: self::scheduleIdOf($subscription),
         );
+    }
+
+    private static function scheduleIdOf(object $subscription): ?string
+    {
+        $schedule = $subscription->schedule ?? null;
+
+        if (is_string($schedule) && $schedule !== '') {
+            return $schedule;
+        }
+
+        return isset($schedule->id) ? (string) $schedule->id : null;
     }
 
     private static function timestamp(mixed $value): ?CarbonImmutable

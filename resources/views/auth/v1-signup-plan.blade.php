@@ -46,7 +46,7 @@
                            required>
                     <label class="form-check-label" for="resume_{{ $plan['tier_value'] }}">
                         <strong>{{ $plan['display_name'] }}</strong>
-                        <span>{{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle'] }}</span>
+                        <span>{{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle_per'] }}</span>
                         @if ($plan['trial_days'] !== null)
                             <span class="d-block text-muted small">{{ trans_choice('{1} :count day free trial|[2,*] :count day free trial', $plan['trial_days'], ['count' => $plan['trial_days']]) }}</span>
                         @endif

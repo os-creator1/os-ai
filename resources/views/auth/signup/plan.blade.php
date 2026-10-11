@@ -35,7 +35,7 @@
                 <h2 class="h4 mb-25">{{ $plan['display_name'] }}</h2>
                 <p class="mb-50">
                     <span class="h3 fw-bold">{{ $plan['price'] }} {{ $plan['currency_code'] }}</span>
-                    <span class="text-muted">/ {{ $plan['billing_cycle'] }}</span>
+                    <span class="text-muted">/ {{ $plan['billing_cycle_per'] }}</span>
                 </p>
                 @if ($plan['trial_days'] !== null)
                     <p class="mb-50"><span class="badge bg-light-primary">{{ trans_choice('{1} :count day free trial|[2,*] :count day free trial', $plan['trial_days'], ['count' => $plan['trial_days']]) }}</span></p>

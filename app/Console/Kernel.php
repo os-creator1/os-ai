@@ -203,6 +203,12 @@
             // overlapping tick applies nothing twice.
             $schedule->command('platform-subscriptions:apply-due-plan-changes')->hourly();
 
+            // Private Offers — release lapsed unpaid reservations and finish
+            // temporary-promotion schedules the provider has not yet been told
+            // about. Without it a promotion whose scheduling call failed would
+            // stay on its discounted price for ever.
+            $schedule->command('platform-offers:sweep')->everyFifteenMinutes()->withoutOverlapping();
+
             // Customer Experience Slice 5 §12.2 — "alerts before thresholds".
             // The command was built (and tested) but nothing ever ran it, so
             // no billing contact was ever warned before a spending limit was

@@ -55,6 +55,21 @@ final class V1SignupDraft
         $this->save($draft);
     }
 
+    /** The private-offer link this signup began from, if any. */
+    public function offerToken(): ?string
+    {
+        $token = $this->all()['offer_token'] ?? null;
+
+        return is_string($token) && $token !== '' ? $token : null;
+    }
+
+    public function setOfferToken(string $token): void
+    {
+        $draft = $this->all();
+        $draft['offer_token'] = $token;
+        $this->save($draft);
+    }
+
     public function forgetTier(): void
     {
         $draft = $this->all();

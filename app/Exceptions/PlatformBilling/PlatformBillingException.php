@@ -68,6 +68,18 @@ final class PlatformBillingException extends RuntimeException
      */
     public const CHANGE_IN_PROGRESS = 'change_in_progress';
 
+    public const CHANGE_ENDS_PRIVATE_PRICING = 'change_ends_private_pricing';
+
+    public const OFFER_UNAVAILABLE = 'offer_unavailable';
+
+    public const OFFER_NOT_FOR_YOU = 'offer_not_for_you';
+
+    public const OFFER_EMAIL_UNVERIFIED = 'offer_email_unverified';
+
+    public const OFFER_TERMS_CHANGED = 'offer_terms_changed';
+
+    public const OFFER_FULLY_REDEEMED = 'offer_fully_redeemed';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -90,6 +102,12 @@ final class PlatformBillingException extends RuntimeException
             self::CHECKOUT_ALREADY_COMPLETED => 'That checkout has already been paid.',
             self::CHECKOUT_CONTENDED => 'Something else changed this checkout. Please try again.',
             self::CHANGE_IN_PROGRESS => 'A plan change is still being confirmed. Please try again shortly.',
+            self::CHANGE_ENDS_PRIVATE_PRICING => 'Changing plan ends your private pricing and moves you to the standard plan price. Please confirm that you want to continue.',
+            self::OFFER_UNAVAILABLE => 'This offer is no longer available.',
+            self::OFFER_NOT_FOR_YOU => 'This offer was not made for this account.',
+            self::OFFER_EMAIL_UNVERIFIED => 'Please verify your email address to use this offer.',
+            self::OFFER_TERMS_CHANGED => 'The terms of this offer changed. Please review them and accept again.',
+            self::OFFER_FULLY_REDEEMED => 'This offer has already been used.',
             default => 'That could not be completed.',
         });
     }

@@ -36,6 +36,8 @@ final readonly class PlatformSubscriptionSnapshot
         public ?CarbonInterface $endedAt = null,
         /** Our own durable row UID, echoed back through provider metadata. */
         public ?string $operationId = null,
+        /** The Subscription Schedule managing this subscription's Price sequence, if any. */
+        public ?string $scheduleId = null,
     ) {
     }
 }

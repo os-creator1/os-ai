@@ -48,7 +48,8 @@ trait CreatesPlatformSubscriptions
         $catalog->forceFill([
             'price' => $price,
             'currency_id' => $this->fixtureCurrencyId(),
-            'billing_cycle' => 'monthly',
+            // Every platform plan bills EXACTLY every 28 days.
+            'billing_cycle' => 'every_28_days',
             'is_active' => true,
             'available_for_signup' => true,
             'trial_enabled' => $trialDays !== null,
@@ -63,8 +64,8 @@ trait CreatesPlatformSubscriptions
         $this->stripe->definePrice($priceId, [
             'currency' => 'USD',
             'unit_amount' => \App\Library\Money\StripeMinorUnits::toMinor($price, 'USD'),
-            'interval' => 'month',
-            'interval_count' => 1,
+            'interval' => 'day',
+            'interval_count' => 28,
             'livemode' => false,
         ]);
 

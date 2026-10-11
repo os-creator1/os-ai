@@ -62,6 +62,7 @@ class PlanSubscriptionController extends CustomerBaseController
         try {
             $direction = $this->subscriptions->requestPlanChange(
                 $workspace, $catalog, (int) $workspace->owner_user_id,
+                acknowledgeEndsPrivatePricing: $request->boolean('confirm_ends_private_pricing'),
             );
         } catch (PlatformBillingException $e) {
             return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
