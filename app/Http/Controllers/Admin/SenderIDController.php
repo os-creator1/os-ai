@@ -224,6 +224,13 @@
          * @throws AuthorizationException
          */
 
+        public function document(Senderid $senderid)
+        {
+            $this->authorize('edit sender_id');
+
+            return \App\Library\Uploads\SenderIdDocumentStore::response($senderid);
+        }
+
         public function show(Senderid $senderid): Factory|View|Application
         {
             $this->authorize('edit sender_id');

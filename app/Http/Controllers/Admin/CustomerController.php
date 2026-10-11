@@ -647,7 +647,7 @@
             Notifications::where('user_id', $customer->id)->delete();
             Plan::where('user_id', $customer->id)->delete();
             Reports::where('user_id', $customer->id)->delete();
-            Senderid::where('user_id', $customer->id)->delete();
+            \App\Library\Uploads\SenderIdDocumentStore::deleteRows(Senderid::where('user_id', $customer->id));
             SendingServer::where('user_id', $customer->id)->delete();
             Subscription::where('user_id', $customer->id)->delete();
             Templates::where('user_id', $customer->id)->delete();

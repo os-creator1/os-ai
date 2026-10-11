@@ -110,6 +110,7 @@
 
     Route::post('senderid/search', 'SenderIDController@search')->name('senderid.search');
     Route::get('senderid/request', 'SenderIDController@request')->name('senderid.request');
+    Route::get('senderid/{senderid}/document', 'SenderIDController@document')->name('senderid.document');
     Route::get('senderid/{senderid}/pay', 'SenderIDController@pay')->name('senderid.pay');
     Route::post('senderid/{senderid}/pay', 'SenderIDController@payment');
     Route::any('senderid/{senderid}/success', 'PaymentController@successfulSenderIDPayment')->name('senderid.payment_success');

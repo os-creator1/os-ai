@@ -736,27 +736,6 @@
 
         }
 
-        /**
-         * Upload and resize avatar.
-         */
-        public static function uploadFile($file): string
-        {
-            $path        = 'senderid_docs/';
-            $upload_path = public_path($path);
-
-            if ( ! file_exists($upload_path)) {
-                mkdir($upload_path, 0777, true);
-            }
-
-            $filename = 'senderid_' . time() . '.' . $file->getClientOriginalExtension();
-
-            // save to server
-            $file->move($upload_path, $filename);
-
-            return asset('/senderid_docs') . '/' . $filename;
-
-        }
-
         public static function strReplaceFirst($search, $replace, $subject)
         {
             $search = '/' . preg_quote($search, '/') . '/';

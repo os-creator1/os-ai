@@ -198,7 +198,7 @@
             if ($user_id) {
                 $exist = $senderid->where('sender_id', $senderid->sender_id)->where('user_id', $user_id)->first();
                 if ($exist) {
-                    if ( ! $exist->delete()) {
+                    if (\App\Library\Uploads\SenderIdDocumentStore::deleteRows(Senderid::query()->whereKey($exist->getKey())) < 1) {
                         throw new GeneralException(__('locale.exceptions.something_went_wrong'));
                     }
 
@@ -206,7 +206,7 @@
                 }
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));
             } else {
-                if ( ! $senderid->delete()) {
+                if (\App\Library\Uploads\SenderIdDocumentStore::deleteRows(Senderid::query()->whereKey($senderid->getKey())) < 1) {
                     throw new GeneralException(__('locale.exceptions.something_went_wrong'));
                 }
             }
@@ -227,7 +227,7 @@
         {
             DB::transaction(function () use ($ids) {
                 // This won't call eloquent events, change to destroy if needed
-                if ($this->query()->whereIn('uid', $ids)->delete()) {
+                if (\App\Library\Uploads\SenderIdDocumentStore::deleteRows($this->query()->whereIn('uid', $ids))) {
                     (new Templates)->whereIn('sender_id', $ids)->update([
                         'sender_id' => null,
                     ]);
