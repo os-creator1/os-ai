@@ -209,11 +209,11 @@ After the first successful deploy, over SSH as `forge`:
 cd /home/forge/staging.getmotiongrove.com/current
 php8.3 artisan platform:install --owner-email=<you@getmotiongrove.com>   # needs a real SSH terminal: the owner password is a concealed prompt
 ```
-**Why this is required:** a deploy only runs migrations. The `app_config` settings rows (about 76, including
-`custom_script` and `license`) are seeded by `platform:install` (its `db:seed` step). Before it has run, the login page
-crashes with `Attempt to read property "value" on null` (the helper is now tolerant, but the platform is still not
-configured). On a fresh, empty database this is safe: the only truncating seeders (`AppConfigSeeder`,
-`PaymentMethodsSeeder`) have nothing of value to lose, and every other step is idempotent.
+**Why this is required:** a deploy only runs migrations. `platform:install` creates the Platform Owner (interactive
+password) and seeds the platform's default settings and catalogs (its `db:seed` step); it does **not** seed any licence row.
+A missing `app_config` row no longer crashes the login page (`Helper::app_config()` returns null), but the platform is not
+configured until the install has run. On a fresh, empty database this is safe: the only truncating seeders
+(`AppConfigSeeder`, `PaymentMethodsSeeder`) have nothing of value to lose, and every other step is idempotent.
 
 **The inherited licence gate is retired.** There is no "Verify Product code" step any more: signed-in owners and customers
 go straight to their dashboards, and nothing calls the original vendor's server. Do **not** store any licence value. If your
