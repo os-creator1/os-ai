@@ -62,7 +62,9 @@ final class SenderIdDocumentStore
         abort_if($extension === null, 422, 'Unsupported document type.');
 
         $path = self::DIR . '/' . Str::random(40) . '.' . $extension;
-        Storage::disk('local')->put($path, $file->get());
+        if (Storage::disk('local')->put($path, $file->get()) !== true) {
+            throw new \RuntimeException('Unable to store sender-ID document in private storage.');
+        }
 
         return self::PREFIX . $path;
     }
