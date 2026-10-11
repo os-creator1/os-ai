@@ -24,7 +24,7 @@ final class ParentAccountSwitch
      */
     public function for(User $user, CustomerContext $context): ?array
     {
-        if ($user->parent_id === null || $context->isViewingAsClient()) {
+        if (! config('account.allow_parent_switch') || $user->parent_id === null || $context->isViewingAsClient()) {
             return null;
         }
 
