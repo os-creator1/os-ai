@@ -56,9 +56,19 @@ class ContactDirectoryController extends CustomerBaseController
 
         $search = mb_substr(trim((string) $request->query('q', '')), 0, 100);
 
+        // The group filter offers this Business's own groups only; an unknown
+        // or foreign uid is ignored rather than widening or erroring.
+        $groups = ContactGroups::query()
+            ->where('business_id', $business->id)
+            ->orderBy('name')
+            ->get(['id', 'uid', 'name']);
+        $group = $groups->firstWhere('uid', (string) $request->query('group', ''));
+
         return view('customer.people.index', [
-            'contacts' => $this->directory->page($business, $search, (int) Auth::id()),
+            'contacts' => $this->directory->page($business, $search, (int) Auth::id(), $group?->id),
             'search' => $search,
+            'groups' => $groups,
+            'selectedGroup' => $group,
         ]);
     }
 

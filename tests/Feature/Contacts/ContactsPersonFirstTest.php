@@ -117,6 +117,31 @@ class ContactsPersonFirstTest extends TestCase
         $this->get($this->peopleUrl($workspace, $business) . '?q=nobody')->assertOk()->assertSee('No contacts match');
     }
 
+    public function test_the_group_filter_narrows_the_list_combines_with_search_and_ignores_foreign_groups(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $customers = $this->group($business, 'Customers');
+        $leads = $this->group($business, 'Leads');
+        $this->person($customers, ['FIRST_NAME' => 'Ana', 'COMPANY' => 'Harbor Bakery']);
+        $this->person($customers, ['FIRST_NAME' => 'Cleo', 'COMPANY' => 'Dock Works']);
+        $this->person($leads, ['FIRST_NAME' => 'Ben', 'COMPANY' => 'Harbor Hardware']);
+        $foreign = $this->group($this->otherBusinessOf($owner)['business'], 'Elsewhere');
+        $this->authenticateAs($owner);
+        $url = $this->peopleUrl($workspace, $business);
+
+        $page = $this->get($url . '?group=' . $leads->uid)->assertOk();
+        $page->assertSee('Harbor Hardware')->assertDontSee('Harbor Bakery')->assertDontSee('Dock Works');
+        $page->assertSee('value="' . $leads->uid . '" selected', false);
+        $page->assertDontSee('Elsewhere');
+
+        $this->get($url . '?group=' . $customers->uid . '&q=harbor')->assertOk()
+            ->assertSee('Harbor Bakery')->assertDontSee('Dock Works')->assertDontSee('Harbor Hardware');
+
+        // Another Business's group never narrows (or widens) this list.
+        $this->get($url . '?group=' . $foreign->uid)->assertOk()
+            ->assertSee('Harbor Bakery')->assertSee('Harbor Hardware');
+    }
+
     public function test_add_contact_goes_straight_to_the_only_group_and_offers_a_choice_between_several(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);

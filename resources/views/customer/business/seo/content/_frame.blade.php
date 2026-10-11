@@ -18,6 +18,7 @@
 
 @section('page-style')
     @include('partials.section-router._styles')
+    @include('partials.cx._styles')
     @include('customer.business.seo.content._styles')
 @endsection
 
