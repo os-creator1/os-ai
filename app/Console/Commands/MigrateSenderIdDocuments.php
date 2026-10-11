@@ -23,10 +23,10 @@ class MigrateSenderIdDocuments extends Command
     public function handle(): int
     {
         $apply = (bool) $this->option('apply');
-        $moved = $quarantined = $missing = 0;
+        $moved = $quarantined = $missing = $failed = 0;
 
         Senderid::query()->whereNotNull('document')->where('document', 'not like', SenderIdDocumentStore::PREFIX . '%')
-            ->orderBy('id')->each(function (Senderid $row) use ($apply, &$moved, &$quarantined, &$missing) {
+            ->orderBy('id')->each(function (Senderid $row) use ($apply, &$moved, &$quarantined, &$missing, &$failed) {
                 $name = basename((string) parse_url($row->document, PHP_URL_PATH));
                 $path = public_path(SenderIdDocumentStore::LEGACY_DIR . '/' . $name);
 
@@ -41,29 +41,58 @@ class MigrateSenderIdDocuments extends Command
                 $ext = preg_match('/^[A-Za-z0-9_\-]+\.(pdf|jpg|jpeg|png|doc|docx)$/i', $name) ? SenderIdDocumentStore::safeExtension($upload) : null;
 
                 if ($ext === null) {
-                    $quarantined++;
                     $this->warn("quarantine  #{$row->id} {$name}");
                     if ($apply) {
-                        Storage::disk('local')->makeDirectory('senderid-quarantine');
-                        File::move($path, Storage::disk('local')->path('senderid-quarantine/' . Str::random(16) . '.bin'));
+                        $disk = Storage::disk('local');
+                        if (! $disk->makeDirectory('senderid-quarantine')) {
+                            $failed++;
+                            $this->error("Cannot prepare private quarantine for #{$row->id}; original file and database row preserved.");
+
+                            return;
+                        }
+
+                        $quarantinePath = $disk->path('senderid-quarantine/' . Str::random(16) . '.bin');
+                        if (! File::move($path, $quarantinePath)) {
+                            $failed++;
+                            $this->error("Cannot move #{$row->id} into quarantine; original file and database row preserved.");
+
+                            return;
+                        }
+
+                        // Never detach a record from its original file unless the private move succeeded.
                         $row->forceFill(['document' => null])->save();
                     }
+
+                    $quarantined++;
 
                     return;
                 }
 
-                $moved++;
                 $this->line("move        #{$row->id} {$name} -> private ({$ext})");
                 if ($apply) {
                     $relative = SenderIdDocumentStore::DIR . '/' . Str::random(40) . '.' . $ext;
-                    Storage::disk('local')->put($relative, File::get($path));
+                    if (Storage::disk('local')->put($relative, File::get($path)) !== true) {
+                        $failed++;
+                        $this->error("Private storage write failed for #{$row->id}; original file and database row preserved.");
+
+                        return;
+                    }
+
+                    // Do not touch the only original until the private copy is persisted.
                     $row->forceFill(['document' => SenderIdDocumentStore::PREFIX . $relative])->save();
-                    File::delete($path);
+                    if (! File::delete($path)) {
+                        $failed++;
+                        $this->error("Private copy saved for #{$row->id}, but public original could not be deleted: {$path}");
+
+                        return;
+                    }
                 }
+
+                $moved++;
             });
 
-        $this->info(($apply ? 'Applied' : 'Dry run') . ": {$moved} moved, {$quarantined} quarantined, {$missing} missing.");
+        $this->info(($apply ? 'Applied' : 'Dry run') . ": {$moved} moved, {$quarantined} quarantined, {$missing} missing, {$failed} failed.");
 
-        return self::SUCCESS;
+        return $failed > 0 ? self::FAILURE : self::SUCCESS;
     }
 }
