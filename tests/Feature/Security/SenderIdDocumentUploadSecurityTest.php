@@ -116,6 +116,60 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertFileDoesNotExist(public_path('senderid_docs'));
     }
 
+    public function test_private_upload_rejects_a_failed_storage_write(): void
+    {
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturn(false);
+        Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
+
+        $this->expectException(\RuntimeException::class);
+        SenderIdDocumentStore::store($this->realUpload('proof.pdf', self::PDF));
+    }
+
+    public function test_failed_private_migration_preserves_the_legacy_file_and_document_reference(): void
+    {
+        $customer = $this->customer();
+        File::ensureDirectoryExists(public_path('senderid_docs'));
+        $path = public_path('senderid_docs/senderid_1700000020.pdf');
+        File::put($path, self::PDF);
+        $url = url('/senderid_docs/senderid_1700000020.pdf');
+        $senderid = Senderid::create([
+            'user_id' => $customer->user_id,
+            'sender_id' => 'FAIL1',
+            'status' => 'pending',
+            'document' => $url,
+        ]);
+
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturn(false);
+        Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+        $this->assertSame($url, $senderid->fresh()->document);
+        $this->assertFileExists($path);
+    }
+
+    public function test_failed_quarantine_move_preserves_the_original_and_document_reference(): void
+    {
+        $customer = $this->customer();
+        File::ensureDirectoryExists(public_path('senderid_docs'));
+        $path = public_path('senderid_docs/senderid_1700000021.php');
+        File::put($path, '<?php echo "unsafe";');
+        $url = url('/senderid_docs/senderid_1700000021.php');
+        $senderid = Senderid::create([
+            'user_id' => $customer->user_id,
+            'sender_id' => 'FAIL2',
+            'status' => 'pending',
+            'document' => $url,
+        ]);
+
+        File::partialMock()->shouldReceive('move')->once()->andReturn(false);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+        $this->assertSame($url, $senderid->fresh()->document);
+        $this->assertFileExists($path);
+    }
+
     public function test_owner_and_admin_can_download_but_other_tenant_cannot(): void
     {
         $owner = $this->customer(['create_sender_id', 'view_sender_id']);
