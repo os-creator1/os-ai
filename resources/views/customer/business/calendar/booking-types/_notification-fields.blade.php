@@ -14,72 +14,95 @@
     $maxReminders = \App\Models\BookingType::MAX_REMINDERS;
 @endphp
 
-<x-card title="Customer notifications" class="mb-2" data-section="booking-type-notifications">
-    <p class="text-caption">
-        Sent to the customer after they book and shortly before the appointment. Times are in the
-        business time zone. They include the date, time, location and your meeting instructions, plus a calendar link.
-    </p>
-
-    <h3 class="text-label mb-50">Confirmation</h3>
-    <input type="hidden" name="notify_email" value="0">
-    <div class="form-check mb-50">
-        <input class="form-check-input" type="checkbox" id="notify_email" name="notify_email" value="1" @checked($emailOn)>
-        <label class="form-check-label" for="notify_email">Send by email</label>
+<section class="cx-card" data-section="booking-type-notifications">
+    <div class="cx-card-head is-plain">
+        <div>
+            <h2 class="cx-card-title">Customer notifications</h2>
+            <p class="cx-card-sub">
+                Sent to the customer after they book and shortly before the appointment. Times are in the
+                business time zone. They include the date, time, location and your meeting instructions, plus a calendar link.
+            </p>
+        </div>
     </div>
-    @if ($emailOn && ! $notificationReadiness['email']['ready'])
-        <p class="text-caption text-danger" data-notification-warning="email">Email is not ready: {{ $notificationReadiness['email']['reason'] }}</p>
-    @endif
+    <div class="cx-card-body">
+        <h3 class="cx-meta-label mb-50">Confirmation</h3>
 
-    <input type="hidden" name="notify_sms" value="0">
-    <div class="form-check mb-50">
-        <input class="form-check-input" type="checkbox" id="notify_sms" name="notify_sms" value="1" @checked($smsOn)>
-        <label class="form-check-label" for="notify_sms">Send by text message</label>
-    </div>
-    <p class="text-caption mb-1">
-        Text messages go only to customers who tick the text-message consent box on the booking page.
-        That consent covers this appointment's messages only — it is not marketing consent.
-    </p>
-    @if ($smsOn && ! $notificationReadiness['sms']['ready'])
-        <p class="text-caption text-danger" data-notification-warning="sms">
-            Text messages are not ready: {{ $notificationReadiness['sms']['reason'] }}
-            Bookings still go through; customers just will not be texted.
-        </p>
-    @elseif (! $smsOn && ! $notificationReadiness['sms']['ready'])
-        <p class="text-caption" data-notification-hint="sms">Text messages are not set up yet: {{ $notificationReadiness['sms']['reason'] }}</p>
-    @endif
+        <div class="bt-notify-option">
+            <input type="hidden" name="notify_email" value="0">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="notify_email" name="notify_email" value="1" @checked($emailOn)>
+                <label class="form-check-label" for="notify_email">Send by email</label>
+            </div>
+            @if ($emailOn && ! $notificationReadiness['email']['ready'])
+                <div class="cx-callout is-danger" data-notification-warning="email">
+                    <x-ds-icon name="alert-triangle" size="15" aria-hidden="true" />
+                    <span class="cx-callout-text">Email is not ready: {{ $notificationReadiness['email']['reason'] }}</span>
+                </div>
+            @endif
+        </div>
 
-    <h3 class="text-label mb-50 mt-1">Reminders</h3>
-    <input type="hidden" name="reminders_submitted" value="1">
-    <div id="reminder-rows" data-max="{{ $maxReminders }}">
-        @foreach ($offsets as $offset)
-            <div class="d-flex align-items-center mb-50" data-reminder-row>
-                <select name="reminder_offsets[]" class="form-control mr-1" style="max-width:260px" aria-label="Reminder timing">
+        <div class="bt-notify-option">
+            <input type="hidden" name="notify_sms" value="0">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="notify_sms" name="notify_sms" value="1" @checked($smsOn)>
+                <label class="form-check-label" for="notify_sms">Send by text message</label>
+            </div>
+            <p class="cx-hint mb-0">
+                Text messages go only to customers who tick the text-message consent box on the booking page.
+                That consent covers this appointment's messages only — it is not marketing consent.
+            </p>
+            @if ($smsOn && ! $notificationReadiness['sms']['ready'])
+                <div class="cx-callout is-danger" data-notification-warning="sms">
+                    <x-ds-icon name="alert-triangle" size="15" aria-hidden="true" />
+                    <span class="cx-callout-text">
+                        Text messages are not ready: {{ $notificationReadiness['sms']['reason'] }}
+                        Bookings still go through; customers just will not be texted.
+                    </span>
+                </div>
+            @elseif (! $smsOn && ! $notificationReadiness['sms']['ready'])
+                <div class="cx-callout is-warning" data-notification-hint="sms">
+                    <x-ds-icon name="alert-circle" size="15" aria-hidden="true" />
+                    <span class="cx-callout-text">Text messages are not set up yet: {{ $notificationReadiness['sms']['reason'] }}</span>
+                </div>
+            @endif
+        </div>
+
+        <h3 class="cx-meta-label mb-50 mt-1">Reminders</h3>
+        <input type="hidden" name="reminders_submitted" value="1">
+        <div id="reminder-rows" data-max="{{ $maxReminders }}">
+            @foreach ($offsets as $offset)
+                <div class="bt-reminder-row" data-reminder-row>
+                    <select name="reminder_offsets[]" class="form-control" aria-label="Reminder timing">
+                        @foreach ($options as $value => $label)
+                            <option value="{{ $value }}" @selected((int) $offset === $value)>{{ $label }}</option>
+                        @endforeach
+                    </select>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-remove-reminder>Remove</button>
+                </div>
+            @endforeach
+        </div>
+        @error('reminder_offsets') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+        <p class="text-caption" id="reminder-empty" @if ($offsets !== []) hidden @endif>No reminders. Customers get the confirmation only.</p>
+        <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" id="add-reminder">
+            <x-ds-icon name="plus" size="14" aria-hidden="true" />Add reminder
+        </button>
+        <small class="cx-hint mt-50">
+            Reminders use the same channels as the confirmation. Changes apply to bookings made after you save.
+            A reminder is never sent for a time that has already passed, a cancelled appointment, or a time the appointment has moved away from.
+        </small>
+
+        <template id="reminder-row-template">
+            <div class="bt-reminder-row" data-reminder-row>
+                <select name="reminder_offsets[]" class="form-control" aria-label="Reminder timing">
                     @foreach ($options as $value => $label)
-                        <option value="{{ $value }}" @selected((int) $offset === $value)>{{ $label }}</option>
+                        <option value="{{ $value }}" @selected($value === 1440)>{{ $label }}</option>
                     @endforeach
                 </select>
                 <button type="button" class="btn btn-sm btn-outline-secondary" data-remove-reminder>Remove</button>
             </div>
-        @endforeach
+        </template>
     </div>
-    <p class="text-caption" id="reminder-empty" @if ($offsets !== []) hidden @endif>No reminders. Customers get the confirmation only.</p>
-    <button type="button" class="btn btn-sm btn-outline-primary" id="add-reminder">Add reminder</button>
-    <small class="text-caption d-block mt-50">
-        Reminders use the same channels as the confirmation. Changes apply to bookings made after you save.
-        A reminder is never sent for a time that has already passed, a cancelled appointment, or a time the appointment has moved away from.
-    </small>
-
-    <template id="reminder-row-template">
-        <div class="d-flex align-items-center mb-50" data-reminder-row>
-            <select name="reminder_offsets[]" class="form-control mr-1" style="max-width:260px" aria-label="Reminder timing">
-                @foreach ($options as $value => $label)
-                    <option value="{{ $value }}" @selected($value === 1440)>{{ $label }}</option>
-                @endforeach
-            </select>
-            <button type="button" class="btn btn-sm btn-outline-secondary" data-remove-reminder>Remove</button>
-        </div>
-    </template>
-</x-card>
+</section>
 
 <script>
     (function () {

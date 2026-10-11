@@ -111,6 +111,10 @@
             transformHref: withPreferredDays,
             beforeSwap: destroyGrid,
             afterSwap: function () {
+                var headActions = document.querySelectorAll('[data-calendar-head-action]');
+                for (var h = 0; h < headActions.length; h++) {
+                    headActions[h].hidden = headActions[h].getAttribute('data-calendar-head-action') !== content.getAttribute('data-calendar-section');
+                }
                 initSection();
             },
             onFail: function () {

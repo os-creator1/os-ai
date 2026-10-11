@@ -10,6 +10,7 @@
     defined by resources/scss/base/tokens/_colors.scss — no new hex value
     is introduced, and an active per-tenant theme override still applies.
 --}}
+@include('partials.cx._styles')
 <style>
     /* ---------------------------------------------------------------
        Module header / subnav
@@ -625,6 +626,128 @@
             flex-wrap: wrap;
         }
     }
+
+
+    /* ---------------------------------------------------------------
+       Booking types — list cards, colour picker, live summary
+    --------------------------------------------------------------- */
+    .calendar-module-head-actions[hidden] { display: none !important; }
+
+    .bt-intro {
+        margin: 0 0 1rem;
+        max-width: 44rem;
+        font-size: .8125rem;
+        color: var(--color-text-muted, #6F6D67);
+    }
+    .bt-intro strong { color: var(--color-text-primary, #262522); }
+
+    .bt-card {
+        position: relative;
+        overflow: hidden;
+        padding-left: .25rem;
+    }
+    .bt-card::before {
+        content: "";
+        position: absolute;
+        top: .875rem;
+        bottom: .875rem;
+        left: .625rem;
+        width: .25rem;
+        border-radius: var(--radius-full, 999px);
+        background: var(--bt-accent, var(--color-border-strong, var(--color-border)));
+    }
+    .bt-card-top {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: .5rem 1rem;
+        padding: .875rem 1.125rem .875rem 1.25rem;
+    }
+    .bt-card-name { margin: 0 0 .3125rem; font-size: .9375rem; font-weight: 600; color: var(--color-text-primary, #262522); overflow-wrap: anywhere; }
+    .bt-card-facts { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem .75rem; font-size: .75rem; color: var(--color-text-muted, #6F6D67); }
+    .bt-card-facts > span { display: inline-flex; align-items: center; gap: .25rem; }
+    .bt-card-bottom { padding: 0 1.125rem .875rem 1.25rem; }
+    .bt-link-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .5rem .75rem;
+        padding: .5rem .5rem .5rem .75rem;
+        border-radius: var(--radius-md, .625rem);
+        background: var(--color-surface-secondary, #FBFAF7);
+        border: 1px solid var(--color-border-subtle, var(--color-border));
+    }
+    .bt-link-url {
+        display: inline-flex;
+        align-items: center;
+        gap: .375rem;
+        flex: 1 1 14rem;
+        min-width: 0;
+        font-size: .75rem;
+        color: var(--color-text-secondary, var(--color-text-muted));
+    }
+    .bt-link-url > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bt-link-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+
+    .bt-colors { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+    .bt-swatch {
+        width: 1.75rem;
+        height: 1.75rem;
+        padding: 0;
+        border-radius: var(--radius-full, 999px);
+        background: var(--bt-swatch);
+        border: 2px solid var(--color-surface, #fff);
+        box-shadow: 0 0 0 1px var(--color-border, #E5E1DA);
+        cursor: pointer;
+    }
+    .bt-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--color-text-primary, #262522); }
+    .bt-swatch:focus-visible { outline: 2px solid var(--color-focus-ring, var(--color-primary)); outline-offset: 2px; }
+    .bt-color-custom { position: relative; display: inline-flex; align-items: center; flex: 0 1 8.5rem; min-width: 6.5rem; }
+    .bt-color-custom .form-control { padding-left: 2rem; }
+    .bt-color-preview {
+        position: absolute;
+        left: .5rem;
+        width: 1rem;
+        height: 1rem;
+        border-radius: var(--radius-full, 999px);
+        background: var(--bt-preview, transparent);
+        box-shadow: inset 0 0 0 1px var(--color-border, #E5E1DA);
+    }
+
+    .bt-summary { list-style: none; margin: 0 0 1rem; padding: 0; }
+    .bt-summary li { display: flex; align-items: flex-start; gap: .5rem; padding: .3125rem 0; font-size: .8125rem; color: var(--color-text-primary, #262522); }
+    .bt-summary li > .ds-icon { flex: 0 0 auto; margin-top: .125rem; color: var(--color-primary, #B5524C); }
+    .bt-aside-actions { display: grid; gap: .5rem; }
+    .bt-aside-actions > .btn { justify-content: center; }
+
+    .bt-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: .75rem 1rem;
+        margin-bottom: 1rem;
+    }
+    .bt-head-title { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+
+    .bt-staff { list-style: none; margin: 0 0 .75rem; padding: 0; border: 1px solid var(--color-border-subtle, var(--color-border)); border-radius: var(--radius-md, .625rem); }
+    .bt-staff li + li { border-top: 1px solid var(--color-border-subtle, var(--color-border)); }
+    .bt-staff label { display: flex !important; align-items: center; gap: .625rem; margin: 0 !important; padding: .5rem .75rem; font-size: .8125rem !important; font-weight: 500 !important; cursor: pointer; }
+    .bt-staff input { flex: 0 0 auto; width: 1rem; height: 1rem; accent-color: var(--color-primary, #B5524C); }
+    .bt-staff .bt-staff-name { min-width: 0; overflow-wrap: anywhere; }
+
+    .bt-notify-option {
+        margin-bottom: .75rem;
+        padding: .625rem .75rem;
+        border-radius: var(--radius-md, .625rem);
+        border: 1px solid var(--color-border-subtle, var(--color-border));
+    }
+    .bt-notify-option .form-check { margin: 0; }
+    .bt-notify-option .form-check-label { font-size: .8125rem; font-weight: 600; }
+    .bt-notify-option .cx-callout { margin-top: .5rem; }
+    .bt-reminder-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+    .bt-reminder-row select { flex: 0 1 16rem; min-width: 0; }
 
     .calendar-sr-only {
         position: absolute;

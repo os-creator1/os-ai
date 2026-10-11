@@ -127,6 +127,11 @@ class AdsController extends CustomerBaseController
             'trend' => $this->trend->forPeriod($account, $period),
             'hasCampaigns' => $account->campaigns()->exists(),
             'waste' => $waste,
+            // Secondary "What needs attention": Google's own recommendation facts
+            // (module only, as on the Recommendations page). Null = not available on this plan.
+            'attention' => $data['adsHasModule']
+                ? app(\App\Library\Ads\AdsChannelOverviewReader::class)->googleAttention($account, $workspaceUid, $businessUid)
+                : null,
             'seriesUrl' => route('customer.workspaces.businesses.ads.series', [$workspaceUid, $businessUid, 'period' => $period->key]),
         ]);
     }

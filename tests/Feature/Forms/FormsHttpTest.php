@@ -279,6 +279,40 @@ class FormsHttpTest extends TestCase
         $this->assertFalse((bool) $deployment->fresh()->is_enabled);
     }
 
+    public function test_the_list_offers_a_live_link_only_where_the_public_form_would_open(): void
+    {
+        $this->authenticateAs($this->owner);
+        $index = $this->formsRoute('index', $this->workspace, $this->business);
+
+        // Active with two enabled locations: "Live at 2 locations", and no single link to guess between.
+        $html = $this->get($index)->assertOk()->getContent();
+        $this->assertStringContainsString('Live at 2 locations.', $html);
+        $this->assertStringNotContainsString('data-role="forms-open-live"', $html);
+
+        // One enabled location: that exact public link is offered.
+        $this->post($this->formsRoute('locations.set', $this->workspace, $this->business, [$this->form->uid, $this->uptown->uid]), ['enabled' => 0])->assertRedirect();
+        $this->get($index)->assertOk()
+            ->assertSee('data-role="forms-open-live"', false)
+            ->assertSee(route('public.forms.show', [$this->atDowntown->uid]), false)
+            ->assertDontSee(route('public.forms.show', [$this->atUptown->uid]), false);
+
+        // Switched off: no public link at all, and the list says why.
+        $this->post($this->formsRoute('deactivate', $this->workspace, $this->business, [$this->form->uid]))->assertRedirect();
+        $this->get($index)->assertOk()
+            ->assertSee('accepts no responses')
+            ->assertDontSee('data-role="forms-open-live"', false)
+            ->assertDontSee(route('public.forms.show', [$this->atDowntown->uid]), false);
+
+        // A location-limited member is never handed another location's link.
+        $this->post($this->formsRoute('activate', $this->workspace, $this->business, [$this->form->uid]))->assertRedirect();
+        $this->post($this->formsRoute('locations.set', $this->workspace, $this->business, [$this->form->uid, $this->uptown->uid]), ['enabled' => 1])->assertRedirect();
+        $this->post($this->formsRoute('locations.set', $this->workspace, $this->business, [$this->form->uid, $this->downtown->uid]), ['enabled' => 0])->assertRedirect();
+        $this->authenticateAs($this->staffGrantedOnly($this->workspace, $this->downtown));
+        $this->get($index)->assertOk()
+            ->assertSee('not offered at any of your locations yet')
+            ->assertDontSee(route('public.forms.show', [$this->atUptown->uid]), false);
+    }
+
     public function test_a_rule_refusal_is_shown_as_the_manager_worded_it_and_writes_nothing(): void
     {
         $this->authenticateAs($this->owner);

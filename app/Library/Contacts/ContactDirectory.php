@@ -47,9 +47,17 @@ final class ContactDirectory
     /**
      * @return LengthAwarePaginator rows: array{uid, name, phone, email, company, group, subscribed, added, last_activity}
      */
-    public function page(Business $business, string $search, ?int $actorUserId = null): LengthAwarePaginator
+    public function page(Business $business, string $search, ?int $actorUserId = null, ?int $groupId = null): LengthAwarePaginator
     {
-        $contacts = $this->query($business, $search, $actorUserId)
+        $query = $this->query($business, $search, $actorUserId);
+
+        // Optional group filter. The caller resolves the id from this
+        // Business's own groups, so it only ever narrows the scoped query.
+        if ($groupId !== null) {
+            $query->where('group_id', $groupId);
+        }
+
+        $contacts = $query
             ->with('contactGroup:id,business_id,name')
             ->orderByDesc('id')
             ->paginate(self::PER_PAGE, ['id', 'uid', 'group_id', 'business_id', 'phone', 'status', 'created_at'])
