@@ -6,6 +6,7 @@ use App\Models\CsvData;
 use App\Models\Customer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Feature\Security\Concerns\PreparesSecurityTenants;
 use Tests\TestCase;
 
 /**
@@ -15,6 +16,13 @@ class CsvDataTenantIsolationTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
+    use PreparesSecurityTenants;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->createPlaceholderSuperAdmin();
+    }
 
     private function csv(int $userId, string $type = CsvData::TYPE_CAMPAIGN, string $data = 'app/bulk_sms/x.csv'): CsvData
     {
@@ -51,6 +59,7 @@ class CsvDataTenantIsolationTest extends TestCase
         $groupB = \App\Models\ContactGroups::create(['customer_id' => $b->user_id, 'name' => 'B', 'status' => true]);
         $fileA = $this->csv($a->user_id, CsvData::TYPE_CONTACT, json_encode([['15550001111', 'Victim']]));
 
+        \Illuminate\Support\Facades\Bus::fake();
         $b->user->email_verified_at = now();
         $b->user->save();
         $this->withSession(['permissions' => collect(['access_backend', 'create_contact', 'view_contact'])]);
@@ -62,6 +71,7 @@ class CsvDataTenantIsolationTest extends TestCase
         ]);
 
         $this->assertDatabaseHas('csv_data', ['id' => $fileA->id]);
+        \Illuminate\Support\Facades\Bus::assertNotDispatched(\App\Jobs\ImportContacts::class);
         $this->assertSame(0, \App\Models\Contacts::where('group_id', $groupB->id)->count());
     }
 
@@ -71,18 +81,20 @@ class CsvDataTenantIsolationTest extends TestCase
         $groupB = \App\Models\ContactGroups::create(['customer_id' => $b->user_id, 'name' => 'B', 'status' => true]);
         $fileB = $this->csv($b->user_id, CsvData::TYPE_CONTACT, json_encode([['15550002222', 'Own']]));
 
+        \Illuminate\Support\Facades\Bus::fake();
         $b->user->email_verified_at = now();
         $b->user->save();
         $this->withSession(['permissions' => collect(['access_backend', 'create_contact', 'view_contact'])]);
         $this->actingAs($b->user);
 
-        $this->post(route('customer.contact.import_process', $groupB->uid), [
+        $r = $this->post(route('customer.contact.import_process', $groupB->uid), [
             'csv_data_file_id' => $fileB->id,
             'fields' => ['phone', 'first_name'],
         ]);
 
         // The record was found and consumed (the legacy handler deletes the staged row once imported).
         $this->assertDatabaseMissing('csv_data', ['id' => $fileB->id]);
+        \Illuminate\Support\Facades\Bus::assertDispatched(\App\Jobs\ImportContacts::class);
     }
 
     public function test_campaign_send_using_file_refuses_a_foreign_csv_and_leaves_it_untouched(): void

@@ -11,6 +11,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Feature\Security\Concerns\PreparesSecurityTenants;
 use Tests\TestCase;
 
 /**
@@ -21,12 +22,14 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
+    use PreparesSecurityTenants;
 
     private const PDF = "%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n";
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->createPlaceholderSuperAdmin();
         Storage::fake('local');
         File::deleteDirectory(public_path('senderid_docs'));
     }
@@ -49,6 +52,15 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         return $customer;
     }
 
+    /** A real temp file (fake() derives its MIME from the file name, which would hide content sniffing). */
+    private function realUpload(string $name, string $body): UploadedFile
+    {
+        $path = tempnam(sys_get_temp_dir(), 'sidtest');
+        file_put_contents($path, $body);
+
+        return new UploadedFile($path, $name, null, null, true);
+    }
+
     private function submit(UploadedFile $file)
     {
         return $this->post(route('customer.senderid.store'), [
@@ -63,7 +75,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
     {
         $this->customer();
 
-        $response = $this->submit(UploadedFile::fake()->createWithContent($name, $body));
+        $response = $this->submit($this->realUpload($name, $body));
 
         $response->assertSessionHasErrors('document');
         $this->assertFileDoesNotExist(public_path('senderid_docs'));
@@ -87,7 +99,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
     {
         $this->customer();
 
-        $this->submit(UploadedFile::fake()->createWithContent('proof.pdf', self::PDF))
+        $this->submit($this->realUpload('proof.pdf', self::PDF))
             ->assertSessionDoesntHaveErrors('document');
 
         $this->submit(UploadedFile::fake()->create('big.pdf', SenderIdDocumentStore::MAX_KB + 1, 'application/pdf'))
@@ -96,7 +108,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
 
     public function test_store_uses_private_random_name_and_ignores_client_name(): void
     {
-        $value = SenderIdDocumentStore::store(UploadedFile::fake()->createWithContent('../../evil name.pdf', self::PDF));
+        $value = SenderIdDocumentStore::store($this->realUpload('../../evil name.pdf', self::PDF));
 
         $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX . SenderIdDocumentStore::DIR . '/', $value);
         $this->assertMatchesRegularExpression('#^private:senderid-docs/[A-Za-z0-9]{40}\.pdf$#', $value);
@@ -107,7 +119,7 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
     public function test_owner_and_admin_can_download_but_other_tenant_cannot(): void
     {
         $owner = $this->customer(['create_sender_id', 'view_sender_id']);
-        $value = SenderIdDocumentStore::store(UploadedFile::fake()->createWithContent('proof.pdf', self::PDF));
+        $value = SenderIdDocumentStore::store($this->realUpload('proof.pdf', self::PDF));
         $senderid = Senderid::create(['user_id' => $owner->user_id, 'sender_id' => 'ACME', 'status' => 'pending', 'document' => $value]);
 
         $ok = $this->get(route('customer.senderid.document', $senderid->uid));
