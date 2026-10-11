@@ -8,6 +8,7 @@ use App\Models\Senderid;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
@@ -311,6 +312,100 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertSame('<?php echo 1;', file_get_contents($path));
         $this->assertSame($url, \Illuminate\Support\Facades\DB::table('senderid')->where('id', $row->id)->value('document'));
         $this->assertSame([], Storage::disk('local')->allFiles('senderid-quarantine'));
+    }
+
+    private function plan(): \App\Models\SenderidPlan
+    {
+        $currency = \App\Models\Currency::query()->first()
+            ?? \App\Models\Currency::create(['name' => 'Test Dollar', 'code' => 'CGT', 'format' => '$', 'status' => true]);
+
+        return \App\Models\SenderidPlan::create(['price' => 5, 'billing_cycle' => 'monthly', 'frequency_amount' => 1, 'frequency_unit' => 'month', 'currency_id' => $currency->id]);
+    }
+
+    private function subscribe(Customer $customer): void
+    {
+        $currency = \App\Models\Currency::query()->first()
+            ?? \App\Models\Currency::create(['name' => 'Test Dollar', 'code' => 'CGT', 'format' => '$', 'status' => true]);
+        $plan = \App\Models\Plan::create([
+            'user_id' => $customer->user_id, 'name' => 'P', 'price' => 10, 'billing_cycle' => 'monthly', 'frequency_amount' => 1,
+            'frequency_unit' => 'month', 'currency_id' => $currency->id, 'options' => json_encode([]), 'status' => true,
+        ]);
+        \App\Models\Subscription::create([
+            'user_id' => $customer->user_id, 'plan_id' => $plan->id, 'status' => \App\Models\Subscription::STATUS_ACTIVE,
+            'paid' => true, 'start_at' => now(), 'end_at' => null,
+        ]);
+    }
+
+    public function test_full_sender_id_request_with_document_creates_row_and_private_file_atomically(): void
+    {
+        $c = $this->customer();
+        $this->subscribe($c);
+        $plan = $this->plan();
+
+        $this->post(route('customer.senderid.store'), ['sender_id' => 'ATOMIC', 'plan' => $plan->id, 'document' => $this->realUpload('proof.pdf', self::PDF)]);
+
+        $row = Senderid::where('sender_id', 'ATOMIC')->first();
+        $this->assertNotNull($row);
+        $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX, $row->document);
+        Storage::disk('local')->assertExists(substr($row->document, strlen(SenderIdDocumentStore::PREFIX)));
+    }
+
+    public function test_database_failure_during_request_creation_leaves_no_row_and_no_private_file(): void
+    {
+        $c = $this->customer();
+        $this->subscribe($c);
+        $plan = $this->plan();
+
+        // Fails on the second write (document attachment), after the row insert, inside the same transaction.
+        Senderid::updating(function () {
+            throw new \RuntimeException('simulated database failure');
+        });
+
+        try {
+            $this->withoutExceptionHandling()->post(route('customer.senderid.store'), ['sender_id' => 'ROLLBK', 'plan' => $plan->id, 'document' => $this->realUpload('proof.pdf', self::PDF)]);
+            $this->fail('expected the simulated failure to propagate');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('simulated database failure', $e->getMessage());
+        }
+
+        $this->assertSame(0, Senderid::where('sender_id', 'ROLLBK')->count());   // row rolled back
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR)); // private file cleaned up
+    }
+
+    public function test_shared_file_save_failure_rolls_back_all_rows_and_keeps_the_original(): void
+    {
+        $c = $this->customer();
+        [$first, $path, $url] = $this->legacyRow($c, 'senderid_1700000037.pdf', self::PDF, 'SHA');
+        $second = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'SHB', 'status' => 'pending', 'document' => $url]);
+
+        Senderid::updating(function (Senderid $row) {
+            if ($row->sender_id === 'SHB') {
+                throw new \RuntimeException('simulated failure on the second shared row');
+            }
+        });
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $first->id)->value('document'));   // first row rolled back too
+        $this->assertSame($url, DB::table('senderid')->where('id', $second->id)->value('document'));
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR));
+    }
+
+    public function test_shared_file_original_delete_failure_restores_every_row(): void
+    {
+        $c = $this->customer();
+        [$first, $path, $url] = $this->legacyRow($c, 'senderid_1700000038.pdf', self::PDF, 'SHC');
+        $second = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'SHD', 'status' => 'pending', 'document' => $url]);
+
+        File::partialMock()->shouldReceive('delete')->atLeast()->once()->andReturn(false);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $first->id)->value('document'));
+        $this->assertSame($url, DB::table('senderid')->where('id', $second->id)->value('document'));
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR));
     }
 
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void

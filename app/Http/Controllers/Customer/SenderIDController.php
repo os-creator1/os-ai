@@ -258,11 +258,22 @@
                 }
             }
 
-            $senderid = $this->sender_ids->storeCustom($request->except('_token'));
+            // Row creation and document attachment commit together; if either fails the private file is removed.
+            try {
+                $senderid = \Illuminate\Support\Facades\DB::transaction(function () use ($request, $documentValue) {
+                    $senderid = $this->sender_ids->storeCustom($request->except('_token'));
 
-            if ($documentValue !== null) {
-                $senderid->document = $documentValue;
-                $senderid->save();
+                    if ($documentValue !== null) {
+                        $senderid->document = $documentValue;
+                        $senderid->save();
+                    }
+
+                    return $senderid;
+                });
+            } catch (\Throwable $e) {
+                \App\Library\Uploads\SenderIdDocumentStore::discard($documentValue);
+
+                throw $e;
             }
 
             Notifications::create([

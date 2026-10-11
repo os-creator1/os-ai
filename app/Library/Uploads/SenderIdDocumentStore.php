@@ -69,6 +69,17 @@ final class SenderIdDocumentStore
         return self::PREFIX . $path;
     }
 
+    /** Remove a private file written by store() (used to clean up when the database write fails). */
+    public static function discard(?string $value): void
+    {
+        if ($value !== null && str_starts_with($value, self::PREFIX)) {
+            $relative = substr($value, strlen(self::PREFIX));
+            if (preg_match('#^' . self::DIR . '/[A-Za-z0-9]{40}\.(pdf|jpg|png|doc|docx)$#', $relative)) {
+                Storage::disk('local')->delete($relative);
+            }
+        }
+    }
+
     /** Resolve the stored value to an absolute readable path, or null. */
     public static function resolve(?string $value): ?string
     {
