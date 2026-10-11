@@ -2365,6 +2365,16 @@ POSTXML;
 
             $authenticatedUser = auth()->user();
 
+            // Off unless an operator opts in (config/account.php): the child would otherwise act as the owner.
+            if ( ! config('account.allow_parent_switch')) {
+                throw new GeneralException(__('locale.customer.impersonation_not_allowed'));
+            }
+
+            // Only the sub-account's own, active parent - never an inactive account, never an administrator.
+            if ($authenticatedUser->parent_id === null || ! $customer->status || ! $authenticatedUser->status) {
+                throw new GeneralException(__('locale.customer.impersonation_not_allowed'));
+            }
+
             // Ensure only parent or owner can impersonate
             if ($authenticatedUser->parent_id !== $customer->id) {
                 throw new GeneralException(__('locale.customer.impersonation_not_allowed'));

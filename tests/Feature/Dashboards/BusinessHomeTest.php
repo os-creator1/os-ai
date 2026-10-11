@@ -753,6 +753,7 @@ class BusinessHomeTest extends TestCase
 
     public function test_a_team_member_keeps_login_as_parent_as_a_quick_action_and_never_while_viewing(): void
     {
+        config(['account.allow_parent_switch' => true]);   // F3: the legacy switch is opt-in (config/account.php)
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Parent Venue', 'Parent Account');
         $member = $this->createCustomer();
         DB::table('users')->where('id', $member->user_id)->update(['parent_id' => $owner->user_id]);
