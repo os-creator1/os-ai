@@ -121,20 +121,9 @@ final class AdsChannelOverviewReader
         $issues = null;
 
         if ($hasModule) {
-            $facts = $this->googleFacts->facts($account);
-            $issues = count($facts);
-
-            foreach (array_slice($facts, 0, self::ATTENTION_LIMIT) as $fact) {
-                $presented = $this->googlePresenter->present($fact);
-                $attention[] = [
-                    'provider' => 'google',
-                    'title' => $presented['title'],
-                    'evidence_lines' => $presented['evidence_lines'],
-                    'action_label' => $presented['action_label'],
-                    'url' => $this->googleUrl($fact->suggestedAction, $workspaceUid, $businessUid),
-                    'tone' => 'neutral',
-                ];
-            }
+            $google = $this->googleAttention($account, $workspaceUid, $businessUid, self::ATTENTION_LIMIT);
+            $issues = $google['count'];
+            $attention = $google['items'];
         }
 
         return [
@@ -236,6 +225,33 @@ final class AdsChannelOverviewReader
     /**
      * @param  array{key: string, target_uid: ?string}  $action
      */
+    /**
+     * Google's ranked recommendation facts as "What needs attention" items —
+     * the same facts and wording as the Recommendations page. Callers read it
+     * only for a viewer with the FULL module, exactly as googleChannel() does.
+     *
+     * @return array{items: list<array<string, mixed>>, count: int}
+     */
+    public function googleAttention(GoogleAdsAccount $account, string $workspaceUid, string $businessUid, int $limit = self::ATTENTION_LIMIT): array
+    {
+        $facts = $this->googleFacts->facts($account);
+        $items = [];
+
+        foreach (array_slice($facts, 0, $limit) as $fact) {
+            $presented = $this->googlePresenter->present($fact);
+            $items[] = [
+                'provider' => 'google',
+                'title' => $presented['title'],
+                'evidence_lines' => $presented['evidence_lines'],
+                'action_label' => $presented['action_label'],
+                'url' => $this->googleUrl($fact->suggestedAction, $workspaceUid, $businessUid),
+                'tone' => 'neutral',
+            ];
+        }
+
+        return ['items' => $items, 'count' => count($facts)];
+    }
+
     private function googleUrl(array $action, string $workspaceUid, string $businessUid): ?string
     {
         $prefix = 'customer.workspaces.businesses.ads.';
