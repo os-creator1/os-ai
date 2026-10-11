@@ -163,8 +163,36 @@ final class SenderIdDocumentStore
         $extension = self::safeExtension($file);
         abort_if($extension === null, 422, 'Unsupported document type.');
 
+        $source = $file->getRealPath();
+        $expected = $source !== false ? filesize($source) : false;
+        $stream = $source !== false ? @fopen($source, 'rb') : false;
+        if ($expected === false || $stream === false) {
+            throw new \RuntimeException('Unable to read the uploaded sender-ID document.');
+        }
+
+        $disk = Storage::disk('local');
         $path = self::DIR . '/' . Str::random(40) . '.' . $extension;
-        if (Storage::disk('local')->put($path, $file->get()) !== true) {
+        $complete = false;
+
+        try {
+            // The write must succeed AND the stored size must equal the uploaded size: a partial write that
+            // the filesystem reports as success must never become a saved document.
+            $complete = $disk->put($path, $stream) === true && $disk->size($path) === $expected;
+        } catch (\Throwable $e) {
+            $complete = false;
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
+
+        if (! $complete) {
+            try {
+                $disk->delete($path);
+            } catch (\Throwable $e) {
+                // best effort: nothing references this path, and it is never served
+            }
+
             throw new \RuntimeException('Unable to store sender-ID document in private storage.');
         }
 

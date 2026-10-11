@@ -349,14 +349,87 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertSame(0, Senderid::where('document', 'not like', SenderIdDocumentStore::PREFIX . '%')->count());
     }
 
-    public function test_failed_private_storage_write_on_upload_throws_and_stores_nothing(): void
+    public function test_failed_private_storage_write_on_upload_throws_and_cleans_up(): void
     {
         $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
         $disk->shouldReceive('put')->once()->andReturn(false);
+        $disk->shouldReceive('delete')->once();
         Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
 
         $this->expectException(\RuntimeException::class);
         SenderIdDocumentStore::store($this->realUpload('proof.pdf', self::PDF));
+    }
+
+    /** @dataProvider partialWrites */
+    public function test_partial_or_unverifiable_writes_are_removed_and_rejected(string $mode): void
+    {
+        $upload = $this->realUpload('proof.pdf', self::PDF);
+        $removed = [];
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturn(true);   // the filesystem claims success
+        match ($mode) {
+            'truncated' => $disk->shouldReceive('size')->once()->andReturn(strlen(self::PDF) - 5),
+            'empty' => $disk->shouldReceive('size')->once()->andReturn(0),
+            'size-throws' => $disk->shouldReceive('size')->once()->andThrow(new \RuntimeException('stat failed')),
+        };
+        $disk->shouldReceive('delete')->once()->andReturnUsing(function ($path) use (&$removed) {
+            $removed[] = $path;
+
+            return true;
+        });
+        Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
+
+        try {
+            SenderIdDocumentStore::store($upload);
+            $this->fail('a truncated or unverifiable private file must not be accepted');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Unable to store', $e->getMessage());
+        }
+
+        $this->assertCount(1, $removed);
+        $this->assertMatchesRegularExpression('#^senderid-docs/[A-Za-z0-9]{40}\.pdf$#', $removed[0]);
+    }
+
+    public static function partialWrites(): array
+    {
+        return ['truncated' => ['truncated'], 'zero bytes' => ['empty'], 'size check fails' => ['size-throws']];
+    }
+
+    public function test_cleanup_failure_after_a_partial_write_still_reports_the_original_error(): void
+    {
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturn(true);
+        $disk->shouldReceive('size')->once()->andReturn(1);
+        $disk->shouldReceive('delete')->once()->andThrow(new \RuntimeException('cannot delete'));
+        Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
+
+        $this->expectExceptionMessage('Unable to store sender-ID document in private storage.');
+        SenderIdDocumentStore::store($this->realUpload('proof.pdf', self::PDF));
+    }
+
+    public function test_a_partial_write_during_a_full_request_leaves_no_row_and_the_user_is_told(): void
+    {
+        $c = $this->customer();
+        $this->subscribe($c);
+        $plan = $this->plan();
+
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturn(true);
+        $disk->shouldReceive('size')->once()->andReturn(3);
+        $disk->shouldReceive('delete')->once();
+        Storage::shouldReceive('disk')->andReturn($disk);
+
+        $this->post(route('customer.senderid.store'), ['sender_id' => 'PARTIAL', 'plan' => $plan->id, 'document' => $this->realUpload('proof.pdf', self::PDF)])
+            ->assertSessionHas('status', 'error');
+
+        $this->assertSame(0, Senderid::where('sender_id', 'PARTIAL')->count());
+    }
+
+    public function test_complete_upload_still_stores_exactly_the_uploaded_bytes(): void
+    {
+        $value = SenderIdDocumentStore::store($this->realUpload('proof.pdf', self::PDF));
+
+        $this->assertSame(self::PDF, Storage::disk('local')->get(substr($value, strlen(SenderIdDocumentStore::PREFIX))));
     }
 
     public function test_owner_and_admin_can_download_but_other_tenant_cannot(): void
