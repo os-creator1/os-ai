@@ -13,6 +13,8 @@
         'verify_account'    => env('ACCOUNT_VERIFICATION', true),
         'create_subaccount' => env('ACCOUNT_CREATE_SUBACCOUNT', true),
         'delete_subaccount' => env('ACCOUNT_DELETE_SUBACCOUNT', true),
+        // Social providers whose e-mail address is asserted verified by the provider itself (used for linking / sign-up).
+        'social_verified_email_providers' => ['google', 'github'],
         // Legacy "Login as Parent": lets a sub-account (team member) become the account owner. OFF by default - the
         // owner's identity carries owner-level authority (V1 workspace/business access, billing, API credentials) that a
         // restricted team member must not reach. Enable only if every sub-account is fully trusted.
