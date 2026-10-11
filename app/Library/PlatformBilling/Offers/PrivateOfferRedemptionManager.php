@@ -295,10 +295,10 @@ final class PrivateOfferRedemptionManager
         // A reservation an earlier Checkout of this Workspace still holds is not
         // this attempt's to give back: a stale or invalid submission must not
         // free a trial another payable session is counting on.
-        $trialHeldBefore = $offer->trial_days !== null && $this->trials->hasReservation($workspace);
+        $trialCreated = false;
 
         if ($offer->trial_days !== null) {
-            $trialEligible = $this->trials->reserve($workspace, $ownerEmail, 'offer');
+            $trialEligible = $this->trials->reserve($workspace, $ownerEmail, 'offer', null, $trialCreated);
         }
 
         $terms = $this->termsOrFail($offer, $workspace, $trialEligible);
@@ -307,7 +307,7 @@ final class PrivateOfferRedemptionManager
             // What they were shown is not what would be charged (the offer
             // changed, a trial became unavailable, a price moved). They must
             // look again; nothing was reserved on their behalf.
-            if ($offer->trial_days !== null && $trialEligible && ! $trialHeldBefore) {
+            if ($offer->trial_days !== null && $trialEligible && $trialCreated) {
                 $this->trials->release($workspace);
             }
 
@@ -321,7 +321,7 @@ final class PrivateOfferRedemptionManager
         try {
             $redemption = $this->reserve($offer, $workspace, $actor, $terms);
         } catch (PlatformBillingException $e) {
-            if ($offer->trial_days !== null && ! $trialHeldBefore) {
+            if ($offer->trial_days !== null && $trialCreated) {
                 $this->trials->release($workspace);
             }
 
@@ -522,6 +522,13 @@ final class PrivateOfferRedemptionManager
             'amount_minor' => $existing['amount_minor'],
             'effective_at' => $effective,
         ]);
+
+        // The provider's boundary is the one that will actually be scheduled. If
+        // it is not the date the customer was shown (our copy of the period had
+        // not caught up with a renewal), they look again.
+        if (! hash_equals($terms->hash(), $acceptedTermsHash)) {
+            throw PlatformBillingException::because(PlatformBillingException::OFFER_TERMS_CHANGED);
+        }
 
         $terms = $this->withProvisionedPrices($terms, $catalog, $currency)
             ->withExtra(['previous_price_id' => (string) $subscription->provider_price_id, 'applied_by_owner' => $byOwner]);

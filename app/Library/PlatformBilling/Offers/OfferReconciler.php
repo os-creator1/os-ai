@@ -327,6 +327,19 @@ final class OfferReconciler
                 return;
             }
 
+            // The subscription is on a Price the agreement does not contain (the
+            // customer moved plans, possibly an upgrade whose response was lost).
+            // The agreement no longer applies; its schedule is never put back
+            // over the new Price.
+            $agreedPrices = array_map('strval', array_filter(array_column($paid, 'price_id')));
+
+            if (! $isChange && ! blank($current->providerPriceId) && $agreedPrices !== []
+                && ! in_array((string) $current->providerPriceId, $agreedPrices, true)) {
+                $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
+
+                return;
+            }
+
             // A schedule this redemption already had once is being put back, so
             // its first idempotency key (and the schedule Stripe answered with,
             // now released) must not be replayed.

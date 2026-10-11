@@ -45,13 +45,16 @@ final class TrialLedger
      * Atomically reserve a trial for this Workspace, or report that it cannot
      * be had. True also when the SAME Workspace already holds the reservation.
      */
-    public function reserve(Workspace $workspace, string $email, string $source, ?CarbonInterface $until = null): bool
+    public function reserve(Workspace $workspace, string $email, string $source, ?CarbonInterface $until = null, ?bool &$created = null): bool
     {
         $key = EmailIdentity::key($email);
         $until ??= now()->addMinutes(self::RESERVATION_MINUTES);
+        // Set INSIDE the same locked transaction that inserts the claim, so a
+        // caller can tell its own reservation from one it merely reused.
+        $created = false;
 
         try {
-            return DB::transaction(function () use ($workspace, $key, $source, $until): bool {
+            return DB::transaction(function () use ($workspace, $key, $source, $until, &$created): bool {
                 // Lapsed reservations are not claims. Clear them first so a
                 // stale one cannot block a legitimate customer.
                 PlatformTrialClaim::query()
@@ -91,6 +94,8 @@ final class TrialLedger
                     'source' => $source,
                     'reserved_until' => $until,
                 ])->save();
+
+                $created = true;
 
                 return true;
             });

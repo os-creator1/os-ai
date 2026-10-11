@@ -712,7 +712,9 @@ final class PlatformSubscriptionManager
         // The key is the OPERATION's, never the target catalog id: the same
         // catalog can later carry a different immutable Stripe Price, and
         // Stripe errors when one key is reused with different parameters.
-        if (! $this->hasPrivatePricing($subscription)) {
+        $hadAgreement = $this->hasPrivatePricing($subscription);
+
+        if (! $hadAgreement) {
             // No agreement on file: only a stray schedule, which is simply released.
             $this->offers->endPrivatePricing($subscription);
             $subscription->refresh();
@@ -732,6 +734,35 @@ final class PlatformSubscriptionManager
                 return $snapshot;
             });
         } catch (Throwable $e) {
+            // A failure AFTER the provider call (a lost response, a local write)
+            // does not mean the upgrade did not happen. The live subscription
+            // decides: already on the target Price means the upgrade took, and the
+            // old schedule must not be put back over it.
+            if (! $hadAgreement) {
+                throw $e;
+            }
+
+            try {
+                $live = $this->gateway->retrieveSubscription((string) $subscription->provider_subscription_id);
+            } catch (Throwable) {
+                $live = null;
+            }
+
+            if ($live !== null && (string) $live->providerPriceId === (string) $subscription->pending_price_id) {
+                $this->offers->endPrivatePricing($subscription->refresh());
+                $this->finalizer->apply($subscription->refresh(), $live);
+
+                return self::CHANGE_UPGRADED;
+            }
+
+            if ($live === null) {
+                // Unknown: leave the agreement's schedule OFF rather than risk
+                // putting it back over an upgrade that may have applied; the
+                // retry (same operation, same key) converges and the sweep
+                // restores it if the customer never retries.
+                throw $e;
+            }
+
             $this->offers->restoreAfterResume($subscription->refresh());
 
             throw $e;

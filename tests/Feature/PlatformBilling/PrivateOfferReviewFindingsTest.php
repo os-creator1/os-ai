@@ -145,6 +145,63 @@ class PrivateOfferReviewFindingsTest extends TestCase
         $this->assertNotSame('ended', (string) $old->refresh()->reconcile_state);
     }
 
+    public function test_an_upgrade_that_applied_but_lost_its_response_is_not_undone_by_restoring_the_old_schedule(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
+            'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 3,
+        ]);
+        [$redemption] = $this->redeem($customer, $created['offer']);
+        $agency = WorkspacePlanCatalog::query()->where('tier', 'agency')->firstOrFail();
+
+        // Stripe moved the subscription, but the response never arrived.
+        $this->stripe->interleaveOnce('changeSubscriptionPrice', function (array $args, $gateway): void {
+            $gateway->subscriptions[$args['subscription']]['price'] = $args['price'];
+
+            throw new \RuntimeException('connection reset');
+        });
+
+        $result = app(PlatformSubscriptionManager::class)
+            ->requestPlanChange($customer['workspace'], $agency, (int) $customer['workspace']->owner_user_id, true);
+
+        $this->assertSame(PlatformSubscriptionManager::CHANGE_UPGRADED, $result);
+        $this->assertCount(1, $this->stripe->callsOf('applyPriceSchedule'), 'the old schedule was NOT put back over the upgrade');
+        $this->assertNull(PlatformSubscription::query()->where('workspace_id', $customer['workspace']->id)->firstOrFail()->offer_redemption_id);
+        $this->assertSame('ended', (string) $redemption->refresh()->reconcile_state);
+    }
+
+    public function test_a_billing_change_is_refused_when_only_the_providers_period_has_moved(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $change = $this->makeOffer([
+            'kind' => 'billing_change', 'customer_email' => null,
+            'workspace_uid' => $fixture['workspace']->uid, 'custom_price' => '120.00',
+        ]);
+        $user = $fixture['customer']->user;
+        $user->forceFill(['email_verified_at' => now()])->save();
+        $shown = $this->redemptions()->present($change['offer']->refresh(), $user)['terms'];
+
+        // The provider renewed; our copy of the period has NOT caught up (no webhook yet).
+        $this->stripe->advancePeriod($fixture['provider_subscription_id']);
+
+        $reason = $this->reasonOf(fn () => $this->redemptions()->acceptBillingChange($change['offer']->refresh(), $user, $shown->hash()));
+
+        $this->assertSame(PlatformBillingException::OFFER_TERMS_CHANGED, $reason);
+        $this->assertCount(0, $this->stripe->callsOf('applyPriceSchedule'));
+    }
+
+    public function test_the_trial_ledger_reports_only_the_reservation_it_created(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $ledger = app(\App\Library\PlatformBilling\Offers\TrialLedger::class);
+
+        $this->assertTrue($ledger->reserve($customer['workspace'], 'buyer@example.test', 'offer', null, $first));
+        $this->assertTrue($first);
+        $this->assertTrue($ledger->reserve($customer['workspace'], 'buyer@example.test', 'offer', null, $second), 'reused');
+        $this->assertFalse($second, 'a reused reservation is not the second caller\'s to release');
+    }
+
     // =================================================================
     // P1 — a pending downgrade is never silently bound to a newer agreement
     // =================================================================

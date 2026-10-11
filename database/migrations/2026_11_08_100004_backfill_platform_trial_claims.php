@@ -48,7 +48,7 @@ return new class extends Migration
                     // their own. When another history row already holds the mailbox
                     // (or customer), this Workspace is STILL recorded as having had
                     // its trial — only the colliding identity is dropped from it.
-                    foreach ([[], ['email_key'], ['email_key', 'provider_customer_id']] as $drop) {
+                    foreach ([[], ['provider_customer_id'], ['email_key'], ['email_key', 'provider_customer_id']] as $drop) {
                         DB::table('platform_trial_claims')->insertOrIgnore(array_merge($row, array_fill_keys($drop, null)));
 
                         if (DB::table('platform_trial_claims')->where('workspace_id', $subscription->workspace_id)->exists()) {

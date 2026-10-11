@@ -351,6 +351,28 @@ class LaunchAcceptanceTest extends TestCase
         }
     }
 
+    public function test_the_trial_backfill_keeps_the_mailbox_when_only_the_provider_customer_collides(): void
+    {
+        $a = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $b = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $a['customer']->user->forceFill(['email' => 'first.owner@example.test'])->save();
+        $b['customer']->user->forceFill(['email' => 'second.owner@example.test'])->save();
+
+        foreach ([$a, $b] as $fixture) {
+            PlatformSubscription::query()->whereKey($fixture['subscription']->id)->update([
+                'trial_days_snapshot' => 14, 'trial_ends_at' => now()->subDays(60), 'provider_customer_id' => 'cus_shared_history',
+            ]);
+        }
+
+        \Illuminate\Support\Facades\DB::table('platform_trial_claims')->delete();
+        (require base_path('database/migrations/2026_11_08_100004_backfill_platform_trial_claims.php'))->up();
+
+        $second = \Illuminate\Support\Facades\DB::table('platform_trial_claims')->where('workspace_id', $b['workspace']->id)->first();
+        $this->assertNotNull($second);
+        $this->assertNull($second->provider_customer_id, 'only the colliding customer is dropped');
+        $this->assertNotNull($second->email_key, 'the mailbox is retained');
+    }
+
     public function test_provisioning_after_the_migration_reuses_the_plans_existing_product(): void
     {
         $this->legacyCatalog();
