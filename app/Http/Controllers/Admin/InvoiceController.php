@@ -39,8 +39,8 @@
             $this->authorize('view invoices');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Reports')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Reports')],
                 ['name' => __('locale.menu.Invoices')],
             ];
 
@@ -154,7 +154,7 @@
         {
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/invoices"), 'name' => __('locale.menu.All Invoices')],
                 ['name' => __('locale.labels.invoice')],
             ];

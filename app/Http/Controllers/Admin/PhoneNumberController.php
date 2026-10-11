@@ -53,8 +53,8 @@
             $this->authorize('view phone_numbers');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Sending')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Sending')],
                 ['name' => __('locale.menu.Phone Numbers')],
             ];
 
@@ -179,7 +179,7 @@
             $this->authorize('create phone_numbers');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/phone-numbers"), 'name' => __('locale.menu.Phone Numbers')],
                 ['name' => __('locale.phone_numbers.add_new_number')],
             ];
@@ -205,7 +205,7 @@
             $this->authorize('edit phone_numbers');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/phone-numbers"), 'name' => __('locale.menu.Phone Numbers')],
                 ['name' => __('locale.phone_numbers.update_number')],
             ];

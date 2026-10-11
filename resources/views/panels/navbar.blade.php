@@ -10,7 +10,7 @@
                         </a>
                     </li>
                 @else
-                    <li class="nav-item"><a class="navbar-brand" href="{{route('admin.home')}}">
+                    <li class="nav-item"><a class="navbar-brand" href="{{\App\Helpers\Helper::adminHomeUrl()}}">
                             <span class="brand-logo"><x-branding-logo variant="full" background="light" /></span>
                         </a>
                     </li>

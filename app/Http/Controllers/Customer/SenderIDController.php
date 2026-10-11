@@ -204,6 +204,14 @@
          * @return RedirectResponse
          */
 
+        public function document(Senderid $senderid)
+        {
+            $this->authorize('view_sender_id');
+            abort_unless((int) $senderid->user_id === (int) Auth::id(), 404);
+
+            return \App\Library\Uploads\SenderIdDocumentStore::response($senderid);
+        }
+
         public function store(CustomSenderID $request): RedirectResponse
         {
 
@@ -226,7 +234,7 @@
             if (config('app.trai_dlt') && $user->customer->activeSubscription()->plan->is_dlt) {
                 $validator = Validator::make($request->all(), [
                     'entity_id' => 'required',
-                    'document'  => 'required|mimes:jpeg,png,jpg,gif,pdf,doc,docx',
+                    'document'  => 'required|file',
                 ]);
 
                 if ($validator->fails()) {
@@ -234,13 +242,38 @@
                 }
             }
 
-            $senderid = $this->sender_ids->storeCustom($request->except('_token'));
+            // Store the document BEFORE creating the request, so a storage failure leaves no orphan row.
+            $documentValue = null;
+            if ($request->hasFile('document')) {
+                try {
+                    abort_unless($request->file('document')->isValid(), 422);
+                    $documentValue = \App\Library\Uploads\SenderIdDocumentStore::store($request->file('document'));
+                } catch (\Throwable $e) {
+                    report($e);
 
-            if (isset($request->document) && $request->hasFile('document')) {
-                if ($request->file('document')->isValid()) {
-                    $senderid->document = Tool::uploadFile($request->file('document'));
-                    $senderid->save();
+                    return redirect()->route('customer.senderid.request')->withInput($request->except('document', 'plan'))->with([
+                        'status'  => 'error',
+                        'message' => 'The document could not be saved. Please try again.',
+                    ]);
                 }
+            }
+
+            // Row creation and document attachment commit together; if either fails the private file is removed.
+            try {
+                $senderid = \Illuminate\Support\Facades\DB::transaction(function () use ($request, $documentValue) {
+                    $senderid = $this->sender_ids->storeCustom($request->except('_token'));
+
+                    if ($documentValue !== null) {
+                        $senderid->document = $documentValue;
+                        $senderid->save();
+                    }
+
+                    return $senderid;
+                });
+            } catch (\Throwable $e) {
+                \App\Library\Uploads\SenderIdDocumentStore::discard($documentValue);
+
+                throw $e;
             }
 
             Notifications::create([
@@ -484,7 +517,7 @@
             }
 
             $ids    = $request->get('ids');
-            $status = Senderid::where('user_id', Auth::user()->id)->whereIn('uid', $ids)->delete();
+            $status = \App\Library\Uploads\SenderIdDocumentStore::deleteRows(Senderid::where('user_id', Auth::user()->id)->whereIn('uid', $ids));
 
             if ( ! $status) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));

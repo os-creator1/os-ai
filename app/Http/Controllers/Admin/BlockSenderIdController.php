@@ -44,8 +44,8 @@
             $this->authorize('view block_senderid');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Security')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Security')],
                 ['name' => __('locale.menu.Block Sender ID')],
             ];
 
@@ -137,7 +137,7 @@
             $this->authorize('create block_senderid');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/block-senderid'), 'name' => __('locale.menu.Block Sender ID')],
                 ['name' => __('locale.block_senderid.block_new')],
             ];

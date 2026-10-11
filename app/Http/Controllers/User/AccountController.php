@@ -264,7 +264,7 @@
 
                     session(['permissions' => $user->getPermissions()]);
 
-                    return redirect()->route('admin.home')->with([
+                    return redirect()->to(\App\Helpers\Helper::adminHomeUrl())->with([
                         'status'  => 'success',
                         'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
                     ]);
@@ -4188,7 +4188,14 @@ POSTXML;
          */
         public function impersonate(User $user): mixed
         {
-            return $this->account->impersonate($user);
+            try {
+                return $this->account->impersonate($user);
+            } catch (GeneralException $exception) {
+                return redirect()->route('user.home')->with([
+                    'status'  => 'error',
+                    'message' => $exception->getMessage(),
+                ]);
+            }
 
         }
 

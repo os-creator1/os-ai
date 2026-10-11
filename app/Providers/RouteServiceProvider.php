@@ -82,17 +82,17 @@
                 ->namespace($this->namespace)
                 ->group(base_path('routes/public.php'));
 
-            Route::middleware(['web', 'auth', 'can:access backend', 'ValidProduct', 'twofactor'])
+            Route::middleware(['web', 'auth', 'can:access backend', 'twofactor'])
                 ->namespace($this->namespace . '\Admin')
                 ->prefix(config('app.admin_path'))
                 ->as('admin.')
                 ->group(base_path('routes/admin.php'));
 
-            Route::middleware(['web', 'twofactor'])
+            Route::middleware(['web', 'twofactor', 'legacy.payments'])
                 ->namespace($this->namespace)
                 ->group(base_path('routes/auth.php'));
 
-            Route::middleware(['web', 'auth', 'can:access_backend', 'ValidProduct', 'twofactor'])
+            Route::middleware(['web', 'auth', 'can:access_backend', 'twofactor', 'legacy.payments'])
                 ->namespace($this->namespace . '\Customer')
                 ->as('customer.')
                 ->group(base_path('routes/customer.php'));

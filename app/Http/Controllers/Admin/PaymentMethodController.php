@@ -26,8 +26,8 @@
             $this->authorize('view payment_gateways');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Settings')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Settings')],
                 ['name' => __('locale.menu.Payment Gateways')],
             ];
 
@@ -60,6 +60,14 @@
 
                 $this->authorize('view payment_gateways');
 
+                // Closed legacy gateways cannot be switched on from the UI (see config/legacy_payments.php).
+                if (! $gateway->status && ! in_array(strtolower((string) $gateway->type), array_map('strtolower', (array) config('legacy_payments.enabled_gateways', [])), true)) {
+                    return response()->json([
+                        'status'  => 'error',
+                        'message' => 'This legacy payment gateway is disabled for security reasons and cannot be activated.',
+                    ]);
+                }
+
                 if ($gateway->update(['status' => ! $gateway->status])) {
                     return response()->json([
                         'status'  => 'success',
@@ -90,7 +98,7 @@
             $this->authorize('update payment_gateways');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/payment-gateways"), 'name' => __('locale.menu.Payment Gateways')],
                 ['name' => $gateway->name],
             ];

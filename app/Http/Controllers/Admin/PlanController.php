@@ -60,8 +60,8 @@
             $this->authorize('manage plans');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Plan')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Plan')],
                 ['name' => __('locale.menu.Plans')],
             ];
 
@@ -189,7 +189,7 @@
             $this->authorize('create plans');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/plans'), 'name' => __('locale.menu.Plans')],
                 ['name' => __('locale.plans.add_new_plan')],
             ];
@@ -242,7 +242,7 @@
             $this->authorize('edit plans');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/plans'), 'name' => __('locale.menu.Plans')],
                 ['name' => $plan->name],
             ];
@@ -609,7 +609,7 @@
             $this->authorize('manage plans');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/plans'), 'name' => __('locale.menu.Plans')],
                 ['name' => __('locale.buttons.add_coverage')],
             ];
@@ -789,7 +789,7 @@
             $this->authorize('manage plans');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/plans'), 'name' => __('locale.menu.Plans')],
                 ['name' => __('locale.buttons.update_coverage')],
             ];

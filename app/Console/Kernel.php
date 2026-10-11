@@ -19,7 +19,6 @@
     use App\Console\Commands\SMPPDLRReports;
     use App\Console\Commands\UpdateImartGroupDLR;
     use App\Console\Commands\VisionUpInboundMessage;
-    use App\Console\Commands\WarmDashboardCache;
     use App\Jobs\Ai\ExpireStaleAiReservations;
     use App\Jobs\GoogleAds\SweepGoogleAdsSyncs;
     use App\Jobs\MetaAds\SweepMetaAdsSyncs;
@@ -65,7 +64,6 @@
             CleanDatabase::class,
             DiafaanDLR::class,
             CleanUpJobMonitors::class,
-            WarmDashboardCache::class,
             \App\Console\Commands\Outreach\DispatchDueOutreachFollowUps::class,
         ];
 
@@ -114,7 +112,6 @@
             // dominant source of provider request volume.
             $schedule->command('calendar:sync-external-connections')->everyFifteenMinutes()->withoutOverlapping();
             //   $schedule->command('imartgroup:dlr')->hourly();
-            $schedule->command('dashboard:warm')->hourly();
             $schedule->command('keywords:check')->daily();
             $schedule->command('numbers:check')->daily();
             $schedule->command('senderid:check')->daily();

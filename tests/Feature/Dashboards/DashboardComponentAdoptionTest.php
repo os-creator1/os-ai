@@ -123,16 +123,6 @@ class DashboardComponentAdoptionTest extends TestCase
         $response->assertDontSee('View all opportunities');
     }
 
-    public function test_admin_dashboard_table_adoption_is_real(): void
-    {
-        $this->ensureRequiredAppConfigRowsExist();
-        $this->actingAsAdmin(['access backend']);
-
-        $response = $this->get(route('admin.home'));
-
-        $response->assertOk();
-        $response->assertSee('ds-table', false);
-    }
 
     private function actingAsAdmin(array $permissions): User
     {

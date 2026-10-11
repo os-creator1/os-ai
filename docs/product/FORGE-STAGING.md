@@ -207,11 +207,28 @@ After the first successful deploy, over SSH as `forge`:
 
 ```
 cd /home/forge/staging.getmotiongrove.com/current
-php artisan platform:install --owner-email=<you@getmotiongrove.com>   # owner password at the concealed prompt
-php artisan config:cache
+php8.3 artisan platform:install --owner-email=<you@getmotiongrove.com>   # needs a real SSH terminal: the owner password is a concealed prompt
 ```
+**Why this is required:** a deploy only runs migrations. `platform:install` creates the Platform Owner (interactive
+password) and seeds the platform's default settings and catalogs (its `db:seed` step); it does **not** seed any licence row.
+A missing `app_config` row no longer crashes the login page (`Helper::app_config()` returns null), but the platform is not
+configured until the install has run. On a fresh, empty database this is safe: the only truncating seeders
+(`AppConfigSeeder`, `PaymentMethodsSeeder`) have nothing of value to lose, and every other step is idempotent.
+
+**The inherited licence gate is retired.** There is no "Verify Product code" step any more: signed-in owners and customers
+go straight to their dashboards, and nothing calls the original vendor's server. Do **not** store any licence value. If your
+staging database was installed before this change it still holds inert `license`, `license_type` and `valid_domain` rows;
+nothing reads them (optional tidy-up: `DELETE FROM app_config WHERE setting IN ('license','license_type','valid_domain');`,
+only with the owner's approval). The remaining third-party entitlement question (which CodeCanyon licence is held) is
+recorded in [`LICENSING-LEGACY-GATE.md`](LICENSING-LEGACY-GATE.md).
+
+**Deploying the retirement to an already-running staging site:** merge the branch into `staging` (owner decision), then deploy
+from Forge as usual. The deploy's `composer install` regenerates the autoloader without the removed package, and
+`artisan package:discover`/config cache pick up the removed provider. Do not re-run `platform:install`. Confirm Forge has
+`APP_NAME`, `APP_TITLE` (both `MotionGrove`) and a private `MAINTENANCE_SECRET_PATH`.
+
 Then check `SELECT count(*) FROM currencies;` = 12, `workspace_plan_catalog` has `core`, `growth`, `agency`, one
-`is_admin` user, and the legacy-gateway query in section 5.2 returns no rows.
+`is_admin` user, and the legacy-gateway query in section 5.2 returns no rows; sign in at `/login` as the owner.
 
 **Do not re-run `platform:install` on a live instance.** It is idempotent for catalogs, but `db:seed` includes
 `PaymentMethodsSeeder`, which **truncates `payment_methods`** and re-seeds it. Upgrades are deploys only.

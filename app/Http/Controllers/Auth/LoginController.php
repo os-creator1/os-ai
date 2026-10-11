@@ -231,7 +231,7 @@
 
                 session(['permissions' => auth()->user()->getPermissions()]);
 
-                return redirect()->route('admin.home');
+                return redirect()->to(\App\Helpers\Helper::adminHomeUrl());
             }
 
             if ($parent_id = Session::get('parent_user_id')) {
@@ -278,6 +278,12 @@
         }
 
 
+        /** Only the four supported drivers, and only when the operator configured their credentials. */
+        private function socialProviderAvailable(string $provider): bool
+        {
+            return in_array($provider, $this->supportedProviders, true) && filled(config('services.' . $provider . '.client_id'));
+        }
+
         /**
          * redirect socialite
          *
@@ -296,8 +302,8 @@
                 ]);
             }
 
-            if ( ! in_array($provider, $this->supportedProviders, true)) {
-                return redirect()->route('user.home')->with([
+            if ( ! $this->socialProviderAvailable($provider)) {
+                return redirect()->route('login')->with([
                     'status'  => 'error',
                     'message' => __('locale.auth.socialite.unacceptable', ['provider' => $provider]),
                 ]);
@@ -322,7 +328,22 @@
                 ]);
             }
 
-            $data = Socialite::driver($provider)->user();
+            if ( ! $this->socialProviderAvailable($provider)) {
+                return redirect()->route('login')->with([
+                    'status'  => 'error',
+                    'message' => __('locale.auth.socialite.unacceptable', ['provider' => $provider]),
+                ]);
+            }
+
+            try {
+                $data = Socialite::driver($provider)->user();
+            } catch (\Throwable $e) {
+                // invalid/expired OAuth state, denied consent, provider outage: never a server error, never a login
+                return redirect()->route('login')->with([
+                    'status'  => 'error',
+                    'message' => __('locale.auth.failed'),
+                ]);
+            }
 
             try {
                 $user = $this->account->findOrCreateSocial($provider, $data);
@@ -337,9 +358,7 @@
                 $this->account->redirectAfterLogin($user);
 
                 auth()->login($user, true);
-                $user->update([
-                    'email_verified_at' => Carbon::now(),
-                ]);
+                request()->session()->regenerate();   // no session fixation across the OAuth round trip
 
                 if ($user->active_portal == 'customer') {
                     return redirect()->route('user.home')->with([
@@ -348,7 +367,7 @@
                     ]);
                 }
 
-                return redirect()->route('admin.home')->with([
+                return redirect()->to(\App\Helpers\Helper::adminHomeUrl())->with([
                     'status'  => 'success',
                     'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
                 ]);

@@ -87,7 +87,7 @@ curl -X POST {{ route('api.contacts.store') }} \
 -H 'Authorization: Bearer {{ Auth::user()->api_token }}' \
 -H 'Content-Type: application/json' \
 -H 'Accept: application/json' \
--d '{"name":"Codeglen"}'
+-d '{"name":"MotionGrove"}'
                                 </code>
                             </pre>
 
@@ -231,7 +231,7 @@ curl -X PATCH {{ route('api.contacts.update', ['contact' => '6065ecdc9184a']) }}
 -H 'Authorization: Bearer {{ Auth::user()->api_token }}' \
 -H 'Content-Type: application/json' \
 -H 'Accept: application/json' \
--d '{"name":"Codeglen Update"}'
+-d '{"name":"Example Update"}'
                                 </code>
                             </pre>
 

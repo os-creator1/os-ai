@@ -10,7 +10,9 @@
      * Author URL: https://codecanyon.net/user/codeglen
      */
 
-    Route::get('/dashboard', 'AdminBaseController@index')->name('home');
+    // Retired inherited dashboard: `/dashboard` only redirects to the user's current landing page (see AdminBaseController).
+    Route::get('/dashboard', 'AdminHomeController@index')->name('home');
+    Route::get('/staff-home', 'AdminHomeController@staffHome')->name('staff-home');
 
     /*
     |--------------------------------------------------------------------------
@@ -252,6 +254,7 @@
 
     Route::post('senderid/search', 'SenderIDController@search')->name('senderid.search');
     Route::get('senderid/export', 'SenderIDController@export')->name('senderid.export');
+    Route::get('senderid/{senderid}/document', 'SenderIDController@document')->name('senderid.document');
     Route::get('senderid/{senderid}/show', 'SenderIDController@show')->name('senderid.show');
     Route::post('senderid/batch_action', 'SenderIDController@batchAction')->name('senderid.batch_action');
     Route::resource('senderid', 'SenderIDController', [

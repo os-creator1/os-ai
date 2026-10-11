@@ -183,7 +183,7 @@ class SeoCitationCatalogController extends AdminBaseController
      */
     private function crumbs(array $extra = [['name' => 'Citation directories']]): array
     {
-        return array_merge([['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')]], $extra);
+        return array_merge([['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')]], $extra);
     }
 
     private function run(callable $write, string $to, string $success, Request $request): RedirectResponse

@@ -40,8 +40,8 @@ class CountriesController extends AdminBaseController
         $this->authorize('general settings');
 
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Dashboard')],
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Settings')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Settings')],
             ['name' => __('locale.menu.Countries')],
         ];
 
@@ -143,7 +143,7 @@ class CountriesController extends AdminBaseController
         $this->authorize('general settings');
 
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => url(config('app.admin_path').'/countries'), 'name' => __('locale.menu.Countries')],
             ['name' => __('locale.settings.add_new')],
         ];

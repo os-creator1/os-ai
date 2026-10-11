@@ -66,7 +66,7 @@
                                         <input type="text" id="secret"
                                                class="form-control @error('secret') is-invalid @enderror"
                                                value="{{ old('secret') }}" name="secret"
-                                               placeholder="{{ config('app.maintenance_secret_path') }}">
+                                               placeholder="{{ config('app.maintenance_secret_path') ?: 'a-private-secret' }}">
                                         @error('secret')
                                         <p><small class="text-danger">{{ $message }}</small></p>
                                         @enderror

@@ -232,7 +232,7 @@ class OpportunityController extends AdminBaseController
     private function breadcrumbs(?Opportunity $opportunity = null): array
     {
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => route('admin.opportunities.index'), 'name' => 'Opportunities'],
         ];
 

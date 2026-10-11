@@ -123,8 +123,8 @@
             }
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Settings')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Settings')],
                 ['name' => __('locale.menu.All Settings')],
             ];
 
@@ -580,7 +580,7 @@
             $this->authorize('general settings');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/email-templates"), 'name' => __('locale.menu.Email Templates')],
                 ['name' => __('locale.labels.terms_of_use')],
             ];
@@ -599,7 +599,7 @@
             $this->authorize('general settings');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/email-templates"), 'name' => __('locale.menu.Email Templates')],
                 ['name' => __('locale.labels.privacy_policy')],
             ];
@@ -699,8 +699,8 @@
         {
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Settings')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Settings')],
                 ['name' => __('locale.menu.Maintenance Mode')],
             ];
 

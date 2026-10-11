@@ -364,7 +364,7 @@
             }
 
             if ($authUser->id === $customer->id || Session::get('admin_user_id') === $customer->id) {
-                return redirect()->route('admin.home');
+                return redirect()->to(\App\Helpers\Helper::adminHomeUrl());
             }
 
             if ( ! Session::get('admin_user_id')) {

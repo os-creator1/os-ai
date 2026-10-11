@@ -110,6 +110,7 @@
 
     Route::post('senderid/search', 'SenderIDController@search')->name('senderid.search');
     Route::get('senderid/request', 'SenderIDController@request')->name('senderid.request');
+    Route::get('senderid/{senderid}/document', 'SenderIDController@document')->name('senderid.document');
     Route::get('senderid/{senderid}/pay', 'SenderIDController@pay')->name('senderid.pay');
     Route::post('senderid/{senderid}/pay', 'SenderIDController@payment');
     Route::any('senderid/{senderid}/success', 'PaymentController@successfulSenderIDPayment')->name('senderid.payment_success');
@@ -1170,7 +1171,7 @@
         |
         | The OAuth callback is registered HERE, inside the authenticated
         | group, so it inherits ['web','auth','can:access_backend',
-        | 'ValidProduct','twofactor']. It is deliberately NOT in
+        | 'twofactor']. It is deliberately NOT in
         | routes/auth.php: it must never authenticate or create a User.
         |
         | No route accepts a redirect_to/return/next/url parameter — there
