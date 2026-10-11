@@ -76,6 +76,8 @@ final class PlatformBillingException extends RuntimeException
 
     public const OFFER_EMAIL_UNVERIFIED = 'offer_email_unverified';
 
+    public const OFFER_VERIFICATION_DISABLED = 'offer_verification_disabled';
+
     public const OFFER_TERMS_CHANGED = 'offer_terms_changed';
 
     public const OFFER_FULLY_REDEEMED = 'offer_fully_redeemed';
@@ -106,6 +108,7 @@ final class PlatformBillingException extends RuntimeException
             self::OFFER_UNAVAILABLE => 'This offer is no longer available.',
             self::OFFER_NOT_FOR_YOU => 'This offer was not made for this account.',
             self::OFFER_EMAIL_UNVERIFIED => 'Please verify your email address to use this offer.',
+            self::OFFER_VERIFICATION_DISABLED => 'This offer is tied to an email address, which cannot be confirmed on this installation. Please contact us.',
             self::OFFER_TERMS_CHANGED => 'The terms of this offer changed. Please review them and accept again.',
             self::OFFER_FULLY_REDEEMED => 'This offer has already been used.',
             default => 'That could not be completed.',

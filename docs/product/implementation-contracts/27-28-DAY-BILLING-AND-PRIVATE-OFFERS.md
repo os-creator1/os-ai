@@ -100,28 +100,43 @@ frozen on the redemption.
 7. Scheduler must run (`platform-offers:sweep`, every 15 min).
 
 ## 4. Verification status (Stripe)
-Checked against the installed `stripe/stripe-php` v7.128.0: services
-`subscriptionSchedules` (create/retrieve/update/release), `products`, `prices`
-exist; `SubscriptionSchedule` statuses are `not_started|active|completed|released|canceled`
-and `end_behavior` is `release|cancel`; `Subscription` exposes `schedule` and
-`trial_end`; `Checkout\Session` exposes `expires_at`. The SDK does **not** document
-request parameters, and Stripe's online docs were unreachable from the build
-environment, so these must be proven in Stripe **test mode** (test clocks) before
-live use:
-1. `subscription_schedules.create(from_subscription)` then `update(phases)`:
-   first phase `start_date` (+ `trial_end` when trialing), `end_date` on
-   non-final phases, `iterations: 1` on the final phase with `end_behavior=release`,
-   `proration_behavior=none` per phase.
-2. Checkout `payment_method_collection=always` and `expires_at` (30 min – 24 h).
-3. A promotion boundary lands exactly on the 28-day period boundary and the next
-   invoice is at the reverted price; a trial + promotion starts the promotion at
-   the first payment.
-4. A billing change (current price until period end, then the agreed phases) with
-   no proration line.
+
+**Real Stripe test mode has NOT been exercised** (no test credentials and no route
+to api.stripe.com from the build environment). What *is* established:
+
+* **Official docs (search of docs.stripe.com):** `from_subscription` on schedule
+  create is documented; phases are sequential and one phase's `end_date` equals the
+  next `start_date`; `end_behavior` is `release|cancel`; **`iterations` was removed
+  from schedule create/update in API version 2025-09-30 and now errors** (use
+  `duration`). The gateway therefore never sends `iterations`: every phase, including
+  the last, ends at an explicit `end_date` (the last one a single period after it
+  starts), and `end_behavior=release` leaves the subscription on that Price.
+* **stripe-php v7.128.0:** the services (`subscriptionSchedules` create / retrieve /
+  update / release, `products`, `prices`) and the fields used (`Subscription.schedule`,
+  `trial_end`, schedule `status`, `end_behavior`, Checkout `expires_at`) exist.
+* **Wire contract (`StripeWireContractTest`):** the REAL gateway and REAL SDK with
+  only the HTTP transport recorded prove the exact parameters sent: Price
+  `recurring[interval]=day`, `interval_count=28`; schedule create `{from_subscription}`
+  then update with `end_behavior=release`, per-phase `end_date`, first-phase
+  `start_date` and `trial_end`, `proration_behavior=none`, **no `iterations`, no
+  coupon**; Checkout `payment_method_collection=always`, `expires_at`,
+  `subscription_data.metadata`, and no trial parameters when there is no trial.
+
+Still BLOCKED until run in test mode (test clocks) — see the acceptance checklist
+in the PR: that Stripe *accepts* those parameters on the account's API version;
+the promotion boundary lands on the 28-day period boundary and the next invoice is
+the reverted amount; trial → first paid invoice; billing-change timing with no
+proration line; webhook retry/replay delivery; invoice amounts.
 
 ## 5. Known limitations
-* Email-bound offers need a *verified* email; installs with `account.verify_account`
-  off cannot verify and so cannot use them.
+* **Email-bound offers require real email verification.** With
+  `ACCOUNT_VERIFICATION=false` every new account is stamped verified at creation
+  without proving the mailbox, so an email match would prove nothing. The system
+  therefore fails closed: email-bound offers cannot be created, an existing one
+  cannot be redeemed (`offer_verification_disabled`) and the offer page does not
+  offer account creation. Offers bound to a **Workspace** (ownership-checked) work
+  normally, as do ordinary signup and billing changes. A staging install running
+  `ACCOUNT_VERIFICATION=false` can therefore test Workspace-bound offers only.
 * The offer link appears in web-server access logs (it is a bearer secret in the
   URL); it is never stored in plain text by the app and is rotated with "New link".
 * Public trials share the same ledger but one reservation can outlive its 2-hour
@@ -134,3 +149,27 @@ live use:
 * Until the 28-day Stripe Prices are created after deploy, formerly monthly plans
   are off sale and signup/plan-changes show "not ready to be purchased".
 * Private Offers are separable: the 28-day change does not depend on them.
+
+## 6. Launch sequence and rollback
+1. Deploy code + `php artisan migrate`. Data effect: plans move to `every_28_days`;
+   plans that pointed at a monthly Price lose that pointer (kept in
+   `legacy_provider_price_id`), come off sale, trials are switched off. Existing
+   subscriptions are not written (proven by `LaunchAcceptanceTest`). Trial history is
+   back-filled into the trial ledger.
+2. Billing & Revenue → each plan → **Create "Every 28 days" Stripe Price** (creates
+   and verifies a day × 28 Price on the plan's Product).
+3. Save each plan with *Available to new signups* ticked (verifies the Price again).
+4. Test-mode signup end to end; then repeat with live keys only when approved.
+5. Ensure the scheduler runs (`platform-offers:sweep`).
+
+Until step 3 signups are closed ("not ready to be purchased") and existing monthly
+subscribers cannot self-serve a plan change onto 28-day plans (billing schedules are
+never re-anchored implicitly).
+
+**Rollback:** `migrate:rollback` restores each moved plan's monthly Price and cycle
+from `legacy_provider_price_id`, then drops the new columns/tables. Subscriptions
+created on 28-day Prices in the meantime keep their own Price/cycle snapshots and
+keep billing every 28 days at Stripe (rollback never touches Stripe or
+subscriptions); they would need a deliberate manual decision. Private-offer tables
+are dropped, so rolling back after offers were redeemed orphans their schedules at
+Stripe — release them first.

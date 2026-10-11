@@ -131,7 +131,7 @@ class PrivateOfferBillingChangeTest extends TestCase
         $call = $this->stripe->callsOf('applyPriceSchedule')[0]['args'];
         $this->assertSame('price_fake_growth', $call['phases'][0]['price']);
         $this->assertSame($periodEnd->toIso8601String(), $call['phases'][0]['ends_at']);
-        $this->assertNull($call['phases'][1]['ends_at']);
+        $this->assertNotNull($call['phases'][1]['ends_at'], 'the final phase also ends explicitly (no iterations)');
         $this->assertSame([], $this->stripe->callsOf('changeSubscriptionPrice'));
         $this->assertCount($chargesBefore, $this->stripe->charges);
 
@@ -218,7 +218,7 @@ class PrivateOfferBillingChangeTest extends TestCase
         $this->assertSame('price_fake_growth', $phases[0]['price']);
         $this->assertSame($subscription->current_period_end->toIso8601String(), $phases[0]['ends_at']);
         $this->assertSame($subscription->current_period_end->copy()->addDays(56)->toIso8601String(), $phases[1]['ends_at']);
-        $this->assertNull($phases[2]['ends_at']);
+        $this->assertNotNull($phases[2]['ends_at'], 'the final phase also ends explicitly (no iterations)');
         $this->assertCount($chargesBefore, $this->stripe->charges, 'nothing is charged today');
 
         // Renewals: 90, 90, 120.

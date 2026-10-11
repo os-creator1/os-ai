@@ -282,7 +282,6 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
             $startDate = $schedule->phases[0]->start_date ?? ($current->start_date ?? null);
 
             $payload = [];
-            $last = count($phases) - 1;
 
             foreach ($phases as $index => $phase) {
                 $entry = ['items' => [['price' => $phase->priceId, 'quantity' => 1]]];
@@ -297,13 +296,13 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
                     }
                 }
 
-                if ($index === $last) {
-                    // One iteration of the final price, after which the schedule
-                    // releases and the subscription simply carries on at it.
-                    $entry['iterations'] = 1;
-                } else {
-                    $entry['end_date'] = (int) $phase->endsAt?->getTimestamp();
-                }
+                // EVERY phase ends at an explicit instant. `iterations` was removed
+                // from schedule create/update in API version 2025-09-30 (it now
+                // errors), so it is never sent; the final phase therefore also
+                // carries an end_date (one billing period after it starts), after
+                // which `end_behavior=release` leaves the subscription in place on
+                // that final Price.
+                $entry['end_date'] = (int) $phase->endsAt->getTimestamp();
 
                 // Moving between phases never creates a proration line or an
                 // unplanned charge: the Prices are agreed in advance.

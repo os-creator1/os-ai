@@ -59,6 +59,7 @@ class PrivateOfferController extends Controller
             'offer' => $offer,
             'plan' => $this->plans->presentTier($offer->catalog->tier),
             'canSignUp' => config('account.can_register')
+                && config('account.verify_account')
                 && ! $offer->isBillingChange()
                 && $offer->target_workspace_id === null,
         ]));
@@ -82,7 +83,8 @@ class PrivateOfferController extends Controller
         if ($view['state'] === 'unavailable'
             || $offer->isBillingChange()
             || $offer->target_workspace_id !== null
-            || ! config('account.can_register')) {
+            || ! config('account.can_register')
+            || ! config('account.verify_account')) {
             return redirect()->route('offers.show', ['token' => $token]);
         }
 

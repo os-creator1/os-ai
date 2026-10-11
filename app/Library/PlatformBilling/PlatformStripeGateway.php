@@ -193,9 +193,9 @@ interface PlatformStripeGateway
      * through a Subscription Schedule, with no proration and no extra charge.
      *
      * The first phase begins at the subscription's current phase (any running
-     * trial is preserved); every non-final phase ends at its `endsAt`; the last
-     * phase is open ended and the schedule then releases, leaving the
-     * subscription on that final Price. If the subscription is already under a
+     * trial is preserved); every non-final phase ends at its `endsAt` (the last one a
+     * single billing period after it starts); the schedule then releases,
+     * leaving the subscription on that final Price. If the subscription is already under a
      * schedule the caller releases it first.
      *
      * @param  array<int, SchedulePhase>  $phases  at least two

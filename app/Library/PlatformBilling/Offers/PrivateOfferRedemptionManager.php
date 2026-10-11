@@ -526,9 +526,13 @@ final class PrivateOfferRedemptionManager
         $phases = [new SchedulePhase((string) $subscription->provider_price_id, $effectiveAt)];
 
         foreach ($paid as $phase) {
+            // The open-ended final phase is given one billing period; the
+            // schedule then releases and the subscription continues at that Price.
             $phases[] = new SchedulePhase(
                 (string) $phase['price_id'],
-                $phase['ends_at'] === null ? null : CarbonImmutable::parse((string) $phase['ends_at']),
+                $phase['ends_at'] === null
+                    ? BillingCycle::addPeriods(CarbonImmutable::parse((string) $phase['starts_at']), (string) $terms->get('cycle'), 1)
+                    : CarbonImmutable::parse((string) $phase['ends_at']),
             );
         }
 
@@ -627,6 +631,16 @@ final class PrivateOfferRedemptionManager
     {
         if ($offer->customer_email === null) {
             return;
+        }
+
+        // FAIL CLOSED when email verification is switched off
+        // (ACCOUNT_VERIFICATION=false): in that mode every new account is stamped
+        // "verified" at creation without anyone proving they own the mailbox, so
+        // "the verified email matches" would be satisfiable by simply registering
+        // with somebody else's address. An email-bound offer is then unusable;
+        // an offer bound to a Workspace (ownership-checked) still works.
+        if (! config('account.verify_account')) {
+            throw PlatformBillingException::because(PlatformBillingException::OFFER_VERIFICATION_DISABLED);
         }
 
         if (! hash_equals((string) $offer->customer_email, EmailIdentity::normalize((string) $actor->email))) {

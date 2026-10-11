@@ -14,13 +14,15 @@ use Carbon\CarbonInterface;
  * with an explicit end instant, and the final phase has no end (the
  * subscription simply continues on it).
  *
- * `$endsAt` null means "open ended": the last phase.
+ * Every phase carries an end instant. The FINAL phase's end is one billing
+ * period after it starts: the schedule then releases and the subscription simply
+ * carries on at that Price (Stripe's `iterations` parameter no longer exists).
  */
 final readonly class SchedulePhase
 {
     public function __construct(
         public string $priceId,
-        public ?CarbonInterface $endsAt = null,
+        public CarbonInterface $endsAt,
     ) {
     }
 }

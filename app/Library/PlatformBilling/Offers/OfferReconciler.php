@@ -329,7 +329,10 @@ final class OfferReconciler
                 (string) $subscription->provider_subscription_id,
                 [
                     new SchedulePhase((string) $paid[0]['price_id'], CarbonImmutable::instance($redemption->promo_ends_at)),
-                    new SchedulePhase((string) $paid[1]['price_id']),
+                    new SchedulePhase(
+                        (string) $paid[1]['price_id'],
+                        BillingCycle::addPeriods($redemption->promo_ends_at, (string) ($redemption->terms_snapshot['cycle'] ?? BillingCycle::EVERY_28_DAYS), 1),
+                    ),
                 ],
                 'offer-schedule:' . $redemption->uid,
             );

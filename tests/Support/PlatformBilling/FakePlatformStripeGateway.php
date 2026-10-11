@@ -377,7 +377,7 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         ]);
 
         // Stripe's idempotency: the same key returns the ORIGINAL Price.
-        $id = $this->priceKeys[$idempotencyKey] ??= 'price_fake_m' . str_pad((string) (++$this->sequence), 5, '0', STR_PAD_LEFT);
+        $id = $this->priceKeys[$idempotencyKey] ??= 'price_fakeM' . str_pad((string) (++$this->sequence), 5, '0', STR_PAD_LEFT);
 
         if (! isset($this->prices[$id])) {
             $this->definePrice($id, [

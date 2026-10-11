@@ -74,6 +74,10 @@ final class PrivateOfferManager
             throw ValidationException::withMessages(['customer_email' => __('Choose who this offer is for: a customer email address or an existing Workspace.')]);
         }
 
+        if ($email !== null && ! config('account.verify_account')) {
+            throw ValidationException::withMessages(['customer_email' => __('Email verification is switched off on this installation, so an offer cannot be tied to an email address (anyone could register with it). Assign the offer to an existing Workspace instead, or turn email verification on.')]);
+        }
+
         if ($kind === PlatformPrivateOffer::KIND_BILLING_CHANGE && $workspace === null) {
             throw ValidationException::withMessages(['workspace_uid' => __('A billing change applies to an existing Workspace.')]);
         }

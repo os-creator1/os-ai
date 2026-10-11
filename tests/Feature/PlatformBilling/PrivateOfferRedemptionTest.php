@@ -399,7 +399,7 @@ class PrivateOfferRedemptionTest extends TestCase
         $phases = $scheduleCall[0]['args']['phases'];
         $this->assertSame($promoPriceId, $phases[0]['price']);
         $this->assertSame('price_fake_growth', $phases[1]['price']);
-        $this->assertNull($phases[1]['ends_at']);
+        $this->assertNotNull($phases[1]['ends_at'], 'the final phase also ends explicitly (no iterations)');
 
         $start = $this->stripe->subscriptions[$providerSubscriptionId]['period_start'];
         $this->assertSame($start->addDays(84)->toIso8601String(), $phases[0]['ends_at'], '3 periods x 28 days, not "3 months"');

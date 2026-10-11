@@ -43,6 +43,15 @@ return new class extends Migration
             $table->string('legacy_provider_price_id', 191)->nullable()->after('provider_product_id');
         });
 
+        $this->convertCatalogData();
+    }
+
+    /**
+     * The DATA half, callable on its own so the conversion of a pre-existing
+     * monthly catalog can be proven (and re-run safely) without re-adding columns.
+     */
+    public function convertCatalogData(): void
+    {
         DB::table('workspace_plan_catalog')->update(['trial_enabled' => false, 'trial_days' => null]);
 
         DB::table('workspace_plan_catalog')
@@ -61,6 +70,17 @@ return new class extends Migration
 
     public function down(): void
     {
+        // ROLLBACK: put every plan that was moved off a monthly Price back on it
+        // BEFORE the column that remembers it is dropped. (Plans that had no
+        // Price keep the 28-day label, which only matters once a Price exists.)
+        // Subscriptions were never touched, so they need nothing.
+        DB::table('workspace_plan_catalog')
+            ->whereNotNull('legacy_provider_price_id')
+            ->update([
+                'provider_price_id' => DB::raw('legacy_provider_price_id'),
+                'billing_cycle' => 'monthly',
+            ]);
+
         Schema::table('workspace_plan_catalog', function (Blueprint $table): void {
             $table->dropColumn(['provider_product_id', 'legacy_provider_price_id']);
         });
