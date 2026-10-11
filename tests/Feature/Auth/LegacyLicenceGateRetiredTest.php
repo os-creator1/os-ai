@@ -140,6 +140,24 @@ class LegacyLicenceGateRetiredTest extends TestCase
         $this->assertSame($customer->id, \Illuminate\Support\Facades\Auth::id());
     }
 
+    public function test_authenticated_owner_with_pending_two_factor_challenge_can_complete_verification(): void
+    {
+        config()->set('app.two_factor', true);
+        $owner = $this->actingAsPlatformOwner();
+        $owner->forceFill([
+            'two_factor' => true,
+            'two_factor_code' => 123456,
+            'two_factor_expires_at' => now()->addMinutes(10),
+        ])->save();
+
+        $this->get(route('verify.index'))->assertOk();
+        $this->post(route('verify.store'), ['two_factor_code' => 123456])
+            ->assertRedirect(\App\Helpers\Helper::home_route());
+
+        $this->assertNull($owner->fresh()->two_factor_code);
+        $this->assertSame($owner->id, \Illuminate\Support\Facades\Auth::id());
+    }
+
     public function test_the_runtime_source_has_no_vendor_licence_callback_or_gate_alias(): void
     {
         $hits = [];
