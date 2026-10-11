@@ -90,6 +90,56 @@ class LegacyLicenceGateRetiredTest extends TestCase
         $this->assertStringNotContainsString('verify-purchase-code', (string) $response->headers->get('Location'));
     }
 
+    public function test_authenticated_platform_owner_cannot_switch_accounts_by_posting_login_credentials(): void
+    {
+        $owner = $this->actingAsPlatformOwner();
+        $other = User::create([
+            'first_name' => 'Other',
+            'last_name' => 'Administrator',
+            'email' => 'other-admin-' . uniqid('', true) . '@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('AnotherSecurePassword123!'),
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+
+        config()->set('no-captcha.login', false);
+
+        $this->post(route('login'), [
+            'email' => $other->email,
+            'password' => 'AnotherSecurePassword123!',
+        ])->assertRedirect(\App\Helpers\Helper::home_route());
+
+        $this->assertSame($owner->id, \Illuminate\Support\Facades\Auth::id());
+    }
+
+    public function test_authenticated_customer_cannot_switch_accounts_by_posting_login_credentials(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $other = User::create([
+            'first_name' => 'Other',
+            'last_name' => 'Customer',
+            'email' => 'other-customer-' . uniqid('', true) . '@example.test',
+            'password' => \Illuminate\Support\Facades\Hash::make('AnotherSecurePassword123!'),
+            'status' => true,
+            'is_admin' => false,
+            'is_customer' => true,
+            'active_portal' => 'customer',
+        ]);
+
+        config()->set('no-captcha.login', false);
+
+        $this->post(route('login'), [
+            'email' => $other->email,
+            'password' => 'AnotherSecurePassword123!',
+        ])->assertRedirect(route('user.home'));
+
+        $this->assertSame($customer->id, \Illuminate\Support\Facades\Auth::id());
+    }
+
     public function test_the_runtime_source_has_no_vendor_licence_callback_or_gate_alias(): void
     {
         $hits = [];
