@@ -85,8 +85,8 @@
             $this->authorize('view customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Customer')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.menu.Customers')],
             ];
 
@@ -212,7 +212,7 @@
             $this->authorize('create customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customers')],
                 ['name' => __('locale.customer.add_new')],
             ];
@@ -283,7 +283,7 @@
 
             // Breadcrumbs & additional data
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customers')],
                 ['name' => $customer->displayName()],
             ];
@@ -955,7 +955,7 @@
         public function coverage(User $customer)
         {
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.buttons.add_coverage')],
             ];
@@ -1044,7 +1044,7 @@
             $this->authorize('edit customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.buttons.update_coverage')],
             ];
@@ -1287,8 +1287,8 @@
             $this->authorize('create customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Customer')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.customer.import_customers')],
             ];
 

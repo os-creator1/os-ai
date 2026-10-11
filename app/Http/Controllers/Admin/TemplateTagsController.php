@@ -51,8 +51,8 @@ class TemplateTagsController extends AdminBaseController
         $this->authorize('view tags');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Sending')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Sending')],
                 ['name' => __('locale.menu.Template Tags')],
         ];
 
@@ -160,7 +160,7 @@ class TemplateTagsController extends AdminBaseController
         $this->authorize('create tags');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/tags"), 'name' => __('locale.menu.Template Tags')],
                 ['name' => __('locale.template_tags.new_template_tag')],
         ];
@@ -184,7 +184,7 @@ class TemplateTagsController extends AdminBaseController
         $this->authorize('edit tags');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/tags"), 'name' => __('locale.menu.Template Tags')],
                 ['name' => __('locale.template_tags.update_template_tag')],
         ];

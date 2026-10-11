@@ -472,7 +472,7 @@ class AgencyV1FinalIsolationTest extends TestCase
         $this->assertAuthenticatedAs($a['agencyOwner']->user);
         $this->assertNull(session('admin_user_id'));
 
-        $admin = $this->get(route('admin.home'));
+        $admin = $this->followingRedirects()->get(route('admin.home'));
         $this->assertNotSame(200, $admin->getStatusCode(), 'The platform portal is not reachable from a View As session.');
 
         // And the banner is the Agency's View As banner, not the platform's "logged in as" notice.

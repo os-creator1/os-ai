@@ -44,8 +44,8 @@
             $this->authorize('view subscription');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Customer')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.menu.Subscriptions')],
             ];
 
@@ -217,7 +217,7 @@
             $this->authorize('new subscription');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/subscriptions"), 'name' => __('locale.menu.Subscriptions')],
                 ['name' => __('locale.buttons.new_subscription')],
             ];
@@ -276,7 +276,7 @@
             $this->authorize('manage subscription');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/subscriptions"), 'name' => __('locale.menu.Subscriptions')],
                 ['name' => __('locale.subscription.logs')],
             ];

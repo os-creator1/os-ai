@@ -10,7 +10,9 @@
      * Author URL: https://codecanyon.net/user/codeglen
      */
 
-    Route::get('/dashboard', 'AdminBaseController@index')->name('home');
+    // Retired inherited dashboard: `/dashboard` only redirects to the user's current landing page (see AdminBaseController).
+    Route::get('/dashboard', 'AdminHomeController@index')->name('home');
+    Route::get('/staff-home', 'AdminHomeController@staffHome')->name('staff-home');
 
     /*
     |--------------------------------------------------------------------------

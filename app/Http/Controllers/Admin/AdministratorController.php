@@ -54,8 +54,8 @@ class AdministratorController extends AdminBaseController
         $this->authorize('view administrator');
 
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Dashboard')],
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Administrator')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Administrator')],
             ['name' => __('locale.menu.Administrators')],
         ];
 
@@ -207,7 +207,7 @@ class AdministratorController extends AdminBaseController
         $this->authorize('create administrator');
 
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => url(config('app.admin_path').'/administrators'), 'name' => __('locale.menu.Administrators')],
             ['name' => __('locale.administrator.create_administrator')],
         ];
@@ -255,7 +255,7 @@ class AdministratorController extends AdminBaseController
         $this->authorize('edit administrator');
 
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => url(config('app.admin_path').'/administrators'), 'name' => __('locale.menu.Administrators')],
             ['name' => $administrator->displayName()],
         ];

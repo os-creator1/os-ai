@@ -25,7 +25,7 @@
 
             @else
                 <li class="nav-item me-auto">
-                    <a class="navbar-brand" href="{{ $customerShell ? route('user.home') : (auth()->user()->is_admin && auth()->user()->active_portal == 'admin' ? route('admin.platform-owner.overview') : route('admin.home')) }}">
+                    <a class="navbar-brand" href="{{ $customerShell ? route('user.home') : (auth()->user()->is_admin && auth()->user()->active_portal == 'admin' ? route('admin.platform-owner.overview') : \App\Helpers\Helper::adminHomeUrl()) }}">
                         <div class="brand-logo">
                             <x-branding-logo variant="full" background="light" />
                         </div>

@@ -46,7 +46,7 @@ class AiUsageController extends AdminBaseController
             'categories' => array_map(fn (AiUsageCategory $category): string => $category->value, AiUsageCategory::cases()),
             'usd' => static fn (?int $micro): string => $micro === null ? '—' : '$' . bcdiv((string) $micro, '1000000', 6),
             'breadcrumbs' => [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['name' => 'AI Usage'],
             ],
         ]);

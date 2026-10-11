@@ -333,7 +333,7 @@ class CustomerContextResolutionTest extends TestCase
         $this->withSession(['permissions' => collect(['access backend'])]);
         $this->actingAs($admin);
 
-        $response = $this->get(route('admin.home'))->assertOk();
+        $response = $this->followingRedirects()->get(route('admin.home'))->assertOk();
         $response->assertDontSee('data-nav-key=', false);
         $response->assertDontSee('data-role="context-switcher"', false);
         $response->assertDontSee('data-role="sidebar-context"', false);

@@ -67,7 +67,7 @@
                 ],
                 [
                     'setting' => 'company_address',
-                    'value'   => 'House#11, Block#B, <br>Rampura<br>Banasree Project<br>Dhaka<br>1219<br>Bangladesh',
+                    'value'   => '',
                 ],
                 [
                     'setting' => 'software_version',

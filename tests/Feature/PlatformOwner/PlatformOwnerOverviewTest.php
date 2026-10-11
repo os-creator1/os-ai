@@ -198,7 +198,8 @@ class PlatformOwnerOverviewTest extends TestCase
 
         // Platform Owner shell V1 flattened the old four-entry group into the grouped
         // sidebar (see PlatformOwnerShellNavigationTest); the four stay top-level and owner-only.
-        $entries = collect(\App\Helpers\Helper::menuData()['admin'])->keyBy('name');
+        // "Home" appears twice by design: the owner entry (admin_only) and the staff landing entry (staff_only).
+        $entries = collect(\App\Helpers\Helper::menuData()['admin'])->filter(fn ($e) => ($e['admin_only'] ?? false) || ! ($e['staff_only'] ?? false))->keyBy('name');
 
         foreach (['Home', 'Workspaces', 'Businesses', 'Audit Logs'] as $name) {
             $this->assertNotNull($entries->get($name), "{$name} is missing");

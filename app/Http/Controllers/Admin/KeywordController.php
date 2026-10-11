@@ -53,8 +53,8 @@
             $this->authorize('view keywords');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Sending')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Sending')],
                 ['name' => __('locale.menu.Keywords')],
             ];
 
@@ -192,7 +192,7 @@
             $this->authorize('create keywords');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/keywords"), 'name' => __('locale.menu.Keywords')],
                 ['name' => __('locale.keywords.create_new_keyword')],
             ];
@@ -248,7 +248,7 @@
             $this->authorize('edit keywords');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/keywords"), 'name' => __('locale.menu.Keywords')],
                 ['name' => __('locale.keywords.update_keyword')],
             ];

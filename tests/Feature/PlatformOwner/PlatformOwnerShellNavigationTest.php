@@ -53,7 +53,6 @@ class PlatformOwnerShellNavigationTest extends TestCase
         'Port-Out Requests' => 'messaging-port-out-requests',
         'Number Lifecycle' => 'messaging-number-lifecycle',
         'Legacy Slot Agreements' => 'additional-business-slot-agreements',
-        'Messaging Dashboard' => 'dashboard',
         'Sending Servers' => 'sending-servers',
     ];
 
@@ -270,7 +269,6 @@ class PlatformOwnerShellNavigationTest extends TestCase
             [route('admin.administrators.index'), 'Administrators'],
             [route('admin.niche-blueprints.index'), 'Niche Blueprints'],
             [route('admin.template-library.index'), 'Website Templates'],
-            [route('admin.home'), 'Messaging Dashboard'],
         ];
 
         foreach ($cases as [$url, $expected]) {
@@ -309,9 +307,9 @@ class PlatformOwnerShellNavigationTest extends TestCase
         $this->assertSame([], $activeFor("{$admin}/workspace-plan-catalog"));
         $this->assertSame(['Audit Logs'], $activeFor("{$admin}/platform-owner/audit"));
         $this->assertSame(['Home'], $activeFor("{$admin}/platform-owner"));
-        // Reports > Dashboard must light up only itself, never the owner's Messaging Dashboard (/dashboard).
+        // Reports > Dashboard must light up only itself, and the retired /dashboard URL lights nothing.
         $this->assertSame([], $activeFor("{$admin}/reports/dashboard"));
-        $this->assertSame(['Messaging Dashboard'], $activeFor("{$admin}/dashboard"));
+        $this->assertSame([], $activeFor("{$admin}/dashboard"));
     }
 
     // --- authorization / isolation ---------------------------------------
@@ -356,12 +354,14 @@ class PlatformOwnerShellNavigationTest extends TestCase
         $this->withSession(['permissions' => collect(self::ALL_OWNER_PERMISSIONS)]);
         $this->actingAs($staff);
 
-        $sidebar = $this->sidebar($this->get(route('admin.home'))->assertOk()->getContent());
+        $sidebar = $this->sidebar($this->followingRedirects()->get(route('admin.home'))->assertOk()->getContent());
         $labels = array_column($sidebar['links'], 'label');
         $hrefs = array_column($sidebar['links'], 'href');
 
-        $this->assertContains('Dashboard', $labels, 'Staff keep the legacy Dashboard');
-        foreach (['Home', 'Workspaces', 'Businesses', 'Opportunities', 'Niche Blueprints', 'Website Templates', 'Billing & Revenue', 'Plans', 'Users', 'Support', 'Feature Management', 'Audit Logs', 'Messaging Operations', 'Messaging Dashboard'] as $ownerOnly) {
+        $this->assertContains('Home', $labels, 'Staff get the staff Home');
+        $this->assertContains(url(config('app.admin_path') . '/staff-home'), $hrefs, 'and it is the staff landing page, never the retired dashboard');
+        $this->assertNotContains(url(config('app.admin_path') . '/dashboard'), $hrefs);
+        foreach (['Workspaces', 'Businesses', 'Opportunities', 'Niche Blueprints', 'Website Templates', 'Billing & Revenue', 'Plans', 'Users', 'Support', 'Feature Management', 'Audit Logs', 'Messaging Operations', 'Messaging Dashboard'] as $ownerOnly) {
             $this->assertNotContains($ownerOnly, $labels);
         }
         foreach (['platform-owner', 'platform-billing', 'platform-plans', 'platform-users', 'platform-support', 'platform-announcements', 'niche-blueprints', 'template-library', 'messaging-provisioning-incidents', '/workspaces', '/businesses'] as $fragment) {
@@ -372,16 +372,15 @@ class PlatformOwnerShellNavigationTest extends TestCase
         $this->assertSame([], array_values(array_filter($sidebar['headers'], fn ($h) => in_array($h, ['Accounts & Operations', 'Product & Configuration', 'Governance'], true))));
     }
 
-    public function test_owner_does_not_see_the_staff_only_dashboard_entry_beside_home(): void
+    public function test_owner_does_not_see_the_staff_home_entry_beside_the_real_home(): void
     {
         $this->actingAsFullOwner();
 
         $links = $this->sidebar($this->get(route('admin.platform-owner.overview'))->getContent())['links'];
 
-        // Reports > Dashboard (admin/reports/dashboard) is a different page; the
-        // staff-only entry is the one linking to admin/dashboard labelled Dashboard.
-        $staffDashboard = array_filter($links, fn ($l) => $l['label'] === 'Dashboard' && $l['href'] === url(config('app.admin_path') . '/dashboard'));
-        $this->assertSame([], array_values($staffDashboard));
+        $hrefs = array_column($links, 'href');
+        $this->assertNotContains(url(config('app.admin_path') . '/staff-home'), $hrefs);
+        $this->assertNotContains(url(config('app.admin_path') . '/dashboard'), $hrefs);
         $this->assertContains('Home', array_column($links, 'label'));
     }
 
@@ -470,6 +469,6 @@ class PlatformOwnerShellNavigationTest extends TestCase
         };
         $walk($admin);
         $dupes = array_keys(array_filter(array_count_values($urls), fn ($n) => $n > 1));
-        $this->assertSame([url(config('app.admin_path') . '/dashboard')], $dupes, 'Only the legacy dashboard is deliberately offered twice (staff vs owner).');
+        $this->assertSame([], $dupes, 'No destination is offered twice; the retired dashboard is gone.');
     }
 }

@@ -34,7 +34,7 @@ class LegacyLicenceGateRetiredTest extends TestCase
     {
         $this->actingAsPlatformOwner();
 
-        $this->get(route('admin.home'))->assertOk();
+        $this->followingRedirects()->get(route('admin.home'))->assertOk();
     }
 
     public function test_a_customer_reaches_their_business_with_no_licence_rows_but_never_the_admin_area(): void
@@ -44,7 +44,7 @@ class LegacyLicenceGateRetiredTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]))->assertOk();
         $this->get(route('user.home'))->assertOk();
-        $this->assertNotSame(200, $this->get(route('admin.home'))->getStatusCode());
+        $this->assertNotSame(200, $this->followingRedirects()->get(route('admin.home'))->getStatusCode());
     }
 
     public function test_a_customer_cannot_open_another_tenants_business(): void
@@ -61,7 +61,7 @@ class LegacyLicenceGateRetiredTest extends TestCase
 
     public function test_guests_are_denied_the_admin_and_customer_areas(): void
     {
-        $this->assertNotSame(200, $this->get(route('admin.home'))->getStatusCode());
+        $this->assertNotSame(200, $this->followingRedirects()->get(route('admin.home'))->getStatusCode());
         $this->assertNotSame(200, $this->get(route('user.home'))->getStatusCode());
     }
 

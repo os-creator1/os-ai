@@ -94,7 +94,7 @@
 curl -X POST {{ route('api_http.contacts.store') }} \
 -H 'Content-Type: application/json' \
 -H 'Accept: application/json' \
--d '{"name":"Codeglen","api_token":"{{ Auth::user()->api_token }}"}'
+-d '{"name":"MotionGrove","api_token":"{{ Auth::user()->api_token }}"}'
                                 </code>
                             </pre>
 
@@ -237,7 +237,7 @@ curl -X POST {{ route('api_http.contacts.show', ['group_id' => '6065ecdc9184a'])
 curl -X PATCH {{ route('api_http.contacts.update', ['contact' => '6065ecdc9184a']) }} \
 -H 'Content-Type: application/json' \
 -H 'Accept: application/json' \
--d '{"name":"Codeglen Update","api_token":"{{ Auth::user()->api_token }}"}'
+-d '{"name":"Example Update","api_token":"{{ Auth::user()->api_token }}"}'
                                 </code>
                             </pre>
 

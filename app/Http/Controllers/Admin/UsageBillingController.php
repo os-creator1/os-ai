@@ -197,7 +197,7 @@ class UsageBillingController extends AdminBaseController
             'safetyLimits' => $this->safetyLimitRepository->all(),
             'history' => $this->limitTransitionRepository->recentPlatformSafetyLimitHistory(),
             'breadcrumbs' => [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['name' => 'Usage Billing Safety Limits'],
             ],
         ]);
@@ -293,7 +293,7 @@ class UsageBillingController extends AdminBaseController
     private function breadcrumbs(Business $business): array
     {
         return [
-            ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => route('admin.businesses.index'), 'name' => 'Businesses'],
             ['link' => route('admin.businesses.show', $business), 'name' => $business->name],
             ['name' => 'Usage Billing'],

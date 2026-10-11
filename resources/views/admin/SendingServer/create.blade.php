@@ -299,7 +299,7 @@
                                         <p>Login with your nobelSMS portal then click on <code>API Connections</code>
                                             Then click on <code>Add Connection</code> option. After that, insert your
                                             connection name, IP Address, Currency and Click Save. Finally, insert your
-                                            <code>Username</code> and <code>Password</code> to Ultimate SMS.</p>
+                                            <code>Username</code> and <code>Password</code> to the platform.</p>
                                         @break
 
 
@@ -335,7 +335,7 @@
                                                     href="https://dashboard.clicksend.com/messaging-settings/sms/inbound-sms"
                                                     target="_blank">Inbound Settings</a>. In the <code>SMS & MMS</code>
                                             section, open the <code>Inbound Rules</code> tab and click <code>Add New
-                                                Rule</code>. Name the rule, e.g., <code>Ultimate SMS Inbound SMS</code>,
+                                                Rule</code>. Name the rule, e.g., <code>Platform Inbound SMS</code>,
                                             and select your <code>Dedicated Number</code>. Finally, select
                                             <code>URL</code> from <code>Action</code> dropdown and insert the following
                                             URL into the URL field:

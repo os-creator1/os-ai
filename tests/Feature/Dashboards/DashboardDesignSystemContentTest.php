@@ -75,14 +75,6 @@ class DashboardDesignSystemContentTest extends TestCase
         $this->assertSame(3, $adoptions);
     }
 
-    public function test_admin_dashboard_has_zero_data_feather_and_genuine_ds_icon_adoption(): void
-    {
-        $source = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
-
-        $this->assertStringNotContainsString('data-feather', $source);
-        $this->assertStringContainsString('<x-ds-icon', $source);
-        $this->assertSame(19, substr_count($source, '<x-ds-icon'));
-    }
 
     /**
      * Corrected, Implementation Correction Round 1 — all four legacy
@@ -101,14 +93,6 @@ class DashboardDesignSystemContentTest extends TestCase
         }
     }
 
-    public function test_admin_dashboard_has_zero_legacy_color_literals(): void
-    {
-        $source = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
-
-        foreach (['#EA5455', '#9c8cfc', '#f29292', '#7367F0'] as $literal) {
-            $this->assertStringNotContainsString($literal, $source, "Expected {$literal} to be fully absent from admin/dashboard.blade.php.");
-        }
-    }
 
     /**
      * theme-tokens.js's own cssVar(name, fallback) prepends "--" to `name`
@@ -116,13 +100,11 @@ class DashboardDesignSystemContentTest extends TestCase
      * never-matching custom property name. Neither dashboard file may
      * call PlatformTheme.color() with a leading `--`.
      */
-    public function test_neither_dashboard_file_uses_the_incorrect_leading_dash_call_form(): void
+    public function test_the_customer_dashboard_file_does_not_use_the_incorrect_leading_dash_call_form(): void
     {
         $customerSource = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
-        $adminSource = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
 
         $this->assertStringNotContainsString("PlatformTheme.color('--", $customerSource);
-        $this->assertStringNotContainsString("PlatformTheme.color('--", $adminSource);
     }
 
     /**
@@ -132,10 +114,9 @@ class DashboardDesignSystemContentTest extends TestCase
      * covers — so the customer dashboard is no longer a chart file and
      * only the admin dashboard is asserted here.
      */
-    public function test_platform_theme_remains_used_in_the_admin_dashboard_chart_file(): void
+    public function test_platform_theme_remains_used_in_the_customer_dashboard_chart_file(): void
     {
         $customerSource = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
-        $adminSource = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
 
         // H-3 gave Business performance one chart: new contacts per bucket,
         // loaded from B5's own series endpoint. Like every other chart in the
@@ -143,9 +124,6 @@ class DashboardDesignSystemContentTest extends TestCase
         $this->assertStringContainsString('ApexCharts', $customerSource, 'The Business performance chart (H-3 §2.5).');
         $this->assertStringContainsString('window.PlatformTheme', $customerSource, 'The customer dashboard chart reads the shared tokens.');
         $this->assertDoesNotMatchRegularExpression('/#[0-9a-fA-F]{6}\b/', $customerSource, 'No literal hex colour on the customer dashboard.');
-        $this->assertStringContainsString("PlatformTheme.color('color-chart-negative')", $adminSource);
-        $this->assertStringContainsString("PlatformTheme.color('color-chart-6')", $adminSource);
-        $this->assertStringContainsString("PlatformTheme.color('color-status-danger-border')", $adminSource);
     }
 
     /**

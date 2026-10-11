@@ -283,7 +283,7 @@ class CustomerShellNavigationTest extends TestCase
         $this->withSession(['permissions' => collect(['access backend'])]);
         $this->actingAs($admin);
 
-        $adminResponse = $this->get(route('admin.home'))->assertOk();
+        $adminResponse = $this->followingRedirects()->get(route('admin.home'))->assertOk();
         $this->assertStringNotContainsString('data-nav-key="accounts"', $adminResponse->getContent(), 'The admin horizontal branch must not switch to CustomerMenuBuilder.');
     }
 }

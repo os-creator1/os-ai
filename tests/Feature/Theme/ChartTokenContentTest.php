@@ -14,8 +14,8 @@ use Tests\TestCase;
 class ChartTokenContentTest extends TestCase
 {
     private const CHART_VIEWS = [
-        'resources/views/admin/dashboard.blade.php',
-        // customer/dashboard.blade.php, customer/Reports/charts.blade.php
+        // admin/dashboard.blade.php left this inventory when the inherited Ultimate SMS admin dashboard was retired
+        // (it now redirects; see AdminHomeController). customer/dashboard.blade.php, customer/Reports/charts.blade.php
         // and customer/Reports/analyze.blade.php left this inventory with
         // B5 Business Analytics (docs/automation/B5-BUSINESS-ANALYTICS-
         // CONTRACT.md §13.3, §18): the two Reports views are deleted with
