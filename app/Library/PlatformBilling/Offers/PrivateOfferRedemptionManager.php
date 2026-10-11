@@ -661,9 +661,10 @@ final class PrivateOfferRedemptionManager
                     return;
                 }
 
-                // Past its window: the provider may or may not hold this change.
-                // It is never released on the clock alone.
-                if ($r->reserved_until !== null && $r->reserved_until->isPast()) {
+                // Past its window, or withdrawn: the provider may or may not hold
+                // this change. It is never retried (revoked) nor released on the
+                // clock alone; it is settled by provider truth.
+                if (($r->reserved_until !== null && $r->reserved_until->isPast()) || $r->offer?->isRevoked()) {
                     $this->settleStaleBillingChange($r, $subscription);
 
                     return;

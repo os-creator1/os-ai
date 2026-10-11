@@ -312,7 +312,14 @@ final class OfferReconciler
                 return;
             }
 
-            if ($current->scheduleId !== null) {
+            // A schedule is attached that this redemption has no record of. When
+            // it never recorded one, it may be OUR OWN from an interrupted push
+            // (response or local write lost): the gateway's idempotent create
+            // proves it, so the push is attempted and a foreign schedule is
+            // surfaced by that attempt failing -- never assumed up front.
+            $attachedUnrecorded = $current->scheduleId !== null;
+
+            if ($attachedUnrecorded && $redemption->provider_schedule_id !== null) {
                 // Not ours: something else is managing this subscription. Do not
                 // fight it; surface it.
                 $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_FAILED);
@@ -336,15 +343,15 @@ final class OfferReconciler
 
             if (! $isChange && ! blank($current->providerPriceId) && $agreedPrices !== []
                 && ! in_array((string) $current->providerPriceId, $agreedPrices, true)) {
-                $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
-
-                // The move off this agreement is complete at the provider: close the
-                // agreement here and let the shared finalizer bring the local plan and
-                // entitlements up to provider truth, rather than waiting for a webhook
-                // that may never come.
-                $this->endPrivatePricing($subscription->refresh());
+                // The move off this agreement is complete at the provider. The
+                // shared finalizer brings the local plan and entitlements up to
+                // provider truth FIRST (if it fails, the agreement stays pending and
+                // the next sweep tries again), and only then is the agreement closed.
                 app(\App\Library\PlatformBilling\PlatformSubscriptionManager::class)
                     ->applyProviderSubscription($subscription->refresh(), (string) $subscription->provider_subscription_id);
+
+                $this->endPrivatePricing($subscription->refresh());
+                $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
 
                 return;
             }
@@ -400,7 +407,16 @@ final class OfferReconciler
             );
             $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $snapshot->scheduleId, $subscription);
         } catch (Throwable $e) {
+            if ($attachedUnrecorded ?? false) {
+                // The attached schedule could not be proven ours: leave it alone and
+                // surface it for an operator.
+                $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_FAILED);
+
+                return;
+            }
+
             Log::warning('Could not put a private-offer promotion on the provider schedule yet; it stays pending', [
+
                 'redemption_id' => $redemption->id,
                 'exception' => class_basename($e),
             ]);

@@ -77,7 +77,7 @@
 
         @elseif ($state === 'needs_account')
             <p class="text-muted" data-role="offer-needs-account">{{ __('Finish setting up your account and business first, then come back to this link.') }}</p>
-            <a class="btn btn-primary w-100" href="{{ route('signup.plan') }}">{{ __('Finish setting up') }}</a>
+            <a class="btn btn-primary w-100" href="{{ \Illuminate\Support\Facades\Route::has('signup.plan') ? route('signup.plan') : route('user.home') }}">{{ __('Finish setting up') }}</a>
 
         @else
             @if ($state === 'in_progress')

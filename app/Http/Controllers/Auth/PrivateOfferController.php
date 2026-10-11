@@ -183,7 +183,7 @@ class PrivateOfferController extends Controller
 
         // Not confirmed yet (the webhook can lag a few seconds). The signup
         // provisioning screen already polls provider truth and hands off.
-        return redirect()->route('signup.success');
+        return redirect()->route(\Illuminate\Support\Facades\Route::has('signup.success') ? 'signup.success' : 'user.home');
     }
 
     public function checkoutCancelled(Request $request, string $redemption): RedirectResponse

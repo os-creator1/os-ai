@@ -259,6 +259,49 @@ class PrivateOfferReviewFindingsTest extends TestCase
         $this->assertSame('reserved', PlatformPrivateOfferRedemption::query()->sole()->state);
     }
 
+    public function test_a_revoked_unapplied_billing_change_is_settled_not_retried(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $change = $this->makeOffer([
+            'kind' => 'billing_change', 'customer_email' => null,
+            'workspace_uid' => $fixture['workspace']->uid, 'custom_price' => '60.00',
+        ]);
+        $this->stripe->interleaveOnce('applyPriceSchedule', function (): void {
+            throw new \RuntimeException('connection reset');
+        });
+        try {
+            $this->redemptions()->applyBillingChangeAsOwner($change['offer'], $this->platformAdminId(), 'Agreed on a call.');
+        } catch (\Throwable) {
+            // expected
+        }
+        $this->offers()->revoke($change['offer']->refresh(), $this->platformAdminId(), 'Withdrawn.');
+
+        $this->redemptions()->sweepUnappliedBillingChanges();
+
+        $this->assertCount(1, $this->stripe->callsOf('applyPriceSchedule'), 'the revoked change was not pushed again');
+        $this->assertSame('released', PlatformPrivateOfferRedemption::query()->sole()->state);
+    }
+
+    public function test_an_attached_schedule_nobody_recorded_is_surfaced_not_overwritten(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
+            'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 2,
+        ]);
+        [$redemption] = $this->redeem($customer, $created['offer']);
+
+        // A genuinely FOREIGN schedule (never recorded by this redemption) is surfaced, not overwritten.
+        $redemption->forceFill(['schedule_state' => 'pending', 'provider_schedule_id' => null])->save();
+        $subscription = PlatformSubscription::query()->where('workspace_id', $customer['workspace']->id)->firstOrFail();
+        $subscription->forceFill(['provider_schedule_id' => null])->save();
+
+        app(\App\Library\PlatformBilling\Offers\OfferReconciler::class)->driveSchedule($redemption->refresh());
+
+        $this->assertSame('failed', $redemption->refresh()->schedule_state);
+        $this->assertCount(2, $this->stripe->callsOf('applyPriceSchedule'), 'attempted once to prove ownership; the provider refuses to overwrite');
+    }
+
     public function test_a_billing_change_is_refused_across_snapshot_currencies(): void
     {
         $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
