@@ -485,6 +485,71 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertSame($url, DB::table('senderid')->where('id', $row->id)->value('document'));
     }
 
+    /** A second, independent DB session standing in for another deployment node / process. */
+    private function otherNode(): \Illuminate\Database\Connection
+    {
+        config(['database.connections.other_node' => config('database.connections.' . config('database.default'))]);
+        DB::purge('other_node');
+
+        return DB::connection('other_node');
+    }
+
+    private function lockName(): string
+    {
+        return 'senderid-migrate:' . substr(md5((string) DB::connection()->getDatabaseName()), 0, 16);
+    }
+
+    public function test_overlapping_apply_run_is_refused_without_touching_anything(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000044.pdf', self::PDF, 'LCK1');
+
+        $other = $this->otherNode();
+        $this->assertSame(1, (int) $other->selectOne('SELECT GET_LOCK(?, 0) AS l', [$this->lockName()])->l); // the "other node" is mid-migration
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])
+            ->expectsOutputToContain('already running')
+            ->assertFailed();
+
+        $this->assertFileExists($path);
+        $this->assertSame($url, DB::table('senderid')->where('id', $row->id)->value('document'));
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR));
+
+        $other->selectOne('SELECT RELEASE_LOCK(?) AS l', [$this->lockName()]);
+    }
+
+    public function test_lock_is_released_after_success_and_after_failure_so_the_next_run_proceeds(): void
+    {
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000045.pdf', self::PDF, 'LCK2');
+
+        // A failing run (original cannot be deleted) must still release the lock...
+        File::partialMock()->shouldReceive('delete')->atLeast()->once()->andReturn(false);
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $other = $this->otherNode();
+        $this->assertSame(1, (int) $other->selectOne('SELECT GET_LOCK(?, 0) AS l', [$this->lockName()])->l, 'lock leaked after a failed run');
+        $other->selectOne('SELECT RELEASE_LOCK(?) AS l', [$this->lockName()]);
+        $this->assertFileExists($path);
+
+        // ...and so must a successful one.
+        \Mockery::close();
+        $this->app->forgetInstance('files');
+        File::clearResolvedInstance('files');
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+        $this->assertSame(1, (int) $other->selectOne('SELECT GET_LOCK(?, 0) AS l', [$this->lockName()])->l, 'lock leaked after a successful run');
+        $other->selectOne('SELECT RELEASE_LOCK(?) AS l', [$this->lockName()]);
+    }
+
+    public function test_dry_run_does_not_need_or_take_the_lock(): void
+    {
+        $this->legacyRow($this->customer(), 'senderid_1700000046.pdf', self::PDF, 'LCK3');
+        $other = $this->otherNode();
+        $other->selectOne('SELECT GET_LOCK(?, 0) AS l', [$this->lockName()]);
+
+        $this->artisan('senderid:migrate-documents')->assertSuccessful();
+
+        $other->selectOne('SELECT RELEASE_LOCK(?) AS l', [$this->lockName()]);
+    }
+
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void
     {
         $owner = $this->customer();

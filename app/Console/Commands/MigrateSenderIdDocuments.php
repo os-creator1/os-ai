@@ -33,6 +33,63 @@ class MigrateSenderIdDocuments extends Command
     public function handle(): int
     {
         $apply = (bool) $this->option('apply');
+
+        // A dry run changes nothing and needs no lock. A destructive run is serialised across every node that
+        // shares this database with a MySQL/MariaDB advisory lock (GET_LOCK is held by this DB session, so it is
+        // also released if the process dies). If it cannot be acquired we do nothing.
+        if (! $apply) {
+            return $this->migrate(false);
+        }
+
+        $name = $this->lockName();
+        $acquired = false;
+
+        try {
+            $acquired = (int) (DB::selectOne('SELECT GET_LOCK(?, 0) AS l', [$name])->l ?? 0) === 1;
+        } catch (\Throwable $e) {
+            $this->error('Could not acquire the migration lock (' . $e->getMessage() . '); nothing was changed.');
+
+            return self::FAILURE;
+        }
+
+        if (! $acquired) {
+            $this->error('Another senderid:migrate-documents --apply is already running (database lock held); nothing was changed.');
+
+            return self::FAILURE;
+        }
+
+        try {
+            return $this->migrate(true);
+        } catch (\Throwable $e) {
+            $this->error('Migration aborted: ' . $e->getMessage());
+
+            return self::FAILURE;
+        } finally {
+            try {
+                DB::selectOne('SELECT RELEASE_LOCK(?) AS l', [$name]);
+            } catch (\Throwable $e) {
+                // the lock is tied to this DB session and disappears with it
+            }
+        }
+    }
+
+    private function lockName(): string
+    {
+        // Same database => same lock on every deployment node. MySQL caps lock names at 64 characters.
+        return 'senderid-migrate:' . substr(md5((string) DB::connection()->getDatabaseName()), 0, 16);
+    }
+
+    /** Abort (before any destructive step) if this session no longer holds the lock, e.g. after a reconnect. */
+    private function assertLockStillHeld(): void
+    {
+        $held = DB::selectOne('SELECT IS_USED_LOCK(?) = CONNECTION_ID() AS h', [$this->lockName()])->h ?? 0;
+        if ((int) $held !== 1) {
+            throw new \RuntimeException('the migration lock was lost (database reconnect?)');
+        }
+    }
+
+    private function migrate(bool $apply): int
+    {
         $moved = $quarantined = $missing = $failed = 0;
         $seen = []; // dry-run only: a dry run changes nothing, so count each shared file once
 
@@ -40,6 +97,10 @@ class MigrateSenderIdDocuments extends Command
             ->eachById(function (Senderid $row) use ($apply, &$moved, &$quarantined, &$missing, &$failed, &$seen) {
                 // eachById() may have loaded this row before an earlier callback migrated or quarantined the
                 // file it shares; re-read it and skip anything already handled (no false "missing", no duplicate work).
+                if ($apply) {
+                    $this->assertLockStillHeld();
+                }
+
                 $row = $row->fresh();
                 if ($row === null || $row->document === null || str_starts_with($row->document, SenderIdDocumentStore::PREFIX)) {
                     return;
