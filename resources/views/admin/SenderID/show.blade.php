@@ -216,8 +216,8 @@
                                                     <div class="mb-1">
                                                         <label for=""
                                                                class="form-label">{{__('locale.labels.attach_supporting_document')}}</label>
-                                                        <p><a href="{{ $senderid->document }}"
-                                                              target="_blank">{{ $senderid->document }}</a></p>
+                                                        <p><a href="{{ route('admin.senderid.document', $senderid->uid) }}"
+                                                              target="_blank" rel="noopener">{{ __('locale.labels.attach_supporting_document') }}</a></p>
                                                     </div>
                                                 </div>
                                             @endif

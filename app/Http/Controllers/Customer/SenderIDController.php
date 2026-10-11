@@ -204,6 +204,13 @@
          * @return RedirectResponse
          */
 
+        public function document(Senderid $senderid)
+        {
+            abort_unless((int) $senderid->user_id === (int) Auth::id(), 404);
+
+            return \App\Library\Uploads\SenderIdDocumentStore::response($senderid);
+        }
+
         public function store(CustomSenderID $request): RedirectResponse
         {
 
@@ -226,7 +233,7 @@
             if (config('app.trai_dlt') && $user->customer->activeSubscription()->plan->is_dlt) {
                 $validator = Validator::make($request->all(), [
                     'entity_id' => 'required',
-                    'document'  => 'required|mimes:jpeg,png,jpg,gif,pdf,doc,docx',
+                    'document'  => 'required|file',
                 ]);
 
                 if ($validator->fails()) {
@@ -238,7 +245,7 @@
 
             if (isset($request->document) && $request->hasFile('document')) {
                 if ($request->file('document')->isValid()) {
-                    $senderid->document = Tool::uploadFile($request->file('document'));
+                    $senderid->document = \App\Library\Uploads\SenderIdDocumentStore::store($request->file('document'));
                     $senderid->save();
                 }
             }

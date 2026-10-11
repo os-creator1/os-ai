@@ -252,6 +252,7 @@
 
     Route::post('senderid/search', 'SenderIDController@search')->name('senderid.search');
     Route::get('senderid/export', 'SenderIDController@export')->name('senderid.export');
+    Route::get('senderid/{senderid}/document', 'SenderIDController@document')->name('senderid.document');
     Route::get('senderid/{senderid}/show', 'SenderIDController@show')->name('senderid.show');
     Route::post('senderid/batch_action', 'SenderIDController@batchAction')->name('senderid.batch_action');
     Route::resource('senderid', 'SenderIDController', [

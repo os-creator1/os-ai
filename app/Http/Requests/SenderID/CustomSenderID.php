@@ -33,6 +33,13 @@
                         return $query->where('user_id', $user_id)->where('sender_id', $sender_id);
                     })],
                 'plan'      => 'required|exists:senderid_plans,id',
+                // Always validated, whether or not DLT is enabled (the upload is stored privately).
+                'document'  => ['nullable', 'file', 'mimes:' . \App\Library\Uploads\SenderIdDocumentStore::RULE_MIMES, 'max:' . \App\Library\Uploads\SenderIdDocumentStore::MAX_KB,
+                    function ($attribute, $value, $fail) {
+                        if ($value instanceof \Illuminate\Http\UploadedFile && \App\Library\Uploads\SenderIdDocumentStore::safeExtension($value) === null) {
+                            $fail('The document must be a PDF, image, or Word file.');
+                        }
+                    }],
             ];
         }
 

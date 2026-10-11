@@ -2319,7 +2319,7 @@
         {
 
             $user          = Auth::user();
-            $csv_file_info = CsvData::find($input['csv_data_file_id']);
+            $csv_file_info = CsvData::findOwnedBy($input['csv_data_file_id'] ?? null, $user->id, CsvData::TYPE_CAMPAIGN);
 
             if ( ! $csv_file_info) {
                 return response()->json([

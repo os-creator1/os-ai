@@ -1338,7 +1338,7 @@
                 ]);
             }
 
-            $data = CsvData::find($request->input('csv_data_file_id'));
+            $data = CsvData::findOwnedBy($request->input('csv_data_file_id'), Auth::id());
 
             if (empty($data)) {
                 return CrmRouting::redirectRoute('contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
