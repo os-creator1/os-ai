@@ -207,11 +207,24 @@ After the first successful deploy, over SSH as `forge`:
 
 ```
 cd /home/forge/staging.getmotiongrove.com/current
-php artisan platform:install --owner-email=<you@getmotiongrove.com>   # owner password at the concealed prompt
-php artisan config:cache
+php8.3 artisan platform:install --owner-email=<you@getmotiongrove.com>   # needs a real SSH terminal: the owner password is a concealed prompt
 ```
+**Why this is required:** a deploy only runs migrations. The `app_config` settings rows (about 76, including
+`custom_script` and `license`) are seeded by `platform:install` (its `db:seed` step). Before it has run, the login page
+crashes with `Attempt to read property "value" on null` (the helper is now tolerant, but the platform is still not
+configured). On a fresh, empty database this is safe: the only truncating seeders (`AppConfigSeeder`,
+`PaymentMethodsSeeder`) have nothing of value to lose, and every other step is idempotent.
+
+**Then, the inherited licence gate (do NOT work around it).** The seeded `app_config.license` is an empty string, and the
+`ValidProduct` middleware on the admin and customer route groups sends every signed-in user to the vendor's
+`/verify-purchase-code` screen while it is empty. That screen validates an Envato purchase code against the original
+product vendor's server. It is a **third-party licence check, not a configuration value**: do not store a placeholder
+licence and do not invent a purchase code. (An earlier version of this runbook suggested a placeholder; that is withdrawn.)
+Read [`LICENSING-LEGACY-GATE.md`](LICENSING-LEGACY-GATE.md): either activate with a real purchase code for the right
+licence (Extended, for a charged SaaS) or obtain written permission and have the gate replaced properly.
+
 Then check `SELECT count(*) FROM currencies;` = 12, `workspace_plan_catalog` has `core`, `growth`, `agency`, one
-`is_admin` user, and the legacy-gateway query in section 5.2 returns no rows.
+`is_admin` user, and the legacy-gateway query in section 5.2 returns no rows; sign in at `/login` as the owner.
 
 **Do not re-run `platform:install` on a live instance.** It is idempotent for catalogs, but `db:seed` includes
 `PaymentMethodsSeeder`, which **truncates `payment_methods`** and re-seeds it. Upgrades are deploys only.

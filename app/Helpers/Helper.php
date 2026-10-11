@@ -251,7 +251,9 @@
         {
             $conf = AppConfig::where('setting', $value)->first();
 
-            return $conf->value;
+            // A migrated-but-not-installed database has no app_config rows (platform:install seeds them):
+            // a missing record reads as "not set", never as a crash on a public page.
+            return $conf?->value;
         }
 
         /**
