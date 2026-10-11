@@ -39,7 +39,7 @@ class BrandingAdminFooterRenderTest extends TestCase
     {
         $this->actingAsAdmin(['access backend', 'manage theme']);
 
-        $html = $this->get(route('admin.home'))->assertOk()->getContent();
+        $html = $this->followingRedirects()->get(route('admin.home'))->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression('#<footer\b.*?</footer>#s', $html, 'Expected a <footer> element in the response.');
         preg_match('#<footer\b.*?</footer>#s', $html, $matches);
@@ -76,7 +76,7 @@ class BrandingAdminFooterRenderTest extends TestCase
 
         $this->actingAsAdmin(['access backend', 'manage theme']);
 
-        $html = $this->get(route('admin.home'))->assertOk()->getContent();
+        $html = $this->followingRedirects()->get(route('admin.home'))->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression('#<footer\b.*?</footer>#s', $html, 'Expected a <footer> element in the response.');
         preg_match('#<footer\b.*?</footer>#s', $html, $matches);

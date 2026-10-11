@@ -261,7 +261,7 @@ class CustomerAccountAccessGateTest extends TestCase
         $this->withSession(['permissions' => collect(['access backend'])]);
         $this->actingAs($admin);
 
-        $this->get(route('admin.home'))->assertOk();
+        $this->followingRedirects()->get(route('admin.home'))->assertOk();
     }
 
     // =========================================================================

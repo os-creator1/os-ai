@@ -430,7 +430,7 @@ class NicheBlueprintController extends AdminBaseController
     private function breadcrumbs(array $trailing = []): array
     {
         return [
-            ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => route('admin.niche-blueprints.index'), 'name' => 'Niche Blueprints'],
             ...$trailing,
         ];

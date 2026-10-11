@@ -228,16 +228,36 @@
         public static function home_route(): string
         {
             if (Gate::allows('access backend')) {
-                // A Platform Owner lands on the Platform Owner Home, not the
-                // inherited messaging dashboard (Contract 22 §3a).
-                if (\Illuminate\Support\Facades\Auth::user()?->is_admin && Gate::allows('view workspace') && \Illuminate\Support\Facades\Route::has('admin.platform-owner.overview')) {
-                    return route('admin.platform-owner.overview');
-                }
-
-                return route('admin.home');
+                return self::adminHomeUrl();
             }
 
             return route('user.home');
+        }
+
+        /**
+         * Can this user open the Platform Owner Home (admin.platform-owner.overview)? An administrator account with the
+         * `view workspace` permission, exactly the authority that route enforces.
+         */
+        public static function isPlatformOwnerHome(?\App\Models\User $user): bool
+        {
+            return $user !== null
+                && (bool) $user->is_admin
+                && Gate::forUser($user)->allows('view workspace')
+                && \Illuminate\Support\Facades\Route::has('admin.platform-owner.overview');
+        }
+
+        /**
+         * The current MotionGrove landing page for a backend user: the Platform Owner Home for Platform Owners, the
+         * authorised staff landing page for everyone else with backend access. The inherited Ultimate SMS dashboard
+         * no longer exists; breadcrumbs, logos and redirects all resolve through here.
+         */
+        public static function adminHomeUrl(): string
+        {
+            if (self::isPlatformOwnerHome(\Illuminate\Support\Facades\Auth::user())) {
+                return route('admin.platform-owner.overview');
+            }
+
+            return route('admin.staff-home');
         }
 
         public static function is_admin_route(Request $request): bool
@@ -561,10 +581,8 @@
                 'admin'    => [
                     [
                         // Platform Owner shell V1 — Home is the Platform Owner
-                        // overview (the support/operations cockpit). The legacy
-                        // SMS dashboard below stays reachable: as "Dashboard"
-                        // for backend staff who are not Platform Owners, and as
-                        // "Messaging Dashboard" under Messaging for owners.
+                        // overview (the support/operations cockpit). Staff who are
+                        // not Platform Owners get the staff home below instead.
                         // 'admin_only' / 'staff_only' are the opt-in account-type
                         // boundaries App\Library\Navigation\AdminMenuBuilder
                         // enforces; every route re-checks authority server-side.
@@ -577,10 +595,11 @@
                         'admin_only' => true,
                     ],
                     [
-                        'url'        => url(config('app.admin_path') . '/dashboard'),
-                        'slug'       => config('app.admin_path') . '/dashboard',
-                        'name'       => 'Dashboard',
-                        'i18n'       => 'Dashboard',
+                        // Backend staff who are not Platform Owners land on the staff home (authorised sections only).
+                        'url'        => url(config('app.admin_path') . '/staff-home'),
+                        'slug'       => config('app.admin_path') . '/staff-home',
+                        'name'       => 'Home',
+                        'i18n'       => 'Home',
                         'icon'       => 'home',
                         'access'     => 'access backend',
                         'staff_only' => true,
@@ -941,7 +960,6 @@
                         'admin_only' => true,
                         'requires_config' => 'app.legacy_messaging_menu',
                         'submenu'    => [
-                            ['url' => url(config('app.admin_path') . '/dashboard'), 'slug' => config('app.admin_path') . '/dashboard', 'name' => 'Messaging Dashboard', 'i18n' => 'Messaging Dashboard', 'access' => 'access backend', 'icon' => 'home'],
                             ['url' => url(config('app.admin_path') . '/customers'), 'slug' => config('app.admin_path') . '/customers', 'name' => 'Customers', 'i18n' => 'Customers', 'access' => 'view customer', 'icon' => 'users'],
                             ['url' => url(config('app.admin_path') . '/subscriptions'), 'slug' => config('app.admin_path') . '/subscriptions', 'name' => 'Subscriptions', 'i18n' => 'Subscriptions', 'access' => 'view subscription', 'icon' => 'repeat'],
                             ['url' => url(config('app.admin_path') . '/plans'), 'slug' => config('app.admin_path') . '/plans', 'name' => 'SMS Plans', 'i18n' => 'SMS Plans', 'access' => 'manage plans', 'icon' => 'layers'],

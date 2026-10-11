@@ -54,8 +54,8 @@ class RoleController extends AdminBaseController
         $this->authorize('view roles');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Administrator')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Administrator')],
                 ['name' => __('locale.menu.Admin Roles')],
         ];
 
@@ -203,7 +203,7 @@ class RoleController extends AdminBaseController
         $this->authorize('create roles');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/roles"), 'name' => __('locale.menu.Admin Roles')],
                 ['name' => __('locale.role.create_role')],
         ];
@@ -271,7 +271,7 @@ class RoleController extends AdminBaseController
         $this->authorize('edit roles');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/roles"), 'name' => __('locale.menu.Admin Roles')],
                 ['name' => __('locale.role.update_role')],
         ];

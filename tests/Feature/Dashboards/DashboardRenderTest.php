@@ -95,7 +95,7 @@ class DashboardRenderTest extends TestCase
         $this->ensureRequiredAppConfigRowsExist();
         $this->actingAsAdmin(['access backend']);
 
-        $response = $this->get(route('admin.home'));
+        $response = $this->followingRedirects()->get(route('admin.home'));
 
         $response->assertOk();
     }

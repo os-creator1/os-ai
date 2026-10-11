@@ -264,7 +264,7 @@
 
                     session(['permissions' => $user->getPermissions()]);
 
-                    return redirect()->route('admin.home')->with([
+                    return redirect()->to(\App\Helpers\Helper::adminHomeUrl())->with([
                         'status'  => 'success',
                         'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
                     ]);

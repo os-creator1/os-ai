@@ -230,7 +230,7 @@
 
                 session(['permissions' => auth()->user()->getPermissions()]);
 
-                return redirect()->route('admin.home');
+                return redirect()->to(\App\Helpers\Helper::adminHomeUrl());
             }
 
             if ($parent_id = Session::get('parent_user_id')) {
@@ -366,7 +366,7 @@
                     ]);
                 }
 
-                return redirect()->route('admin.home')->with([
+                return redirect()->to(\App\Helpers\Helper::adminHomeUrl())->with([
                     'status'  => 'success',
                     'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
                 ]);

@@ -52,8 +52,8 @@ class CurrencyController extends AdminBaseController
         $this->authorize('manage currencies');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Plan')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Plan')],
                 ['name' => __('locale.menu.Currencies')],
         ];
 
@@ -176,7 +176,7 @@ class CurrencyController extends AdminBaseController
         $this->authorize('create currencies');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/currencies"), 'name' => __('locale.menu.Currencies')],
                 ['name' => __('locale.currencies.add_new_currency')],
         ];
@@ -200,7 +200,7 @@ class CurrencyController extends AdminBaseController
         $this->authorize('edit currencies');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/currencies"), 'name' => __('locale.menu.Currencies')],
                 ['name' => __('locale.currencies.update_currency')],
         ];

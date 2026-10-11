@@ -56,11 +56,11 @@
 
             $breadcrumbs = [
                 [
-                    'link' => url(config('app.admin_path') . "/dashboard"),
+                    'link' => \App\Helpers\Helper::adminHomeUrl(),
                     'name' => __('locale.menu.Dashboard'),
                 ],
                 [
-                    'link' => url(config('app.admin_path') . "/dashboard"),
+                    'link' => \App\Helpers\Helper::adminHomeUrl(),
                     'name' => __('locale.menu.Sending'),
                 ],
                 ['name' => __('locale.menu.Sending Servers')],
@@ -196,7 +196,7 @@
 
             $breadcrumbs = [
                 [
-                    'link' => url(config('app.admin_path') . "/dashboard"),
+                    'link' => \App\Helpers\Helper::adminHomeUrl(),
                     'name' => __('locale.menu.Dashboard'),
                 ],
                 [
@@ -230,7 +230,7 @@
 
             $breadcrumbs = [
                 [
-                    'link' => url(config('app.admin_path') . "/dashboard"),
+                    'link' => \App\Helpers\Helper::adminHomeUrl(),
                     'name' => __('locale.menu.Dashboard'),
                 ],
                 [
@@ -349,7 +349,7 @@
 
             $breadcrumbs = [
                 [
-                    'link' => url(config('app.admin_path') . "/dashboard"),
+                    'link' => \App\Helpers\Helper::adminHomeUrl(),
                     'name' => __('locale.menu.Dashboard'),
                 ],
                 [
@@ -677,7 +677,7 @@
 
             $breadcrumbs = [
                 [
-                    'link' => url(config('app.admin_path') . "/dashboard"),
+                    'link' => \App\Helpers\Helper::adminHomeUrl(),
                     'name' => __('locale.menu.Dashboard'),
                 ],
                 [
@@ -1037,7 +1037,7 @@
 
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard'),],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard'),],
                 ['link' => url(config('app.admin_path') . "/sending-servers"), 'name' => __('locale.menu.Sending Servers'),],
                 ['name' => __('locale.sending_servers.select_sending_server'),],
             ];
@@ -1144,7 +1144,7 @@
             $this->authorize('edit sending_servers');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard'),],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard'),],
                 ['link' => url(config('app.admin_path') . "/sending-servers"), 'name' => __('locale.menu.Sending Servers'),],
                 ['name' => __('locale.buttons.add_coverage')],
             ];
@@ -1229,7 +1229,7 @@
             $this->authorize('edit sending_servers');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/sending-servers"), 'name' => __('locale.menu.Sending Servers')],
                 ['name' => __('locale.buttons.edit_coverage')],
             ];
