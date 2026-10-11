@@ -318,28 +318,31 @@ final class PrivateOfferManager
         })->all();
     }
 
-    /** One-line, owner-facing description of the commercial terms. */
+    /**
+     * One-line, owner-facing description of the commercial terms, keeping
+     * PERMANENT negotiated pricing and TEMPORARY promotions visibly apart.
+     */
     public function describe(PlatformPrivateOffer $offer): string
     {
         $currency = $offer->currency?->code ?? '';
+        $cycle = mb_strtolower(BillingCycle::label((string) $offer->catalog?->billing_cycle));
         $parts = [];
 
-        if ($offer->custom_price !== null) {
-            $parts[] = sprintf('%s %s %s', $offer->custom_price, $currency, mb_strtolower(BillingCycle::label((string) $offer->catalog?->billing_cycle)));
-        } else {
-            $parts[] = __('plan price');
-        }
+        $ongoing = $offer->custom_price !== null
+            ? __('Permanent negotiated price :price :cycle', ['price' => $offer->custom_price . ' ' . $currency, 'cycle' => $cycle])
+            : __('Standard plan price');
+        $parts[] = $ongoing;
 
         if ($offer->discount_type !== null) {
             $off = $offer->discount_type === PlatformPrivateOffer::DISCOUNT_PERCENT
                 ? rtrim(rtrim((string) $offer->discount_value, '0'), '.') . '% off'
                 : $offer->discount_value . ' ' . $currency . ' off';
-            $for = match ($offer->discount_duration) {
-                PlatformPrivateOffer::DURATION_FOREVER => __('forever'),
-                PlatformPrivateOffer::DURATION_ONCE => __('for 1 billing period'),
-                default => __('for :n billing periods', ['n' => $offer->discount_periods]),
+
+            $parts[] = match ($offer->discount_duration) {
+                PlatformPrivateOffer::DURATION_FOREVER => __('permanent discount: :off', ['off' => $off]),
+                PlatformPrivateOffer::DURATION_ONCE => __('temporary promotion: :off for 1 billing period, then back to :to', ['off' => $off, 'to' => $offer->custom_price !== null ? __('the negotiated price') : __('the plan price')]),
+                default => __('temporary promotion: :off for :n billing periods, then back to :to', ['off' => $off, 'n' => $offer->discount_periods, 'to' => $offer->custom_price !== null ? __('the negotiated price') : __('the plan price')]),
             };
-            $parts[] = $off . ' ' . $for;
         }
 
         if ($offer->trial_days !== null) {

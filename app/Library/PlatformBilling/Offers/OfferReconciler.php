@@ -12,6 +12,7 @@ use App\Models\PlatformSubscription;
 use App\Models\User;
 use App\Models\Workspace;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -276,7 +277,22 @@ final class OfferReconciler
             return;
         }
 
+        // One worker at a time per redemption: the Checkout return and the
+        // webhook can both arrive together, and the loser must not mistake the
+        // winner's schedule for somebody else's.
+        $lock = Cache::lock('offer-schedule:' . $redemption->id, 60);
+
+        if (! $lock->get()) {
+            return;
+        }
+
         try {
+            $redemption->refresh();
+
+            if ($redemption->schedule_state !== PlatformPrivateOfferRedemption::SCHEDULE_PENDING) {
+                return;
+            }
+
             $current = $this->gateway->retrieveSubscription((string) $subscription->provider_subscription_id);
 
             if ($current->scheduleId !== null && $current->scheduleId === $redemption->provider_schedule_id) {
@@ -317,16 +333,15 @@ final class OfferReconciler
                 ],
                 'offer-schedule:' . $redemption->uid,
             );
+            $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $snapshot->scheduleId, $subscription);
         } catch (Throwable $e) {
             Log::warning('Could not put a private-offer promotion on the provider schedule yet; it stays pending', [
                 'redemption_id' => $redemption->id,
                 'exception' => class_basename($e),
             ]);
-
-            return;
+        } finally {
+            $lock->release();
         }
-
-        $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $snapshot->scheduleId, $subscription);
     }
 
     /** The scheduled retry for promotions the provider has not yet been told about. */

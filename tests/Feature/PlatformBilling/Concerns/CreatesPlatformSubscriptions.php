@@ -32,6 +32,11 @@ trait CreatesPlatformSubscriptions
         $this->stripe->baselineTransactionLevel = DB::transactionLevel();
         $this->app->instance(PlatformStripeGateway::class, $this->stripe);
 
+        // The legacy lane-A suites exercise catalog trials, which are inert in
+        // production (config/platform_billing.php). New-behaviour tests state
+        // the setting they need explicitly.
+        config(['platform_billing.allow_public_trials' => true]);
+
         return $this->stripe;
     }
 

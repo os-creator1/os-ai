@@ -17,6 +17,7 @@
     $promotion = $terms->promotion();
     $hasPromoEnd = $terms->hasPromotionEnd();
     $first = $paid[0];
+    $negotiated = $terms->get('standard_source') === 'negotiated';
 @endphp
 
 <div class="card mb-1" data-role="offer-terms">
@@ -56,7 +57,9 @@
                 {{ $money((int) $first['price_minor']) }}
                 <span data-role="terms-frequency">{{ $label }}</span>
                 @if ($promotion !== null && $hasPromoEnd)
-                    <span class="text-muted">({{ __('promotional price') }})</span>
+                    <span class="badge bg-light-warning" data-role="terms-promo-badge">{{ __('Temporary promotional price') }}</span>
+                @elseif ($negotiated)
+                    <span class="badge bg-light-primary" data-role="terms-negotiated-badge">{{ __('Permanent agreed price') }}</span>
                 @endif
             </dd>
 
@@ -73,12 +76,12 @@
                 <dt class="col-sm-6">{{ __('Promotional price ends') }}</dt>
                 <dd class="col-sm-6" data-role="terms-promo-end">{{ $date($promotion['ends_at']) }}</dd>
 
-                <dt class="col-sm-6">{{ __('Recurring price afterwards') }}</dt>
+                <dt class="col-sm-6" data-role="terms-after-label">{{ $negotiated ? __('Then your agreed ongoing price') : __('Then the standard plan price') }}</dt>
                 <dd class="col-sm-6" data-role="terms-after">{{ $money($terms->standardPriceMinor()) }} {{ $label }}</dd>
             @elseif ($promotion !== null)
                 <dt class="col-sm-6">{{ __('Discount') }}</dt>
                 <dd class="col-sm-6" data-role="terms-discount">
-                    {{ __('Your discounted price continues for as long as you subscribe (the standard price is :price).', ['price' => $money($terms->standardPriceMinor())]) }}
+                    {{ __('This is a permanent agreed price: it continues for as long as you subscribe (the standard plan price would be :price).', ['price' => $money($terms->standardPriceMinor())]) }}
                 </dd>
             @endif
         </dl>

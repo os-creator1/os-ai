@@ -162,7 +162,10 @@ final class PlatformSubscriptionManager
      */
     private function publicTerms(Workspace $workspace, WorkspacePlanCatalog $catalog, string $customerEmail): CheckoutTerms
     {
-        $trialDays = $catalog->configuredTrialDays();
+        // Ordinary signup carries NO trial unless the platform has deliberately
+        // enabled public trials (config/platform_billing.php, off). Special
+        // trials are issued only through eligible Private Offers.
+        $trialDays = config('platform_billing.allow_public_trials') ? $catalog->configuredTrialDays() : null;
 
         if ($trialDays !== null && ! $this->trials->reserve($workspace, $customerEmail, 'public')) {
             $trialDays = null;
@@ -657,6 +660,14 @@ final class PlatformSubscriptionManager
         }
 
         $current = WorkspacePlanCatalog::query()->findOrFail($subscription->workspace_plan_catalog_id);
+
+        // A plan change must never silently change the customer's BILLING
+        // SCHEDULE. Moving between cycles (a legacy monthly subscriber onto a
+        // 28-day plan, say) would re-anchor their billing, so it is refused
+        // here and handled as a deliberate, separate move.
+        if ((string) $subscription->billing_cycle_snapshot !== (string) $target->billing_cycle) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
+        }
 
         if ((int) $current->id === (int) $target->id) {
             throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);

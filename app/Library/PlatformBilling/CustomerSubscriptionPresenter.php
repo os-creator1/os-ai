@@ -85,7 +85,7 @@ final class CustomerSubscriptionPresenter
             // §10.2 — what the customer may change to, and in which direction.
             // Empty once the subscription has ended: there is nothing live to
             // change.
-            'available_plans' => $hasEnded ? [] : $this->availablePlans($catalog),
+            'available_plans' => $hasEnded ? [] : $this->availablePlans($catalog, $subscription),
             // §10.4 — the real way back for an ended account. The same
             // Workspace, Business and Locations; a NEW provider subscription
             // through hosted Checkout.
@@ -175,13 +175,19 @@ final class CustomerSubscriptionPresenter
      *
      * @return array<int, array<string, mixed>>
      */
-    private function availablePlans(?WorkspacePlanCatalog $current): array
+    private function availablePlans(?WorkspacePlanCatalog $current, ?\App\Models\PlatformSubscription $subscription = null): array
     {
         $rank = ['core' => 1, 'growth' => 2, 'agency' => 3];
         $plans = [];
 
         foreach ($this->plans->sellablePlans() as $plan) {
             if ($current !== null && (int) $plan['id'] === (int) $current->id) {
+                continue;
+            }
+
+            // Only plans on the SAME billing cycle: a change never re-anchors a
+            // customer's billing schedule.
+            if ($subscription !== null && (string) $subscription->billing_cycle_snapshot !== (string) $plan['billing_cycle']) {
                 continue;
             }
 

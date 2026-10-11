@@ -97,7 +97,8 @@ final class PlatformPlanPresenter
     private function present(WorkspacePlanCatalog $catalog, $currencies): array
     {
         $featureKeys = $this->planFeatures->featureKeysForCatalog($catalog)->all();
-        $trialDays = $catalog->configuredTrialDays();
+        // No public page advertises a trial unless public trials are enabled.
+        $trialDays = config('platform_billing.allow_public_trials') ? $catalog->configuredTrialDays() : null;
 
         return [
             'id' => (int) $catalog->id,

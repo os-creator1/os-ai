@@ -85,7 +85,7 @@
                         <div class="col-md-4 mb-1">
                             <label class="form-label" for="offer_price">Custom recurring price</label>
                             <input class="form-control" id="offer_price" name="custom_price" type="text" inputmode="decimal" value="{{ old('custom_price') }}" placeholder="plan price">
-                            <small class="text-muted">Every 28 days. Leave empty to keep the plan price.</small>
+                            <small class="text-muted">A <strong>permanent</strong> negotiated price, every 28 days. Leave empty to keep the plan's catalog price.</small>
                         </div>
                         <div class="col-md-4 mb-1">
                             <label class="form-label" for="offer_limit">Redemption limit</label>
@@ -119,7 +119,10 @@
                             <input class="form-control" id="offer_discount_periods" name="discount_periods" type="number" min="2" max="120" value="{{ old('discount_periods') }}">
                         </div>
                     </div>
-                    <p class="text-muted">After a temporary discount the price automatically goes back to the normal recurring price.</p>
+                    <p class="text-muted">
+                        A discount that is not "forever" is a <strong>temporary promotion</strong>: when it ends the price automatically
+                        reverts to the permanent negotiated price above, or — if you set none — to the plan's catalog price.
+                    </p>
 
                     <div class="row">
                         <div class="col-md-4 mb-1">

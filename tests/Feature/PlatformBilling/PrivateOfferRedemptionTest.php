@@ -99,8 +99,33 @@ class PrivateOfferRedemptionTest extends TestCase
             ->assertSee($terms->firstPaymentAt()->toFormattedDateString()) // when the first payment occurs
             ->assertSee(\Carbon\CarbonImmutable::parse($paid[0]['ends_at'])->toFormattedDateString()) // when the promotion ends
             ->assertSee('100.00 USD every 28 days')                       // the recurring price afterwards
+            ->assertSee('Temporary promotional price')                    // promotion is labelled temporary
+            ->assertSee('Then the standard plan price')                   // …and what it reverts to
             ->assertSee('I accept these terms')                           // the explicit acceptance
             ->assertDontSee('monthly');
+    }
+
+    public function test_a_permanent_negotiated_price_is_distinguished_from_a_temporary_promotion(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $negotiated = $this->makeOffer(['customer_email' => 'buyer@example.test', 'custom_price' => '80.00']);
+        $both = $this->makeOffer([
+            'customer_email' => 'buyer@example.test', 'custom_price' => '80.00',
+            'discount_type' => 'fixed', 'discount_value' => '20.00', 'discount_duration' => 'periods', 'discount_periods' => 2,
+        ]);
+        $this->signInAs($customer['user']);
+
+        $this->get(route('offers.show', ['token' => $negotiated['token']]))
+            ->assertOk()->assertSee('Permanent agreed price')->assertDontSee('Temporary promotional price');
+
+        // A promotion on top of a negotiated price reverts to the NEGOTIATED price, not the catalog's.
+        $this->get(route('offers.show', ['token' => $both['token']]))
+            ->assertOk()
+            ->assertSee('Temporary promotional price')
+            ->assertSee('Then your agreed ongoing price')
+            ->assertSee('60.00 USD')
+            ->assertSee('80.00 USD every 28 days')
+            ->assertDontSee('100.00 USD');
     }
 
     public function test_a_page_with_no_trial_charges_today_in_full(): void
@@ -460,6 +485,28 @@ class PrivateOfferRedemptionTest extends TestCase
 
         // First payment at the trial's end is already the promotional price.
         $this->assertSame([6000, 6000, 10000], array_column($this->stripe->charges, 'amount'));
+    }
+
+    public function test_the_return_and_the_webhook_racing_cannot_schedule_a_promotion_twice_or_flag_it_failed(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
+            'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 2,
+        ]);
+        $session = $this->acceptAs($customer['user'], $created['offer']);
+        $this->payOnStripe($session->sessionId);
+        $redemption = PlatformPrivateOfferRedemption::query()->sole();
+
+        // While the first worker is talking to Stripe, the second arrives.
+        $this->stripe->interleaveOnce('applyPriceSchedule', function () use ($redemption): void {
+            app(\App\Library\PlatformBilling\Offers\OfferReconciler::class)->driveSchedule($redemption->fresh());
+        });
+
+        $this->redemptions()->handleReturn($redemption, $customer['user']);
+
+        $this->assertSame('applied', $redemption->refresh()->schedule_state);
+        $this->assertCount(1, $this->stripe->callsOf('applyPriceSchedule'));
     }
 
     public function test_a_failure_to_schedule_the_end_of_a_promotion_is_retried_not_forgotten(): void

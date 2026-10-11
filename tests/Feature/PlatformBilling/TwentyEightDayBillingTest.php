@@ -31,6 +31,44 @@ class TwentyEightDayBillingTest extends TestCase
 
         $this->bindFakeStripe();
         $this->ensureRequiredAppConfigRowsExist();
+        // Production default: ordinary signup has no trial.
+        config(['platform_billing.allow_public_trials' => false]);
+    }
+
+    public function test_ordinary_signup_has_no_trial_even_if_a_catalog_trial_is_configured(): void
+    {
+        $catalog = $this->sellableTier(WorkspacePlanTier::Growth, 14);
+        config(['account.can_register' => true]);
+
+        $this->assertSame(14, $catalog->configuredTrialDays(), 'the catalog field exists but is inert');
+
+        $this->get(route('register.plan'))->assertOk()->assertDontSee('day free trial');
+
+        app(V1SignupManager::class)->startSubscription(
+            $this->createCustomer(), $this->draft(), $catalog, 'https://app.test/done', 'https://app.test/cancel',
+        );
+
+        $this->assertNull($this->stripe->callsOf('createSubscriptionCheckout')[0]['args']['trial_days']);
+        $this->assertSame(0, PlatformTrialClaim::query()->count());
+    }
+
+    public function test_a_plan_change_never_moves_a_subscriber_onto_a_different_billing_cycle(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $core = $this->sellableTier(WorkspacePlanTier::Core, null, '49.00');
+
+        // A subscriber whose agreement is the legacy monthly cadence.
+        $fixture['subscription']->forceFill(['billing_cycle_snapshot' => 'monthly'])->save();
+
+        try {
+            app(PlatformSubscriptionManager::class)->requestPlanChange($fixture['workspace'], $core, (int) $fixture['workspace']->owner_user_id);
+            $this->fail('A change that would re-anchor billing must be refused.');
+        } catch (\App\Exceptions\PlatformBilling\PlatformBillingException $e) {
+            $this->assertSame(\App\Exceptions\PlatformBilling\PlatformBillingException::CHANGE_NOT_PERMITTED, $e->reason);
+        }
+
+        $this->assertSame([], $this->stripe->callsOf('changeSubscriptionPrice'));
+        $this->assertSame('monthly', (string) $fixture['subscription']->refresh()->billing_cycle_snapshot);
     }
 
     private function draft(string $name = 'Harbor Lane'): array
@@ -192,6 +230,7 @@ class TwentyEightDayBillingTest extends TestCase
 
     public function test_a_cancelled_checkout_does_not_use_up_the_trial_but_a_started_one_does(): void
     {
+        config(['platform_billing.allow_public_trials' => true]);
         $catalog = $this->sellableTier(WorkspacePlanTier::Growth, 14);
         $customer = $this->createCustomer();
         $manager = app(PlatformSubscriptionManager::class);
@@ -226,6 +265,7 @@ class TwentyEightDayBillingTest extends TestCase
 
     public function test_a_second_account_on_the_same_mailbox_does_not_get_a_second_trial(): void
     {
+        config(['platform_billing.allow_public_trials' => true]);
         $catalog = $this->sellableTier(WorkspacePlanTier::Growth, 14);
         $signup = app(V1SignupManager::class);
         $manager = app(PlatformSubscriptionManager::class);

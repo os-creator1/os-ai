@@ -16,12 +16,15 @@ use InvalidArgumentException;
  *
  * THE MODEL, stated once:
  *
- *   standard price  the custom recurring price when the owner set one,
- *                   otherwise the plan's own price.
+ *   standard price  the permanent NEGOTIATED recurring price when the owner set
+ *                   one, otherwise the plan's own catalog price. This is the
+ *                   explicitly agreed ongoing price.
  *   discount        a fixed amount or a percentage off the standard price.
- *   duration        forever | one billing period | N billing periods. After a
- *                   temporary discount the price AUTOMATICALLY reverts to the
- *                   standard price; a "forever" discount never ends.
+ *   duration        forever | one billing period | N billing periods. A
+ *                   TEMPORARY promotion is distinct from a permanent negotiated
+ *                   price: when it ends the price AUTOMATICALLY reverts to the
+ *                   negotiated price if there is one, otherwise the catalog
+ *                   price. A "forever" discount never ends.
  *   trial           free days before the first payment (new subscriptions only).
  *
  * EVERY PHASE IS A PLAIN PRICE. A temporary promotion is "N periods at the
@@ -62,7 +65,7 @@ final class OfferTermsCalculator
         $isChange = $offer->isBillingChange();
 
         $standardMinor = $planMinor;
-        $standardSource = 'plan';
+        $standardSource = 'catalog';
 
         if ($offer->custom_price !== null) {
             $custom = PlatformMoney::toMinor((string) $offer->custom_price, $currencyCode);
@@ -72,7 +75,7 @@ final class OfferTermsCalculator
             }
 
             $standardMinor = $custom;
-            $standardSource = 'custom';
+            $standardSource = 'negotiated';
         }
 
         $this->assertChargeable($standardMinor, __('The recurring price'));
@@ -201,7 +204,14 @@ final class OfferTermsCalculator
             'interval_count' => $recurrence[1],
             'plan_price_minor' => $planMinor,
             'standard_price_minor' => $standardMinor,
+            // WHERE THE ONGOING PRICE COMES FROM — the one fact the customer's
+            // agreement must make unmistakable:
+            //   negotiated  a permanent price agreed for this customer; a
+            //               temporary promotion reverts to THIS price
+            //   catalog     the plan's normal price; a temporary promotion
+            //               reverts to THIS price
             'standard_source' => $standardSource,
+            'ongoing_label' => $standardSource === 'negotiated' ? 'Your agreed ongoing price' : 'The standard plan price',
             'trial_days_requested' => $requestedTrial,
             'trial_days' => $trialDays,
             'trial_blocked' => $requestedTrial !== null && $trialDays === null && ! $isChange,

@@ -101,7 +101,7 @@ class PrivateOfferTermsTest extends TestCase
 
         $this->assertSame(7950, $terms->standardPriceMinor());
         $this->assertSame(7950, $terms->todayChargeMinor());
-        $this->assertSame('custom', $terms->get('standard_source'));
+        $this->assertSame('negotiated', $terms->get('standard_source'));
         $this->assertSame(10000, $terms->get('plan_price_minor'), 'the list price is still recorded');
         $this->assertSame([7950], $terms->requiredAmountsMinor());
     }
@@ -161,6 +161,17 @@ class PrivateOfferTermsTest extends TestCase
         $this->assertSame(6000, $paid[0]['price_minor']);
         $this->assertSame(8000, $paid[1]['price_minor']);
         $this->assertSame(8000, $terms->get('recurring_after_promotion_minor'));
+        $this->assertSame('negotiated', $terms->get('standard_source'));
+        $this->assertSame('Your agreed ongoing price', $terms->get('ongoing_label'));
+    }
+
+    public function test_a_promotion_without_a_negotiated_price_reverts_to_the_catalog_price(): void
+    {
+        $terms = $this->terms($this->offer(['discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'once']));
+
+        $this->assertSame('catalog', $terms->get('standard_source'));
+        $this->assertSame('The standard plan price', $terms->get('ongoing_label'));
+        $this->assertSame(10000, $terms->paidPhases()[1]['price_minor']);
     }
 
     public function test_a_trial_and_a_promotion_together_start_the_promotion_at_the_first_payment(): void
