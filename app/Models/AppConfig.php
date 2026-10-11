@@ -58,20 +58,8 @@
                     'value'   => 'business operations, automation, workspace, crm, messaging',
                 ],
                 [
-                    'setting' => 'license',
-                    'value'   => '',
-                ],
-                [
-                    'setting' => 'license_type',
-                    'value'   => 'Regular license',
-                ],
-                [
-                    'setting' => 'valid_domain',
-                    'value'   => 'yes',
-                ],
-                [
                     'setting' => 'from_email',
-                    'value'   => 'akasham67@gmail.com',
+                    'value'   => 'noreply@example.com',
                 ],
                 [
                     'setting' => 'from_name',
@@ -279,7 +267,7 @@
                 ],
                 [
                     'setting' => 'notification_email',
-                    'value'   => 'akasham67@gmail.com',
+                    'value'   => 'noreply@example.com',
                 ],
                 [
                     'setting' => 'sender_id_notification_email',

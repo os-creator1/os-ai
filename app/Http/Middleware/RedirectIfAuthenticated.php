@@ -25,10 +25,6 @@ class RedirectIfAuthenticated
         foreach ($guards as $guard) {
             if (Auth::guard($guard)->check()) {
 
-                if (Helper::app_config('license') == null) {
-                    return redirect()->route('verify.license');
-                }
-
                 Helper::home_route();
             }
         }

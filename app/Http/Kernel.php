@@ -14,7 +14,6 @@
     use App\Http\Middleware\LocaleMiddleware;
     use App\Http\Middleware\PreventRequestsDuringMaintenance;
     use App\Http\Middleware\RedirectIfAuthenticated;
-    use App\Http\Middleware\RedirectIfNotValid;
     use App\Http\Middleware\ResolveCustomDomainWebsite;
     use App\Http\Middleware\ResolveCustomerContext;
     use App\Http\Middleware\SubAccountRestriction;
@@ -127,7 +126,6 @@
             |--------------------------------------------------------------------------
             */
 
-            'ValidProduct'      => RedirectIfNotValid::class,
             'twofactor'         => TwoFactor::class,
             'json.response'     => ForceJsonResponse::class,
             'customer.sub_only' => SubAccountRestriction::class,

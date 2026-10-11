@@ -363,15 +363,6 @@
 
         /*
         |--------------------------------------------------------------------------
-        | purchase code from envato marketplace for verify real product
-        |--------------------------------------------------------------------------
-        */
-
-        'purchase_key' => env('PURCHASE_CODE', ''),
-
-
-        /*
-        |--------------------------------------------------------------------------
         | Two step verification in login
         |--------------------------------------------------------------------------
         */
@@ -501,7 +492,7 @@
         | Maintenance Mode
         |--------------------------------------------------------------------------
         */
-        'maintenance_secret_path' => env('MAINTENANCE_SECRET_PATH', 'codeglen'),
+        'maintenance_secret_path' => env('MAINTENANCE_SECRET_PATH'),
 
 
         /*
@@ -557,7 +548,6 @@
             App\Providers\EventServiceProvider::class,
             App\Providers\RouteServiceProvider::class,
             App\Providers\MenuServiceProvider::class,
-            kashem\licenseChecker\licenseCheckerServiceProvider::class,
             App\Providers\JobServiceProvider::class,
         ],
 
