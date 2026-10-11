@@ -25,7 +25,8 @@ class RedirectIfAuthenticated
         foreach ($guards as $guard) {
             if (Auth::guard($guard)->check()) {
 
-                Helper::home_route();
+                // An authenticated user must never re-enter a guest-only login flow.
+                return redirect(Helper::home_route());
             }
         }
 
