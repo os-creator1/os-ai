@@ -117,7 +117,7 @@ final class PrivateOfferRedemptionManager
      *
      * @return array<string, mixed>
      */
-    public function present(PlatformPrivateOffer $offer, ?User $viewer): array
+    public function present(PlatformPrivateOffer $offer, ?User $viewer, ?string $workspaceUid = null): array
     {
         $view = [
             'offer' => $offer, 'state' => 'unavailable', 'terms' => null, 'workspace' => null,
@@ -145,7 +145,20 @@ final class PrivateOfferRedemptionManager
             return $view;
         }
 
-        $workspace = $this->workspaceFor($offer, $viewer);
+        $workspace = $this->workspaceFor($offer, $viewer, $workspaceUid);
+
+        if ($workspace === null && $offer->target_workspace_id === null) {
+            $owned = $this->ownedWorkspaces($viewer);
+
+            // Several Workspaces and none chosen (or one that is not theirs):
+            // never pick one for them -- ask.
+            if ($owned->count() > 1) {
+                $view['state'] = ($workspaceUid === null || $workspaceUid === '') ? 'needs_workspace' : 'not_for_you';
+                $view['workspaces'] = $owned;
+
+                return $view;
+            }
+        }
 
         if ($workspace === null) {
             $view['state'] = $offer->target_workspace_id !== null ? 'not_for_you' : 'needs_account';
@@ -235,6 +248,7 @@ final class PrivateOfferRedemptionManager
         User $actor,
         string $acceptedTermsHash,
         callable $returnUrls,
+        ?string $workspaceUid = null,
     ): CheckoutSessionResult {
         if ($offer->isBillingChange()) {
             throw PlatformBillingException::because(PlatformBillingException::OFFER_UNAVAILABLE);
@@ -243,12 +257,13 @@ final class PrivateOfferRedemptionManager
         $this->assertRedeemable($offer);
         $this->assertIdentity($offer, $actor);
 
-        $workspace = $this->workspaceFor($offer, $actor)
-            ?? throw PlatformBillingException::because(
-                $offer->target_workspace_id !== null
-                    ? PlatformBillingException::OFFER_NOT_FOR_YOU
-                    : PlatformBillingException::NO_SUBSCRIPTION
-            );
+        $workspace = $this->workspaceFor($offer, $actor, $workspaceUid)
+            ?? throw PlatformBillingException::because(match (true) {
+                $offer->target_workspace_id !== null => PlatformBillingException::OFFER_NOT_FOR_YOU,
+                $workspaceUid !== null && $workspaceUid !== '' => PlatformBillingException::OFFER_NOT_FOR_YOU,
+                $this->ownedWorkspaces($actor)->count() > 1 => PlatformBillingException::OFFER_WORKSPACE_REQUIRED,
+                default => PlatformBillingException::NO_SUBSCRIPTION,
+            });
 
         $subscription = PlatformSubscription::query()->where('workspace_id', $workspace->id)->first();
 
@@ -277,6 +292,10 @@ final class PrivateOfferRedemptionManager
 
         // ---- the trial: reserved first, so the terms below reflect the truth --
         $trialEligible = true;
+        // A reservation an earlier Checkout of this Workspace still holds is not
+        // this attempt's to give back: a stale or invalid submission must not
+        // free a trial another payable session is counting on.
+        $trialHeldBefore = $offer->trial_days !== null && $this->trials->hasReservation($workspace);
 
         if ($offer->trial_days !== null) {
             $trialEligible = $this->trials->reserve($workspace, $ownerEmail, 'offer');
@@ -288,7 +307,7 @@ final class PrivateOfferRedemptionManager
             // What they were shown is not what would be charged (the offer
             // changed, a trial became unavailable, a price moved). They must
             // look again; nothing was reserved on their behalf.
-            if ($offer->trial_days !== null && $trialEligible) {
+            if ($offer->trial_days !== null && $trialEligible && ! $trialHeldBefore) {
                 $this->trials->release($workspace);
             }
 
@@ -302,7 +321,7 @@ final class PrivateOfferRedemptionManager
         try {
             $redemption = $this->reserve($offer, $workspace, $actor, $terms);
         } catch (PlatformBillingException $e) {
-            if ($offer->trial_days !== null) {
+            if ($offer->trial_days !== null && ! $trialHeldBefore) {
                 $this->trials->release($workspace);
             }
 
@@ -463,6 +482,14 @@ final class PrivateOfferRedemptionManager
             throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
         }
 
+        // A plan change (a scheduled downgrade, or an upgrade still being
+        // confirmed) was agreed against the pricing the customer had when they
+        // asked for it, and may end private pricing when it lands. New private
+        // pricing is therefore not stacked on top of it.
+        if ($subscription->pending_operation_uid !== null) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_IN_PROGRESS);
+        }
+
         $catalog = $offer->catalog;
         $currency = $this->currencyOf($offer);
 
@@ -536,15 +563,27 @@ final class PrivateOfferRedemptionManager
             );
         }
 
-        // A previous private agreement (and its schedule) is ended, explicitly,
-        // because Stripe allows one schedule per subscription.
-        $this->reconciler->endPrivatePricing($subscription);
+        // Stripe allows one schedule per subscription, so a previous private
+        // agreement's schedule is stepped aside for the push -- but the agreement
+        // itself stays on file until the new schedule is in place. If the push
+        // fails, the old schedule is put back (here, or by the sweep) instead of
+        // the customer's negotiated pricing having been destroyed.
+        try {
+            $snapshot = $this->reconciler->withScheduleSuspended(
+                $subscription,
+                fn () => $this->gateway->applyPriceSchedule(
+                    (string) $subscription->provider_subscription_id,
+                    $phases,
+                    'offer-change:' . $redemption->uid,
+                ),
+            );
+        } catch (\Throwable $e) {
+            $this->reconciler->restoreAfterResume($subscription->refresh());
 
-        $snapshot = $this->gateway->applyPriceSchedule(
-            (string) $subscription->provider_subscription_id,
-            $phases,
-            'offer-change:' . $redemption->uid,
-        );
+            throw $e;
+        }
+
+        $this->reconciler->endPrivatePricing($subscription->refresh());
 
         $promoEnds = null;
 
@@ -587,7 +626,6 @@ final class PrivateOfferRedemptionManager
         PlatformPrivateOfferRedemption::query()
             ->where('state', PlatformPrivateOfferRedemption::STATE_RESERVED)
             ->whereHas('offer', fn ($q) => $q->where('kind', PlatformPrivateOffer::KIND_BILLING_CHANGE))
-            ->where('reserved_until', '>', now())
             ->orderBy('id')
             ->limit($limit)
             ->get()
@@ -595,6 +633,14 @@ final class PrivateOfferRedemptionManager
                 $subscription = PlatformSubscription::query()->where('workspace_id', $r->workspace_id)->first();
 
                 if ($subscription === null) {
+                    return;
+                }
+
+                // Past its window: the provider may or may not hold this change.
+                // It is never released on the clock alone.
+                if ($r->reserved_until !== null && $r->reserved_until->isPast()) {
+                    $this->settleStaleBillingChange($r, $subscription);
+
                     return;
                 }
 
@@ -607,6 +653,46 @@ final class PrivateOfferRedemptionManager
             });
 
         return $done;
+    }
+
+    /**
+     * A billing-change reservation older than its window. If the provider
+     * subscription carries no schedule of ours (none at all, or still only the
+     * previous agreement's own), nothing was applied and the reservation is
+     * released. Any other schedule might be this change's: it is left, loudly,
+     * for an operator -- releasing the row would orphan an active schedule.
+     */
+    private function settleStaleBillingChange(PlatformPrivateOfferRedemption $redemption, PlatformSubscription $subscription): void
+    {
+        try {
+            $live = $this->gateway->retrieveSubscription((string) $subscription->provider_subscription_id);
+        } catch (\Throwable $e) {
+            return;
+        }
+
+        $stepsAside = $live->scheduleId === null
+            || (! blank($subscription->provider_schedule_id) && $live->scheduleId === $subscription->provider_schedule_id);
+
+        if (! $stepsAside) {
+            \Illuminate\Support\Facades\Log::warning('A billing-change reservation is past its window but the provider subscription still has a schedule; leaving it for operator attention', [
+                'redemption_id' => $redemption->id,
+            ]);
+
+            return;
+        }
+
+        DB::transaction(function () use ($redemption): void {
+            $row = PlatformPrivateOfferRedemption::query()->whereKey($redemption->id)->lockForUpdate()->first();
+
+            if ($row !== null && $row->state === PlatformPrivateOfferRedemption::STATE_RESERVED) {
+                $row->forceFill([
+                    'state' => PlatformPrivateOfferRedemption::STATE_RELEASED,
+                    'active_slot' => null,
+                    'released_at' => now(),
+                    'release_reason' => 'expired_unapplied',
+                ])->save();
+            }
+        });
     }
 
     // =====================================================================
@@ -664,7 +750,7 @@ final class PrivateOfferRedemptionManager
      * signed-in user, NEVER from anything the request supplied. Null when the
      * user has no standing over the offer's Workspace, or owns none yet.
      */
-    private function workspaceFor(PlatformPrivateOffer $offer, User $actor): ?Workspace
+    private function workspaceFor(PlatformPrivateOffer $offer, User $actor, ?string $workspaceUid = null): ?Workspace
     {
         if ($offer->target_workspace_id !== null) {
             $workspace = Workspace::query()->find($offer->target_workspace_id);
@@ -672,7 +758,22 @@ final class PrivateOfferRedemptionManager
             return $workspace !== null && $this->canBill($workspace, (int) $actor->id) ? $workspace : null;
         }
 
-        return Workspace::query()->where('owner_user_id', $actor->id)->orderBy('id')->first();
+        // An email-bound offer names no Workspace, so it is never GUESSED: the
+        // customer's one Workspace is used, and with several the customer must
+        // choose -- and only among those they own.
+        $owned = $this->ownedWorkspaces($actor);
+
+        if ($workspaceUid !== null && $workspaceUid !== '') {
+            return $owned->firstWhere('uid', $workspaceUid);
+        }
+
+        return $owned->count() === 1 ? $owned->first() : null;
+    }
+
+    /** @return \Illuminate\Support\Collection<int, Workspace> */
+    private function ownedWorkspaces(User $actor): \Illuminate\Support\Collection
+    {
+        return Workspace::query()->where('owner_user_id', $actor->id)->orderBy('id')->get();
     }
 
     private function canBill(Workspace $workspace, int $userId): bool

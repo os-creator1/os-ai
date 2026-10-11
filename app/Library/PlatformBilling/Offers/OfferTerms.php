@@ -124,8 +124,16 @@ final class OfferTerms
 
     public function hash(): string
     {
-        $paid = array_map(static fn (array $phase): array => [
+        // A billing change starts at the subscription's NEXT RENEWAL, and that
+        // date is part of what the customer agrees to: if the form was left open
+        // across a renewal the boundary moves, the hash no longer matches and the
+        // terms are shown again. (A new subscription's start is "now", so it is
+        // deliberately not part of the hash.)
+        $isChange = ($this->data['kind'] ?? null) === 'billing_change';
+
+        $paid = array_map(static fn (array $phase) => [
             $phase['kind'], (int) $phase['price_minor'], $phase['periods'] ?? null,
+            $isChange ? ($phase['starts_at'] ?? null) : null,
         ], $this->paidPhases());
 
         return hash('sha256', json_encode([

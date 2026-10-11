@@ -281,6 +281,10 @@ final class PrivateOfferManager
 
         PlatformPrivateOfferRedemption::query()
             ->where('state', PlatformPrivateOfferRedemption::STATE_RESERVED)
+            // A billing change has no Checkout to expire; its reservation may stand
+            // for a schedule already placed at the provider and is settled by
+            // PrivateOfferRedemptionManager::sweepUnappliedBillingChanges().
+            ->whereHas('offer', fn ($q) => $q->where('kind', PlatformPrivateOffer::KIND_NEW_SUBSCRIPTION))
             ->where('reserved_until', '<', now())
             ->orderBy('id')
             ->limit($limit)

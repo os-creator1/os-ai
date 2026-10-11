@@ -293,12 +293,81 @@ class LaunchAcceptanceTest extends TestCase
         $growth->refresh();
         $this->assertSame('price_old_month_growth', $growth->provider_price_id);
         $this->assertSame('monthly', (string) $growth->billing_cycle);
+        $this->assertTrue((bool) $growth->available_for_signup, 'back on sale, as before the release');
+        $this->assertTrue((bool) $growth->trial_enabled, 'and the trial setting is back');
+        $this->assertSame(14, (int) $growth->trial_days);
         $this->assertSame($provider === '' ? null : 'every_28_days', (string) $new->refresh()->billing_cycle_snapshot, 'rollback never rewrites a subscription');
     }
 
     // =================================================================
     // Email verification switched OFF (ACCOUNT_VERIFICATION=false)
     // =================================================================
+
+    public function test_a_rollback_never_leaves_a_28_day_row_the_previous_release_cannot_represent(): void
+    {
+        $this->legacyCatalog();
+        $this->runMigrationData();
+
+        // The owner then created a 28-day Price on the converted core plan, and a
+        // plan row appeared that the migration never saw.
+        $core = WorkspacePlanCatalog::query()->where('tier', 'core')->firstOrFail();
+        $core->forceFill(['provider_price_id' => 'price_new_28_core', 'available_for_signup' => true])->save();
+        $extra = WorkspacePlanCatalog::query()->where('tier', 'agency')->firstOrFail();
+        \Illuminate\Support\Facades\DB::table('workspace_plan_catalog')->where('id', $extra->id)->update(['pre_28_day_snapshot' => null]);
+
+        (require base_path(self::MIGRATION))->down();
+
+        $core->refresh();
+        $this->assertSame('monthly', (string) $core->billing_cycle);
+        $this->assertSame('price_old_month_core', $core->provider_price_id, 'the legacy monthly Price, not the 28-day one');
+
+        $extra->refresh();
+        $this->assertContains((string) $extra->billing_cycle, ['monthly', 'yearly']);
+        $this->assertNull($extra->provider_price_id, 'no snapshot: taken off sale rather than sold on a wrong cadence');
+        $this->assertFalse((bool) $extra->available_for_signup);
+    }
+
+    public function test_the_trial_backfill_records_every_historical_workspace_even_when_mailboxes_collide(): void
+    {
+        $a = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $b = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $a['customer']->user->forceFill(['email' => 'same.owner+one@example.test'])->save();
+        $b['customer']->user->forceFill(['email' => 'same.owner+two@example.test'])->save();
+
+        foreach ([$a, $b] as $fixture) {
+            PlatformSubscription::query()->whereKey($fixture['subscription']->id)->update(['trial_days_snapshot' => 14, 'trial_ends_at' => now()->subDays(60)]);
+        }
+
+        \Illuminate\Support\Facades\DB::table('platform_trial_claims')->delete();
+
+        (require base_path('database/migrations/2026_11_08_100004_backfill_platform_trial_claims.php'))->up();
+
+        foreach ([$a, $b] as $fixture) {
+            $this->assertTrue(
+                \Illuminate\Support\Facades\DB::table('platform_trial_claims')
+                    ->where('workspace_id', $fixture['workspace']->id)->where('state', 'granted')->exists(),
+                'every workspace that had a trial is recorded as having used it',
+            );
+        }
+    }
+
+    public function test_provisioning_after_the_migration_reuses_the_plans_existing_product(): void
+    {
+        $this->legacyCatalog();
+        $this->stripe->definePrice('price_old_month_growth', ['product' => 'prod_existing_growth', 'unit_amount' => 9900, 'interval' => 'month', 'interval_count' => 1]);
+        $this->runMigrationData();
+
+        $growth = WorkspacePlanCatalog::query()->where('tier', 'growth')->firstOrFail();
+        $this->assertNull($growth->provider_price_id);
+        $this->assertSame('price_old_month_growth', $growth->legacy_provider_price_id);
+
+        app(\App\Library\PlatformBilling\Offers\PlatformPriceProvisioner::class)->provisionCatalogPrice($growth, 'USD');
+
+        $products = $this->stripe->callsOf('ensureProduct');
+        $this->assertNotEmpty($products);
+        $this->assertSame('prod_existing_growth', $products[0]['args']['existing'], 'no duplicate Product is created');
+        $this->assertSame('prod_existing_growth', $growth->refresh()->provider_product_id);
+    }
 
     public function test_with_verification_off_an_email_bound_offer_cannot_be_created(): void
     {

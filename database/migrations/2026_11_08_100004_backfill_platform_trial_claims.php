@@ -33,7 +33,7 @@ return new class extends Migration
                         ->where('workspaces.id', $subscription->workspace_id)
                         ->value('users.email');
 
-                    DB::table('platform_trial_claims')->insertOrIgnore([
+                    $row = [
                         'workspace_id' => $subscription->workspace_id,
                         'email_key' => $email === null ? null : self::mailboxKey((string) $email),
                         'provider_customer_id' => $subscription->provider_customer_id,
@@ -42,7 +42,19 @@ return new class extends Migration
                         'granted_at' => $subscription->trial_ends_at ?? $subscription->created_at ?? now(),
                         'created_at' => now(),
                         'updated_at' => now(),
-                    ]);
+                    ];
+
+                    // Workspace, mailbox and provider customer are each unique on
+                    // their own. When another history row already holds the mailbox
+                    // (or customer), this Workspace is STILL recorded as having had
+                    // its trial — only the colliding identity is dropped from it.
+                    foreach ([[], ['email_key'], ['email_key', 'provider_customer_id']] as $drop) {
+                        DB::table('platform_trial_claims')->insertOrIgnore(array_merge($row, array_fill_keys($drop, null)));
+
+                        if (DB::table('platform_trial_claims')->where('workspace_id', $subscription->workspace_id)->exists()) {
+                            break;
+                        }
+                    }
                 }
             });
     }

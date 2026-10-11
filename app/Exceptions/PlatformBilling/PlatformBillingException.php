@@ -82,6 +82,9 @@ final class PlatformBillingException extends RuntimeException
 
     public const OFFER_FULLY_REDEEMED = 'offer_fully_redeemed';
 
+    /** An email-bound offer, and the recipient owns several Workspaces: they must say which. */
+    public const OFFER_WORKSPACE_REQUIRED = 'offer_workspace_required';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -111,6 +114,7 @@ final class PlatformBillingException extends RuntimeException
             self::OFFER_VERIFICATION_DISABLED => 'This offer is tied to an email address, which cannot be confirmed on this installation. Please contact us.',
             self::OFFER_TERMS_CHANGED => 'The terms of this offer changed. Please review them and accept again.',
             self::OFFER_FULLY_REDEEMED => 'This offer has already been used.',
+            self::OFFER_WORKSPACE_REQUIRED => 'Please choose which of your workspaces this offer is for.',
             default => 'That could not be completed.',
         });
     }

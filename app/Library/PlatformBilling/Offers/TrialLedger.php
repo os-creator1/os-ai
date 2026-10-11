@@ -105,6 +105,15 @@ final class TrialLedger
         }
     }
 
+    /** Whether the Workspace already holds an open trial reservation (an earlier Checkout's). */
+    public function hasReservation(Workspace $workspace): bool
+    {
+        return PlatformTrialClaim::query()
+            ->where('workspace_id', $workspace->id)
+            ->where('state', PlatformTrialClaim::STATE_RESERVED)
+            ->exists();
+    }
+
     /** Drops a Workspace's RESERVATION. A granted claim is never touched. */
     public function release(Workspace $workspace): void
     {

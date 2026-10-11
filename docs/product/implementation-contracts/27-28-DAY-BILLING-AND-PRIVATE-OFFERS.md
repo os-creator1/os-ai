@@ -163,6 +163,32 @@ version the account / SDK uses, so this cannot arise; do not pin different versi
 for different processes.
 
 Private Offers are additionally behind the server-side switch in section 6.
+### Review hardening (PR #440, second round)
+
+* **A failed upgrade or billing-change push never destroys a negotiated agreement.**
+  The agreement's schedule is stepped aside only for the provider call
+  (`OfferReconciler::withScheduleSuspended`); the agreement is closed locally only
+  after the provider has moved, and a failure puts the schedule straight back.
+* **A pending plan change blocks new private pricing.** While a downgrade (or an
+  unconfirmed upgrade) is pending, a billing change is refused (`change_in_progress`),
+  so a downgrade the customer acknowledged against one agreement can never end a
+  newer one they were not told about.
+* **An unrelated Subscription Schedule is never overwritten.** An attached schedule is
+  reused only if the create call's idempotency key replays to the same schedule;
+  otherwise the push fails for operator attention (verified on real Stripe).
+* **Email-bound offers name their Workspace.** One owned Workspace is used; with
+  several the customer must choose, and only among those they own
+  (`offer_workspace_required`).
+* **Billing-change reservations are not Checkout reservations.** The expired-checkout
+  cleanup skips them; a stale one is released only when the provider holds no schedule
+  of ours, otherwise it is left (and logged) for an operator.
+* The acceptance hash includes a billing change's effective date; a trial reservation
+  is released only by the attempt that created it; consent copy states the offer's
+  real cadence; the verification prompt has a fallback when registration is closed.
+* **Migration rollback** restores each plan row (cycle, Price, signup availability,
+  trial) from `pre_28_day_snapshot`; rows without one are taken off sale. The trial
+  backfill records every historical Workspace even when mailboxes collide. Product
+  reuse falls back to the legacy Price's Product.
 ## 5. Known limitations
 * **Email-bound offers require real email verification.** With
   `ACCOUNT_VERIFICATION=false` every new account is stamped verified at creation

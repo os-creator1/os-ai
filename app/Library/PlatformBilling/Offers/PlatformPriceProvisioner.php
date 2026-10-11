@@ -163,11 +163,21 @@ final class PlatformPriceProvisioner
         // Group under the product of the plan's existing Price when there is one.
         $productId = null;
 
-        if (! blank($catalog->provider_price_id)) {
+        // The 28-day migration moves a monthly Price to `legacy_provider_price_id`,
+        // which is still on the plan's own Product, so it is the fallback.
+        foreach ([$catalog->provider_price_id, $catalog->legacy_provider_price_id] as $existingPrice) {
+            if (blank($existingPrice)) {
+                continue;
+            }
+
             try {
-                $productId = $this->gateway->retrievePrice((string) $catalog->provider_price_id)->productId;
+                $productId = $this->gateway->retrievePrice((string) $existingPrice)->productId;
             } catch (PlatformBillingException) {
                 $productId = null;
+            }
+
+            if (! blank($productId)) {
+                break;
             }
         }
 

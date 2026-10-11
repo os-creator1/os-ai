@@ -266,16 +266,26 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
             // The schedule begins as an exact copy of the live subscription, so
             // its first phase carries the real start (and any running trial).
             //
-            // A schedule that an earlier, interrupted attempt already created
-            // (its idempotency key may have aged out) is re-used rather than
-            // fought with: a subscription can sit under only one.
+            // A subscription can sit under only one schedule, and a schedule we
+            // did not create is somebody's billing plan (a Dashboard change, a
+            // Stripe automation) that this call must never overwrite. The only
+            // attached schedule that is reused is OUR OWN, left by an earlier
+            // interrupted attempt, and it is proven ours by the create call's
+            // idempotency key: replaying the same key answers with the schedule
+            // that attempt made. Anything else fails for operator attention.
             $existingScheduleId = self::scheduleIdOf($current);
+            $created = $this->client()->subscriptionSchedules->create(
+                ['from_subscription' => $providerSubscriptionId],
+                ['idempotency_key' => $idempotencyKey . ':create'],
+            );
+
+            if ($existingScheduleId !== null && (string) $created->id !== $existingScheduleId) {
+                throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+            }
+
             $schedule = $existingScheduleId !== null
                 ? $this->client()->subscriptionSchedules->retrieve($existingScheduleId, [])
-                : $this->client()->subscriptionSchedules->create(
-                    ['from_subscription' => $providerSubscriptionId],
-                    ['idempotency_key' => $idempotencyKey . ':create'],
-                );
+                : $created;
 
             $trialEnd = $current->trial_end ?? null;
             $stillTrialing = is_int($trialEnd) && $trialEnd > time();

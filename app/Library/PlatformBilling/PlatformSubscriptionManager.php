@@ -703,19 +703,39 @@ final class PlatformSubscriptionManager
         // ---- 2. the provider, outside every transaction ------------------
         //
         // A subscription under a promotion schedule cannot have its items
-        // edited, so the (acknowledged) end of private pricing releases it first.
-        $this->offers->endPrivatePricing($subscription);
-        $subscription->refresh();
-
+        // edited, so the (acknowledged) agreement's schedule is stepped aside for
+        // the call -- but the AGREEMENT is ended only once the provider has
+        // actually moved the subscription. If the call fails, the schedule is put
+        // back (here, or by the sweep) and the customer keeps the negotiated
+        // pricing they had; a retry of the upgrade starts from that state.
+        //
         // The key is the OPERATION's, never the target catalog id: the same
         // catalog can later carry a different immutable Stripe Price, and
         // Stripe errors when one key is reused with different parameters.
-        $snapshot = $this->gateway->changeSubscriptionPrice(
-            (string) $subscription->provider_subscription_id,
-            (string) $subscription->pending_price_id,
-            prorate: true,
-            idempotencyKey: (string) $subscription->planChangeKey(),
-        );
+        if (! $this->hasPrivatePricing($subscription)) {
+            // No agreement on file: only a stray schedule, which is simply released.
+            $this->offers->endPrivatePricing($subscription);
+            $subscription->refresh();
+        }
+
+        try {
+            $snapshot = $this->offers->withScheduleSuspended($subscription, function () use ($subscription) {
+                $snapshot = $this->gateway->changeSubscriptionPrice(
+                    (string) $subscription->provider_subscription_id,
+                    (string) $subscription->pending_price_id,
+                    prorate: true,
+                    idempotencyKey: (string) $subscription->planChangeKey(),
+                );
+
+                $this->offers->endPrivatePricing($subscription->refresh());
+
+                return $snapshot;
+            });
+        } catch (Throwable $e) {
+            $this->offers->restoreAfterResume($subscription->refresh());
+
+            throw $e;
+        }
 
         // ---- 3. converge, through the SHARED finalizer -------------------
         //

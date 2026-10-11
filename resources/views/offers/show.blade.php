@@ -31,11 +31,26 @@
 
     @elseif ($state === 'needs_verification')
         <p data-role="offer-needs-verification">{{ __('This offer was made for your email address. Please verify it first — we sent you a verification email when you signed up.') }}</p>
-        <form method="POST" action="{{ route('verification.send') }}" class="mb-1">
-            @csrf
-            <button type="submit" class="btn btn-primary w-100">{{ __('Send the verification email again') }}</button>
-        </form>
-        <p class="text-muted small">{{ __('After verifying, open your offer link again.') }}</p>
+        @if (\Illuminate\Support\Facades\Route::has('verification.send'))
+            <form method="POST" action="{{ route('verification.send') }}" class="mb-1">
+                @csrf
+                <button type="submit" class="btn btn-primary w-100">{{ __('Send the verification email again') }}</button>
+            </form>
+            <p class="text-muted small">{{ __('After verifying, open your offer link again.') }}</p>
+        @else
+            <p class="text-muted small" data-role="offer-verification-contact">{{ __('Open the verification email we sent you, then open your offer link again. If you cannot find it, please contact us.') }}</p>
+        @endif
+
+    @elseif ($state === 'needs_workspace')
+        <p data-role="offer-needs-workspace">{{ __('You own more than one workspace. Choose the one this offer is for:') }}</p>
+        <ul class="list-unstyled">
+            @foreach ($view['workspaces'] as $choice)
+                <li class="mb-50">
+                    <a class="btn btn-outline-primary w-100" data-role="offer-choose-workspace"
+                       href="{{ route('offers.show', ['token' => $token, 'workspace' => $choice->uid]) }}">{{ $choice->name }}</a>
+                </li>
+            @endforeach
+        </ul>
 
     @elseif ($state === 'subscribed')
         <p data-role="offer-subscribed">{{ __('This account already has a subscription, so this offer cannot be applied to it. Please contact us if you were expecting special pricing.') }}</p>
@@ -73,6 +88,10 @@
                 <form method="POST" action="{{ route('offers.accept', ['token' => $token]) }}" data-role="offer-accept-form">
                     @csrf
                     <input type="hidden" name="terms_hash" value="{{ $view['terms']->hash() }}">
+                    @if ($offer->target_workspace_id === null && $view['workspace'] !== null)
+                        <input type="hidden" name="workspace_uid" value="{{ $view['workspace']->uid }}">
+                        <p class="text-muted small" data-role="offer-workspace">{{ __('For workspace: :name', ['name' => $view['workspace']->name]) }}</p>
+                    @endif
 
                     <div class="form-check mb-1">
                         <input class="form-check-input" type="checkbox" name="accept_terms" id="accept_terms" value="1" required>

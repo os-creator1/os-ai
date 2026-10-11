@@ -92,7 +92,7 @@
             @elseif ($terms->trialDays() !== null)
                 {{ __('A payment method is required now so your subscription renews automatically after the free trial. You can cancel any time before then and you will not be charged.') }}
             @else
-                {{ __('Your subscription renews automatically every 28 days until you cancel.') }}
+                {{ __('Your subscription renews automatically :cycle until you cancel.', ['cycle' => $label]) }}
             @endif
             {{ __('Dates are in UTC.') }}
         </p>

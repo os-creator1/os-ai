@@ -51,7 +51,7 @@ class PrivateOfferController extends Controller
             OfferReturn::forget();
         }
 
-        $view = $this->offers->present($offer, $viewer);
+        $view = $this->offers->present($offer, $viewer, $request->query('workspace') !== null ? (string) $request->query('workspace') : null);
 
         return $this->private(response()->view('offers.show', [
             'token' => $token,
@@ -105,6 +105,9 @@ class PrivateOfferController extends Controller
             'terms_hash' => ['required', 'string', 'size:64'],
             // The explicit act. A missing or unticked box is a refusal, not a default.
             'accept_terms' => ['required', 'accepted'],
+            // Which of their workspaces an email-bound offer is for. Never trusted:
+            // the manager only accepts one the signed-in user owns.
+            'workspace_uid' => ['nullable', 'string', 'max:64'],
         ], [
             'accept_terms.required' => __('Please tick the box to confirm you accept these terms.'),
             'accept_terms.accepted' => __('Please tick the box to confirm you accept these terms.'),
@@ -115,6 +118,7 @@ class PrivateOfferController extends Controller
         }
 
         $hash = (string) $validator->validated()['terms_hash'];
+        $workspaceUid = $validator->validated()['workspace_uid'] ?? null;
         $user = $request->user();
 
         try {
@@ -135,6 +139,7 @@ class PrivateOfferController extends Controller
                     route('offers.return', ['redemption' => $r->uid]),
                     route('offers.cancelled', ['redemption' => $r->uid]),
                 ],
+                $workspaceUid,
             );
         } catch (PlatformBillingException $e) {
             return redirect()->route('offers.show', ['token' => $token])->with([
