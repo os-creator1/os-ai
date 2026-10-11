@@ -4188,7 +4188,14 @@ POSTXML;
          */
         public function impersonate(User $user): mixed
         {
-            return $this->account->impersonate($user);
+            try {
+                return $this->account->impersonate($user);
+            } catch (GeneralException $exception) {
+                return redirect()->route('user.home')->with([
+                    'status'  => 'error',
+                    'message' => $exception->getMessage(),
+                ]);
+            }
 
         }
 

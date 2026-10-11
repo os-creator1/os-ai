@@ -13,4 +13,8 @@
         'verify_account'    => env('ACCOUNT_VERIFICATION', true),
         'create_subaccount' => env('ACCOUNT_CREATE_SUBACCOUNT', true),
         'delete_subaccount' => env('ACCOUNT_DELETE_SUBACCOUNT', true),
+        // Legacy "Login as Parent": lets a sub-account (team member) become the account owner. OFF by default - the
+        // owner's identity carries owner-level authority (V1 workspace/business access, billing, API credentials) that a
+        // restricted team member must not reach. Enable only if every sub-account is fully trusted.
+        'allow_parent_switch' => env('ACCOUNT_ALLOW_PARENT_SWITCH', false),
     ];
