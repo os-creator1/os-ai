@@ -31,6 +31,12 @@ trait CreatesCooInsightFixtures
 {
     use CreatesDashboardFixtures;
 
+    /** These fixtures are about the COO envelope, not Home's setup state: a tenant stays bare. */
+    protected function tenantsFinishSetup(): bool
+    {
+        return false;
+    }
+
     protected FakeAiCompletionClient $fakeAi;
 
     protected function setUpCooInsights(): void

@@ -205,14 +205,14 @@ final class BusinessConversationReadModel
      * InnoDB leaf already carries the primary key, so MAX(id) per box needs
      * no further index — joined back to that one row.
      */
-    public function awaitingReplyCount(Business $business, ?CarbonInterface $now = null): int
+    public function awaitingReplyCount(Business $business, ?CarbonInterface $now = null, ?int $actorUserId = null): int
     {
         $now = CarbonImmutable::parse($now ?? CarbonImmutable::now());
         $graceCutoff = $now->subMinutes($this->graceMinutes());
         $scanFloor = $now->subDays($this->scanDays());
 
         $latest = DB::table('chat_box_messages as m')
-            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor))
+            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
             ->groupBy('m.box_id')
             ->selectRaw('MAX(m.id) as last_message_id');
 
@@ -224,6 +224,42 @@ final class BusinessConversationReadModel
     }
 
     /**
+     * Home V2 — the conversations behind awaitingReplyCount(): same predicate (customer wrote
+     * last, past the grace period, touched within the scan window), same Location rule, newest
+     * customer message first, bounded. One statement plus the one that names them.
+     *
+     * @return array<int, array{id: int, uid: string, to: string, at: CarbonImmutable, body: string}>
+     */
+    public function awaitingReplyConversations(Business $business, int $actorUserId, int $limit = 5, ?CarbonInterface $now = null): array
+    {
+        $now = CarbonImmutable::parse($now ?? CarbonImmutable::now());
+        $graceCutoff = $now->subMinutes($this->graceMinutes());
+        $scanFloor = $now->subDays($this->scanDays());
+
+        $latest = DB::table('chat_box_messages as m')
+            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
+            ->groupBy('m.box_id')
+            ->selectRaw('MAX(m.id) as last_message_id');
+
+        $rows = DB::table('chat_box_messages as last')
+            ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
+            ->join('chat_boxes as box', 'box.id', '=', 'last.box_id')
+            ->where('last.direction', self::DIRECTION_INCOMING)
+            ->where('last.created_at', '<', $graceCutoff)
+            ->orderBy('last.created_at')
+            ->limit(max(1, $limit))
+            ->get(['box.id as box_id', 'box.uid as box_uid', 'box.to as box_to', 'last.created_at as at', 'last.message as body']);
+
+        return $rows->map(fn ($r): array => [
+            'id' => (int) $r->box_id,
+            'uid' => (string) $r->box_uid,
+            'to' => (string) $r->box_to,
+            'at' => CarbonImmutable::parse((string) $r->at),
+            'body' => (string) $r->body,
+        ])->all();
+    }
+
+    /**
      * This Business's conversation ids, as a SUBQUERY rather than a join.
      *
      * Tenancy is identical either way — `chat_boxes.business_id = ?`, so a
@@ -232,12 +268,19 @@ final class BusinessConversationReadModel
      * `chat_box_messages` through its `box_id` index instead of scanning
      * every tenant's messages. EXPLAIN, not taste, chose this (H-4).
      */
-    private function conversationIds(Business $business, ?CarbonInterface $touchedSince = null): \Closure
+    private function conversationIds(Business $business, ?CarbonInterface $touchedSince = null, ?int $actorUserId = null): \Closure
     {
-        return function ($query) use ($business, $touchedSince): void {
+        return function ($query) use ($business, $touchedSince, $actorUserId): void {
             $query->select('id')
                 ->from('chat_boxes')
                 ->where('business_id', $business->id);
+
+            // Home V2 — when an actor is named, the inbox's own Location rule applies, so a
+            // Location-restricted staff member is never counted (or shown) conversations of a
+            // Location they cannot reach. Without an actor the count is Business-wide, as before.
+            if ($actorUserId !== null) {
+                app(\App\Library\Crm\CrmLocationScope::class)->restrict($query, $business, $actorUserId, 'location_id');
+            }
 
             if ($touchedSince !== null) {
                 $query->where('updated_at', '>=', $touchedSince);

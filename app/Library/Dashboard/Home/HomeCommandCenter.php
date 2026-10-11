@@ -1,0 +1,467 @@
+<?php
+
+namespace App\Library\Dashboard\Home;
+
+use App\Enums\Dashboard\AttentionSeverity;
+use App\Enums\Dashboard\AttentionType;
+use App\Library\Coo\NextBestMove;
+use App\Library\Dashboard\AttentionItem;
+use App\Library\Dashboard\BusinessStatusRow;
+use App\Library\Dashboard\DashboardLinkGate;
+use App\Library\Dashboard\DashboardSnapshot;
+use App\Library\Dashboard\HomeActivityWindow;
+use App\Library\Navigation\CustomerContext;
+use App\Library\Navigation\MenuEntitlements;
+use App\Models\Business;
+use App\Models\User;
+use Carbon\CarbonImmutable;
+
+/**
+ * Home V2 — the coordinator that turns the bands BusinessHomePresenter already
+ * read into ONE coherent command center.
+ *
+ * It owns presentation decisions and NO facts:
+ *
+ *  - the ONE primary move is NextBestMoveSelector's pick, handed to it through
+ *    the `next_best_move` band; Growth items may only ENRICH that move (same
+ *    Opportunity) or fill the secondary queue — they never compete for the
+ *    primary slot;
+ *  - "Needs your attention" is the Business's own attention items minus the one
+ *    already shown as the primary move, plus booking problems BookingTypeManager
+ *    itself reports, plus real "awaiting approval" Opportunities;
+ *  - every figure on the page still comes from the band that owns it
+ *    (headlines, activity, recent work). This class does arithmetic on none
+ *    of them and runs no query.
+ *
+ * A pure function of its inputs, so each of the four states, the dedupe rule
+ * and the all-clear honesty rule can be tested without a database.
+ */
+final class HomeCommandCenter
+{
+    public const STATE_SETUP = 'setup';
+
+    public const STATE_BROKEN = 'broken';
+
+    public const STATE_NORMAL = 'normal';
+
+    public const STATE_GROWING = 'growing';
+
+    /** Attention types that mean something the Business relies on has stopped working. */
+    private const BROKEN_TYPES = [
+        AttentionType::GoogleConnectionLost,
+        AttentionType::AutomationFailing,
+    ];
+
+    public function __construct(
+        private readonly HomeBriefing $briefing,
+        private readonly HomeSetupJourney $journey,
+        private readonly HomeActionRouter $router,
+        private readonly HomeAskRegistry $ask,
+        private readonly DashboardLinkGate $links,
+    ) {
+    }
+
+    /**
+     * @param  array<int, string>  $scoped  [workspaceUid, businessUid]
+     * @param  array<string, mixed>  $bands  the presenter's bands so far
+     * @param  array<int, string>  $failed  the presenter's failed band keys
+     * @param  array<int, AttentionItem>  $attention  non-billing items this actor can fix
+     * @param  array<string, mixed>|null  $booking  HomeBookingReader::summary(), null when Calendar is not in play
+     * @return array<string, mixed>
+     */
+    public function build(
+        Business $business,
+        CustomerContext $context,
+        User $user,
+        MenuEntitlements $entitlements,
+        array $scoped,
+        ?BusinessStatusRow $status,
+        array $bands,
+        array $failed,
+        array $attention,
+        ?array $booking,
+    ): array {
+        $actions = $this->router->forActor($context, $user, $entitlements, $scoped, $booking['firstLocationUid'] ?? null);
+
+        // ── Setup journey (STATE 1) ────────────────────────────────────────
+        $journey = $this->setup($context, $user, $entitlements, $scoped, $status, $booking);
+
+        // ── Primary move (one) and its secondary queue ─────────────────────
+        $nbmFailed = in_array(DashboardSnapshot::BAND_NEXT_BEST_MOVE, $failed, true);
+        $nbm = $bands[DashboardSnapshot::BAND_NEXT_BEST_MOVE] ?? null;
+        $growth = $bands[DashboardSnapshot::BAND_GROWTH] ?? null;
+        $primary = null;
+        $primaryUid = null;
+        $primaryAttentionType = null;
+
+        if (is_array($nbm) && is_array($nbm['move'] ?? null)) {
+            $primary = $this->primary($nbm['move'], $growth, $actions);
+            $primaryUid = $nbm['move']['subjectUid'] ?? null;
+            $primaryAttentionType = ($nbm['move']['kind'] ?? null) === NextBestMove::KIND_ATTENTION ? $nbm['move']['key'] : null;
+        }
+
+        $queue = [];
+
+        if (is_array($growth)) {
+            foreach ($growth['items'] as $item) {
+                if ($primaryUid !== null && $item['uid'] === $primaryUid) {
+                    continue;
+                }
+
+                $queue[] = [
+                    'uid' => $item['uid'],
+                    'title' => $item['title'],
+                    'context' => $item['headline'],
+                    'category' => $item['category_label'],
+                    'impact' => $item['impact'],
+                    'awaitingApproval' => (bool) ($item['awaiting_approval'] ?? false),
+                    'url' => $item['detail_url'],
+                ];
+            }
+        }
+
+        // ── Needs your attention ───────────────────────────────────────────
+        $attentionItems = $this->attentionItems($context, $user, $entitlements, $scoped, $attention, $primaryAttentionType, $growth, $primaryUid, $booking, $actions);
+        $sourcesFailed = $status === null
+            || in_array(DashboardSnapshot::BAND_NEXT_BEST_MOVE, $failed, true)
+            || in_array(DashboardSnapshot::BAND_GROWTH, $failed, true);
+        $visible = max(1, (int) config('home.attention_visible', 3));
+
+        // ── State ──────────────────────────────────────────────────────────
+        $problem = false;
+
+        foreach ($attention as $item) {
+            if (in_array($item->type, self::BROKEN_TYPES, true)) {
+                $problem = true;
+            }
+        }
+
+        foreach ($attentionItems as $item) {
+            if ($item['kind'] === 'problem' && ($item['broken'] ?? false)) {
+                $problem = true;
+            }
+        }
+
+        if ($bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] ?? null) {
+            $problem = true;
+        }
+
+        $growing = $primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY || $queue !== [];
+
+        $state = match (true) {
+            $journey !== null && $journey['essentialIncomplete'] => self::STATE_SETUP,
+            $problem => self::STATE_BROKEN,
+            $growing => self::STATE_GROWING,
+            default => self::STATE_NORMAL,
+        };
+
+        // ── Briefing ───────────────────────────────────────────────────────
+        $activity = $bands[DashboardSnapshot::BAND_ACTIVITY] ?? null;
+        $window = is_array($activity) && ($activity['window'] ?? null) instanceof HomeActivityWindow ? $activity['window'] : null;
+        $briefing = $this->briefing->compose(
+            is_array($activity) ? ($activity['counts'] ?? []) : null,
+            $window,
+            $business->name,
+        );
+
+        return [
+            'state' => $state,
+            'greeting' => $this->greeting($business, $user),
+            'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
+            'setup' => $state === self::STATE_SETUP ? $journey : null,
+            'primary' => $primary,
+            'primaryFailed' => $nbmFailed,
+            'growthShown' => is_array($growth),
+            'caughtUp' => $primary === null && ! $nbmFailed && $state !== self::STATE_SETUP,
+            'queue' => $queue,
+            'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
+            'queueLabel' => is_array($growth) ? (string) $growth['open_count'] : (string) ($nbm['recommendations']['label'] ?? '0'),
+            'queueUrl' => is_array($growth) ? ($growth['urls']['all'] ?? null) : ($nbm['recommendations']['url'] ?? null),
+            'attention' => [
+                'visible' => array_slice($attentionItems, 0, $visible),
+                'overflow' => array_slice($attentionItems, $visible),
+                // "All clear" is only ever said when nothing is wrong ANYWHERE — a primary exception counts.
+                'allClear' => $attentionItems === [] && ! $sourcesFailed && $primaryAttentionType === null,
+                'unknown' => $attentionItems === [] && $sourcesFailed && $primaryAttentionType === null,
+                'hasPrimaryException' => $primaryAttentionType !== null,
+            ],
+            'handling' => $this->handling($bands, $growth),
+            'actions' => $actions,
+            'ask' => [
+                'suggestions' => array_map(function (array $s) use ($actions): array {
+                    return $s + ['available' => $this->suggestionAvailable($s['key'], $actions)];
+                }, $this->ask->suggestions()),
+                'url' => route('customer.workspaces.businesses.home.ask', $scoped),
+            ],
+        ];
+    }
+
+    private function suggestionAvailable(string $key, array $actions): bool
+    {
+        $map = [
+            'follow_up' => 'follow-ups', 'booking_type' => 'booking-type', 'appointment' => 'appointment',
+            'upcoming' => 'upcoming', 'ads' => 'ads', 'website' => 'website', 'contact' => 'contact', 'explain' => 'advisor',
+        ];
+
+        return ($actions[$map[$key] ?? ''] ?? null) !== null;
+    }
+
+    /** "Good morning" — in the Business's own timezone, never the server's. */
+    private function greeting(Business $business, User $user): array
+    {
+        $tz = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+
+        try {
+            $hour = (int) CarbonImmutable::now($tz)->format('G');
+        } catch (\Throwable) {
+            $hour = (int) CarbonImmutable::now()->format('G');
+        }
+
+        $salutation = match (true) {
+            $hour < 12 => 'Good morning',
+            $hour < 18 => 'Good afternoon',
+            default => 'Good evening',
+        };
+
+        $first = trim((string) ($user->first_name ?? ''));
+
+        return [
+            'salutation' => $salutation,
+            'name' => $first !== '' ? $first : null,
+            'business' => (string) $business->name,
+            'subline' => "Here's what's happening with " . $business->name . '.',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $move  the next_best_move band's payload
+     * @param  array<string, mixed>|null  $growth
+     * @param  array<string, array<string, mixed>|null>  $actions
+     * @return array<string, mixed>
+     */
+    private function primary(array $move, ?array $growth, array $actions): array
+    {
+        $kind = $move['kind'];
+        $enriched = null;
+
+        if ($kind === NextBestMove::KIND_OPPORTUNITY && is_array($growth)) {
+            foreach ($growth['items'] as $item) {
+                if (($move['subjectUid'] ?? null) === $item['uid']) {
+                    $enriched = $item;
+
+                    break;
+                }
+            }
+        }
+
+        $severity = $move['severity'] ?? null;
+        $action = ['label' => $move['actionLabel'], 'url' => $move['actionUrl'], 'drawer' => null, 'drawerUrl' => null];
+        $detailUrl = null;
+        $evidence = [];
+        $impact = null;
+        $headline = $move['headline'];
+        $summary = null;
+        $confidence = null;
+        $statusKey = 'ready';
+        $statusLabel = 'Ready to act on';
+
+        if ($kind === NextBestMove::KIND_ATTENTION) {
+            if ($move['key'] === AttentionType::ConversationsAwaitingReply->value && ($actions['follow-ups']['drawerUrl'] ?? null) !== null) {
+                $action = ['label' => 'Review follow-ups', 'url' => $actions['follow-ups']['fullUrl'], 'drawer' => 'follow-ups', 'drawerUrl' => $actions['follow-ups']['drawerUrl']];
+            }
+
+            if ($severity === AttentionSeverity::Blocking) {
+                $statusKey = 'blocked';
+                $statusLabel = 'Blocked until fixed';
+            }
+        } elseif ($enriched !== null) {
+            $headline = $enriched['title'];
+            $summary = $enriched['summary'] ?: null;
+            $detailUrl = $enriched['detail_url'];
+            $impact = $enriched['expected'] ?? null;
+            $confidence = $enriched['confidence'];
+            $evidence = array_values(array_filter([
+                $enriched['headline'] !== $enriched['title'] ? $enriched['headline'] : null,
+                $enriched['evidence_summary'],
+                $enriched['age_label'] ?: null,
+            ]));
+
+            $isAds = str_contains(strtolower((string) ($enriched['source_module'] ?? '')), 'ads');
+
+            if ($isAds && ($actions['ads']['drawerUrl'] ?? null) !== null) {
+                $action = ['label' => 'Review ads recommendation', 'url' => $actions['ads']['fullUrl'], 'drawer' => 'ads', 'drawerUrl' => $actions['ads']['drawerUrl']];
+            } elseif ($enriched['action_url'] !== null) {
+                $action = ['label' => $enriched['action_label'], 'url' => $enriched['action_url'], 'drawer' => null, 'drawerUrl' => null];
+            } else {
+                $action = ['label' => 'See details', 'url' => $detailUrl, 'drawer' => null, 'drawerUrl' => null];
+            }
+
+            if ($enriched['awaiting_approval'] ?? false) {
+                $statusKey = 'awaiting_approval';
+                $statusLabel = 'Waiting for your approval';
+            } elseif (($enriched['state'] ?? '') === 'in_progress') {
+                $statusKey = 'in_progress';
+                $statusLabel = 'In progress';
+            } elseif ($confidence === 'Limited data') {
+                $statusKey = 'needs_evidence';
+                $statusLabel = 'Waiting for more evidence';
+            }
+        }
+
+        return [
+            'kind' => $kind,
+            'key' => $move['key'],
+            'headline' => $headline,
+            'summary' => $summary,
+            // A "why" line that merely repeats the headline adds nothing.
+            'why' => array_values(array_filter($move['why'], fn (string $line): bool => trim($line) !== trim((string) $headline))),
+            'evidence' => $evidence,
+            'impact' => $impact,
+            'confidence' => $confidence,
+            'severity' => $severity,
+            'status' => $statusKey,
+            'statusLabel' => $statusLabel,
+            'needsMoreInfo' => $statusKey === 'needs_evidence',
+            'action' => $action['url'] === null && $action['drawerUrl'] === null ? null : $action,
+            'detailUrl' => $detailUrl,
+            'explanation' => $move['explanation'] ?? null,
+        ];
+    }
+
+    /**
+     * @param  array<int, AttentionItem>  $attention
+     * @param  array<string, mixed>|null  $growth
+     * @param  array<string, mixed>|null  $booking
+     * @param  array<string, array<string, mixed>|null>  $actions
+     * @return array<int, array<string, mixed>>
+     */
+    private function attentionItems(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, array $attention, ?string $primaryType, ?array $growth, ?string $primaryUid, ?array $booking, array $actions): array
+    {
+        $items = [];
+
+        foreach ($attention as $item) {
+            // A problem is shown once. The primary move already carries this one.
+            if ($primaryType !== null && $item->type->value === $primaryType) {
+                continue;
+            }
+
+            $action = ['label' => $item->actionLabel, 'url' => $item->url, 'drawer' => null, 'drawerUrl' => null];
+
+            if ($item->type === AttentionType::ConversationsAwaitingReply && ($actions['follow-ups']['drawerUrl'] ?? null) !== null) {
+                $action = ['label' => 'Review follow-ups', 'url' => $actions['follow-ups']['fullUrl'], 'drawer' => 'follow-ups', 'drawerUrl' => $actions['follow-ups']['drawerUrl']];
+            }
+
+            $items[] = [
+                'key' => $item->type->value,
+                'kind' => $item->severity === AttentionSeverity::Informational ? 'info' : 'problem',
+                'broken' => in_array($item->type, self::BROKEN_TYPES, true),
+                'text' => $item->text,
+                'action' => $action,
+            ];
+        }
+
+        foreach ($booking['problems'] ?? [] as $problem) {
+            $url = $this->links->url(
+                $context, $user, $entitlements,
+                'customer.workspaces.businesses.calendar.booking-types.edit',
+                array_merge($scoped, [$problem['locationUid'], $problem['typeUid']]),
+                ['access_backend'], 'calendar',
+            );
+
+            $items[] = [
+                'key' => 'booking_unavailable:' . $problem['typeUid'],
+                'kind' => 'problem',
+                // Only a problem that leaves NO bookable type at all is "something is broken".
+                'broken' => ($booking['readyCount'] ?? 0) === 0,
+                'text' => 'Customers cannot book "' . $problem['name'] . '" yet. ' . $problem['reason'],
+                'action' => ['label' => 'Fix booking setup', 'url' => $url, 'drawer' => null, 'drawerUrl' => null],
+            ];
+        }
+
+        if (is_array($growth)) {
+            foreach ($growth['items'] as $item) {
+                if (! ($item['awaiting_approval'] ?? false) || ($primaryUid !== null && $item['uid'] === $primaryUid)) {
+                    continue;
+                }
+
+                $items[] = [
+                    'key' => 'approval:' . $item['uid'],
+                    'kind' => 'approval',
+                    'broken' => false,
+                    'text' => $item['title'] . ' is waiting for your approval.',
+                    'action' => ['label' => 'Review', 'url' => $item['detail_url'], 'drawer' => null, 'drawerUrl' => null],
+                ];
+            }
+        }
+
+        $order = ['problem' => 0, 'approval' => 1, 'processing' => 2, 'info' => 3];
+        usort($items, fn (array $a, array $b): int => $order[$a['kind']] <=> $order[$b['kind']]);
+
+        return $items;
+    }
+
+    /**
+     * What MotionGrove has actually been doing: the recent-work timeline's
+     * persisted facts, plus in-progress / awaiting-approval Opportunities.
+     * A queued job is never listed as done — only rows that prove an outcome are.
+     *
+     * @param  array<string, mixed>  $bands
+     * @param  array<string, mixed>|null  $growth
+     * @return array<int, array<string, mixed>>
+     */
+    private function handling(array $bands, ?array $growth): array
+    {
+        $rows = [];
+
+        if (is_array($growth)) {
+            foreach ($growth['items'] as $item) {
+                if ($item['awaiting_approval'] ?? false) {
+                    $rows[] = ['key' => 'recommendation_awaiting_approval', 'text' => $item['title'], 'status' => 'approval', 'at' => null, 'url' => $item['detail_url']];
+                } elseif (($item['state'] ?? '') === 'in_progress') {
+                    $rows[] = ['key' => 'recommendation_in_progress', 'text' => $item['title'], 'status' => 'progress', 'at' => null, 'url' => $item['detail_url']];
+                }
+            }
+        }
+
+        $recent = $bands[DashboardSnapshot::BAND_RECENT_WORK] ?? null;
+
+        foreach (is_array($recent) ? $recent['items'] : [] as $item) {
+            $rows[] = [
+                'key' => $item['key'],
+                'text' => $item['text'],
+                'status' => $item['key'] === 'automation_failed' ? 'failed' : 'completed',
+                'at' => $item['at'],
+                'url' => $item['url'],
+            ];
+        }
+
+        return array_slice($rows, 0, max(1, (int) config('home.handling_visible', 5)));
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $booking
+     * @return array<string, mixed>|null
+     */
+    private function setup(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status, ?array $booking): ?array
+    {
+        $calendar = $booking !== null;
+        $firstLoc = $booking['firstLocationUid'] ?? null;
+
+        $urls = [
+            'locations' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.locations.index', $scoped, ['access_backend']),
+            'bookingType' => $firstLoc === null ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.booking-types.create', array_merge($scoped, [$firstLoc]), ['access_backend'], 'calendar'),
+            'fixBooking' => $firstLoc === null ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.booking-types.index', array_merge($scoped, [$firstLoc]), ['access_backend'], 'calendar'),
+            'website' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.website.show', $scoped, ['website'], 'website_generation'),
+        ];
+
+        return $this->journey->build([
+            'hasLocation' => $calendar ? ($booking['locationIds'] !== []) : true,
+            'calendar' => $calendar,
+            'activeTypeCount' => (int) ($booking['activeTypeCount'] ?? 0),
+            'readyCount' => (int) ($booking['readyCount'] ?? 0),
+            'problemReason' => $booking['problems'][0]['reason'] ?? null,
+            'websiteStatus' => $status?->websiteStatus,
+            'websiteApplicable' => $urls['website'] !== null && $status !== null,
+        ], $urls);
+    }
+}

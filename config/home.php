@@ -28,4 +28,10 @@ return [
     // At most this many factual items render in the activity line.
     'activity_max_items' => env('HOME_ACTIVITY_MAX_ITEMS', 5),
 
+    // Home V2 — Needs your attention shows this many items; the rest sit behind "Show more".
+    'attention_visible' => env('HOME_ATTENTION_VISIBLE', 3),
+
+    // Home V2 — What MotionGrove is handling shows this many rows.
+    'handling_visible' => env('HOME_HANDLING_VISIBLE', 5),
+
 ];

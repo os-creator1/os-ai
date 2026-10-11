@@ -221,13 +221,13 @@ class BusinessHomePerformanceTest extends TestCase
         $band = $this->performance($customer->user);
 
         $this->assertSame(
-            ['new_contacts', 'new_conversations', 'messages_received'],
+            ['new_contacts', 'new_conversations', 'appointments_booked', 'messages_received'],
             array_map(fn ($headline) => $headline->key, $band['items']),
         );
-        $this->assertSame(['3', '2', '6'], array_map(fn ($headline) => $headline->figure, $band['items']));
+        $this->assertSame(['3', '2', '0', '6'], array_map(fn ($headline) => $headline->figure, $band['items']));
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertSame(['new_contacts', 'new_conversations', 'messages_received'], $this->headlineKeys($html));
+        $this->assertSame(['new_contacts', 'new_conversations', 'appointments_booked', 'messages_received'], $this->headlineKeys($html));
 
         foreach (['messages_sent', 'provider_accepted', 'confirmed_failed', 'automation_runs'] as $absent) {
             $this->assertNotContains($absent, $this->headlineKeys($html), "{$absent} is not a Business performance figure.");
@@ -243,7 +243,7 @@ class BusinessHomePerformanceTest extends TestCase
         );
         $this->assertDoesNotMatchRegularExpression(
             '/\b(leads?|bookings?|revenue|conversions?|google views|rankings?|SEO)\b/i',
-            $this->mainText($html),
+            $this->mainTextWithoutAsk($html),
         );
     }
 
@@ -515,7 +515,7 @@ class BusinessHomePerformanceTest extends TestCase
         $this->assertSame('Today so far', $ninety['window']->label(), 'The activity window is the visit marker, never the performance period.');
         $this->assertSame($default['items'], $ninety['items']);
         $this->assertSame([['key' => 'new_contacts', 'text' => '2 new contacts']], $ninety['items']);
-        $this->assertStringContainsString('Business activity', $this->mainText($html));
+        $this->assertStringContainsString('Today so far, you gained 2 new contacts', $this->mainText($html));
         $this->assertSame(1, DB::table('business_home_visits')->count(), 'One marker row, per user and Business.');
     }
 

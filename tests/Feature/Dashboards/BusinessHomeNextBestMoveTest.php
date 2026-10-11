@@ -221,7 +221,7 @@ class BusinessHomeNextBestMoveTest extends TestCase
 
         $this->assertSame(1, substr_count($main, 'data-role="next-best-move"'), 'Exactly one move.');
         $this->assertSame(1, substr_count($this->bandHtml($html, 'next_best_move'), 'data-role="next-best-move-action"'), 'Exactly one action.');
-        $this->assertStringNotContainsString('data-band="attention"', $main, "Slice 4's attention list is gone.");
+        $this->assertStringNotContainsString('data-band="attention-list"', $main, "Slice 4's attention list is gone.");
         $this->assertStringNotContainsString('data-band="recommendations"', $main, 'And its list of five.');
         $this->assertStringNotContainsString('Recommended next steps', $main);
         $this->assertStringNotContainsString('Needs attention', $this->mainText($html));
