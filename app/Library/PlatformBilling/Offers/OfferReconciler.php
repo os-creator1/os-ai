@@ -337,6 +337,14 @@ final class OfferReconciler
                 && ! in_array((string) $current->providerPriceId, $agreedPrices, true)) {
                 $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
 
+                // The move off this agreement is complete at the provider: close the
+                // agreement here and let the shared finalizer bring the local plan and
+                // entitlements up to provider truth, rather than waiting for a webhook
+                // that may never come.
+                $this->endPrivatePricing($subscription->refresh());
+                app(\App\Library\PlatformBilling\PlatformSubscriptionManager::class)
+                    ->applyProviderSubscription($subscription->refresh(), (string) $subscription->provider_subscription_id);
+
                 return;
             }
 

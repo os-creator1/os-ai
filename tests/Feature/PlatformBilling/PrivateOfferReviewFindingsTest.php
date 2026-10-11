@@ -171,6 +171,72 @@ class PrivateOfferReviewFindingsTest extends TestCase
         $this->assertSame('ended', (string) $redemption->refresh()->reconcile_state);
     }
 
+    public function test_the_sweep_finishes_an_upgrade_whose_response_and_reconciliation_were_both_lost(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
+            'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 3,
+        ]);
+        [$redemption] = $this->redeem($customer, $created['offer']);
+        $agency = WorkspacePlanCatalog::query()->where('tier', 'agency')->firstOrFail();
+
+        $this->stripe->interleaveOnce('changeSubscriptionPrice', function (array $args, $gateway): void {
+            $gateway->subscriptions[$args['subscription']]['price'] = $args['price'];
+
+            // ...and the immediate reconciliation read is lost too.
+            $gateway->interleaveOnce('retrieveSubscription', function (): void {
+                throw new \RuntimeException('connection reset');
+            });
+
+            throw new \RuntimeException('connection reset');
+        });
+
+        try {
+            app(PlatformSubscriptionManager::class)
+                ->requestPlanChange($customer['workspace'], $agency, (int) $customer['workspace']->owner_user_id, true);
+            $this->fail('The lost response must surface.');
+        } catch (\RuntimeException) {
+            // expected
+        }
+
+        $this->assertSame('pending', $redemption->refresh()->schedule_state, 'the old schedule was left OFF, not put back');
+
+        $this->artisan('platform-offers:sweep')->assertExitCode(0);
+
+        $subscription = PlatformSubscription::query()->where('workspace_id', $customer['workspace']->id)->firstOrFail();
+        $this->assertNull($subscription->offer_redemption_id);
+        $this->assertSame((int) $agency->id, (int) $subscription->workspace_plan_catalog_id, 'local plan caught up with the provider');
+        $this->assertCount(1, $this->stripe->callsOf('applyPriceSchedule'));
+    }
+
+    public function test_an_earlier_attempt_cannot_release_a_trial_another_attempt_has_since_reused(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $ledger = app(\App\Library\PlatformBilling\Offers\TrialLedger::class);
+
+        // A creates the reservation and pauses; B reuses it and carries on to a payable Checkout.
+        $this->assertTrue($ledger->reserve($customer['workspace'], 'buyer@example.test', 'offer', null, $aCreated, $aStamp));
+        $this->assertTrue($aCreated);
+        $this->assertTrue($ledger->reserve($customer['workspace'], 'buyer@example.test', 'offer', null, $bCreated, $bStamp));
+        $this->assertFalse($bCreated);
+        $this->assertNotSame($aStamp, $bStamp, 'a reuse changes the reservation\'s stamp');
+
+        // A then fails its stale-hash check.
+        $ledger->releaseIfUnchanged($customer['workspace'], $aStamp);
+
+        $this->assertTrue(
+            PlatformTrialClaim::query()->where('workspace_id', $customer['workspace']->id)->where('state', 'reserved')->exists(),
+            'B\'s still-payable Checkout keeps its trial',
+        );
+
+        // Left unchanged, a creator's own release still works.
+        $other = $this->unpaidCustomer('other@example.test');
+        $ledger->reserve($other['workspace'], 'other@example.test', 'offer', null, $c, $stamp);
+        $ledger->releaseIfUnchanged($other['workspace'], $stamp);
+        $this->assertFalse(PlatformTrialClaim::query()->where('workspace_id', $other['workspace']->id)->exists());
+    }
+
     public function test_a_billing_change_is_refused_when_only_the_providers_period_has_moved(): void
     {
         $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);

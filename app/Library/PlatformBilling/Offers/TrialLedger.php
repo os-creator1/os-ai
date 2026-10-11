@@ -45,16 +45,17 @@ final class TrialLedger
      * Atomically reserve a trial for this Workspace, or report that it cannot
      * be had. True also when the SAME Workspace already holds the reservation.
      */
-    public function reserve(Workspace $workspace, string $email, string $source, ?CarbonInterface $until = null, ?bool &$created = null): bool
+    public function reserve(Workspace $workspace, string $email, string $source, ?CarbonInterface $until = null, ?bool &$created = null, ?string &$stamp = null): bool
     {
         $key = EmailIdentity::key($email);
         $until ??= now()->addMinutes(self::RESERVATION_MINUTES);
         // Set INSIDE the same locked transaction that inserts the claim, so a
         // caller can tell its own reservation from one it merely reused.
         $created = false;
+        $stamp = null;
 
         try {
-            return DB::transaction(function () use ($workspace, $key, $source, $until, &$created): bool {
+            return DB::transaction(function () use ($workspace, $key, $source, $until, &$created, &$stamp): bool {
                 // Lapsed reservations are not claims. Clear them first so a
                 // stale one cannot block a legitimate customer.
                 PlatformTrialClaim::query()
@@ -82,7 +83,15 @@ final class TrialLedger
                 $own = $existing->first(fn (PlatformTrialClaim $c): bool => (int) $c->workspace_id === (int) $workspace->id);
 
                 if ($own !== null) {
-                    $own->forceFill(['email_key' => $key, 'reserved_until' => $until, 'source' => $source])->save();
+                    // A REUSE changes the reservation's stamp, so an earlier attempt
+                    // that created it (and releases only what it created and left
+                    // unchanged) can no longer take it away from this one.
+                    $bumped = $own->reserved_until !== null && $own->reserved_until->format('Y-m-d H:i:s') === $until->format('Y-m-d H:i:s')
+                        ? $until->copy()->addSecond()
+                        : $until;
+
+                    $own->forceFill(['email_key' => $key, 'reserved_until' => $bumped, 'source' => $source])->save();
+                    $stamp = $bumped->format('Y-m-d H:i:s');
 
                     return true;
                 }
@@ -96,6 +105,7 @@ final class TrialLedger
                 ])->save();
 
                 $created = true;
+                $stamp = $until->format('Y-m-d H:i:s');
 
                 return true;
             });
@@ -108,6 +118,19 @@ final class TrialLedger
 
             throw $e;
         }
+    }
+
+    /**
+     * Drops the reservation only if it is still exactly the one a caller made
+     * (same stamp): a reservation another attempt has since reused is theirs.
+     */
+    public function releaseIfUnchanged(Workspace $workspace, string $stamp): void
+    {
+        PlatformTrialClaim::query()
+            ->where('workspace_id', $workspace->id)
+            ->where('state', PlatformTrialClaim::STATE_RESERVED)
+            ->where('reserved_until', $stamp)
+            ->delete();
     }
 
     /** Whether the Workspace already holds an open trial reservation (an earlier Checkout's). */

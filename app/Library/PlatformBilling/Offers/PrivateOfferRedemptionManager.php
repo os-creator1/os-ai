@@ -265,6 +265,17 @@ final class PrivateOfferRedemptionManager
                 default => PlatformBillingException::NO_SUBSCRIPTION,
             });
 
+        return $this->acceptResolved($offer, $actor, $acceptedTermsHash, $returnUrls, $workspace);
+    }
+
+    /** @param callable(PlatformPrivateOfferRedemption): array{0: string, 1: string} $returnUrls */
+    private function acceptResolved(
+        PlatformPrivateOffer $offer,
+        User $actor,
+        string $acceptedTermsHash,
+        callable $returnUrls,
+        Workspace $workspace,
+    ): CheckoutSessionResult {
         $subscription = PlatformSubscription::query()->where('workspace_id', $workspace->id)->first();
 
         if ($subscription !== null && $this->isLive($subscription)) {
@@ -296,9 +307,10 @@ final class PrivateOfferRedemptionManager
         // this attempt's to give back: a stale or invalid submission must not
         // free a trial another payable session is counting on.
         $trialCreated = false;
+        $trialStamp = null;
 
         if ($offer->trial_days !== null) {
-            $trialEligible = $this->trials->reserve($workspace, $ownerEmail, 'offer', null, $trialCreated);
+            $trialEligible = $this->trials->reserve($workspace, $ownerEmail, 'offer', null, $trialCreated, $trialStamp);
         }
 
         $terms = $this->termsOrFail($offer, $workspace, $trialEligible);
@@ -308,7 +320,7 @@ final class PrivateOfferRedemptionManager
             // changed, a trial became unavailable, a price moved). They must
             // look again; nothing was reserved on their behalf.
             if ($offer->trial_days !== null && $trialEligible && $trialCreated) {
-                $this->trials->release($workspace);
+                $this->trials->releaseIfUnchanged($workspace, (string) $trialStamp);
             }
 
             throw PlatformBillingException::because(PlatformBillingException::OFFER_TERMS_CHANGED);
@@ -322,7 +334,7 @@ final class PrivateOfferRedemptionManager
             $redemption = $this->reserve($offer, $workspace, $actor, $terms);
         } catch (PlatformBillingException $e) {
             if ($offer->trial_days !== null && $trialCreated) {
-                $this->trials->release($workspace);
+                $this->trials->releaseIfUnchanged($workspace, (string) $trialStamp);
             }
 
             throw $e;
