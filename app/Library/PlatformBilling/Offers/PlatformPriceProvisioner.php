@@ -116,11 +116,17 @@ final class PlatformPriceProvisioner
                 'livemode' => $livemode,
                 'verified_at' => now(),
             ])->save();
-        } catch (QueryException) {
-            // Lost a race to an identical row: converge on the winner.
+        } catch (QueryException $e) {
+            // Lost a race to an identical row: converge on the winner. Anything
+            // else (a connection or data error) is NOT a race and must surface,
+            // not hand back an untracked Price.
             $winner = $this->registryRow($catalog, $currencyCode, $amountMinor, $interval, $intervalCount, $livemode);
 
-            if ($winner !== null && $winner->provider_price_id !== $created->id) {
+            if ($winner === null) {
+                throw $e;
+            }
+
+            if ($winner->provider_price_id !== $created->id) {
                 return $this->verifiedOrFail((string) $winner->provider_price_id, $amountMinor, $currencyCode, (string) $catalog->billing_cycle);
             }
         }

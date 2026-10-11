@@ -213,11 +213,16 @@ final class PrivateOfferManager
 
         // 2. Retire any Checkout a customer has open but has not paid. Provider
         //    calls, so: no transaction. One failure never blocks the rest.
-        PlatformPrivateOfferRedemption::query()
-            ->where('platform_private_offer_id', $revoked->id)
-            ->where('state', PlatformPrivateOfferRedemption::STATE_RESERVED)
-            ->get()
-            ->each(fn (PlatformPrivateOfferRedemption $r) => $this->retireUnpaid($r, 'revoked'));
+        //    A billing change has no Checkout: its reservation may stand for a schedule
+        //    already placed at the provider, so it is left to
+        //    PrivateOfferRedemptionManager::sweepUnappliedBillingChanges().
+        if (! $revoked->isBillingChange()) {
+            PlatformPrivateOfferRedemption::query()
+                ->where('platform_private_offer_id', $revoked->id)
+                ->where('state', PlatformPrivateOfferRedemption::STATE_RESERVED)
+                ->get()
+                ->each(fn (PlatformPrivateOfferRedemption $r) => $this->retireUnpaid($r, 'revoked'));
+        }
 
         return $revoked;
     }

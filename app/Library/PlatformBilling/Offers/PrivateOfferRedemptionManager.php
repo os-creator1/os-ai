@@ -494,6 +494,12 @@ final class PrivateOfferRedemptionManager
             throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
         }
 
+        // The subscription's price is held in ITS snapshot currency; terms are
+        // calculated in the offer's. Different currencies cannot be compared.
+        if (strcasecmp((string) $subscription->currency_code, (string) $this->currencyOf($offer)->code) !== 0) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
+        }
+
         // A plan change (a scheduled downgrade, or an upgrade still being
         // confirmed) was agreed against the pricing the customer had when they
         // asked for it, and may end private pricing when it lands. New private

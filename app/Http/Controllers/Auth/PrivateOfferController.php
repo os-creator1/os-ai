@@ -164,7 +164,8 @@ class PrivateOfferController extends Controller
         } catch (PlatformBillingException $e) {
             abort_if($e->reason === PlatformBillingException::OFFER_NOT_FOR_YOU, 404);
 
-            return redirect()->route('signup.plan')->with(['status' => 'error', 'message' => $e->customerMessage()]);
+            return redirect()->route(\Illuminate\Support\Facades\Route::has('signup.plan') ? 'signup.plan' : 'user.home')
+                ->with(['status' => 'error', 'message' => $e->customerMessage()]);
         }
 
         $subscription = PlatformSubscription::query()->where('workspace_id', $row->workspace_id)->first();

@@ -237,6 +237,65 @@ class PrivateOfferReviewFindingsTest extends TestCase
         $this->assertFalse(PlatformTrialClaim::query()->where('workspace_id', $other['workspace']->id)->exists());
     }
 
+    public function test_revoking_a_billing_change_offer_never_releases_its_reservation_as_an_unpaid_checkout(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $change = $this->makeOffer([
+            'kind' => 'billing_change', 'customer_email' => null,
+            'workspace_uid' => $fixture['workspace']->uid, 'custom_price' => '60.00',
+        ]);
+
+        $this->stripe->interleaveOnce('applyPriceSchedule', function (): void {
+            throw new \RuntimeException('connection reset');
+        });
+        try {
+            $this->redemptions()->applyBillingChangeAsOwner($change['offer'], $this->platformAdminId(), 'Agreed on a call.');
+        } catch (\Throwable) {
+            // expected
+        }
+
+        $this->offers()->revoke($change['offer']->refresh(), $this->platformAdminId(), 'Withdrawn.');
+
+        $this->assertSame('reserved', PlatformPrivateOfferRedemption::query()->sole()->state);
+    }
+
+    public function test_a_billing_change_is_refused_across_snapshot_currencies(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        PlatformSubscription::query()->whereKey($fixture['subscription']->id)->update(['currency_code' => 'EUR']);
+        $change = $this->makeOffer([
+            'kind' => 'billing_change', 'customer_email' => null,
+            'workspace_uid' => $fixture['workspace']->uid, 'custom_price' => '60.00',
+        ]);
+
+        $reason = $this->reasonOf(fn () => $this->redemptions()->applyBillingChangeAsOwner($change['offer'], $this->platformAdminId(), 'Agreed on a call.'));
+
+        $this->assertSame(PlatformBillingException::CHANGE_NOT_PERMITTED, $reason);
+        $this->assertCount(0, $this->stripe->callsOf('applyPriceSchedule'));
+    }
+
+    public function test_the_accepted_snapshot_carries_the_dates_the_provider_actually_started(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
+            'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 2,
+        ]);
+        $this->acceptAs($customer['user'], $created['offer']);
+        // Checkout is completed a day after the form was submitted.
+        \Illuminate\Support\Carbon::setTestNow(now()->addDay());
+        [$redemption] = $this->redeem($customer, $created['offer']);
+
+        $promo = collect($redemption->refresh()->terms_snapshot['phases'])->firstWhere('kind', 'promotional');
+        $this->assertNotNull($promo);
+        $this->assertSame(
+            \Carbon\CarbonImmutable::parse($redemption->promo_ends_at)->toIso8601String(),
+            \Carbon\CarbonImmutable::parse($promo['ends_at'])->toIso8601String(),
+            'the redeemed offer page and the provider schedule agree',
+        );
+        \Illuminate\Support\Carbon::setTestNow();
+    }
+
     public function test_a_billing_change_is_refused_when_only_the_providers_period_has_moved(): void
     {
         $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);

@@ -158,6 +158,7 @@ final class OfferReconciler
                 'platform_subscription_id' => $subscription->id,
                 'provider_subscription_id' => $snapshot->providerSubscriptionId,
                 'trial_granted' => $trialDays !== null,
+                'terms_snapshot' => $this->alignDates($terms, $paidStart, $cycle, $trialDays),
                 'promo_ends_at' => ($hasLaterPhase && $promoPeriods !== null)
                     ? BillingCycle::addPeriods($paidStart, $cycle, (int) $promoPeriods)
                     : null,
@@ -170,7 +171,7 @@ final class OfferReconciler
             $this->history->record(
                 $subscription,
                 SubscriptionTermsHistory::OFFER_REDEEMED,
-                [...$this->history->currentTermsOf($subscription), 'offer_terms' => $terms, 'redemption_uid' => $redemption->uid],
+                [...$this->history->currentTermsOf($subscription), 'offer_terms' => $redemption->terms_snapshot, 'redemption_uid' => $redemption->uid],
                 $redemption->id,
             );
 
@@ -607,6 +608,43 @@ final class OfferReconciler
                 ])->save();
             }
         });
+    }
+
+    /**
+     * The terms the customer accepted, with their dates moved to the instants the
+     * provider actually started the periods (Checkout can complete later than the
+     * acceptance). Commercial figures are untouched.
+     *
+     * @param  array<string, mixed>  $terms
+     * @return array<string, mixed>
+     */
+    private function alignDates(array $terms, CarbonImmutable $paidStart, string $cycle, ?int $trialDays): array
+    {
+        $cursor = $paidStart;
+
+        foreach ((array) ($terms['phases'] ?? []) as $i => $phase) {
+            if (($phase['kind'] ?? null) === 'trial') {
+                $terms['phases'][$i]['starts_at'] = $paidStart->subDays((int) $trialDays)->toIso8601String();
+                $terms['phases'][$i]['ends_at'] = $paidStart->toIso8601String();
+
+                continue;
+            }
+
+            $terms['phases'][$i]['starts_at'] = $cursor->toIso8601String();
+
+            if (($phase['kind'] ?? null) === 'promotional' && isset($phase['periods'])) {
+                $cursor = BillingCycle::addPeriods($cursor, $cycle, (int) $phase['periods']);
+                $terms['phases'][$i]['ends_at'] = $cursor->toIso8601String();
+
+                if (isset($terms['promotion'])) {
+                    $terms['promotion']['ends_at'] = $cursor->toIso8601String();
+                }
+            }
+        }
+
+        $terms['first_payment_at'] = $paidStart->toIso8601String();
+
+        return $terms;
     }
 
     private function markSchedule(
