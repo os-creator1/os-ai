@@ -96,6 +96,94 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         ];
     }
 
+    private function docxBytes(array $entries = null): string
+    {
+        $entries ??= [
+            '[Content_Types].xml' => '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+            '_rels/.rels' => '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+            'word/document.xml' => '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Letter of authorisation</w:t></w:r></w:p></w:body></w:document>',
+        ];
+        $tmp = tempnam(sys_get_temp_dir(), 'zip');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+        foreach ($entries as $name => $body) {
+            $zip->addFromString($name, $body);
+        }
+        $zip->close();
+
+        return (string) file_get_contents($tmp);
+    }
+
+    /** A minimal but structurally valid OLE2 compound file (512-byte sectors) with a WordDocument stream entry. */
+    private function docBytes(bool $withWordStream = true): string
+    {
+        $header = "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1" . str_repeat("\0", 16)
+            . pack('vvvvv', 0x3E, 3, 0xFFFE, 9, 6) . str_repeat("\0", 6)
+            . pack('VVVVVVVVVV', 0, 1, 1, 0, 4096, 0xFFFFFFFE, 0, 0xFFFFFFFE, 0, 0) // dirsectors,numFAT,firstDir,txn,cutoff,miniFAT,numMini,DIFAT,numDIFAT,DIFAT[0]
+            . str_repeat(pack('V', 0xFFFFFFFF), 108);
+        $header = substr($header, 0, 512);
+        $fat = pack('VV', 0xFFFFFFFD, 0xFFFFFFFE) . str_repeat(pack('V', 0xFFFFFFFF), 126);
+        $entry = function (string $name, int $type, int $start, int $size) {
+            $utf16 = mb_convert_encoding($name, 'UTF-16LE', 'UTF-8') . "\0\0";
+
+            return str_pad($utf16, 64, "\0") . pack('v', strlen($utf16)) . chr($type) . "\1"
+                . pack('VVV', 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF) . str_repeat("\0", 16) . pack('VVVV', 0, 0, $start, $size) . pack('V', 0);
+        };
+        $dir = $entry('Root Entry', 5, 0xFFFFFFFE, 0) . ($withWordStream ? $entry('WordDocument', 2, 0xFFFFFFFE, 0) : $entry('Workbook', 2, 0xFFFFFFFE, 0));
+        $dir = str_pad($dir, 512, "\0");
+
+        return $header . $fat . $dir;
+    }
+
+    public function test_legitimate_word_documents_are_accepted_and_stored_with_a_safe_extension(): void
+    {
+        $this->customer();
+
+        $this->submit($this->realUpload('letter.docx', $this->docxBytes()))->assertSessionDoesntHaveErrors('document');
+        $this->submit($this->realUpload('LETTER.DOC', $this->docBytes()))->assertSessionDoesntHaveErrors('document');
+
+        $docx = SenderIdDocumentStore::store($this->realUpload('letter.docx', $this->docxBytes()));
+        $doc = SenderIdDocumentStore::store($this->realUpload('letter.doc', $this->docBytes()));
+        $this->assertMatchesRegularExpression('#\.docx$#', $docx);
+        $this->assertMatchesRegularExpression('#\.doc$#', $doc);
+    }
+
+    /** @dataProvider disguisedContainers */
+    public function test_disguised_or_arbitrary_containers_are_rejected(string $name, string $kind): void
+    {
+        $this->customer();
+        $body = match ($kind) {
+            'empty-zip-as-docx' => $this->docxBytes(['readme.txt' => 'hello']),
+            'zip-with-php-as-docx' => $this->docxBytes(['shell.php' => '<?php system($_GET[0]);']),
+            'macro-docx' => $this->docxBytes(['[Content_Types].xml' => '<Types/>', 'word/document.xml' => '<w:document/>', 'word/vbaProject.bin' => 'MZ']),
+            'random-binary' => random_bytes(2048),
+            'ole-without-word' => $this->docBytes(false),
+            'docx-named-doc' => $this->docxBytes(),
+            'doc-named-docx' => $this->docBytes(),
+            'plain-text' => 'just text',
+            'pdf-named-php' => "%PDF-1.4\n%%EOF\n",
+        };
+
+        $this->submit($this->realUpload($name, $body))->assertSessionHasErrors('document');
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR));
+    }
+
+    public static function disguisedContainers(): array
+    {
+        return [
+            'arbitrary zip as docx' => ['a.docx', 'empty-zip-as-docx'],
+            'zip with php as docx' => ['b.docx', 'zip-with-php-as-docx'],
+            'macro-bearing docx' => ['c.docx', 'macro-docx'],
+            'random binary as doc' => ['d.doc', 'random-binary'],
+            'random binary as docx' => ['d.docx', 'random-binary'],
+            'ole container that is not word' => ['e.doc', 'ole-without-word'],
+            'docx bytes named .doc' => ['f.doc', 'docx-named-doc'],
+            'doc bytes named .docx' => ['g.docx', 'doc-named-docx'],
+            'text named doc' => ['h.doc', 'plain-text'],
+            'pdf content with php extension' => ['i.php', 'pdf-named-php'],
+        ];
+    }
+
     public function test_valid_pdf_passes_validation_and_oversized_files_do_not(): void
     {
         $this->customer();
