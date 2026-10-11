@@ -253,7 +253,9 @@ class MigrateSenderIdDocuments extends Command
                 $moved++;
             });
 
-        $this->info(($apply ? 'Applied' : 'Dry run') . ": {$moved} moved, {$quarantined} quarantined, {$missing} missing, {$failed} failed, {$resumed} resumed.");
+        $swept = $this->sweepUnreferenced($apply, $failed);
+
+        $this->info(($apply ? 'Applied' : 'Dry run') . ": {$moved} moved, {$quarantined} quarantined, {$missing} missing, {$failed} failed, {$resumed} resumed, {$swept} unreferenced swept.");
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
     }
@@ -478,6 +480,54 @@ class MigrateSenderIdDocuments extends Command
         }
 
         return 1;
+    }
+
+    /**
+     * Quarantine files in public/senderid_docs that no sender-ID row references (their rows were deleted without the
+     * file being unlinked, or they are stray uploads). They are MOVED to private quarantine, never deleted, and only
+     * if older than ten minutes (an old-code upload may be mid-flight during a rolling deploy). Symlinks and
+     * sub-directories are never followed.
+     */
+    private function sweepUnreferenced(bool $apply, int &$failed): int
+    {
+        $dir = public_path(SenderIdDocumentStore::LEGACY_DIR);
+        if (! is_dir($dir) || is_link($dir)) {
+            return 0;
+        }
+
+        $referenced = Senderid::query()->whereNotNull('document')->pluck('document')
+            ->map(fn ($d) => basename((string) parse_url($d, PHP_URL_PATH)))->flip();
+        // A file named by a pending recovery record may be the only intact copy of an interrupted move: never touch it here.
+        foreach ($this->disk->files(self::PENDING_DIR) as $recordPath) {
+            $named = json_decode((string) $this->disk->get($recordPath), true)['name'] ?? null;
+            if (is_string($named)) {
+                $referenced[$named] = true;
+            }
+        }
+        $swept = 0;
+
+        foreach (new \DirectoryIterator($dir) as $entry) {
+            $name = $entry->getFilename();
+            if ($entry->isDot() || ! $entry->isFile() || $entry->isLink() || $name === '.gitkeep' || isset($referenced[$name])
+                || $entry->getMTime() > time() - 600) {
+                continue;
+            }
+
+            $this->warn("sweep       {$name}: no sender ID references this public file");
+            if ($apply) {
+                $this->assertLockStillHeld();
+                $rel = 'senderid-quarantine/orphan-' . md5($name) . '-' . Str::random(16) . '.bin';
+                if (! $this->disk->makeDirectory('senderid-quarantine') || ! File::move($entry->getPathname(), $this->disk->path($rel))) {
+                    $failed++;
+                    $this->error("Cannot move {$name} into quarantine; left in place.");
+
+                    continue;
+                }
+            }
+            $swept++;
+        }
+
+        return $swept;
     }
 
     /** Update every sibling row atomically; any failure rolls all of them back. */

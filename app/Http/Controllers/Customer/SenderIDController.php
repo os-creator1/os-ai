@@ -517,7 +517,7 @@
             }
 
             $ids    = $request->get('ids');
-            $status = Senderid::where('user_id', Auth::user()->id)->whereIn('uid', $ids)->delete();
+            $status = \App\Library\Uploads\SenderIdDocumentStore::deleteRows(Senderid::where('user_id', Auth::user()->id)->whereIn('uid', $ids));
 
             if ( ! $status) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));

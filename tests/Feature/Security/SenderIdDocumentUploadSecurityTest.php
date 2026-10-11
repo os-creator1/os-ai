@@ -957,6 +957,124 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertSame([], $this->pendingFiles());
     }
 
+    private function oldOrphan(string $name, string $body): string
+    {
+        File::ensureDirectoryExists(public_path('senderid_docs'));
+        $path = public_path('senderid_docs/' . $name);
+        File::put($path, $body);
+        touch($path, time() - 3600);
+
+        return $path;
+    }
+
+    public function test_apply_quarantines_unreferenced_public_files_but_never_deletes_them(): void
+    {
+        $this->customer();
+        $php = $this->oldOrphan('senderid_1700000080.php', '<?php system($_GET[0]);');
+        $htaccess = $this->oldOrphan('.htaccess', 'AddType application/x-httpd-php .jpg');
+        $pdf = $this->oldOrphan('senderid_1700000081.pdf', self::PDF);          // a deleted sender ID's document
+        $fresh = public_path('senderid_docs/senderid_1700000082.pdf');
+        File::put($fresh, self::PDF);                                             // < 10 minutes old: maybe mid-upload
+        $this->oldOrphan('.gitkeep', '');
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->expectsOutputToContain('3 unreferenced swept')->assertSuccessful();
+
+        foreach ([$php, $htaccess, $pdf] as $gone) {
+            $this->assertFileDoesNotExist($gone);
+        }
+        $this->assertFileExists($fresh);
+        $this->assertFileExists(public_path('senderid_docs/.gitkeep'));
+        $kept = Storage::disk('local')->allFiles('senderid-quarantine');
+        $this->assertCount(3, $kept);
+        $contents = array_map(fn ($f) => Storage::disk('local')->get($f), $kept);
+        $this->assertContains('<?php system($_GET[0]);', $contents);
+        $this->assertContains(self::PDF, $contents);
+    }
+
+    public function test_sweep_leaves_referenced_files_symlinks_and_dry_runs_alone(): void
+    {
+        $c = $this->customer();
+        [$row, $refPath] = $this->legacyRow($c, 'senderid_1700000083.pdf', self::PDF, 'KEEP');
+        touch($refPath, time() - 3600);
+        $orphan = $this->oldOrphan('senderid_1700000084.php', '<?php echo 1;');
+        $target = tempnam(sys_get_temp_dir(), 'lnk');
+        file_put_contents($target, 'outside');
+        @symlink($target, public_path('senderid_docs/senderid_1700000085.pdf'));
+
+        $this->artisan('senderid:migrate-documents')->expectsOutputToContain('1 unreferenced swept')->assertSuccessful();   // dry run
+        $this->assertFileExists($orphan);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+        $this->assertFileDoesNotExist($orphan);
+        $this->assertFileExists($target);                                                    // symlink target never followed or moved
+        $this->assertTrue(is_link(public_path('senderid_docs/senderid_1700000085.pdf')));
+        $this->get(route('customer.senderid.document', $row->uid))->assertOk();               // referenced doc migrated normally
+    }
+
+    public function test_sweep_does_not_touch_a_file_named_by_a_pending_recovery_record(): void
+    {
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000086.pdf', self::PDF, 'REC');
+        $this->interruptedRun();
+        $rel = substr($row->fresh()->document, strlen(SenderIdDocumentStore::PREFIX));
+        Storage::disk('local')->put($rel, 'corrupted');
+        file_put_contents($path, 'changed public file');   // not restorable automatically => the record is kept for a human
+        touch($path, time() - 3600);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);   // not swept: the retained record still names it
+        $this->assertCount(1, $this->pendingFiles());
+    }
+
+    public function test_deleting_sender_ids_removes_their_private_documents_on_every_path(): void
+    {
+        $c = $this->customer(['create_sender_id', 'view_sender_id', 'delete_sender_id']);
+        $make = function (string $sid) use ($c) {
+            $value = SenderIdDocumentStore::store($this->realUpload('p.pdf', self::PDF));
+
+            return [Senderid::create(['user_id' => $c->user_id, 'sender_id' => $sid, 'status' => 'pending', 'document' => $value]), substr($value, strlen(SenderIdDocumentStore::PREFIX))];
+        };
+        $repo = app(\App\Repositories\Eloquent\EloquentSenderIDRepository::class);
+
+        [$single, $singleFile] = $make('DEL1');
+        $repo->destroy($single);
+        Storage::disk('local')->assertMissing($singleFile);
+
+        [$owned, $ownedFile] = $make('DEL2');
+        $repo->destroy($owned, $c->user_id);
+        Storage::disk('local')->assertMissing($ownedFile);
+
+        [$b1, $f1] = $make('DEL3');
+        [$b2, $f2] = $make('DEL4');
+        $repo->batchDestroy([$b1->uid, $b2->uid]);
+        Storage::disk('local')->assertMissing($f1);
+        Storage::disk('local')->assertMissing($f2);
+
+        [$cb, $cbFile] = $make('DEL5');
+        $this->post(route('customer.senderid.batch_action'), ['action' => 'destroy', 'ids' => [$cb->uid]])->assertOk();
+        $this->assertSame(0, Senderid::where('id', $cb->id)->count());
+        Storage::disk('local')->assertMissing($cbFile);
+    }
+
+    public function test_private_document_survives_when_the_surrounding_transaction_rolls_back(): void
+    {
+        $c = $this->customer();
+        $value = SenderIdDocumentStore::store($this->realUpload('p.pdf', self::PDF));
+        $row = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'KEEP2', 'status' => 'pending', 'document' => $value]);
+        $rel = substr($value, strlen(SenderIdDocumentStore::PREFIX));
+
+        try {
+            DB::transaction(function () use ($row) {
+                SenderIdDocumentStore::deleteRows(Senderid::query()->whereKey($row->id));
+                throw new \RuntimeException('rollback');
+            });
+        } catch (\RuntimeException $e) {
+        }
+
+        $this->assertSame(1, Senderid::where('id', $row->id)->count());
+        Storage::disk('local')->assertExists($rel);
+    }
+
     public function test_legacy_public_documents_are_still_served_only_when_allow_listed(): void
     {
         $owner = $this->customer();

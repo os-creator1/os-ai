@@ -199,6 +199,29 @@ final class SenderIdDocumentStore
         return self::PREFIX . $path;
     }
 
+    /**
+     * Delete sender-ID rows AND their private documents. The documents are collected first and removed only after
+     * the row deletion succeeded (query deletes bypass model events, so this is the single place that does both).
+     *
+     * @param \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Query\Builder $query
+     */
+    public static function deleteRows($query): int
+    {
+        $documents = (clone $query)->pluck('document')->filter()->all();
+        $deleted = $query->delete();
+
+        if ($deleted) {
+            // afterCommit: runs now outside a transaction, and only if the surrounding transaction commits.
+            \Illuminate\Support\Facades\DB::afterCommit(function () use ($documents) {
+                foreach ($documents as $document) {
+                    self::discard($document);
+                }
+            });
+        }
+
+        return (int) $deleted;
+    }
+
     /** Remove a private file written by store() (used to clean up when the database write fails). */
     public static function discard(?string $value): void
     {
