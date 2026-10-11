@@ -137,7 +137,7 @@ class LegacyLicenceGateRetiredTest extends TestCase
             'password' => 'AnotherSecurePassword123!',
         ])->assertRedirect(route('user.home'));
 
-        $this->assertSame($customer->id, \Illuminate\Support\Facades\Auth::id());
+        $this->assertSame($customer->user_id, \Illuminate\Support\Facades\Auth::id());
     }
 
     public function test_authenticated_owner_with_pending_two_factor_challenge_can_complete_verification(): void

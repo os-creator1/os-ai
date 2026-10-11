@@ -188,7 +188,15 @@ class V1SecurityTenancyFinalTest extends TestCase
     public function test_backup_code_is_single_use(): void
     {
         [$tenant] = $this->twoTenantCustomers();
-        $tenant->user->forceFill(['two_factor_backup_code' => json_encode([111111, 222222])])->save();
+        // Backup codes are only usable during a pending two-factor challenge (the guest-only
+        // verification routes reject a fully signed-in session with no challenge outstanding).
+        config()->set('app.two_factor', true);
+        $tenant->user->forceFill([
+            'two_factor' => true,
+            'two_factor_code' => 654321,
+            'two_factor_expires_at' => now()->addMinutes(10),
+            'two_factor_backup_code' => json_encode([111111, 222222]),
+        ])->save();
         $this->authenticateAsCustomer($tenant, ['access_backend']);
 
         $this->post(route('verify.backup.store'), ['two_factor_code' => 111111]);
