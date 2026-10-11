@@ -170,6 +170,104 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertFileExists($path);
     }
 
+    private function legacyRow(Customer $c, string $file, string $body, string $sid): array
+    {
+        File::ensureDirectoryExists(public_path('senderid_docs'));
+        $path = public_path('senderid_docs/' . $file);
+        File::put($path, $body);
+        $url = url('/senderid_docs/' . $file);
+
+        return [Senderid::create(['user_id' => $c->user_id, 'sender_id' => $sid, 'status' => 'pending', 'document' => $url]), $path, $url];
+    }
+
+    public function test_migration_dry_run_changes_nothing(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000030.pdf', self::PDF, 'DRY');
+
+        $this->artisan('senderid:migrate-documents')->assertSuccessful();
+
+        $this->assertSame($url, $row->fresh()->document);
+        $this->assertFileExists($path);
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR));
+    }
+
+    public function test_migration_apply_moves_valid_files_and_quarantines_unsafe_ones_without_deleting_either(): void
+    {
+        $c = $this->customer();
+        [$good, $goodPath] = $this->legacyRow($c, 'senderid_1700000031.pdf', self::PDF, 'GOOD');
+        [$bad, $badPath] = $this->legacyRow($c, 'senderid_1700000032.php', '<?php echo 1;', 'BAD');
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+
+        $value = $good->fresh()->document;
+        $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX, $value);
+        Storage::disk('local')->assertExists(substr($value, strlen(SenderIdDocumentStore::PREFIX)));
+        $this->assertFileDoesNotExist($goodPath);
+        $this->get(route('customer.senderid.document', $good->uid))->assertOk();
+
+        $this->assertNull($bad->fresh()->document);
+        $this->assertFileDoesNotExist($badPath);
+        $quarantined = Storage::disk('local')->allFiles('senderid-quarantine');
+        $this->assertCount(1, $quarantined);
+        $this->assertStringContainsString('row-' . $bad->id . '-', $quarantined[0]);
+        $this->assertSame('<?php echo 1;', Storage::disk('local')->get($quarantined[0]));
+    }
+
+    public function test_failed_original_delete_rolls_back_so_the_row_stays_retryable(): void
+    {
+        [$row, $path, $url] = $this->legacyRow($this->customer(), 'senderid_1700000033.pdf', self::PDF, 'DEL');
+
+        File::partialMock()->shouldReceive('delete')->atLeast()->once()->andReturn(false);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);                              // original untouched
+        $this->assertSame($url, $row->fresh()->document);            // still on the legacy reference => retried next run
+        $this->assertSame([], Storage::disk('local')->allFiles(SenderIdDocumentStore::DIR)); // no orphan private copy
+    }
+
+    public function test_rows_sharing_one_legacy_file_all_follow_the_same_outcome(): void
+    {
+        $c = $this->customer();
+        [$first, $path, $url] = $this->legacyRow($c, 'senderid_1700000034.pdf', self::PDF, 'SH1');
+        $second = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'SH2', 'status' => 'pending', 'document' => $url]);
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+
+        $this->assertFileDoesNotExist($path);
+        $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX, $first->fresh()->document);
+        $this->assertSame($first->fresh()->document, $second->fresh()->document);
+        $this->get(route('customer.senderid.document', $second->uid))->assertOk();
+    }
+
+    public function test_every_row_is_migrated_beyond_one_thousand_because_paging_is_by_id(): void
+    {
+        $c = $this->customer();
+        [, , $url] = $this->legacyRow($c, 'senderid_1700000035.pdf', self::PDF, 'BULK0');
+        $now = now();
+        $rows = [];
+        for ($i = 1; $i <= 1100; $i++) {
+            $rows[] = ['user_id' => $c->user_id, 'uid' => (string) \Illuminate\Support\Str::uuid(), 'sender_id' => 'B' . $i, 'status' => 'pending', 'document' => $url, 'created_at' => $now, 'updated_at' => $now];
+        }
+        foreach (array_chunk($rows, 200) as $chunk) {
+            \Illuminate\Support\Facades\DB::table('senderid')->insert($chunk);
+        }
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
+
+        $this->assertSame(0, Senderid::where('document', 'not like', SenderIdDocumentStore::PREFIX . '%')->count());
+    }
+
+    public function test_failed_private_storage_write_on_upload_throws_and_stores_nothing(): void
+    {
+        $disk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturn(false);
+        Storage::shouldReceive('disk')->once()->with('local')->andReturn($disk);
+
+        $this->expectException(\RuntimeException::class);
+        SenderIdDocumentStore::store($this->realUpload('proof.pdf', self::PDF));
+    }
+
     public function test_owner_and_admin_can_download_but_other_tenant_cannot(): void
     {
         $owner = $this->customer(['create_sender_id', 'view_sender_id']);

@@ -241,13 +241,27 @@
                 }
             }
 
+            // Store the document BEFORE creating the request, so a storage failure leaves no orphan row.
+            $documentValue = null;
+            if ($request->hasFile('document')) {
+                try {
+                    abort_unless($request->file('document')->isValid(), 422);
+                    $documentValue = \App\Library\Uploads\SenderIdDocumentStore::store($request->file('document'));
+                } catch (\Throwable $e) {
+                    report($e);
+
+                    return redirect()->route('customer.senderid.request')->withInput($request->except('document', 'plan'))->with([
+                        'status'  => 'error',
+                        'message' => 'The document could not be saved. Please try again.',
+                    ]);
+                }
+            }
+
             $senderid = $this->sender_ids->storeCustom($request->except('_token'));
 
-            if (isset($request->document) && $request->hasFile('document')) {
-                if ($request->file('document')->isValid()) {
-                    $senderid->document = \App\Library\Uploads\SenderIdDocumentStore::store($request->file('document'));
-                    $senderid->save();
-                }
+            if ($documentValue !== null) {
+                $senderid->document = $documentValue;
+                $senderid->save();
             }
 
             Notifications::create([
