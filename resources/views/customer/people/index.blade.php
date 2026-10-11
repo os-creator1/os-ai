@@ -38,6 +38,7 @@
         .contacts-name a { font-weight: 600; color: var(--color-text-primary); overflow-wrap: anywhere; }
         .contacts-name a:hover { color: var(--color-primary); }
         .contacts-email { overflow-wrap: anywhere; }
+        .contacts-table .text-numeric { font-size: inherit; }
         .contacts-empty { color: var(--color-text-disabled, var(--color-text-muted)); }
         .contacts-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
         .contacts-foot .ds-pagination { width: 100%; }

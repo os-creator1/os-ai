@@ -192,8 +192,11 @@
     .cx-hint { display: block; margin-top: .25rem; font-size: .71875rem; line-height: 1.4; color: var(--color-text-muted); }
     .cx-grid-2 {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+        grid-template-columns: minmax(0, 1fr);
         gap: 0 1rem;
+    }
+    @media (min-width: 576px) {
+        .cx-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     /* Two-column editor (main + narrower aside) ------------------------- */

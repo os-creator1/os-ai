@@ -40,7 +40,7 @@
         <p class="text-caption mb-25">Spent this month</p>
         <p class="ads-pacing-figure" data-role="pacing-spent">{{ $money($pacing->spentMicros) }}</p>
 
-        @if($hasTarget)
+        @if($hasTarget && $pacing->spentMicros !== null)
             <div class="ads-meter" role="img" aria-label="{{ $spentShare === null ? 'No spend yet' : number_format($spentShare * 100, 0) . '% of the monthly target spent' }}{{ $elapsed === null ? '' : ', ' . number_format($elapsed * 100, 0) . '% of the month gone' }}">
                 <span style="width: {{ number_format(($spentShare ?? 0) * 100, 2, '.', '') }}%"></span>
                 @if($elapsed !== null)

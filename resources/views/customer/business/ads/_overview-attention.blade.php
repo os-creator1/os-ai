@@ -16,6 +16,8 @@
     $total = $attention['count'] ?? count($items);
     $extraItems = $extraItems ?? [];
     $decisionFlagsProblem = $decisionState !== null && in_array($decisionState, [AdsDecisionState::CheckTracking, AdsDecisionState::FixTheFunnel, AdsDecisionState::Act], true);
+    // No judged goal yet (no goal, or no campaign assigned): the account may look calm, but nothing is judged.
+    $goalSetupPending = $decisionState === null;
 @endphp
 
 <section class="cx-card" data-role="attention">
@@ -32,6 +34,8 @@
                     <x-ds-icon name="alert-circle" size="15" aria-hidden="true" />
                     <span class="cx-callout-text">No {{ $providerName }} account issues found. The recommendation above still needs your attention first.</span>
                 </div>
+            @elseif($goalSetupPending)
+                <p class="text-caption mb-0" data-role="attention-none">No {{ $providerName }} account issues found. Finish the goal setup above so MotionGrove can judge whether these ads are working.</p>
             @elseif($attention === null)
                 <p class="text-caption mb-0" data-role="attention-none">{{ $upgradeNote ?? 'Nothing stands out right now.' }}</p>
             @else
