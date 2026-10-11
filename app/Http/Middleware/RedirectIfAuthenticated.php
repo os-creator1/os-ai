@@ -25,7 +25,13 @@ class RedirectIfAuthenticated
         foreach ($guards as $guard) {
             if (Auth::guard($guard)->check()) {
 
-                // An authenticated user must never re-enter a guest-only login flow.
+                // Only pending two-factor challenges may use the guest-tagged verification routes.
+                // All other guest-only actions (including POST /login) must remain inaccessible.
+                $user = Auth::guard($guard)->user();
+                if ($request->routeIs('verify.*') && config('app.two_factor') && $user?->two_factor && $user?->two_factor_code !== null) {
+                    return $next($request);
+                }
+
                 return redirect(Helper::home_route());
             }
         }
