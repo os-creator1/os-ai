@@ -60,6 +60,14 @@
 
                 $this->authorize('view payment_gateways');
 
+                // Closed legacy gateways cannot be switched on from the UI (see config/legacy_payments.php).
+                if (! $gateway->status && ! in_array(strtolower((string) $gateway->type), array_map('strtolower', (array) config('legacy_payments.enabled_gateways', [])), true)) {
+                    return response()->json([
+                        'status'  => 'error',
+                        'message' => 'This legacy payment gateway is disabled for security reasons and cannot be activated.',
+                    ]);
+                }
+
                 if ($gateway->update(['status' => ! $gateway->status])) {
                     return response()->json([
                         'status'  => 'success',

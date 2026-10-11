@@ -129,6 +129,7 @@
             'twofactor'         => TwoFactor::class,
             'json.response'     => ForceJsonResponse::class,
             'customer.sub_only' => SubAccountRestriction::class,
+            'legacy.payments'   => \App\Http\Middleware\LegacyPaymentGate::class,
             'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,
             'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,
             'business.profile.accessible' => EnsureBusinessProfileIsAccessible::class,
