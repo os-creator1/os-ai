@@ -837,17 +837,41 @@ class SenderIdDocumentUploadSecurityTest extends TestCase
         $this->assertSame([], $this->pendingFiles());
     }
 
-    public function test_cleanup_never_deletes_the_public_file_when_the_private_copy_is_missing_or_corrupt(): void
+    public function test_corrupt_private_copy_after_interruption_restores_the_rows_and_the_public_original_is_migrated_again(): void
     {
-        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000063.pdf', self::PDF, 'RES5');
+        $c = $this->customer();
+        [$row, $path, $url] = $this->legacyRow($c, 'senderid_1700000063.pdf', self::PDF, 'RES5');
+        $second = Senderid::create(['user_id' => $c->user_id, 'sender_id' => 'RES5B', 'status' => 'pending', 'document' => $url]);
         $this->interruptedRun();
         $rel = substr($row->fresh()->document, strlen(SenderIdDocumentStore::PREFIX));
+        Storage::disk('local')->put($rel, 'corrupted');                       // the only recovery path must not be dropped silently
 
-        Storage::disk('local')->put($rel, 'corrupted');
         $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertSuccessful();
-        $this->assertFileExists($path);                                    // the only intact copy survives
 
+        // Rows were put back on the legacy URL, the intact public original survived, and the ordinary pass then
+        // migrated them again to a fresh, verified private copy: nothing dangles and nothing was lost.
+        $this->assertSame($row->fresh()->document, $second->fresh()->document);
+        $new = substr($row->fresh()->document, strlen(SenderIdDocumentStore::PREFIX));
+        $this->assertNotSame($rel, $new);
+        $this->assertSame(self::PDF, Storage::disk('local')->get($new));
+        Storage::disk('local')->assertMissing($rel);
+        $this->assertSame([], $this->pendingFiles());
+        $this->get(route('customer.senderid.document', $row->uid))->assertOk();
+    }
+
+    public function test_missing_private_copy_with_a_changed_public_file_keeps_the_record_and_fails(): void
+    {
+        [$row, $path] = $this->legacyRow($this->customer(), 'senderid_1700000066.pdf', self::PDF, 'RES8');
+        $this->interruptedRun();
+        $rel = substr($row->fresh()->document, strlen(SenderIdDocumentStore::PREFIX));
         Storage::disk('local')->delete($rel);
+        file_put_contents($path, 'someone replaced the public file');
+
+        $this->artisan('senderid:migrate-documents', ['--apply' => true])->assertFailed();
+
+        $this->assertFileExists($path);                 // never delete
+        $this->assertCount(1, $this->pendingFiles());   // record retained for a human
+        $this->assertStringStartsWith(SenderIdDocumentStore::PREFIX, DB::table('senderid')->where('id', $row->id)->value('document'));
     }
 
     public function test_cleanup_never_deletes_the_public_file_while_a_row_still_references_it(): void

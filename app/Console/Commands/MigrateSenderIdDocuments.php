@@ -212,7 +212,7 @@ class MigrateSenderIdDocuments extends Command
 
                     // Durable recovery record, written BEFORE the rows change: if the process dies after the commit
                     // but before the public original is removed, the next run can finish the job from this.
-                    if (! $this->writePending($disk, self::PENDING_DIR . '/' . $name . '.json', $name, $relative, $path, 'move')) {
+                    if (! $this->writePending($disk, self::PENDING_DIR . '/' . $name . '.json', $name, $relative, $path, 'move', $originals)) {
                         $disk->delete($relative);
                         $failed++;
                         $this->error("Could not write the recovery record for #{$ids}; original file and database rows preserved.");
@@ -304,7 +304,7 @@ class MigrateSenderIdDocuments extends Command
     }
 
     /** Record what is needed to finish (or safely abandon) a move: legacy name, target path, size and checksum. */
-    private function writePending($disk, string $recordPath, string $name, string $relative, string $publicPath, string $kind): bool
+    private function writePending($disk, string $recordPath, string $name, string $relative, string $publicPath, string $kind, array $rows = []): bool
     {
         $sha1 = @hash_file('sha1', $publicPath);
         $size = @filesize($publicPath);
@@ -313,7 +313,7 @@ class MigrateSenderIdDocuments extends Command
         }
 
         try {
-            return $disk->put($recordPath, json_encode(['kind' => $kind, 'name' => $name, 'private' => $relative, 'size' => $size, 'sha1' => $sha1])) === true;
+            return $disk->put($recordPath, json_encode(['kind' => $kind, 'name' => $name, 'private' => $relative, 'size' => $size, 'sha1' => $sha1, 'rows' => $rows])) === true;
         } catch (\Throwable $e) {
             return false;
         }
@@ -368,8 +368,45 @@ class MigrateSenderIdDocuments extends Command
                 && @hash_file('sha1', $public) === $record['sha1'] && @filesize($public) === $record['size'];
 
             if (! $safeToDelete) {
-                // Not an interrupted-after-commit state (rolled back, still legacy, or a different file): leave the public file.
-                $apply && $disk->delete($recordPath);
+                $referencesPrivate = Senderid::query()->where('document', SenderIdDocumentStore::PREFIX . $private)->get();
+                $publicIntact = @hash_file('sha1', $public) === $record['sha1'] && @filesize($public) === $record['size'];
+
+                $privateIntact = is_file($privateFull) && @hash_file('sha1', $privateFull) === $record['sha1'];
+
+                if ($stillLegacy || $referencesPrivate->isEmpty() || $privateIntact) {
+                    // Rolled back / never repointed, nothing refers to the private copy, or the private copy is fine and the public
+                    // file is merely an unrelated file with the same name: no dangling references, so leave the public file alone.
+                    $apply && $disk->delete($recordPath);
+
+                    continue;
+                }
+
+                // Rows were repointed to a private copy that is now missing or corrupt. Never leave them dangling:
+                // if the public original is still intact, put the rows back on their legacy references (the ordinary
+                // pass then migrates them afresh); otherwise keep the record and demand human attention.
+                $legacyByRow = is_array($record['rows'] ?? null) ? $record['rows'] : [];
+                $restorable = $publicIntact && $referencesPrivate->every(fn (Senderid $r) => is_string($legacyByRow[$r->id] ?? null));
+
+                if (! $restorable) {
+                    $failed++;
+                    $this->error("Private copy for {$name} is missing or corrupt and the rows cannot be restored automatically; recovery record kept: {$recordPath}.");
+
+                    continue;
+                }
+
+                $this->warn("repair      {$name}: private copy unusable; restoring rows to their legacy references");
+                if ($apply) {
+                    try {
+                        $this->restore($referencesPrivate->keyBy('id'), $legacyByRow);
+                    } catch (\Throwable $e) {
+                        $failed++;
+                        $this->error("Could not restore rows for {$name} ({$e->getMessage()}); recovery record kept.");
+
+                        continue;
+                    }
+                    $disk->delete($recordPath);
+                    $disk->delete($private);
+                }
 
                 continue;
             }
