@@ -869,8 +869,9 @@ class AgencyClientProvisioningTest extends TestCase
         $this->assertNull(\App\Library\Workspace\ClientInvitationReturn::pull(), 'The memory is consumed: no loop.');
         $this->assertNull($invitation->fresh()->accepted_at, 'Returning to the invitation never accepts it.');
 
-        // The same code cannot be replayed.
-        $this->post(route('verify.backup.store'), ['two_factor_code' => 111111])->assertSessionHas('status', 'error');
+        // The same code cannot be replayed: it no longer matches, so nothing is consumed or redirected to the invitation.
+        $this->post(route('verify.backup.store'), ['two_factor_code' => 111111])->assertRedirect();
+        $this->assertSame(['222222'], json_decode($account->fresh()->two_factor_backup_code, true));
     }
 
     public function test_backup_code_two_factor_completes_a_pending_verification_link_first_and_keeps_the_invitation(): void
@@ -894,11 +895,12 @@ class AgencyClientProvisioningTest extends TestCase
     {
         [$account, $claim, $token, $invitation] = $this->accountAtBackupCodeChallenge();
 
-        // A tampered token is never remembered, and the claim route refuses it.
-        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => 'wrong' . $token]))->assertViewIs('client_invitations.invalid');
+        // While the 2FA challenge is pending the claim route is blocked outright; a tampered token is never remembered either.
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => 'wrong' . $token]))->assertRedirect();
         $this->assertNull(session(\App\Library\Workspace\ClientInvitationReturn::KEY));
 
-        $this->post(route('verify.backup.store'), ['two_factor_code' => 999999])->assertSessionHas('status', 'error');
+        $wrong = $this->post(route('verify.backup.store'), ['two_factor_code' => 999999]);
+        $this->assertNotSame($claim, $wrong->headers->get('Location'));
         $this->assertSame(['111111', '222222'], json_decode($account->fresh()->two_factor_backup_code, true));
         $this->assertNull($invitation->fresh()->accepted_at);
     }
