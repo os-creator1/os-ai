@@ -604,6 +604,11 @@ class PrivateOfferRedemptionTest extends TestCase
         $this->assertCount(1, $this->stripe->callsOf('applyPriceSchedule'), 'only the original push');
         $change = $this->stripe->callsOf('changeSubscriptionPrice');
         $this->assertCount(1, $change);
+        $this->assertSame(
+            'price_fake_growth',
+            PlatformSubscription::query()->where('workspace_id', $customer['workspace']->id)->firstOrFail()->provider_price_id,
+            'the catch-up move is recorded locally, not only at the provider',
+        );
         $this->assertSame('price_fake_growth', $change[0]['args']['price']);
         $this->assertFalse($change[0]['args']['prorate']);
         $this->assertSame('none', $redemption->refresh()->schedule_state);

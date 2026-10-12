@@ -45,7 +45,7 @@ final class TrialLedger
      * Atomically reserve a trial for this Workspace, or report that it cannot
      * be had. True also when the SAME Workspace already holds the reservation.
      */
-    public function reserve(Workspace $workspace, string $email, string $source, ?CarbonInterface $until = null, ?bool &$created = null, ?string &$stamp = null): bool
+    public function reserve(Workspace $workspace, string $email, string $source, ?CarbonInterface $until = null, ?bool &$created = null, ?string &$stamp = null, ?string $providerCustomerId = null): bool
     {
         $key = EmailIdentity::key($email);
         $until ??= now()->addMinutes(self::RESERVATION_MINUTES);
@@ -55,7 +55,7 @@ final class TrialLedger
         $stamp = null;
 
         try {
-            return DB::transaction(function () use ($workspace, $key, $source, $until, &$created, &$stamp): bool {
+            return DB::transaction(function () use ($workspace, $key, $source, $until, &$created, &$stamp, $providerCustomerId): bool {
                 // Lapsed reservations are not claims. Clear them first so a
                 // stale one cannot block a legitimate customer.
                 PlatformTrialClaim::query()
@@ -64,8 +64,13 @@ final class TrialLedger
                     ->where(fn ($q) => $q->where('workspace_id', $workspace->id)->orWhere('email_key', $key))
                     ->delete();
 
+                // The Workspace, the mailbox AND the provider customer are each a
+                // trial identity (the same three eligible() checks), so the atomic
+                // reservation honours all of them.
                 $existing = PlatformTrialClaim::query()
-                    ->where(fn ($q) => $q->where('workspace_id', $workspace->id)->orWhere('email_key', $key))
+                    ->where(fn ($q) => $q->where('workspace_id', $workspace->id)
+                        ->orWhere('email_key', $key)
+                        ->when(! blank($providerCustomerId), fn ($q) => $q->orWhere('provider_customer_id', $providerCustomerId)))
                     ->lockForUpdate()
                     ->get();
 

@@ -420,12 +420,17 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
 
         $subscription = $this->subscriptions[$providerSubscriptionId] ?? throw new RuntimeException('Unknown fake subscription.');
 
-        if (($subscription['schedule'] ?? null) !== null) {
-            // Stripe: a subscription already attached to a schedule cannot be given another.
-            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        $attached = $subscription['schedule'] ?? null;
+
+        if ($attached !== null && ($this->scheduleKeys[$idempotencyKey . ':create'] ?? null) !== $attached) {
+            // Stripe: a subscription already attached to a schedule cannot be given
+            // another, and a create whose key is not a replay of the one that made
+            // it is refused -- that schedule is not ours.
+            throw PlatformBillingException::because(PlatformBillingException::SCHEDULE_NOT_OURS);
         }
 
-        $scheduleId = 'sub_sched_fake' . str_pad((string) (++$this->sequence), 5, '0', STR_PAD_LEFT);
+        $scheduleId = $attached ?? 'sub_sched_fake' . str_pad((string) (++$this->sequence), 5, '0', STR_PAD_LEFT);
+        $this->scheduleKeys[$idempotencyKey . ':create'] = $scheduleId;
         $this->schedules[$scheduleId] = [
             'subscription' => $providerSubscriptionId,
             'phases' => array_map(static fn (SchedulePhase $p): array => [
@@ -438,7 +443,37 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         // The first phase is the live one: the subscription is on its price.
         $this->subscriptions[$providerSubscriptionId]['price'] = $phases[0]->priceId;
 
+        if ($this->loseNextScheduleResponse) {
+            // The schedule WAS created at the provider; the caller never hears.
+            $this->loseNextScheduleResponse = false;
+
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
         return $this->subscriptionSnapshot($providerSubscriptionId);
+    }
+
+    /** @var array<string, string> Schedule id by `<key>:create` idempotency key. */
+    public array $scheduleKeys = [];
+
+    /** When true, the NEXT applyPriceSchedule creates the schedule and then loses its response. */
+    public bool $loseNextScheduleResponse = false;
+
+    /** When set, proveOwnSchedule fails inconclusively (a transient network/API error). */
+    public ?\Throwable $proofFailure = null;
+
+    public function proveOwnSchedule(string $providerSubscriptionId, string $idempotencyKey): ?string
+    {
+        $this->record('proveOwnSchedule', ['subscription' => $providerSubscriptionId, 'key' => $idempotencyKey]);
+
+        if ($this->proofFailure !== null) {
+            throw $this->proofFailure;
+        }
+
+        $attached = $this->subscriptions[$providerSubscriptionId]['schedule'] ?? null;
+        $known = $this->scheduleKeys[$idempotencyKey . ':create'] ?? null;
+
+        return ($attached !== null && $known === $attached) ? $attached : null;
     }
 
     public function releaseSchedule(string $providerScheduleId): void

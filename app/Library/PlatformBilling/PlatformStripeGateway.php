@@ -205,6 +205,21 @@ interface PlatformStripeGateway
     public function applyPriceSchedule(string $providerSubscriptionId, array $phases, string $idempotencyKey): PlatformSubscriptionSnapshot;
 
     /**
+     * Whether the schedule attached to this subscription is the one the
+     * `$idempotencyKey` push created (the push whose response may have been
+     * lost). Only call it when a schedule IS attached.
+     *
+     * @return string|null the proven schedule id, or null when the provider
+     *                     DEFINITIVELY says the attached schedule is not that
+     *                     push's (or the proof window has passed)
+     *
+     * @throws PlatformBillingException (PROVIDER_FAILED) when the answer is
+     *         inconclusive — a transient API or network failure. Never read as
+     *         "not ours".
+     */
+    public function proveOwnSchedule(string $providerSubscriptionId, string $idempotencyKey): ?string;
+
+    /**
      * Release a subscription from its schedule, leaving it on whatever Price it
      * is on right now. Releasing an already released/completed schedule is not
      * an error.

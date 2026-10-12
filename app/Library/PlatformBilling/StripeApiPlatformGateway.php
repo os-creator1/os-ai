@@ -5,6 +5,7 @@ namespace App\Library\PlatformBilling;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use Carbon\CarbonImmutable;
 use Stripe\Exception\ApiErrorException;
+use Stripe\Exception\InvalidRequestException;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\StripeClient;
 use Stripe\Webhook;
@@ -274,13 +275,26 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
             // idempotency key: replaying the same key answers with the schedule
             // that attempt made. Anything else fails for operator attention.
             $existingScheduleId = self::scheduleIdOf($current);
-            $created = $this->client()->subscriptionSchedules->create(
-                ['from_subscription' => $providerSubscriptionId],
-                ['idempotency_key' => $idempotencyKey . ':create'],
-            );
+
+            try {
+                $created = $this->client()->subscriptionSchedules->create(
+                    ['from_subscription' => $providerSubscriptionId],
+                    ['idempotency_key' => $idempotencyKey . ':create'],
+                );
+            } catch (InvalidRequestException $e) {
+                // The provider REFUSED a create while a schedule is attached and
+                // the key is not a replay: that schedule is not ours. (Any other
+                // failure -- network, rate limit, 5xx -- is inconclusive and falls
+                // through to PROVIDER_FAILED below, so it is retried.)
+                if ($existingScheduleId !== null) {
+                    throw PlatformBillingException::because(PlatformBillingException::SCHEDULE_NOT_OURS);
+                }
+
+                throw $e;
+            }
 
             if ($existingScheduleId !== null && (string) $created->id !== $existingScheduleId) {
-                throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+                throw PlatformBillingException::because(PlatformBillingException::SCHEDULE_NOT_OURS);
             }
 
             $schedule = $existingScheduleId !== null
@@ -331,6 +345,33 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
         }
 
         return $this->subscriptionSnapshot($subscription);
+    }
+
+    public function proveOwnSchedule(string $providerSubscriptionId, string $idempotencyKey): ?string
+    {
+        try {
+            $current = $this->client()->subscriptions->retrieve($providerSubscriptionId, []);
+            $attached = self::scheduleIdOf($current);
+
+            if ($attached === null) {
+                return null;
+            }
+
+            // Replaying the push's create key answers with the schedule that push
+            // made (inside Stripe's idempotency window).
+            try {
+                $created = $this->client()->subscriptionSchedules->create(
+                    ['from_subscription' => $providerSubscriptionId],
+                    ['idempotency_key' => $idempotencyKey . ':create'],
+                );
+            } catch (InvalidRequestException) {
+                return null;
+            }
+
+            return (string) $created->id === $attached ? $attached : null;
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
     }
 
     public function releaseSchedule(string $providerScheduleId): void

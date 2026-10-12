@@ -335,6 +335,11 @@ final class OfferReconciler
                 return;
             }
 
+            // A schedule this redemption already had once is being put back, so
+            // its first idempotency key (and the schedule Stripe answered with,
+            // now released) must not be replayed.
+            $attemptKey = 'offer-schedule:' . $redemption->uid . ($redemption->provider_schedule_id !== null ? ':r' . Str::random(10) : '');
+
             // The subscription is on a Price the agreement does not contain (the
             // customer moved plans, possibly an upgrade whose response was lost).
             // The agreement no longer applies; its schedule is never put back
@@ -343,6 +348,28 @@ final class OfferReconciler
 
             if (! $isChange && ! blank($current->providerPriceId) && $agreedPrices !== []
                 && ! in_array((string) $current->providerPriceId, $agreedPrices, true)) {
+                // An attached schedule this redemption never recorded may be a
+                // Dashboard-made one that moved the subscription. Nothing is
+                // finalized or released until it is PROVEN ours; an inconclusive
+                // proof (transient failure) leaves everything pending to retry.
+                if ($attachedUnrecorded) {
+                    try {
+                        $proved = $this->gateway->proveOwnSchedule((string) $subscription->provider_subscription_id, $attemptKey);
+                    } catch (PlatformBillingException) {
+                        return;
+                    }
+
+                    if ($proved === null || $proved !== (string) $current->scheduleId) {
+                        $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_FAILED);
+
+                        return;
+                    }
+
+                    // Ours: record it so the closing release below covers it.
+                    $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $proved, $subscription);
+                    $subscription->refresh();
+                }
+
                 // The move off this agreement is complete at the provider. The
                 // shared finalizer brings the local plan and entitlements up to
                 // provider truth FIRST (if it fails, the agreement stays pending and
@@ -355,11 +382,6 @@ final class OfferReconciler
 
                 return;
             }
-
-            // A schedule this redemption already had once is being put back, so
-            // its first idempotency key (and the schedule Stripe answered with,
-            // now released) must not be replayed.
-            $attemptKey = 'offer-schedule:' . $redemption->uid . ($redemption->provider_schedule_id !== null ? ':r' . Str::random(10) : '');
 
             if ($isChange) {
                 $phases = $this->billingChangePhases($redemption, $paid, $current);
@@ -389,7 +411,11 @@ final class OfferReconciler
                     idempotencyKey: 'offer-catchup:' . $redemption->uid,
                 );
                 $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
-                $this->observe($subscription->refresh(), $redemption->refresh(), $snapshot);
+
+                // The shared finalizer records the new Price, period and lifecycle
+                // state (and observes the agreement) instead of waiting for a webhook.
+                app(\App\Library\PlatformBilling\PlatformSubscriptionManager::class)
+                    ->applyProviderSubscription($subscription->refresh(), (string) $subscription->provider_subscription_id);
 
                 return;
             }
@@ -407,9 +433,11 @@ final class OfferReconciler
             );
             $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $snapshot->scheduleId, $subscription);
         } catch (Throwable $e) {
-            if ($attachedUnrecorded ?? false) {
-                // The attached schedule could not be proven ours: leave it alone and
-                // surface it for an operator.
+            if ($e instanceof PlatformBillingException && $e->reason === PlatformBillingException::SCHEDULE_NOT_OURS) {
+                // The provider PROVED the attached schedule is not ours: leave it
+                // alone and surface it for an operator. Any other failure -- a
+                // transient API or network error, a failed replay -- stays pending
+                // and is retried by the sweep.
                 $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_FAILED);
 
                 return;

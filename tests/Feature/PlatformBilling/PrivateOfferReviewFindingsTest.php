@@ -296,10 +296,32 @@ class PrivateOfferReviewFindingsTest extends TestCase
         $subscription = PlatformSubscription::query()->where('workspace_id', $customer['workspace']->id)->firstOrFail();
         $subscription->forceFill(['provider_schedule_id' => null])->save();
 
+        // The earlier schedule is no longer ours: a Dashboard user's replaced it.
+        $this->stripe->scheduleKeys = [];
+
         app(\App\Library\PlatformBilling\Offers\OfferReconciler::class)->driveSchedule($redemption->refresh());
 
         $this->assertSame('failed', $redemption->refresh()->schedule_state);
         $this->assertCount(2, $this->stripe->callsOf('applyPriceSchedule'), 'attempted once to prove ownership; the provider refuses to overwrite');
+    }
+
+    public function test_a_provider_customer_with_a_granted_trial_blocks_another_workspaces_reservation(): void
+    {
+        $ledger = app(\App\Library\PlatformBilling\Offers\TrialLedger::class);
+        $first = $this->unpaidCustomer('first@example.test');
+        $second = $this->unpaidCustomer('second@example.test');
+
+        PlatformTrialClaim::query()->forceCreate([
+            'workspace_id' => $first['workspace']->id, 'email_key' => 'first@example.test',
+            'provider_customer_id' => 'cus_shared', 'state' => 'granted', 'source' => 'public', 'granted_at' => now()->subYear(),
+        ]);
+
+        $this->assertFalse($ledger->eligible($second['workspace'], 'second@example.test', 'cus_shared'));
+        $this->assertFalse(
+            $ledger->reserve($second['workspace'], 'second@example.test', 'offer', null, $created, $stamp, 'cus_shared'),
+            'the atomic reservation agrees with the read-only check',
+        );
+        $this->assertTrue($ledger->reserve($second['workspace'], 'second@example.test', 'offer', null, $created2, $stamp2, 'cus_other'));
     }
 
     public function test_a_billing_change_is_refused_across_snapshot_currencies(): void
@@ -455,42 +477,6 @@ class PrivateOfferReviewFindingsTest extends TestCase
     // =================================================================
     // P1 — billing-change reservations are never released by the Checkout cleanup
     // =================================================================
-
-    public function test_an_old_billing_change_reservation_is_not_released_while_the_provider_holds_its_schedule(): void
-    {
-        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
-        $change = $this->makeOffer([
-            'kind' => 'billing_change', 'customer_email' => null,
-            'workspace_uid' => $fixture['workspace']->uid, 'custom_price' => '60.00',
-        ]);
-
-        // The provider applied the schedule, but the response / local write was lost.
-        $this->stripe->interleaveOnce('applyPriceSchedule', function (): void {
-            throw new \RuntimeException('connection reset');
-        });
-        try {
-            $this->redemptions()->applyBillingChangeAsOwner($change['offer'], $this->platformAdminId(), 'Agreed on a call.');
-        } catch (\Throwable) {
-            // expected
-        }
-
-        $reservation = PlatformPrivateOfferRedemption::query()->sole();
-        $this->assertSame('reserved', $reservation->state);
-        $reservation->forceFill(['reserved_until' => now()->subDay()])->save();
-
-        // The provider DOES hold a schedule on this subscription now.
-        $this->stripe->subscriptions[$fixture['provider_subscription_id']]['schedule'] = 'sub_sched_applied_but_unrecorded';
-
-        $this->assertSame(0, $this->offers()->sweepExpiredReservations(), 'billing changes are not Checkout reservations');
-        $this->redemptions()->sweepUnappliedBillingChanges();
-        $this->assertSame('reserved', $reservation->refresh()->state, 'left for an operator, never orphaned');
-
-        // Had the provider applied nothing, the stale reservation is simply released.
-        $this->stripe->subscriptions[$fixture['provider_subscription_id']]['schedule'] = null;
-        $this->redemptions()->sweepUnappliedBillingChanges();
-        $this->assertSame('released', $reservation->refresh()->state);
-        $this->assertSame('expired_unapplied', $reservation->release_reason);
-    }
 
     // =================================================================
     // P2 — consent date, trial reservation isolation, renewal cadence

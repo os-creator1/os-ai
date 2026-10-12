@@ -310,7 +310,7 @@ final class PrivateOfferRedemptionManager
         $trialStamp = null;
 
         if ($offer->trial_days !== null) {
-            $trialEligible = $this->trials->reserve($workspace, $ownerEmail, 'offer', null, $trialCreated, $trialStamp);
+            $trialEligible = $this->trials->reserve($workspace, $ownerEmail, 'offer', null, $trialCreated, $trialStamp, $subscription?->provider_customer_id);
         }
 
         $terms = $this->termsOrFail($offer, $workspace, $trialEligible);
@@ -682,11 +682,19 @@ final class PrivateOfferRedemptionManager
     }
 
     /**
-     * A billing-change reservation older than its window. If the provider
-     * subscription carries no schedule of ours (none at all, or still only the
-     * previous agreement's own), nothing was applied and the reservation is
-     * released. Any other schedule might be this change's: it is left, loudly,
-     * for an operator -- releasing the row would orphan an active schedule.
+     * A billing-change reservation that is past its window or withdrawn,
+     * settled by PROVIDER TRUTH and an ownership proof -- never by the clock.
+     *
+     *  - no schedule of ours at the provider (none, or only the previous
+     *    agreement's own): nothing was applied; the reservation is released;
+     *  - a schedule is attached and the idempotent replay PROVES it is this
+     *    change's (a push whose response or local write was lost): the accepted
+     *    change is adopted and completed, whether or not the offer has since been
+     *    revoked -- a revoke never alters pricing the provider already holds;
+     *  - proven NOT ours inside the proof window: it is somebody else's, nothing
+     *    of ours was applied, the reservation is released;
+     *  - inconclusive (transient failure) or unprovable (window passed): left
+     *    reserved, retried / surfaced to an operator -- never released.
      */
     private function settleStaleBillingChange(PlatformPrivateOfferRedemption $redemption, PlatformSubscription $subscription): void
     {
@@ -696,14 +704,47 @@ final class PrivateOfferRedemptionManager
             return;
         }
 
-        $stepsAside = $live->scheduleId === null
+        $nothingOfOurs = $live->scheduleId === null
             || (! blank($subscription->provider_schedule_id) && $live->scheduleId === $subscription->provider_schedule_id);
 
-        if (! $stepsAside) {
-            \Illuminate\Support\Facades\Log::warning('A billing-change reservation is past its window but the provider subscription still has a schedule; leaving it for operator attention', [
-                'redemption_id' => $redemption->id,
-            ]);
+        $release = false;
 
+        if ($nothingOfOurs) {
+            $release = true;
+        } else {
+            try {
+                $proved = $this->gateway->proveOwnSchedule(
+                    (string) $subscription->provider_subscription_id,
+                    'offer-change:' . $redemption->uid,
+                );
+            } catch (\Throwable) {
+                return; // inconclusive: stays reserved, retried by the next sweep
+            }
+
+            if ($proved !== null && $proved === (string) $live->scheduleId) {
+                try {
+                    $this->pushBillingChange($redemption, $subscription, OfferTerms::fromArray($redemption->terms_snapshot));
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+
+                return;
+            }
+
+            $withinProofWindow = $redemption->created_at !== null && $redemption->created_at->greaterThan(now()->subHours(23));
+
+            if (! $withinProofWindow) {
+                \Illuminate\Support\Facades\Log::warning('A billing-change reservation is past the provider proof window and the subscription has a schedule that cannot be proven; leaving it for operator attention', [
+                    'redemption_id' => $redemption->id,
+                ]);
+
+                return;
+            }
+
+            $release = true;
+        }
+
+        if (! $release) {
             return;
         }
 

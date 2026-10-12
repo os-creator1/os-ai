@@ -22,14 +22,14 @@ class ScheduleOwnershipWireTest extends TestCase
     /** @var array<int, array{method: string, path: string, params: array<string, mixed>}> */
     public array $wire = [];
 
-    private function transport(?string $attachedSchedule, string $createAnswers): void
+    private function transport(?string $attachedSchedule, string $createAnswers, string $createMode = 'ok'): void
     {
         config(['services.stripe.secret' => 'sk_test_wire_contract_only']);
         $test = $this;
         $start = CarbonImmutable::now()->subDay()->getTimestamp();
 
-        ApiRequestor::setHttpClient(new class($test, $attachedSchedule, $createAnswers, $start) implements ClientInterface {
-            public function __construct(private object $test, private ?string $attached, private string $createAnswers, private int $start)
+        ApiRequestor::setHttpClient(new class($test, $attachedSchedule, $createAnswers, $start, $createMode) implements ClientInterface {
+            public function __construct(private object $test, private ?string $attached, private string $createAnswers, private int $start, private string $createMode)
             {
             }
 
@@ -44,6 +44,16 @@ class ScheduleOwnershipWireTest extends TestCase
                     'items' => ['object' => 'list', 'data' => [['id' => 'si_1', 'price' => ['id' => 'price_a'], 'current_period_start' => $this->start, 'current_period_end' => $this->start + 28 * 86400]]],
                 ];
                 $schedule = fn (string $id) => ['id' => $id, 'object' => 'subscription_schedule', 'status' => 'active', 'phases' => [['start_date' => $this->start]]];
+
+                if ($path === '/v1/subscription_schedules' && strtoupper($method) === 'POST') {
+                    if ($this->createMode === 'refuse') {
+                        return [json_encode(['error' => ['type' => 'invalid_request_error', 'message' => 'The subscription is already attached to a schedule.']]), 400, []];
+                    }
+
+                    if ($this->createMode === 'transient') {
+                        throw new \Stripe\Exception\ApiConnectionException('connection reset');
+                    }
+                }
 
                 $body = match (true) {
                     $path === '/v1/subscriptions/sub_1' => $subscription,
@@ -85,10 +95,56 @@ class ScheduleOwnershipWireTest extends TestCase
             (new StripeApiPlatformGateway())->applyPriceSchedule('sub_1', $this->phases(), 'offer-change:uid');
             $this->fail('Expected the push to be refused.');
         } catch (PlatformBillingException $e) {
-            $this->assertSame(PlatformBillingException::PROVIDER_FAILED, $e->reason);
+            $this->assertSame(PlatformBillingException::SCHEDULE_NOT_OURS, $e->reason);
         }
 
         $this->assertSame([], $this->updates(), 'no phases were written to any schedule');
+    }
+
+    public function test_a_refused_create_over_an_attached_schedule_is_a_definitive_not_ours(): void
+    {
+        $this->transport(attachedSchedule: 'sub_sched_dashboard', createAnswers: 'unused', createMode: 'refuse');
+
+        try {
+            (new StripeApiPlatformGateway())->applyPriceSchedule('sub_1', $this->phases(), 'offer-change:uid');
+            $this->fail('Expected refusal.');
+        } catch (PlatformBillingException $e) {
+            $this->assertSame(PlatformBillingException::SCHEDULE_NOT_OURS, $e->reason);
+        }
+
+        $this->assertSame([], $this->updates());
+    }
+
+    public function test_a_transient_failure_is_never_read_as_a_foreign_schedule(): void
+    {
+        $this->transport(attachedSchedule: 'sub_sched_ours', createAnswers: 'unused', createMode: 'transient');
+
+        try {
+            (new StripeApiPlatformGateway())->applyPriceSchedule('sub_1', $this->phases(), 'offer-change:uid');
+            $this->fail('Expected a failure.');
+        } catch (PlatformBillingException $e) {
+            $this->assertSame(PlatformBillingException::PROVIDER_FAILED, $e->reason, 'retryable, not terminal');
+        }
+
+        $this->assertSame([], $this->updates());
+    }
+
+    public function test_the_ownership_proof_is_tri_state(): void
+    {
+        $gateway = new StripeApiPlatformGateway();
+
+        $this->transport(attachedSchedule: 'sub_sched_ours', createAnswers: 'sub_sched_ours');
+        $this->assertSame('sub_sched_ours', $gateway->proveOwnSchedule('sub_1', 'offer-change:uid'));
+
+        $this->transport(attachedSchedule: 'sub_sched_dashboard', createAnswers: 'sub_sched_new');
+        $this->assertNull($gateway->proveOwnSchedule('sub_1', 'offer-change:uid'), 'the replay answered with a different schedule');
+
+        $this->transport(attachedSchedule: 'sub_sched_dashboard', createAnswers: 'x', createMode: 'refuse');
+        $this->assertNull($gateway->proveOwnSchedule('sub_1', 'offer-change:uid'), 'refused: definitive');
+
+        $this->transport(attachedSchedule: 'sub_sched_ours', createAnswers: 'x', createMode: 'transient');
+        $this->expectException(PlatformBillingException::class);
+        $gateway->proveOwnSchedule('sub_1', 'offer-change:uid');
     }
 
     public function test_our_own_interrupted_schedule_is_reused_through_the_idempotent_create(): void
