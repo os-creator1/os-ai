@@ -2,7 +2,9 @@
 
 namespace App\Notifications\Documents;
 
+use App\Library\Mail\MailBrand;
 use Illuminate\Bus\Queueable;
+use App\Library\Mail\BrandedMailMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -21,6 +23,7 @@ class PaymentReceiptNotification extends Notification
         private readonly string $businessName,
         private readonly string $documentTitle,
         private readonly string $amount,
+        private readonly ?MailBrand $brand = null,
     ) {
     }
 
@@ -32,8 +35,14 @@ class PaymentReceiptNotification extends Notification
 
     public function toMail(object $notifiable): MailMessage
     {
-        return (new MailMessage)
+        return (new BrandedMailMessage)
             ->subject("Payment received — {$this->documentTitle}")
+            ->greeting('Payment received')
+            ->viewData([
+                'brand' => $this->brand,
+                'icon' => 'check',
+                'details' => ['Amount' => $this->amount, 'For' => $this->documentTitle, 'Paid to' => $this->businessName],
+            ])
             ->line("{$this->businessName} has received your payment of {$this->amount}.")
             ->line('Thank you.');
     }

@@ -4,6 +4,7 @@ namespace App\Jobs\Documents;
 
 use App\Jobs\Base;
 use App\Library\Documents\Delivery\DocumentBalanceRequestDispatcher;
+use App\Library\Mail\MailBrandResolver;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentPaymentScheduleItem;
@@ -76,6 +77,7 @@ class SendDocumentBalanceRequestEmail extends Base implements ShouldQueueAfterCo
             (string) $document->title,
             number_format(((int) $item->amount_minor) / 100, 2) . ' ' . (string) $item->currency_code,
             $item->due_at->copy()->setTimezone($timezone)->isoFormat('D MMMM YYYY'),
+            app(MailBrandResolver::class)->forBusiness($business),
         ));
 
         self::recordSent($this->documentId, $this->scheduleItemId, $this->plaintextToken);
