@@ -85,6 +85,22 @@
          */
         public function systemEmail(array $input): bool
         {
+            // Resend is an HTTPS API mailer configured in the environment
+            // (RESEND_API_KEY via Forge). Selecting it changes only the
+            // mailer and the sender; SMTP fields, the SMTP password and the
+            // API key are never read or written here.
+            if (($input['driver'] ?? null) === 'resend') {
+                $this->envWriter->set('MAIL_MAILER', 'mail.default', 'resend');
+                $this->envWriter->set('MAIL_FROM_ADDRESS', 'mail.from.address', $input['from_email']);
+                $this->envWriter->set('MAIL_FROM_NAME', 'mail.from.name', $input['from_name']);
+
+                foreach (Arr::only($input, ['driver', 'from_email', 'from_name']) as $key => $value) {
+                    AppConfig::where('setting', $key)->update(['value' => $value]);
+                }
+
+                return true;
+            }
+
             if (($input['driver'] ?? null) === 'sendmail') {
                 $this->envWriter->set('MAIL_DRIVER', null, 'sendmail');
                 $this->envWriter->set('MAIL_MAILER', 'mail.default', 'sendmail');

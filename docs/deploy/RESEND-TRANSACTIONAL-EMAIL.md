@@ -6,9 +6,9 @@ platform automation mail) through Resend's **HTTPS API** using Laravel's native
 Verified sending domain: `notify.getmotiongrove.com`.
 
 Customer-connected email accounts do not use `config('mail.*')`; they are
-unaffected. Note that the platform admin "System Email" settings screen
-(`EloquentSettingsRepository::systemEmail`) rewrites `MAIL_MAILER` to
-`smtp`/`sendmail`; do not save it on a Resend environment.
+unaffected. The admin System Email screen offers "Resend (API)"; saving it
+preserves `MAIL_MAILER=resend` and never reads or writes `RESEND_API_KEY`
+(Forge environment only) or the SMTP fields.
 
 ## Forge environment variables (Site -> Environment)
 
