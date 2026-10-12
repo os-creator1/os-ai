@@ -72,5 +72,10 @@ jobs:
             tests/Feature/PlatformBilling/PrivateOfferRedemptionTest.php > phpunit.out 2>&1
           rc=$?
           echo '=== FAILURE SUMMARY ==='
-          grep -E '^[0-9]+\) |^Tests:|^OK|Expected response code' phpunit.out | cut -c1-300
+          awk '/^[0-9]+\) /{c=9} c>0{print; c--} /^Tests:|^OK/{print}' phpunit.out | grep -v '^#' | cut -c1-260
           exit $rc
+      - name: Baseline - the replay test on untouched origin/staging code
+        if: always()
+        run: |
+          git checkout -q origin/staging -- app routes resources/lang
+          php vendor/bin/phpunit --no-coverage --filter test_replaying_the_payment_submit_never_duplicates_the_account_or_tenant tests/Feature/PlatformBilling/V1SignupHttpTest.php 2>&1 | grep -v '^#' | tail -25 | cut -c1-260
