@@ -26,7 +26,7 @@ class EmailVerificationContinuationTest extends TestCase
         parent::setUp();
 
         $this->ensureRequiredAppConfigRowsExist();
-        config(['account.verify_account' => true, 'app.two_factor' => false]);
+        config(['account.verify_account' => true, 'app.two_factor' => false, 'no-captcha.login' => false]);
     }
 
     private function user(bool $verified = false): User
