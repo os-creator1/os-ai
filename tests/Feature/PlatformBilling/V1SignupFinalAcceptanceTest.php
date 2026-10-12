@@ -314,10 +314,31 @@ class V1SignupFinalAcceptanceTest extends TestCase
         $this->get(route('signup.success'));
         $user = User::query()->where('email', $form['email'])->sole();
         $user->forceFill(['email_verified_at' => now(), 'status' => false])->save();
+        // Genuinely signed out: flushing the session is not enough, the test guard caches the user.
         $this->flushSession();
+        $this->app['auth']->forgetGuards();
+        $this->assertGuest();
 
         $this->post(route('login'), ['email' => $form['email'], 'password' => self::PASSWORD]);
 
+        $this->assertGuest();
+        $this->assertOneGraph();
+    }
+
+    public function test_an_already_signed_in_session_is_ended_when_the_account_is_suspended(): void
+    {
+        $form = $this->startSignup(WorkspacePlanTier::Growth);
+        $this->pay();
+        $this->get(route('signup.success'));
+        $user = User::query()->where('email', $form['email'])->sole();
+        $user->forceFill(['email_verified_at' => now()])->save();
+        $this->assertAuthenticatedAs($user);
+
+        $user->forceFill(['status' => false])->save();
+        $this->app['auth']->forgetGuards();
+        $this->actingAs($user->fresh());
+
+        $this->get(route('user.home'))->assertRedirect(route('login'));
         $this->assertGuest();
         $this->assertOneGraph();
     }
