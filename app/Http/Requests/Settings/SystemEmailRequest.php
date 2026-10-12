@@ -24,7 +24,7 @@ class SystemEmailRequest extends FormRequest
     public function rules(): array
     {
         return [
-                'driver'     => 'required',
+                'driver'     => 'required|in:smtp,sendmail,resend',
                 'from_email' => 'required|email',
                 'from_name'  => 'required',
                 'host'       => 'required_if:driver,smtp|nullable',
