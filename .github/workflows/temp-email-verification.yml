@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 45
     env:
       APP_ENV: testing
+      MAIL_MAILER: array
+      MAIL_DRIVER: array
       APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       DB_CONNECTION: mysql
       DB_HOST: 127.0.0.1
@@ -63,7 +65,12 @@ jobs:
           grep -q verification.verify routes.txt && grep -q verification.notice routes.txt && grep -q verification.send routes.txt
       - name: Focused tests (sequential)
         run: |
+          set +e
           php vendor/bin/phpunit --no-coverage \
             tests/Feature/Auth/EmailVerificationContinuationTest.php \
             tests/Feature/PlatformBilling/V1SignupHttpTest.php \
-            tests/Feature/PlatformBilling/PrivateOfferRedemptionTest.php
+            tests/Feature/PlatformBilling/PrivateOfferRedemptionTest.php > phpunit.out 2>&1
+          rc=$?
+          echo '=== FAILURE SUMMARY ==='
+          grep -E '^[0-9]+\) |^Tests:|^OK|Expected response code' phpunit.out | cut -c1-300
+          exit $rc
