@@ -3,6 +3,7 @@
 namespace App\Jobs\Documents;
 
 use App\Jobs\Base;
+use App\Library\Mail\MailBrandResolver;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Notifications\Documents\DocumentIssuedNotification;
@@ -101,6 +102,7 @@ class SendDocumentLinkEmail extends Base implements ShouldQueueAfterCommit, Shou
             (string) ($business?->name ?? config('app.name')),
             (string) $document->title,
             (bool) $document->requires_signature,
+            app(MailBrandResolver::class)->forBusiness($business),
         ));
 
         self::recordOutcome($this->documentId, $this->plaintextToken, true);
