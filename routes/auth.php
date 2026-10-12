@@ -34,6 +34,14 @@
                 Route::post('register/payment', 'V1SignupController@startPayment')->middleware('throttle:10,1')->name('register.payment.start');
             });
 
+            // Email verification must stay reachable for existing users even when public
+            // registration is closed, so these live outside the can_register block.
+            Route::get('/email/verify', 'VerificationController@verificationNotice')->middleware(['auth'])->name('verification.notice');
+            // Not behind `auth`/`signed`: the controller checks the signature itself so a signed-out
+            // customer is sent to sign in (and brought back) instead of a bare 401.
+            Route::get('/email/verify/{id}/{hash}', 'VerificationController@verificationVerify')->middleware('twofactor')->name('verification.verify');
+            Route::post('/email/verification-notification', 'VerificationController@verificationSend')->middleware(['auth', 'throttle:6,1'])->name('verification.send');
+
             if (config('account.can_register')) {
                 /*
                 |------------------------------------------------------------
@@ -77,9 +85,6 @@
                 Route::post('pay-offline', 'RegisterController@PayOffline')->name('payment.offline');
                 Route::post('pay-nowpayments', 'RegisterController@PayNowpayments')->name('payment.nowpayments');
 
-                Route::get('/email/verify', 'VerificationController@verificationNotice')->middleware(['auth'])->name('verification.notice');
-                Route::get('/email/verify/{id}/{hash}', 'VerificationController@verificationVerify')->middleware(['auth', 'signed'])->name('verification.verify');
-                Route::post('/email/verification-notification', 'VerificationController@verificationSend')->middleware(['auth', 'throttle:6,1'])->name('verification.send');
                 Route::get('/sub-account/accept/{token}', 'VerificationController@subAccountAccept')->name('sub_account.accept');
                 Route::post('/sub-account/accept/{token}', 'VerificationController@subAccountAcceptSubmit')->name('sub_account.accept.submit');
             }
