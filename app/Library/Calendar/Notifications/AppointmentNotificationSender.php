@@ -144,7 +144,9 @@ class AppointmentNotificationSender
             return [AppointmentNotification::STATUS_SKIPPED, 'no_email'];
         }
 
-        Notification::route('mail', $recipient)->notify(new AppointmentCustomerNotification($details, $isReminder));
+        Notification::route('mail', $recipient)->notify(
+            new AppointmentCustomerNotification($details, $isReminder, $this->customEmail($row, $details, $isReminder)),
+        );
 
         return [AppointmentNotification::STATUS_SENT, null];
     }
@@ -185,7 +187,7 @@ class AppointmentNotificationSender
         $sendData = [
             'business_id' => (int) $business->id,
             'user_id' => (int) $business->customer_id,
-            'message' => self::smsBody($details, $isReminder),
+            'message' => $this->smsText($row, $details, $isReminder),
             'sms_type' => 'plain',
             'originator' => 'sender_id',
             'sender_id' => $path['originator'],
@@ -220,6 +222,59 @@ class AppointmentNotificationSender
         return in_array($response->status ?? 'error', ['success', 'info'], true)
             ? [AppointmentNotification::STATUS_SENT, null]
             : [AppointmentNotification::STATUS_FAILED, 'send_failed'];
+    }
+
+    /** The Booking Type's own text for this send, or null for the built-in wording. */
+    private function customEmail(AppointmentNotification $row, AppointmentNotificationDetails $d, bool $isReminder): ?array
+    {
+        $kind = $isReminder ? 'reminder' : 'confirmation';
+        $template = AppointmentNotificationContent::templateFor($this->typeOf($row), $kind, 'email', $row->offset_minutes);
+
+        if ($template['subject'] === null && $template['body'] === null) {
+            return null;
+        }
+
+        $defaults = AppointmentNotificationContent::defaults();
+        $name = $this->customerName($row);
+
+        return [
+            'subject' => AppointmentNotificationContent::render($template['subject'] ?? $defaults[$kind . '_email_subject'], $d, $name),
+            'body' => AppointmentNotificationContent::render($template['body'] ?? $defaults[$kind . '_email_body'], $d, $name),
+        ];
+    }
+
+    private function smsText(AppointmentNotification $row, AppointmentNotificationDetails $d, bool $isReminder): string
+    {
+        $kind = $isReminder ? 'reminder' : 'confirmation';
+        $template = AppointmentNotificationContent::templateFor($this->typeOf($row), $kind, 'sms', $row->offset_minutes);
+
+        if ($template['body'] === null) {
+            return self::smsBody($d, $isReminder);
+        }
+
+        return AppointmentNotificationContent::renderSms($template['body'], $d, $this->customerName($row));
+    }
+
+    private function typeOf(AppointmentNotification $row): ?\App\Models\BookingType
+    {
+        $typeId = Appointment::query()->whereKey($row->appointment_id)->value('booking_type_id');
+
+        return $typeId === null ? null : \App\Models\BookingType::query()->find($typeId);
+    }
+
+    private function customerName(AppointmentNotification $row): string
+    {
+        if ($row->contact_id === null) {
+            return '';
+        }
+
+        // A Contact's name lives in its identity fields (FIRST_NAME), not on the row.
+        return trim((string) \Illuminate\Support\Facades\DB::table('contacts_custom_field as v')
+            ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+            ->where('v.contact_id', $row->contact_id)
+            ->where('f.tag', 'FIRST_NAME')
+            ->orderBy('v.id')
+            ->value('v.value'));
     }
 
     public static function smsBody(AppointmentNotificationDetails $d, bool $isReminder): string

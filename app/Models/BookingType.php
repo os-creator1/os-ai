@@ -33,6 +33,10 @@ class BookingType extends Model
         'notify_email',
         'notify_sms',
         'reminder_offsets',
+        'reminder_steps',
+        'confirmation_email_subject',
+        'confirmation_email_body',
+        'confirmation_sms_body',
         'color',
         'is_active',
         'created_by_user_id',
@@ -48,6 +52,7 @@ class BookingType extends Model
         'notify_email' => 'boolean',
         'notify_sms' => 'boolean',
         'reminder_offsets' => 'array',
+        'reminder_steps' => 'array',
         'is_active' => 'boolean',
     ];
 
@@ -191,7 +196,16 @@ class BookingType extends Model
         10080 => '1 week before',
     ];
 
-    public const MAX_REMINDERS = 4;
+    /**
+     * A system safeguard, not a product limit: reminders are an unbounded-in-practice
+     * list. (Each step is at most one email and one text per appointment.)
+     */
+    public const MAX_REMINDERS = 20;
+
+    /** The soonest and furthest a reminder may be placed before the start, in minutes. */
+    public const MIN_REMINDER_MINUTES = 5;
+
+    public const MAX_REMINDER_MINUTES = 129600;
 
     /** A freshly created model has not re-read the column default yet, hence the null fallback. */
     public function notifiesByEmail(): bool
@@ -205,6 +219,72 @@ class BookingType extends Model
     }
 
     /**
+     * Whether ANY customer text can be sent for this type: the confirmation, or an
+     * enabled reminder step with the text channel. The booking page offers the
+     * consent box when this is true.
+     */
+    public function usesSms(): bool
+    {
+        if ($this->notifiesBySms()) {
+            return true;
+        }
+
+        foreach ($this->reminderSteps() as $step) {
+            if ($step['enabled'] && $step['sms']) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The reminder steps as the scheduler reads them. A type that has used the V2
+     * editor carries `reminder_steps`; any other has them DERIVED from its legacy
+     * offsets and channel switches, so nothing about it changes.
+     *
+     * @return list<array{id: string, offset_minutes: int, email: bool, sms: bool, enabled: bool, email_subject: ?string, email_body: ?string, sms_body: ?string}>
+     */
+    public function reminderSteps(): array
+    {
+        if (is_array($this->reminder_steps)) {
+            $steps = [];
+
+            foreach ($this->reminder_steps as $s) {
+                $offset = is_array($s) ? (int) ($s['offset_minutes'] ?? 0) : 0;
+
+                if ($offset <= 0) {
+                    continue;
+                }
+
+                $steps[] = [
+                    'id' => (string) ($s['id'] ?? 'r' . $offset),
+                    'offset_minutes' => $offset,
+                    'email' => (bool) ($s['email'] ?? false),
+                    'sms' => (bool) ($s['sms'] ?? false),
+                    'enabled' => (bool) ($s['enabled'] ?? true),
+                    'email_subject' => $s['email_subject'] ?? null,
+                    'email_body' => $s['email_body'] ?? null,
+                    'sms_body' => $s['sms_body'] ?? null,
+                ];
+            }
+
+            return $steps;
+        }
+
+        return array_map(fn (int $offset): array => [
+            'id' => 'legacy-' . $offset,
+            'offset_minutes' => $offset,
+            'email' => $this->notifiesByEmail(),
+            'sms' => $this->notifiesBySms(),
+            'enabled' => true,
+            'email_subject' => null,
+            'email_body' => null,
+            'sms_body' => null,
+        ], $this->reminderOffsetMinutes());
+    }
+
+    /**
      * The effective reminder offsets: positive, distinct, largest first.
      *
      * @return list<int>
@@ -213,6 +293,13 @@ class BookingType extends Model
     {
         $stored = $this->reminder_offsets;
         $offsets = is_array($stored) ? $stored : self::DEFAULT_REMINDER_OFFSETS;
+
+        if (is_array($this->reminder_steps)) {
+            $offsets = array_map(
+                static fn (array $s): int => (int) $s['offset_minutes'],
+                array_filter($this->reminderSteps(), static fn (array $s): bool => $s['enabled'] && ($s['email'] || $s['sms'])),
+            );
+        }
         $offsets = array_values(array_unique(array_filter(
             array_map('intval', $offsets),
             static fn (int $minutes): bool => $minutes > 0,

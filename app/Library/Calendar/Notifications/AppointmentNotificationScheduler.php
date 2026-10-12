@@ -64,6 +64,31 @@ class AppointmentNotificationScheduler
             $channels[AppointmentNotification::CHANNEL_SMS] = $smsConsent ? $now : null;
         }
 
+        // A reminder step may use a channel the confirmation does not (a text-only
+        // 15-minute nudge): that channel is recorded too, for reminders alone.
+        $confirmationChannels = array_keys($channels);
+        $stepOffsets = [AppointmentNotification::CHANNEL_EMAIL => [], AppointmentNotification::CHANNEL_SMS => []];
+
+        foreach ($type->reminderSteps() as $step) {
+            if (! $step['enabled']) {
+                continue;
+            }
+
+            if ($step['email']) {
+                $stepOffsets[AppointmentNotification::CHANNEL_EMAIL][] = (int) $step['offset_minutes'];
+            }
+
+            if ($step['sms']) {
+                $stepOffsets[AppointmentNotification::CHANNEL_SMS][] = (int) $step['offset_minutes'];
+            }
+        }
+
+        foreach ($stepOffsets as $stepChannel => $offsets) {
+            if ($offsets !== [] && ! array_key_exists($stepChannel, $channels)) {
+                $channels[$stepChannel] = $stepChannel === AppointmentNotification::CHANNEL_SMS && $smsConsent ? $now : null;
+            }
+        }
+
         $confirmationIds = [];
 
         foreach ($channels as $channel => $consentAt) {
@@ -78,23 +103,25 @@ class AppointmentNotificationScheduler
                 'sms_consent_at' => $channel === AppointmentNotification::CHANNEL_SMS ? $consentAt : null,
             ];
 
-            $this->insertOnce($base + [
-                'kind' => AppointmentNotification::KIND_CONFIRMATION,
-                'occurrence_key' => 'confirmation',
-                'offset_minutes' => null,
-                'appointment_start_at' => $appointment->start_at,
-                'scheduled_for' => $now,
-            ], $now);
+            if (in_array($channel, $confirmationChannels, true)) {
+                $this->insertOnce($base + [
+                    'kind' => AppointmentNotification::KIND_CONFIRMATION,
+                    'occurrence_key' => 'confirmation',
+                    'offset_minutes' => null,
+                    'appointment_start_at' => $appointment->start_at,
+                    'scheduled_for' => $now,
+                ], $now);
 
-            $row = AppointmentNotification::query()
-                ->where('appointment_id', $appointment->id)->where('channel', $channel)
-                ->where('occurrence_key', 'confirmation')->first();
+                $row = AppointmentNotification::query()
+                    ->where('appointment_id', $appointment->id)->where('channel', $channel)
+                    ->where('occurrence_key', 'confirmation')->first();
 
-            if ($row !== null && $row->status === AppointmentNotification::STATUS_PENDING) {
-                $confirmationIds[] = (int) $row->id;
+                if ($row !== null && $row->status === AppointmentNotification::STATUS_PENDING) {
+                    $confirmationIds[] = (int) $row->id;
+                }
             }
 
-            foreach ($type->reminderOffsetMinutes() as $offset) {
+            foreach (array_values(array_unique($stepOffsets[$channel] ?? [])) as $offset) {
                 $this->insertReminder($base, $appointment->start_at, $offset, $now);
             }
         }
