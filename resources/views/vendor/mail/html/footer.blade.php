@@ -1,3 +1,4 @@
+{{-- Retained for compatibility: the brand footer is rendered by layout.blade.php. --}}
 <tr>
 <td>
 <table class="footer" align="center" width="570" cellpadding="0" cellspacing="0" role="presentation">
