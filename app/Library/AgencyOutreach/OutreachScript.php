@@ -90,6 +90,12 @@ final class OutreachScript
         return $hours > 0 ? $hours : 24;
     }
 
+    /** One switch that holds every send of the sequence. */
+    public function sequencePaused(): bool
+    {
+        return (bool) ($this->settings?->sequence_paused ?? false);
+    }
+
     public function settings(): ?AgencyProspectingSetting
     {
         return $this->settings;

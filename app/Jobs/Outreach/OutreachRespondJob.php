@@ -8,7 +8,9 @@ use App\Library\AgencyOutreach\OutreachDecision;
 use App\Library\AgencyOutreach\OutreachEligibility;
 use App\Library\AgencyOutreach\OutreachInboundLedger;
 use App\Library\AgencyOutreach\OutreachReplyComposer;
+use App\Library\AgencyOutreach\OutreachFaq;
 use App\Library\AgencyOutreach\OutreachScript;
+use App\Library\AgencyOutreach\OutreachSequence;
 use App\Library\AgencyOutreach\OutreachSendPipeline;
 use App\Library\AgencyOutreach\OutreachSendPlan;
 use App\Library\AgencyOutreach\OutreachStageMachine;
@@ -93,7 +95,10 @@ class OutreachRespondJob extends Base
             ->exists();
 
         $classification = OutreachClassification::of((string) $inbound->body, $linkRepeatUsed);
-        $decision = OutreachStageMachine::decide($member->stage, $classification);
+        $sequence = OutreachSequence::forWorkspace($eligible->workspace);
+        $faqMatched = OutreachFaq::forWorkspace($eligible->workspace)
+            ->match((string) $inbound->body, $classification->intent, (int) $member->campaign_id) !== null;
+        $decision = OutreachStageMachine::decide($member->stage, $classification, $sequence, $sequence->sentIdsFor($member), $faqMatched);
 
         if ($decision->stops()) {
             $stops->apply($member, $decision->action === OutreachDecision::OPT_OUT, $inbound->id);
@@ -139,6 +144,7 @@ class OutreachRespondJob extends Base
             intent: $decision->action === OutreachDecision::RESEND_LINK ? 'link_resend' : $classification->intent,
             scriptVersion: OutreachScript::forWorkspace($eligible->workspace)->version(),
             suppressAfterManualReply: true,
+            stepId: $decision->stepId,
         ));
 
         // 'already_claimed' means a concurrent run owns this reply: it is not a reason for silence.

@@ -28,7 +28,8 @@ class UiScriptTest extends TestCase
         $this->assertStringContainsString('{{agency.calendar_link}}', $html);
         $this->assertStringContainsString('Calendar link', $html);
         $this->assertStringContainsString('coming later', $html);
-        $this->assertStringContainsString('data-preview-target="message_3"', $html);
+        $this->assertStringContainsString('data-role="sequence-editor"', $html);
+        $this->assertStringContainsString('legacy-3', $html, 'The three-message flow is the starter sequence.');
         $this->assertStringContainsString('data-merge-insert="{{agency.name}}"', $html);
         $this->assertStringContainsString('data-merge-insert="{{prospect.company}}"', $html);
         $this->assertSame(0, AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->count(), 'Defaults are never persisted by merely viewing.');
@@ -81,6 +82,43 @@ class UiScriptTest extends TestCase
         $this->assertStringContainsString('calendar link', $warnings);
         $this->assertStringContainsString('nonsense.token', $warnings);
         $this->assertSame('No link here.', AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->value('message_3'));
+    }
+
+    public function test_the_editor_saves_a_variable_length_sequence_and_answers_and_an_emptied_list_stays_empty(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $this->authenticateAs($a['customer']);
+
+        $this->post($this->outreachRoute('script.update', $a['workspace']), [
+            'sequence_steps_present' => 1,
+            'sequence_steps' => [
+                ['id' => 'one', 'body' => 'First {{ Agency_Name }}', 'advance_on' => 'reply', 'enabled' => 1],
+                ['id' => '', 'body' => 'Second {{calendar_link}}', 'advance_on' => 'reply', 'enabled' => 1],
+                ['id' => 'nudge', 'body' => 'Still there?', 'advance_on' => 'time', 'delay_hours' => 12, 'enabled' => 1],
+                ['id' => 'four', 'body' => 'Fourth', 'advance_on' => 'reply', 'enabled' => 0],
+            ],
+            'faq_entries_present' => 1,
+            'faq_entries' => [['id' => 'q1', 'question' => 'Cost?', 'answer' => 'Free to start.', 'keywords' => 'cost, price']],
+            'faq_fallback' => 'continue',
+            'sequence_paused' => 0,
+        ])->assertSessionHas('flash_success');
+
+        $row = AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->first();
+        $this->assertCount(4, $row->sequence_steps);
+        $this->assertSame('First {{agency.name}}', $row->sequence_steps[0]['body']);
+        $this->assertNotSame('', $row->sequence_steps[1]['id'], 'A new step is given a stable id.');
+        $this->assertSame(12, $row->sequence_steps[2]['delay_hours']);
+        $this->assertFalse($row->sequence_steps[3]['enabled']);
+        $this->assertSame(['cost', 'price'], $row->faq_entries[0]['keywords']);
+        $this->assertSame('continue', $row->faq_fallback);
+
+        // The page shows the saved sequence to edit.
+        $html = $this->get($this->outreachRoute('script.show', $a['workspace']))->assertOk()->getContent();
+        $this->assertStringContainsString('Still there?', $html);
+
+        // Deleting every message posts an empty list, which is saved as empty (not ignored).
+        $this->post($this->outreachRoute('script.update', $a['workspace']), ['sequence_steps_present' => 1])->assertSessionHas('flash_success');
+        $this->assertSame([], AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->first()->sequence_steps);
     }
 
     public function test_an_invalid_calendar_url_is_refused_and_nothing_is_saved(): void

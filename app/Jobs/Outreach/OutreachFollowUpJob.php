@@ -5,6 +5,8 @@ namespace App\Jobs\Outreach;
 use App\Jobs\Base;
 use App\Library\AgencyOutreach\OutreachEligibility;
 use App\Library\AgencyOutreach\OutreachScript;
+use App\Library\AgencyOutreach\OutreachSequence;
+use App\Library\AgencyOutreach\OutreachScriptTokens;
 use App\Library\AgencyOutreach\OutreachScriptRenderer;
 use App\Library\AgencyOutreach\OutreachSendPipeline;
 use App\Library\AgencyOutreach\OutreachSendPlan;
@@ -28,7 +30,7 @@ use App\Models\AgencyProspectMessage;
 class OutreachFollowUpJob extends Base
 {
     /** Eligibility refusals that only HOLD the follow-up; any other refusal closes it. */
-    private const HOLD = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled'];
+    private const HOLD = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled', 'sequence_paused'];
 
     public function __construct(private readonly int $campaignMemberId)
     {
@@ -36,12 +38,6 @@ class OutreachFollowUpJob extends Base
 
     public function handle(OutreachEligibility $eligibility, OutreachSendPipeline $pipeline): void
     {
-        $key = 'outreach:followup:' . $this->campaignMemberId;
-
-        if (AgencyProspectMessage::query()->where('operation_key', $key)->exists()) {
-            return;
-        }
-
         $member = AgencyProspectCampaignMember::query()->where('id', $this->campaignMemberId)->first();
 
         if ($member === null
@@ -56,8 +52,10 @@ class OutreachFollowUpJob extends Base
         }
 
         $script = OutreachScript::forWorkspace($member->workspace);
+        $sequence = OutreachSequence::forWorkspace($member->workspace);
+        $step = $sequence->nextTimeStep($sequence->sentIdsFor($member));
 
-        if (! $script->followUpEnabled() || $this->prospectRepliedSinceLink($member)) {
+        if ($step === null || $this->prospectRepliedSinceLink($member, $step['id'])) {
             $this->cancel($member->id);
 
             return;
@@ -73,7 +71,15 @@ class OutreachFollowUpJob extends Base
             return;
         }
 
-        $body = OutreachScriptRenderer::render($script->get('followup_message'), $eligible->workspace, $eligible->prospect);
+        // One ledger key per member and step (the legacy follow-up keeps its original key).
+        $key = 'outreach:followup:' . $this->campaignMemberId
+            . ($step['id'] === OutreachSequence::LEGACY_FOLLOWUP ? '' : ':' . $step['id']);
+
+        if (AgencyProspectMessage::query()->where('operation_key', $key)->exists()) {
+            return;
+        }
+
+        $body = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $step['body']), $eligible->workspace, $eligible->prospect);
 
         if ($body === '') {
             $this->cancel($member->id);
@@ -89,12 +95,13 @@ class OutreachFollowUpJob extends Base
             stageFrom: $member->stage->value,
             stageTo: $member->stage->value,
             scriptVersion: $script->version(),
-        ), function (AgencyProspectCampaignMember $locked): ?string {
+            stepId: $step['id'],
+        ), function (AgencyProspectCampaignMember $locked) use ($step): ?string {
             if ($locked->followup_sent_at !== null || $locked->followup_cancelled_at !== null) {
                 return 'followup_closed';
             }
 
-            return $this->prospectRepliedSinceLink($locked) ? 'prospect_replied' : null;
+            return $this->prospectRepliedSinceLink($locked, $step['id']) ? 'prospect_replied' : null;
         });
 
         if ($result->skipReason === 'prospect_replied') {
@@ -103,14 +110,16 @@ class OutreachFollowUpJob extends Base
     }
 
     /** A reply after the link went out (or any reply when the link time is unknown) ends the nudge. */
-    private function prospectRepliedSinceLink(AgencyProspectCampaignMember $member): bool
+    private function prospectRepliedSinceLink(AgencyProspectCampaignMember $member, string $stepId = OutreachSequence::LEGACY_FOLLOWUP): bool
     {
         if ($member->last_inbound_at === null) {
             return false;
         }
 
-        return $member->booking_link_sent_at === null
-            || $member->last_inbound_at->greaterThan($member->booking_link_sent_at);
+        // The legacy follow-up waits on the booking link; a timed step waits on whatever we last sent.
+        $since = $stepId === OutreachSequence::LEGACY_FOLLOWUP ? $member->booking_link_sent_at : $member->last_outbound_at;
+
+        return $since === null || $member->last_inbound_at->greaterThan($since);
     }
 
     private function cancel(int $memberId): void

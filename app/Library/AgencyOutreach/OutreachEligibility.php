@@ -97,6 +97,10 @@ final class OutreachEligibility
             return OutreachEligibilityResult::refused($state === 'registration_required' ? 'verification_incomplete' : 'no_sending_number');
         }
 
+        if (OutreachSequence::forWorkspace($workspace)->paused()) {
+            return OutreachEligibilityResult::refused('sequence_paused');
+        }
+
         if ($requireAiActive && $member->isAiPaused()) {
             return OutreachEligibilityResult::refused('manual_hold');
         }

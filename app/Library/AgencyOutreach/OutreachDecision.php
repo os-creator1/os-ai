@@ -36,6 +36,7 @@ final class OutreachDecision
         public readonly bool $answerFirst = false,
         public readonly bool $scheduleFollowUp = false,
         public readonly string $reason = '',
+        public readonly ?string $stepId = null,
     ) {
     }
 

@@ -47,6 +47,7 @@ class AgencyProspectMessage extends Model
         'stage_from',
         'stage_to',
         'script_version',
+        'sequence_step_id',
         'actor_user_id',
         'failure_reason',
     ];

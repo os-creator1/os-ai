@@ -22,6 +22,7 @@ final class OutreachSendPlan
         public readonly bool $suppressAfterManualReply = false,
         /** When true the member's AI-paused state blocks it (everything automatic). */
         public readonly bool $requireAiActive = true,
+        public readonly ?string $stepId = null,
     ) {
     }
 }

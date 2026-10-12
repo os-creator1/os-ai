@@ -320,7 +320,8 @@ class AgencyProspectingController extends CustomerBaseController
             'summaries' => $service->summaries($workspace, $campaigns),
             'pausedForFunds' => $service->hasPausedForFunds($workspace),
             'sendingNumber' => $readiness->info()['number'] ?? null,
-            'defaultOpener' => \App\Library\AgencyOutreach\OutreachScript::forWorkspace($workspace)->get('message_1'),
+            'defaultOpener' => \App\Library\AgencyOutreach\OutreachSequence::forWorkspace($workspace)->enabledSteps()[0]['body']
+                ?? \App\Library\AgencyOutreach\OutreachScript::forWorkspace($workspace)->get('message_1'),
         ]);
     }
 
