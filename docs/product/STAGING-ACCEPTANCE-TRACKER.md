@@ -28,17 +28,17 @@ Nothing is marked *Deployed* or *Verified in the browser*: no one has exercised 
 | 28-day billing + Private Offers (flag OFF) | #440 | yes | passed | yes | not verified | no | Staging migrate + 28-day Prices (§D) |
 | Growth email verification for signed-out customers (login / 2FA / session-loss continuation, works with registration closed) | #447 | yes | passed | yes | not verified | no | Click a real verification link while logged out on staging |
 
-## B. Final integration wave (all lanes rebased onto staging `e82ce4fd` by merge; no PR opened by Claude)
+## B. Final integration wave (all lanes integrated with staging `e82ce4fd`; PRs opened by ChatGPT for human review)
 
 Test runs are throw-away workflows on `verify/*` branches (not part of any feature branch).
 
 | Lane | Branch | Final SHA | PR | Tests (disposable MySQL 8, CI) | Result |
 | --- | --- | --- | --- | --- | --- |
 | Agency Outreach V2 | `feature/agency-outreach-v2` | `bd031721` | **#448 open** | [run 38260388607](https://github.com/os-creator1/os-ai/actions/runs/38260388607): `tests/Feature/AgencyOutreach` 187 tests, 1097 assertions, 0 failures | Code implemented · Tests passed · PR open · not merged · not deployed · not browser-verified |
-| Onboarding V2 | `feature/onboarding-v2` | `1e1dbaef` (clean merge of staging into `66c40a54`) | Awaiting PR | [run 38264833241](https://github.com/os-creator1/os-ai/actions/runs/38264833241): 184 tests, 1173 assertions, 1 error + 3 failures, **all four reproduced identically on unchanged staging** ([baseline run 38267930835](https://github.com/os-creator1/os-ai/actions/runs/38267930835): 183 tests, 1156 assertions, same 1 error + 3 failures). No new failure from this branch | Code implemented · Tests passed except the 4 baseline failures below · Awaiting PR |
-| Invitation return-to-link | `feature/invitation-return-to-link` | `03337262` | Awaiting PR | [run 38264828848](https://github.com/os-creator1/os-ai/actions/runs/38264828848): AgencyClientProvisioningTest, ClientInvitationManagerTest, AgencyClientsHttpTest and `tests/Feature/Auth` (includes #447 continuation tests): 169 tests, 896 assertions, 0 failures | Code implemented · Tests passed · Awaiting PR |
-| Calendar Notifications V2 | `feature/calendar-notifications-v2` | `9d9650b1` | Awaiting PR | [run 38264074032](https://github.com/os-creator1/os-ai/actions/runs/38264074032): `tests/Feature/Calendar` + `tests/Feature/Mail` 494 tests, 2502 assertions, 0 failures | Code implemented · Tests passed · Awaiting PR |
-| Outbound email identity (tests only) | `feature/outbound-email-identity` | `46cac88f` | Awaiting PR | [run 38264108143](https://github.com/os-creator1/os-ai/actions/runs/38264108143): `tests/Feature/BusinessEmail` 179 tests, 723 assertions, 0 failures (includes `BusinessEmailSenderTest`) | Tests passed · Awaiting PR. No production code changed |
+| Onboarding V2 | `feature/onboarding-v2` | `1e1dbaef` (clean merge of staging into `66c40a54`) | **#449 draft** | [run 38264833241](https://github.com/os-creator1/os-ai/actions/runs/38264833241): 184 tests, 1173 assertions, 1 error + 3 failures, **all four reproduced identically on unchanged staging** ([baseline run 38267930835](https://github.com/os-creator1/os-ai/actions/runs/38267930835): 183 tests, 1156 assertions, same 1 error + 3 failures). No new failure from this branch | Code implemented · Baseline-reproduced CI exceptions · Draft PR, review required |
+| Invitation return-to-link | `feature/invitation-return-to-link` | `03337262` | **#450 draft** | [run 38264828848](https://github.com/os-creator1/os-ai/actions/runs/38264828848): AgencyClientProvisioningTest, ClientInvitationManagerTest, AgencyClientsHttpTest and `tests/Feature/Auth` (includes #447 continuation tests): 169 tests, 896 assertions, 0 failures | Code implemented · Tests passed · PR open or draft · not merged |
+| Calendar Notifications V2 | `feature/calendar-notifications-v2` | `9d9650b1` | **#451 open** | [run 38264074032](https://github.com/os-creator1/os-ai/actions/runs/38264074032): `tests/Feature/Calendar` + `tests/Feature/Mail` 494 tests, 2502 assertions, 0 failures | Code implemented · Tests passed · Awaiting PR |
+| Outbound email identity (tests only) | `feature/outbound-email-identity` | `46cac88f` | **#452 open** | [run 38264108143](https://github.com/os-creator1/os-ai/actions/runs/38264108143): `tests/Feature/BusinessEmail` 179 tests, 723 assertions, 0 failures (includes `BusinessEmailSenderTest`) | Tests passed · PR open · not merged. No production code changed |
 
 ### Corrections made in this wave
 - **Invitation return-to-link** (merge conflict with #447 in `LoginController`): both fixes kept. After login the order is
@@ -66,6 +66,11 @@ Also: a full `tests/Feature/Business` directory run in CI hits DB-creation privi
 `2026_11_12_100001_add_dynamic_sequences_to_agency_outreach` (Outreach, nullable/defaulted columns) and
 `2026_11_12_110001_add_configurable_notifications_to_booking_types` (Calendar, nullable columns) both sort after
 every migration currently on staging and touch different tables. Onboarding V2, Invitation and Outbound email add none.
+
+### Follow-up discovered during review
+- **Invitation 2FA backup-code path:** `TwoFactorController::updateBackUpCode` still redirects directly home after successful backup-code entry, bypassing pending email verification/invitation continuation. **PR #450 remains draft** until this branch gains a focused fix and passing tests.
+- **Baseline suspended-account test:** because it asserts an authenticated suspended user, examine real login behavior before dismissing it as a test-only artifact. **PR #449 remains draft**, with 3 baseline failures and 1 baseline error; do not present its run as green.
+- **PR tracking:** #448 Outreach, #449 Onboarding (draft), #450 Invitation (draft), #451 Calendar and #452 Outbound email are open and not merged. Checks and staged-browser acceptance remain separate.
 
 ## C. Billing / Private Offers findings (report only)
 
@@ -96,5 +101,4 @@ every migration currently on staging and touch different tables. Onboarding V2, 
 
 ## E. Rules observed
 
-No PRs opened, nothing merged into `staging`/`main`, no deployments, no real AI/Stripe/email/SMS
-calls, no production or staging database/credential access, no automation locks or gates edited.
+Claude implementation lanes did not open PRs, merge or deploy. ChatGPT opened PRs #448–#452 for human review (including draft safety-review PRs #449 and #450). No deployment, real AI/Stripe/email/SMS calls, staging/production DB/credential access, or automation lock/gate changes in this stabilization pass.
