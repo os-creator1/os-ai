@@ -843,6 +843,66 @@ class AgencyClientProvisioningTest extends TestCase
         $this->assertTrue($account->fresh()->hasVerifiedEmail());
     }
 
+    /** @return array{0: User, 1: string, 2: string, 3: object} account with a pending 2FA challenge and a backup code */
+    private function accountAtBackupCodeChallenge(): array
+    {
+        [$agency, $owner] = $this->agency();
+        $email = 'backup' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $owner, $email, 'Backup Co');
+        $account = $this->realAccount($email);
+        $this->markPendingTwoFactor($account);
+        $account = $account->fresh();
+        $account->forceFill(['two_factor_backup_code' => json_encode(['111111', '222222'])])->save();
+        $this->actingAs($account->fresh());
+
+        return [$account, route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]), $token, $invitation];
+    }
+
+    public function test_backup_code_two_factor_returns_to_the_pending_invitation_and_consumes_the_code_once(): void
+    {
+        [$account, $claim, $token, $invitation] = $this->accountAtBackupCodeChallenge();
+        \App\Library\Workspace\ClientInvitationReturn::remember($invitation->uid, $token);
+
+        $this->post(route('verify.backup.store'), ['two_factor_code' => 111111])->assertRedirect($claim);
+
+        $this->assertSame(['222222'], json_decode($account->fresh()->two_factor_backup_code, true), 'The used code is consumed.');
+        $this->assertNull(\App\Library\Workspace\ClientInvitationReturn::pull(), 'The memory is consumed: no loop.');
+        $this->assertNull($invitation->fresh()->accepted_at, 'Returning to the invitation never accepts it.');
+
+        // The same code cannot be replayed.
+        $this->post(route('verify.backup.store'), ['two_factor_code' => 111111])->assertSessionHas('status', 'error');
+    }
+
+    public function test_backup_code_two_factor_completes_a_pending_verification_link_first_and_keeps_the_invitation(): void
+    {
+        [$account, $claim, $token, $invitation] = $this->accountAtBackupCodeChallenge();
+        $verify = \Illuminate\Support\Facades\URL::temporarySignedRoute('verification.verify', now()->addMinutes(60), [
+            'id' => $account->getKey(), 'hash' => sha1($account->getEmailForVerification()),
+        ]);
+        $parts = parse_url($verify);
+        \App\Library\PlatformBilling\PendingVerification::remember($parts['path'] . '?' . $parts['query']);
+        \App\Library\Workspace\ClientInvitationReturn::remember($invitation->uid, $token);
+
+        $location = $this->post(route('verify.backup.store'), ['two_factor_code' => 222222])->headers->get('Location');
+
+        $this->assertStringContainsString($parts['path'], $location);
+        $this->assertNotNull(session(\App\Library\Workspace\ClientInvitationReturn::KEY), 'The invitation is still remembered for after verification.');
+        $this->assertNull($invitation->fresh()->accepted_at);
+    }
+
+    public function test_a_wrong_backup_code_returns_nowhere_and_an_invalid_invitation_is_never_accepted(): void
+    {
+        [$account, $claim, $token, $invitation] = $this->accountAtBackupCodeChallenge();
+
+        // A tampered token is never remembered, and the claim route refuses it.
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => 'wrong' . $token]))->assertViewIs('client_invitations.invalid');
+        $this->assertNull(session(\App\Library\Workspace\ClientInvitationReturn::KEY));
+
+        $this->post(route('verify.backup.store'), ['two_factor_code' => 999999])->assertSessionHas('status', 'error');
+        $this->assertSame(['111111', '222222'], json_decode($account->fresh()->two_factor_backup_code, true));
+        $this->assertNull($invitation->fresh()->accepted_at);
+    }
+
     public function test_an_expired_or_revoked_invitation_is_never_remembered_for_return(): void
     {
         [$agency, $owner] = $this->agency();
