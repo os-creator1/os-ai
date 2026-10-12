@@ -308,6 +308,59 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertNotSame(OnboardingStatus::Completed, $this->onboardingFor($user)->status);
     }
 
+    public function test_finish_after_the_business_and_location_completes_once_without_services_or_analysis(): void
+    {
+        [$user] = $this->paidSignup();
+
+        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation', 'local_seo', 'reputation', 'automation'], 'priority_goal' => 'reputation'])
+            ->assertSessionHasNoErrors();
+        $this->assertSame('reputation', $this->onboardingFor($user)->primary_goals[0], 'The priority goal comes first; no goal is dropped.');
+        $this->assertCount(4, $this->onboardingFor($user)->primary_goals);
+
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
+        $this->post(route('customer.onboarding.location.store'), [
+            'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
+            'region' => 'TX', 'country_code' => 'US', 'public_address' => '1',
+        ]);
+        // Services are skipped; the analysis is never requested.
+        $this->post(route('customer.onboarding.services.skip'))->assertSessionHasNoErrors();
+
+        $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
+
+        $this->assertSame(OnboardingStatus::Completed, $this->onboardingFor($user)->status);
+        $this->assertSame(BusinessStatus::Active, Business::query()->sole()->status);
+
+        // One click is enough, a refresh does not reopen onboarding, and a repeat is idempotent.
+        $this->get(route('user.home'))->assertOk();
+        $this->post(route('customer.onboarding.later'))->assertRedirect(route('user.home'));
+        $this->assertSame(OnboardingStatus::Completed, $this->onboardingFor($user)->status);
+    }
+
+    public function test_services_can_be_added_in_one_session_with_blank_prices_and_an_empty_submit_changes_nothing(): void
+    {
+        [$user] = $this->paidSignup();
+        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => []])->assertSessionHasNoErrors();
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
+        $this->post(route('customer.onboarding.location.store'), [
+            'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
+            'region' => 'TX', 'country_code' => 'US', 'public_address' => '1',
+        ]);
+
+        $this->post(route('customer.onboarding.services.store'), ['services' => [
+            ['name' => 'Photo booth hire', 'starting_price' => '', 'is_primary' => '1'],
+            ['name' => 'Props package'],
+            ['name' => 'Backdrop rental', 'starting_price' => '45.50'],
+        ]])->assertSessionHasNoErrors();
+
+        $business = Business::query()->sole();
+        $this->assertSame(['Photo booth hire', 'Props package', 'Backdrop rental'], $business->services()->orderBy('sort_order')->pluck('name')->all());
+        $this->assertSame(1, $business->services()->where('is_primary', true)->count());
+
+        // Revisiting and submitting nothing keeps the services as they are.
+        $this->post(route('customer.onboarding.services.store'), ['services' => []])->assertSessionHasNoErrors();
+        $this->assertSame(3, $business->services()->where('status', 'active')->count());
+    }
+
     // E ----------------------------------------------------------------
 
     public function test_a_cancelled_payment_has_no_plan_no_onboarding_and_no_activation(): void
@@ -499,8 +552,9 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $onboarding = $this->onboardingFor($user);
         $this->assertNotNull($onboarding, 'The Agency owner configures their OWN Business through first-run onboarding.');
         $this->assertSame($business->id, $onboarding->business_id);
-        $this->assertTrue((bool) $onboarding->is_required);
+        $this->assertFalse((bool) $onboarding->is_required, 'An Agency is never FORCED through an individual Business setup.');
         $this->assertSame(BusinessStatus::Draft, $business->status);
+        $this->get(route('user.home'))->assertOk();
 
         $this->walkWizardToResults($onboarding);
         $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));

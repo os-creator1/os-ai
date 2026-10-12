@@ -177,7 +177,12 @@ class V1SignupFinalAcceptanceTest extends TestCase
         $onboarding = CustomerOnboarding::query()->sole();
         $this->assertSame($business->id, $onboarding->business_id);
         $this->assertSame(BusinessStatus::Draft, $business->status);
-        $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'goals']));
+        if ($tier === WorkspacePlanTier::Agency) {
+            // An Agency reaches its Agency features without an individual Business setup.
+            $this->get(route('user.home'))->assertOk();
+        } else {
+            $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'goals']));
+        }
 
         $this->walkWizard($onboarding);
         $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));

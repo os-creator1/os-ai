@@ -50,6 +50,7 @@ class OnboardingManager
      * assets can be skipped").
      */
     private const SKIPPABLE_STEPS = [
+        OnboardingStep::Services,
         OnboardingStep::Assets,
     ];
 
@@ -67,6 +68,29 @@ class OnboardingManager
      * unchanged (startForCustomer() is already idempotent — RFC-001 §10.4).
      * Dispatches CustomerOnboardingStarted only on genuine first creation.
      */
+    /**
+     * Whether this customer's account is an Agency. An Agency's Workspace features
+     * do not depend on an individual local Business, so no individual-Business
+     * setup is ever REQUIRED of it (it can still add its own Business explicitly).
+     */
+    public function isAgencyAccount(Customer $customer): bool
+    {
+        $workspaces = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+        $entitlements = app(\App\Library\Entitlement\EntitlementManager::class);
+
+        foreach (\App\Models\Workspace::query()->where('owner_user_id', $customer->user_id)->get() as $workspace) {
+            try {
+                if ($entitlements->getWorkspaceEntitlementSummary($workspace)->tier === \App\Enums\Entitlement\WorkspacePlanTier::Agency) {
+                    return true;
+                }
+            } catch (\Throwable) {
+                // A Workspace with no readable plan is not an Agency.
+            }
+        }
+
+        return false;
+    }
+
     public function start(Customer $customer, bool $required = false): CustomerOnboarding
     {
         $onboarding = $this->onboardingRepository->startForCustomer($customer, $required);
@@ -287,7 +311,10 @@ class OnboardingManager
         return DB::transaction(function () use ($onboarding, $customer, $services) {
             $business = $this->resolveOwnedBusiness($onboarding, $customer);
 
-            $this->businessManager->syncServices($customer, $business, $services);
+            // No rows is "nothing to change", never "remove every service".
+            if ($services !== []) {
+                $this->businessManager->syncServices($customer, $business, $services);
+            }
 
             return $this->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Assets);
         });
@@ -395,28 +422,28 @@ class OnboardingManager
      */
     private function assertCompletionPrerequisites(CustomerOnboarding $onboarding, Customer $customer): void
     {
+        // Business identity and its location are what the product needs; everything
+        // after them (services, assets, analysis) can be finished later.
+        foreach ([OnboardingStep::Business, OnboardingStep::Location] as $required) {
+            if (! in_array($required->value, $onboarding->completed_steps ?? [], true)) {
+                throw new InvalidArgumentException("The [{$required->value}] step must be completed before onboarding can be completed.");
+            }
+        }
+
         $business = $this->resolveOwnedBusiness($onboarding, $customer);
 
         if ($business->locations()->where('is_primary', true)->count() !== 1) {
             throw new InvalidArgumentException('Exactly one primary location is required before onboarding can be completed.');
         }
 
-        if ($business->services()->where('status', BusinessServiceStatus::Active)->count() < 1) {
-            throw new InvalidArgumentException('At least one active service is required before onboarding can be completed.');
-        }
+        // Services, the analysis and its recommendations are optional: a customer may
+        // finish without them and add them later. The invariant that DOES hold is that
+        // services, once any exist, have exactly one primary.
+        $active = $business->services()->where('status', BusinessServiceStatus::Active);
 
-        if ($business->services()->where('status', BusinessServiceStatus::Active)->where('is_primary', true)->count() !== 1) {
-            throw new InvalidArgumentException('Exactly one active primary service is required before onboarding can be completed.');
-        }
-
-        if ($onboarding->analysis_payload === null) {
-            throw new InvalidArgumentException('The initial analysis must complete before onboarding can be completed.');
-        }
-
-        $findings = $onboarding->analysis_payload['findings'] ?? [];
-
-        if ($findings !== [] && $onboarding->first_value_action_key === null) {
-            throw new InvalidArgumentException('Complete a first-value action before finishing onboarding.');
+        if ((clone $active)->count() > 0
+            && (clone $active)->where('is_primary', true)->count() !== 1) {
+            throw new InvalidArgumentException('Exactly one active primary service is required when services are listed.');
         }
     }
 

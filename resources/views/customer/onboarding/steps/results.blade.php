@@ -32,4 +32,5 @@
 <form method="POST" action="{{ route('customer.onboarding.complete') }}" class="mt-2">
     @csrf
     <button type="submit" class="btn btn-success">Finish setup</button>
+    <p class="text-caption mt-50 mb-0">The recommendations above are optional. You can act on them later from your dashboard.</p>
 </form>

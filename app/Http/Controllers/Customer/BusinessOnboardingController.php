@@ -79,7 +79,7 @@ class BusinessOnboardingController extends CustomerBaseController
             fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveGoalsStep(
                 $onboarding,
                 $customer,
-                $request->validated('primary_goals')
+                $this->orderedGoals($request->validated('primary_goals') ?? [], $request->validated('priority_goal'))
             )
         );
     }
@@ -112,7 +112,7 @@ class BusinessOnboardingController extends CustomerBaseController
             fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveServicesStep(
                 $onboarding,
                 $customer,
-                $request->validated('services')
+                $request->validated('services') ?? []
             )
         );
     }
@@ -132,6 +132,13 @@ class BusinessOnboardingController extends CustomerBaseController
      * The only step the RFC permits skipping without data (RFC-001 §23).
      * OnboardingManager::skipStep() itself rejects any other step.
      */
+    public function skipServices(): RedirectResponse
+    {
+        return $this->saveStep(
+            fn (CustomerOnboarding $onboarding) => $this->onboarding->skipStep($onboarding, OnboardingStep::Services)
+        );
+    }
+
     public function skipAssets(): RedirectResponse
     {
         return $this->saveStep(
@@ -206,9 +213,11 @@ class BusinessOnboardingController extends CustomerBaseController
         try {
             $this->onboarding->complete($onboarding, $customer);
         } catch (InvalidArgumentException) {
+            // Only the business identity and its primary location are required; send the
+            // customer to the step that is actually missing instead of back to Results.
             return redirect()
-                ->route('customer.onboarding.show', ['step' => 'results'])
-                ->withErrors(['onboarding' => 'Finish the required steps before completing onboarding.']);
+                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
+                ->withErrors(['onboarding' => 'Add your business and its primary location first, then you can finish.']);
         } catch (WorkspacePlanUnassignedException | InactiveWorkspacePlanException | SuspendedWorkspacePlanException) {
             // No usable paid plan: the completion rolled back and the
             // Business stays Draft.
@@ -227,6 +236,18 @@ class BusinessOnboardingController extends CustomerBaseController
      * instead of a raw 500 — ownership failures (AuthorizationException)
      * are left to propagate as a 403 via the framework's exception handler.
      */
+    /** The selected goals, the optional priority first (the order is the only prioritisation stored). */
+    private function orderedGoals(array $goals, ?string $priority): array
+    {
+        $goals = array_values(array_unique($goals));
+
+        if ($priority !== null && in_array($priority, $goals, true)) {
+            $goals = array_values(array_unique([$priority, ...$goals]));
+        }
+
+        return $goals;
+    }
+
     private function saveStep(Closure $action): RedirectResponse
     {
         $onboarding = $this->currentOnboarding();
