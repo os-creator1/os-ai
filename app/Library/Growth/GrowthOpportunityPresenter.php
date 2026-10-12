@@ -54,6 +54,8 @@ final class GrowthOpportunityPresenter
             'confidence' => $this->confidenceLabel((float) $o->confidence),
             'priority_score' => (int) $o->priority_score,
             'state' => $this->state($o),
+            // The engine's own status: a prepared action the customer has not yet approved.
+            'awaiting_approval' => $o->status === OpportunityStatus::AwaitingApproval && $o->freshness !== OpportunityFreshness::Stale,
             'state_label' => $this->stateLabel($this->state($o)),
             'location_id' => $o->location_id,
             'location_name' => $locationName,

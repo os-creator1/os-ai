@@ -667,7 +667,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
         $activity = $snapshot->band(DashboardSnapshot::BAND_ACTIVITY);
 
         $this->assertSame(
-            ['new_contacts', 'new_conversations', 'messages_received'],
+            ['new_contacts', 'new_conversations', 'appointments_booked', 'messages_received'],
             array_map(fn ($headline) => $headline->key, $headlines['items']),
             'Business performance still carries exactly its three figures.',
         );

@@ -206,7 +206,7 @@ class CalendarController extends Controller
      * Create through the canonical engine. `staff` is a user id for an explicit
      * assignment, or `auto` for round-robin; either way it is ONE call.
      */
-    public function store(Request $request, string $workspaceUid, string $businessUid, string $locationUid): RedirectResponse
+    public function store(Request $request, string $workspaceUid, string $businessUid, string $locationUid): RedirectResponse|\Illuminate\Http\JsonResponse
     {
         [, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
 
@@ -237,11 +237,17 @@ class CalendarController extends Controller
             return $this->refused($refusal)->withInput();
         }
 
-        return redirect()
-            ->route('customer.workspaces.businesses.calendar.appointments.show', [
-                $workspaceUid, $businessUid, $locationUid, $appointment->uid,
-            ])
-            ->with('flash_success', 'Appointment booked.');
+        $showUrl = route('customer.workspaces.businesses.calendar.appointments.show', [
+            $workspaceUid, $businessUid, $locationUid, $appointment->uid,
+        ]);
+
+        // Home V2 action drawer: the SAME write, answered as JSON so the drawer can report
+        // success only once the engine has confirmed the booking.
+        if ($request->expectsJson()) {
+            return response()->json(['status' => 'success', 'message' => 'Appointment booked.', 'url' => $showUrl], 201);
+        }
+
+        return redirect($showUrl)->with('flash_success', 'Appointment booked.');
     }
 
     public function showAppointment(string $workspaceUid, string $businessUid, string $locationUid, string $appointmentUid): View
@@ -393,6 +399,14 @@ class CalendarController extends Controller
 
     private function refused(BookingRefusedException $refusal, ?RedirectResponse $to = null): RedirectResponse
     {
+        // A JSON caller (the Home action drawer) gets the same plain-language refusal, with a
+        // 422, instead of a redirect it cannot tell apart from success.
+        if (request()->expectsJson()) {
+            throw new \Illuminate\Http\Exceptions\HttpResponseException(
+                response()->json(['status' => 'error', 'message' => $this->refusalMessage($refusal)], 422)
+            );
+        }
+
         return ($to ?? back())->with('flash_error', $this->refusalMessage($refusal));
     }
 

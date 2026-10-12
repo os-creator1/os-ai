@@ -46,7 +46,7 @@
 
         <div class="row g-2">
             @foreach($headlines['items'] as $headline)
-                <div class="col-12 col-sm-6 col-xl-4">
+                <div class="col-12 col-sm-6 {{ count($headlines['items']) > 3 ? 'col-xl-3' : 'col-xl-4' }}">
                     <article class="border rounded p-1 h-100" data-role="headline" data-headline="{{ $headline->key }}"
                              data-trend="{{ $headline->comparison->trend->value }}" data-polarity="{{ $headline->polarity->value }}"
                              @if($headline->judgement !== null) data-judgement="{{ $headline->judgement }}" @endif>

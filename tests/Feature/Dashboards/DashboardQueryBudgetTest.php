@@ -74,7 +74,21 @@ class DashboardQueryBudgetTest extends TestCase
      */
     // 13 -> 17 with Home = Growth Center: the Growth band reads the Location ACL ids, the top
     // recommendations, the latest score and (only when the list is full) one open count.
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 17;
+    //
+    // 17 -> 25 with Home V2 (command center), for a Calendar-entitled Business that has finished setup
+    // (every Dashboard fixture Business now has — see completeCalendarSetup()). Eight reads, each bounded
+    // and flat in rows, contacts, conversations and messages:
+    //   1. business_locations the actor may reach (CalendarScheduleService::accessibleLocations), and
+    //      2. the guard's per-Location read inside it (one Location here);
+    //   3. booking_types at those Locations (LIMIT 10);
+    //   4. the staff pool, 5. LocationAccessGuard's Location read for each pool member, and
+    //   6. the availability-exists check — BookingTypeManager's own readiness, evaluated for at most
+    //      3 booking types (this fixture has one);
+    //   7. appointments booked, ONE statement carrying every window (activity + both KPI periods);
+    //   8. the cached MoveExplanation read that Home now always makes, because the move is selected
+    //      even when Growth rendered (it used to be skipped), exactly as 19.C budgets it.
+    // A Business with no Calendar entitlement pays only the eighth.
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 25;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
@@ -151,10 +165,10 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(self::BUSINESS_HOME_ANALYTICS, $cost['analytics']);
         $this->assertSame(self::BUSINESS_HOME_CONVERSATIONS, $cost['conversations']);
 
-        $this->assertLessThanOrEqual(18, $cost['dashboard'], 'Contract §16: the dashboard-owned ceiling, Recent work included.');
+        $this->assertLessThanOrEqual(26, $cost['dashboard'], 'Contract §16 ceiling (18) plus the eight bounded Home V2 reads documented above.');
         $this->assertLessThanOrEqual(7, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
-        $this->assertLessThanOrEqual(31, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling.');
+        $this->assertLessThanOrEqual(39, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling (31) plus the eight Home V2 reads.');
 
         // Within the TTL the CACHED Business performance figures cost nothing.
         // What remains is the one read deliberately never cached: Recent work

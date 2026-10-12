@@ -266,8 +266,8 @@ class BusinessHomeRecentWorkTest extends TestCase
         $order = $this->bandOrder($this->home()->assertOk()->getContent());
 
         $this->assertSame(
-            ['headlines', 'visibility', 'conversations', 'automations', 'recent_work', 'actions'],
-            array_values(array_filter($order, fn (string $band) => in_array($band, ['headlines', 'visibility', 'conversations', 'automations', 'recent_work', 'actions'], true))),
+            ['headlines', 'handling', 'visibility', 'conversations', 'automations', 'actions'],
+            array_values(array_filter($order, fn (string $band) => in_array($band, ['headlines', 'handling', 'visibility', 'conversations', 'automations', 'actions'], true))),
         );
     }
 
@@ -296,14 +296,14 @@ class BusinessHomeRecentWorkTest extends TestCase
 
         // With the permissions, both are links.
         $this->authenticateAs($customer);
-        $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'recent_work');
+        $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'handling');
 
         $this->assertSame(2, substr_count($band, 'data-role="recent-work-link"'));
         $this->assertStringNotContainsString('data-role="recent-work-text"', $band);
 
         // Without them, the same two facts still render — as text.
         $this->authenticateAs($customer, array_values(array_diff($this->allCustomerPermissions(), ['website', 'view_google_business_profile'])));
-        $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'recent_work');
+        $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'handling');
 
         $this->assertStringContainsString('Website version 3 published', $band, 'The event happened either way.');
         $this->assertStringContainsString('Google connected', $band);
@@ -356,7 +356,7 @@ class BusinessHomeRecentWorkTest extends TestCase
         $this->websiteRevision($business, 1, $this->hoursAgo(2));
         $this->authenticateAs($customer);
 
-        $band = $this->bandText($this->home()->assertOk()->getContent(), 'recent_work');
+        $band = $this->bandText($this->home()->assertOk()->getContent(), 'handling');
 
         $this->assertStringContainsString('Website version 1 published', $band);
         $this->assertDoesNotMatchRegularExpression('/\b(balance|payment|invoice|top.?up|prospect|campaign|outreach)\b/i', $band);

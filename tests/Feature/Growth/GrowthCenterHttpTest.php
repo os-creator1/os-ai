@@ -120,6 +120,8 @@ class GrowthCenterHttpTest extends TestCase
         $this->conversation([['incoming', 30], ['outgoing', 20]]);
         $this->conversation([['incoming', 50], ['outgoing', 40]]);
         $this->conversation([['incoming', 60], ['outgoing', 55]]);
+        // A business that can take bookings is out of Home's setup journey, so Home speaks its all-clear.
+        $this->assignStaff($this->bookingType(), null, 3);
         $this->evaluateGrowth();
         // Clear every opportunity the bare fixture legitimately has.
         DB::table('opportunities')->where('business_id', $this->business->id)->update(['freshness' => 'stale', 'stale_at' => now()]);
@@ -143,7 +145,7 @@ class GrowthCenterHttpTest extends TestCase
         $page->assertSee('data-band="growth"', false);
         $page->assertSee('Needs your attention');
         $page->assertSee('3 new leads have had no reply for 24+ hours — $2,100 in pipeline value.');   // the factual context
-        $page->assertSee('data-role="growth-item-action"', false);                                     // one action
+        $page->assertSee('data-role="next-best-move-action"', false);                                  // one action, on the one move
         $page->assertSee('View leads');
         $page->assertSee('data-role="growth-health-score"', false);                                    // health is secondary, still there
         $page->assertSee('data-role="growth-ask-advisor"', false);

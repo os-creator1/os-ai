@@ -186,8 +186,7 @@ class BusinessHomeActivityTest extends TestCase
         $this->assertSame('3 new contacts', $activity['items'][0]['text'], 'An hourly visit still summarises the day, not the last two hours.');
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('Business activity', $this->mainText($html));
-        $this->assertStringContainsString('Today so far', $this->mainText($html));
+        $this->assertStringContainsString('Today so far, you gained 3 new contacts', $this->mainText($html), 'The briefing sentence, from the same counts.');
     }
 
     public function test_a_visit_days_ago_counts_from_that_visit(): void
@@ -327,10 +326,10 @@ class BusinessHomeActivityTest extends TestCase
         $this->contactsAt($business, 2, $this->ago('1 day'));
         $this->receivedAt($business, 3, $this->ago('1 day'));
 
-        $main = $this->mainText($this->home()->assertOk()->getContent());
+        $main = $this->mainTextWithoutAsk($this->home()->assertOk()->getContent());
 
         $this->assertDoesNotMatchRegularExpression(
-            '/\b(leads?|bookings?|appointments?|revenue|sales|visitors?|page views?|impressions?|rankings?|seo|conversion(s| rate)?|roi)\b/i',
+            '/\b(leads?|bookings?|revenue|sales|visitors?|page views?|impressions?|rankings?|seo|conversion(s| rate)?|roi)\b/i',
             $main,
             'None of these has a canonical source in this application.'
         );
