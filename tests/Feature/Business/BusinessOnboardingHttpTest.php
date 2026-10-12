@@ -898,10 +898,16 @@ class BusinessOnboardingHttpTest extends TestCase
                 $entitlementManager->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Suspended, $admin->id, 'Fixture.');
                 break;
             case 'business_slot_allocation_required':
+                // Contract 13: one Business per Workspace (unique businesses.workspace_id), and the
+                // seeded Core/Growth catalog has business_slot_max == business_slot_included (1), so
+                // this denial is unreachable through seeded data. Reach it honestly: a catalog that
+                // permits more slots than are allocated, with the Workspace's single Business in use.
                 $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
-                for ($i = 0; $i < 3; $i++) {
-                    $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => "Existing {$i}"]));
-                }
+                \Illuminate\Support\Facades\DB::table((new \App\Models\WorkspacePlanCatalog())->getTable())
+                    ->where('tier', WorkspacePlanTier::Core->value)
+                    ->update(['business_slot_max' => 5]);
+                $existing = $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Existing']));
+                $businessRepository->updateStatus($existing, \App\Enums\Business\BusinessStatus::Active);
                 break;
             case 'business_slot_limit_exceeded':
                 // Customer Experience Slice 1A (RFC-004 §33.2): Core offers no additional Business slot.

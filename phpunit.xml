@@ -34,6 +34,8 @@
         <server name="BCRYPT_ROUNDS" value="4"/>
         <server name="CACHE_DRIVER" value="array"/>
         <server name="MAIL_MAILER" value="array"/>
+        <server name="NOCAPTCHA_IN_LOGIN" value="false"/>
+        <server name="NOCAPTCHA_IN_REGISTRATION" value="false"/>
         <server name="QUEUE_CONNECTION" value="sync"/>
         <server name="SESSION_DRIVER" value="array"/>
     </php>
