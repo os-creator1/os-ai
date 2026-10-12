@@ -365,8 +365,11 @@ final class OfferReconciler
                         return;
                     }
 
-                    // Ours: record it so the closing release below covers it.
-                    $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_APPLIED, $proved, $subscription);
+                    // Ours. The id is noted on the subscription so the closing release
+                    // below covers it, but the REDEMPTION stays `pending`: it is
+                    // completed only after local finalization has succeeded, so a
+                    // failure there is retried by the sweep.
+                    PlatformSubscription::query()->whereKey($subscription->id)->update(['provider_schedule_id' => $proved]);
                     $subscription->refresh();
                 }
 
@@ -377,8 +380,9 @@ final class OfferReconciler
                 app(\App\Library\PlatformBilling\PlatformSubscriptionManager::class)
                     ->applyProviderSubscription($subscription->refresh(), (string) $subscription->provider_subscription_id);
 
+                // Closing the agreement (which also releases OUR schedule and marks
+                // the redemption complete) is the LAST step.
                 $this->endPrivatePricing($subscription->refresh());
-                $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
 
                 return;
             }
@@ -404,18 +408,24 @@ final class OfferReconciler
                 // The promotion's window closed before we could schedule it
                 // (a long outage): go straight to the standard price, without
                 // a proration line.
-                $snapshot = $this->gateway->changeSubscriptionPrice(
-                    (string) $subscription->provider_subscription_id,
-                    (string) $paid[1]['price_id'],
-                    prorate: false,
-                    idempotencyKey: 'offer-catchup:' . $redemption->uid,
-                );
-                $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
+                // A retry after a failed finalization finds the provider already
+                // on the standard Price: no second provider call is made.
+                if ((string) $current->providerPriceId !== (string) $paid[1]['price_id']) {
+                    $this->gateway->changeSubscriptionPrice(
+                        (string) $subscription->provider_subscription_id,
+                        (string) $paid[1]['price_id'],
+                        prorate: false,
+                        idempotencyKey: 'offer-catchup:' . $redemption->uid,
+                    );
+                }
 
                 // The shared finalizer records the new Price, period and lifecycle
-                // state (and observes the agreement) instead of waiting for a webhook.
+                // state FIRST; the retry marker is cleared only once it has
+                // succeeded, so a failure here is picked up by the next sweep.
                 app(\App\Library\PlatformBilling\PlatformSubscriptionManager::class)
                     ->applyProviderSubscription($subscription->refresh(), (string) $subscription->provider_subscription_id);
+
+                $this->markSchedule($redemption, PlatformPrivateOfferRedemption::SCHEDULE_NONE);
 
                 return;
             }

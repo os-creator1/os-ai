@@ -191,6 +191,10 @@ final class PrivateOfferRedemptionManager
         }
 
         if (! $offer->isBillingChange()) {
+            if ($this->offerCurrencyIsStale($offer)) {
+                return $view;
+            }
+
             if ($subscription !== null && $this->isLive($subscription)) {
                 $view['state'] = 'subscribed';
 
@@ -215,7 +219,8 @@ final class PrivateOfferRedemptionManager
         // ---- billing change ------------------------------------------------
         $existing = $this->existingTermsOf($subscription);
 
-        if ($existing === null) {
+        if ($existing === null
+            || (string) $subscription->billing_cycle_snapshot !== (string) $offer->catalog->billing_cycle) {
             $view['state'] = 'unavailable';
 
             return $view;
@@ -256,6 +261,13 @@ final class PrivateOfferRedemptionManager
 
         $this->assertRedeemable($offer);
         $this->assertIdentity($offer, $actor);
+
+        // The offer's Stripe Price, terms and the subscription's stored currency
+        // must be one currency; a catalog that has since moved currency makes the
+        // offer stale rather than letting it be charged under another label.
+        if ($this->offerCurrencyIsStale($offer)) {
+            throw PlatformBillingException::because(PlatformBillingException::OFFER_UNAVAILABLE);
+        }
 
         $workspace = $this->workspaceFor($offer, $actor, $workspaceUid)
             ?? throw PlatformBillingException::because(match (true) {
@@ -494,6 +506,12 @@ final class PrivateOfferRedemptionManager
             throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
         }
 
+        // A billing change is price-only. An annual subscription must never be
+        // silently turned into a 28-day one (or any cadence change) by an offer.
+        if ((string) $subscription->billing_cycle_snapshot !== (string) $offer->catalog->billing_cycle) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
+        }
+
         // The subscription's price is held in ITS snapshot currency; terms are
         // calculated in the offer's. Different currencies cannot be compared.
         if (strcasecmp((string) $subscription->currency_code, (string) $this->currencyOf($offer)->code) !== 0) {
@@ -572,6 +590,31 @@ final class PrivateOfferRedemptionManager
      */
     private function pushBillingChange(PlatformPrivateOfferRedemption $redemption, PlatformSubscription $subscription, OfferTerms $terms): void
     {
+        // One push OR one settlement per redemption at a time. Settlement reads
+        // provider state; without this, an early read showing no schedule could
+        // release a reservation whose push was still on the wire.
+        $lock = \Illuminate\Support\Facades\Cache::lock('offer-push:' . $redemption->id, 120);
+
+        if (! $lock->get()) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_IN_PROGRESS);
+        }
+
+        try {
+            $this->pushBillingChangeLocked($redemption, $subscription, $terms);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function pushBillingChangeLocked(PlatformPrivateOfferRedemption $redemption, PlatformSubscription $subscription, OfferTerms $terms): void
+    {
+        // A reservation settled (released) while this push waited is never pushed.
+        $fresh = PlatformPrivateOfferRedemption::query()->find($redemption->id);
+
+        if ($fresh === null || $fresh->state !== PlatformPrivateOfferRedemption::STATE_RESERVED) {
+            throw PlatformBillingException::because(PlatformBillingException::OFFER_UNAVAILABLE);
+        }
+
         $paid = $terms->paidPhases();
         $effectiveAt = CarbonImmutable::parse((string) $paid[0]['starts_at']);
 
@@ -698,6 +741,29 @@ final class PrivateOfferRedemptionManager
      */
     private function settleStaleBillingChange(PlatformPrivateOfferRedemption $redemption, PlatformSubscription $subscription): void
     {
+        $lock = \Illuminate\Support\Facades\Cache::lock('offer-push:' . $redemption->id, 120);
+
+        // A push is on the wire: its outcome (including a lost response) is
+        // reconciled by a later sweep, never decided here.
+        if (! $lock->get()) {
+            return;
+        }
+
+        try {
+            $fresh = PlatformPrivateOfferRedemption::query()->find($redemption->id);
+
+            if ($fresh === null || $fresh->state !== PlatformPrivateOfferRedemption::STATE_RESERVED) {
+                return;
+            }
+
+            $this->settleStaleBillingChangeLocked($fresh, $subscription);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function settleStaleBillingChangeLocked(PlatformPrivateOfferRedemption $redemption, PlatformSubscription $subscription): void
+    {
         try {
             $live = $this->gateway->retrieveSubscription((string) $subscription->provider_subscription_id);
         } catch (\Throwable $e) {
@@ -723,7 +789,7 @@ final class PrivateOfferRedemptionManager
 
             if ($proved !== null && $proved === (string) $live->scheduleId) {
                 try {
-                    $this->pushBillingChange($redemption, $subscription, OfferTerms::fromArray($redemption->terms_snapshot));
+                    $this->pushBillingChangeLocked($redemption, $subscription, OfferTerms::fromArray($redemption->terms_snapshot));
                 } catch (\Throwable $e) {
                     report($e);
                 }
@@ -765,6 +831,14 @@ final class PrivateOfferRedemptionManager
     // =====================================================================
     // Internals
     // =====================================================================
+
+    /** Whether the plan's catalog currency is no longer the one the offer was made in. */
+    private function offerCurrencyIsStale(PlatformPrivateOffer $offer): bool
+    {
+        $catalogCode = $offer->catalog?->currency?->code;
+
+        return $catalogCode !== null && strcasecmp((string) $catalogCode, (string) $this->currencyOf($offer)->code) !== 0;
+    }
 
     /** @throws PlatformBillingException */
     private function assertRedeemable(PlatformPrivateOffer $offer): void

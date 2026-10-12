@@ -61,7 +61,9 @@ final class TrialLedger
                 PlatformTrialClaim::query()
                     ->where('state', PlatformTrialClaim::STATE_RESERVED)
                     ->where('reserved_until', '<', now())
-                    ->where(fn ($q) => $q->where('workspace_id', $workspace->id)->orWhere('email_key', $key))
+                    ->where(fn ($q) => $q->where('workspace_id', $workspace->id)
+                        ->orWhere('email_key', $key)
+                        ->when(! blank($providerCustomerId), fn ($q) => $q->orWhere('provider_customer_id', $providerCustomerId)))
                     ->delete();
 
                 // The Workspace, the mailbox AND the provider customer are each a
@@ -95,7 +97,12 @@ final class TrialLedger
                         ? $until->copy()->addSecond()
                         : $until;
 
-                    $own->forceFill(['email_key' => $key, 'reserved_until' => $bumped, 'source' => $source])->save();
+                    $own->forceFill([
+                        'email_key' => $key,
+                        'provider_customer_id' => $own->provider_customer_id ?? (blank($providerCustomerId) ? null : $providerCustomerId),
+                        'reserved_until' => $bumped,
+                        'source' => $source,
+                    ])->save();
                     $stamp = $bumped->format('Y-m-d H:i:s');
 
                     return true;
@@ -104,6 +111,9 @@ final class TrialLedger
                 (new PlatformTrialClaim())->forceFill([
                     'workspace_id' => $workspace->id,
                     'email_key' => $key,
+                    // Persisted, so the unique key protects the NEXT reservation that
+                    // shares this provider customer.
+                    'provider_customer_id' => blank($providerCustomerId) ? null : $providerCustomerId,
                     'state' => PlatformTrialClaim::STATE_RESERVED,
                     'source' => $source,
                     'reserved_until' => $until,
