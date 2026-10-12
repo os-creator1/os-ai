@@ -101,6 +101,29 @@ class BookingTypeManager
             $out['reminder_offsets'] = array_slice($offsets, 0, BookingType::MAX_REMINDERS);
         }
 
+        // Calendar Notifications V2: steps with their own timing, channels and wording.
+        if (array_key_exists('reminder_steps', $attributes)) {
+            $steps = $attributes['reminder_steps'];
+            $out['reminder_steps'] = is_array($steps) ? array_values($steps) : null;
+
+            if (is_array($steps)) {
+                // Keep the legacy column in step for anything that still reads it.
+                $offsets = array_values(array_unique(array_map(
+                    static fn (array $s): int => (int) $s['offset_minutes'],
+                    array_filter($steps, static fn (array $s): bool => ($s['enabled'] ?? true) && (($s['email'] ?? false) || ($s['sms'] ?? false))),
+                )));
+                rsort($offsets);
+                $out['reminder_offsets'] = $offsets;
+            }
+        }
+
+        foreach (['confirmation_email_subject', 'confirmation_email_body', 'confirmation_sms_body'] as $key) {
+            if (array_key_exists($key, $attributes)) {
+                $text = trim((string) $attributes[$key]);
+                $out[$key] = $text === '' ? null : $text;
+            }
+        }
+
         return $out;
     }
 

@@ -88,7 +88,7 @@ class PublicBookingController extends Controller
             'timezones' => $this->timezoneOptions(),
             // The transactional-SMS consent box is offered only when texting is enabled for this
             // Booking Type AND the Business could actually text (never a consent for a dead channel).
-            'offerSmsConsent' => $type->notifiesBySms() && $this->notificationReadiness->smsReady($type),
+            'offerSmsConsent' => $type->usesSms() && $this->notificationReadiness->smsReady($type),
             'config' => [
                 'datesUrl' => route('public.booking.dates', [$type->public_booking_uuid]),
                 'slotsUrl' => route('public.booking.slots', [$type->public_booking_uuid]),
@@ -232,7 +232,7 @@ class PublicBookingController extends Controller
         // the details the guest gave for THIS booking. Best-effort by design: the booking is already
         // committed, so nothing here may fail it (a failure is logged and the due-sweep recovers).
         // Consent counts only if the box was actually offered (texting enabled and ready).
-        $smsConsent = (bool) ($data['sms_consent'] ?? false) && $type->notifiesBySms() && $this->notificationReadiness->smsReady($type);
+        $smsConsent = (bool) ($data['sms_consent'] ?? false) && $type->usesSms() && $this->notificationReadiness->smsReady($type);
         try {
             $this->notifications->recordPublicBooking($appointment, $type, (string) $data['email'], (string) $data['phone'], $smsConsent);
         } catch (\Throwable $exception) {

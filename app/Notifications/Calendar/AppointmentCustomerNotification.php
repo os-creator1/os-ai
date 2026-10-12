@@ -30,6 +30,8 @@ class AppointmentCustomerNotification extends Notification
     public function __construct(
         private readonly AppointmentNotificationDetails $details,
         private readonly bool $isReminder,
+        /** @var array{subject: string, body: string}|null The Booking Type's own wording, already rendered. */
+        private readonly ?array $custom = null,
     ) {
     }
 
@@ -42,6 +44,23 @@ class AppointmentCustomerNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         $d = $this->details;
+
+        if ($this->custom !== null) {
+            $mail = (new BrandedMailMessage)
+                ->from((string) config('mail.from.address'), $d->businessName)
+                ->subject($this->custom['subject']);
+
+            foreach (preg_split('/\R{2,}/', $this->custom['body']) ?: [] as $paragraph) {
+                if (trim($paragraph) !== '') {
+                    $mail->line(new \Illuminate\Support\HtmlString(nl2br(e(trim($paragraph)))));
+                }
+            }
+
+            return $mail
+                ->viewData(['brand' => $d->brand, 'icon' => 'calendar'])
+                ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d))
+                ->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
+        }
 
         $mail = (new BrandedMailMessage)
             ->from((string) config('mail.from.address'), $d->businessName)

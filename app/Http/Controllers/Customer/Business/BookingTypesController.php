@@ -222,7 +222,32 @@ class BookingTypesController extends Controller
             'reminders_submitted' => ['sometimes', 'boolean'],
             'reminder_offsets' => ['sometimes', 'array', 'max:'.BookingType::MAX_REMINDERS],
             'reminder_offsets.*' => ['integer', Rule::in(array_keys(BookingType::REMINDER_OFFSET_OPTIONS))],
+
+            // Calendar Notifications V2: free timing, per-step channels and wording.
+            'reminder_steps_submitted' => ['sometimes', 'boolean'],
+            'reminder_steps' => ['sometimes', 'array', 'max:'.BookingType::MAX_REMINDERS],
+            'reminder_steps.*.id' => ['nullable', 'string', 'max:64'],
+            'reminder_steps.*.value' => ['required', 'integer', 'min:1', 'max:100000'],
+            'reminder_steps.*.unit' => ['required', 'in:minutes,hours,days'],
+            'reminder_steps.*.email' => ['nullable', 'boolean'],
+            'reminder_steps.*.sms' => ['nullable', 'boolean'],
+            'reminder_steps.*.enabled' => ['nullable', 'boolean'],
+            'reminder_steps.*.email_subject' => ['nullable', 'string', 'max:200'],
+            'reminder_steps.*.email_body' => ['nullable', 'string', 'max:3000'],
+            'reminder_steps.*.sms_body' => ['nullable', 'string', 'max:480'],
+            'confirmation_email_subject' => ['nullable', 'string', 'max:200'],
+            'confirmation_email_body' => ['nullable', 'string', 'max:3000'],
+            'confirmation_sms_body' => ['nullable', 'string', 'max:480'],
         ]);
+
+        if ($request->boolean('reminder_steps_submitted')) {
+            $data['reminder_steps'] = $this->reminderSteps($data['reminder_steps'] ?? []);
+            unset($data['reminder_offsets']);
+        } elseif ($request->boolean('reminders_submitted')) {
+            // The older editor's list is authoritative again for a type that is saved through it.
+            $data['reminder_steps'] = null;
+        }
+        unset($data['reminder_steps_submitted']);
 
         // A form that submitted the reminders section with every row removed sends
         // no `reminder_offsets` at all; that is "no reminders", not "unchanged".
@@ -232,6 +257,95 @@ class BookingTypesController extends Controller
         unset($data['reminders_submitted']);
 
         return $data;
+    }
+
+    /**
+     * Value + unit rows -> stored steps. Timing is checked against the system
+     * bounds and two steps may not share a moment (they would be the same send).
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     * @return list<array<string, mixed>>
+     */
+    private function reminderSteps(array $rows): array
+    {
+        $steps = [];
+        $seen = [];
+        $unit = ['minutes' => 1, 'hours' => 60, 'days' => 1440];
+
+        foreach (array_values($rows) as $i => $row) {
+            $minutes = (int) $row['value'] * $unit[$row['unit']];
+
+            if ($minutes < BookingType::MIN_REMINDER_MINUTES || $minutes > BookingType::MAX_REMINDER_MINUTES) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    "reminder_steps.{$i}.value" => 'Choose a time between 5 minutes and 90 days before the appointment.',
+                ]);
+            }
+
+            if (isset($seen[$minutes])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    "reminder_steps.{$i}.value" => 'Two reminders cannot be sent at the same time.',
+                ]);
+            }
+
+            $seen[$minutes] = true;
+            $id = trim((string) ($row['id'] ?? ''));
+
+            $steps[] = [
+                'id' => $id === '' ? 'r' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(8)) : $id,
+                'offset_minutes' => $minutes,
+                'email' => (bool) ($row['email'] ?? false),
+                'sms' => (bool) ($row['sms'] ?? false),
+                'enabled' => ! array_key_exists('enabled', $row) || (bool) $row['enabled'],
+                'email_subject' => trim((string) ($row['email_subject'] ?? '')) ?: null,
+                'email_body' => trim((string) ($row['email_body'] ?? '')) ?: null,
+                'sms_body' => trim((string) ($row['sms_body'] ?? '')) ?: null,
+            ];
+        }
+
+        return $steps;
+    }
+
+    /** Renders one template with sample appointment details, exactly as a customer would receive it. */
+    public function previewNotification(Request $request, string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): \Illuminate\Http\JsonResponse
+    {
+        [, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
+        $bookingType = $this->bookingType($location, $bookingTypeUid);
+
+        $data = $request->validate([
+            'channel' => ['required', 'in:email,sms'],
+            'kind' => ['required', 'in:confirmation,reminder'],
+            'subject' => ['nullable', 'string', 'max:200'],
+            'body' => ['nullable', 'string', 'max:3000'],
+        ]);
+
+        $defaults = \App\Library\Calendar\Notifications\AppointmentNotificationContent::defaults();
+        $key = $data['kind'] . '_' . $data['channel'];
+        $details = new \App\Library\Calendar\Notifications\AppointmentNotificationDetails(
+            appointmentUid: 'preview',
+            businessName: (string) $business->name,
+            bookingType: (string) $bookingType->name,
+            date: now($business->timezone ?: 'UTC')->addDays(3)->format('l, F j, Y'),
+            timeRange: '10:00 AM – 10:30 AM',
+            startTime: '10:00 AM',
+            zoneAbbr: 'UTC',
+            timezone: (string) ($business->timezone ?: 'UTC'),
+            where: \App\Library\Calendar\BookingLocationLabel::for($location),
+            instructions: trim((string) $bookingType->meeting_instructions) ?: null,
+            startUtc: now()->addDays(3),
+            endUtc: now()->addDays(3)->addMinutes(30),
+            sequence: 0,
+        );
+
+        $render = \App\Library\Calendar\Notifications\AppointmentNotificationContent::class;
+        $body = trim((string) ($data['body'] ?? '')) !== '' ? $data['body'] : $defaults[$key . (($data['channel'] === 'email') ? '_body' : '_body')];
+        $subject = trim((string) ($data['subject'] ?? '')) !== '' ? $data['subject'] : ($defaults[$data['kind'] . '_email_subject']);
+
+        return response()->json([
+            'subject' => $data['channel'] === 'email' ? $render::render($subject, $details, 'Alex') : null,
+            'body' => $data['channel'] === 'sms'
+                ? $render::renderSms($body, $details, 'Alex')
+                : $render::render($body, $details, 'Alex'),
+        ]);
     }
 
     private function backToEdit(string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): RedirectResponse

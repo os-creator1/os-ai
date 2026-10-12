@@ -1920,6 +1920,7 @@
             Route::get('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@edit')->name('booking-types.edit');
             Route::post('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@update')->name('booking-types.update');
             Route::post('/booking-types/{bookingTypeUid}/active', 'Business\BookingTypesController@toggleActive')->name('booking-types.active');
+            Route::post('/booking-types/{bookingTypeUid}/notification-preview', 'Business\BookingTypesController@previewNotification')->name('booking-types.notification-preview');
             Route::post('/booking-types/{bookingTypeUid}/staff', 'Business\BookingTypesController@syncStaff')->name('booking-types.staff');
 
             Route::get('/availability', 'Business\StaffAvailabilityController@index')->name('availability.index');

@@ -760,7 +760,9 @@ class BookingNotificationsTest extends TestCase
 
         $this->get($editUrl)->assertOk()
             ->assertSee('Customer notifications')->assertSee('Send by email')->assertSee('Send by text message')
-            ->assertSee('24 hours before')->assertSee('2 hours before')->assertSee('Add reminder')
+            // The reminder list is a script-built editor (any timing); the saved steps travel as data.
+            ->assertSee('"offset_minutes":1440', false)->assertSee('"offset_minutes":120', false)
+            ->assertSee('reminder_steps_submitted', false)->assertSee('Add reminder')
             ->assertSee('Text messages are not set up yet');
 
         $base = ['name' => 'Consultation', 'duration_minutes' => 60];
