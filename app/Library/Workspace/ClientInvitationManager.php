@@ -84,7 +84,7 @@ class ClientInvitationManager
     ): ClientWorkspaceInvitation {
         $plaintextToken = Str::random(64);
 
-        [$invitation, $normalizedEmail, $agencyWorkspaceName] = DB::transaction(function () use ($actorUserId, $agencyWorkspace, $email, $intendedBusinessName, $plaintextToken) {
+        [$invitation, $normalizedEmail, $agencyWorkspaceName, $agencyWorkspaceId] = DB::transaction(function () use ($actorUserId, $agencyWorkspace, $email, $intendedBusinessName, $plaintextToken) {
             $lockedAgencyWorkspace = $this->workspaceRepository->findForUpdate((int) $agencyWorkspace->id);
 
             if ($lockedAgencyWorkspace === null) {
@@ -110,7 +110,7 @@ class ClientInvitationManager
             // The single writer of invitations raises the single "invitation created" fact, after commit.
             DB::afterCommit(fn () => \App\Events\Workspace\ClientInvitationCreated::dispatch((int) $invitation->id, (int) $lockedAgencyWorkspace->id));
 
-            return [$invitation, $normalizedEmail, $lockedAgencyWorkspace->name];
+            return [$invitation, $normalizedEmail, $lockedAgencyWorkspace->name, (int) $lockedAgencyWorkspace->id];
         });
 
         // Dispatched only after the transaction above has committed: a
@@ -121,6 +121,7 @@ class ClientInvitationManager
             $plaintextToken,
             $agencyWorkspaceName,
             $invitation->intended_business_name,
+            $agencyWorkspaceId,
         ));
 
         return $invitation;

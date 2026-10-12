@@ -123,6 +123,7 @@
             'is_customer'           => 'boolean',
             'status'                => 'boolean',
             'two_factor'            => 'boolean',
+            'email_verified_at'     => 'datetime',
             'last_access_at'        => 'datetime',
             'two_factor_expires_at' => 'datetime',
             'password_changed_at'   => 'datetime',

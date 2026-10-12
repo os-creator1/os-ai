@@ -3,6 +3,7 @@
 namespace App\Jobs\Documents;
 
 use App\Jobs\Base;
+use App\Library\Mail\MailBrandResolver;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentPaymentScheduleItem;
@@ -60,6 +61,7 @@ class SendDocumentReminderEmail extends Base implements ShouldQueueAfterCommit
             $item === null ? null : number_format(((int) $item->amount_minor) / 100, 2) . ' ' . (string) $item->currency_code,
             $due === null ? null : 'on ' . $due->toFormattedDateString(),
             isExpiryWarning: $item === null,
+            brand: app(MailBrandResolver::class)->forBusiness($business),
         ));
     }
 }

@@ -21,6 +21,7 @@ use App\Models\SendingServer;
 use App\Notifications\Calendar\AppointmentCustomerNotification;
 use App\Repositories\Contracts\CampaignRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Mail\Markdown;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -174,13 +175,15 @@ class BookingNotificationsTest extends TestCase
         $this->assertSame('ada@example.test', $emails[0]['route']);
 
         $mail = $emails[0]['notification']->toMail(new AnonymousNotifiable());
-        $text = $mail->subject . ' ' . implode(' ', array_map('strval', array_merge($mail->introLines, [$mail->actionText, $mail->actionUrl])));
+        [$html, $plain] = $this->renderedFormats($mail);
+        $text = $mail->subject . ' ' . $plain;
         $this->assertSame($this->business->name, $mail->from[1], 'The Business is the From display name.');
         foreach ([
             $this->business->name, 'Consultation', 'Monday, March 1, 2027', '10:00 AM – 11:00 AM', 'America/New York (EST)',
             'Location A', 'Ring the bell at the side door.', 'calendar.google.com/calendar/render',
         ] as $expected) {
-            $this->assertStringContainsString($expected, $text);
+            $this->assertStringContainsString($expected, $text, 'plain-text version');
+            $this->assertStringContainsString($expected, $html . $mail->subject, 'HTML version');
         }
         $this->assertStringContainsString('dates=20270301T150000Z/20270301T160000Z', $mail->actionUrl);
         $this->assertCount(1, $mail->rawAttachments);
@@ -384,10 +387,11 @@ class BookingNotificationsTest extends TestCase
 
         $this->assertSame('2027-03-15 14:00:00', $this->appointment()->start_at->utc()->toDateTimeString());
         $mail = $this->emails()[0]['notification']->toMail(new AnonymousNotifiable());
-        $text = implode(' ', array_map('strval', $mail->introLines));
-        $this->assertStringContainsString('Monday, March 15, 2027', $text);
-        $this->assertStringContainsString('10:00 AM – 11:00 AM', $text);
-        $this->assertStringContainsString('(EDT)', $text);
+        foreach ($this->renderedFormats($mail) as $rendered) {
+            $this->assertStringContainsString('Monday, March 15, 2027', $rendered);
+            $this->assertStringContainsString('10:00 AM – 11:00 AM', $rendered);
+            $this->assertStringContainsString('(EDT)', $rendered);
+        }
         $this->assertSame(
             ['2027-03-14 14:00:00', '2027-03-15 12:00:00'],
             $this->rows('reminder', 'email')->map(fn ($r) => $r->scheduled_for->utc()->toDateTimeString())->all(),
@@ -555,7 +559,20 @@ class BookingNotificationsTest extends TestCase
         $this->sweepAt('2027-03-01 15:00:00 UTC');
         $this->assertCount(3, $this->emails());
         $reminder = $this->emails()[2]['notification']->toMail(new AnonymousNotifiable());
-        $this->assertStringContainsString('12:00 PM – 1:00 PM', implode(' ', array_map('strval', $reminder->introLines)));
+        foreach ($this->renderedFormats($reminder) as $rendered) {
+            $this->assertStringContainsString('12:00 PM – 1:00 PM', $rendered);
+        }
+    }
+
+    /**
+     * The details live in the branded details panel (view data), not introLines, so assert on what
+     * the guest actually receives: the rendered HTML and plain-text versions.
+     *
+     * @return array{0: string, 1: string} [html, plain text]
+     */
+    private function renderedFormats(\Illuminate\Notifications\Messages\MailMessage $mail): array
+    {
+        return [(string) $mail->render(), (string) app(Markdown::class)->renderText($mail->markdown, $mail->data())];
     }
 
     public function test_an_obsolete_reminder_is_never_sent_even_if_the_listener_never_ran(): void

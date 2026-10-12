@@ -898,4 +898,40 @@ class AgencyStripeOwnAccountTest extends TestCase
 
         $this->assertSame([], $this->agencyStripe->callsOf('oauthAuthorizeUrl'));
     }
+
+    // ------------------------------------------------------------------
+    // Staging acceptance — the REAL gateway's configuration boundary (every
+    // test above drives the fake gateway, so this was previously unproven).
+    // ------------------------------------------------------------------
+
+    public function test_the_real_gateway_reports_not_configured_when_the_oauth_client_id_is_unset(): void
+    {
+        config(['services.stripe.agency_connect_client_id' => null]);
+
+        try {
+            (new \App\Library\AgencyBilling\StripeApiAgencyGateway())
+                ->oauthAuthorizeUrl('state123', route('customer.agency.stripe.connect-existing.callback'));
+            $this->fail('An unset STRIPE_AGENCY_CONNECT_CLIENT_ID must fail closed.');
+        } catch (\App\Exceptions\AgencyBilling\AgencyBillingException $e) {
+            $this->assertSame(\App\Exceptions\AgencyBilling\AgencyBillingException::NOT_CONFIGURED, $e->reason);
+            $this->assertSame('Payments are not available right now.', $e->customerMessage());
+        }
+    }
+
+    public function test_the_real_gateway_builds_the_authorize_url_for_the_fixed_callback_when_configured(): void
+    {
+        config(['services.stripe.agency_connect_client_id' => 'ca_testclientid']);
+
+        $callback = route('customer.agency.stripe.connect-existing.callback');
+        $this->assertSame('/agency/stripe/connect-existing/callback', parse_url($callback, PHP_URL_PATH));
+
+        $url = (new \App\Library\AgencyBilling\StripeApiAgencyGateway())->oauthAuthorizeUrl('state123', $callback);
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+
+        $this->assertSame('connect.stripe.com', parse_url($url, PHP_URL_HOST));
+        $this->assertSame('ca_testclientid', $query['client_id']);
+        $this->assertSame($callback, $query['redirect_uri']);
+        $this->assertSame('state123', $query['state']);
+        $this->assertSame('read_write', $query['scope']);
+    }
 }

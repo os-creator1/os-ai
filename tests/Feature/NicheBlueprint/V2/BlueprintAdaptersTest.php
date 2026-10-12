@@ -109,14 +109,13 @@ class BlueprintAdaptersTest extends TestCase
         $this->assertSame(0, DB::table('automation_workflows')->where('business_id', $business->id)->where('status', 'published')->count());
     }
 
-    public function test_package_templates_carry_no_price_and_website_and_seo_touch_no_website_rows(): void
+    public function test_package_templates_create_no_catalog_items_and_website_and_seo_touch_no_website_rows(): void
     {
         $this->seedPhotoBoothBlueprintV2();
         [, $business] = $this->tenant(WorkspacePlanTier::Growth);
 
         $items = CatalogItem::query()->where('business_id', $business->id)->get();
-        $this->assertSame(['package', 'package', 'product', 'product'], $items->pluck('type')->map(fn ($t) => $t->value)->sort()->values()->all());
-        $this->assertSame([null], $items->pluck('price_minor')->unique()->values()->all(), 'No real pricing is copied.');
+        $this->assertSame(0, $items->count(), 'Package/product templates never create catalog items automatically.');
 
         $this->assertSame(0, DB::table('websites')->where('business_id', $business->id)->count(), 'The Website renderer/tables are untouched; Website reads the config seam.');
     }
