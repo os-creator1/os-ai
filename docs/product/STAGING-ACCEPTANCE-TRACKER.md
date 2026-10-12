@@ -57,8 +57,7 @@ Test runs are throw-away workflows on `verify/*` branches (not part of any featu
 | `V1SignupFinalAcceptanceTest::test_a_suspended_user_cannot_sign_in` | `assertGuest` fails: user is authenticated |
 | `BusinessOnboardingHttpTest::test_capacity_denial_business_slot_allocation_required_redirects_with_the_safe_message` | Fixture creates 3 Businesses in one Workspace; unique `businesses.workspace_id` rejects it |
 
-The two V1SignupFinalAcceptance failures look like the login-captcha setting that #447 had to disable in its own
-tests; this is a hypothesis, not verified. Not fixed here: out of scope for every lane.
+**Baseline corrections implemented and CI-verified, NOT YET MERGED:** [PR #454](https://github.com/os-creator1/os-ai/pull/454), branch `fix/signup-auth-baseline-regressions` @ `5ef1c48b`. [CI #38272848862](https://github.com/os-creator1/os-ai/actions/runs/38272848862) passed **175 tests, 1,401 assertions, zero failures** on disposable MySQL 8. Four-file, test-only correction: explicit no-CAPTCHA PHPUnit flags, clearing cached guards for guest-only reset/suspended-login tests, preserving the signed-in replay rejection while asserting the actual `/dashboard` redirect, and a valid single-Business Workspace capacity fixture. Adds a logged-in session suspension test. **Staging currently retains the old tests:** merge #454 first, then integrate updated staging into Onboarding [PR #449](https://github.com/os-creator1/os-ai/pull/449), rerun its focused tests, and review its status before marking it ready.
 Also: a full `tests/Feature/Business` directory run in CI hits DB-creation privilege errors (the CI user cannot
 `CREATE DATABASE` for the historical-schema tests); run those narrowly.
 
@@ -69,7 +68,7 @@ every migration currently on staging and touch different tables. Onboarding V2, 
 
 ### Follow-up discovered during review
 - **Invitation 2FA backup-code path resolved:** `TwoFactorController::updateBackUpCode` now respects pending signed verification, invitation, Private Offer and home redirect precedence; ordinary 2FA also retains Private Offer return. [CI #38271166962](https://github.com/os-creator1/os-ai/actions/runs/38271166962) passed 172 tests and 917 assertions. **PR #450 is ready for review**, not merged or deployed.
-- **Baseline suspended-account test:** because it asserts an authenticated suspended user, examine real login behavior before dismissing it as a test-only artifact. **PR #449 remains draft**, with 3 baseline failures and 1 baseline error; do not present its run as green.
+- **Baseline suspended-account test corrected in PR #454:** CI now verifies that a genuinely signed-out suspended account cannot sign in and an existing authenticated session is terminated after suspension. No production auth code was changed. **PR #449 remains draft** until #454 merges and #449 is rerun on updated staging; its earlier CI run was not green.
 - **PR tracking:** #448 Outreach, #449 Onboarding (draft), #450 Invitation (ready), #451 Calendar and #452 Outbound email are open and not merged. Checks and staged-browser acceptance remain separate.
 
 ## C. Billing / Private Offers findings (report only)
@@ -101,4 +100,4 @@ every migration currently on staging and touch different tables. Onboarding V2, 
 
 ## E. Rules observed
 
-Claude implementation lanes did not open PRs, merge or deploy. ChatGPT opened PRs #448–#452 for human review (including draft safety-review PRs #449 and #450). No deployment, real AI/Stripe/email/SMS calls, staging/production DB/credential access, or automation lock/gate changes in this stabilization pass.
+Claude implementation lanes did not open PRs, merge or deploy. ChatGPT opened PRs #448–#452 and #454 for human review (including draft safety-review PRs #449 and #450). No deployment, real AI/Stripe/email/SMS calls, staging/production DB/credential access, or automation lock/gate changes in this stabilization pass.
