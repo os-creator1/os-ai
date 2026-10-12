@@ -131,6 +131,31 @@ class PlatformOwnerV1PeopleAndAnnouncementsTest extends TestCase
         }
     }
 
+    public function test_the_user_page_renders_for_verified_and_unverified_accounts_with_formatted_dates(): void
+    {
+        $this->owner();
+        $verified = $this->customerUser([
+            'email_verified_at' => '2026-03-04 10:00:00',
+            'last_access_at' => now()->subDay(),
+        ]);
+        $unverified = $this->customerUser(['email_verified_at' => null, 'last_access_at' => null]);
+
+        // Loaded from the database exactly as the controller loads it: the
+        // raw column is a string, so the model must cast it to a date.
+        $this->assertInstanceOf(\Illuminate\Support\Carbon::class, User::find($verified->id)->email_verified_at);
+        $this->assertNull(User::find($unverified->id)->email_verified_at);
+
+        $html = $this->get(route('admin.platform-users.show', $verified->uid))->assertOk()->getContent();
+        $this->assertStringContainsString('Verified Mar 4, 2026', $html);
+        $this->assertStringNotContainsString('Not verified', $html);
+
+        $html = $this->get(route('admin.platform-users.show', $unverified->uid))->assertOk()->getContent();
+        $this->assertStringContainsString('Not verified', $html);
+        $this->assertStringContainsString('Never', $html);
+        // The support actions stay available.
+        $this->assertStringContainsString('Send password reset link', $html);
+    }
+
     public function test_a_password_reset_link_is_emailed_and_audited_without_exposing_it(): void
     {
         $owner = $this->owner();
