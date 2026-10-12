@@ -2,7 +2,9 @@
 
 namespace App\Notifications\Documents;
 
+use App\Library\Mail\MailBrand;
 use Illuminate\Bus\Queueable;
+use App\Library\Mail\BrandedMailMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -37,6 +39,7 @@ class DocumentIssuedNotification extends Notification
         private readonly string $businessName,
         private readonly string $documentTitle,
         private readonly bool $requiresSignature,
+        private readonly ?MailBrand $brand = null,
     ) {
     }
 
@@ -50,8 +53,14 @@ class DocumentIssuedNotification extends Notification
     {
         $action = $this->requiresSignature ? 'Review and sign' : 'View document';
 
-        return (new MailMessage)
+        return (new BrandedMailMessage)
             ->subject("{$this->businessName} sent you \"{$this->documentTitle}\"")
+            ->greeting($this->requiresSignature ? 'A document is ready for your signature' : 'You have a new document')
+            ->viewData([
+                'brand' => $this->brand,
+                'icon' => $this->requiresSignature ? 'sign' : 'document',
+                'details' => ['From' => $this->businessName, 'Document' => $this->documentTitle],
+            ])
             ->line("{$this->businessName} has sent you a document to review.")
             ->action($action, $this->documentUrl())
             ->line('This link is personal to you. Please do not forward it.');

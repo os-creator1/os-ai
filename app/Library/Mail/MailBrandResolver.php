@@ -1,0 +1,105 @@
+<?php
+
+namespace App\Library\Mail;
+
+use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Website\WebsiteAssetPurpose;
+use App\Library\Entitlement\EntitlementManager;
+use App\Library\Workspace\AgencyClientRelationshipManager;
+use App\Models\AgencyWhiteLabelSetting;
+use App\Models\Business;
+use App\Models\Website;
+use App\Models\WebsiteAsset;
+use App\Models\Workspace;
+use Throwable;
+
+/**
+ * Decides which identity a transactional email renders. Branding is cosmetic, so
+ * every lookup is keyed ONLY by the notification's own subject and any failure
+ * degrades to the platform brand — never to another tenant's, and never to
+ * whatever account is signed in.
+ */
+class MailBrandResolver
+{
+    public function __construct(
+        private readonly EntitlementManager $entitlements,
+        private readonly AgencyClientRelationshipManager $relationships,
+    ) {
+    }
+
+    /** The Business's actual name, canonical Website brand colour and Website logo. */
+    public function forBusiness(?Business $business): MailBrand
+    {
+        if ($business === null) {
+            return MailBrand::platform();
+        }
+
+        $accent = null;
+        $logo = null;
+
+        try {
+            $website = Website::query()->where('business_id', $business->id)->first();
+            $theme = is_array($website?->theme) ? $website->theme : [];
+            $accent = $theme['brand_color'] ?? null;
+            $logoUid = $theme['logo_asset_uid'] ?? null;
+
+            if ($website !== null && is_string($logoUid) && $logoUid !== '') {
+                $asset = WebsiteAsset::query()
+                    ->where('website_id', $website->id)
+                    ->where('uid', $logoUid)
+                    ->where('purpose', WebsiteAssetPurpose::Logo)
+                    ->first();
+
+                $logo = $asset?->url();
+            }
+        } catch (Throwable) {
+            // fall through to name-only branding
+        }
+
+        return MailBrand::business((string) $business->name, $accent, $logo);
+    }
+
+    /**
+     * The white-label brand of the inviting Agency when it is enabled and still
+     * entitled (the same checks ClientWorkspaceBrandResolver applies); otherwise the
+     * platform brand. The Agency is always named by the caller either way.
+     */
+    public function forAgencyWorkspace(?int $agencyWorkspaceId): MailBrand
+    {
+        if ($agencyWorkspaceId === null) {
+            return MailBrand::platform();
+        }
+
+        try {
+            $setting = AgencyWhiteLabelSetting::query()
+                ->where('agency_workspace_id', $agencyWorkspaceId)
+                ->where('is_enabled', true)
+                ->first();
+            $agency = $setting === null ? null : Workspace::query()->find($agencyWorkspaceId);
+
+            if ($setting === null
+                || trim((string) $setting->display_name) === ''
+                || $agency === null
+                || ! $agency->is_active
+                || ! $this->relationships->agencyWorkspaceHasManagementEligibility($agency)
+                || ! $this->entitlements->decideForWorkspace($agency, PlatformFeature::WhiteLabel->value)->allowed) {
+                return MailBrand::platform();
+            }
+
+            return MailBrand::agency((string) $setting->display_name, $setting->accent_color, self::agencyLogoUrl($setting->logo_path));
+        } catch (Throwable) {
+            return MailBrand::platform();
+        }
+    }
+
+    private static function agencyLogoUrl(?string $path): ?string
+    {
+        $path = trim(str_replace('\\', '/', (string) $path));
+
+        if (! str_starts_with($path, 'images/branding/agency/') || str_contains($path, '..') || str_contains($path, ':') || str_contains($path, '//')) {
+            return null;
+        }
+
+        return asset($path);
+    }
+}

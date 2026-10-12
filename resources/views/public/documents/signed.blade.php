@@ -25,13 +25,35 @@
     <title>Signature recorded</title>
     <style>
         html{color-scheme:light}
-        body{background:#fff;font-family:system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;color:#17212b}
-        .cta{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#1d4ed8;color:#fff;border-radius:.5rem;text-decoration:none;font-weight:600}
-        .muted{color:#5b6672}
+        *{box-sizing:border-box}
+        body{margin:0;background:#f6f5f2;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#17212b;line-height:1.5}
+        .bar{background:{{ $brand['color'] }};color:{{ $brand['ink'] }}}
+        .bar-in{max-width:42rem;margin:0 auto;padding:.9rem 1rem;display:flex;align-items:center;gap:.75rem}
+        .logo{width:2.25rem;height:2.25rem;border-radius:.5rem;background:rgba(255,255,255,.92);object-fit:contain;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;color:{{ $brand['color'] }}}
+        .bar-name{font-weight:600;font-size:1rem;overflow-wrap:anywhere}
+        main{max-width:42rem;margin:0 auto;padding:1.5rem 1rem 3rem}
+        .card{background:#fff;border:1px solid #e7e4de;border-radius:1rem;padding:1.5rem;margin-bottom:1rem}
+        h1{font-size:1.5rem;line-height:1.25;margin:0 0 .5rem}
+        .ok{display:inline-flex;align-items:center;justify-content:center;width:2.5rem;height:2.5rem;border-radius:50%;background:#e6f4ec;color:#1e7b4a;font-size:1.25rem;margin-bottom:.75rem}
+        .cta{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:{{ $brand['color'] }};color:{{ $brand['ink'] }};border-radius:.5rem;text-decoration:none;font-weight:600}
+        .muted{color:#5b6672;font-size:.9rem}
+        @media (max-width:480px){.card{padding:1.15rem}.cta{display:block;text-align:center}}
     </style>
 </head>
 <body>
+<header class="bar" data-role="brand-header">
+    <div class="bar-in">
+        @if($brand['logo_url'])
+            <img class="logo" data-role="brand-logo" src="{{ $brand['logo_url'] }}" alt="{{ $brand['name'] }} logo">
+        @else
+            <span class="logo" data-role="brand-initial" aria-hidden="true">{{ $brand['initials'] }}</span>
+        @endif
+        <span class="bar-name" data-role="brand-name">{{ $brand['name'] }}</span>
+    </div>
+</header>
 <main>
+  <section class="card">
+    <div class="ok" aria-hidden="true">&#10003;</div>
     <h1>Signature recorded</h1>
     <p data-role="signed-ok"><strong>Signed successfully.</strong></p>
     <p>Thank you. Your typed signature for &ldquo;{{ $document->title }}&rdquo; was recorded on {{ $document->signed_at?->format('j F Y') }}.</p>
@@ -60,6 +82,7 @@
     @else
         <p class="muted">You can close this page.</p>
     @endif
+  </section>
 </main>
 </body>
 </html>

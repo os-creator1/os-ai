@@ -3,6 +3,8 @@
 namespace App\Library\Calendar\Notifications;
 
 use App\Library\Calendar\BookingLocationLabel;
+use App\Library\Mail\MailBrand;
+use App\Library\Mail\MailBrandResolver;
 use App\Models\Appointment;
 use App\Models\BookingType;
 use App\Models\Business;
@@ -35,6 +37,7 @@ final readonly class AppointmentNotificationDetails
         public Carbon $startUtc,
         public Carbon $endUtc,
         public int $sequence,
+        public ?MailBrand $brand = null,
     ) {
     }
 
@@ -76,6 +79,7 @@ final readonly class AppointmentNotificationDetails
             startUtc: $start,
             endUtc: $end,
             sequence: (int) $appointment->reschedule_count,
+            brand: app(MailBrandResolver::class)->forBusiness($business),
         );
     }
 

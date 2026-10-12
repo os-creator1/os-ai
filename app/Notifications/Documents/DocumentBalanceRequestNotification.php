@@ -2,7 +2,9 @@
 
 namespace App\Notifications\Documents;
 
+use App\Library\Mail\MailBrand;
 use Illuminate\Bus\Queueable;
+use App\Library\Mail\BrandedMailMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -32,6 +34,7 @@ class DocumentBalanceRequestNotification extends Notification
         private readonly string $documentTitle,
         private readonly string $amount,
         private readonly string $dueDate,
+        private readonly ?MailBrand $brand = null,
     ) {
     }
 
@@ -43,7 +46,9 @@ class DocumentBalanceRequestNotification extends Notification
 
     public function toMail(object $notifiable): MailMessage
     {
-        return (new MailMessage)
+        return (new BrandedMailMessage)
+            ->greeting('A payment is due')
+            ->viewData(['brand' => $this->brand, 'icon' => 'alert'])
             ->subject("A payment of {$this->amount} for “{$this->documentTitle}” is due")
             ->line("{$this->businessName} is requesting your payment of {$this->amount} for “{$this->documentTitle}”.")
             ->line("Due date: {$this->dueDate}.")

@@ -1,4 +1,4 @@
-@component('mail::message')
+@component('mail::message', ['icon' => 'mail'])
 {!! $content !!}
 @component('mail::button', ['url' => $url])
 {{ __('locale.auth.verify') }}

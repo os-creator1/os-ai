@@ -3,6 +3,7 @@
 namespace App\Jobs\BusinessPayments;
 
 use App\Jobs\Base;
+use App\Library\Mail\MailBrandResolver;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentPayment;
@@ -57,6 +58,7 @@ class SendPaymentReceiptEmail extends Base implements ShouldQueueAfterCommit
             (string) ($business?->name ?? config('app.name')),
             (string) $document->title,
             number_format(((int) $payment->amount_minor) / 100, 2) . ' ' . (string) $payment->currency_code,
+            app(MailBrandResolver::class)->forBusiness($business),
         ));
     }
 }
