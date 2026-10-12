@@ -117,6 +117,52 @@ class BusinessEmailSenderTest extends TestCase
         $this->assertSame(0, $this->fakeGoogle->callCount('send'));
     }
 
+    /**
+     * Outbound policy: Business-controlled sales email (an automation, a manual send)
+     * only ever leaves through the Business's OWN authenticated mailbox. It never
+     * falls back to the platform transactional transport, and the request carries no
+     * way to name a From address.
+     */
+    public function test_business_sales_email_never_uses_the_platform_transport_and_cannot_choose_a_from_address(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        \Illuminate\Support\Facades\Notification::fake();
+
+        // No connected mailbox: refused, nothing is sent from the platform identity.
+        [, $noMailbox] = $this->emailTenant('No Mailbox Co');
+        $contact = $this->contactWithEmails($noMailbox, ['pat@example.com']);
+
+        foreach ([BusinessEmailSource::Automation, BusinessEmailSource::Manual] as $source) {
+            try {
+                $this->sender()->send(new BusinessEmailSendRequest($noMailbox, $contact, 'Offer', 'Buy now', 'op-' . $source->value, source: $source));
+                $this->fail('A business without its own mailbox must not send.');
+            } catch (BusinessEmailSendRefusedException $exception) {
+                $this->assertSame(Category::DisconnectedAccount, $exception->category);
+            }
+        }
+
+        \Illuminate\Support\Facades\Mail::assertNothingSent();
+        \Illuminate\Support\Facades\Mail::assertNothingQueued();
+        \Illuminate\Support\Facades\Notification::assertNothingSent();
+        $this->assertSame(0, BusinessEmailMessage::query()->count());
+
+        // The request type has no From/sender/reply-to input at all.
+        $params = array_map(fn (\ReflectionParameter $p) => strtolower($p->getName()), (new \ReflectionClass(BusinessEmailSendRequest::class))->getConstructor()->getParameters());
+        foreach ($params as $name) {
+            $this->assertStringNotContainsString('from', $name);
+            $this->assertStringNotContainsString('sender', $name);
+            $this->assertStringNotContainsString('replyto', $name);
+        }
+
+        // With its own mailbox connected, the From is that mailbox, as the account holder authenticated it.
+        [$business, $connected] = $this->readyTenant();
+        $message = $this->sender()->send(new BusinessEmailSendRequest($business, $connected, 'Offer', 'Buy now', 'op-ok', source: BusinessEmailSource::Automation));
+
+        $this->assertSame('owner@business.test', $this->fakeGoogle->sent[0]->fromEmail);
+        $this->assertSame('owner@business.test', $message->from_email);
+        \Illuminate\Support\Facades\Mail::assertNothingSent();
+    }
+
     public function test_a_foreign_business_account_can_never_be_used(): void
     {
         [, $businessA] = $this->emailTenant('Business A');
