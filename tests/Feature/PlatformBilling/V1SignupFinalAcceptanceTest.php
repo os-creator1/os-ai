@@ -276,7 +276,11 @@ class V1SignupFinalAcceptanceTest extends TestCase
         $this->get(route('signup.success'));
         $user = User::query()->where('email', $form['email'])->sole();
         $user->forceFill(['email_verified_at' => now()])->save();
+        // A visitor resetting a forgotten password is signed out: flushing the session is not
+        // enough, the test guard still caches the signup user and the reset route is `guest`-only.
         $this->flushSession();
+        $this->app['auth']->forgetGuards();
+        $this->assertGuest();
 
         $token = Password::broker()->createToken($user);
         $this->post(route('password.update'), [
