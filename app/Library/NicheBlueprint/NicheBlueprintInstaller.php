@@ -8,6 +8,7 @@ use App\Enums\NicheBlueprint\NicheBlueprintVersionState;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry;
 use App\Library\NicheBlueprint\Adapters\FingerprintsInstalledComponent;
+use App\Library\NicheBlueprint\Adapters\TemplateOnlyComponent;
 use App\Library\NicheBlueprint\Workspace\BlueprintChecksum;
 use App\Models\Business;
 use App\Models\BusinessBlueprintComponentInstallation;
@@ -367,6 +368,18 @@ class NicheBlueprintInstaller
         $featureKey = (string) $component->required_feature_key;
         $versionNumber = (int) $version->version_number;
         $payload = is_array($component->payload) ? $component->payload : [];
+
+        // Template-only components are suggestions, never installed rows: no
+        // adapter write, no entitlement decision and no installation record
+        // (so nothing to retry or to leave inconsistent). Checked before the
+        // lock; an unregistered type falls through to the ordinary path.
+        try {
+            if ($this->adapters->adapterFor($componentType) instanceof TemplateOnlyComponent) {
+                return self::OUTCOME_ALREADY_DECIDED;
+            }
+        } catch (Throwable) {
+            // Handled by the ordinary path below, which records the failure.
+        }
 
         try {
             return DB::transaction(function () use (

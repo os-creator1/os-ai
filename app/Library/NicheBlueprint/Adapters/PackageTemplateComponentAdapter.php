@@ -2,32 +2,28 @@
 
 namespace App\Library\NicheBlueprint\Adapters;
 
-use App\Enums\Catalog\CatalogItemType;
 use App\Enums\NicheBlueprint\BlueprintUpdatePolicy;
-use App\Library\Catalog\CatalogItemManager;
 use App\Library\NicheBlueprint\Workspace\BlueprintChecksum;
 use App\Models\Business;
 use App\Models\CatalogItem;
 use InvalidArgumentException;
+use LogicException;
 
 /**
- * Blueprint V2 — a package or add-on TEMPLATE for the Business catalog.
- * Delegates to `CatalogItemManager::create` (system-authored, no actor).
+ * Blueprint V2 — a package or add-on TEMPLATE: a reusable suggestion, NOT a
+ * customer offering. It is template-only, so installation runs never create
+ * catalog items; a catalog item exists only after a deliberate customer action
+ * or an explicitly authorised import. Existing blueprint-origin items are left
+ * untouched (fingerprint still reads them).
  *
  * A template carries NO price unless the Blueprint author deliberately sets a
- * "suggested" one; the Business owner is expected to set their own. An add-on
- * is a catalog `product` (the catalog has two types: product, package).
- * Idempotency: the row carries `source_questionnaire_item_key =
- * "blueprint:<hash>"`, and an existing row with that key is adopted, so a
- * re-run can never duplicate it.
+ * "suggested" one.
  */
-final class PackageTemplateComponentAdapter implements BlueprintComponentAdapter, BlueprintComponentDefinition, FingerprintsInstalledComponent
+final class PackageTemplateComponentAdapter implements BlueprintComponentAdapter, BlueprintComponentDefinition, FingerprintsInstalledComponent, TemplateOnlyComponent
 {
     use InteractsWithBlueprintPayload;
 
     public const TYPE = 'package_template';
-
-    public function __construct(private readonly CatalogItemManager $catalog) {}
 
     public function componentType(): string
     {
@@ -39,24 +35,13 @@ final class PackageTemplateComponentAdapter implements BlueprintComponentAdapter
         $this->parse($payload);
     }
 
+    /**
+     * Never called by the installer (see TemplateOnlyComponent): a template is
+     * a suggestion, so no automated run creates a catalog item from it.
+     */
     public function install(Business $business, array $payload, ?int $actorUserId): InstalledComponentReference
     {
-        $p = $this->parse($payload);
-        $sourceKey = 'blueprint:'.substr(BlueprintChecksum::of([$p['kind'], mb_strtolower($p['name'])]), 0, 40);
-
-        $existing = $this->catalog->findBySourceKey($business, $sourceKey);
-
-        $item = $existing ?? $this->catalog->create($business, [
-            'type' => $p['kind'] === 'add_on' ? CatalogItemType::Product->value : CatalogItemType::Package->value,
-            'name' => $p['name'],
-            'description' => $p['description'],
-            'price_minor' => $p['suggested_price_minor'],
-            'currency_code' => $p['suggested_price_minor'] === null ? null : $p['currency_code'],
-            'featured' => false,
-            'source_questionnaire_item_key' => $sourceKey,
-        ], $actorUserId);
-
-        return new InstalledComponentReference('catalog_item', (int) $item->id);
+        throw new LogicException('Package templates are suggestions and are never installed automatically.');
     }
 
     public function fingerprint(Business $business, InstalledComponentReference $reference, array $payload): ?string
