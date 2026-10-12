@@ -4,6 +4,7 @@ namespace App\Library\AgencyBilling;
 
 use App\Exceptions\AgencyBilling\AgencyBillingException;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Log;
 use Stripe\Exception\ApiErrorException;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\StripeClient;
@@ -235,6 +236,10 @@ final class StripeApiAgencyGateway implements AgencyStripeGateway
         $clientId = (string) config('services.stripe.agency_connect_client_id');
 
         if ($clientId === '') {
+            // Operator-only diagnosis (names the setting, never a value); the
+            // customer still sees the generic "Payments are not available".
+            Log::warning('Agency "Connect existing Stripe account" is unavailable: STRIPE_AGENCY_CONNECT_CLIENT_ID (services.stripe.agency_connect_client_id) is not set.');
+
             throw AgencyBillingException::because(AgencyBillingException::NOT_CONFIGURED);
         }
 
