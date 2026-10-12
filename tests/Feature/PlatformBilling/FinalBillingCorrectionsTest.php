@@ -235,6 +235,33 @@ class FinalBillingCorrectionsTest extends TestCase
         $this->assertSame(1, PlatformTrialClaim::query()->where('provider_customer_id', 'cus_shared')->count());
     }
 
+    public function test_retiring_one_checkout_keeps_the_trial_another_live_attempt_relies_on(): void
+    {
+        $customer = $this->unpaidCustomer('buyer@example.test');
+        $created = $this->makeOffer(['customer_email' => 'buyer@example.test', 'trial_days' => 14]);
+        $other = $this->makeOffer(['customer_email' => 'buyer@example.test', 'trial_days' => 14]);
+
+        $this->acceptAs($customer['user'], $created['offer']);
+        $first = PlatformPrivateOfferRedemption::query()->latest('id')->firstOrFail();
+        $this->acceptAs($customer['user'], $other['offer']);
+        $second = PlatformPrivateOfferRedemption::query()->latest('id')->firstOrFail();
+        $this->assertNotSame($first->id, $second->id);
+        $this->assertSame('reserved', $second->refresh()->state);
+
+        // Make the FIRST one retirable while the second is still live.
+        $first->refresh()->forceFill(['state' => 'reserved', 'reserved_until' => now()->addHour()])->save();
+        $this->assertTrue($this->offers()->retireUnpaid($first, 'cancelled'));
+
+        $this->assertTrue(
+            PlatformTrialClaim::query()->where('workspace_id', $customer['workspace']->id)->where('state', 'reserved')->exists(),
+            'the other live checkout keeps its trial',
+        );
+
+        // Retiring the last live attempt does give it back.
+        $this->assertTrue($this->offers()->retireUnpaid($second->refresh(), 'cancelled'));
+        $this->assertFalse(PlatformTrialClaim::query()->where('workspace_id', $customer['workspace']->id)->exists());
+    }
+
     public function test_a_reservation_learns_the_provider_customer_when_it_becomes_known(): void
     {
         $ledger = app(TrialLedger::class);

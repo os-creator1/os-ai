@@ -271,7 +271,17 @@ final class PrivateOfferManager
 
             $workspace = Workspace::query()->find($locked->workspace_id);
 
-            if ($workspace !== null) {
+            // The trial reservation is shared by every open attempt of this
+            // Workspace. Retiring ONE Checkout gives it back only when no other
+            // live attempt is still relying on it.
+            $otherLiveAttempt = PlatformPrivateOfferRedemption::query()
+                ->where('workspace_id', $locked->workspace_id)
+                ->where('id', '!=', $locked->id)
+                ->where('state', PlatformPrivateOfferRedemption::STATE_RESERVED)
+                ->where('reserved_until', '>', now())
+                ->exists();
+
+            if ($workspace !== null && ! $otherLiveAttempt) {
                 $this->trials->release($workspace);
             }
 
