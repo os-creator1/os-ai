@@ -2,7 +2,9 @@
 
 namespace App\Notifications\Documents;
 
+use App\Library\Mail\MailBrand;
 use Illuminate\Bus\Queueable;
+use App\Library\Mail\BrandedMailMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -34,6 +36,7 @@ class DocumentReminderNotification extends Notification
         private readonly ?string $amount,
         private readonly ?string $dueDescription,
         private readonly bool $isExpiryWarning,
+        private readonly ?MailBrand $brand = null,
     ) {
     }
 
@@ -46,13 +49,17 @@ class DocumentReminderNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         if ($this->isExpiryWarning) {
-            return (new MailMessage)
+            return (new BrandedMailMessage)
+                ->greeting('A document is expiring soon')
+                ->viewData(['brand' => $this->brand, 'icon' => 'alert'])
                 ->subject("Expiring soon — {$this->documentTitle}")
                 ->line("\"{$this->documentTitle}\" from {$this->businessName} expires {$this->dueDescription}.")
                 ->line('You can still review it using the link in the original email.');
         }
 
-        $message = (new MailMessage)
+        $message = (new BrandedMailMessage)
+            ->greeting('Payment reminder')
+            ->viewData(['brand' => $this->brand, 'icon' => 'alert'])
             ->subject("Payment reminder — {$this->documentTitle}")
             ->line("{$this->businessName} is expecting a payment of {$this->amount} for \"{$this->documentTitle}\".");
 

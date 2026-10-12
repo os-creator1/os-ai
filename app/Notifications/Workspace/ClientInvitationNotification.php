@@ -2,7 +2,9 @@
 
 namespace App\Notifications\Workspace;
 
+use App\Library\Mail\MailBrandResolver;
 use Illuminate\Bus\Queueable;
+use App\Library\Mail\BrandedMailMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -25,6 +27,7 @@ class ClientInvitationNotification extends Notification
         private readonly string $plaintextToken,
         private readonly string $agencyWorkspaceName,
         private readonly ?string $intendedBusinessName,
+        private readonly ?int $agencyWorkspaceId = null,
     ) {
     }
 
@@ -39,8 +42,21 @@ class ClientInvitationNotification extends Notification
             ? " for \"{$this->intendedBusinessName}\""
             : '';
 
-        return (new MailMessage)
+        // The inviting Agency is always named; its own look applies only when its white-label brand is enabled and entitled.
+        $details = ['Invited by' => $this->agencyWorkspaceName];
+
+        if ($this->intendedBusinessName !== null) {
+            $details['Workspace'] = $this->intendedBusinessName;
+        }
+
+        return (new BrandedMailMessage)
             ->subject("{$this->agencyWorkspaceName} invited you to a new workspace")
+            ->greeting("You're invited to a new workspace")
+            ->viewData([
+                'brand' => app(MailBrandResolver::class)->forAgencyWorkspace($this->agencyWorkspaceId),
+                'icon' => 'mail',
+                'details' => $details,
+            ])
             ->line("{$this->agencyWorkspaceName} has invited you to set up a new workspace{$businessPhrase}.")
             ->action('Accept invitation', $this->claimUrl())
             ->line('If you did not expect this invitation, you can safely ignore this email.');
