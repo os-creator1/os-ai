@@ -894,9 +894,10 @@ class V1SignupHttpTest extends TestCase
         $first->assertRedirectContains('checkout.stripe.test');
 
         // Double-click / browser re-POST: the account is now signed in, and a
-        // signed-in actor can never begin another guest signup.
-        $this->post(route('register.payment.start'))->assertRedirect(route('signup.plan'));
-        $this->get(route('register'))->assertRedirect(route('signup.plan'));
+        // signed-in actor can never begin another guest signup. The `guest` middleware
+        // (RedirectIfAuthenticated) turns such a request away to the signed-in home.
+        $this->post(route('register.payment.start'))->assertRedirect(\App\Helpers\Helper::home_route());
+        $this->get(route('register'))->assertRedirect(\App\Helpers\Helper::home_route());
 
         $this->assertSame(1, User::query()->where('is_customer', true)->count());
         $this->assertSame(1, Workspace::query()->count());
