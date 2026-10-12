@@ -1,11 +1,5 @@
-<x-mail::layout>
-{{-- Header --}}
-<x-slot:header>
-<x-mail::header :url="config('app.url')">
-{{ config('app.name') }}
-</x-mail::header>
-</x-slot:header>
-
+@props(['brand' => null, 'icon' => null])
+<x-mail::layout :brand="$brand" :icon="$icon">
 {{-- Body --}}
 {!! $slot !!}
 
@@ -17,11 +11,4 @@
 </x-mail::subcopy>
 </x-slot:subcopy>
 @endisset
-
-{{-- Footer --}}
-<x-slot:footer>
-<x-mail::footer>
-© {{ date('Y') }} {{ config('app.name') }}. {{ __('All rights reserved.') }}
-</x-mail::footer>
-</x-slot:footer>
 </x-mail::layout>

@@ -5,6 +5,7 @@ namespace App\Notifications\Calendar;
 use App\Library\Calendar\Notifications\AppointmentCalendarLinks;
 use App\Library\Calendar\Notifications\AppointmentNotificationDetails;
 use Illuminate\Bus\Queueable;
+use App\Library\Mail\BrandedMailMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
@@ -45,7 +46,7 @@ class AppointmentCustomerNotification extends Notification
         $d = $this->details;
 
         if ($this->custom !== null) {
-            $mail = (new MailMessage)
+            $mail = (new BrandedMailMessage)
                 ->from((string) config('mail.from.address'), $d->businessName)
                 ->subject($this->custom['subject']);
 
@@ -56,32 +57,31 @@ class AppointmentCustomerNotification extends Notification
             }
 
             return $mail
+                ->viewData(['brand' => $d->brand, 'icon' => 'calendar'])
                 ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d))
                 ->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
         }
 
-        $mail = (new MailMessage)
+        $mail = (new BrandedMailMessage)
             ->from((string) config('mail.from.address'), $d->businessName)
             ->subject(($this->isReminder ? 'Reminder: ' : 'Booking confirmed: ') . $d->title() . ' on ' . $d->date)
             ->greeting($this->isReminder ? 'Your appointment is coming up' : 'You are booked')
             ->line($this->isReminder
                 ? "This is a reminder of your appointment with {$d->businessName}."
-                : "Your appointment with {$d->businessName} is confirmed.")
-            ->line('**What:** ' . $d->bookingType)
-            ->line('**Business:** ' . $d->businessName)
-            ->line('**Date:** ' . $d->date)
-            ->line('**Time:** ' . $d->timeRange)
-            ->line('**Time zone:** ' . $d->timezone);
+                : "Your appointment with {$d->businessName} is confirmed.");
+
+        $details = ['What' => $d->bookingType, 'Business' => $d->businessName, 'Date' => $d->date, 'Time' => $d->timeRange, 'Time zone' => $d->timezone];
 
         if ($d->where !== null) {
-            $mail->line('**Where:** ' . $d->where);
+            $details['Where'] = $d->where;
         }
 
         if ($d->instructions !== null) {
-            $mail->line('**Details:** ' . $d->instructions);
+            $details['Details'] = $d->instructions;
         }
 
         return $mail
+            ->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => $details])
             ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d))
             ->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
     }

@@ -62,7 +62,8 @@ class PhotoBoothBlueprintV2ProvisioningTest extends TestCase
         $this->assertSame(4, CustomFieldDefinition::query()->where('business_id', $business->id)->count());
         $this->assertSame(1, Form::query()->where('business_id', $business->id)->count());
         $this->assertSame('draft', Form::query()->where('business_id', $business->id)->first()->lifecycle_state->value);
-        $this->assertSame(4, CatalogItem::query()->where('business_id', $business->id)->count());
+        $this->assertSame(0, CatalogItem::query()->where('business_id', $business->id)->count(), 'Package templates are suggestions, never auto-created catalog items.');
+        $this->assertSame(0, BusinessBlueprintComponentInstallation::query()->where('business_id', $business->id)->where('component_type', 'package_template')->count(), 'Template-only components leave no installation record.');
 
         $workflows = AutomationWorkflow::query()->where('business_id', $business->id)->get();
         $this->assertCount(3, $workflows);
@@ -108,5 +109,23 @@ class PhotoBoothBlueprintV2ProvisioningTest extends TestCase
         $this->assertSame(BlueprintComponentInstallationState::Installed, $record->state);
         $this->assertSame(64, strlen((string) $record->source_checksum));
         $this->assertSame(64, strlen((string) $record->installed_fingerprint));
+    }
+
+    public function test_recovery_runs_never_create_catalog_items_and_keep_customer_items(): void
+    {
+        $this->seedPhotoBoothBlueprintV2();
+        [, $business] = $this->tenant(WorkspacePlanTier::Growth);
+
+        $mine = app(\App\Library\Catalog\CatalogItemManager::class)->create($business, [
+            'type' => \App\Enums\Catalog\CatalogItemType::Package->value,
+            'name' => 'My own package',
+            'featured' => false,
+        ], null);
+
+        foreach ([1, 2] as $_) {
+            app(NicheBlueprintInstaller::class)->installForBusiness($business);
+        }
+
+        $this->assertSame([$mine->id], CatalogItem::query()->where('business_id', $business->id)->pluck('id')->all());
     }
 }
