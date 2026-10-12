@@ -189,6 +189,46 @@ Private Offers are additionally behind the server-side switch in section 6.
   trial) from `pre_28_day_snapshot`; rows without one are taken off sale. The trial
   backfill records every historical Workspace even when mailboxes collide. Product
   reuse falls back to the legacy Price's Product.
+### Schedule ownership and recovery (final hardening)
+
+* **Ownership is proven, never assumed.** `PlatformStripeGateway::proveOwnSchedule()`
+  replays the push's idempotency key: the provider answers with our schedule (ours),
+  refuses / answers with another (definitively *not* ours → `schedule_not_ours`, terminal,
+  surfaced), or fails transiently (`provider_failed`, always retried). A transient failure
+  is never read as "foreign".
+* **Nothing is completed before local state is final.** Whenever the provider has moved
+  (a late promotion catch-up, an upgrade whose response was lost), the shared finalizer
+  records the Price, period, lifecycle and entitlements FIRST; only then is the
+  redemption's retry marker cleared / the agreement closed. A failure leaves it `pending`
+  for the sweep, which finishes it exactly once.
+* **Pushes and settlement share a per-redemption lock.** A sweep that meets a push on the
+  wire does nothing; a reservation settled while a push waited is never pushed. A
+  reservation is adopted when the replay proves the provider holds our schedule (even
+  after a revoke), released only when nothing of ours exists, and left for an operator
+  when it cannot be proven (key window passed).
+* **Billing changes are price-only.** The subscription's billing-cycle snapshot must equal
+  the catalog's; an annual (or legacy monthly) subscriber is never silently moved to 28
+  days, and the offer shows as unavailable.
+* **One currency per offer.** A catalog that has moved currency makes an open
+  new-subscription offer stale (refused before Checkout) rather than charging in one
+  currency under another label.
+* **Trial identity.** A reservation persists the provider customer id, and the atomic
+  reservation honours Workspace, mailbox and provider customer (all unique keys).
+
+### Staging acceptance checklist (after merge)
+
+1. Deploy code, run `php artisan migrate` (one pass); confirm `workspace_plan_catalog`
+   rows moved to `every_28_days`, signup closed, `pre_28_day_snapshot` filled.
+2. Keep `PLATFORM_PRIVATE_OFFERS_ENABLED` and `PLATFORM_ALLOW_PUBLIC_TRIALS` unset (off).
+3. Billing & Revenue → create the **"Every 28 days"** Stripe TEST-mode Price for each plan
+   (Core, Growth, Agency); save with *Available to new signups* ticked.
+4. Confirm the plans are sellable and the plan page shows "Every 28 days" with no trial.
+5. Public signup → real Checkout → pay with a test card; confirm the webhook delivered
+   (event rows `processed`), the Workspace is entitled only after payment, the invoice is
+   paid, and the period is exactly 28 days.
+6. Confirm an existing subscriber's price, cycle and period are unchanged.
+7. Confirm `/offers/<token>` and the owner Private Offers screens answer 404.
+8. Confirm the scheduler runs `platform-offers:sweep` and the queue worker is up.
 ## 5. Known limitations
 * **Email-bound offers require real email verification.** With
   `ACCOUNT_VERIFICATION=false` every new account is stamped verified at creation
