@@ -51,7 +51,7 @@ jobs:
       - name: Diff check and PHP lint
         run: |
           git diff --check origin/staging...HEAD
-          for f in $(git diff --name-only origin/staging...HEAD | grep '\.php$' | grep -v '\.blade\.php$'); do php -l "$f" | grep -v '^No syntax errors'; done
+          for f in $(git diff --name-only origin/staging...HEAD | grep '\.php$' | grep -v '\.blade\.php$'); do php -l "$f" >/dev/null; done
       - name: Prepare disposable test database once
         run: |
           [ "$DB_DATABASE" = "ultimatesms_testing" ] && [ "$DB_HOST" = "127.0.0.1" ]
