@@ -65,6 +65,7 @@
     "pusher/pusher-php-server": "^7.0",
     "rap2hpoutre/fast-excel": "^5.0",
     "razorpay/razorpay": "^2.8.3",
+    "resend/resend-php": "^1.16",
     "selcom/selcom-apigw-client": "^1.0",
     "sendpulse/rest-api": "^1.0",
     "spatie/laravel-html": "^3.2",
