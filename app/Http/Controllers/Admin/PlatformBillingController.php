@@ -7,6 +7,8 @@ use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Http\Controllers\Controller;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\PlatformBilling\BillingCycle;
+use App\Library\PlatformBilling\Offers\PlatformPriceProvisioner;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
 use App\Library\PlatformBilling\PlatformPriceVerifier;
 use App\Models\AgencyClientSubscription;
@@ -59,6 +61,7 @@ class PlatformBillingController extends Controller
         private readonly EntitlementManager $entitlements,
         private readonly PlatformPriceVerifier $prices,
         private readonly \App\Library\PlatformOwner\PlatformPlanAdministrator $admin,
+        private readonly PlatformPriceProvisioner $provisioner,
     ) {
     }
 
@@ -90,7 +93,7 @@ class PlatformBillingController extends Controller
         $data = $request->validate([
             'price' => ['required', 'regex:/^\d+(\.\d{1,2})?$/'],
             'currency_id' => ['required', 'integer', 'exists:currencies,id'],
-            'billing_cycle' => ['required', 'string', 'in:monthly,yearly'],
+            'billing_cycle' => ['required', 'string', 'in:' . BillingCycle::validationList($catalog->billing_cycle)],
             'trial_enabled' => ['nullable', 'boolean'],
             'trial_days' => ['nullable', 'integer', 'min:1', 'max:730'],
             'available_for_signup' => ['nullable', 'boolean'],
@@ -129,6 +132,43 @@ class PlatformBillingController extends Controller
      *
      * @return array<string, int>
      */
+    /**
+     * Create (or reuse) this plan's standard Stripe Price — recurring, in the
+     * plan's own cycle (day x 28 for "Every 28 days") — verify it against what
+     * Stripe actually made, and put it on the plan. This is what replaces
+     * "open Stripe and make a Price by hand".
+     */
+    public function provisionPrice(Request $request, string $tier): RedirectResponse
+    {
+        $this->authorize('manage workspace plans');
+
+        $catalog = WorkspacePlanCatalog::query()->where('tier', $tier)->firstOrFail();
+
+        $data = $request->validate(['reason' => ['required', 'string', 'min:3', 'max:500']]);
+
+        if ($catalog->price === null || $catalog->currency_id === null) {
+            return back()->withErrors(['price' => __('Set the plan price and currency first.')]);
+        }
+
+        try {
+            $code = (string) DB::table('currencies')->where('id', $catalog->currency_id)->value('code');
+            $priceId = $this->provisioner->provisionCatalogPrice($catalog, $code);
+            $this->admin->apply($catalog, ['provider_price_id' => $priceId, 'reason' => $data['reason']], (int) Auth::id());
+        } catch (PlatformBillingException $e) {
+            return back()->withErrors(['provider_price_id' => $e->customerMessage()]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return back()->withErrors($e->errors());
+        }
+
+        return back()->with([
+            'status' => 'success',
+            'message' => __(':plan now sells on a verified Stripe Price (:cycle).', [
+                'plan' => $catalog->display_name,
+                'cycle' => BillingCycle::label((string) $catalog->billing_cycle),
+            ]),
+        ]);
+    }
+
     private function metrics(): array
     {
         $byStatus = PlatformSubscription::query()

@@ -29,6 +29,8 @@ final readonly class ProviderPriceSnapshot
         public ?string $interval = null,
         public ?int $intervalCount = null,
         public bool $livemode = false,
+        /** The Stripe Product this Price belongs to, so offer Prices group with the plan's own. */
+        public ?string $productId = null,
     ) {
     }
 }

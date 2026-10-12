@@ -277,7 +277,7 @@ class PlatformBillingCorrectionsTest extends TestCase
         return array_merge([
             'price' => '297.00',
             'currency_id' => $this->fixtureCurrencyId(),
-            'billing_cycle' => 'monthly',
+            'billing_cycle' => 'every_28_days',
             'available_for_signup' => '1',
             'provider_price_id' => 'price_underTest01',
             'reason' => 'Launch pricing.',
@@ -318,7 +318,7 @@ class PlatformBillingCorrectionsTest extends TestCase
         $this->signInAsPlatformOwner();
 
         try {
-            app(PlatformPriceVerifier::class)->mismatches('price_onAConnectedAcct', '297.00', 'USD', 'monthly');
+            app(PlatformPriceVerifier::class)->mismatches('price_onAConnectedAcct', '297.00', 'USD', 'every_28_days');
             $this->fail('A connected-account Price must not verify here.');
         } catch (PlatformBillingException $e) {
             $this->assertSame(PlatformBillingException::PRICE_NOT_RETRIEVABLE, $e->reason);
@@ -364,7 +364,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     {
         $this->signInAsPlatformOwner();
         $this->stripe->definePrice('price_underTest01', [
-            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'day', 'interval_count' => 28,
         ]);
 
         $this->post(route('admin.platform-billing.update', ['growth']), $this->ownerConfig())

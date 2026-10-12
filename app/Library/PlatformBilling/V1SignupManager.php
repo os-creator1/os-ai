@@ -113,6 +113,18 @@ final class V1SignupManager
      *
      * @throws PlatformBillingException
      */
+    /**
+     * Creates the account's Workspace, Business and Primary Location WITHOUT
+     * opening a Checkout — for a customer arriving from a Private Offer, who
+     * must first review and accept the offer's terms before any payment starts.
+     * Provisioning grants nothing: the plan is assigned only after the provider
+     * confirms payment.
+     */
+    public function provisionWithoutCheckout(Customer $customer, array $draft): Workspace
+    {
+        return $this->provision($customer, $draft);
+    }
+
     public function restartCheckout(
         Customer $customer,
         WorkspacePlanCatalog $catalog,

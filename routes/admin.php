@@ -792,7 +792,23 @@
         |
         */
         Route::get('platform-billing', 'PlatformBillingController@index')->name('platform-billing.index');
-        Route::post('platform-billing/{tier}', 'PlatformBillingController@update')->name('platform-billing.update');
+        Route::post('platform-billing/{tier}', 'PlatformBillingController@update')->where('tier', 'core|growth|agency')->name('platform-billing.update');
+        Route::post('platform-billing/{tier}/price', 'PlatformBillingController@provisionPrice')->where('tier', 'core|growth|agency')->name('platform-billing.provision-price');
+
+        /*
+        | Private Offers — special terms for ONE customer (a trial of any length,
+        | a negotiated recurring price, a fixed or percentage discount for
+        | forever / one / N 28-day periods), delivered as a unique expiring
+        | link. Platform Owner → Billing & Revenue → Private Offers → Create
+        | Offer → Copy Link. The owner never opens Stripe: the Prices are
+        | created and verified by MotionGrove.
+        */
+        Route::get('platform-billing/offers', 'PlatformPrivateOffersController@index')->middleware('private.offers')->name('platform-billing.offers.index');
+        Route::post('platform-billing/offers', 'PlatformPrivateOffersController@store')->middleware('private.offers')->name('platform-billing.offers.store');
+        Route::get('platform-billing/offers/{offer}', 'PlatformPrivateOffersController@show')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.show');
+        Route::post('platform-billing/offers/{offer}/revoke', 'PlatformPrivateOffersController@revoke')->whereUuid('offer')->name('platform-billing.offers.revoke');
+        Route::post('platform-billing/offers/{offer}/link', 'PlatformPrivateOffersController@newLink')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.new-link');
+        Route::post('platform-billing/offers/{offer}/apply', 'PlatformPrivateOffersController@applyChange')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.apply');
 
         /*
         | Platform Owner V1 final — Plans: the one plan authority. Edit name,

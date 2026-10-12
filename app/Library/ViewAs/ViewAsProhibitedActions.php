@@ -125,6 +125,9 @@ final class ViewAsProhibitedActions
         // Checkout return buy a lane-A plan for the ACTOR's own account. A View
         // As session never starts, resumes or confirms a platform purchase.
         'signup.',
+        // Private Offers: accepting terms, paying and returning from Checkout
+        // commit the ACTOR's own account to a price. Never done while viewing.
+        'offers.',
     ];
 
     /** GET-only read exceptions inside the prefixes above. */

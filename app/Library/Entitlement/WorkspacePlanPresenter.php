@@ -246,7 +246,11 @@ final class WorkspacePlanPresenter
                 ? str_replace('{PRICE}', $amount, (string) $currency->format)
                 : "{$amount} {$currency->code}";
 
-            return [['label' => 'Price', 'value' => $catalog->billingCycle === 'monthly' ? "{$formatted} per month" : "{$formatted} ({$catalog->billingCycle})"]];
+            return [['label' => 'Price', 'value' => match ($catalog->billingCycle) {
+                'monthly' => "{$formatted} per month",
+                'every_28_days' => "{$formatted} every 28 days",
+                default => "{$formatted} ({$catalog->billingCycle})",
+            }]];
         }
 
         return [];

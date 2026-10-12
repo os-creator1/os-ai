@@ -65,7 +65,7 @@ class CustomerSubscriptionHttpTest extends TestCase
             ->assertSee('Trial')
             // The SNAPSHOT price — what this customer actually pays.
             ->assertSee((string) $fixture['subscription']->price_snapshot)
-            ->assertSee('monthly');
+            ->assertSee('every 28 days');
     }
 
     public function test_the_page_shows_the_snapshot_price_not_the_current_catalog_price(): void
@@ -81,7 +81,7 @@ class CustomerSubscriptionHttpTest extends TestCase
         $this->get($this->planUrl($fixture['workspace']))
             ->assertOk()
             ->assertSee('99.00')
-            ->assertDontSee('499.00 USD / monthly');
+            ->assertDontSee('499.00 USD / every 28 days');
     }
 
     public function test_the_page_never_surfaces_legacy_ultimate_sms_plan_semantics(): void

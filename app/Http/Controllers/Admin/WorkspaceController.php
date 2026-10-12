@@ -79,6 +79,14 @@ class WorkspaceController extends AdminBaseController
             'breadcrumbs' => $this->breadcrumbs($workspace),
         ];
 
+        // Private Offers for this Workspace (explicit, audited billing-change
+        // workflow and special pricing). Read model only; every mutation is on
+        // the owner's offer screens.
+        if (Gate::allows('view workspace plans') && \App\Library\PlatformBilling\Offers\PrivateOffersFeature::enabled()) {
+            $viewData['workspaceOffers'] = app(\App\Library\PlatformBilling\Offers\PrivateOfferManager::class)
+                ->overview((int) $workspace->id, 20);
+        }
+
         // The read card (§14, gated by @can('view workspace plans')) and the
         // mutate card (gated by @can('manage workspace plans')) are
         // independent permissions -- an administrator can legitimately hold

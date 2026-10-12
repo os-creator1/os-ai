@@ -104,7 +104,7 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $this->assertNotNull($row);
         $this->assertNull($row->price);
         $this->assertNull($row->currency_id);
-        $this->assertSame('monthly', $row->billing_cycle);
+        $this->assertSame('every_28_days', $row->billing_cycle);
         $this->assertSame(1, (int) $row->business_slot_included);
         $this->assertSame(1, (int) $row->business_slot_max);
         $this->assertSame(0, (int) $row->unlimited_business_slots);

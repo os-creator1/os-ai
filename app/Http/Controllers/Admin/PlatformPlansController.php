@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Exceptions\Entitlement\PlanCatalogPricingInUseException;
 use App\Library\Entitlement\PlatformFeatureRegistry;
+use App\Library\PlatformBilling\BillingCycle;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
 use App\Library\PlatformOwner\PlatformFeatureGroups;
 use App\Library\PlatformOwner\PlatformPlanAdministrator;
@@ -82,7 +83,7 @@ class PlatformPlansController extends Controller
             'display_name' => ['required', 'string', 'min:2', 'max:60'],
             'price' => ['nullable', 'regex:/^\d+(\.\d{1,2})?$/'],
             'currency_id' => ['nullable', 'integer', 'exists:currencies,id'],
-            'billing_cycle' => ['required', 'in:monthly,yearly'],
+            'billing_cycle' => ['required', 'in:' . BillingCycle::validationList($catalog->billing_cycle)],
             'is_active' => ['nullable', 'boolean'],
             'available_for_signup' => ['nullable', 'boolean'],
             'trial_enabled' => ['nullable', 'boolean'],

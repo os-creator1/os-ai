@@ -41,6 +41,7 @@ class ProductionSchedulerRegistrationTest extends TestCase
         'documents:dispatch-balance-requests',
         'documents:reconcile-stale-payments',
         'platform-subscriptions:apply-due-plan-changes',
+        'platform-offers:sweep',
         'agency-subscriptions:apply-due-plan-changes',
         'workspaces:advance-account-lifecycle',
         'usage:spending-threshold-alerts',

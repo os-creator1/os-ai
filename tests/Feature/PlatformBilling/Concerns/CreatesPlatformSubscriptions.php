@@ -32,6 +32,15 @@ trait CreatesPlatformSubscriptions
         $this->stripe->baselineTransactionLevel = DB::transactionLevel();
         $this->app->instance(PlatformStripeGateway::class, $this->stripe);
 
+        // The legacy lane-A suites exercise catalog trials, which are inert in
+        // production (config/platform_billing.php). New-behaviour tests state
+        // the setting they need explicitly.
+        config(['platform_billing.allow_public_trials' => true]);
+
+        // Private Offers are off in production by default; their suites turn
+        // them on, and PrivateOffersFeatureFlagTest pins the off behaviour.
+        config(['platform_billing.private_offers_enabled' => true]);
+
         return $this->stripe;
     }
 
@@ -48,7 +57,8 @@ trait CreatesPlatformSubscriptions
         $catalog->forceFill([
             'price' => $price,
             'currency_id' => $this->fixtureCurrencyId(),
-            'billing_cycle' => 'monthly',
+            // Every platform plan bills EXACTLY every 28 days.
+            'billing_cycle' => 'every_28_days',
             'is_active' => true,
             'available_for_signup' => true,
             'trial_enabled' => $trialDays !== null,
@@ -63,8 +73,8 @@ trait CreatesPlatformSubscriptions
         $this->stripe->definePrice($priceId, [
             'currency' => 'USD',
             'unit_amount' => \App\Library\Money\StripeMinorUnits::toMinor($price, 'USD'),
-            'interval' => 'month',
-            'interval_count' => 1,
+            'interval' => 'day',
+            'interval_count' => 28,
             'livemode' => false,
         ]);
 

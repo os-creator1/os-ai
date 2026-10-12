@@ -33,7 +33,7 @@
                             <td><strong>{{ $c->display_name }}</strong></td>
                             <td>
                                 @if ($c->price !== null)
-                                    {{ $c->currency?->code }} {{ number_format((float) $c->price, 2) }} / {{ $c->billing_cycle === 'yearly' ? 'year' : 'month' }}
+                                    {{ $c->currency?->code }} {{ number_format((float) $c->price, 2) }} / {{ \App\Library\PlatformBilling\BillingCycle::perLabel((string) $c->billing_cycle) }}
                                 @else
                                     <span class="text-muted">Not priced</span>
                                 @endif

@@ -6,6 +6,8 @@ use App\Enums\Business\BusinessIndustry;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Http\Controllers\Controller;
 use App\Library\Business\BusinessLocaleOptions;
+use App\Library\PlatformBilling\Offers\OfferReturn;
+use App\Library\PlatformBilling\Offers\PrivateOfferRedemptionManager;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
 use App\Library\PlatformBilling\V1SignupDraft;
 use App\Library\PlatformBilling\V1SignupManager;
@@ -71,6 +73,7 @@ class V1SignupController extends Controller
         private readonly UserRepository $users,
         private readonly BusinessLocaleOptions $localeOptions,
         private readonly WorkspacePlanAssignmentRepository $assignments,
+        private readonly PrivateOfferRedemptionManager $offers,
     ) {
     }
 
@@ -110,7 +113,7 @@ class V1SignupController extends Controller
             return $this->planView(errors: ['plan' => __('That plan is not available right now. Please choose one of the plans below.')]);
         }
 
-        if ($draft->tier() !== null && $this->sellablePlan($draft->tier()) !== null) {
+        if ($draft->tier() !== null && $this->planFor($draft) !== null) {
             return redirect()->to($this->furthestStepUrl($draft));
         }
 
@@ -160,8 +163,8 @@ class V1SignupController extends Controller
 
         return view('auth.signup.account', [
             'step' => 2,
-            'plan' => $this->sellablePlan((string) $draft->tier()),
-            'account' => $draft->account() ?? [],
+            'plan' => $this->planFor($draft),
+            'account' => $draft->account() ?? ['email' => $this->draftOffer($draft)?->customer_email],
             'languages' => $this->enabledLanguages(),
         ]);
     }
@@ -224,7 +227,7 @@ class V1SignupController extends Controller
 
         return view('auth.signup.business', [
             'step' => 3,
-            'plan' => $this->sellablePlan($tier),
+            'plan' => $this->planFor($draft),
             'isAgency' => $tier === 'agency',
             'business' => $draft->business() ?? [],
             'industries' => BusinessIndustry::cases(),
@@ -304,7 +307,7 @@ class V1SignupController extends Controller
 
         return view('auth.signup.payment', [
             'step' => 4,
-            'plan' => $this->sellablePlan((string) $draft->tier()),
+            'plan' => $this->planFor($draft),
             'account' => $draft->account(),
             'business' => $draft->business(),
             'isAgency' => $draft->tier() === 'agency',
@@ -336,6 +339,9 @@ class V1SignupController extends Controller
         $account = (array) $draft->account();
         $business = (array) $draft->business();
         $password = $draft->password();
+        // Captured before the draft is cleared: a customer from a private-offer
+        // link is sent back to the offer, NOT to an undiscounted Checkout.
+        $offerToken = $this->draftOffer($draft) !== null ? $draft->offerToken() : null;
 
         if ($password === null) {
             return redirect()->route('register.account')
@@ -396,6 +402,26 @@ class V1SignupController extends Controller
         $request->session()->regenerate();
 
         $this->sendVerificationEmail($user);
+
+        if ($offerToken !== null) {
+            // Account, Workspace and Business exist; NOTHING is bought. The
+            // customer reviews and accepts the offer's exact terms next, and
+            // only then is a Checkout opened.
+            try {
+                $this->signup->provisionWithoutCheckout($customer, $business);
+            } catch (\Throwable $e) {
+                report($e);
+
+                return redirect()->route('signup.plan')->with([
+                    'status' => 'error',
+                    'message' => __('We could not finish setting up your account. Please try again.'),
+                ]);
+            }
+
+            OfferReturn::remember($offerToken);
+
+            return redirect()->route('offers.show', ['token' => $offerToken]);
+        }
 
         try {
             $session = $this->signup->startSubscription(
@@ -576,7 +602,17 @@ class V1SignupController extends Controller
      */
     private function signupClosed(): bool
     {
-        return ! config('account.can_register') || count($this->plans->sellablePlans()) === 0;
+        if (! config('account.can_register')) {
+            return true;
+        }
+
+        // Nothing on public sale does not close signup for someone holding a
+        // valid private offer.
+        if (count($this->plans->sellablePlans()) === 0) {
+            return $this->draftOffer($this->draft(request())) === null;
+        }
+
+        return false;
     }
 
     private function closedView(): View
@@ -636,11 +672,60 @@ class V1SignupController extends Controller
     }
 
     /** A pinned plan that is no longer sellable is dropped, not trusted. */
+    /**
+     * The plan this signup is for: a publicly sellable one, or — for a customer
+     * who arrived from a Private Offer link — the plan that offer is on, even
+     * if it is not on public sale. The offer is re-validated every time, so an
+     * expired or revoked link cannot keep a signup alive.
+     */
+    private function planFor(V1SignupDraft $draft): ?array
+    {
+        $tier = $draft->tier();
+
+        if ($tier === null) {
+            return null;
+        }
+
+        $public = $this->sellablePlan($tier);
+
+        if ($public !== null) {
+            return $public;
+        }
+
+        $offer = $this->draftOffer($draft);
+
+        return $offer !== null && $offer->catalog->tier->value === $tier
+            ? $this->plans->presentTier($offer->catalog->tier)
+            : null;
+    }
+
+    /** The still-usable new-customer offer this signup began from, if any. */
+    private function draftOffer(V1SignupDraft $draft): ?\App\Models\PlatformPrivateOffer
+    {
+        $token = $draft->offerToken();
+
+        if ($token === null) {
+            return null;
+        }
+
+        $offer = $this->offers->findByToken($token);
+
+        if ($offer === null
+            || $offer->isRevoked()
+            || $offer->isExpired()
+            || $offer->isBillingChange()
+            || $offer->target_workspace_id !== null) {
+            return null;
+        }
+
+        return $offer;
+    }
+
     private function requirePlan(V1SignupDraft $draft): ?RedirectResponse
     {
         $tier = $draft->tier();
 
-        if ($tier !== null && $this->sellablePlan($tier) !== null) {
+        if ($tier !== null && $this->planFor($draft) !== null) {
             return null;
         }
 

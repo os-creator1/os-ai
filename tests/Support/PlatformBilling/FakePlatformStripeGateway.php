@@ -4,7 +4,10 @@ namespace Tests\Support\PlatformBilling;
 
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
+use App\Library\PlatformBilling\CheckoutOptions;
 use App\Library\PlatformBilling\CheckoutSessionResult;
+use App\Library\PlatformBilling\ProviderPriceSnapshot;
+use App\Library\PlatformBilling\SchedulePhase;
 use App\Library\PlatformBilling\PlatformStripeGateway;
 use App\Library\PlatformBilling\PlatformSubscriptionSnapshot;
 use Carbon\CarbonImmutable;
@@ -86,8 +89,11 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         string $customerEmail,
         ?int $trialDays,
         ?string $existingCustomerId = null,
+        ?CheckoutOptions $options = null,
     ): CheckoutSessionResult {
         $this->record('createSubscriptionCheckout', [
+            'options' => $options,
+            'payment_method_collection' => 'always',
             'price' => $providerPriceId,
             'client_reference_id' => $clientReferenceId,
             'idempotency_key' => $idempotencyKey,
@@ -103,6 +109,7 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         // errors if they're not the same to prevent accidental misuse".
         $fingerprint = md5(json_encode([
             $providerPriceId, $clientReferenceId, $successUrl, $cancelUrl, $customerEmail, $trialDays, $existingCustomerId,
+            $options?->expiresAt, $options?->subscriptionMetadata, $options?->sessionMetadata,
         ]));
 
         if (isset($this->sessionsByKey[$idempotencyKey])) {
@@ -127,6 +134,8 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             'status' => 'open',
             'price' => $providerPriceId,
             'trial_days' => $trialDays,
+            'options' => $options,
+            'email' => $customerEmail,
         ];
 
         return $this->sessionResult($sessionId);
@@ -162,13 +171,26 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             'status' => $resolved,
             'price' => $session['price'],
             'period_start' => $now,
-            'period_end' => $trialDays !== null ? $now->addDays($trialDays) : $now->addMonth(),
+            'period_end' => $trialDays !== null ? $now->addDays($trialDays) : $this->addOnePeriod($now, $session['price']),
             'trial_end' => $trialDays !== null ? $now->addDays($trialDays) : null,
             'cancel_at_period_end' => false,
             'canceled_at' => null,
             'ended_at' => null,
             'operation_id' => $session['client_reference_id'],
+            'metadata' => $session['options']?->subscriptionMetadata ?? [],
+            'schedule' => null,
         ];
+
+        // What Stripe charges at Checkout: nothing during a trial, the Price's
+        // amount otherwise. Recorded so a test can assert "today's charge".
+        if ($trialDays === null && $resolved !== PlatformSubscriptionStatus::Incomplete) {
+            $this->charges[] = [
+                'subscription' => $subscriptionId,
+                'price' => $session['price'],
+                'amount' => $this->prices[$session['price']]['unit_amount'] ?? null,
+                'reason' => 'checkout',
+            ];
+        }
 
         $this->sessions[$sessionId]['subscription'] = $subscriptionId;
         $this->sessions[$sessionId]['status'] = 'complete';
@@ -192,8 +214,74 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
     {
         $end = $this->subscriptions[$subscriptionId]['period_end'] ?? CarbonImmutable::now()->startOfSecond();
         $this->subscriptions[$subscriptionId]['period_start'] = $end;
-        $this->subscriptions[$subscriptionId]['period_end'] = $end->addMonth();
         $this->subscriptions[$subscriptionId]['trial_end'] = null;
+
+        // A subscription managed by a schedule takes the price of the phase the
+        // new period starts in — exactly the transition Stripe performs.
+        $schedule = $this->subscriptions[$subscriptionId]['schedule'] ?? null;
+
+        if ($schedule !== null) {
+            $this->subscriptions[$subscriptionId]['price'] = $this->schedulePriceAt($schedule, $end)
+                ?? $this->subscriptions[$subscriptionId]['price'];
+
+            if ($this->scheduleCompletedAt($schedule, $end)) {
+                $this->subscriptions[$subscriptionId]['schedule'] = null;
+            }
+        }
+
+        $price = $this->subscriptions[$subscriptionId]['price'];
+        $this->subscriptions[$subscriptionId]['period_end'] = $this->addOnePeriod($end, $price);
+
+        if (($this->subscriptions[$subscriptionId]['status'] ?? null) === PlatformSubscriptionStatus::Active
+            || ($this->subscriptions[$subscriptionId]['status'] ?? null) === PlatformSubscriptionStatus::Trialing) {
+            $this->charges[] = [
+                'subscription' => $subscriptionId,
+                'price' => $price,
+                'amount' => $this->prices[$price]['unit_amount'] ?? null,
+                'reason' => 'renewal',
+            ];
+        }
+    }
+
+    /** @var array<int, array{subscription: string, price: string, amount: int|null, reason: string}> */
+    public array $charges = [];
+
+    /** @var array<string, array<string, mixed>> Schedule id => phases */
+    public array $schedules = [];
+
+    /** @var array<string, string> Product id by key. */
+    public array $products = [];
+
+    /** The length of one period of a Price, as Stripe would advance it. */
+    private function addOnePeriod(CarbonImmutable $from, string $priceId): CarbonImmutable
+    {
+        $price = $this->prices[$priceId] ?? [];
+        $count = (int) ($price['interval_count'] ?? 1);
+
+        return match ($price['interval'] ?? 'month') {
+            'day' => $from->addDays($count),
+            'year' => $from->addYears($count),
+            default => $from->addMonths($count),
+        };
+    }
+
+    private function schedulePriceAt(string $scheduleId, CarbonImmutable $at): ?string
+    {
+        foreach ($this->schedules[$scheduleId]['phases'] ?? [] as $phase) {
+            if ($phase['ends_at'] === null || $at->lt($phase['ends_at'])) {
+                return $phase['price'];
+            }
+        }
+
+        return null;
+    }
+
+    private function scheduleCompletedAt(string $scheduleId, CarbonImmutable $at): bool
+    {
+        $phases = $this->schedules[$scheduleId]['phases'] ?? [];
+        $penultimate = $phases[count($phases) - 2]['ends_at'] ?? null;
+
+        return $penultimate !== null && $at->gte($penultimate);
     }
 
     public function retrieveCheckoutSession(string $sessionId): CheckoutSessionResult
@@ -226,9 +314,11 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             'currency' => 'USD',
             'unit_amount' => 9900,
             'recurring' => true,
-            'interval' => 'month',
-            'interval_count' => 1,
+            // The platform's standard cadence: EXACTLY every 28 days.
+            'interval' => 'day',
+            'interval_count' => 28,
             'livemode' => false,
+            'product' => 'prod_fake_platform',
         ], $facts);
     }
 
@@ -253,7 +343,148 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             interval: $price['interval'],
             intervalCount: $price['interval_count'] === null ? null : (int) $price['interval_count'],
             livemode: (bool) $price['livemode'],
+            productId: $price['product'] ?? null,
         );
+    }
+
+    public function ensureProduct(string $name, ?string $existingProductId, string $idempotencyKey): string
+    {
+        $this->record('ensureProduct', ['name' => $name, 'existing' => $existingProductId, 'key' => $idempotencyKey]);
+
+        if ($existingProductId !== null && $existingProductId !== '') {
+            return $existingProductId;
+        }
+
+        return $this->products[$idempotencyKey] ??= 'prod_fake' . str_pad((string) (++$this->sequence), 6, '0', STR_PAD_LEFT);
+    }
+
+    /** @var array<string, string> Price id by idempotency key. */
+    public array $priceKeys = [];
+
+    public function createRecurringPrice(
+        string $productId,
+        int $unitAmountMinor,
+        string $currencyCode,
+        string $interval,
+        int $intervalCount,
+        string $nickname,
+        array $metadata,
+        string $idempotencyKey,
+    ): ProviderPriceSnapshot {
+        $this->record('createRecurringPrice', [
+            'product' => $productId, 'amount' => $unitAmountMinor, 'currency' => $currencyCode,
+            'interval' => $interval, 'interval_count' => $intervalCount, 'key' => $idempotencyKey,
+        ]);
+
+        // Stripe's idempotency: the same key returns the ORIGINAL Price.
+        $id = $this->priceKeys[$idempotencyKey] ??= 'price_fakeM' . str_pad((string) (++$this->sequence), 5, '0', STR_PAD_LEFT);
+
+        if (! isset($this->prices[$id])) {
+            $this->definePrice($id, [
+                'currency' => mb_strtoupper($currencyCode),
+                'unit_amount' => $unitAmountMinor,
+                'interval' => $interval,
+                'interval_count' => $intervalCount,
+                'product' => $productId,
+                'livemode' => $this->mode === 'live',
+            ]);
+        }
+
+        return $this->retrievePriceQuietly($id);
+    }
+
+    private function retrievePriceQuietly(string $id): ProviderPriceSnapshot
+    {
+        $price = $this->prices[$id];
+
+        return new ProviderPriceSnapshot(
+            id: $id,
+            active: (bool) $price['active'],
+            currency: (string) $price['currency'],
+            unitAmount: $price['unit_amount'] === null ? null : (int) $price['unit_amount'],
+            recurring: (bool) $price['recurring'],
+            interval: $price['interval'],
+            intervalCount: $price['interval_count'] === null ? null : (int) $price['interval_count'],
+            livemode: (bool) $price['livemode'],
+            productId: $price['product'] ?? null,
+        );
+    }
+
+    public function applyPriceSchedule(string $providerSubscriptionId, array $phases, string $idempotencyKey): PlatformSubscriptionSnapshot
+    {
+        $this->record('applyPriceSchedule', [
+            'subscription' => $providerSubscriptionId,
+            'phases' => array_map(static fn (SchedulePhase $p): array => ['price' => $p->priceId, 'ends_at' => $p->endsAt?->toIso8601String()], $phases),
+            'key' => $idempotencyKey,
+        ]);
+
+        $subscription = $this->subscriptions[$providerSubscriptionId] ?? throw new RuntimeException('Unknown fake subscription.');
+
+        $attached = $subscription['schedule'] ?? null;
+
+        if ($attached !== null && ($this->scheduleKeys[$idempotencyKey . ':create'] ?? null) !== $attached) {
+            // Stripe: a subscription already attached to a schedule cannot be given
+            // another, and a create whose key is not a replay of the one that made
+            // it is refused -- that schedule is not ours.
+            throw PlatformBillingException::because(PlatformBillingException::SCHEDULE_NOT_OURS);
+        }
+
+        $scheduleId = $attached ?? 'sub_sched_fake' . str_pad((string) (++$this->sequence), 5, '0', STR_PAD_LEFT);
+        $this->scheduleKeys[$idempotencyKey . ':create'] = $scheduleId;
+        $this->schedules[$scheduleId] = [
+            'subscription' => $providerSubscriptionId,
+            'phases' => array_map(static fn (SchedulePhase $p): array => [
+                'price' => $p->priceId,
+                'ends_at' => $p->endsAt === null ? null : CarbonImmutable::instance($p->endsAt),
+            ], $phases),
+        ];
+        $this->subscriptions[$providerSubscriptionId]['schedule'] = $scheduleId;
+
+        // The first phase is the live one: the subscription is on its price.
+        $this->subscriptions[$providerSubscriptionId]['price'] = $phases[0]->priceId;
+
+        if ($this->loseNextScheduleResponse) {
+            // The schedule WAS created at the provider; the caller never hears.
+            $this->loseNextScheduleResponse = false;
+
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        return $this->subscriptionSnapshot($providerSubscriptionId);
+    }
+
+    /** @var array<string, string> Schedule id by `<key>:create` idempotency key. */
+    public array $scheduleKeys = [];
+
+    /** When true, the NEXT applyPriceSchedule creates the schedule and then loses its response. */
+    public bool $loseNextScheduleResponse = false;
+
+    /** When set, proveOwnSchedule fails inconclusively (a transient network/API error). */
+    public ?\Throwable $proofFailure = null;
+
+    public function proveOwnSchedule(string $providerSubscriptionId, string $idempotencyKey): ?string
+    {
+        $this->record('proveOwnSchedule', ['subscription' => $providerSubscriptionId, 'key' => $idempotencyKey]);
+
+        if ($this->proofFailure !== null) {
+            throw $this->proofFailure;
+        }
+
+        $attached = $this->subscriptions[$providerSubscriptionId]['schedule'] ?? null;
+        $known = $this->scheduleKeys[$idempotencyKey . ':create'] ?? null;
+
+        return ($attached !== null && $known === $attached) ? $attached : null;
+    }
+
+    public function releaseSchedule(string $providerScheduleId): void
+    {
+        $this->record('releaseSchedule', ['schedule' => $providerScheduleId]);
+
+        foreach ($this->subscriptions as $id => $subscription) {
+            if (($subscription['schedule'] ?? null) === $providerScheduleId) {
+                $this->subscriptions[$id]['schedule'] = null;
+            }
+        }
     }
 
     /** Whether any session is still payable — the invariant §7 protects. */
@@ -296,6 +527,12 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             );
         }
 
+        // Stripe refuses to edit the items of a subscription a schedule manages;
+        // the caller must release the schedule first.
+        if (($this->subscriptions[$providerSubscriptionId]['schedule'] ?? null) !== null) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
         $this->keyFingerprints[$idempotencyKey] = $fingerprint;
         $this->subscriptions[$providerSubscriptionId]['price'] = $providerPriceId;
 
@@ -308,6 +545,14 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             'subscription' => $providerSubscriptionId,
             'cancel_at_period_end' => $cancelAtPeriodEnd,
         ]);
+
+        // Observed against real Stripe test mode: "The subscription is managed
+        // by the subscription schedule `sub_sched_...`, and updating any
+        // cancelation behavior directly is not allowed. Please update the
+        // schedule instead." The caller must release the schedule first.
+        if (($this->subscriptions[$providerSubscriptionId]['schedule'] ?? null) !== null) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
 
         $this->subscriptions[$providerSubscriptionId]['cancel_at_period_end'] = $cancelAtPeriodEnd;
 
@@ -367,6 +612,7 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             canceledAt: $subscription['canceled_at'] ?? null,
             endedAt: $subscription['ended_at'] ?? null,
             operationId: $subscription['operation_id'] ?? null,
+            scheduleId: $subscription['schedule'] ?? null,
         );
     }
 
