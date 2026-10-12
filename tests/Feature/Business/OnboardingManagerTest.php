@@ -498,21 +498,24 @@ class OnboardingManagerTest extends TestCase
 
     public function test_complete_no_longer_requires_services_the_analysis_or_a_first_value_action(): void
     {
+        Event::fake([CustomerOnboardingCompleted::class]);
+
         [$onboarding, $customer, $business] = $this->onboardingAtAnalysisStep();
         app(BusinessServiceRepository::class)->syncForBusiness($business, []);
         $business->services()->update(['is_primary' => false]);
+        // Unresolved findings and no recorded first-value action: neither may block finishing.
         $onboarding->analysis_payload = ['version' => 1, 'findings' => [['fingerprint' => 'business:1:missing_phone']]];
         $onboarding->save();
 
-        try {
-            app(OnboardingManager::class)->complete($onboarding, $customer);
-        } catch (InvalidArgumentException $e) {
-            $this->fail('Optional setup must not block finishing: ' . $e->getMessage());
-        } catch (\Throwable) {
-            // A plan/activation refusal in this fixture is a different, intentional gate.
-        }
+        $this->assertSame(0, $business->services()->count(), 'Fixture: no services at all.');
+        $this->assertNull($onboarding->fresh()->first_value_action_completed_at, 'Fixture: no first-value action recorded.');
 
-        $this->assertTrue(true);
+        $updated = app(OnboardingManager::class)->complete($onboarding, $customer);
+
+        $this->assertSame(OnboardingStatus::Completed, $updated->status);
+        $this->assertNotNull($updated->completed_at);
+        $this->assertSame(OnboardingStatus::Completed, $onboarding->fresh()->status, 'Completion is persisted.');
+        Event::assertDispatched(CustomerOnboardingCompleted::class, 1);
     }
 
     public function test_complete_throws_when_there_are_zero_primary_locations(): void
