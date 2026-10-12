@@ -9,28 +9,63 @@ Status vocabulary: Not started · In progress · Implemented, untested · Tests 
 Awaiting merge · Merged into staging · Verified on staging · Blocked by owner configuration ·
 Deferred by product decision.
 
-Last updated against `origin/staging` @ `347b4b9a`.
+Last updated against `origin/staging` @ `e82ce4fd` (includes PRs #443–#447).
 
-## A. Already merged into staging (needs staging verification)
+**Legend (every cell below uses exactly one of these for each stage):**
+*Code implemented* · *Tests passed* (disposable MySQL 8 in GitHub Actions; run linked) · *Awaiting PR* ·
+*PR open* · *Merged into staging* · *Deployed* · *Verified in the browser* · *Blocked by owner configuration*.
+Nothing is marked *Deployed* or *Verified in the browser*: no one has exercised these on
+`staging.getmotiongrove.com`, and no evidence exists for it.
 
-| Item | PR | Status | Remaining action |
-| --- | --- | --- | --- |
-| Resend HTTPS transport for transactional email | #443 | Merged into staging | Owner: Resend sender authentication + `RESEND_API_KEY` (see §D) then send one real test email |
-| Standardized transactional email design, per-business branding | #444 | Merged into staging | Visually confirm one email per family on staging |
-| Platform-user date crash, invitation + Stripe OAuth diagnostics | #445 | Merged into staging | Re-open the previously crashing Platform Owner page; trigger invitation and Stripe Connect error paths |
-| Business-branded signed confirmation; blueprint packages kept out of live catalogs | #446 | Merged into staging | Sign a document on staging; confirm no auto-created packages in live catalog |
-| 28-day billing + Private Offers (flag OFF) | #440 | Merged into staging | Needs staging migrate + 28-day Prices (see §D) |
+## A. Merged into staging (not deployed or browser-verified unless stated)
 
-## B. This assignment — implemented on isolated branches (no PR opened, not merged)
+| Item | PR | Code | Tests | Merged | Deployed | Browser-verified | Remaining action |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Resend HTTPS transport | #443 | yes | passed | yes | not verified | no | Owner: Resend sender auth + `RESEND_API_KEY` (§D), then one real test email |
+| Standardized transactional email design | #444 | yes | passed | yes | not verified | no | Visually confirm one email per family |
+| Platform-user date crash, invitation + Stripe OAuth diagnostics | #445 | yes | passed | yes | not verified | no | Re-open the crashing Platform Owner page; trigger error paths |
+| Business-branded signed confirmation; no auto-created catalog packages | #446 | yes | passed | yes | not verified | no | Sign a document on staging |
+| 28-day billing + Private Offers (flag OFF) | #440 | yes | passed | yes | not verified | no | Staging migrate + 28-day Prices (§D) |
+| Growth email verification for signed-out customers (login / 2FA / session-loss continuation, works with registration closed) | #447 | yes | passed | yes | not verified | no | Click a real verification link while logged out on staging |
 
-| # | Area | Branch | SHA | Status | Tests run (local, disposable DB) | Remaining action |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Agency Outreach V2: dynamic ordered sequences, per-step timing/advance/pause, preview, link not tied to message 3, legacy 3-message flow as optional template, versioned edits, custom FAQ with niche/campaign scope + configurable unanswered behavior | `feature/agency-outreach-v2` | `562aa51a` | Tests passed (locally) · Awaiting merge | AgencyOutreach + AgencyProspecting: 364 tests OK; new `OutreachSequenceV2Test` (15) | Open PR, review, merge; run additive migration `2026_11_12_100001` on staging; verify with a sandbox campaign. Branch is 8 commits behind staging; merges cleanly (dry run), not re-run on the new base |
-| 2 | Onboarding V2: Agency not forced through Business setup, goals no longer capped at 2 (+ optional priority), services optional/skippable, "set up later", Finish redirect/idempotency | `feature/onboarding-v2` | `66c40a54` | Tests passed (locally; only pre-existing baseline failures remain) · Awaiting merge | Onboarding + V1 signup suites; baseline failures proven pre-existing on clean staging | Open PR, review, merge; verify first-time Business and Agency sign-ups on staging. Merges cleanly (dry run) |
-| 3 | Calendar Notifications V2: unlimited reminders, custom timing/units/reorder/disable, per-reminder channel, editable confirmation/reminder wording with variables + preview | `feature/calendar-notifications-v2` | `c15e524b` | Tests passed (locally) · Awaiting merge | Calendar folder: 489 tests OK after merging staging (conflict with #444 resolved: custom wording uses `BrandedMailMessage`); new `BookingNotificationsV2Test` (12) | Open PR, review, merge; run migration `2026_11_12_110001`; send one reminder on staging |
-| 4 | Client invitation return-to-link (safe destination, no token leakage, no loops) | `feature/invitation-return-to-link` | `c1bfac61` | Tests passed (locally) · Awaiting merge | `AgencyClientProvisioningTest` 30 OK (3 new) | Merge after #445 (already in staging; dry-run merge clean); fresh invitation acceptance on staging. New-user registration still requires a plan (V1 signup) — return-to-link covers sign-in and verification only |
-| 5 | Outbound email safety | `feature/outbound-email-identity` | `97434f94` | Tests passed (locally) · Awaiting merge | `BusinessEmailSenderTest` 55 OK | **No code change**: policy was already enforced (Business sales email only via the Business's own authenticated mailbox, no platform fallback, no caller-supplied From). Test-only pin. Transactional mail keeps platform identity |
-| 6 | Private Offers / billing re-inspection | — | — | No code change | — | See §C |
+## B. Final integration wave (all lanes rebased onto staging `e82ce4fd` by merge; no PR opened by Claude)
+
+Test runs are throw-away workflows on `verify/*` branches (not part of any feature branch).
+
+| Lane | Branch | Final SHA | PR | Tests (disposable MySQL 8, CI) | Result |
+| --- | --- | --- | --- | --- | --- |
+| Agency Outreach V2 | `feature/agency-outreach-v2` | `bd031721` | **#448 open** | [run 38260388607](https://github.com/os-creator1/os-ai/actions/runs/38260388607): `tests/Feature/AgencyOutreach` 187 tests, 1097 assertions, 0 failures | Code implemented · Tests passed · PR open · not merged · not deployed · not browser-verified |
+| Onboarding V2 | `feature/onboarding-v2` | `1e1dbaef` (clean merge of staging into `66c40a54`) | Awaiting PR | [run 38264833241](https://github.com/os-creator1/os-ai/actions/runs/38264833241): 184 tests, 1173 assertions, 1 error + 3 failures, **all four reproduced identically on unchanged staging** ([baseline run 38267930835](https://github.com/os-creator1/os-ai/actions/runs/38267930835): 183 tests, 1156 assertions, same 1 error + 3 failures). No new failure from this branch | Code implemented · Tests passed except the 4 baseline failures below · Awaiting PR |
+| Invitation return-to-link | `feature/invitation-return-to-link` | `03337262` | Awaiting PR | [run 38264828848](https://github.com/os-creator1/os-ai/actions/runs/38264828848): AgencyClientProvisioningTest, ClientInvitationManagerTest, AgencyClientsHttpTest and `tests/Feature/Auth` (includes #447 continuation tests): 169 tests, 896 assertions, 0 failures | Code implemented · Tests passed · Awaiting PR |
+| Calendar Notifications V2 | `feature/calendar-notifications-v2` | `9d9650b1` | Awaiting PR | [run 38264074032](https://github.com/os-creator1/os-ai/actions/runs/38264074032): `tests/Feature/Calendar` + `tests/Feature/Mail` 494 tests, 2502 assertions, 0 failures | Code implemented · Tests passed · Awaiting PR |
+| Outbound email identity (tests only) | `feature/outbound-email-identity` | `46cac88f` | Awaiting PR | [run 38264108143](https://github.com/os-creator1/os-ai/actions/runs/38264108143): `tests/Feature/BusinessEmail` 179 tests, 723 assertions, 0 failures (includes `BusinessEmailSenderTest`) | Tests passed · Awaiting PR. No production code changed |
+
+### Corrections made in this wave
+- **Invitation return-to-link** (merge conflict with #447 in `LoginController`): both fixes kept. After login the order is
+  pending email verification, then pending client invitation, then private offer, then home. The invitation
+  memory was also added to the 2FA success redirect and the already-verified verification redirect, which
+  would otherwise have dropped it. New regression
+  `test_a_verification_link_clicked_after_opening_the_invitation_still_returns_to_the_invitation`.
+  The invitation claim/accept checks, new-user registration and plan requirements are unchanged.
+- No code correction was needed for Onboarding V2, Calendar V2 or Outbound email identity.
+
+### Known failing tests (reproduced on unchanged staging `e82ce4fd`, not caused by any lane)
+| Test | Symptom |
+| --- | --- |
+| `V1SignupHttpTest::test_replaying_the_payment_submit_never_duplicates_the_account_or_tenant` | Expected redirect to `/signup/plan`, got `/dashboard` (signup payment replay) |
+| `V1SignupFinalAcceptanceTest::test_password_reset_works_and_the_new_password_logs_in_to_the_same_account` | Login assertion fails (login not completing in CI) |
+| `V1SignupFinalAcceptanceTest::test_a_suspended_user_cannot_sign_in` | `assertGuest` fails: user is authenticated |
+| `BusinessOnboardingHttpTest::test_capacity_denial_business_slot_allocation_required_redirects_with_the_safe_message` | Fixture creates 3 Businesses in one Workspace; unique `businesses.workspace_id` rejects it |
+
+The two V1SignupFinalAcceptance failures look like the login-captcha setting that #447 had to disable in its own
+tests; this is a hypothesis, not verified. Not fixed here: out of scope for every lane.
+Also: a full `tests/Feature/Business` directory run in CI hits DB-creation privilege errors (the CI user cannot
+`CREATE DATABASE` for the historical-schema tests); run those narrowly.
+
+### Migrations (additive, not applied anywhere)
+`2026_11_12_100001_add_dynamic_sequences_to_agency_outreach` (Outreach, nullable/defaulted columns) and
+`2026_11_12_110001_add_configurable_notifications_to_booking_types` (Calendar, nullable columns) both sort after
+every migration currently on staging and touch different tables. Onboarding V2, Invitation and Outbound email add none.
 
 ## C. Billing / Private Offers findings (report only)
 
