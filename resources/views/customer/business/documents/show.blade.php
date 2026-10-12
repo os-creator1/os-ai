@@ -154,7 +154,8 @@
     if ($document->paid_at) { $events->push(['at' => $document->paid_at, 'icon' => 'credit-card', 'tone' => 'success', 'title' => 'Paid', 'meta' => null]); }
     if ($document->expired_at) { $events->push(['at' => $document->expired_at, 'icon' => 'clock', 'tone' => 'muted', 'title' => 'Expired', 'meta' => null]); }
     if ($document->voided_at) { $events->push(['at' => $document->voided_at, 'icon' => 'x', 'tone' => 'muted', 'title' => 'Voided', 'meta' => $document->void_reason]); }
-    $events = $events->sortByDesc(fn ($e) => $e['at']->getTimestamp())->values();
+    // Newest first; events sharing a timestamp keep their lifecycle order reversed (a send follows its creation).
+    $events = $events->map(fn ($e, $i) => $e + ['i' => $i])->sortBy([[fn ($e) => $e['at']->getTimestamp(), 'desc'], ['i', 'desc']])->values();
 @endphp
 <div class="dd" data-role="document-detail">
     <nav class="dd-crumbs" aria-label="Breadcrumb" data-role="breadcrumb">
