@@ -85,10 +85,14 @@ class EmailVerificationContinuationTest extends TestCase
         $user = $this->user();
         $link = $this->link($user);
 
-        $this->get($link)->assertRedirect(route('login'));
+        $first = $this->get($link);
+        $first->assertRedirect(route('login'));
+        $this->assertSame('info', session('status'), 'Guest click must remember the link (info), not reject it: ' . session('message'));
+        $this->assertNotNull(session(PendingVerification::KEY), 'The signed link was not remembered.');
         $this->assertFalse($user->fresh()->hasVerifiedEmail());
 
         $response = $this->signIn($user);
+        $this->assertNotNull(session(PendingVerification::KEY), 'Sign-in dropped the remembered link; Location=' . $response->headers->get('Location'));
         $this->assertStringStartsWith('/email/verify/', '/' . ltrim(parse_url($response->headers->get('Location'), PHP_URL_PATH), '/'));
 
         $this->get($response->headers->get('Location'))->assertRedirect();
