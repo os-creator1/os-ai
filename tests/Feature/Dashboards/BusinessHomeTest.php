@@ -68,7 +68,7 @@ class BusinessHomeTest extends TestCase
         // the Google tile is absent because Core is not entitled to it — the
         // Visibility band still renders for the website alone.
         $this->assertSame(
-            ['billing_exception', 'activity', 'next_best_move', 'headlines', 'visibility', 'conversations', 'actions'],
+            ['billing_exception', 'needs_attention', 'next_best_move', 'ask', 'headlines', 'handling', 'visibility', 'conversations', 'actions'],
             $this->bandOrder($html),
             'Billing speaks first only when it is a real exception, then what changed, then what to do about it.'
         );
@@ -296,7 +296,8 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
-        $this->assertNotContains('attention', $this->bandOrder($html), 'None of B\'s conditions raises an item for A.');
+        $this->assertStringContainsString('data-role="attention-clear"', $html, 'None of B\'s conditions raises an item for A.');
+        $this->assertStringNotContainsString('data-role="attention-items"', $html);
         $this->assertNotContains('recommendations', $this->bandOrder($html));
         $this->assertStringNotContainsString('Stranger', $main);
         $this->assertStringNotContainsString('777', $main);
@@ -611,7 +612,7 @@ class BusinessHomeTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/\bmessages sent\b/i', $main);
         $this->assertDoesNotMatchRegularExpression('/\bconfirmed failed\b/i', $main);
         $this->assertDoesNotMatchRegularExpression('/\bdelivered\b/i', $main);
-        $this->assertDoesNotMatchRegularExpression('/\b(revenue|roi|reply rate|handset delivery|pipeline value|bookings?|conversions?)\b/i', $main);
+        $this->assertDoesNotMatchRegularExpression('/\b(revenue|roi|reply rate|handset delivery|pipeline value|bookings?|conversions?)\b/i', $this->mainTextWithoutAsk($html));
         $this->assertStringNotContainsString('locale.', $main);
         $this->assertStringNotContainsString('locale.', $this->titleOf($html));
 
@@ -685,7 +686,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['billing_exception', 'next_best_move', 'headlines', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
+        $this->assertSame(['billing_exception', 'next_best_move', 'needs_attention', 'ask', 'headlines', 'handling', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
         $this->assertStringContainsString('data-band="next_best_move" data-band-state="failed"', $html);
         $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'next_best_move'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));

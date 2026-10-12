@@ -21,6 +21,8 @@ use App\Library\Coo\NextBestMove;
 use App\Library\Coo\NextBestMoveSelector;
 use App\Library\Coo\SignalComparator;
 use App\Library\Coo\WhyThis;
+use App\Library\Dashboard\Home\HomeBookingReader;
+use App\Library\Dashboard\Home\HomeCommandCenter;
 use App\Library\Growth\GrowthHomeBand;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\CustomerShellComposer;
@@ -119,6 +121,8 @@ final class BusinessHomePresenter
         private readonly CooContextEnvelopeFactory $envelopes,
         private readonly CooInsightExplainLimiter $explainLimiter,
         private readonly GrowthHomeBand $growthHome,
+        private readonly HomeBookingReader $bookingReader,
+        private readonly HomeCommandCenter $command,
     ) {
     }
 
@@ -158,6 +162,18 @@ final class BusinessHomePresenter
 
         $entitlements = $this->shell->currentMenuEntitlements($context);
         $scoped = [$workspace->uid, $candidate->uid];
+
+        // Home V2 — Calendar facts (Locations this actor may reach, booking-type
+        // readiness), read ONCE, only when Calendar is in play for this actor.
+        $booking = null;
+
+        if ($entitlements->allows('calendar') && Gate::forUser($user)->allows('access_backend')) {
+            try {
+                $booking = $this->bookingReader->summary($business, (int) $user->id);
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
         $bands = [];
         $failed = [];
 
@@ -202,7 +218,7 @@ final class BusinessHomePresenter
 
         if ($conversationsShown) {
             try {
-                $awaiting = $this->conversations->awaitingReplyCount($business);
+                $awaiting = $this->conversations->awaitingReplyCount($business, null, (int) $user->id);
             } catch (Throwable $e) {
                 report($e);
                 $awaitingFailed = true;
@@ -254,7 +270,7 @@ final class BusinessHomePresenter
         // 1b — Business activity: what actually changed since this customer
         // last used this Business (§2.3). Absent on a first visit.
         try {
-            $activity = $this->businessActivity($business, $context, $user, $entitlements);
+            $activity = $this->businessActivity($business, $context, $user, $entitlements, $booking);
 
             if ($activity !== null) {
                 $bands[DashboardSnapshot::BAND_ACTIVITY] = $activity;
@@ -269,9 +285,12 @@ final class BusinessHomePresenter
         // status row (a real exception might be hidden) or, when this actor can
         // see conversations, without the waiting count — so either failing
         // degrades the band rather than claiming "all caught up".
-        if ($growthShown) {
-            // Superseded by the Growth band above — one recommendation voice.
-        } elseif ($statusFailed || $awaitingFailed) {
+        // Home V2 — the move is ALWAYS selected here, by NextBestMoveSelector, so
+        // the Growth band and the move can never both claim the primary slot: when
+        // Growth has an evaluation, its ACL-scoped head is the selector's
+        // Opportunity candidate (no second queue read), and Growth items only
+        // enrich or queue behind the one move (HomeCommandCenter).
+        if ($statusFailed || $awaitingFailed) {
             $failed[] = DashboardSnapshot::BAND_NEXT_BEST_MOVE;
         } else {
             try {
@@ -289,6 +308,7 @@ final class BusinessHomePresenter
                         'unhealthyListings' => $status?->unhealthyGoogleLocations ?? 0,
                     ],
                     $selectedRange,
+                    $growthShown ? $bands[DashboardSnapshot::BAND_GROWTH] : null,
                 );
             } catch (Throwable $e) {
                 report($e);
@@ -302,7 +322,7 @@ final class BusinessHomePresenter
                 $failed[] = DashboardSnapshot::BAND_HEADLINES;
             } else {
                 try {
-                    $bands[DashboardSnapshot::BAND_HEADLINES] = $this->headlines($business, $context, $user, $entitlements, $scoped, $comparison, $rangeRejected);
+                    $bands[DashboardSnapshot::BAND_HEADLINES] = $this->headlines($business, $context, $user, $entitlements, $scoped, $comparison, $rangeRejected, $booking);
                 } catch (Throwable $e) {
                     report($e);
                     $failed[] = DashboardSnapshot::BAND_HEADLINES;
@@ -385,6 +405,18 @@ final class BusinessHomePresenter
 
         // 7 — Quick actions
         $bands[DashboardSnapshot::BAND_ACTIONS] = $this->actions($context, $user, $entitlements, $scoped, $status);
+
+        // Home V2 — the command center: one coordinator over the bands above. A
+        // failure here degrades only the command layout; the bands themselves are
+        // untouched and the page falls back to them.
+        try {
+            $bands[DashboardSnapshot::BAND_COMMAND] = $this->command->build(
+                $business, $context, $user, $entitlements, $scoped, $status, $bands, $failed, $attention, $booking,
+            );
+        } catch (Throwable $e) {
+            report($e);
+            $failed[] = DashboardSnapshot::BAND_COMMAND;
+        }
 
         return new DashboardSnapshot(
             kind: DashboardSnapshot::KIND_BUSINESS,
@@ -532,7 +564,7 @@ final class BusinessHomePresenter
      *
      * @return array{window: HomeActivityWindow, items: array<int, array{key: string, text: string}>}|null
      */
-    private function businessActivity(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements): ?array
+    private function businessActivity(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, ?array $booking = null): ?array
     {
         // Looking at someone else's Business never consumes their window:
         // neither an agency viewing a client nor an impersonated session
@@ -546,6 +578,10 @@ final class BusinessHomePresenter
 
         $counts = $this->analyticsQueries->countsBetween($business, $window->start, $window->end);
         $items = [];
+        $briefingCounts = [
+            'new_contacts' => (int) $counts['newContacts'],
+            'messages_received' => (int) $counts['messagesReceived'],
+        ];
 
         if ($counts['newContacts'] > 0) {
             $items[] = ['key' => 'new_contacts', 'text' => self::plural($counts['newContacts'], 'new contact', 'new contacts')];
@@ -553,6 +589,8 @@ final class BusinessHomePresenter
 
         if ($entitlements->allows('conversations') && Gate::forUser($user)->allows('chat_box')) {
             $conversations = $this->conversations->startedCount($business, $window->start, $window->end);
+
+            $briefingCounts['new_conversations'] = $conversations;
 
             if ($conversations > 0) {
                 $items[] = ['key' => 'new_conversations', 'text' => self::plural($conversations, 'new conversation', 'new conversations')];
@@ -563,8 +601,22 @@ final class BusinessHomePresenter
             $items[] = ['key' => 'messages_received', 'text' => self::plural($counts['messagesReceived'], 'message received', 'messages received')];
         }
 
+        if ($booking !== null && $booking['locationIds'] !== []) {
+            // Appointments BOOKED in the window, at Locations this actor may reach only.
+            $booked = $this->bookingReader->bookedCounts($booking['locationIds'], ['window' => [$window->start, $window->end]])['window'];
+
+            $briefingCounts['appointments_booked'] = $booked;
+
+            if ($booked > 0) {
+                $items[] = ['key' => 'appointments_booked', 'text' => self::plural($booked, 'appointment booked', 'appointments booked')];
+            }
+        }
+
         if ($entitlements->allows('automations') && Gate::forUser($user)->allows('automations')) {
             $automations = $this->analyticsQueries->automationCountsBetween($business, $window->start, $window->end);
+
+            $briefingCounts['automations_completed'] = (int) ($automations['completed'] ?? 0);
+            $briefingCounts['automations_failed'] = (int) ($automations['failed'] ?? 0);
 
             if ($automations !== null && $automations['completed'] > 0) {
                 $items[] = ['key' => 'automations_completed', 'text' => self::plural($automations['completed'], 'automation completed', 'automations completed')];
@@ -578,6 +630,9 @@ final class BusinessHomePresenter
         return [
             'window' => $window,
             'items' => array_slice($items, 0, max(1, (int) config('home.activity_max_items', 5))),
+            // Home V2 — the same canonical counts, by item key, for the briefing sentence. The
+            // items above stay exactly as they were; nothing is counted twice.
+            'counts' => $briefingCounts,
         ];
     }
 
@@ -616,11 +671,16 @@ final class BusinessHomePresenter
      * @param  array{awaiting: int, graceMinutes: int, failedRuns: int, window: string, unhealthyListings: int}  $facts
      * @return array<string, mixed>
      */
-    private function nextBestMove(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $attention, array $facts, AnalyticsDateRange $range): array
+    private function nextBestMove(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $attention, array $facts, AnalyticsDateRange $range, ?array $growth = null): array
     {
-        $queue = config('opportunity.enabled', false)
-            ? $this->opportunities->topForCustomer($business, self::RECOMMENDATION_QUEUE_CAP)
-            : collect();
+        // With a Growth evaluation the head is the Growth reader's own (Location-ACL-scoped,
+        // already read for the Growth band) — one queue read, one authority. Without one it
+        // is RFC-002's work queue, exactly as before.
+        $queue = $growth !== null
+            ? collect($growth['head'] !== null ? [$growth['head']] : [])
+            : (config('opportunity.enabled', false)
+                ? $this->opportunities->topForCustomer($business, self::RECOMMENDATION_QUEUE_CAP)
+                : collect());
 
         $advisorOpensThisBusiness = $context->isBusinessFrame() && $context->selectedBusiness !== null;
 
@@ -645,6 +705,7 @@ final class BusinessHomePresenter
             $payload = [
                 'kind' => NextBestMove::KIND_OPPORTUNITY,
                 'key' => 'opportunity',
+                'subjectUid' => (string) $opportunity->uid,
                 'headline' => self::opportunityTitle($opportunity),
                 'severity' => null,
                 'why' => $this->whyThis->forOpportunity($opportunity),
@@ -656,12 +717,12 @@ final class BusinessHomePresenter
             ];
         }
 
-        $count = $queue->count();
+        $count = $growth !== null ? (int) $growth['open_count'] : $queue->count();
 
         return [
             'move' => $payload,
             'recommendations' => $count === 0 ? null : [
-                'label' => $count >= self::RECOMMENDATION_QUEUE_CAP ? self::RECOMMENDATION_QUEUE_CAP . '+' : (string) $count,
+                'label' => $growth === null && $count >= self::RECOMMENDATION_QUEUE_CAP ? self::RECOMMENDATION_QUEUE_CAP . '+' : (string) $count,
                 'url' => $advisorOpensThisBusiness
                     ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.index', [], ['business_advisor'])
                     : null,
@@ -737,7 +798,7 @@ final class BusinessHomePresenter
      * @param  array{current: array<string, mixed>, previous: array<string, mixed>}  $comparison
      * @return array<string, mixed>
      */
-    private function headlines(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, array $comparison, bool $rangeRejected): array
+    private function headlines(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, array $comparison, bool $rangeRejected, ?array $booking = null): array
     {
         /** @var AnalyticsDateRange $currentRange */
         $currentRange = $comparison['current']['range'];
@@ -787,6 +848,30 @@ final class BusinessHomePresenter
                     HeadlineTrend::Unchanged->value => 'The same number of conversations started as in ' . $before . '.',
                 ],
                 'A change in volume is a fact, not a result.',
+                $before,
+            );
+        }
+
+        // Home V2 — appointments BOOKED, over the Locations this actor may reach, compared
+        // with the equal-length window before. A booking event, never revenue or attendance.
+        if ($booking !== null && $booking['locationIds'] !== []) {
+            $counts = $this->bookingReader->bookedCounts($booking['locationIds'], [
+                'current' => [$currentRange->startUtc, $currentRange->endUtc],
+                'previous' => [$previousRange->startUtc, $previousRange->endUtc],
+            ]);
+            $booked = new HeadlineComparison($counts['current'], $counts['previous']);
+
+            $items[] = $this->volumeHeadline(
+                'appointments_booked',
+                'Appointments booked',
+                'Booked at this business, ' . $window . '.',
+                $booked,
+                [
+                    HeadlineTrend::Up->value => 'More appointments were booked than in ' . $before . '.',
+                    HeadlineTrend::Down->value => 'Fewer appointments were booked than in ' . $before . '.',
+                    HeadlineTrend::Unchanged->value => 'The same number of appointments were booked as in ' . $before . '.',
+                ],
+                'Booked is not attended or paid.',
                 $before,
             );
         }

@@ -79,17 +79,22 @@ class BookingTypesController extends Controller
         ]);
     }
 
-    public function store(Request $request, string $workspaceUid, string $businessUid, string $locationUid): RedirectResponse
+    public function store(Request $request, string $workspaceUid, string $businessUid, string $locationUid): RedirectResponse|\Illuminate\Http\JsonResponse
     {
         [, , $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
 
         $bookingType = $this->bookingTypes->create($location, $this->validated($request), (int) Auth::id());
 
-        return redirect()
-            ->route('customer.workspaces.businesses.calendar.booking-types.edit', [
-                $workspaceUid, $businessUid, $locationUid, $bookingType->uid,
-            ])
-            ->with('flash_success', 'Booking type created.');
+        $editUrl = route('customer.workspaces.businesses.calendar.booking-types.edit', [
+            $workspaceUid, $businessUid, $locationUid, $bookingType->uid,
+        ]);
+
+        // Home V2 action drawer: the same create, answered as JSON (validation already 422s).
+        if ($request->expectsJson()) {
+            return response()->json(['status' => 'success', 'message' => 'Booking type created.', 'url' => $editUrl], 201);
+        }
+
+        return redirect($editUrl)->with('flash_success', 'Booking type created.');
     }
 
     public function edit(string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): View

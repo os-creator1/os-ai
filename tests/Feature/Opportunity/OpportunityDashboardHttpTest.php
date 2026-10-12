@@ -481,6 +481,20 @@ class OpportunityDashboardHttpTest extends TestCase
 
         $this->actingAs($customer->user);
 
+        // Home V2: a Calendar-entitled Business that has not set up a booking type is, truthfully,
+        // in setup and shows its journey instead of a move. These tests are about the move.
+        $location = \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $typeId = \Illuminate\Support\Facades\DB::table('booking_types')->insertGetId([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'public_booking_uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'business_location_id' => $location->id, 'name' => 'Consultation', 'duration_minutes' => 30, 'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        \Illuminate\Support\Facades\DB::table('booking_type_staff')->insert(['booking_type_id' => $typeId, 'staff_user_id' => (int) $business->customer_id, 'created_at' => now(), 'updated_at' => now()]);
+        \Illuminate\Support\Facades\DB::table('staff_availability_rules')->insert([
+            'business_location_id' => $location->id, 'staff_user_id' => (int) $business->customer_id, 'day_of_week' => 1,
+            'start_time' => '09:00:00', 'end_time' => '17:00:00', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
         return $business;
     }
 

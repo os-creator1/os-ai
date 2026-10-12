@@ -142,7 +142,7 @@ class DashboardHeadlinesTest extends TestCase
             $this->assertSame($source($previous), $headlines[$key]->comparison->previous, "{$key}: previous");
         }
 
-        $this->assertSame(self::KEYS, array_keys($headlines), 'Home carries exactly the canonical figures, in KPI-priority order.');
+        $this->assertSame(['new_contacts', 'new_conversations', 'appointments_booked', 'messages_received'], array_keys($headlines), 'Home carries exactly the canonical figures, in KPI-priority order.');
         $this->assertSame([4, 6], [$headlines['new_contacts']->comparison->current, $headlines['new_contacts']->comparison->previous]);
         $this->assertSame([2, 7], [$headlines['new_conversations']->comparison->current, $headlines['new_conversations']->comparison->previous]);
         $this->assertSame([5, 3], [$headlines['messages_received']->comparison->current, $headlines['messages_received']->comparison->previous]);

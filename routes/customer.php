@@ -1703,6 +1703,22 @@
         | for view-as, so the middleware refuses any pair other than the one
         | being viewed.
         */
+        /*
+        |----------------------------------------------------------------
+        | Home V2 — action drawers and Ask MotionGrove
+        |----------------------------------------------------------------
+        |
+        | Read-only drawer fragments (GET) and one intent-resolution POST. Neither
+        | writes anything: every write a drawer performs is the module's OWN endpoint
+        | (conversations.reply, booking-types.store, appointments.store), which keeps
+        | its own tenancy, entitlement, permission and Location gates. Carrying
+        | {businessUid} makes both BusinessScoped for view-as.
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/home')->name('businesses.home.')->group(function () {
+            Route::get('/drawers/{drawer}', 'Business\HomeActionsController@drawer')->name('drawer');
+            Route::post('/ask', 'Business\HomeActionsController@ask')->middleware('throttle:30,1')->name('ask');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/conversations')->name('businesses.conversations.')->group(function () {
             Route::get('/', 'ChatBoxController@index')->name('index');
             Route::get('/new', 'ChatBoxController@new')->name('new');

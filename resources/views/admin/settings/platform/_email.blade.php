@@ -13,7 +13,7 @@
 
     <div class="row">
         <div class="col-md-6">
-            <x-select name="driver" label="{{ __('locale.settings.method_for_sending') }}" :options="['sendmail' => 'Sendmail', 'smtp' => 'SMTP']" :selected="old('driver', config('mail.default'))" data-reveals="#platform-settings-smtp-fields" data-reveal-value="smtp" />
+            <x-select name="driver" label="{{ __('locale.settings.method_for_sending') }}" :options="['resend' => 'Resend (API)', 'sendmail' => 'Sendmail', 'smtp' => 'SMTP']" :selected="old('driver', config('mail.default'))" data-reveals="#platform-settings-smtp-fields" data-reveal-value="smtp" />
 
             <div id="platform-settings-smtp-fields" @if (old('driver', config('mail.default')) !== 'smtp') class="d-none" @endif>
                 <x-input name="host" label="Host" value="{{ old('host', config('mail.mailers.smtp.host')) }}" />
@@ -25,6 +25,9 @@
         </div>
 
         <div class="col-md-6">
+            @if (old('driver', config('mail.default')) === 'resend')
+                <p class="text-caption">Resend is configured through the server environment; the API key is not managed here.</p>
+            @endif
             <x-input type="email" name="from_email" label="{{ __('locale.settings.from_email') }}" value="{{ old('from_email', config('mail.from.address')) }}" required />
             <x-input name="from_name" label="{{ __('locale.settings.from_name') }}" value="{{ old('from_name', config('mail.from.name')) }}" required />
         </div>

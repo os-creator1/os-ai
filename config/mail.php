@@ -29,7 +29,7 @@ return [
     | mailers below. You are free to add additional mailers as required.
     |
     | Supported: "smtp", "sendmail", "mailgun", "ses", "ses-v2",
-    |            "postmark", "log", "array", "failover"
+    |            "postmark", "resend", "log", "array", "failover"
     |
     */
 
@@ -61,6 +61,12 @@ return [
                     // 'client' => [
                     //     'timeout' => 5,
                     // ],
+                ],
+
+                // Resend HTTPS API transport (no SMTP; DigitalOcean blocks SMTP
+                // ports). Key is read from services.resend.key (RESEND_API_KEY).
+                'resend' => [
+                        'transport' => 'resend',
                 ],
 
                 'sendmail' => [
@@ -98,8 +104,8 @@ return [
     */
 
         'from' => [
-                'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
-                'name' => env('MAIL_FROM_NAME', 'Example'),
+                'address' => env('MAIL_FROM_ADDRESS', 'notifications@notify.getmotiongrove.com'),
+                'name' => env('MAIL_FROM_NAME', 'MotionGrove'),
         ],
 
     /*

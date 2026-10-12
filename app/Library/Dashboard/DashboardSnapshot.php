@@ -57,6 +57,13 @@ final class DashboardSnapshot
     public const BAND_RECENT_WORK = 'recent_work';
 
     public const BAND_ACTIONS = 'actions';
+
+    /**
+     * Home V2 — the coordinated command-center model (HomeCommandCenter): the one
+     * primary move, attention with duplicates removed, briefing, setup journey,
+     * handled-work panel and Ask MotionGrove. Built from the bands above.
+     */
+    public const BAND_COMMAND = 'command_center';
     public const BAND_CLIENTS = 'clients';
 
     /** Unified Home §3.1 (A-1) — per-client new contacts and conversations for the period. */

@@ -39,7 +39,8 @@ final class GrowthHomeBand
         $viewer = GrowthViewer::resolve($this->locationGuard, $actorUserId, $business);
         // Home is the overview: it carries no Location labels (the detail page does),
         // which keeps its read budget flat.
-        $items = $this->reader->top($business, $viewer, self::LIMIT)
+        $top = $this->reader->top($business, $viewer, self::LIMIT);
+        $items = $top
             ->map(fn (Opportunity $o) => $this->presenter->present($o, [], $workspaceUid, $businessUid))
             ->all();
 
@@ -49,6 +50,10 @@ final class GrowthHomeBand
 
         return [
             'items' => $items,
+            // The raw head of the same, ACL-scoped read — the one candidate the Home move selector
+            // weighs against status exceptions. Never rendered; Home's primary move is chosen by
+            // NextBestMoveSelector, not by this band.
+            'head' => $top->first(),
             // top() and this count read the SAME open set, so a short list IS the total: one read saved.
             'open_count' => count($items) < self::LIMIT
                 ? count($items)
