@@ -60,7 +60,7 @@
                 $user->notify(new WelcomeEmailNotification($user->first_name, $user->last_name, $user->email, route('login'), ''));
             }
 
-            return redirect(\App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route());
+            return redirect(\App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route());
         }
 
         /**

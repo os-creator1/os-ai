@@ -52,8 +52,14 @@ class ClientInvitationClaimController extends Controller
         }
 
         if (! Auth::check()) {
+            // Signing in (or verifying a new account) brings them straight back here.
+            \App\Library\Workspace\ClientInvitationReturn::remember($uid, $token);
+
             return view('client_invitations.sign_in_required');
         }
+
+        // Signed in: the memory has done its job and must never redirect again.
+        \App\Library\Workspace\ClientInvitationReturn::forget();
 
         /** @var User $user */
         $user = Auth::user();
