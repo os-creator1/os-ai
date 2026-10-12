@@ -139,6 +139,7 @@ class PublicDocumentController extends Controller
         return response()->view('public.documents.signed', [
             'document' => $document,
             'parties' => $this->parties($access),
+            'brand' => $this->brand($access),
             'payment' => $payment,
             'payUrl' => route('public.documents.show', ['uid' => $document->uid, 'token' => $token]) . '#pay',
             'nextItem' => $next,
@@ -241,6 +242,37 @@ class PublicDocumentController extends Controller
         return [
             'business_name' => is_string($frozen['business_name'] ?? null) ? $frozen['business_name'] : (string) $access->business->name,
             'business_location_name' => is_string($frozen['business_location_name'] ?? null) ? $frozen['business_location_name'] : null,
+        ];
+    }
+
+    /**
+     * Presentation-only branding of the Business whose document this is, from
+     * its own Website theme (owner `brand_color` and logo). Never the platform,
+     * the Agency workspace or a signed-in user; unavailable branding yields a
+     * neutral fallback.
+     *
+     * @return array{name: string, color: string, ink: string, logo_url: ?string, initials: string}
+     */
+    private function brand(PublicDocumentAccess $access): array
+    {
+        $business = $access->business;
+        $name = $this->parties($access)['business_name'];
+        $website = \App\Models\Website::query()->where('business_id', $business->id)->first();
+        $theme = is_array($website?->theme) ? $website->theme : [];
+
+        $tokens = \App\Library\Website\Design\BrandColors::tokens($theme['brand_color'] ?? null);
+
+        $logoUid = $theme['logo_asset_uid'] ?? null;
+        $logo = $website !== null && is_string($logoUid) && $logoUid !== ''
+            ? \App\Models\WebsiteAsset::query()->where('website_id', $website->id)->where('uid', $logoUid)->first()
+            : null;
+
+        return [
+            'name' => $name,
+            'color' => $tokens['accent'] ?? '#1f2933',
+            'ink' => $tokens['accent_ink'] ?? '#ffffff',
+            'logo_url' => $logo?->url(),
+            'initials' => mb_strtoupper(mb_substr(trim($name), 0, 1)) ?: '•',
         ];
     }
 

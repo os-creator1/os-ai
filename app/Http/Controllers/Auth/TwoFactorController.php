@@ -99,7 +99,7 @@ class TwoFactorController extends Controller
 
             Session::reflash();
 
-            return redirect(Helper::home_route());
+            return redirect(\App\Library\PlatformBilling\PendingVerification::uri() ?? \App\Library\Workspace\ClientInvitationReturn::pull() ?? Helper::home_route());
         }
 
         Session::reflash();

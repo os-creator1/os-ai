@@ -165,8 +165,9 @@
 
                 $request->session()->put('password_changed_at', Auth::user()->password_changed_at?->timestamp);
 
-                // Someone who arrived from a private-offer link goes back to it.
-                return redirect(\App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route())->with([
+                // A clicked (already signature-checked) email-verification link is completed first;
+                // otherwise someone who opened a client invitation or a private-offer link goes back to it.
+                return redirect(\App\Library\PlatformBilling\PendingVerification::uri() ?? \App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route())->with([
                     'status'  => 'success',
                     'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
                 ]);
