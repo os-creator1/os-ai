@@ -40,6 +40,27 @@ class UpdateOutreachScriptRequest extends FormRequest
             'agency_name' => ['nullable', 'string', 'max:255'],
             'website_url' => ['nullable', 'string', 'max:2048'],
             'booking_url' => ['nullable', 'string', 'max:2048'],
+
+            // Outreach V2: ordered, variable-length lists (normalised and bounded by OutreachScriptManager).
+            'sequence_steps_present' => ['nullable', 'boolean'],
+            'sequence_steps' => ['nullable', 'array', 'max:50'],
+            'sequence_steps.*.id' => ['nullable', 'string', 'max:64'],
+            'sequence_steps.*.body' => ['nullable', 'string', 'max:1600'],
+            'sequence_steps.*.advance_on' => ['nullable', 'in:reply,time'],
+            'sequence_steps.*.delay_hours' => ['nullable', 'integer', 'min:1', 'max:720'],
+            'sequence_steps.*.enabled' => ['nullable', 'boolean'],
+            'sequence_paused' => ['nullable', 'boolean'],
+            'faq_entries_present' => ['nullable', 'boolean'],
+            'faq_entries' => ['nullable', 'array', 'max:100'],
+            'faq_entries.*.id' => ['nullable', 'string', 'max:64'],
+            'faq_entries.*.question' => ['nullable', 'string', 'max:300'],
+            'faq_entries.*.answer' => ['nullable', 'string', 'max:1000'],
+            'faq_entries.*.keywords' => ['nullable', 'string', 'max:600'],
+            'faq_entries.*.intent' => ['nullable', 'string', 'max:32'],
+            'faq_entries.*.niche' => ['nullable', 'string', 'max:120'],
+            'faq_entries.*.campaign_ids' => ['nullable', 'array'],
+            'faq_entries.*.campaign_ids.*' => ['integer'],
+            'faq_fallback' => ['nullable', 'in:ai,continue,handoff'],
         ];
     }
 }

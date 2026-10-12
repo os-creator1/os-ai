@@ -69,9 +69,19 @@ final class OutreachReplyComposer
     ): OutreachComposedReply {
         $script = OutreachScript::forWorkspace($workspace);
 
-        $stageText = $decision->messageNumber === null
-            ? null
-            : OutreachScriptRenderer::render($script->get('message_' . $decision->messageNumber), $workspace, $prospect);
+        $inbound = AgencyProspectMessage::query()->with('campaignMember')->find($inboundMessageId);
+        $campaignId = $inbound?->campaignMember?->campaign_id === null ? null : (int) $inbound->campaignMember->campaign_id;
+        $inboundBody = (string) $inbound?->body;
+        $faq = OutreachFaq::forWorkspace($workspace);
+
+        if ($decision->stepId !== null) {
+            $stepBody = OutreachSequence::forWorkspace($workspace)->find($decision->stepId)['body'] ?? '';
+            $stageText = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $stepBody), $workspace, $prospect);
+        } else {
+            $stageText = $decision->messageNumber === null
+                ? null
+                : OutreachScriptRenderer::render($script->get('message_' . $decision->messageNumber), $workspace, $prospect);
+        }
 
         if ($stageText === '') {
             $stageText = null;
@@ -81,7 +91,15 @@ final class OutreachReplyComposer
         $source = AgencyProspectMessage::SOURCE_DETERMINISTIC;
 
         if ($decision->answerFirst) {
-            [$answer, $usedAi] = $this->answer($workspace, $prospect, $script, $intent, $inboundMessageId);
+            [$answer, $usedAi] = $this->answer($workspace, $prospect, $script, $intent, $inboundMessageId, $faq, $inboundBody, $campaignId);
+
+            // The Agency chose to answer only what it has approved: a question none of its
+            // answers covers is left for a person rather than guessed at.
+            if ($answer === null
+                && $intent !== OutreachIntentClassifier::NAME
+                && $faq->fallback() === OutreachFaq::FALLBACK_HANDOFF) {
+                return OutreachComposedReply::nothing($intent, 'needs_human');
+            }
 
             if ($usedAi && $answer !== null) {
                 $source = AgencyProspectMessage::SOURCE_AI;
@@ -113,19 +131,31 @@ final class OutreachReplyComposer
     /**
      * @return array{0: ?string, 1: bool} the answer sentence and whether a model produced it
      */
-    private function answer(Workspace $workspace, AgencyProspect $prospect, OutreachScript $script, string $intent, int $inboundMessageId): array
-    {
+    private function answer(
+        Workspace $workspace,
+        AgencyProspect $prospect,
+        OutreachScript $script,
+        string $intent,
+        int $inboundMessageId,
+        OutreachFaq $faq,
+        string $inboundBody,
+        ?int $campaignId,
+    ): array {
         if ($intent === OutreachIntentClassifier::NAME) {
             return [OutreachScriptRenderer::render("We're {{agency.name}}.", $workspace, $prospect) ?: null, false];
         }
 
-        if (isset(self::FAQ_FIELDS[$intent])) {
-            $rendered = OutreachScriptRenderer::render($script->get(self::FAQ_FIELDS[$intent]), $workspace, $prospect);
+        $entry = $faq->match($inboundBody, $intent, $campaignId);
+
+        if ($entry !== null) {
+            $rendered = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $entry['answer']), $workspace, $prospect);
 
             return [$rendered === '' ? null : $rendered, false];
         }
 
-        if ($intent === OutreachIntentClassifier::QUESTION_OTHER && $script->aiEnabled()) {
+        if ($faq->fallback() === OutreachFaq::FALLBACK_AI
+            && $intent === OutreachIntentClassifier::QUESTION_OTHER
+            && $script->aiEnabled()) {
             $sentence = $this->askModel($workspace, $prospect, $script, $inboundMessageId);
 
             return [$sentence, $sentence !== null];
@@ -208,10 +238,10 @@ final class OutreachReplyComposer
             'Agency name: ' . ($script->agencyName() ?: 'not given'),
             'What the agency offers: ' . (trim((string) $settings?->offer) ?: 'not given'),
             'Who it is for: ' . (trim((string) $settings?->niche) ?: 'not given'),
-            'Pricing answer: ' . ($render($script->get('pricing_answer')) ?: 'not given'),
-            'Location answer: ' . ($render($script->get('location_answer')) ?: 'not given'),
-            'How we found them: ' . ($render($script->get('found_you_answer')) ?: 'not given'),
-            'What we do: ' . ($render($script->get('what_we_do_answer')) ?: 'not given'),
+            ...array_map(
+                static fn (array $e): string => 'Approved answer to "' . ($e['question'] ?: 'a question') . '": ' . $render($e['answer']),
+                OutreachFaq::forWorkspace($workspace)->applicable($this->campaignOf($inboundMessageId)),
+            ),
             'Website: ' . ($script->settings()?->website_url ?: 'not given'),
             'Booking link: ' . ($script->calendarUrl() ?: 'not given'),
         ];
@@ -240,6 +270,13 @@ final class OutreachReplyComposer
             ->all();
 
         return array_merge([['role' => 'system', 'content' => $system]], $history);
+    }
+
+    private function campaignOf(int $inboundMessageId): ?int
+    {
+        $id = AgencyProspectMessage::query()->with('campaignMember')->find($inboundMessageId)?->campaignMember?->campaign_id;
+
+        return $id === null ? null : (int) $id;
     }
 
     private function join(?string $answer, ?string $stageText): ?string

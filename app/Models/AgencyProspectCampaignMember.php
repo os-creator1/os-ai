@@ -30,6 +30,7 @@ class AgencyProspectCampaignMember extends Model
         'chat_box_id',
         'ai_paused_at',
         'ai_paused_by_user_id',
+        'sequence_sent_ids',
     ];
 
     protected $casts = [
@@ -43,6 +44,7 @@ class AgencyProspectCampaignMember extends Model
         'followup_cancelled_at' => 'datetime',
         'soft_negative_count' => 'integer',
         'ai_paused_at' => 'datetime',
+        'sequence_sent_ids' => 'array',
     ];
 
     public function workspace(): BelongsTo

@@ -34,7 +34,7 @@ use Illuminate\Support\Facades\Log;
 final class OutreachSendPipeline
 {
     /** Eligibility refusals that only HOLD a paused send; anything else cancels it. */
-    private const RECOVERABLE = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled', 'no_sending_number', 'verification_incomplete'];
+    private const RECOVERABLE = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled', 'no_sending_number', 'verification_incomplete', 'sequence_paused'];
 
     public function __construct(
         private readonly OutreachEligibility $eligibility,
@@ -70,6 +70,13 @@ final class OutreachSendPipeline
                 return 'stage_changed';
             }
 
+            // A step is delivered to a prospect once, whatever order the sends arrive in.
+            if ($plan->stepId !== null
+                && $plan->intent !== 'link_resend'
+                && in_array($plan->stepId, OutreachSequence::forWorkspace($member->workspace)->sentIdsFor($member), true)) {
+                return 'step_already_sent';
+            }
+
             if ($this->inFlight($member->id, null, true)) {
                 return 'send_in_flight';
             }
@@ -97,6 +104,7 @@ final class OutreachSendPipeline
                     'stage_from' => $plan->stageFrom,
                     'stage_to' => $plan->stageTo,
                     'script_version' => $plan->scriptVersion,
+                    'sequence_step_id' => $plan->stepId,
                 ]);
             } catch (UniqueConstraintViolationException) {
                 return 'already_claimed';
@@ -244,23 +252,38 @@ final class OutreachSendPipeline
         $from = $row->stage_from === null ? null : (int) $row->stage_from;
         $to = $row->stage_to === null ? null : (int) $row->stage_to;
 
+        $sequence = OutreachSequence::forWorkspace($member->workspace);
+        $sentBefore = $sequence->sentIdsFor($member);
+        $stepId = $row->sequence_step_id;
+
         if ($row->purpose === AgencyProspectMessage::PURPOSE_FOLLOWUP) {
             $updates['followup_sent_at'] = now();
         } elseif ($from !== null && $to !== null && $from !== $to && $member->stage->value === $from) {
             $updates['stage'] = $to;
 
-            // Message 3 is the calendar link: the one follow-up is scheduled from now.
+            // The message that carries the calendar link moves the prospect to "link sent".
             if ($to === AgencyProspectStage::BookingLinkSent->value) {
                 $updates['booking_link_sent_at'] = now();
+            }
+        }
 
-                $script = OutreachScript::forWorkspace($member->workspace);
+        if ($stepId !== null) {
+            // Progress is the set of step ids delivered: editing the sequence later can
+            // neither repeat a step nor skip or reorder one for this prospect.
+            $sentNow = array_values(array_unique([...$sentBefore, $stepId]));
+            $updates['sequence_sent_ids'] = $sentNow;
 
-                if ($script->followUpEnabled()
-                    && $member->followup_sent_at === null
-                    && $member->followup_cancelled_at === null) {
-                    $followUpAt = now()->addHours($script->followUpDelayHours());
-                    $updates['followup_at'] = $followUpAt;
-                }
+            // The very next thing due may be a timed step: one timer at a time, and a
+            // legacy follow-up that was already sent or cancelled is never re-armed.
+            $next = $sequence->nextTimeStep($sentNow);
+
+            if ($next !== null
+                && ! ($next['id'] === OutreachSequence::LEGACY_FOLLOWUP
+                    && ($member->followup_sent_at !== null || $member->followup_cancelled_at !== null))) {
+                $followUpAt = now()->addHours((int) $next['delay_hours']);
+                $updates['followup_at'] = $followUpAt;
+                $updates['followup_sent_at'] = null;
+                $updates['followup_cancelled_at'] = null;
             }
         }
 

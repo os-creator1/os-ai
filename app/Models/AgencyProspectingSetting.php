@@ -40,6 +40,10 @@ class AgencyProspectingSetting extends Model
         'ai_enabled',
         'scheduling_mode',
         'script_version',
+        'sequence_steps',
+        'faq_entries',
+        'sequence_paused',
+        'faq_fallback',
     ];
 
     protected $casts = [
@@ -47,6 +51,9 @@ class AgencyProspectingSetting extends Model
         'ai_enabled' => 'boolean',
         'script_version' => 'integer',
         'follow_up_delay_hours' => 'integer',
+        'sequence_steps' => 'array',
+        'faq_entries' => 'array',
+        'sequence_paused' => 'boolean',
     ];
 
     public function workspace(): BelongsTo

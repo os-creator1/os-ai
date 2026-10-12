@@ -236,6 +236,24 @@ class AgencyOutreachController extends CustomerBaseController
             ])->all(),
             'picker' => $picker,
             'previewUrl' => route('customer.workspaces.prospecting.script.preview', $workspaceUid),
+            'sequenceSteps' => \App\Library\AgencyOutreach\OutreachSequence::forWorkspace($workspace)->steps(),
+            'sequencePaused' => $script->sequencePaused(),
+            'faqEntries' => \App\Library\AgencyOutreach\OutreachFaq::forWorkspace($workspace)->all(),
+            'faqFallback' => \App\Library\AgencyOutreach\OutreachFaq::forWorkspace($workspace)->fallback(),
+            'starterTemplate' => collect([1, 2, 3])->map(fn (int $n) => [
+                'body' => \App\Library\AgencyOutreach\OutreachScriptDefaults::all()['message_' . $n],
+                'advance_on' => 'reply',
+                'delay_hours' => null,
+                'enabled' => true,
+            ])->push([
+                'body' => \App\Library\AgencyOutreach\OutreachScriptDefaults::all()['followup_message'],
+                'advance_on' => 'time',
+                'delay_hours' => 24,
+                'enabled' => true,
+            ])->all(),
+            'campaignOptions' => \App\Models\AgencyProspectCampaign::query()
+                ->where('workspace_id', $workspace->id)->orderBy('name')->get(['id', 'name'])
+                ->map(fn ($c) => ['id' => (int) $c->id, 'name' => $c->name])->all(),
             'unknown' => collect($values)->map(fn ($text) => OutreachScriptRenderer::unknownTokens($text, $workspace))->filter()->all(),
         ]);
     }
@@ -245,24 +263,42 @@ class AgencyOutreachController extends CustomerBaseController
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
 
         $fields = $request->validated();
-        // An unchecked box is simply absent from the request.
-        $fields['followup_enabled'] = $request->boolean('followup_enabled');
-        $fields['ai_enabled'] = $request->boolean('ai_enabled');
+        unset($fields['sequence_steps_present'], $fields['faq_entries_present']);
+
+        // The legacy switches are only written by a form that carries them.
+        if ($request->has('followup_enabled')) {
+            $fields['followup_enabled'] = $request->boolean('followup_enabled');
+        }
+
+        if ($request->has('ai_enabled')) {
+            $fields['ai_enabled'] = $request->boolean('ai_enabled');
+        }
+
+        // An emptied list posts nothing, so the editor says it was on the page.
+        if ($request->boolean('sequence_steps_present')) {
+            $fields['sequence_steps'] = $fields['sequence_steps'] ?? [];
+        }
+
+        if ($request->boolean('faq_entries_present')) {
+            $fields['faq_entries'] = $fields['faq_entries'] ?? [];
+        }
 
         OutreachScriptManager::save($workspace, $fields, Auth::user());
 
         $warnings = [];
         $script = OutreachScript::forWorkspace($workspace);
 
-        if (! str_contains($script->get('message_3'), '{{agency.calendar_link}}')) {
-            $warnings[] = 'Message 3 does not include your calendar link, so Outreach cannot start until it does.';
+        $sequence = \App\Library\AgencyOutreach\OutreachSequence::forWorkspace($workspace);
+
+        if (! $sequence->containsCalendarLink()) {
+            $warnings[] = 'None of your messages includes your calendar link, so Outreach cannot start until one does.';
         }
 
-        foreach (['message_1', 'message_2', 'message_3', 'followup_message'] as $field) {
-            $unknown = OutreachScriptRenderer::unknownTokens($script->get($field), $workspace);
+        foreach ($sequence->steps() as $position => $step) {
+            $unknown = OutreachScriptRenderer::unknownTokens($step['body'], $workspace);
 
             if ($unknown !== []) {
-                $warnings[] = 'Some fields in ' . str_replace('_', ' ', $field) . ' are not recognised and will be left blank: ' . implode(', ', $unknown) . '.';
+                $warnings[] = 'Message ' . ($position + 1) . ' has fields that are not recognised and will be left blank: ' . implode(', ', $unknown) . '.';
             }
         }
 

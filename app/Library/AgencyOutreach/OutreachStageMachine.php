@@ -25,8 +25,18 @@ use App\Enums\AgencyProspecting\AgencyProspectStage;
  */
 final class OutreachStageMachine
 {
-    public static function decide(AgencyProspectStage|int $stage, OutreachClassification $reply): OutreachDecision
-    {
+    /**
+     * @param  OutreachSequence|null  $sequence  the Agency's ordered steps (null = the legacy fixed three)
+     * @param  array<int, string>  $sent  step ids this prospect already received
+     * @param  bool  $faqMatched  an approved answer covers this reply (beyond the classifier's own FAQ intents)
+     */
+    public static function decide(
+        AgencyProspectStage|int $stage,
+        OutreachClassification $reply,
+        ?OutreachSequence $sequence = null,
+        array $sent = [],
+        bool $faqMatched = false,
+    ): OutreachDecision {
         $current = $stage instanceof AgencyProspectStage ? $stage->value : $stage;
 
         if ($current === AgencyProspectStage::Booked->value || $current === AgencyProspectStage::StoppedOptOut->value) {
@@ -45,7 +55,11 @@ final class OutreachStageMachine
             return new OutreachDecision(OutreachDecision::REJECT, $current, AgencyProspectStage::StoppedOptOut->value, reason: 'rejected');
         }
 
-        $answer = $reply->hasFaq();
+        $answer = $reply->hasFaq() || $faqMatched;
+
+        if ($sequence !== null) {
+            return self::sequenced($current, $reply, $sequence, $sent, $answer);
+        }
 
         return match ($current) {
             AgencyProspectStage::Introduction->value => new OutreachDecision(OutreachDecision::SEND_STAGE, 1, 2, 1, $answer),
@@ -54,6 +68,52 @@ final class OutreachStageMachine
             AgencyProspectStage::BookingLinkSent->value => self::booking($reply, $answer),
             default => new OutreachDecision(OutreachDecision::NONE, $current, $current, reason: 'stage_not_automated'),
         };
+    }
+
+    /**
+     * The dynamic process: the next unsent reply step is sent whatever its position,
+     * and the stage only records how far the conversation has got (a message carrying
+     * the calendar link means "link sent").
+     *
+     * @param  array<int, string>  $sent
+     */
+    private static function sequenced(int $current, OutreachClassification $reply, OutreachSequence $sequence, array $sent, bool $answer): OutreachDecision
+    {
+        $booking = AgencyProspectStage::BookingLinkSent->value;
+        $step = $sequence->nextReplyStep($sent);
+
+        if ($current === $booking) {
+            if ($reply->schedulingReply && ! $reply->linkRepeatUsed) {
+                $link = $sequence->linkStep($sent);
+
+                if ($link !== null) {
+                    return new OutreachDecision(OutreachDecision::RESEND_LINK, $booking, $booking, null, $answer, stepId: $link['id']);
+                }
+            }
+
+            if ($step !== null) {
+                return new OutreachDecision(OutreachDecision::SEND_STAGE, $booking, $booking, null, $answer, stepId: $step['id']);
+            }
+
+            return $answer
+                ? new OutreachDecision(OutreachDecision::ANSWER_ONLY, $booking, $booking, null, true)
+                : new OutreachDecision(OutreachDecision::NONE, $booking, $booking, reason: 'no_scripted_reply');
+        }
+
+        if (! in_array($current, [AgencyProspectStage::Introduction->value, AgencyProspectStage::Qualification->value, AgencyProspectStage::CallInvitation->value], true)) {
+            return new OutreachDecision(OutreachDecision::NONE, $current, $current, reason: 'stage_not_automated');
+        }
+
+        if ($step === null) {
+            return $answer
+                ? new OutreachDecision(OutreachDecision::ANSWER_ONLY, $current, $current, null, true)
+                : new OutreachDecision(OutreachDecision::NONE, $current, $current, reason: 'sequence_complete');
+        }
+
+        $delivered = count(array_filter($sent, static fn (string $id): bool => ($sequence->find($id)['advance_on'] ?? OutreachSequence::REPLY) !== OutreachSequence::TIME)) + 1;
+        $to = OutreachSequence::stepHasCalendarLink($step) ? $booking : max($current, min(3, $delivered + 1));
+
+        return new OutreachDecision(OutreachDecision::SEND_STAGE, $current, $to, null, $answer, stepId: $step['id']);
     }
 
     private static function booking(OutreachClassification $reply, bool $answer): OutreachDecision

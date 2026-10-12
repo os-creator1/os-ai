@@ -87,9 +87,17 @@ class AgencyOutreachReadiness
         $script = OutreachScript::forWorkspace($workspace);
         $url = route('customer.workspaces.prospecting.script.show', $workspace->uid);
 
-        foreach (['message_1' => 'Message 1', 'message_2' => 'Message 2', 'message_3' => 'Message 3'] as $field => $label) {
-            if (trim((string) $script->get($field)) === '') {
-                return $this->item('script', 'Script', false, "{$label} is empty. Write it in Script & Settings.", $url);
+        $sequence = OutreachSequence::forWorkspace($workspace);
+
+        if ($sequence->isCustom()) {
+            if ($sequence->enabledSteps() === []) {
+                return $this->item('script', 'Script', false, 'Add at least one message to your sequence in Script & Settings.', $url);
+            }
+        } else {
+            foreach (['message_1' => 'Message 1', 'message_2' => 'Message 2', 'message_3' => 'Message 3'] as $field => $label) {
+                if (trim((string) $script->get($field)) === '') {
+                    return $this->item('script', 'Script', false, "{$label} is empty. Write it in Script & Settings.", $url);
+                }
             }
         }
 
@@ -101,7 +109,11 @@ class AgencyOutreachReadiness
             return $this->item('script', 'Script', false, 'Add a calendar link (a valid http or https address) in Script & Settings.', $url);
         }
 
-        if (! str_contains((string) $script->get('message_3'), self::CALENDAR_TOKEN)) {
+        if ($sequence->isCustom()) {
+            if (! $sequence->containsCalendarLink()) {
+                return $this->item('script', 'Script', false, 'Include your calendar link in one of your messages so prospects can book.', $url);
+            }
+        } elseif (! str_contains((string) $script->get('message_3'), self::CALENDAR_TOKEN)) {
             return $this->item('script', 'Script', false, 'Message 3 must include your calendar link so prospects can book.', $url);
         }
 
