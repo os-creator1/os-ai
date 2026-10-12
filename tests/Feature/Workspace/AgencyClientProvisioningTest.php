@@ -820,6 +820,7 @@ class AgencyClientProvisioningTest extends TestCase
 
     public function test_a_verification_link_clicked_after_opening_the_invitation_still_returns_to_the_invitation(): void
     {
+        config(['account.verify_account' => true, 'app.two_factor' => false, 'no-captcha.login' => false]);
         [$agency, $owner] = $this->agency();
         $email = 'verify-return' . uniqid('', true) . '@example.test';
         [$invitation, $token] = $this->pendingInvitation($agency, $owner, $email, 'Verify Return Co');
