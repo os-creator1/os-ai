@@ -507,7 +507,8 @@ class OnboardingManagerTest extends TestCase
         $onboarding->analysis_payload = ['version' => 1, 'findings' => [['fingerprint' => 'business:1:missing_phone']]];
         $onboarding->save();
 
-        $this->assertSame(0, $business->services()->count(), 'Fixture: no services at all.');
+        $this->assertSame(0, $business->services()->where('status', BusinessServiceStatus::Active)->count(), 'Fixture: no active services (syncing an empty list deactivates, not deletes).');
+        $this->assertSame(0, $business->services()->where('is_primary', true)->count(), 'Fixture: no primary service.');
         $this->assertNull($onboarding->fresh()->first_value_action_completed_at, 'Fixture: no first-value action recorded.');
 
         $updated = app(OnboardingManager::class)->complete($onboarding, $customer);
