@@ -16,7 +16,8 @@ class SyncBusinessServicesRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'services' => ['required', 'array', 'min:1', 'max:50'],
+            // Optional: leaving every row blank keeps the existing services as they are.
+            'services' => ['nullable', 'array', 'max:50'],
             'services.*.id' => ['nullable', 'integer'],
             'services.*.name' => ['required', 'string', 'min:2', 'max:255'],
             'services.*.description' => ['nullable', 'string', 'max:5000'],
@@ -40,6 +41,8 @@ class SyncBusinessServicesRequest extends FormRequest
             ->filter(fn ($service) => trim((string) ($service['name'] ?? '')) !== '')
             ->map(fn ($service) => array_merge(['is_primary' => false], $service))
             ->values()
+            // The order on the page is the order of the services.
+            ->map(fn ($service, $index) => array_merge($service, ['sort_order' => $index]))
             ->all();
 
         $this->merge(['services' => $services]);

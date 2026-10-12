@@ -131,9 +131,10 @@ class BusinessOnboardingHttpTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         app(OnboardingManager::class)->start($customer);
 
+        // Any number of goals is fine now; an unknown goal is still refused.
         $this->post(route('customer.onboarding.goals.store'), [
-            'primary_goals' => [],
-        ])->assertSessionHasErrors('primary_goals');
+            'primary_goals' => ['not_a_real_goal'],
+        ])->assertSessionHasErrors('primary_goals.0');
 
         $onboarding = CustomerOnboarding::where('customer_id', $customer->user_id)->first();
         $this->assertSame(OnboardingStep::Goals, $onboarding->current_step);
@@ -675,10 +676,14 @@ class BusinessOnboardingHttpTest extends TestCase
 
     public function test_complete_endpoint_redirects_back_with_an_error_when_prerequisites_are_missing(): void
     {
-        $this->httpOnboardingAtAnalysisStep();
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+        // The Location step was never completed: that (and only that) is missing.
+        $onboarding->completed_steps = ['goals', 'business'];
+        $onboarding->current_step = \App\Enums\Business\OnboardingStep::Location;
+        $onboarding->save();
 
         $this->post(route('customer.onboarding.complete'))
-            ->assertRedirect(route('customer.onboarding.show', ['step' => 'results']))
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'location']))
             ->assertSessionHasErrors('onboarding');
     }
 

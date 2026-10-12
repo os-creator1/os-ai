@@ -297,7 +297,11 @@ final class V1SignupManager
             // otherwise non-Draft) Business must never gain, or be sent back
             // into, an onboarding requirement because of it.
             if ($customer !== null && $business !== null && $business->status === BusinessStatus::Draft) {
-                $this->onboarding->startForProvisionedBusiness($customer, $business);
+                $this->onboarding->startForProvisionedBusiness(
+                    $customer,
+                    $business,
+                    required: ! $this->onboarding->isAgencyAccount($customer),
+                );
             }
         } catch (\Throwable $e) {
             report($e);

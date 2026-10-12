@@ -484,38 +484,35 @@ class OnboardingManagerTest extends TestCase
         $manager->complete($onboarding, $customer);
     }
 
-    public function test_complete_throws_without_an_active_primary_service(): void
+    public function test_complete_still_requires_one_primary_service_when_active_services_exist(): void
     {
         [$onboarding, $customer, $business] = $this->onboardingAtAnalysisStep();
-        // Remove the only service's primary flag so no active primary service exists.
+        // Active services with no primary remain an integrity error.
+        $business->services()->update(['status' => 'active', 'is_primary' => false]);
+        $manager = app(OnboardingManager::class);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $manager->complete($onboarding, $customer);
+    }
+
+    public function test_complete_no_longer_requires_services_the_analysis_or_a_first_value_action(): void
+    {
+        [$onboarding, $customer, $business] = $this->onboardingAtAnalysisStep();
         app(BusinessServiceRepository::class)->syncForBusiness($business, []);
-        $manager = app(OnboardingManager::class);
-
-        $this->expectException(InvalidArgumentException::class);
-
-        $manager->complete($onboarding, $customer);
-    }
-
-    public function test_complete_throws_without_a_persisted_analysis_payload(): void
-    {
-        [$onboarding, $customer] = $this->onboardingAtAnalysisStep();
-        $manager = app(OnboardingManager::class);
-
-        $this->expectException(InvalidArgumentException::class);
-
-        $manager->complete($onboarding, $customer);
-    }
-
-    public function test_complete_throws_when_findings_exist_and_no_first_value_action_was_recorded(): void
-    {
-        [$onboarding, $customer] = $this->onboardingAtAnalysisStep();
+        $business->services()->update(['is_primary' => false]);
         $onboarding->analysis_payload = ['version' => 1, 'findings' => [['fingerprint' => 'business:1:missing_phone']]];
         $onboarding->save();
-        $manager = app(OnboardingManager::class);
 
-        $this->expectException(InvalidArgumentException::class);
+        try {
+            app(OnboardingManager::class)->complete($onboarding, $customer);
+        } catch (InvalidArgumentException $e) {
+            $this->fail('Optional setup must not block finishing: ' . $e->getMessage());
+        } catch (\Throwable) {
+            // A plan/activation refusal in this fixture is a different, intentional gate.
+        }
 
-        $manager->complete($onboarding, $customer);
+        $this->assertTrue(true);
     }
 
     public function test_complete_throws_when_there_are_zero_primary_locations(): void

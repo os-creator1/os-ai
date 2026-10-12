@@ -16,8 +16,11 @@ class UpdateOnboardingGoalsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'primary_goals' => ['required', 'array', 'min:1', 'max:2'],
+            // Any number of goals; none is allowed too ("set up later").
+            'primary_goals' => ['nullable', 'array'],
             'primary_goals.*' => ['distinct', new Enum(BusinessGoal::class)],
+            // One optional "start here" goal; it must be one of the selected goals.
+            'priority_goal' => ['nullable', new Enum(BusinessGoal::class), 'in_array:primary_goals.*'],
         ];
     }
 }
