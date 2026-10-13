@@ -159,9 +159,13 @@ class AutomationWorkflowsController extends CustomerBaseController
      * through to `GET /{workflowUid}` with uid "new" and 404. It is registered
      * before the wildcard for the same reason.
      */
-    public function create(string $workspaceUid, string $businessUid): mixed
-    {
-        return $this->respond(function () use ($workspaceUid, $businessUid): mixed {
+    public function create(
+        string $workspaceUid,
+        string $businessUid,
+        \App\Library\Navigation\CustomerShellComposer $shell,
+        \App\Library\Navigation\CustomerMenuBuilder $menu,
+    ): mixed {
+        return $this->respond(function () use ($workspaceUid, $businessUid, $shell, $menu): mixed {
             [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
             return view('customer.Automations.Workflows.chooser', [
@@ -170,8 +174,32 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'basePath' => $this->basePath($workspaceUid, $businessUid),
                 // A recipe the account cannot run is shown disabled, with the reason.
                 'capabilities' => $this->capabilities->forBusiness($business),
+                // Where a missing capability can be fixed — only destinations the
+                // permission-aware Settings hub already offers this person.
+                'setupLinks' => $this->setupLinks($shell, $menu),
             ]);
         });
+    }
+
+    /** @return array<string, string> capability => URL, for the ones this user may open */
+    private function setupLinks(
+        \App\Library\Navigation\CustomerShellComposer $shell,
+        \App\Library\Navigation\CustomerMenuBuilder $menu,
+    ): array {
+        $user = Auth::user();
+        $context = $shell->currentContext($user);
+        $byKey = ['text-messaging' => 'sms', 'email' => 'email', 'payments' => 'payments'];
+        $links = [];
+
+        foreach ($menu->settingsSections($context, $user, $shell->currentMenuEntitlements($context)) as $section) {
+            foreach ($section['items'] as $item) {
+                if (isset($byKey[$item->key]) && $item->url !== null) {
+                    $links[$byKey[$item->key]] = $item->url;
+                }
+            }
+        }
+
+        return $links;
     }
 
     /** 201 with `{workflow, redirect}` — the two keys V2-D's chooser reads. */
