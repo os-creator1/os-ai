@@ -103,6 +103,41 @@ class PlatformAccountClosureSafetyTest extends TestCase
         app(EloquentCustomerRepository::class)->destroy($user);
     }
 
+    public function test_legacy_single_toggle_cannot_reactivate_a_closed_account(): void
+    {
+        [$fixture] = $this->billedTenantWithStaff();
+        $owner = $fixture['customer']->user;
+        $closure = $this->request($owner);
+        $this->assertSame(AccountClosureState::Closed, $closure->state);
+        $this->assertFalse((bool) $owner->fresh()->status);
+
+        $this->postJson(route('admin.customers.active', $owner->uid))
+            ->assertOk()->assertJsonPath('status', 'error');
+        $this->assertFalse((bool) $owner->fresh()->status);
+    }
+
+    public function test_legacy_bulk_enable_rejects_mixed_batch_atomically(): void
+    {
+        [$fixture] = $this->billedTenantWithStaff();
+        $closed = $fixture['customer']->user;
+        $this->assertSame(AccountClosureState::Closed, $this->request($closed)->state);
+        $ordinary = $this->createCustomer()->user;
+        $ordinary->forceFill(['status' => false])->save();
+
+        \Illuminate\Support\Facades\Event::fake([\App\Events\Account\UserAccountStatusChanged::class]);
+        $this->postJson(route('admin.customers.batch_action'), [
+            'action' => 'enable', 'ids' => [$closed->uid, $ordinary->uid],
+        ])->assertOk()->assertJsonPath('status', 'error');
+        $this->assertFalse((bool) $closed->fresh()->status);
+        $this->assertFalse((bool) $ordinary->fresh()->status);
+        \Illuminate\Support\Facades\Event::assertNotDispatched(\App\Events\Account\UserAccountStatusChanged::class);
+
+        $this->postJson(route('admin.customers.batch_action'), [
+            'action' => 'enable', 'ids' => [$ordinary->uid],
+        ])->assertOk()->assertJsonPath('status', 'success');
+        $this->assertTrue((bool) $ordinary->fresh()->status);
+    }
+
     // -- 2. lock down BEFORE the provider call ------------------------------------
 
     public function test_billable_activity_is_already_locked_down_when_the_provider_is_called(): void
