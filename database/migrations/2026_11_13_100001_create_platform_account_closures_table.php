@@ -39,6 +39,9 @@ return new class extends Migration {
             $table->json('pending_items')->nullable();
             $table->text('last_error')->nullable();
             $table->unsignedInteger('attempts')->default(0);
+            // Lease: claim_token identifies the ONE run that may act; claimed_at is
+            // renewed by that run as it works (see PlatformAccountClosureManager).
+            $table->uuid('claim_token')->nullable();
             $table->timestamp('claimed_at')->nullable();
             $table->timestamp('last_attempt_at')->nullable();
             $table->timestamp('completed_at')->nullable();

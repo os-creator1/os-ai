@@ -194,7 +194,7 @@ class PlatformAccountDeletionHttpTest extends TestCase
         $this->assertTrue(User::where('id', $victim->user->id)->exists());
     }
 
-    public function test_the_legacy_customer_delete_refuses_workspace_owners(): void
+    public function test_the_legacy_customer_delete_refuses_everyone(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Core);
 

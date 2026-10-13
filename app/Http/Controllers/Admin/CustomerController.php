@@ -590,12 +590,7 @@
 
                     $this->authorize('delete customer');
 
-                    $this->customers->batchDelete($ids);
-
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => __('locale.customer.customers_deleted'),
-                    ]);
+                    return $this->legacyDeleteRetired();
             }
 
             return response()->json([
@@ -614,73 +609,26 @@
          */
         public function destroy(User $customer): JsonResponse
         {
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
             $this->authorize('delete customer');
 
-            $this->mayMutateAccount($customer);
+            return $this->legacyDeleteRetired();
+        }
 
-            // This legacy path predates Workspaces, subscriptions and usage
-            // ledgers: it hard-deletes invoices and subscription rows without
-            // cancelling anything with a payment provider. Any account that has
-            // Workspaces (or an in-flight closure) must go through the
-            // Platform Owner account deletion lifecycle instead.
-            if (\App\Models\Workspace::where('owner_user_id', $customer->id)->exists()
-                || \App\Models\PlatformAccountClosure::where('user_uid', $customer->uid)->exists()) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => __('This customer has Workspaces. Delete the account from Platform Owner > Users, which cancels billing safely.'),
-                ]);
-            }
-
-            if ($customer->is_super_admin) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Super Admin cannot be deleted',
-                ]);
-            }
-
-            PhoneNumbers::where('user_id', $customer->id)->update([
-                'status'  => 'available',
-                'user_id' => 1,
-            ]);
-
-            Blacklists::where('user_id', $customer->id)->delete();
-            Campaigns::where('user_id', $customer->id)->delete();
-            ChatBox::where('user_id', $customer->id)->delete();
-            ContactGroups::where('customer_id', $customer->id)->delete();
-            Customer::where('user_id', $customer->id)->delete();
-            Invoices::where('user_id', $customer->id)->delete();
-            Keywords::where('user_id', $customer->id)->delete();
-            Notifications::where('user_id', $customer->id)->delete();
-            Plan::where('user_id', $customer->id)->delete();
-            Reports::where('user_id', $customer->id)->delete();
-            \App\Library\Uploads\SenderIdDocumentStore::deleteRows(Senderid::where('user_id', $customer->id));
-            SendingServer::where('user_id', $customer->id)->delete();
-            Subscription::where('user_id', $customer->id)->delete();
-            Templates::where('user_id', $customer->id)->delete();
-            Announcements::where('user_id', $customer->id)->get()->each(function (Announcements $announcement) {
-                $announcement->users()->detach();
-                $announcement->delete();
-            });
-
-            if ( ! $customer->delete()) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => __('locale.exceptions.something_went_wrong'),
-                ]);
-            }
-
+        /**
+         * The legacy hard delete is retired for EVERY customer. It removed
+         * invoices and subscription rows (historical financial records)
+         * without cancelling anything with a payment provider, and it knew
+         * nothing about Workspaces, Businesses or usage ledgers. Customer
+         * accounts are now removed only through the Platform Owner account
+         * closure lifecycle, which cancels billing first and retains protected
+         * records.
+         */
+        private function legacyDeleteRetired(): JsonResponse
+        {
             return response()->json([
-                'status'  => 'success',
-                'message' => __('locale.customer.customer_successfully_deleted'),
+                'status'  => 'error',
+                'message' => __('Deleting customers from this page has been retired. Use Platform Owner > Users to delete or close a customer account; it cancels billing safely and keeps financial records.'),
             ]);
-
         }
 
         public function customerGenerator(): Generator

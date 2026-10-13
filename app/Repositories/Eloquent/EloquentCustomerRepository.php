@@ -23,6 +23,9 @@
      */
     class EloquentCustomerRepository extends EloquentBaseRepository implements CustomerRepository
     {
+        /** Customer hard deletion is retired; see PlatformAccountClosureManager. */
+        public const HARD_DELETE_RETIRED = 'Customer hard deletion is retired. Use the Platform Owner account closure flow.';
+
 
 
         /**
@@ -233,15 +236,7 @@
          */
         public function destroy(User $customer): bool
         {
-            if ( ! $customer->can_delete) {
-                throw new GeneralException(__('locale.exceptions.first_user_cannot_be_destroyed'));
-            }
-
-            if ( ! $customer->delete()) {
-                throw new GeneralException(__('locale.exceptions.delete'));
-            }
-
-            return true;
+            throw new GeneralException(self::HARD_DELETE_RETIRED);
         }
 
 
@@ -318,21 +313,7 @@
          */
         public function batchDelete(array $ids): bool
         {
-            DB::transaction(function () use ($ids) {
-                $superAdminUid = $this->query()->where('id', 1)->value('uid');
-
-                if (in_array($superAdminUid, $ids, true)) {
-                    throw new GeneralException(__('locale.exceptions.super_admin_delete'));
-                }
-
-                if ($this->query()->whereIn('uid', $ids)->delete()) {
-                    return true;
-                }
-
-                throw new GeneralException(__('locale.exceptions.delete'));
-            });
-
-            return true;
+            throw new GeneralException(self::HARD_DELETE_RETIRED);
         }
 
 

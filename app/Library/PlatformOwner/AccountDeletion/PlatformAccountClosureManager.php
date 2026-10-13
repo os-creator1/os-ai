@@ -2,6 +2,7 @@
 
 namespace App\Library\PlatformOwner\AccountDeletion;
 
+use App\Enums\AgencyBilling\AgencyClientSubscriptionStatus;
 use App\Enums\PlatformOwner\AccountClosureState;
 use App\Enums\Workspace\AgencyClientRelationshipStatus;
 use App\Exceptions\AgencyBilling\AgencyBillingException;
@@ -33,6 +34,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -46,17 +48,24 @@ use Throwable;
  * operation is a durable, resumable state machine
  * (platform_account_closures), and every step is idempotent:
  *
- *   1. block_access      the account can no longer sign in or call the API;
- *                        sessions and tokens are revoked.
+ *   1. lock_down         ONE local transaction, BEFORE any provider call: the
+ *                        account can no longer sign in; sessions and tokens are
+ *                        revoked; every member's access to the owned Workspaces
+ *                        is removed; Workspaces and Businesses go inactive;
+ *                        paid activity is paused and auto-recharge disabled;
+ *                        outreach, campaigns, schedules, automations, websites
+ *                        and forms stop; Agency relationships end. Nothing
+ *                        owned by anyone else moves. Whatever happens at the
+ *                        provider afterwards, nobody can run billable work.
  *   2. cancel_billing    every subscription that could still charge is
  *                        cancelled THROUGH ITS PROVIDER GATEWAY (the provider
  *                        is read first, so an outcome that was uncertain is
- *                        converged, not repeated). A local subscription row is
- *                        never simply deleted or relabelled.
- *   3. halt_activity     Workspaces and Businesses stop being usable; outreach,
- *                        campaigns, schedules, automations and websites stop;
- *                        provider connections are disconnected; Agency
- *                        relationships end. Nothing owned by anyone else moves.
+ *                        converged, not repeated), and the confirmed result is
+ *                        recorded ONLY through the authoritative finalizer. If
+ *                        the finalizer fails the item stays pending and is
+ *                        reconciled on retry; local status is never written
+ *                        directly and a row is never deleted or relabelled.
+ *   3. disconnect        provider connections (Google, Meta, mailbox, calendar).
  *   4. finalize          only when no provider or accounting prerequisite is
  *                        outstanding: either erase the account-owned rows
  *                        (no protected history) -> DELETED, or keep them
@@ -68,7 +77,14 @@ use Throwable;
  */
 class PlatformAccountClosureManager
 {
-    /** A run that has held the claim longer than this is presumed dead. */
+    /**
+     * The lease. A run renews it (heartbeat) before every external call and
+     * every item, and every guarded write renews it too, so only a worker stuck
+     * inside ONE operation for longer than this can lose it — and a worker that
+     * has lost it is stopped at its next heartbeat (AccountClosureClaimLost) and
+     * can write nothing further. Every provider call is bounded far below this
+     * by the HTTP client timeouts.
+     */
     private const CLAIM_SECONDS = 300;
 
     public function __construct(
@@ -160,7 +176,7 @@ class PlatformAccountClosureManager
         $claimed = $this->claim($closure);
 
         if ($claimed === null) {
-            // Already final, or another run holds the claim: report the current row.
+            // Already final, or another run holds the lease: report the current row.
             return $closure->refresh();
         }
 
@@ -168,12 +184,22 @@ class PlatformAccountClosureManager
 
         try {
             $this->run($closure);
+        } catch (AccountClosureClaimLost) {
+            // Another worker took over after this one stalled. Write nothing.
+            Log::warning('account-closure.claim-lost', ['closure' => $closure->uid]);
         } catch (Throwable $e) {
             report($e);
-            $this->record($closure, 'run', 'failed', 'The run stopped on an unexpected error; it will be retried.');
-            $closure->forceFill(['last_error' => 'Unexpected error: ' . class_basename($e)])->save();
+
+            try {
+                $this->record($closure, 'run', 'failed', 'The run stopped on an unexpected error; it will be retried.');
+                $this->write($closure, ['last_error' => 'Unexpected error: ' . class_basename($e)]);
+            } catch (AccountClosureClaimLost) {
+            }
         } finally {
-            $closure->refresh()->forceFill(['claimed_at' => null])->save();
+            // Release only OUR lease; a successor's is left alone.
+            DB::table('platform_account_closures')
+                ->where('id', $closure->id)->where('claim_token', $closure->claim_token)
+                ->update(['claimed_at' => null, 'claim_token' => null]);
         }
 
         return $closure->refresh();
@@ -183,6 +209,8 @@ class PlatformAccountClosureManager
 
     private function run(PlatformAccountClosure $closure): void
     {
+        $this->heartbeat($closure);
+
         // Re-check authority and identity immediately before acting, every run.
         $this->authority->assertAdministrator((int) $closure->requested_by_user_id);
 
@@ -192,7 +220,7 @@ class PlatformAccountClosureManager
             // The row is gone but the closure never recorded it (a crash after the
             // purge commit): the purge transaction also marks the closure Deleted,
             // so this is only reachable if the user vanished some other way.
-            $closure->forceFill(['state' => AccountClosureState::Deleted, 'outcome' => 'deleted', 'completed_at' => now(), 'pending_items' => [], 'last_error' => null])->save();
+            $this->write($closure, ['state' => AccountClosureState::Deleted, 'outcome' => 'deleted', 'completed_at' => now(), 'pending_items' => [], 'last_error' => null]);
 
             return;
         }
@@ -201,11 +229,11 @@ class PlatformAccountClosureManager
             throw new AccountClosureRefused('Administrator or acting accounts can never be closed.');
         }
 
-        $pending = [];
+        $this->lockDown($closure, $user);
 
-        $this->blockAccess($closure, $user);
+        $pending = [];
         $pending = array_merge($pending, $this->cancelBilling($closure, $user));
-        $pending = array_merge($pending, $this->haltActivity($closure, $user));
+        $pending = array_merge($pending, $this->disconnectExternal($closure, $user));
 
         $this->finalize($closure, $user, $pending);
     }
@@ -245,53 +273,160 @@ class PlatformAccountClosureManager
     {
         $uid = $closure->uid;
 
-        $claimed = DB::transaction(function () use ($uid) {
+        return DB::transaction(function () use ($uid) {
             $locked = PlatformAccountClosure::query()->where('uid', $uid)->lockForUpdate()->first();
 
             if ($locked === null || $locked->state->isFinal()) {
                 return null;
             }
 
-            if ($locked->claimed_at !== null && $locked->claimed_at->gt(now()->subSeconds(self::CLAIM_SECONDS))) {
+            if ($locked->claim_token !== null && $locked->claimed_at !== null && $locked->claimed_at->gt(now()->subSeconds(self::CLAIM_SECONDS))) {
                 return null;
             }
 
-            $locked->forceFill(['claimed_at' => now(), 'last_attempt_at' => now(), 'attempts' => $locked->attempts + 1])->save();
+            $token = (string) Str::uuid();
 
-            return $locked;
+            DB::table('platform_account_closures')->where('id', $locked->id)->update([
+                'claim_token' => $token,
+                'claimed_at' => now(),
+                'last_attempt_at' => now(),
+                'attempts' => $locked->attempts + 1,
+            ]);
+
+            return $locked->refresh();
         });
+    }
 
-        return $claimed;
+    /**
+     * Renew the lease, or stop. Called before every external call and item.
+     *
+     * @throws AccountClosureClaimLost
+     */
+    private function heartbeat(PlatformAccountClosure $closure): void
+    {
+        $this->guarded($closure, fn ($query) => $query->update(['claimed_at' => now()]));
+    }
+
+    /**
+     * Every write the lease-holder makes goes through here: it is applied only
+     * while this run still holds the lease, and it renews the lease.
+     *
+     * @param  array<string, mixed>  $attributes
+     *
+     * @throws AccountClosureClaimLost
+     */
+    private function write(PlatformAccountClosure $closure, array $attributes): void
+    {
+        $row = $attributes;
+
+        foreach (['preflight', 'steps', 'pending_items'] as $json) {
+            if (array_key_exists($json, $row) && $row[$json] !== null) {
+                $row[$json] = json_encode($row[$json]);
+            }
+        }
+
+        if (($row['state'] ?? null) instanceof AccountClosureState) {
+            $row['state'] = $row['state']->value;
+        }
+
+        $row['claimed_at'] = now();
+        $row['updated_at'] = now();
+
+        $this->guarded($closure, fn ($query) => $query->update($row));
+
+        $closure->forceFill($attributes)->syncOriginal();
+    }
+
+    /**
+     * @throws AccountClosureClaimLost
+     */
+    private function guarded(PlatformAccountClosure $closure, callable $do): void
+    {
+        $query = fn () => DB::table('platform_account_closures')->where('id', $closure->id)->where('claim_token', $closure->claim_token);
+
+        // MySQL reports 0 changed rows for an identical update, so a zero is only
+        // "lost" if the lease row itself is gone.
+        if ($do($query()) === 0 && ! $query()->exists()) {
+            throw new AccountClosureClaimLost();
+        }
     }
 
     // -- step 1 -----------------------------------------------------------------
 
-    private function blockAccess(PlatformAccountClosure $closure, User $user): void
+    /**
+     * Everything that must be true before the first provider call, applied in
+     * ONE transaction so it is all-or-nothing and idempotent.
+     */
+    private function lockDown(PlatformAccountClosure $closure, User $user): void
     {
-        $user->forceFill([
-            'status' => false,
-            'password_changed_at' => now(),
-            'remember_token' => null,
-            'api_token' => null,
-        ])->save();
+        $actorId = (int) $closure->requested_by_user_id;
 
-        if (Schema::hasTable('sessions')) {
-            DB::table('sessions')->where('user_id', $user->id)->delete();
-        }
+        DB::transaction(function () use ($user, $actorId, $closure) {
+            $user->forceFill([
+                'status' => false,
+                'password_changed_at' => now(),
+                'remember_token' => null,
+                'api_token' => null,
+            ])->save();
 
-        if (Schema::hasTable('personal_access_tokens')) {
-            DB::table('personal_access_tokens')->where('tokenable_type', User::class)->where('tokenable_id', $user->id)->delete();
-        }
+            if (Schema::hasTable('sessions')) {
+                DB::table('sessions')->where('user_id', $user->id)->delete();
+            }
 
-        DB::table('view_as_sessions')->where('actor_user_id', $user->id)->delete();
+            if (Schema::hasTable('personal_access_tokens')) {
+                DB::table('personal_access_tokens')->where('tokenable_type', User::class)->where('tokenable_id', $user->id)->delete();
+            }
 
-        // Their seats in other people's Workspaces. The Workspaces are untouched.
-        DB::table('workspace_memberships')
-            ->where('user_id', $user->id)
-            ->whereNotIn('workspace_id', fn ($q) => $q->select('id')->from('workspaces')->where('owner_user_id', $user->id))
-            ->update(['is_active' => false, 'updated_at' => now()]);
+            DB::table('view_as_sessions')->where('actor_user_id', $user->id)->delete();
 
-        $this->record($closure, 'block_access', 'done', 'Sign-in, sessions, tokens and seats in other Workspaces revoked.');
+            $owned = fn ($q) => $q->select('id')->from('workspaces')->where('owner_user_id', $user->id);
+
+            // Their seats in other people's Workspaces. Those Workspaces are untouched.
+            DB::table('workspace_memberships')->where('user_id', $user->id)->whereNotIn('workspace_id', $owned)
+                ->update(['is_active' => false, 'updated_at' => now()]);
+
+            // Per-user legacy work.
+            DB::table('campaigns')->where('user_id', $user->id)->whereIn('status', PlatformAccountAssessor::RUNNING_CAMPAIGN_STATUSES)
+                ->update(['status' => 'cancelled', 'updated_at' => now()]);
+            DB::table('automations')->where('user_id', $user->id)->where('status', 'active')
+                ->update(['status' => 'inactive', 'updated_at' => now()]);
+            DB::table('schedule_messages')->where('user_id', $user->id)->where('schedule_on', '>=', now()->subMinutes(3))->delete();
+
+            $workspaceIds = DB::table('workspaces')->where('owner_user_id', $user->id)->pluck('id')->all();
+
+            if ($workspaceIds === []) {
+                return;
+            }
+
+            $businessIds = DB::table('businesses')->whereIn('workspace_id', $workspaceIds)->pluck('id')->all();
+
+            // Every member of every owned Workspace, then the Workspace and its Businesses.
+            DB::table('workspace_memberships')->whereIn('workspace_id', $workspaceIds)->update(['is_active' => false, 'updated_at' => now()]);
+            DB::table('workspaces')->whereIn('id', $workspaceIds)->update(['is_active' => false, 'updated_at' => now()]);
+            DB::table('businesses')->whereIn('workspace_id', $workspaceIds)->where('status', '!=', 'inactive')->update(['status' => 'inactive', 'updated_at' => now()]);
+
+            foreach ($workspaceIds as $workspaceId) {
+                DB::table('workspace_usage_controls')->updateOrInsert(
+                    ['workspace_id' => $workspaceId],
+                    ['paid_activity_paused_at' => now(), 'paid_activity_paused_by_user_id' => $actorId, 'updated_at' => now(), 'created_at' => now()],
+                );
+            }
+
+            if ($businessIds !== []) {
+                DB::table('business_usage_wallets')->whereIn('business_id', $businessIds)->where('auto_recharge_enabled', true)
+                    ->update(['auto_recharge_enabled' => false, 'updated_at' => now()]);
+                DB::table('automation_workflows')->whereIn('business_id', $businessIds)->where('status', 'published')->update(['status' => 'paused', 'updated_at' => now()]);
+                DB::table('websites')->whereIn('business_id', $businessIds)->where('status', 'published')->update(['status' => 'archived', 'updated_at' => now()]);
+                DB::table('form_deployments')->whereIn('form_id', fn ($q) => $q->select('id')->from('forms')->whereIn('business_id', $businessIds))->update(['is_enabled' => false, 'updated_at' => now()]);
+            }
+
+            DB::table('agency_prospect_campaigns')->whereIn('workspace_id', $workspaceIds)->where('status', 'active')->update(['status' => 'paused', 'updated_at' => now()]);
+            DB::table('agency_prospects')->whereIn('workspace_id', $workspaceIds)->where('status', 'active')->update(['status' => 'stopped', 'updated_at' => now()]);
+
+            $this->terminateRelationships($workspaceIds, $actorId, $closure);
+        });
+
+        $this->record($closure, 'lock_down', 'done', 'Sign-in, sessions, tokens, member access, Workspaces, Businesses, paid activity, campaigns, schedules, automations, outreach, websites and Agency relationships stopped.');
     }
 
     // -- step 2 -----------------------------------------------------------------
@@ -302,6 +437,7 @@ class PlatformAccountClosureManager
     private function cancelBilling(PlatformAccountClosure $closure, User $user): array
     {
         $pending = [];
+        $this->heartbeat($closure);
         $workspaceIds = DB::table('workspaces')->where('owner_user_id', $user->id)->pluck('id')->all();
 
         if ($workspaceIds === []) {
@@ -315,9 +451,16 @@ class PlatformAccountClosureManager
                 continue;
             }
 
+            $this->heartbeat($closure);
+
             try {
                 $this->cancelPlatformSubscription($closure, $sub);
-            } catch (PlatformBillingException) {
+            } catch (AccountClosureClaimLost $e) {
+                throw $e;
+            } catch (AccountClosureReconciliationPending) {
+                $pending[] = 'Platform subscription ' . $sub->uid . ' is cancelled at the payment provider, but recording that locally failed; it will be reconciled on retry.';
+            } catch (Throwable $e) {
+                report($e);
                 $pending[] = 'Platform subscription ' . $sub->uid . ' could not be cancelled with the payment provider yet; it will be retried. It may still be charging.';
             }
         }
@@ -337,9 +480,16 @@ class PlatformAccountClosureManager
                 continue;
             }
 
+            $this->heartbeat($closure);
+
             try {
                 $this->cancelAgencySubscription($closure, $agency, $sub);
-            } catch (AgencyBillingException) {
+            } catch (AccountClosureClaimLost $e) {
+                throw $e;
+            } catch (AccountClosureReconciliationPending) {
+                $pending[] = 'Agency client subscription ' . $sub->uid . ' is cancelled at the payment provider, but recording that locally failed; it will be reconciled on retry.';
+            } catch (Throwable $e) {
+                report($e);
                 $pending[] = 'Agency client subscription ' . $sub->uid . ' could not be cancelled with the payment provider yet; it will be retried. It may still be charging.';
             }
         }
@@ -349,6 +499,8 @@ class PlatformAccountClosureManager
                 continue;
             }
 
+            $this->heartbeat($closure);
+
             try {
                 app(UsageBillingCheckoutManager::class)->requestSlotAgreementCancellation($agreement, (int) $closure->requested_by_user_id, 'Account closure: ' . $closure->reason);
             } catch (Throwable $e) {
@@ -356,11 +508,6 @@ class PlatformAccountClosureManager
                 $pending[] = 'Slot agreement #' . $agreement->id . ' could not be set to stop renewing yet; it will be retried.';
             }
         }
-
-        DB::table('business_usage_wallets')
-            ->whereIn('business_id', fn ($q) => $q->select('id')->from('businesses')->whereIn('workspace_id', $workspaceIds))
-            ->where('auto_recharge_enabled', true)
-            ->update(['auto_recharge_enabled' => false, 'updated_at' => now()]);
 
         $this->record($closure, 'cancel_billing', $pending === [] ? 'done' : 'pending', $pending === [] ? 'No subscription can still charge.' : count($pending) . ' billing item(s) outstanding.');
 
@@ -384,18 +531,20 @@ class PlatformAccountClosureManager
             throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
         }
 
+        // The provider has ended it. Record that ONLY through the authoritative
+        // finalizer; if it cannot, stay pending (the retry re-reads the provider,
+        // sees it ended, and reconciles without cancelling again).
         try {
             app(PlatformSubscriptionFinalizer::class)->apply($sub, $snapshot);
+            $sub->refresh();
         } catch (Throwable $e) {
-            // The provider has ended it; mirror that fact locally even if the
-            // entitlement writers refuse (e.g. the Workspace is already retired).
             report($e);
-            PlatformSubscription::query()->whereKey($sub->id)->update([
-                'status' => $snapshot->status->value,
-                'canceled_at' => $snapshot->canceledAt ?? now(),
-                'ended_at' => $snapshot->endedAt ?? now(),
-                'updated_at' => now(),
-            ]);
+
+            throw new AccountClosureReconciliationPending('platform', 0, $e);
+        }
+
+        if ($this->assessor->platformSubscriptionIsLive($sub)) {
+            throw new AccountClosureReconciliationPending('platform');
         }
     }
 
@@ -403,77 +552,54 @@ class PlatformAccountClosureManager
     {
         $account = (string) $sub->connected_account_id;
         $id = (string) $sub->provider_subscription_id;
+        $ended = fn ($snapshot) => in_array($snapshot->status, [AgencyClientSubscriptionStatus::Canceled, AgencyClientSubscriptionStatus::IncompleteExpired], true);
 
         $snapshot = $gateway->retrieveSubscription($account, $id);
 
-        if ($snapshot->status !== \App\Enums\AgencyBilling\AgencyClientSubscriptionStatus::Canceled && $snapshot->status !== \App\Enums\AgencyBilling\AgencyClientSubscriptionStatus::IncompleteExpired) {
+        if (! $ended($snapshot)) {
             $snapshot = $gateway->cancelSubscriptionNow($account, $id, 'account-closure:' . $closure->uid . ':agency:' . $sub->uid);
         }
 
-        if ($snapshot->status !== \App\Enums\AgencyBilling\AgencyClientSubscriptionStatus::Canceled && $snapshot->status !== \App\Enums\AgencyBilling\AgencyClientSubscriptionStatus::IncompleteExpired) {
+        if (! $ended($snapshot)) {
             throw AgencyBillingException::because(AgencyBillingException::PROVIDER_FAILED);
         }
 
         try {
             app(AgencyClientSubscriptionFinalizer::class)->apply($sub, $snapshot);
+            $sub->refresh();
         } catch (Throwable $e) {
             report($e);
-            AgencyClientSubscription::query()->whereKey($sub->id)->update([
-                'status' => $snapshot->status->value,
-                'canceled_at' => $snapshot->canceledAt ?? now(),
-                'ended_at' => $snapshot->endedAt ?? now(),
-                'updated_at' => now(),
-            ]);
+
+            throw new AccountClosureReconciliationPending('agency', 0, $e);
+        }
+
+        if ($this->assessor->agencySubscriptionIsLive($sub)) {
+            throw new AccountClosureReconciliationPending('agency');
         }
     }
 
     // -- step 3 -----------------------------------------------------------------
 
     /**
+     * Provider connections. Local lockdown already happened; these are the
+     * external revocations, each retryable on its own.
+     *
      * @return array<int, string> outstanding items
      */
-    private function haltActivity(PlatformAccountClosure $closure, User $user): array
+    private function disconnectExternal(PlatformAccountClosure $closure, User $user): array
     {
         $pending = [];
         $actorId = (int) $closure->requested_by_user_id;
         $workspaceIds = DB::table('workspaces')->where('owner_user_id', $user->id)->pluck('id')->all();
         $businessIds = $workspaceIds === [] ? [] : DB::table('businesses')->whereIn('workspace_id', $workspaceIds)->pluck('id')->all();
 
-        // Per-user legacy work.
-        DB::table('campaigns')->where('user_id', $user->id)->whereIn('status', PlatformAccountAssessor::RUNNING_CAMPAIGN_STATUSES)
-            ->update(['status' => 'cancelled', 'updated_at' => now()]);
-        DB::table('automations')->where('user_id', $user->id)->where('status', 'active')
-            ->update(['status' => 'inactive', 'updated_at' => now()]);
-        DB::table('schedule_messages')->where('user_id', $user->id)->where('schedule_on', '>=', now()->subMinutes(3))->delete();
-
-        if ($workspaceIds !== []) {
-            // Stop access first, then work, so nothing is admitted in between.
-            DB::table('workspace_memberships')->whereIn('workspace_id', $workspaceIds)->update(['is_active' => false, 'updated_at' => now()]);
-            DB::table('workspaces')->whereIn('id', $workspaceIds)->update(['is_active' => false, 'updated_at' => now()]);
-            DB::table('businesses')->whereIn('workspace_id', $workspaceIds)->where('status', '!=', 'inactive')->update(['status' => 'inactive', 'updated_at' => now()]);
-
-            foreach ($workspaceIds as $workspaceId) {
-                DB::table('workspace_usage_controls')->updateOrInsert(
-                    ['workspace_id' => $workspaceId],
-                    ['paid_activity_paused_at' => now(), 'paid_activity_paused_by_user_id' => $actorId, 'updated_at' => now(), 'created_at' => now()],
-                );
-            }
-
-            DB::table('agency_prospect_campaigns')->whereIn('workspace_id', $workspaceIds)->where('status', 'active')->update(['status' => 'paused', 'updated_at' => now()]);
-            DB::table('agency_prospects')->whereIn('workspace_id', $workspaceIds)->where('status', 'active')->update(['status' => 'stopped', 'updated_at' => now()]);
-
-            $this->terminateRelationships($workspaceIds, $actorId, $closure);
-        }
-
         if ($businessIds !== []) {
-            DB::table('automation_workflows')->whereIn('business_id', $businessIds)->where('status', 'published')->update(['status' => 'paused', 'updated_at' => now()]);
-            DB::table('websites')->whereIn('business_id', $businessIds)->where('status', 'published')->update(['status' => 'archived', 'updated_at' => now()]);
-            DB::table('form_deployments')->whereIn('form_id', fn ($q) => $q->select('id')->from('forms')->whereIn('business_id', $businessIds))->update(['is_enabled' => false, 'updated_at' => now()]);
-
-            $pending = array_merge($pending, $this->disconnectProviders($businessIds, $actorId));
+            $pending = array_merge($pending, $this->disconnectProviders($closure, $businessIds, $actorId));
         }
 
         foreach (ExternalCalendarConnection::query()->where('user_id', $user->id)->whereIn('state', ['pending', 'active'])->get() as $connection) {
+            $this->heartbeat($closure);
+
             try {
                 app(ExternalCalendarConnectionManager::class)->disconnect($connection, $actorId);
             } catch (Throwable $e) {
@@ -482,7 +608,7 @@ class PlatformAccountClosureManager
             }
         }
 
-        $this->record($closure, 'halt_activity', $pending === [] ? 'done' : 'pending', $pending === [] ? 'Workspaces, Businesses, outreach, campaigns, schedules, automations, websites and provider connections stopped.' : count($pending) . ' item(s) outstanding.');
+        $this->record($closure, 'disconnect', $pending === [] ? 'done' : 'pending', $pending === [] ? 'Provider connections disconnected.' : count($pending) . ' item(s) outstanding.');
 
         return $pending;
     }
@@ -508,11 +634,13 @@ class PlatformAccountClosureManager
      * @param  array<int, int>  $businessIds
      * @return array<int, string>
      */
-    private function disconnectProviders(array $businessIds, int $actorId): array
+    private function disconnectProviders(PlatformAccountClosure $closure, array $businessIds, int $actorId): array
     {
         $pending = [];
 
         foreach (BusinessGoogleConnection::query()->whereIn('business_id', $businessIds)->whereIn('state', ['pending', 'active'])->get() as $connection) {
+            $this->heartbeat($closure);
+
             try {
                 app(GoogleBusinessProfileConnectionManager::class)->disconnect($connection, $actorId);
             } catch (Throwable $e) {
@@ -522,6 +650,8 @@ class PlatformAccountClosureManager
         }
 
         foreach (BusinessMetaConnection::query()->whereIn('business_id', $businessIds)->whereIn('state', ['pending', 'active'])->get() as $connection) {
+            $this->heartbeat($closure);
+
             try {
                 app(MetaAdsConnectionManager::class)->disconnect($connection, $actorId);
             } catch (Throwable $e) {
@@ -531,6 +661,8 @@ class PlatformAccountClosureManager
         }
 
         foreach (BusinessEmailAccount::query()->whereIn('business_id', $businessIds)->whereIn('state', ['pending', 'active'])->get() as $account) {
+            $this->heartbeat($closure);
+
             try {
                 app(BusinessEmailAccountManager::class)->disconnect($account);
             } catch (Throwable $e) {
@@ -549,6 +681,7 @@ class PlatformAccountClosureManager
      */
     private function finalize(PlatformAccountClosure $closure, User $user, array $pending): void
     {
+        $this->heartbeat($closure);
         $assessment = $this->assessor->assess($user);
 
         if ($assessment['connected_services']['carrier_numbers'] > 0) {
@@ -561,10 +694,10 @@ class PlatformAccountClosureManager
         }
 
         if ($pending !== []) {
-            $closure->forceFill([
+            $this->write($closure, [
                 'pending_items' => array_values(array_unique($pending)),
                 'last_error' => implode(' ', array_values(array_unique($pending))),
-            ])->save();
+            ]);
 
             $this->record($closure, 'finalize', 'pending', 'Waiting on provider or accounting prerequisites.');
             $this->audit->record((int) $closure->requested_by_user_id, 'user.closure_pending', 'user', $user->uid, 'Closure of ' . $user->email . ' is pending: ' . count($pending) . ' item(s) outstanding');
@@ -578,13 +711,13 @@ class PlatformAccountClosureManager
             return;
         }
 
-        $closure->forceFill([
+        $this->write($closure, [
             'state' => AccountClosureState::Closed,
             'outcome' => 'closed_retained',
             'pending_items' => [],
             'last_error' => null,
             'completed_at' => now(),
-        ])->save();
+        ]);
 
         $this->record($closure, 'finalize', 'done', 'Account closed. Protected records are retained, locked.');
         $this->audit->record((int) $closure->requested_by_user_id, 'user.closed', 'user', $user->uid, 'Closed ' . $user->email . '; protected records retained', $closure->reason, ['retained' => array_column($assessment['protected_records'], 'label')]);
@@ -599,6 +732,15 @@ class PlatformAccountClosureManager
 
         try {
             DB::transaction(function () use ($closure, $userId, $email, &$files) {
+                // The destructive step re-proves, under a row lock, that this run
+                // STILL holds the lease: a worker that stalled and was replaced can
+                // never erase.
+                $held = PlatformAccountClosure::query()->whereKey($closure->id)->where('claim_token', $closure->claim_token)->lockForUpdate()->exists();
+
+                if (! $held) {
+                    throw new AccountClosureClaimLost();
+                }
+
                 // Re-derive inside the transaction: ownership is checked against
                 // the database at the instant of deletion, not the earlier read.
                 $workspaceIds = DB::table('workspaces')->where('owner_user_id', $userId)->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -617,7 +759,7 @@ class PlatformAccountClosureManager
                     }
                 }
 
-                $closure->forceFill([
+                $this->write($closure, [
                     'state' => AccountClosureState::Deleted,
                     'outcome' => 'deleted',
                     'user_id' => null,
@@ -625,11 +767,11 @@ class PlatformAccountClosureManager
                     'last_error' => null,
                     'completed_at' => now(),
                     'preflight' => null,
-                ])->save();
+                ]);
             }, 3);
         } catch (AccountClosureRefused $e) {
             // Became ineligible between the check and the lock: close instead.
-            $closure->forceFill(['state' => AccountClosureState::Closed, 'outcome' => 'closed_retained', 'pending_items' => [], 'last_error' => null, 'completed_at' => now()])->save();
+            $this->write($closure, ['state' => AccountClosureState::Closed, 'outcome' => 'closed_retained', 'pending_items' => [], 'last_error' => null, 'completed_at' => now()]);
             $this->record($closure, 'finalize', 'done', $e->getMessage());
 
             return;
@@ -653,6 +795,6 @@ class PlatformAccountClosureManager
     {
         $steps = $closure->steps ?? [];
         $steps[$step] = ['status' => $status, 'detail' => $detail, 'at' => now()->toIso8601String()];
-        $closure->forceFill(['steps' => $steps])->save();
+        $this->write($closure, ['steps' => $steps]);
     }
 }

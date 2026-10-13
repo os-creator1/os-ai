@@ -119,4 +119,34 @@ class PlatformAccountDeletionAgencyBillingTest extends TestCase
         $this->assertSame(AccountClosureState::Closed, $closure->state);
         $this->assertSame(AgencyClientSubscriptionStatus::Canceled, AgencyClientSubscription::find($enrolled['subscription']->id)->status);
     }
+
+    public function test_agency_provider_success_then_finalizer_failure_stays_pending_and_reconciles_on_retry(): void
+    {
+        [$fixture, $enrolled] = $this->enrolled();
+        $client = $fixture['clientOwner']->user;
+
+        $this->app->bind(\App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer::class, fn () => new class {
+            public function apply(...$args): string
+            {
+                throw new \RuntimeException('finalizer unavailable');
+            }
+        });
+
+        $closure = $this->close($client);
+
+        $this->assertCount(1, $this->agencyStripe->callsOf('cancelSubscriptionNow'));
+        $this->assertSame(AccountClosureState::Closing, $closure->state);
+        $this->assertStringContainsString('recording that locally failed', implode(' ', $closure->pending_items));
+        $local = AgencyClientSubscription::find($enrolled['subscription']->id);
+        $this->assertNotSame(AgencyClientSubscriptionStatus::Canceled, $local->status, 'local status must not be written directly');
+        $this->assertNull($local->canceled_at);
+        $this->assertFalse((bool) User::find($client->id)->status);
+
+        $this->app->bind(\App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer::class, \App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer::class);
+        $closure = app(PlatformAccountClosureManager::class)->resume($closure->uid, $this->platformAdminId());
+
+        $this->assertSame(AccountClosureState::Closed, $closure->state);
+        $this->assertSame(AgencyClientSubscriptionStatus::Canceled, AgencyClientSubscription::find($enrolled['subscription']->id)->status);
+        $this->assertCount(1, $this->agencyStripe->callsOf('cancelSubscriptionNow'), 'the retry reconciles; it does not cancel twice');
+    }
 }
