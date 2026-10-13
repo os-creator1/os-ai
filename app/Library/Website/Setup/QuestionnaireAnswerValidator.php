@@ -47,11 +47,18 @@ final class QuestionnaireAnswerValidator
     public const MAX_CATEGORY_LENGTH = 40;
 
     /**
+     * `$draft` is the autosave / Back path: the owner is still typing, so
+     * "required", "not empty" and "is a complete email address" are NOT
+     * enforced (they are enforced when they press Continue). Everything that
+     * bounds the stored value — type, length, option membership, item counts,
+     * shape — is enforced identically, so a draft can never persist something
+     * Continue would have refused on size or shape grounds.
+     *
      * @throws InvalidAnswerException
      */
-    public function validate(array $step, mixed $value): void
+    public function validate(array $step, mixed $value, bool $draft = false): void
     {
-        $required = (bool) ($step['required'] ?? false);
+        $required = (bool) ($step['required'] ?? false) && ! $draft;
         $inputType = (string) ($step['input_type'] ?? '');
 
         if ($value === null) {
@@ -64,12 +71,12 @@ final class QuestionnaireAnswerValidator
 
         match ($inputType) {
             'text', 'tel' => $this->validateText($value, self::MAX_TEXT),
-            'email' => $this->validateEmail($value, $required),
+            'email' => $draft ? $this->validateText($value, self::MAX_TEXT) : $this->validateEmail($value, $required),
             'textarea' => $this->validateText($value, self::MAX_TEXTAREA),
             'select' => $this->validateSelect($step, $value),
             'multi_select' => $this->validateMultiSelect($step, $value),
             'boolean' => $this->validateBoolean($value),
-            'repeatable_group' => $this->validateRepeatableGroup($step, $value),
+            'repeatable_group' => $draft ? $this->validateRepeatableGroupDraft($step, $value) : $this->validateRepeatableGroup($step, $value),
             'string_list' => $this->validateStringList($value),
             'catalog_selection' => $this->validateCatalogSelection($value),
             default => null,
@@ -240,6 +247,31 @@ final class QuestionnaireAnswerValidator
 
     /** Matches WebsiteGalleryManager::MAX_CUSTOM_SECTION_ASSETS exactly — one consistent limit, never two. */
     public const MAX_CUSTOM_SECTION_IMAGES = 6;
+
+    /**
+     * A draft keeps a half-finished row (e.g. a testimonial with a quote but
+     * no author yet) instead of refusing the whole autosave; the missing
+     * parts are demanded when the owner presses Continue. Only the bounds are
+     * enforced here.
+     */
+    private function validateRepeatableGroupDraft(array $step, mixed $value): void
+    {
+        if (! is_array($value) || ! array_is_list($value) || count($value) > self::MAX_REPEATABLE_ITEMS) {
+            throw new InvalidAnswerException('That answer is not valid.');
+        }
+
+        foreach ($value as $item) {
+            if (! is_array($item)) {
+                throw new InvalidAnswerException('That answer is not valid.');
+            }
+
+            foreach (['name', 'description', 'question', 'answer', 'quote', 'author_name', 'author_title', 'body'] as $field) {
+                if (isset($item[$field]) && (! is_string($item[$field]) || mb_strlen($item[$field]) > self::MAX_TEXTAREA)) {
+                    throw new InvalidAnswerException('One of the entries is too long.');
+                }
+            }
+        }
+    }
 
     private function validateRepeatableGroup(array $step, mixed $value): void
     {

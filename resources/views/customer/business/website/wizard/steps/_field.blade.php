@@ -12,6 +12,7 @@
 @endphp
 
 <div class="mb-4" data-step="{{ $stepKey }}">
+    <input type="hidden" name="__present[]" value="{{ $stepKey }}">
     @if ($isMultiStep)
         <label class="form-label h6 mb-1">
             {{ $step['prompt'] }}

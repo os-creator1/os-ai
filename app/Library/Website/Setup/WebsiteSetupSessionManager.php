@@ -215,6 +215,55 @@ final class WebsiteSetupSessionManager
     }
 
     /**
+     * The autosave path: persists a screen's current (possibly unfinished)
+     * values under the same lock and the same optimistic revision check as
+     * saveAnswers(), but never moves the resume position and never bumps the
+     * revision when nothing actually changed — so a debounce tick that fires
+     * after an identical save is a harmless no-op rather than a revision
+     * churn that would invalidate another open form.
+     *
+     * Only the keys in `$values` (this screen's own steps) are ever written;
+     * every other stored answer is carried over untouched.
+     *
+     * @param  array<string, mixed>  $values  step key => (draft-validated) value
+     *
+     * @throws AnswerRevisionConflictException
+     */
+    public function saveDraft(QuestionnaireResponse $response, array $values, int $expectedRevision): QuestionnaireResponse
+    {
+        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($values, $expectedRevision) {
+            if ((int) $locked->answers_revision !== $expectedRevision) {
+                throw new AnswerRevisionConflictException((int) $locked->answers_revision);
+            }
+
+            $answers = $locked->answers ?? [];
+            $changed = false;
+
+            foreach ($values as $key => $value) {
+                if (! array_key_exists($key, $answers) || $answers[$key] !== $value) {
+                    $answers[$key] = $value;
+                    $changed = true;
+                }
+            }
+
+            if (! $changed) {
+                return $locked;
+            }
+
+            if (strlen((string) json_encode($answers)) > self::MAX_ANSWERS_JSON_BYTES) {
+                throw new DomainException('This answer is too large to save.');
+            }
+
+            $locked->forceFill([
+                'answers' => $answers,
+                'answers_revision' => $locked->answers_revision + 1,
+            ])->save();
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
      * Independent-review correction round — updates one step's stored
      * answer WITHOUT advancing `current_step_key`, unlike saveAnswer().
      * The custom-section step's inline image upload/remove/improve

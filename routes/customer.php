@@ -2129,6 +2129,8 @@
                 Route::get('/{stepKey}', 'Business\WebsiteWizardController@show')->name('step');
                 Route::post('/{stepKey}/back', 'Business\WebsiteWizardController@goBack')->name('back');
                 Route::post('/{stepKey}/answers', 'Business\WebsiteWizardController@autosaveAnswer')->name('autosave');
+                Route::post('/{stepKey}/draft', 'Business\WebsiteWizardController@draftAnswer')->name('draft');
+                Route::post('/{stepKey}/visit', 'Business\WebsiteWizardController@visitStep')->name('visit');
             });
             Route::get('/edit-setup', 'Business\WebsiteWizardController@editSetupAnswers')->name('edit-setup');
 

@@ -340,11 +340,12 @@ class WebsiteWizardController extends CustomerBaseController
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
     }
 
-    public function autosaveAnswer(Request $request, string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse
+    public function autosaveAnswer(Request $request, string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
+        $wantsJson = $request->expectsJson();
 
         // Independent-review correction round: an unknown or currently
         // hidden step key (a foreign niche's step, a step a prior answer
@@ -361,50 +362,35 @@ class WebsiteWizardController extends CustomerBaseController
         // (every v1 step) keeps the original un-namespaced field names.
         $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $stepKey);
         $screenKey = $screen[0]['key'];
-        $isMultiStepScreen = count($screen) > 1;
         $expectedRevision = (int) $request->input('answers_revision', $response->answers_revision);
 
         // Canonical package writes (CatalogItemManager) happen at save
         // time; refuse a stale form BEFORE they run so a double-submitted
         // screen can never create a package twice.
         if ((int) $response->answers_revision !== $expectedRevision) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with([
-                'status' => 'error',
-                'message' => (new AnswerRevisionConflictException((int) $response->answers_revision))->getMessage(),
-            ]);
+            $conflict = new AnswerRevisionConflictException((int) $response->answers_revision);
+
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => 'conflict', 'message' => $conflict->getMessage(), 'revision' => (int) $response->answers_revision], 409)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with(['status' => 'error', 'message' => $conflict->getMessage()]);
         }
 
-        $values = [];
-
         try {
-            // Catalog selections are processed LAST so a validation failure
-            // on any other field of the screen never leaves canonical
-            // package edits half-applied behind an error page.
-            $ordered = collect($screen)->sortBy(fn (array $s) => $s['input_type'] === 'catalog_selection' ? 1 : 0)->values()->all();
-
-            foreach ($ordered as $screenStep) {
-                $stepRequest = $isMultiStepScreen
-                    ? $request->duplicate(null, (array) $request->input('s.' . $screenStep['key'], []))
-                    : $request;
-
-                $value = $this->stepValue($stepRequest, $screenStep, $response->website, $business);
-                $this->answerValidator->validate($screenStep, $value);
-                $values[$screenStep['key']] = $value;
-            }
+            $values = $this->screenValues($request, $business, $response, $screen, draft: false);
         } catch (InvalidAnswerException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with([
-                'status' => 'error',
-                'message' => $e->getMessage(),
-            ]);
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => 'invalid', 'message' => $e->getMessage()], 422)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
         try {
             $response = $this->sessionManager->saveAnswers($response, $screenKey, $values, $expectedRevision);
         } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
-                'status' => 'error',
-                'message' => $e->getMessage(),
-            ]);
+            $conflictRevision = $e instanceof AnswerRevisionConflictException ? $e->currentRevision : null;
+
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => $e instanceof AnswerRevisionConflictException ? 'conflict' : 'locked', 'message' => $e->getMessage(), 'revision' => $conflictRevision], 409)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
         // Independent-review correction round 3 (item 11) — FAQ and
@@ -425,13 +411,154 @@ class WebsiteWizardController extends CustomerBaseController
             // a redirect always issues GET, which returned a 405. The
             // review screen is the correct GET landing spot; its own form
             // POSTs to setup.generate.
-            return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+            $nextUrl = route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+            $finished = true;
+        } else {
+            $nextUrl = route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
+            $finished = false;
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
+        if ($wantsJson) {
+            return response()->json([
+                'ok' => true,
+                'revision' => (int) $response->answers_revision,
+                'next_url' => $nextUrl,
+                // The review screen is a different page (generation controls), reached by a normal navigation.
+                'full_page' => $finished,
+            ]);
+        }
+
+        return redirect($nextUrl);
     }
 
-    public function goBack(string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse
+    /**
+     * Autosave: persists whatever the owner has on the current screen right
+     * now, WITHOUT validating completeness and WITHOUT moving the resume
+     * position. Same revision compare-and-swap as Continue, so a slower,
+     * earlier request can never overwrite a newer answer: it is refused
+     * (409) and the client — which sends one save at a time — surfaces it.
+     */
+    public function draftAnswer(Request $request, string $workspaceUid, string $businessUid, string $stepKey): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+
+        $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $stepKey);
+        if ($screen === []) {
+            abort(404);
+        }
+
+        $expectedRevision = (int) $request->input('answers_revision', -1);
+        if ((int) $response->answers_revision !== $expectedRevision) {
+            return response()->json([
+                'ok' => false,
+                'kind' => 'conflict',
+                'message' => (new AnswerRevisionConflictException((int) $response->answers_revision))->getMessage(),
+                'revision' => (int) $response->answers_revision,
+            ], 409);
+        }
+
+        try {
+            // Canonical package edits only ever run on an explicit flush (Back / Save & exit / leaving),
+            // never on a debounce tick — see screenValues().
+            $values = $this->screenValues($request, $business, $response, $screen, draft: true, includeCatalog: $request->boolean('flush'));
+            $saved = $this->sessionManager->saveDraft($response, $values, $expectedRevision);
+        } catch (InvalidAnswerException $e) {
+            return response()->json(['ok' => false, 'kind' => 'invalid', 'message' => $e->getMessage()], 422);
+        } catch (AnswerRevisionConflictException $e) {
+            return response()->json(['ok' => false, 'kind' => 'conflict', 'message' => $e->getMessage(), 'revision' => $e->currentRevision], 409);
+        } catch (GenerationInProgressException $e) {
+            return response()->json(['ok' => false, 'kind' => 'locked', 'message' => $e->getMessage()], 409);
+        } catch (\DomainException $e) {
+            return response()->json(['ok' => false, 'kind' => 'invalid', 'message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['ok' => true, 'revision' => (int) $saved->answers_revision, 'saved_at' => now()->toIso8601String()]);
+    }
+
+    /**
+     * Records that the owner is now looking at this screen (browser Back /
+     * Forward lands on a screen without any save), so closing the tab right
+     * after resumes where they actually were.
+     */
+    public function visitStep(Request $request, string $workspaceUid, string $businessUid, string $stepKey): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+
+        $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $stepKey);
+        if ($screen === []) {
+            abort(404);
+        }
+
+        try {
+            if ($response->current_step_key !== $screen[0]['key']) {
+                $this->sessionManager->goToStep($response, $screen[0]['key']);
+            }
+        } catch (GenerationInProgressException $e) {
+            return response()->json(['ok' => false, 'kind' => 'locked', 'message' => $e->getMessage()], 409);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Parses and validates every step of one screen into `step key => value`.
+     * Catalog selections are processed LAST so a validation failure on any
+     * other field of the screen never leaves canonical package edits
+     * half-applied behind an error. In draft mode a catalog selection is only
+     * processed when explicitly asked for (`includeCatalog`), because it
+     * writes canonical Packages & Products rows and must never run on every
+     * keystroke-driven autosave.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @return array<string, mixed>
+     *
+     * @throws InvalidAnswerException
+     */
+    private function screenValues(Request $request, Business $business, QuestionnaireResponse $response, array $screen, bool $draft, bool $includeCatalog = true): array
+    {
+        $isMultiStepScreen = count($screen) > 1;
+        $values = [];
+        $ordered = collect($screen)->sortBy(fn (array $s) => $s['input_type'] === 'catalog_selection' ? 1 : 0)->values()->all();
+
+        foreach ($ordered as $screenStep) {
+            if ($draft && ! $includeCatalog && $screenStep['input_type'] === 'catalog_selection') {
+                continue;
+            }
+
+            $stepRequest = $isMultiStepScreen
+                ? $request->duplicate(null, (array) $request->input('s.' . $screenStep['key'], []))
+                : $request;
+
+            if ($draft && ! $this->requestCarriesStep($request, $screenStep)) {
+                // The field was not part of this submission at all (e.g. a
+                // screen reloaded mid-edit): never treat absence as "cleared".
+                continue;
+            }
+
+            $value = $this->stepValue($stepRequest, $screenStep, $response->website, $business);
+            $this->answerValidator->validate($screenStep, $value, $draft);
+            $values[$screenStep['key']] = $value;
+        }
+
+        return $values;
+    }
+
+    /**
+     * Whether a submission actually contains this step's inputs. A cleared
+     * text box submits an empty string and a cleared list submits no row at
+     * all — so the screen always sends a marker per step (`__present[]`),
+     * which is what distinguishes "emptied on purpose" from "not sent".
+     */
+    private function requestCarriesStep(Request $request, array $step): bool
+    {
+        return in_array($step['key'], array_map('strval', (array) $request->input('__present', [])), true);
+    }
+
+    public function goBack(Request $request, string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -444,29 +571,36 @@ class WebsiteWizardController extends CustomerBaseController
             // session has nowhere safe "before" its first question:
             // template replacement is never exposed to it (see show()),
             // so Back exits to Studio instead of a dead-end reload of
-            // the same step. A fresh, first-time session genuinely does
-            // have something before its first question — the template
-            // picker — and now actually reaches it (see show()'s own
-            // template-step handling for a non-edit in-progress session).
-            if ($response->edit_mode) {
-                return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
-            }
+            // the same step. Nothing precedes the first question any more
+            // (the look is chosen on the Review screen): a fresh session's
+            // Back returns to the Website landing.
+            $exitRoute = $response->edit_mode
+                ? route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])
+                : route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
 
-            // Nothing precedes the first question any more (the look is chosen
-            // on the Review screen): Back returns to the Website landing.
-            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
+            return $request->expectsJson()
+                ? response()->json(['ok' => true, 'url' => $exitRoute, 'full_page' => true])
+                : redirect($exitRoute);
         }
 
         try {
             $this->sessionManager->goToStep($response, $previousStepKey);
         } catch (GenerationInProgressException $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['ok' => false, 'kind' => 'locked', 'message' => $e->getMessage()], 409);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $previousStepKey]);
+        $previousUrl = route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $previousStepKey]);
+
+        return $request->expectsJson()
+            ? response()->json(['ok' => true, 'url' => $previousUrl, 'full_page' => false])
+            : redirect($previousUrl);
     }
 
     public function reviewGenerate(string $workspaceUid, string $businessUid): View|RedirectResponse

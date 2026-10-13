@@ -9,8 +9,11 @@
 (function () {
     'use strict';
 
-    var screen = document.querySelector('[data-wizard-screen]');
-    if (!screen) { return; }
+    // `root` is the persistent shell; `screen` is the CURRENT screen inside it and is
+    // re-resolved after every in-page navigation (see swapScreen()).
+    var root = document.querySelector('[data-wizard-root]');
+    if (!root) { return; }
+    var screen = root.querySelector('[data-wizard-screen]');
 
     var csrfMeta = document.querySelector('meta[name="csrf-token"]');
     var csrf = csrfMeta ? csrfMeta.getAttribute('content') : '';
@@ -150,11 +153,6 @@
         reindex(containerOf(row));
     }
 
-    screen.querySelectorAll('[data-repeatable]').forEach(function (container) {
-        if (container.hasAttribute('data-nested')) { nameNested(container, outerIndexOf(container)); }
-        reindex(container);
-    });
-
     // ------------------------------------------------ immediate image picker
     function setPickerImage(box, path, url) {
         var hidden = box.querySelector('[data-image-path]');
@@ -202,6 +200,7 @@
 
             if (status === 200 && data && data.path) {
                 setPickerImage(box, data.path, data.url);
+                wizard.markDirty(0);
                 var alt = row ? row.querySelector('[data-image-alt]') : null;
                 if (alt && data.alt_suggestion) { alt.placeholder = data.alt_suggestion; }
                 if (previousPath && previousPath !== data.path) {
@@ -325,7 +324,12 @@
     function updateRevision(data) {
         var form = answerForm();
         var field = form ? form.querySelector('input[name="answers_revision"]') : null;
-        if (field && data && data.answers_revision) { field.value = data.answers_revision; }
+        if (field && data && data.answers_revision) {
+            field.value = data.answers_revision;
+            // This tab's own media endpoint bumped the revision; a draft already in flight was sent
+            // with the previous one and is retried against the new revision rather than reported as a conflict.
+            wizard.noteOwnRevisionBump();
+        }
     }
 
     function customImageAdd(box, file) {
@@ -421,7 +425,7 @@
     }
 
     // ----------------------------------------------------------- wiring
-    screen.addEventListener('click', function (event) {
+    root.addEventListener('click', function (event) {
         var target = event.target;
         var el;
 
@@ -445,11 +449,12 @@
                 var answer = emptyQuestion.closest('[data-row]').querySelector('textarea, input[name$="[answer]"]');
                 if (answer) { answer.focus(); }
             }
+            wizard.markDirty(0);
             return;
         }
-        if ((el = target.closest('[data-add-row]'))) { event.preventDefault(); addRow(el.closest('[data-repeatable]')); return; }
-        if ((el = target.closest('[data-remove-row]'))) { event.preventDefault(); removeRow(el.closest('[data-row]')); return; }
-        if ((el = target.closest('[data-move-row]'))) { event.preventDefault(); moveRow(el.closest('[data-row]'), el.getAttribute('data-move-row')); return; }
+        if ((el = target.closest('[data-add-row]'))) { event.preventDefault(); addRow(el.closest('[data-repeatable]')); wizard.markDirty(0); return; }
+        if ((el = target.closest('[data-remove-row]'))) { event.preventDefault(); removeRow(el.closest('[data-row]')); wizard.markDirty(0); return; }
+        if ((el = target.closest('[data-move-row]'))) { event.preventDefault(); moveRow(el.closest('[data-row]'), el.getAttribute('data-move-row')); wizard.markDirty(0); return; }
         if ((el = target.closest('[data-ai-describe]'))) { event.preventDefault(); aiDescribe(el); return; }
         if ((el = target.closest('[data-image-replace]'))) { event.preventDefault(); el.closest('[data-image-picker]').querySelector('[data-image-input]').click(); return; }
         if ((el = target.closest('[data-image-remove]'))) {
@@ -457,6 +462,7 @@
             var box = el.closest('[data-image-picker]');
             discardPickerFile(box);
             setPickerImage(box, '', '');
+            wizard.markDirty(0);
             return;
         }
         if ((el = target.closest('[data-gallery-action]'))) {
@@ -470,7 +476,7 @@
         }
     });
 
-    screen.addEventListener('change', function (event) {
+    root.addEventListener('change', function (event) {
         var target = event.target;
         var box;
 
@@ -489,19 +495,354 @@
         }
     });
 
-    var form = answerForm();
-    if (form) {
-        form.addEventListener('submit', function (event) {
-            if (pendingUploads > 0) {
-                event.preventDefault();
-                window.alert('Please wait for your images to finish uploading.');
-            }
+    // ------------------------------------------------- screen (re)initialisation
+    function initScreen() {
+        screen = root.querySelector('[data-wizard-screen]');
+        if (!screen) { return; }
+
+        screen.querySelectorAll('[data-repeatable]').forEach(function (container) {
+            if (container.hasAttribute('data-nested')) { nameNested(container, outerIndexOf(container)); }
+            reindex(container);
+        });
+
+        screen.querySelectorAll('[data-image-picker]').forEach(function (box) {
+            var hidden = box.querySelector('[data-image-path]');
+            setPickerImage(box, hidden.value, '');
         });
     }
 
-    screen.querySelectorAll('[data-image-picker]').forEach(function (box) {
-        var hidden = box.querySelector('[data-image-path]');
-        setPickerImage(box, hidden.value, '');
-    });
+    // =====================================================================
+    // Wizard shell: in-page navigation + durable autosave.
+    //
+    // Everything here is progressive enhancement over ordinary forms — with
+    // no script, Continue/Back still POST and redirect. With it:
+    //  * edits autosave (debounced) to the server as drafts;
+    //  * saves are strictly SERIALISED (one in flight) and carry the
+    //    server's answers_revision, so a slower, earlier request can never
+    //    overwrite a newer one — the server also refuses a stale revision;
+    //  * Continue / Back / Save & exit first flush pending edits and only
+    //    navigate once the server confirmed them. A failed save never
+    //    navigates away, keeps what the owner typed and offers a retry;
+    //  * moving between screens swaps just the screen element and updates
+    //    the URL with the History API — no document reload.
+    // =====================================================================
+    var wizard = (function () {
+        var DEBOUNCE_MS = 800;
+        var state = { dirty: false, inflight: null, timer: null, lastResult: { ok: true }, navigating: false, ownBumps: 0 };
+
+        function statusEl() { return root.querySelector('[data-save-status]'); }
+        function errorEl() { return root.querySelector('[data-wizard-error]'); }
+        function revisionInput() { var f = answerForm(); return f ? f.querySelector('input[name="answers_revision"]') : null; }
+
+        function setStatus(kind, extra) {
+            var el = statusEl();
+            if (!el) { return; }
+            el.textContent = '';
+            el.removeAttribute('data-state');
+            el.setAttribute('data-state', kind);
+            if (kind === 'saving') { el.textContent = 'Saving\u2026'; }
+            else if (kind === 'saved') { el.textContent = 'Saved'; }
+            else if (kind === 'pending') { el.textContent = 'Unsaved changes'; }
+            else if (kind === 'invalid') { el.textContent = 'Finish this field to save'; }
+            else if (kind === 'error') {
+                el.appendChild(document.createTextNode('Couldn\u2019t save \u2014 '));
+                var retry = document.createElement('button');
+                retry.type = 'button';
+                retry.className = 'btn btn-link p-0 align-baseline';
+                retry.setAttribute('data-save-retry', '');
+                retry.textContent = 'Retry';
+                el.appendChild(retry);
+                if (extra) { el.appendChild(document.createTextNode(' (' + extra + ')')); }
+            }
+        }
+
+        function showError(message) {
+            var el = errorEl();
+            if (!el) { return; }
+            el.textContent = message;
+            el.classList.remove('d-none');
+            el.focus();
+        }
+
+        function clearError() { var el = errorEl(); if (el) { el.classList.add('d-none'); el.textContent = ''; } }
+
+        function csrfHeaders() {
+            return { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+        }
+
+        function postJson(url, formData) {
+            return fetch(url, { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body: formData }).then(function (response) {
+                return response.json().catch(function () { return null; }).then(function (data) {
+                    return { status: response.status, data: data };
+                });
+            });
+        }
+
+        function adoptRevision(revision) {
+            var input = revisionInput();
+            var next = parseInt(revision, 10);
+            // Monotonic: a late response can never move the revision backwards.
+            if (input && next && next > parseInt(input.value || '0', 10)) { input.value = String(next); }
+        }
+
+        function markDirty(delay) {
+            var host = screen;
+            if (!host || state.navigating) { return; }
+            state.dirty = true;
+            clearTimeout(state.timer);
+            if (host.getAttribute('data-autosave') === 'off') { setStatus('pending'); return; }
+            setStatus('pending');
+            state.timer = setTimeout(function () { flush(false); }, delay === undefined ? DEBOUNCE_MS : delay);
+        }
+
+        // Saves the current screen's draft. Resolves { ok, kind? }. Never rejects.
+        function flush(explicit) {
+            clearTimeout(state.timer);
+
+            if (state.inflight) {
+                // Strictly one save at a time; whatever changed meanwhile is saved by the next pass.
+                return state.inflight.then(function () { return flush(explicit); });
+            }
+            if (!state.dirty) { return Promise.resolve(state.lastResult); }
+            if (pendingUploads > 0) { return waitForUploads().then(function () { return flush(explicit); }); }
+
+            var host = screen;
+            var form = answerForm();
+            if (!host || !form) { return Promise.resolve({ ok: true }); }
+
+            var body = new FormData(form);
+            if (revisionInput()) { body.set('answers_revision', revisionInput().value); }
+            if (explicit) { body.set('flush', '1'); }
+            state.dirty = false;
+            state.ownBumps = 0;
+            setStatus('saving');
+
+            state.inflight = postJson(host.getAttribute('data-draft-url'), body).then(function (res) {
+                var data = res.data || {};
+                if (res.status === 200 && data.ok) {
+                    adoptRevision(data.revision);
+                    state.lastResult = { ok: true };
+                    if (!state.dirty) { setStatus('saved'); }
+                    return state.lastResult;
+                }
+                state.dirty = true;
+                if (res.status === 409 && data.kind === 'conflict' && state.ownBumps > 0 && data.revision) {
+                    // Our own upload/remove bumped the revision while this draft was in flight: not a
+                    // cross-tab conflict. Adopt the server's revision and save again from the live form.
+                    state.ownBumps = 0;
+                    adoptRevision(data.revision);
+                    state.inflight = null;
+                    return flush(explicit);
+                }
+                if (res.status === 409 && data.kind === 'conflict') {
+                    setStatus('error', 'this was changed in another tab');
+                    showError('This setup was changed in another tab or device. Reload the page to see the latest answers \u2014 your unsaved text on this screen is still here until you do.');
+                    state.lastResult = { ok: false, kind: 'conflict' };
+                } else if (res.status === 422) {
+                    setStatus('invalid');
+                    state.lastResult = { ok: false, kind: 'invalid', message: data.message };
+                } else if (res.status === 419) {
+                    setStatus('error', 'session expired \u2014 reload');
+                    state.lastResult = { ok: false, kind: 'auth' };
+                } else {
+                    setStatus('error');
+                    state.lastResult = { ok: false, kind: 'server', message: data.message };
+                }
+                return state.lastResult;
+            }).catch(function () {
+                // Offline / connection lost: nothing was saved, so nothing is claimed as saved.
+                state.dirty = true;
+                setStatus('error', 'you appear to be offline');
+                state.lastResult = { ok: false, kind: 'network' };
+                return state.lastResult;
+            }).then(function (result) {
+                state.inflight = null;
+                return result;
+            });
+
+            return state.inflight;
+        }
+
+        function waitForUploads() {
+            return new Promise(function (resolve) {
+                (function check() { if (pendingUploads > 0) { setTimeout(check, 150); } else { resolve(); } })();
+            });
+        }
+
+        // ---- navigation -------------------------------------------------
+        function isWizardUrl(url) {
+            try { var u = new URL(url, window.location.href); return u.origin === window.location.origin && /\/website\/build\//.test(u.pathname) && !/\/review$/.test(u.pathname); } catch (e) { return false; }
+        }
+
+        function swapScreen(html, finalUrl, push) {
+            var doc = new DOMParser().parseFromString(html, 'text/html');
+            var incoming = doc.querySelector('[data-wizard-screen]');
+            if (!incoming) { return false; }
+            var current = root.querySelector('[data-wizard-screen]');
+            current.replaceWith(document.importNode(incoming, true));
+            if (doc.title) { document.title = doc.title; }
+            if (push) { window.history.pushState({ wizard: true }, '', finalUrl); }
+            state.dirty = false;
+            state.lastResult = { ok: true };
+            state.navigating = false;
+            initScreen();
+            window.scrollTo(0, 0);
+            var heading = screen.querySelector('[data-wizard-heading]') || screen.querySelector('h4, h5');
+            if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
+            return true;
+        }
+
+        function navigate(url, push) {
+            if (!isWizardUrl(url)) { window.location.assign(url); return Promise.resolve(); }
+            state.navigating = true;
+            root.setAttribute('aria-busy', 'true');
+            return fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'text/html', 'X-Requested-With': 'XMLHttpRequest' } }).then(function (response) {
+                if (!response.ok && response.status !== 404) { throw new Error('http ' + response.status); }
+                var finalUrl = response.url || url;
+                if (!isWizardUrl(finalUrl)) { window.location.assign(finalUrl); return null; }
+                return response.text().then(function (html) {
+                    if (!swapScreen(html, finalUrl, push)) { window.location.assign(finalUrl); }
+                });
+            }).catch(function () {
+                // Could not fetch the next screen in place: fall back to a normal navigation (state is saved).
+                window.location.assign(url);
+            }).then(function () {
+                state.navigating = false;
+                root.removeAttribute('aria-busy');
+            });
+        }
+
+        function leaveAfterSave(go, opts) {
+            opts = opts || {};
+            clearError();
+            return flush(true).then(function (result) {
+                if (result.ok) { return go(); }
+                if (result.kind === 'invalid' && opts.allowDiscard) {
+                    if (window.confirm('Part of this screen can\u2019t be saved yet (' + (result.message || 'it is incomplete') + '). Go back without saving that part?')) {
+                        state.dirty = false;
+                        return go();
+                    }
+                    return null;
+                }
+                showError(result.kind === 'invalid'
+                    ? (result.message || 'Please finish this field first.')
+                    : 'Your changes could not be saved, so we haven\u2019t moved on. Check your connection and use Retry \u2014 nothing you typed has been lost.');
+                return null;
+            });
+        }
+
+        function submitContinue(submitter) {
+            var form = answerForm();
+            var host = screen;
+            clearError();
+            return flush(false).then(function (pre) {
+                // Wait for any in-flight draft so the revision we send is the server's latest.
+                if (!pre.ok && pre.kind !== 'invalid') {
+                    showError('Your changes could not be saved yet, so we haven\u2019t moved on. Use Retry \u2014 nothing you typed has been lost.');
+                    return null;
+                }
+                var body = new FormData(form);
+                if (revisionInput()) { body.set('answers_revision', revisionInput().value); }
+                if (submitter && submitter.name) { body.set(submitter.name, submitter.value); }
+                setStatus('saving');
+                return postJson(form.getAttribute('action'), body).then(function (res) {
+                    var data = res.data || {};
+                    if (res.status === 200 && data.ok) {
+                        adoptRevision(data.revision);
+                        state.dirty = false;
+                        setStatus('saved');
+                        return data.full_page ? window.location.assign(data.next_url) : navigate(data.next_url, true);
+                    }
+                    state.dirty = true;
+                    if (res.status === 422) { setStatus('invalid'); showError(data.message || 'Please check your answer.'); }
+                    else if (res.status === 409) { setStatus('error', 'changed elsewhere'); showError(data.message || 'This setup changed in another tab. Reload to continue.'); }
+                    else { setStatus('error'); showError('Something went wrong saving this screen. Please try again.'); }
+                    return null;
+                });
+            }).catch(function () {
+                state.dirty = true;
+                setStatus('error', 'you appear to be offline');
+                showError('Your connection dropped, so nothing was saved and we haven\u2019t moved on. Reconnect and press Continue again \u2014 what you typed is still here.');
+            });
+        }
+
+        function submitBack(form) {
+            return leaveAfterSave(function () {
+                return postJson(form.getAttribute('action'), new FormData()).then(function (res) {
+                    var data = res.data || {};
+                    if (res.status === 200 && data.ok) { return data.full_page ? window.location.assign(data.url) : navigate(data.url, true); }
+                    showError(data.message || 'Could not go back right now. Please try again.');
+                    return null;
+                });
+            }, { allowDiscard: true }).catch(function () {
+                showError('Your connection dropped, so we haven\u2019t moved. Try again in a moment.');
+            });
+        }
+
+        function exitWizard() {
+            leaveAfterSave(function () { window.location.assign(screen.getAttribute('data-exit-url')); });
+        }
+
+        // ---- wiring (delegated on the persistent root; survives swaps) ----
+        root.addEventListener('input', function (event) {
+            if (event.target.closest && event.target.closest('form[id^="answer-form-"]') && !event.target.matches('[data-gallery-field]')) { markDirty(); }
+        });
+        root.addEventListener('change', function (event) {
+            if (event.target.closest && event.target.closest('form[id^="answer-form-"]') && !event.target.matches('[data-gallery-input], [data-image-input], [data-custom-image-input], [data-gallery-field]')) { markDirty(0); }
+        });
+
+        root.addEventListener('submit', function (event) {
+            var form = event.target;
+            if (form.matches && form.matches('form[id^="answer-form-"]')) {
+                event.preventDefault();
+                if (pendingUploads > 0) { showError('Please wait for your images to finish uploading.'); return; }
+                // A formaction override (e.g. "Improve with AI") is a normal submission, not a Continue.
+                if (event.submitter && event.submitter.hasAttribute('formaction')) { form.submit(); return; }
+                submitContinue(event.submitter);
+            } else if (form.matches && form.matches('form[data-wizard-back]')) {
+                event.preventDefault();
+                submitBack(form);
+            }
+        }, true);
+
+        root.addEventListener('click', function (event) {
+            var el;
+            if ((el = event.target.closest('[data-save-retry]'))) { event.preventDefault(); clearError(); flush(true); return; }
+            if ((el = event.target.closest('[data-wizard-exit]'))) { event.preventDefault(); exitWizard(); }
+        });
+
+        window.addEventListener('popstate', function () {
+            if (!isWizardUrl(window.location.href)) { return; }
+            flush(true).then(function () {
+                return navigate(window.location.href, false).then(function () {
+                    // Browser Back/Forward changes screens without a save: record the resume position.
+                    var host = screen;
+                    if (host && host.getAttribute('data-visit-url')) { postJson(host.getAttribute('data-visit-url'), new FormData()); }
+                });
+            });
+        });
+
+        window.addEventListener('beforeunload', function (event) {
+            if (state.dirty || state.inflight) { event.preventDefault(); event.returnValue = ''; }
+        });
+
+        // Last-chance save when the tab is closed or hidden with unsaved edits.
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'hidden' || !state.dirty || state.inflight || !screen) { return; }
+            var form = answerForm();
+            if (!form || !navigator.sendBeacon || pendingUploads > 0) { return; }
+            var body = new FormData(form);
+            if (revisionInput()) { body.set('answers_revision', revisionInput().value); }
+            body.set('flush', screen.getAttribute('data-autosave') === 'off' ? '1' : '0');
+            body.set('_token', csrf);
+            if (navigator.sendBeacon(screen.getAttribute('data-draft-url'), body)) { state.dirty = false; }
+        });
+
+        window.history.replaceState({ wizard: true }, '', window.location.href);
+
+        return { markDirty: markDirty, flush: flush, noteOwnRevisionBump: function () { state.ownBumps++; } };
+    })();
+
+    initScreen();
 })();
 </script>
