@@ -116,7 +116,6 @@ class V1SignupFinalAcceptanceTest extends TestCase
 
     private function walkWizard(CustomerOnboarding $onboarding): void
     {
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['name' => 'Harbor Lane Studios']));
         $this->post(route('customer.onboarding.location.store'), [
             'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
@@ -125,12 +124,7 @@ class V1SignupFinalAcceptanceTest extends TestCase
         $this->post(route('customer.onboarding.services.store'), [
             'services' => [['name' => 'Digital Photo Booth', 'is_primary' => '1']],
         ]);
-        $this->post(route('customer.onboarding.assets.skip'));
-
-        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding->refresh(), 0, [
-            'version' => 1, 'generated_at' => now()->toIso8601String(), 'profile_completeness_percent' => 100,
-            'facts' => [], 'findings' => [],
-        ]);
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
     }
 
     /** @return array<int, string> */
@@ -181,7 +175,7 @@ class V1SignupFinalAcceptanceTest extends TestCase
             // An Agency reaches its Agency features without an individual Business setup.
             $this->get(route('user.home'))->assertOk();
         } else {
-            $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'goals']));
+            $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'business']));
         }
 
         $this->walkWizard($onboarding);
@@ -270,7 +264,7 @@ class V1SignupFinalAcceptanceTest extends TestCase
 
         // Login resumes onboarding on that Business.
         $this->logoutAndLogin($form);
-        $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'goals']));
+        $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'business']));
         $this->assertSame(Business::query()->sole()->id, CustomerOnboarding::query()->sole()->business_id);
     }
 
