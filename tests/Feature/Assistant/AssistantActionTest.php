@@ -93,7 +93,7 @@ class AssistantActionTest extends TestCase
     public function test_a_claim_in_flight_blocks_a_concurrent_second_request(): void
     {
         [, $business, $workspace, $uid] = $this->proposeBookingType();
-        AssistantActionProposal::query()->where('uid', $uid)->update(['status' => 'executing', 'attempts' => 1]);
+        AssistantActionProposal::query()->where('uid', $uid)->update(['status' => 'executing', 'attempts' => 1, 'lease_token' => 'live-owner', 'fence' => 1, 'lease_expires_at' => now()->addSeconds(30)]);
 
         $r = $this->approve($workspace, $business, $uid);
 

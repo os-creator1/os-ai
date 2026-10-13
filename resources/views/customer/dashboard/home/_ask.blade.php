@@ -14,7 +14,8 @@
          data-assistant-show="{{ $home['ask']['assistant']['show'] }}"
          data-assistant-message="{{ $home['ask']['assistant']['message'] }}"
          data-assistant-approve="{{ $home['ask']['assistant']['approve'] }}"
-         data-assistant-decline="{{ $home['ask']['assistant']['decline'] }}">
+         data-assistant-decline="{{ $home['ask']['assistant']['decline'] }}"
+         data-assistant-delete="{{ $home['ask']['assistant']['delete'] }}">
     <x-card>
         <div class="home-ask-head d-flex align-items-start justify-content-between gap-50">
             <h2 class="h5 text-section-heading mb-1" id="home-ask-heading">Ask MotionGrove</h2>
@@ -48,6 +49,7 @@
                 <strong>Conversation</strong>
                 <div class="d-flex gap-50">
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-role="ask-new">New conversation</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-role="ask-delete" hidden>Delete conversation</button>
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-role="ask-minimize">Back to dashboard</button>
                 </div>
             </div>

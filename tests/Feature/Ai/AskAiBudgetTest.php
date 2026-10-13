@@ -196,7 +196,7 @@ class AskAiBudgetTest extends TestCase
 
     public function test_former_observation_categories_cannot_exceed_a_paid_cap_by_default(): void
     {
-        $this->assertTrue((bool) config('ai.enforce_budgets_for_existing_categories'), 'Observation mode is off by default.');
+        config(['ai.enforce_budgets_for_existing_categories' => false]); // retired flag: must change nothing
         [$workspace, $business] = $this->account(WorkspacePlanTier::Core);
         $this->openPeriod($workspace, '2026-09', 'core', 5_000_000, 5_000_000);
 

@@ -78,7 +78,7 @@ final class AssistantFastPath
         }
 
         if ($toolKey === 'unanswered_conversations') {
-            $shown = $r->data['shown'] ?? [];
+            $shown = $r->display;
             $total = (int) ($r->data['waiting_total'] ?? 0);
             $payload['suggestions'] = $shown === [] ? [] : ['Help me follow up with those leads'];
 
@@ -92,7 +92,7 @@ final class AssistantFastPath
         }
 
         if ($toolKey === 'schedule') {
-            $rows = $r->data['upcoming_appointments'] ?? [];
+            $rows = $r->display;
 
             if ($rows === []) {
                 return new AssistantTurn(AssistantTurn::ANSWER, 'You have no appointments booked in the next 14 days.', $payload);

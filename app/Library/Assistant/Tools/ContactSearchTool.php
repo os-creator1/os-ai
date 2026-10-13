@@ -3,6 +3,7 @@
 namespace App\Library\Assistant\Tools;
 
 use App\Library\Assistant\AssistantContext;
+use App\Library\Assistant\AssistantHandles;
 use App\Library\Assistant\ToolResult;
 use App\Library\Contacts\ContactDirectory;
 use App\Library\Dashboard\DashboardLinkGate;
@@ -21,7 +22,7 @@ final class ContactSearchTool implements ReadTool
 
     public function description(): string
     {
-        return 'Look up a contact/lead by name or phone. args: query (string, 2-60 chars).';
+        return 'Check whether a contact/lead exists by name or phone: returns how many match and a short label for each (no phone numbers). The customer sees the full details. args: query (string, 2-60 chars).';
     }
 
     public function rules(): array
@@ -39,17 +40,24 @@ final class ContactSearchTool implements ReadTool
         $found = $this->directory->search($context->business, (string) $args['query'], 5, (int) $context->user->id);
         [$workspaceUid, $businessUid] = $context->scoped;
         $links = [];
+        $facts = [['label' => 'Matching contacts', 'value' => (string) count($found)]];
+        $display = [];
 
         foreach ($found as $c) {
             $links[] = ['label' => $c['name'] ?: $c['phone'], 'url' => route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $c['uid']])];
+            // Full details are for the customer's eyes: facts/links/display never go to the model.
+            $facts[] = ['label' => 'Match', 'value' => trim(($c['name'] ?? '') . ' ' . $c['phone'])];
+            $display[] = ['name' => $c['name'], 'phone' => $c['phone']];
         }
 
         return new ToolResult(
             $this->key(),
-            ['matches' => array_map(fn (array $c): array => ['name' => $c['name'], 'phone' => $c['phone']], $found)],
-            [['label' => 'Matching contacts', 'value' => (string) count($found)]],
+            ['match_count' => count($found), 'matches' => array_map(fn (array $c): array => ['handle' => AssistantHandles::for($context, 'contact', (string) $c['uid']), 'label' => AssistantHandles::shortLabel($c['name'] ?? null, $c['phone'])], $found)],
+            array_slice($facts, 0, 8),
             $links,
             $found === [] ? ['No contact matched that search among the contacts you can see.'] : [],
+            true,
+            $display,
         );
     }
 }

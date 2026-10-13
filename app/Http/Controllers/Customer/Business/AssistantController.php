@@ -51,6 +51,8 @@ class AssistantController extends Controller
         if ($conversation === null) {
             return response()->json([
                 'uid' => null,
+                // First use: tell the customer how AI is used before they send anything.
+                'notice' => ['title' => __('ask_ai.data_notice.title'), 'body' => $this->assistant->noticeText()],
                 'messages' => [],
                 'allowance' => $this->presenter->allowanceView($context, $this->allowance->forWorkspace($context->workspace, $context->business)),
             ]);
@@ -73,6 +75,18 @@ class AssistantController extends Controller
         $result = $this->assistant->send($context, $data['conversation'] ?? null, $data['q'], $data['client_message_id'], (bool) ($data['new'] ?? false));
 
         return response()->json($result, ($result['status'] ?? '') === 'busy' ? 409 : 200);
+    }
+
+    /** The customer deletes one of THEIR conversations (messages, summary, prepared-action text). */
+    public function destroy(string $workspaceUid, string $businessUid, string $conversationUid): JsonResponse
+    {
+        $context = $this->context($workspaceUid, $businessUid);
+
+        if (! $this->assistant->delete($context, $conversationUid)) {
+            return response()->json(['deleted' => false, 'message' => 'An action you approved is still running. Try again in a moment.'], 409);
+        }
+
+        return response()->json(['deleted' => true]);
     }
 
     public function approve(string $workspaceUid, string $businessUid, string $proposalUid): JsonResponse

@@ -156,17 +156,12 @@ final class AiGateway
             maxRequestCostMicrousd: (int) $routeConfig['max_request_cost_microusd'],
         );
 
-        // §19.3 rule 3 / T-BUD-8: the three pre-existing categories may
-        // run over cap, unrefused, for one observation window. New COO
-        // categories are never eligible for this bypass.
-        //
-        // A free trial's $3 is a HARD cap for every category, whatever the
-        // observation flag says: the flag exists to protect an established
-        // paying Workspace's existing behaviour, never to let a trial spend
-        // past what it was promised.
-        $bypassCapEnforcement = ! $request->category->isAlwaysHardEnforced()
-            && ! $policy->isTrial()
-            && ! (bool) config('ai.enforce_budgets_for_existing_categories');
+        // Every cap is HARD, for every category and every scope. The §19.3 observation window (the three pre-existing
+        // categories running over cap, unrefused) is closed: customer plan caps (trial, Core, Growth, Agency) and the
+        // Platform's own cap are enforced by reserve() whatever `ai.enforce_budgets_for_existing_categories` says — that
+        // flag is no longer read here. The parameter stays so reserve()'s signature and its refusal arithmetic are
+        // untouched; nothing may pass true.
+        $bypassCapEnforcement = false;
 
         // Gate 3b (§5.7a C, §6.7, R-28) — the SECOND authority boundary, run
         // fresh, immediately before the reservation and therefore before any

@@ -21,14 +21,20 @@ final class AssistantCompactor
     {
     }
 
-    public function maybeCompact(AssistantContext $context, AssistantConversation $conversation, AssistantMessage $current): void
+    public function maybeCompact(AssistantContext $context, AssistantConversation $conversation, AssistantMessage $current, ?int $deadline = null): void
     {
+        // Compaction shares the turn's wall-clock budget: it only runs if the answer that follows still has room.
+        if ($deadline !== null && $deadline - \Illuminate\Support\Carbon::now()->getTimestamp() < 2 * max(1, (int) config('assistant.min_seconds_for_model_call'))) {
+            return;
+        }
+
         $window = max(2, (int) config('assistant.history_window_messages'));
 
         $older = AssistantMessage::query()
             ->where('conversation_id', $conversation->id)
             ->where('id', '<', $current->id)
             ->when($conversation->summary_through_message_id, fn ($q, $id) => $q->where('id', '>', $id))
+            ->where('kind', '!=', 'notice')
             ->orderBy('id')
             ->get();
 

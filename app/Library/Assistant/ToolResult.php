@@ -8,7 +8,10 @@ namespace App\Library\Assistant;
  *  - `data`        compact facts handed to the model, clipped to a fixed size;
  *  - `facts`       the customer-visible "what this is based on" rows, built here from the same records — the
  *                  customer sees measured values from the module, never a number the model wrote;
- *  - `limitations` plain statements of what is missing, stale, disconnected or not built yet.
+ *  - `limitations` plain statements of what is missing, stale, disconnected or not built yet;
+ *  - `display`     server-side presentation rows (full names, phone numbers, message text) used by the deterministic
+ *                  fast path. NEVER sent to the model: forModel() reads `data` and `limitations` only. `facts` and
+ *                  `links` are customer-visible and are not sent to the model either.
  */
 final class ToolResult
 {
@@ -25,6 +28,7 @@ final class ToolResult
         public readonly array $links = [],
         public readonly array $limitations = [],
         public readonly bool $available = true,
+        public readonly array $display = [],
     ) {
     }
 

@@ -150,13 +150,30 @@ class HomeActionsController extends Controller
 
         $proposal = \App\Models\AssistantActionProposal::query()
             ->where('uid', $uid)
+            ->where('workspace_id', $business->workspace_id)
             ->where('business_id', $business->id)
             ->where('user_id', $user->id)
             ->where('tool_key', 'draft_reply')
             ->where('status', \App\Models\AssistantActionProposal::HANDED_OFF)
+            ->whereNotNull('conversation_id')
+            ->whereNull('scrubbed_at')
             ->first();
 
-        return $proposal === null ? null : ['conversation_uid' => (string) ($proposal->params['conversation_uid'] ?? ''), 'message' => (string) ($proposal->params['message'] ?? '')];
+        // Expired (handed off too long ago) or revoked (its conversation was deleted, which scrubs the proposal and
+        // detaches it) hand-offs are refused; so is one whose conversation is not this actor's, in this Business.
+        if ($proposal === null
+            || $proposal->executed_at === null
+            || $proposal->executed_at->lt(now()->subMinutes(max(1, (int) config('assistant.handoff_ttl_minutes'))))
+            || ! \App\Models\AssistantConversation::query()
+                ->whereKey($proposal->conversation_id)
+                ->where('workspace_id', $business->workspace_id)
+                ->where('business_id', $business->id)
+                ->where('user_id', $user->id)
+                ->exists()) {
+            return null;
+        }
+
+        return ['conversation_uid' => (string) ($proposal->params['conversation_uid'] ?? ''), 'message' => (string) ($proposal->params['message'] ?? '')];
     }
 
     private function bookingTypeForm(string $workspaceUid, string $businessUid, Business $business, User $user, array $common): View

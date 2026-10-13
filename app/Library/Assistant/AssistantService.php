@@ -6,6 +6,7 @@ use App\Library\Ai\AiAllowanceReader;
 use App\Models\AssistantConversation;
 use App\Models\AssistantMessage;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
@@ -28,6 +29,7 @@ final class AssistantService
         private readonly AssistantCompactor $compactor,
         private readonly AiAllowanceReader $allowance,
         private readonly AssistantPresenter $presenter,
+        private readonly AssistantRetention $retention,
     ) {
     }
 
@@ -63,6 +65,8 @@ final class AssistantService
             : ($startNew ? null : $this->latest($context));
 
         if ($conversation === null || $conversation->message_count >= (int) config('assistant.conversation_max_messages')) {
+            $firstUse = $this->latest($context) === null;
+
             $conversation = AssistantConversation::create([
                 'uid' => (string) Str::uuid(),
                 'workspace_id' => $context->workspace->id,
@@ -71,31 +75,68 @@ final class AssistantService
                 'title' => Str::limit($text, 60, ''),
                 'message_count' => 0,
             ]);
+
+            if ($firstUse) {
+                $this->recordNotice($conversation);
+            }
         }
 
-        // One message at a time per conversation: ordering, and a duplicate in flight, are settled here.
-        $lock = Cache::lock('assistant:conversation:' . $conversation->id, 90);
+        // One turn at a time per conversation: ordering, and a duplicate in flight, are settled here. The lease is derived
+        // from the turn's wall-clock budget so it always outlives the work it protects; the lock has an owner token, so
+        // only this request can release it, and a request that has lost it writes nothing.
+        $budget = max(10, (int) config('assistant.turn_budget_seconds'));
+        $lock = Cache::lock('assistant:conversation:' . $conversation->id, $budget + max(15, (int) config('assistant.turn_lock_margin_seconds')));
 
         if (! $lock->get()) {
             return ['status' => 'busy'] + $this->presenter->conversation($context, $conversation);
         }
 
         try {
-            return $this->handle($context, $conversation, $text, $clientMessageId);
+            return $this->handle($context, $conversation, $text, $clientMessageId, $lock, Carbon::now()->getTimestamp() + $budget);
         } finally {
             $lock->release();
         }
+    }
+
+    /** The AI-data notice, as the first message of a customer's first conversation in a Business. */
+    public function noticeText(): string
+    {
+        return __('ask_ai.data_notice.body', ['days' => AssistantRetention::retentionDays()]);
+    }
+
+    private function recordNotice(AssistantConversation $conversation): void
+    {
+        AssistantMessage::create([
+            'conversation_id' => $conversation->id,
+            'uid' => (string) Str::uuid(),
+            'role' => AssistantMessage::ROLE_ASSISTANT,
+            'kind' => 'notice',
+            'body' => $this->noticeText(),
+            'payload' => ['title' => __('ask_ai.data_notice.title')],
+            'created_at' => now(),
+        ]);
+        $conversation->increment('message_count');
+    }
+
+    /** Customer-requested deletion of one of THEIR conversations. @return bool false = an approved action is still running */
+    public function delete(AssistantContext $context, string $uid): bool
+    {
+        $conversation = $this->find($context, $uid) ?? abort(404);
+
+        return $this->retention->delete($conversation, 'customer_request');
     }
 
     /**
      * Writes what happened to a proposal into the conversation, so a refresh (and the model's next turn) both see it.
      * Only real transitions are recorded; a replay or a busy answer adds nothing.
      *
-     * @param  array{state: string, proposal: \App\Models\AssistantActionProposal, message: ?string, url: ?string}  $result
+     * @param  array{state: string, proposal: \App\Models\AssistantActionProposal, message: ?string, url: ?string, transitioned?: bool}  $result
      */
     public function recordOutcome(AssistantContext $context, array $result): void
     {
-        if (in_array($result['state'], ['replayed', 'busy'], true)) {
+        // Only a call that actually moved the proposal records anything: a repeated approve/decline on a final proposal,
+        // a replay and a busy answer add no message.
+        if (! ($result['transitioned'] ?? false) || in_array($result['state'], ['replayed', 'busy'], true)) {
             return;
         }
 
@@ -128,7 +169,7 @@ final class AssistantService
     }
 
     /** @return array<string, mixed> */
-    private function handle(AssistantContext $context, AssistantConversation $conversation, string $text, string $clientMessageId): array
+    private function handle(AssistantContext $context, AssistantConversation $conversation, string $text, string $clientMessageId, \Illuminate\Contracts\Cache\Lock $lock, int $deadline): array
     {
         $existing = AssistantMessage::query()->where('conversation_id', $conversation->id)->where('client_message_id', $clientMessageId)->first();
 
@@ -157,13 +198,16 @@ final class AssistantService
             ->exists();
 
         if (! $replied) {
-            $this->reply($context, $conversation, $existing, $existing->body);
+            if (! $this->reply($context, $conversation, $existing, $existing->body, $lock, $deadline)) {
+                return ['status' => 'busy'] + $this->presenter->conversation($context, $conversation->refresh());
+            }
         }
 
         return ['status' => $replied ? 'replayed' : 'ok'] + $this->presenter->conversation($context, $conversation->refresh());
     }
 
-    private function reply(AssistantContext $context, AssistantConversation $conversation, AssistantMessage $userMessage, string $question): void
+    /** @return bool false when the turn lost its lock and therefore wrote nothing */
+    private function reply(AssistantContext $context, AssistantConversation $conversation, AssistantMessage $userMessage, string $question, \Illuminate\Contracts\Cache\Lock $lock, int $deadline): bool
     {
         $turn = $context->viewingAsClient()
             ? new AssistantTurn(AssistantTurn::UNSUPPORTED, "Ask MotionGrove isn't available while you're viewing as a client. Switch back to your own account to use it.", ['links' => []])
@@ -175,9 +219,15 @@ final class AssistantService
             if (! $state->usable()) {
                 $turn = $this->interpreter->limit($context);
             } else {
-                $this->compactor->maybeCompact($context, $conversation, $userMessage);
-                $turn = $this->interpreter->interpret($context, $conversation, $userMessage, $question);
+                $this->compactor->maybeCompact($context, $conversation, $userMessage, $deadline);
+                $turn = $this->interpreter->interpret($context, $conversation, $userMessage, $question, $deadline);
             }
+        }
+
+        // Ownership is re-checked immediately before anything is written: a turn whose lease lapsed (it should never) must
+        // not write a reply a newer owner may also be writing.
+        if (! $lock->isOwnedByCurrentProcess()) {
+            return false;
         }
 
         $payload = $turn->payload;
@@ -199,5 +249,7 @@ final class AssistantService
 
         $conversation->forceFill(['last_message_at' => now()])->save();
         $conversation->increment('message_count');
+
+        return true;
     }
 }

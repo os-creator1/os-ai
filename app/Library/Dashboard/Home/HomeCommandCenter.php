@@ -202,6 +202,7 @@ final class HomeCommandCenter
                     'message' => route('customer.workspaces.businesses.home.assistant.message', $scoped),
                     'approve' => route('customer.workspaces.businesses.home.assistant.approve', array_merge($scoped, ['__UID__'])),
                     'decline' => route('customer.workspaces.businesses.home.assistant.decline', array_merge($scoped, ['__UID__'])),
+                    'delete' => route('customer.workspaces.businesses.home.assistant.delete', array_merge($scoped, ['__UID__'])),
                 ],
             ],
         ];

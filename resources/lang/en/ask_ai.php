@@ -19,17 +19,29 @@ return [
     'interactive_limit' => [
         'title' => 'Assistant conversations are paused for now',
         'body' => "The share of your included AI set aside for conversations with the assistant has been used.\n\nMotionGrove's background work is unaffected and your other features keep working. Conversations resume when your allowance renews on :date.",
-        'trial_body' => "The share of your trial's included AI set aside for conversations with the assistant has been used.\n\nUpgrade to a paid MotionGrove plan for a much higher monthly allowance. Your other MotionGrove features will keep working.",
+        'trial_body' => "The share of your trial's included AI set aside for conversations with the assistant has been used.\n\nMotionGrove's background work is unaffected and your other features keep working.",
     ],
     'unavailable' => [
         'title' => 'AI is not available on this account right now',
         'body' => "AI features are not included while your account is in its current state. Your other MotionGrove features keep working.",
-        'trial_expired_body' => "Your free trial has ended, so its included AI is no longer available. Choose a paid plan to continue using the AI assistant. Your other MotionGrove features keep working.",
+        'trial_expired_body' => "Your free trial has ended, so its included AI is no longer available. Your other MotionGrove features keep working.",
     ],
     'nearing_limit' => 'You have used most of your included AI. Everything else keeps working.',
     'provider_failure' => [
         'title' => "I couldn't complete that just now",
         'body' => "Something went wrong reaching the assistant. Nothing was changed. Please try again in a moment.",
+    ],
+    'data_notice' => [
+        'title' => 'How Ask MotionGrove uses AI',
+        'body' => "To answer, Ask MotionGrove uses an AI service run by a third-party provider. The details relevant to your question — for example appointment details or the wording of a customer message — can be sent to that provider; names and phone numbers are kept to a minimum. Your conversations are saved in MotionGrove for :days days and you can delete one at any time with Delete conversation. Deleting it here removes MotionGrove's copy; it does not control what the provider holds under its own terms.",
+    ],
+    'timeout' => [
+        'title' => 'That took too long',
+        'body' => 'I could not finish that in time. Nothing was changed. Please try again.',
+    ],
+    'too_large' => [
+        'title' => 'That is too much to take in at once',
+        'body' => 'There is too much to consider for that question in one go. Try asking about one thing at a time — nothing was changed.',
     ],
     'ai_off' => [
         'title' => 'The assistant is switched off',

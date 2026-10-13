@@ -57,7 +57,7 @@ class AssistantConversationTest extends TestCase
         $second = $this->say($workspace, $business, 'Which keyword improved the most?', ['conversation' => $uid])->assertOk();
 
         $this->assertSame($uid, $second->json('uid'));
-        $this->assertCount(4, $second->json('messages'));
+        $this->assertCount(5, $second->json('messages'), 'The first-use data notice plus two question/answer pairs.');
 
         $sent = collect($this->fake->requests()[1]->messages)->pluck('content')->implode("\n");
         $this->assertStringContainsString('How is my SEO doing?', $sent, 'The model sees the earlier customer turn.');
@@ -73,7 +73,7 @@ class AssistantConversationTest extends TestCase
 
         $resumed = $this->getJson($this->assistantUrl($workspace, $business, 'show'))->assertOk();
 
-        $this->assertCount(2, $resumed->json('messages'));
+        $this->assertCount(3, $resumed->json('messages'), 'notice + question + answer');
         $this->assertSame('Hello there.', $this->lastReply($resumed)['body']);
     }
 
@@ -89,7 +89,7 @@ class AssistantConversationTest extends TestCase
 
         $this->assertSame('replayed', $b->json('status'));
         $this->assertSame(1, $this->aiCalls());
-        $this->assertSame(2, AssistantMessage::query()->count());
+        $this->assertSame(3, AssistantMessage::query()->count(), 'notice + question + answer, once');
         $this->assertSame(1, AiUsageLedgerEntry::query()->count());
     }
 

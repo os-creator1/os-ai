@@ -33,6 +33,8 @@ return new class extends Migration
                 $table->timestamps();
 
                 $table->index(['business_id', 'user_id', 'last_message_at'], 'assistant_conversations_scope_recent_index');
+                // The retention sweep reads by age, oldest first.
+                $table->index(['last_message_at'], 'assistant_conversations_retention_index');
             });
         }
 
@@ -59,7 +61,10 @@ return new class extends Migration
             Schema::create('assistant_action_proposals', function (Blueprint $table) {
                 $table->id();
                 $table->char('uid', 36)->unique();
-                $table->foreignId('conversation_id')->constrained('assistant_conversations')->cascadeOnDelete();
+                // NULLABLE, SET NULL: deleting a conversation (customer request or retention) removes its text, while
+                // the proposal row survives as a minimal action-audit fact — scrubbed of its params/preview/result by
+                // AssistantRetention. Account deletion still removes it through workspace_id / user_id (CASCADE).
+                $table->foreignId('conversation_id')->nullable()->constrained('assistant_conversations')->nullOnDelete();
                 $table->foreignId('workspace_id')->constrained('workspaces')->cascadeOnDelete();
                 $table->foreignId('business_id')->constrained('businesses')->cascadeOnDelete();
                 $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
@@ -74,6 +79,12 @@ return new class extends Migration
                 $table->timestamp('decided_at')->nullable();
                 $table->timestamp('executed_at')->nullable();
                 $table->unsignedTinyInteger('attempts')->default(0);
+                // Fenced execution lease: every claim takes a new token and bumps the fence; the executor's own
+                // transaction re-checks both under the row lock, so a superseded executor can never commit.
+                $table->char('lease_token', 36)->nullable();
+                $table->timestamp('lease_expires_at')->nullable();
+                $table->unsignedInteger('fence')->default(0);
+                $table->timestamp('scrubbed_at')->nullable();
                 // One proposal -> one domain effect: the key the executed write is made under.
                 $table->char('idempotency_key', 64)->unique();
                 $table->json('result')->nullable();

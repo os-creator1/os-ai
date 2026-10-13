@@ -125,10 +125,9 @@ return [
     | conversation_compaction) are ALWAYS hard-enforced regardless of this
     | flag (contract §19.3 rule 2) — see AiUsageCategory::isHardEnforced().
     |
-    | This is the §21 launch gate, and it now defaults to TRUE: every category
-    | is hard-capped. A free trial's cap is hard for every category even if an
-    | operator sets this false (AiGateway never opens the observation bypass for
-    | a trial policy), so no older category can spend past the trial's $3.
+    | DEPRECATED AND NO LONGER READ BY THE GATEWAY. The §21 launch gate is closed: every category is hard-capped
+    | against its plan cap (trial $3 whole-trial, Core, Growth, Agency) and against the Platform's own cap, whatever
+    | this flag says. The key is kept only so an old environment file does not error.
     |
     */
     'enforce_budgets_for_existing_categories' => (bool) env('AI_ENFORCE_BUDGETS_FOR_EXISTING_CATEGORIES', true),

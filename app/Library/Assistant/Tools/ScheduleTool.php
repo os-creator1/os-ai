@@ -57,6 +57,7 @@ final class ScheduleTool implements ReadTool
                 $rows[] = [
                     'when' => $start->format('D j M, g:ia'),
                     'type' => (string) ($a->bookingType->name ?? 'Appointment'),
+                    // Who it is with is for the customer's eyes only: it goes into `facts`, never into `data`.
                     'with' => $contact['name'] ?? $contact['phone'] ?? 'Customer',
                     'location' => (string) $location->name,
                     'sort' => $start->getTimestamp(),
@@ -67,6 +68,8 @@ final class ScheduleTool implements ReadTool
 
         usort($rows, fn (array $x, array $y): int => $x['sort'] <=> $y['sort']);
         $rows = array_map(fn (array $r): array => array_diff_key($r, ['sort' => 1]), array_slice($rows, 0, 8));
+        $display = $rows;
+        $rows = array_map(fn (array $r): array => array_diff_key($r, ['with' => 1]), $rows);
 
         $data = [
             'timezone' => $tz,
@@ -82,6 +85,10 @@ final class ScheduleTool implements ReadTool
             ['label' => 'Booking types ready to take bookings', 'value' => $summary['readyCount'] . ' of ' . $summary['activeTypeCount'] . ' active'],
         ];
 
-        return new ToolResult($this->key(), $data, $facts, array_slice($links, 0, 4), $summary['locations']->isEmpty() ? ['No Location is available to you for scheduling.'] : []);
+        foreach (array_slice($display, 0, 6) as $d) {
+            $facts[] = ['label' => $d['when'], 'value' => $d['type'] . ' · ' . $d['with']];
+        }
+
+        return new ToolResult($this->key(), $data, array_slice($facts, 0, 8), array_slice($links, 0, 4), $summary['locations']->isEmpty() ? ['No Location is available to you for scheduling.'] : [], true, $display);
     }
 }

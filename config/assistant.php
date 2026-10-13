@@ -29,4 +29,27 @@ return [
 
     // The model's answer text is clipped to this many characters before it is stored or shown.
     'answer_max_chars' => 1600,
+
+    // One explicit wall-clock budget for a whole assistant turn: compaction, every model call and every tool call.
+    // A turn that cannot finish inside it stops, says so, and stays retryable. The per-conversation lock lease is
+    // derived from it (budget + margin), so the lease always outlives the work it protects.
+    'turn_budget_seconds' => (int) env('ASSISTANT_TURN_BUDGET_SECONDS', 75),
+    'turn_lock_margin_seconds' => 45,
+    // A model call is only started if at least this many seconds of the budget remain (the route's provider timeout).
+    'min_seconds_for_model_call' => 30,
+
+    // Execution lease for an approved action. A claim that outlives it may be re-claimed ONLY by the fenced protocol
+    // in AssistantActionService (a live executor holds the proposal's row lock, so it cannot be superseded).
+    'action_lease_seconds' => 60,
+
+    // The input envelope: the serialized request must fit the route's max_input_tokens, measured with the gateway's own
+    // estimator, minus this headroom (basis points of the route ceiling kept free).
+    'input_headroom_bps' => 500,
+
+    // Retention. Conversations (messages, summary, facts) are deleted this many days after their last message; the
+    // customer can delete one at any time. Clamped to 1..365. Action audit facts are kept, scrubbed of text and PII.
+    'retention_days' => (int) env('ASSISTANT_RETENTION_DAYS', 90),
+
+    // How long a prepared reply stays openable (pre-filled) in Follow-ups after it was handed off.
+    'handoff_ttl_minutes' => 60,
 ];

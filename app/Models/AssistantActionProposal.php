@@ -32,7 +32,7 @@ class AssistantActionProposal extends Model
     protected $fillable = [
         'uid', 'conversation_id', 'workspace_id', 'business_id', 'user_id', 'tool_key', 'params', 'preview',
         'params_hash', 'state_fingerprint', 'status', 'expires_at', 'decided_at', 'executed_at', 'attempts',
-        'idempotency_key', 'result', 'failure_code',
+        'idempotency_key', 'result', 'failure_code', 'lease_token', 'lease_expires_at', 'fence', 'scrubbed_at',
     ];
 
     protected $casts = [
@@ -47,6 +47,9 @@ class AssistantActionProposal extends Model
         'expires_at' => 'datetime',
         'decided_at' => 'datetime',
         'executed_at' => 'datetime',
+        'lease_expires_at' => 'datetime',
+        'scrubbed_at' => 'datetime',
+        'fence' => 'integer',
     ];
 
     public function conversation(): BelongsTo

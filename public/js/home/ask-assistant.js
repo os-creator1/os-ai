@@ -17,8 +17,10 @@
         show: section.getAttribute('data-assistant-show'),
         message: section.getAttribute('data-assistant-message'),
         approve: section.getAttribute('data-assistant-approve'),
-        decline: section.getAttribute('data-assistant-decline')
+        decline: section.getAttribute('data-assistant-decline'),
+        remove: section.getAttribute('data-assistant-delete')
     };
+    var deleteBtn = section.querySelector('[data-role="ask-delete"]');
     var form = section.querySelector('[data-role="ask-form"]');
     var input = section.querySelector('[data-role="ask-input"]');
     var submitBtn = section.querySelector('[data-role="ask-submit"]');
@@ -275,6 +277,14 @@
             return row;
         }
 
+        if (m.kind === 'notice') {
+            box.classList.add('is-notice');
+            box.appendChild(el('p', 'home-ask-title mb-25', p.title || 'How Ask MotionGrove uses AI'));
+            box.appendChild(el('p', 'text-caption mb-0', m.body));
+            row.appendChild(box);
+            return row;
+        }
+
         if (m.kind === 'limit') {
             box.classList.add('is-limit');
             box.appendChild(el('p', 'home-ask-title mb-50', p.title || ''));
@@ -339,6 +349,10 @@
             thread.appendChild(bubble(m));
         });
         state.uid = data.uid || state.uid;
+        if (deleteBtn) { deleteBtn.hidden = !state.uid; }
+        if (!(data.messages || []).length && data.notice) {
+            thread.appendChild(bubble({ role: 'assistant', kind: 'notice', body: data.notice.body, payload: { title: data.notice.title } }));
+        }
         renderAllowance(data.allowance);
         if (resumeBtn) { resumeBtn.setAttribute('data-has-conversation', (data.messages || []).length ? '1' : ''); }
         scrollToEnd();
@@ -442,11 +456,41 @@
         });
     }
 
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', function () {
+            if (!state.uid || !cfg.remove) { return; }
+            // Two-step: the first press asks, the second deletes. Nothing is removed by a stray click.
+            if (deleteBtn.getAttribute('data-armed') !== '1') {
+                deleteBtn.setAttribute('data-armed', '1');
+                deleteBtn.textContent = 'Press again to delete';
+                window.setTimeout(function () { deleteBtn.removeAttribute('data-armed'); deleteBtn.textContent = 'Delete conversation'; }, 5000);
+                return;
+            }
+            deleteBtn.disabled = true;
+            request(cfg.remove.replace('__UID__', encodeURIComponent(state.uid)), { method: 'POST', body: {} }).then(function (res) {
+                if (res.status === 409) {
+                    thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: (res.body && res.body.message) || 'An action is still running. Try again in a moment.', payload: { title: 'Not deleted yet', retryable: false } }));
+                    return;
+                }
+                if (!res.ok) { throw new Error('status ' + res.status); }
+                state.uid = null;
+                state.startNew = false;
+                thread.textContent = '';
+                thread.appendChild(el('p', 'text-muted mb-0', 'Conversation deleted.'));
+                if (resumeBtn) { resumeBtn.removeAttribute('data-has-conversation'); resumeBtn.hidden = true; }
+                deleteBtn.hidden = true;
+            }).catch(function () {
+                thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't delete it just now. Nothing was changed.", payload: { title: 'Not deleted', retryable: false } }));
+            }).then(function () { deleteBtn.disabled = false; deleteBtn.removeAttribute('data-armed'); deleteBtn.textContent = 'Delete conversation'; });
+        });
+    }
+
     if (resumeBtn) {
         resumeBtn.addEventListener('click', function () { setOpen(true); input.focus(); });
     }
 
-    // Reading the saved conversation never calls a model; it only lets Home offer to continue it.
+    // Reading the saved conversation never calls a model; it only lets Home offer to continue it (and, on first use,
+    // carries the AI-data notice shown when the panel opens).
     function loadSaved() {
         if (!cfg.show) { return; }
         request(cfg.show).then(function (res) {

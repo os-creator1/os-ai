@@ -42,11 +42,13 @@ final readonly class AiAllowance
         return in_array($this->status, [self::AVAILABLE, self::NEARING_LIMIT], true);
     }
 
-    /** Is an upgrade the truthful remedy (trial limit, or an ended trial)? */
+    /**
+     * Is an upgrade the truthful remedy? ONLY when a trial's whole included allowance is used up. The interactive share
+     * being spent, a trial that has ended, a lock or an unassigned plan are different facts with different words and no
+     * upgrade button.
+     */
     public function upgradeIsRemedy(): bool
     {
-        return $this->status === self::TRIAL_LIMIT_REACHED
-            || ($this->isTrial && $this->status === self::INTERACTIVE_LIMIT)
-            || ($this->status === self::UNAVAILABLE && $this->policyKey === 'trial_expired');
+        return $this->status === self::TRIAL_LIMIT_REACHED;
     }
 }

@@ -7,6 +7,7 @@ use App\Models\AssistantActionAudit;
 use App\Models\AssistantActionProposal;
 use App\Models\AssistantMessage;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Throwable;
@@ -21,19 +22,19 @@ use Throwable;
  *    available to this actor (permission, entitlement, view-as, Location reach), the proposal must not have expired,
  *    and the live state the preview was computed against must still hold (the tool's fingerprint). Otherwise the
  *    proposal goes `stale` and nothing runs.
- *  - ONE EFFECT. The pending -> executing claim is a compare-and-set under a row lock, so a double click, a retry or a
- *    concurrent request cannot execute twice; a replay of a completed proposal returns its recorded result. The domain
- *    write and the recording of its result share one transaction, so a failure leaves nothing half-done and a failed
- *    proposal may be retried (bounded) without duplicating anything.
+ *  - ONE EFFECT, by a FENCED LEASE. A claim takes a fresh `lease_token`, bumps `fence` and sets `lease_expires_at`, all
+ *    under the proposal's row lock. The executor's own transaction starts by re-locking the row and verifying token,
+ *    fence and `executing` status; if any differ it throws AssistantLeaseLost and writes NOTHING. That transaction holds
+ *    the row lock until it commits, and the domain write and the recording of its result share it. So: a live executor
+ *    can never be superseded (a second claimant blocks on the lock and is told "busy"); a dead one's transaction died
+ *    with its connection, and its expired lease may then be re-claimed; and a superseded executor that wakes late finds
+ *    a different token and aborts before touching anything. An expired timestamp alone never permits a second effect.
  *  - AUDIT. Every step appends an immutable row, and the result shown to the customer is read back from the domain
  *    mechanism, not assumed.
  */
 final class AssistantActionService
 {
     public const MAX_ATTEMPTS = 3;
-
-    /** An `executing` claim older than this belonged to a request that died; its transaction was rolled back. */
-    private const CLAIM_STALE_SECONDS = 120;
 
     public function __construct(private readonly AssistantToolRegistry $tools)
     {
@@ -49,7 +50,7 @@ final class AssistantActionService
             ->first();
     }
 
-    /** @return array{state: string, proposal: AssistantActionProposal, message: ?string, url: ?string} */
+    /** @return array{state: string, proposal: AssistantActionProposal, message: ?string, url: ?string, transitioned: bool} */
     public function approve(AssistantContext $context, string $uid): array
     {
         $proposal = $this->find($context, $uid);
@@ -58,105 +59,158 @@ final class AssistantActionService
             abort(404);
         }
 
+        $claim = $this->claimForExecution($context, $proposal);
+
+        if ($claim['kind'] !== 'claimed') {
+            return $this->view($claim['kind'] === 'replay' ? 'replayed' : ($claim['kind'] === 'busy' ? 'busy' : $claim['proposal']->status), $claim['proposal'], $claim['transitioned']);
+        }
+
+        return $this->executeClaimed($context, $claim['proposal'], $claim['token'], $claim['fence']);
+    }
+
+    /**
+     * Phase 1 — revalidate, then take (or refuse) the lease. Public so the protocol can be exercised step by step.
+     *
+     * @return array{kind: string, proposal: AssistantActionProposal, token: ?string, fence: ?int, transitioned: bool}
+     */
+    public function claimForExecution(AssistantContext $context, AssistantActionProposal $proposal): array
+    {
         $tool = $this->tools->action($proposal->tool_key);
 
-        // Phase 1 — claim, under a lock, after revalidation.
-        $claim = DB::transaction(function () use ($proposal, $context, $tool): array {
-            $locked = AssistantActionProposal::query()->whereKey($proposal->id)->lockForUpdate()->first();
+        try {
+            return DB::transaction(function () use ($proposal, $context, $tool): array {
+                $locked = AssistantActionProposal::query()->whereKey($proposal->id)->lockForUpdate()->first();
+                $out = fn (string $kind, bool $changed = false, ?string $token = null, ?int $fence = null): array => ['kind' => $kind, 'proposal' => $locked, 'token' => $token, 'fence' => $fence, 'transitioned' => $changed];
 
-            if ($locked->status === AssistantActionProposal::COMPLETED || $locked->status === AssistantActionProposal::HANDED_OFF) {
-                return ['replay', $locked];
+                if ($locked->status === AssistantActionProposal::COMPLETED || $locked->status === AssistantActionProposal::HANDED_OFF) {
+                    return $out('replay');
+                }
+
+                if (in_array($locked->status, [AssistantActionProposal::DECLINED, AssistantActionProposal::EXPIRED, AssistantActionProposal::STALE], true)) {
+                    return $out('final');
+                }
+
+                // A live lease is never taken over. An EXPIRED lease may be, but only because we hold the row lock here:
+                // a live executor would still be holding it inside its own transaction.
+                if ($locked->status === AssistantActionProposal::EXECUTING && $locked->lease_expires_at !== null && $locked->lease_expires_at->isFuture()) {
+                    return $out('busy');
+                }
+
+                if ($locked->status === AssistantActionProposal::FAILED && $locked->attempts >= self::MAX_ATTEMPTS) {
+                    return $out('final');
+                }
+
+                if ($locked->expires_at->isPast()) {
+                    $this->finish($locked, AssistantActionProposal::EXPIRED, 'expired', 'expired', $context);
+
+                    return $out('final', true);
+                }
+
+                $reason = $this->revalidate($context, $locked, $tool);
+
+                if ($reason !== null) {
+                    $this->finish($locked, AssistantActionProposal::STALE, $reason[0], 'revalidation_failed', $context, ['message' => $reason[1]]);
+                    $locked->forceFill(['result' => ['ok' => false, 'message' => $reason[1]]])->save();
+
+                    return $out('final', true);
+                }
+
+                $token = (string) Str::uuid();
+                $fence = (int) $locked->fence + 1;
+                $locked->forceFill([
+                    'status' => AssistantActionProposal::EXECUTING,
+                    'attempts' => $locked->attempts + 1,
+                    'decided_at' => $locked->decided_at ?? now(),
+                    'failure_code' => null,
+                    'lease_token' => $token,
+                    'fence' => $fence,
+                    'lease_expires_at' => now()->addSeconds(max(5, (int) config('assistant.action_lease_seconds'))),
+                ])->save();
+                $this->audit($locked, $locked->attempts > 1 ? 'retried' : 'approved', $context, ['fence' => $fence]);
+
+                return $out('claimed', true, $token, $fence);
+            });
+        } catch (QueryException $e) {
+            // The proposal's row is locked by an executor that is running right now (lock wait timeout / deadlock):
+            // that is exactly "busy", never a reason to proceed.
+            if ($this->isLockContention($e)) {
+                return ['kind' => 'busy', 'proposal' => $proposal->fresh() ?? $proposal, 'token' => null, 'fence' => null, 'transitioned' => false];
             }
 
-            if (in_array($locked->status, [AssistantActionProposal::DECLINED, AssistantActionProposal::EXPIRED, AssistantActionProposal::STALE], true)) {
-                return ['final', $locked];
-            }
-
-            if ($locked->status === AssistantActionProposal::EXECUTING && $locked->updated_at->gt(now()->subSeconds(self::CLAIM_STALE_SECONDS))) {
-                return ['busy', $locked];
-            }
-
-            if ($locked->status === AssistantActionProposal::FAILED && $locked->attempts >= self::MAX_ATTEMPTS) {
-                return ['final', $locked];
-            }
-
-            if ($locked->expires_at->isPast()) {
-                $this->finish($locked, AssistantActionProposal::EXPIRED, 'expired', 'expired', $context);
-
-                return ['final', $locked];
-            }
-
-            $reason = $this->revalidate($context, $locked, $tool);
-
-            if ($reason !== null) {
-                $this->finish($locked, AssistantActionProposal::STALE, $reason[0], 'revalidation_failed', $context, ['message' => $reason[1]]);
-                $locked->forceFill(['result' => ['ok' => false, 'message' => $reason[1]]])->save();
-
-                return ['final', $locked];
-            }
-
-            $locked->forceFill(['status' => AssistantActionProposal::EXECUTING, 'attempts' => $locked->attempts + 1, 'decided_at' => $locked->decided_at ?? now(), 'failure_code' => null])->save();
-            $this->audit($locked, $locked->attempts > 1 ? 'retried' : 'approved', $context);
-
-            return ['claimed', $locked];
-        });
-
-        [$kind, $locked] = $claim;
-
-        if ($kind === 'replay') {
-            return $this->view('replayed', $locked);
+            throw $e;
         }
+    }
 
-        if ($kind === 'busy') {
-            return $this->view('busy', $locked);
-        }
-
-        if ($kind === 'final') {
-            return $this->view($locked->status, $locked);
-        }
-
-        // Phase 2 — execute through the domain mechanism, atomically with recording its result.
-        $resolved = $locked->params + ['_proposal_uid' => $locked->uid];
+    /**
+     * Phase 2 — execute through the domain mechanism, atomically with recording its result, only while the lease is still
+     * ours. Public for the same reason as claimForExecution().
+     *
+     * @return array{state: string, proposal: AssistantActionProposal, message: ?string, url: ?string, transitioned: bool}
+     */
+    public function executeClaimed(AssistantContext $context, AssistantActionProposal $claimed, string $token, int $fence): array
+    {
+        $tool = $this->tools->action($claimed->tool_key);
 
         try {
-            $outcome = DB::transaction(function () use ($tool, $context, $resolved, $locked): ActionOutcome {
-                $outcome = $tool->execute($context, $resolved);
+            DB::transaction(function () use ($tool, $context, $claimed, $token, $fence): void {
+                // FENCE: re-lock and verify before anything else. Superseded => throw, write nothing.
+                $row = AssistantActionProposal::query()->whereKey($claimed->id)->lockForUpdate()->first();
+
+                if ($row === null || $row->status !== AssistantActionProposal::EXECUTING || $row->lease_token !== $token || (int) $row->fence !== $fence) {
+                    throw new AssistantLeaseLost('Execution lease lost.');
+                }
+
+                $row->forceFill(['lease_expires_at' => now()->addSeconds(max(5, (int) config('assistant.action_lease_seconds')))])->save();
+
+                $outcome = $tool->execute($context, $row->params + ['_proposal_uid' => $row->uid]);
                 $handoff = $tool->mode() === ActionTool::MODE_HANDOFF;
 
-                $locked->forceFill([
+                $row->forceFill([
                     'status' => $handoff ? AssistantActionProposal::HANDED_OFF : AssistantActionProposal::COMPLETED,
                     'executed_at' => now(),
+                    'lease_token' => null,
                     'result' => ['ok' => true, 'message' => $outcome->message, 'url' => $outcome->url, 'details' => $outcome->details],
                 ])->save();
-                $this->audit($locked, $handoff ? 'handed_off' : 'executed', $context, ['message' => $outcome->message]);
-
-                return $outcome;
+                $this->audit($row, $handoff ? 'handed_off' : 'executed', $context, ['message' => $outcome->message, 'fence' => $fence]);
             });
+        } catch (AssistantLeaseLost) {
+            $fresh = $claimed->fresh() ?? $claimed;
+
+            return $this->view($fresh->status === AssistantActionProposal::EXECUTING ? 'busy' : $fresh->status, $fresh, false);
         } catch (AssistantActionRefused $e) {
-            return $this->failed($locked, $context, $e->reason, $e->getMessage());
+            return $this->failed($claimed, $context, $token, $fence, $e->reason, $e->getMessage());
         } catch (Throwable $e) {
             report($e);
 
-            return $this->failed($locked, $context, 'error', 'That could not be completed. Nothing was changed. You can try again.');
+            return $this->failed($claimed, $context, $token, $fence, 'error', 'That could not be completed. Nothing was changed. You can try again.');
         }
 
-        return $this->view($locked->fresh()->status, $locked->fresh());
+        $fresh = $claimed->fresh();
+
+        return $this->view($fresh->status, $fresh, true);
     }
 
-    /** @return array{state: string, proposal: AssistantActionProposal, message: ?string, url: ?string} */
+    private function isLockContention(QueryException $e): bool
+    {
+        return in_array((string) ($e->errorInfo[1] ?? ''), ['1205', '1213'], true) || str_contains($e->getMessage(), 'Lock wait timeout') || str_contains($e->getMessage(), 'Deadlock');
+    }
+
+    /** @return array{state: string, proposal: AssistantActionProposal, message: ?string, url: ?string, transitioned: bool} */
     public function decline(AssistantContext $context, string $uid): array
     {
         $proposal = $this->find($context, $uid) ?? abort(404);
+        $changed = false;
 
-        DB::transaction(function () use ($proposal, $context): void {
+        DB::transaction(function () use ($proposal, $context, &$changed): void {
             $locked = AssistantActionProposal::query()->whereKey($proposal->id)->lockForUpdate()->first();
 
-            if ($locked->status === AssistantActionProposal::PENDING || $locked->status === AssistantActionProposal::FAILED) {
+            if ($locked->status === AssistantActionProposal::PENDING || ($locked->status === AssistantActionProposal::FAILED)) {
                 $this->finish($locked, AssistantActionProposal::DECLINED, 'declined', 'declined', $context);
+                $changed = true;
             }
         });
 
-        return $this->view($proposal->fresh()->status, $proposal->fresh());
+        return $this->view($proposal->fresh()->status, $proposal->fresh(), $changed);
     }
 
     /** @return array{0: string, 1: string}|null [code, customer message] when the proposal must not run */
@@ -179,15 +233,24 @@ final class AssistantActionService
         return null;
     }
 
-    private function failed(AssistantActionProposal $proposal, AssistantContext $context, string $code, string $message): array
+    private function failed(AssistantActionProposal $proposal, AssistantContext $context, string $token, int $fence, string $code, string $message): array
     {
-        DB::transaction(function () use ($proposal, $context, $code, $message): void {
+        $changed = false;
+
+        DB::transaction(function () use ($proposal, $context, $token, $fence, $code, $message, &$changed): void {
             $locked = AssistantActionProposal::query()->whereKey($proposal->id)->lockForUpdate()->first();
-            $locked->forceFill(['status' => AssistantActionProposal::FAILED, 'failure_code' => $code, 'result' => ['ok' => false, 'message' => $message]])->save();
-            $this->audit($locked, 'failed', $context, ['code' => $code, 'message' => $message]);
+
+            // Only the current lease holder may record a failure; a superseded executor records nothing.
+            if ($locked->status !== AssistantActionProposal::EXECUTING || $locked->lease_token !== $token || (int) $locked->fence !== $fence) {
+                return;
+            }
+
+            $locked->forceFill(['status' => AssistantActionProposal::FAILED, 'failure_code' => $code, 'lease_token' => null, 'result' => ['ok' => false, 'message' => $message]])->save();
+            $this->audit($locked, 'failed', $context, ['code' => $code, 'message' => $message, 'fence' => $fence]);
+            $changed = true;
         });
 
-        return $this->view(AssistantActionProposal::FAILED, $proposal->fresh());
+        return $this->view($proposal->fresh()->status, $proposal->fresh(), $changed);
     }
 
     /** @param array<string, mixed> $detail */
@@ -209,10 +272,11 @@ final class AssistantActionService
         ]);
     }
 
-    /** @return array{state: string, proposal: AssistantActionProposal, message: ?string, url: ?string} */
-    private function view(string $state, AssistantActionProposal $proposal): array
+    /** @return array{state: string, proposal: AssistantActionProposal, message: ?string, url: ?string, transitioned: bool} */
+    private function view(string $state, AssistantActionProposal $proposal, bool $transitioned = false): array
     {
         return [
+            'transitioned' => $transitioned,
             'state' => $state,
             'proposal' => $proposal,
             'message' => $proposal->result['message'] ?? null,

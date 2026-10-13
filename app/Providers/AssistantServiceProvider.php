@@ -18,6 +18,7 @@ class AssistantServiceProvider extends ServiceProvider
             [
                 $app->make(Tools\BusinessSnapshotTool::class),
                 $app->make(Tools\UnansweredConversationsTool::class),
+                $app->make(Tools\WaitingMessageTool::class),
                 $app->make(Tools\ScheduleTool::class),
                 $app->make(Tools\GrowthRecommendationsTool::class),
                 $app->make(Tools\RecentWorkTool::class),

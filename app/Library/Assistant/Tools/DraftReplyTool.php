@@ -6,6 +6,7 @@ use App\Library\Assistant\ActionOutcome;
 use App\Library\Assistant\ActionPreview;
 use App\Library\Assistant\AssistantActionRefused;
 use App\Library\Assistant\AssistantContext;
+use App\Library\Assistant\AssistantHandles;
 use App\Library\Conversations\BusinessConversationReadModel;
 use App\Models\ChatBox;
 use Illuminate\Support\Str;
@@ -28,7 +29,7 @@ final class DraftReplyTool implements ActionTool
 
     public function description(): string
     {
-        return 'Prepare a reply to a waiting customer (it is NOT sent; the customer reviews and sends it themselves). args: conversation_ref (the "ref" from unanswered_conversations), message (the reply text, written in the business\'s voice, max 600 chars).';
+        return 'Prepare a reply to a waiting customer (it is NOT sent; the customer reviews and sends it themselves). args: conversation_ref (the opaque "handle" from unanswered_conversations), message (the reply text, written in the business\'s voice, max 600 chars).';
     }
 
     public function rules(): array
@@ -102,7 +103,9 @@ final class DraftReplyTool implements ActionTool
     private function waiting(AssistantContext $context, string $uid): array
     {
         foreach ($this->conversations->awaitingReplyConversations($context->business, (int) $context->user->id, 25) as $row) {
-            if ((string) $row['uid'] === $uid) {
+            // The model names a conversation by its opaque handle; the server's own uid is accepted too, so a stored
+            // proposal can be revalidated by the id it recorded.
+            if ((string) $row['uid'] === $uid || hash_equals(AssistantHandles::for($context, 'conversation', (string) $row['uid']), $uid)) {
                 return $row;
             }
         }
