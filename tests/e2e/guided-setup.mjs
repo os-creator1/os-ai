@@ -4,6 +4,8 @@ import { launch, login, wizardUrl, check, finish, BASE, fixture } from './lib.mj
 
 const IMG = process.env.IMG_DIR || '/tmp/claude-0/imgs';
 const SHOTS = process.env.E2E_SHOTS || '/tmp';
+// Which of the four photo booth designs to generate (photo_booth_modern | _editorial | _luxury | _conversion).
+const TEMPLATE_KEY = process.env.TEMPLATE_KEY || '';
 
 // Scroll the whole page so lazy-loaded images are fetched before a full-page screenshot.
 async function settle(p) {
@@ -35,6 +37,18 @@ const uploadTo = async (locator, file) => {
 
 await page.goto(wizardUrl(''), { waitUntil: 'load' });
 await page.evaluate(() => { window.__alive = 'same-document'; });
+
+// 0. choose the design (the picker's own endpoint), then reload the wizard on it
+if (TEMPLATE_KEY) {
+  const chosen = await page.evaluate(async ([url, key]) => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || document.querySelector('input[name="_token"]')?.value;
+    const res = await fetch(url, { method: 'POST', credentials: 'same-origin', redirect: 'follow', headers: { 'X-CSRF-TOKEN': token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ template_key: key, _token: token }) });
+    return res.status;
+  }, [wizardUrl('/template'), TEMPLATE_KEY]);
+  check(`design ${TEMPLATE_KEY} chosen`, chosen === 200, String(chosen));
+  await page.goto(wizardUrl(''), { waitUntil: 'load' });
+  await page.evaluate(() => { window.__alive = 'same-document'; });
+}
 
 // 1. basics (prefilled) → confirm
 check('business name prefilled', (await page.inputValue('input[name="s[business_name][value]"]')) === 'Glow Booths Co');
@@ -78,6 +92,13 @@ await second.locator('input[name$="[name]"]').fill('Signature');
 await second.locator('input[name$="[price]"]').fill('799');
 check('packages can be linked to a booth', (await page.locator('[data-package-link]').count()) >= 1);
 await page.locator('[data-package-link]').first().selectOption({ label: 'Open-Air Photo Booth' });
+// A third package: borrows the mirror booth's photo. Signature stays text-only (the no-photo fallback).
+await page.locator('button[data-add-row]', { hasText: 'Add package' }).click();
+const third = page.locator('[data-new-package]').nth(2);
+await third.locator('input[name$="[name]"]').fill('Premier');
+await third.locator('input[name$="[price]"]').fill('1199');
+await third.locator('[data-package-link]').selectOption({ label: 'Mirror Photo Booth' });
+check('three packages entered', (await page.locator('[data-new-package]').count()) >= 3);
 await page.screenshot({ path: `${SHOTS}/packages-desktop.png`, fullPage: true });
 await cont('addons');
 
@@ -91,6 +112,13 @@ await cont('backdrops');
 await page.locator('[data-row]').first().locator('[data-item-name]').fill('Floral wall');
 await page.locator('[data-row]').first().locator('select[name$="[category]"]').selectOption('backdrop');
 await uploadTo(page.locator('[data-row]').first().locator('[data-image-input]').first(), 'backdrop.jpg');
+// A second backdrop with its own, different photograph.
+await page.locator('button[data-add-row]').first().click();
+const bd2 = page.locator('[data-row]').nth(1);
+await bd2.locator('[data-item-name]').fill('Starry night');
+await bd2.locator('select[name$="[category]"]').selectOption('backdrop');
+await uploadTo(bd2.locator('[data-image-input]').first(), 'event-2.jpg');
+check('two backdrops, each with its own photo', (await page.locator('[data-row] [data-image-preview], [data-row] img').count()) >= 2);
 await cont('gallery');
 
 // 7. gallery with an explicit cover
@@ -184,6 +212,7 @@ const pages = await live.evaluate((h) => [...new Set([...document.querySelectorA
 const urls = [home, ...pages.filter((u) => u !== home && u !== home + '/')];
 check('the site has several pages', urls.length >= 4, String(urls.length));
 let n = 0;
+const allHrefs = new Set();
 for (const [label, vp] of [['desktop', { width: 1280, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
   await live.setViewportSize(vp);
   for (const u of urls) {
@@ -193,10 +222,34 @@ for (const [label, vp] of [['desktop', { width: 1280, height: 900 }], ['mobile',
     await live.screenshot({ path: `${SHOTS}/public-${slug}-${label}.png`, fullPage: true });
     check(`${slug} (${label}): no broken or empty images`, await live.evaluate(() => [...document.images].every((i) => i.complete && i.naturalWidth > 0)));
     check(`${slug} (${label}): no horizontal scroll`, await live.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
+    (await live.evaluate(() => [...document.querySelectorAll('a[href]')].map((a) => a.href.split('#')[0]).filter((h) => h.startsWith(location.origin) && !h.includes('/logout')))).forEach((h) => allHrefs.add(h));
+    const bad = await live.evaluate(() => {
+      const parse = (c) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const [r, g, b, a = 1] = m[1].split(/[ ,\/]+/).filter(Boolean).map(Number); return { r, g, b, a }; };
+      const lum = ({ r, g, b }) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+      const bgOf = (el) => { for (let n = el; n; n = n.parentElement) { const c = parse(getComputedStyle(n).backgroundColor); if (c && c.a > 0.5) { return c; } if (getComputedStyle(n).backgroundImage !== 'none') { return null; } } return { r: 255, g: 255, b: 255, a: 1 }; };
+      const out = [];
+      for (const el of document.querySelectorAll('a, button, h1, h2, h3, p, li, summary, label, figcaption, span')) {
+        const text = (el.childElementCount === 0 ? el.textContent : '').trim();
+        if (!text || el.closest('[hidden], .d-none')) { continue; }
+        const rect = el.getBoundingClientRect(); if (rect.width === 0 || rect.height === 0) { continue; }
+        const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || cs.opacity === '0') { continue; }
+        const fg = parse(cs.color), bg = bgOf(el); if (!fg || !bg) { continue; }
+        const [l1, l2] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+        const ratio = (l1 + 0.05) / (l2 + 0.05);
+        const large = parseFloat(cs.fontSize) >= 24 || (parseFloat(cs.fontSize) >= 18.66 && parseInt(cs.fontWeight, 10) >= 700);
+        if (ratio < (large ? 3 : 4.5)) { out.push(`${text.slice(0, 40)} (${ratio.toFixed(2)})`); }
+      }
+      return out.slice(0, 8);
+    });
+    check(`${slug} (${label}): text/button contrast`, bad.length === 0, bad.join(' | '));
     check(`${slug} (${label}): no empty section`, await live.evaluate(() => [...document.querySelectorAll('main section, section.website-section')].every((sec) => sec.innerText.trim().length > 0 || sec.querySelector('img, form, iframe'))));
     n++;
   }
 }
+const hrefs = [...allHrefs];
+let deadLinks = [];
+for (const h of hrefs.slice(0, 60)) { const r = await context.request.get(h); if (r.status() >= 400) { deadLinks.push(`${r.status()} ${h}`); } }
+check('no broken internal links across every page', deadLinks.length === 0, deadLinks.join(' | '));
 check('captured every page at both widths', n === urls.length * 2, String(n));
 
 await browser.close();

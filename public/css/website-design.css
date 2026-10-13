@@ -415,7 +415,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-services-stacked .wd-card h3 { font-size: 1.35rem; text-transform: none; letter-spacing: -0.02em; }
 
 /* Services — event tiles (Party Luxe): white rounded tiles with an arrow badge. */
-.wd-services-event-tiles .wd-card { background: #fff; color: var(--wd-ink); box-shadow: var(--wd-shadow); border-radius: 24px; padding: 1rem; flex-direction: column; }
+.wd-services-event-tiles .wd-card { background: #fff; color: var(--wd-ink); box-shadow: var(--wd-shadow); border-radius: 24px; padding: 1rem 1rem 4rem; flex-direction: column; }
 .wd-services-event-tiles .wd-card img { aspect-ratio: 1 / 1; border-radius: 16px; margin-bottom: 0.5rem; }
 .wd-services-event-tiles .wd-card p { color: var(--wd-muted); }
 .wd-services-event-tiles .wd-card h3 { font-size: 1.2rem; padding-right: 3rem; }
@@ -557,7 +557,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-footer-centered .wd-footer-col ul { grid-auto-flow: row; }
 .wd-footer-centered a:hover { color: var(--wd-accent-text); }
 .wd-footer-centered .wd-footer-legal { border-top-color: var(--wd-line); color: var(--wd-muted); }
-@media (min-width: 760px) { .wd-footer-centered .wd-footer-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); width: 100%; } .wd-footer-centered .wd-footer-brand { grid-column: 1 / -1; } }
+@media (min-width: 760px) { .wd-footer-centered .wd-footer-grid { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 2rem 4.5rem; width: 100%; } .wd-footer-centered .wd-footer-brand { flex: 0 0 100%; } .wd-footer-centered .wd-footer-col { text-align: center; } }
 
 .wd-footer-soft { background: #e9dbe9; color: var(--wd-ink); border-top: 1px solid rgba(42, 29, 69, 0.15); }
 .wd-footer-soft .wd-footer-heading { color: #a8412b; }
@@ -593,3 +593,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 /* Call-to-action bands that follow each other read as ONE block (same tone, no double padding between them). */
 .wd-band-cta + .wd-band-cta { border-top: 1px solid var(--wd-t-line); }
 .wd-band-cta + .wd-band-cta > .wd-container { padding-top: 0; }
+
+/* Midnight Gold: the page behind the breadcrumb is dark, so it must read light (it inherited near-black). */
+.wd-luxury .website-breadcrumbs { color: #d4d4d8; }
+.wd-luxury .website-breadcrumbs a { color: #e4e4e7; }

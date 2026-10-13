@@ -24,5 +24,5 @@ Each script prints PASS/FAIL per check and exits non-zero on any failure.
 - `guided-setup.mjs` — the full guided photo booth flow: confirm basics → service areas → booths (preset
   photos) → backdrops → gallery → About → review → generate the deterministic website → Studio preview →
   strict publish gate → every page of the published `/sites/{id}` site at desktop and phone width (broken image,
-  overflow and empty-section checks). Needs a folder of sample photos: `IMG_DIR=/path/to/photos` (default `/tmp/claude-0/imgs`);
+  overflow and empty-section checks). `TEMPLATE_KEY=photo_booth_modern|_editorial|_luxury|_conversion` picks the design. Needs a folder of sample photos: `IMG_DIR=/path/to/photos` (default `/tmp/claude-0/imgs`);
   screenshots go to `E2E_SHOTS` (default `/tmp`).
