@@ -32,6 +32,13 @@ final class BusinessStatusRow
         public readonly ?string $websiteStatus,
         public readonly ?string $googleConnectionState,
         public readonly int $unhealthyGoogleLocations,
+        // Launch-readiness facts (HomeSetupJourney). Each is a boolean read of a canonical table inside the
+        // one status statement, so Home pays no extra query for them. Defaults keep older callers valid.
+        public readonly bool $hasPrimaryLocation = false,
+        public readonly bool $hasPrimaryService = false,
+        public readonly bool $hasLiveForm = false,
+        public readonly bool $hasActiveWebsiteForm = false,
+        public readonly bool $hasCompletedExternalAudit = false,
     ) {
     }
 

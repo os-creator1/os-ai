@@ -2,8 +2,11 @@
 
 namespace App\Library\Dashboard;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
+use App\Enums\Business\BusinessServiceStatus;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleLocationHealth;
+use App\Models\ExternalSiteCrawl;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -83,6 +86,14 @@ final class DashboardStatusReader
                 's.status as website_status',
                 'g.state as google_state',
             ])
+            // Launch-readiness facts for HomeSetupJourney: EXISTS probes on canonical rows, riding on this one
+            // statement (no extra query per Home request). Each is business-scoped and indexed by business_id/
+            // website_id; none reads onboarding step flags.
+            ->selectRaw('EXISTS (SELECT 1 FROM business_locations bl WHERE bl.business_id = b.id AND bl.is_primary = 1 AND bl.lifecycle_state = ?) AS has_primary_location', [BusinessLocationLifecycleState::Active->value])
+            ->selectRaw('EXISTS (SELECT 1 FROM business_services bs WHERE bs.business_id = b.id AND bs.is_primary = 1 AND bs.status = ?) AS has_primary_service', [BusinessServiceStatus::Active->value])
+            ->selectRaw("EXISTS (SELECT 1 FROM forms lf WHERE lf.business_id = b.id AND lf.lifecycle_state = 'active') AS has_live_form")
+            ->selectRaw('EXISTS (SELECT 1 FROM website_forms wf WHERE wf.website_id = s.id AND wf.is_active = 1) AS has_active_website_form')
+            ->selectRaw('EXISTS (SELECT 1 FROM external_site_crawls ec WHERE ec.business_id = b.id AND ec.status = ?) AS has_completed_external_audit', [ExternalSiteCrawl::COMPLETED])
             ->selectSub(
                 DB::table('business_google_locations as l')
                     ->selectRaw('COUNT(*)')
@@ -119,6 +130,11 @@ final class DashboardStatusReader
                 websiteStatus: $row->website_status !== null ? (string) $row->website_status : null,
                 googleConnectionState: $row->google_state !== null ? (string) $row->google_state : null,
                 unhealthyGoogleLocations: (int) ($row->unhealthy_google_locations ?? 0),
+                hasPrimaryLocation: (bool) $row->has_primary_location,
+                hasPrimaryService: (bool) $row->has_primary_service,
+                hasLiveForm: (bool) $row->has_live_form,
+                hasActiveWebsiteForm: (bool) $row->has_active_website_form,
+                hasCompletedExternalAudit: (bool) $row->has_completed_external_audit,
             );
         }
 

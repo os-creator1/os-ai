@@ -15,6 +15,7 @@ use App\Library\Navigation\MenuEntitlements;
 use App\Models\Business;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Route;
 
 /**
  * Home V2 — the coordinator that turns the bands BusinessHomePresenter already
@@ -439,6 +440,15 @@ final class HomeCommandCenter
     }
 
     /**
+     * The Launch journey's facts, assembled from what this request has ALREADY read:
+     *  - the Business row (name, niche, website source, address) the presenter loaded;
+     *  - the BusinessStatusRow (website status, primary Location/Service, live forms and a completed
+     *    external-site check: EXISTS probes inside the status statement it already issues);
+     *  - the Calendar summary, only when Calendar is in play for this actor.
+     * This method issues no query of its own. When the status row could not be read, foundation facts
+     * are treated as satisfied and the website as not applicable, so a failed read never shows a gap
+     * the customer may not have.
+     *
      * @param  array<string, mixed>|null  $booking
      * @return array<string, mixed>|null
      */
@@ -446,24 +456,39 @@ final class HomeCommandCenter
     {
         $calendar = $booking !== null;
         $firstLoc = $booking['firstLocationUid'] ?? null;
+        $owns = ! $context->isViewingAsClient() && (int) $business->customer_id === (int) $user->id;
+        $onboardingOn = $owns && (bool) config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show');
 
         $urls = [
             'locations' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.locations.index', $scoped, ['access_backend']),
             'bookingType' => $firstLoc === null ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.booking-types.create', array_merge($scoped, [$firstLoc]), ['access_backend'], 'calendar'),
             'fixBooking' => $firstLoc === null ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.booking-types.index', array_merge($scoped, [$firstLoc]), ['access_backend'], 'calendar'),
             'website' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.website.show', $scoped, ['website'], 'website_generation'),
+            'forms' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.forms.index', $scoped, ['forms'], 'forms'),
+            // The wizard already holds these answers; it is only offered for one that is genuinely missing.
+            'business' => $onboardingOn ? route('customer.onboarding.show', ['step' => 'business']) : null,
+            'service' => $onboardingOn ? route('customer.onboarding.show', ['step' => 'services']) : null,
         ];
 
+        $known = $status !== null;
+
         return $this->journey->build([
-            'hasLocation' => $calendar ? ($booking['locationIds'] !== []) : true,
+            'hasIdentity' => ! $known || (filled($business->name) && $business->industry !== null),
+            'hasLocation' => ! $known || $status->hasPrimaryLocation,
+            'hasPrimaryService' => ! $known || $status->hasPrimaryService,
             'calendar' => $calendar,
+            'typeCount' => (int) ($booking['typeCount'] ?? 0),
             'activeTypeCount' => (int) ($booking['activeTypeCount'] ?? 0),
             'readyCount' => (int) ($booking['readyCount'] ?? 0),
             'problemReason' => $booking['problems'][0]['reason'] ?? null,
             'websiteStatus' => $status?->websiteStatus,
-            'websiteApplicable' => $urls['website'] !== null && $status !== null,
-            // The stored website source (already on the loaded Business: no extra read).
-            'websiteMode' => $business->getRawOriginal('website_mode'),
+            'websiteApplicable' => $urls['website'] !== null && $known,
+            // The website source: the stored choice, or "hosted" for a legacy Business that already owns a site.
+            'websiteMode' => ((string) $business->getRawOriginal('website_mode')) ?: ($status?->websiteStatus !== null ? 'hosted' : null),
+            'hasCompletedExternalAudit' => $status?->hasCompletedExternalAudit ?? false,
+            'hasLiveForm' => $status?->hasLiveForm ?? false,
+            'hasActiveWebsiteForm' => $status?->hasActiveWebsiteForm ?? false,
+            'formsApplicable' => $urls['forms'] !== null && $known,
         ], $urls);
     }
 }

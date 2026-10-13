@@ -641,6 +641,9 @@ trait CreatesDashboardFixtures
             'service_mode' => 'storefront',
             'country_code' => 'US',
         ]);
+        // A Business that finished setup has its onboarding foundation: a PRIMARY Location and PRIMARY Service.
+        $location->forceFill(['is_primary' => true])->save();
+        $this->primaryService($business);
 
         $typeId = DB::table('booking_types')->insertGetId([
             'uid' => (string) Str::uuid(),
@@ -671,6 +674,17 @@ trait CreatesDashboardFixtures
         ]);
 
         return ['location' => (int) $location->id, 'bookingType' => (int) $typeId];
+    }
+
+    /** One active primary Service, the way onboarding leaves it. */
+    protected function primaryService(Business $business, string $name = 'Photo Booth Rental'): void
+    {
+        \App\Models\BusinessService::query()->create([
+            'business_id' => $business->id,
+            'name' => $name,
+            'slug' => \Illuminate\Support\Str::slug($name),
+            'status' => 'active',
+        ])->forceFill(['is_primary' => true])->save();
     }
 
     /** mainText() without the Ask MotionGrove section: its chip labels are controls, not claims. */

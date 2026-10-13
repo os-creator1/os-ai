@@ -650,21 +650,18 @@ class OnboardingSeoFlowTest extends TestCase
         $this->assertFalse($business->services()->where('name', 'like', '%Orange%')->exists());
     }
 
-    public function test_the_home_setup_journey_wording_follows_the_saved_website_source_but_never_claims_it_is_live(): void
+    public function test_a_completed_onboarding_hands_home_every_foundation_fact(): void
     {
-        $journey = new \App\Library\Dashboard\Home\HomeSetupJourney();
-        $facts = ['hasLocation' => true, 'calendar' => false, 'activeTypeCount' => 0, 'readyCount' => 0, 'problemReason' => null, 'websiteStatus' => null, 'websiteApplicable' => true];
-        $urls = ['locations' => '/l', 'bookingType' => null, 'fixBooking' => null, 'website' => '/w'];
+        [$customer, $business] = $this->onboardingAtWebsiteStep();
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
+        $this->post(route('customer.onboarding.complete'));
 
-        foreach (['hosted' => 'Create your website', 'external' => 'Review your existing website', 'none' => 'Launch your website', null => 'Launch your website'] as $mode => $title) {
-            $result = $journey->build($facts + ['websiteMode' => $mode], $urls);
-            $step = collect($result['steps'])->firstWhere('key', 'website');
+        $status = app(\App\Library\Dashboard\DashboardStatusReader::class)->forBusiness($business->id);
 
-            $this->assertSame($title, $step['title']);
-            $this->assertFalse($step['done'], 'Choosing a website path never marks the website done.');
-            $this->assertFalse($step['essential'], 'The website is never a mandatory gate.');
-            $this->assertSame('website', $result['nextKey']);
-        }
+        $this->assertTrue($status->hasPrimaryLocation);
+        $this->assertTrue($status->hasPrimaryService);
+        $this->assertNull($status->websiteStatus, 'Choosing a website path creates no website.');
+        $this->assertFalse($status->hasCompletedExternalAudit);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
