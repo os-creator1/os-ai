@@ -209,7 +209,11 @@ final class AssistantInterpreter
         $tool = $this->tools->action($key);
 
         if (! $tool instanceof ActionTool || ! $tool->available($context)) {
-            return new AssistantTurn(AssistantTurn::UNSUPPORTED, "I can't do that for you from here. " . (($parsed['message'] ?? '') !== '' ? '' : 'It may not be part of your plan or role.'), ['links' => []]);
+            return new AssistantTurn(
+                AssistantTurn::UNSUPPORTED,
+                "I can't do that for you from here right now. It may not be part of your plan or role, or something it needs — such as a location — isn't set up yet. Nothing was changed.",
+                ['links' => []],
+            );
         }
 
         return $this->proposals->prepare($context, $conversation, $userMessage, $tool, $parsed['args'] ?? [], $this->clip((string) ($parsed['message'] ?? '')));

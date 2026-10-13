@@ -32,6 +32,12 @@ final class AssistantFastPath
     {
     }
 
+    /** Is this exact phrase answered without a model (so it needs no AI entitlement and no allowance)? */
+    public function handles(string $question): bool
+    {
+        return isset(self::PHRASES[$this->normalise($question)]);
+    }
+
     public function match(AssistantContext $context, string $question): ?AssistantTurn
     {
         $key = $this->normalise($question);

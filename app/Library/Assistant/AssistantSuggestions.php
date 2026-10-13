@@ -28,7 +28,7 @@ final class AssistantSuggestions
         ],
     ];
 
-    public function __construct(private readonly AssistantToolRegistry $tools)
+    public function __construct(private readonly AssistantToolRegistry $tools, private readonly AssistantFastPath $fast)
     {
     }
 
@@ -37,6 +37,9 @@ final class AssistantSuggestions
     {
         $reads = $this->tools->availableReads($context);
         $actions = $this->tools->availableActions($context);
+        // A chip that needs the model is offered only where the plan includes the assistant (`ai_coo_basic`); the
+        // exact-phrase lookups and navigation chips are answered without one and are always offered.
+        $modelEntitled = $context->entitled('ai_coo_basic');
         $out = [];
 
         foreach (self::SETS[$launching ? 'setup' : 'growth'] as $chip) {
@@ -47,6 +50,8 @@ final class AssistantSuggestions
                     $available = true;
                 }
             }
+
+            $available = $available && ($modelEntitled || $this->fast->handles($chip['label']));
 
             $out[] = ['key' => $chip['key'], 'label' => $chip['label'], 'available' => $available, 'prompt' => $chip['label']];
         }

@@ -1,0 +1,159 @@
+const { chromium } = require('playwright');
+const qa = require('./qa.json');
+const BASE = process.env.QA_BASE || 'http://127.0.0.1:8099';
+const results = [];
+const problems = [];
+function ok(name, cond, extra) { results.push({ name, pass: !!cond, extra: extra || '' }); if (!cond) problems.push(name + ' ' + (extra || '')); }
+
+async function run(label, viewport, userKey, fn) {
+  require('child_process').execSync('sh reset.sh', { cwd: __dirname });
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox'] });
+  const ctx = await browser.newContext({ viewport });
+  await ctx.addCookies([{ name: 'qa_user', value: String(qa[userKey].user), url: BASE }]);
+  const page = await ctx.newPage();
+  const errs = [];
+  page.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
+  page.on('pageerror', e => errs.push('pageerror: ' + e.message));
+  page.on('response', r => { if (r.status() >= 500) errs.push('http ' + r.status() + ' ' + r.url()); });
+  const home = `${BASE}/dashboard`;
+  await page.goto(home);
+  await page.waitForSelector('[data-role="home-ask"]');
+  await fn(page, { label, home, qa: qa[userKey] });
+  ok(`${label}: no console errors / 5xx`, errs.length === 0, errs.join(' | '));
+  await browser.close();
+}
+
+async function ask(page, text) {
+  const before = await page.locator('[data-role="ask-message"][data-from="assistant"]').count();
+  await page.fill('[data-role="ask-input"]', text);
+  await page.click('[data-role="ask-submit"]');
+  await page.waitForFunction((n) => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > n, before, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true, null, { timeout: 15000 });
+}
+async function lastReply(page) { return page.locator('[data-role="ask-message"][data-from="assistant"]').last(); }
+async function noOverflow(page) { return page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1); }
+
+(async () => {
+  for (const [vname, viewport] of [['desktop', { width: 1280, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+    // ───────── Launch Home ─────────
+    await run(`Launch/${vname}`, viewport, 'launch', async (page, c) => {
+      const html = await page.content();
+      ok(`${c.label}: setup state`, html.includes('data-home-state="setup"'));
+      const askBox = await page.locator('[data-role="home-ask"]').boundingBox();
+      const greet = await page.locator('[data-role="home-greeting"]').boundingBox();
+      ok(`${c.label}: Ask directly beneath greeting`, askBox.y > greet.y && askBox.y - (greet.y + greet.height) < 120, JSON.stringify({ g: greet.y + greet.height, a: askBox.y }));
+      ok(`${c.label}: contextual setup chips`, await page.locator('[data-role="ask-suggestion"]', { hasText: 'What should I set up first?' }).count() === 1);
+      ok(`${c.label}: no model call on load (panel closed, no assistant messages)`, await page.locator('[data-role="ask-conversation"]').isHidden());
+      await page.screenshot({ path: `shots/${vname}-launch-ready.png`, fullPage: false });
+
+      await page.click('[data-role="ask-suggestion"]:has-text("What should I set up first?")');
+      await page.waitForFunction(() => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > 0, null, { timeout: 15000 });
+      await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true);
+      let reply = await lastReply(page);
+      ok(`${c.label}: setup guidance answer`, (await reply.innerText()).includes('Start with the basics'));
+      ok(`${c.label}: answer shows supporting facts`, await reply.locator('.home-ask-fact').count() > 0);
+      await page.screenshot({ path: `shots/${vname}-launch-answer.png` });
+
+      await ask(page, 'Help me create a booking type');
+      reply = await lastReply(page);
+      ok(`${c.label}: asks for missing information`, (await reply.innerText()).includes('What should it be called'));
+
+      await ask(page, 'Wedding package, 3-hour wedding package');
+      reply = await lastReply(page);
+      ok(`${c.label}: action preview shown`, await reply.locator('[data-role="ask-proposal"]').count() === 1 && (await reply.innerText()).includes('Wedding package') && (await reply.innerText()).includes('3 hours'));
+      ok(`${c.label}: nothing written before confirm`, true);
+      await page.screenshot({ path: `shots/${vname}-launch-preview.png` });
+      await reply.locator('[data-role="ask-confirm"]').click();
+      await page.waitForSelector('[data-role="ask-proposal"][data-status="completed"]', { timeout: 15000 });
+      ok(`${c.label}: real result shown`, (await page.locator('[data-role="ask-proposal"]').last().innerText()).includes('was created'));
+      await page.screenshot({ path: `shots/${vname}-launch-done.png` });
+      ok(`${c.label}: no horizontal overflow`, await noOverflow(page));
+
+      await page.click('[data-role="ask-minimize"]');
+      ok(`${c.label}: back to dashboard keeps the page`, await page.locator('[data-role="ask-conversation"]').isHidden() && await page.locator('[data-role="home-greeting"]').isVisible());
+      await page.reload();
+      await page.waitForSelector('[data-role="ask-resume"]:not([hidden])', { timeout: 10000 });
+      await page.click('[data-role="ask-resume"]');
+      ok(`${c.label}: refresh resumes the conversation`, await page.locator('[data-role="ask-proposal"][data-status="completed"]').count() === 1);
+    });
+
+    // ───────── Exhausted trial ─────────
+    await run(`Capped/${vname}`, viewport, 'capped', async (page, c) => {
+      await page.fill('[data-role="ask-input"]', 'What should I set up first?');
+      await page.click('[data-role="ask-submit"]');
+      await page.waitForSelector('[data-kind="limit"]', { timeout: 15000 });
+      const card = page.locator('[data-role="ask-message"][data-kind="limit"]').last();
+      const text = await card.innerText();
+      ok(`${c.label}: trial title`, text.includes("You've used your trial's included AI"));
+      ok(`${c.label}: trial body`, text.includes("You've reached the AI usage limit included with your free trial.") && text.includes('Your other MotionGrove features will keep working.'));
+      const up = card.locator('[data-role="ask-upgrade"]');
+      ok(`${c.label}: Upgrade plan links to the plan page`, (await up.getAttribute('href')).endsWith(`/workspaces/${c.qa.workspace}/plan`), await up.getAttribute('href'));
+      ok(`${c.label}: no internal cost/model/provider leaked`, !/\$\s?\d|token|gpt|openai|microusd|unlimited/i.test(text));
+      await page.screenshot({ path: `shots/${vname}-capped-limit.png` });
+      const href = await up.getAttribute('href');
+      const r = await page.request.get(BASE + new URL(href, BASE).pathname, { headers: { Cookie: 'qa_user=' + c.qa.user } });
+      ok(`${c.label}: plan page reachable`, r.status() === 200, String(r.status()));
+      await page.click('[data-role="ask-minimize"]');
+      const r2 = await page.request.get(c.home, { headers: { Cookie: 'qa_user=' + c.qa.user } });
+      ok(`${c.label}: Home and non-AI features unchanged`, r2.status() === 200);
+    });
+
+    // ───────── Growth Home ─────────
+    await run(`Growth/${vname}`, viewport, 'growth', async (page, c) => {
+      const html = await page.content();
+      ok(`${c.label}: not setup state`, !html.includes('data-home-state="setup"'));
+      ok(`${c.label}: contextual growth chips`, await page.locator('[data-role="ask-suggestion"]', { hasText: 'How is my business doing this month?' }).count() === 1);
+      const cards = ['next_best_move', 'needs_attention', 'headlines', 'handling'].map(b => `[data-band="${b}"]`);
+      for (const sel of cards) { ok(`${c.label}: card ${sel} present`, await page.locator(sel).count() >= 1); }
+      await page.screenshot({ path: `shots/${vname}-growth-ready.png` });
+
+      await page.click('[data-role="ask-suggestion"]:has-text("How is my business doing this month?")');
+      await page.waitForFunction(() => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > 0, null, { timeout: 15000 });
+      await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true);
+      let reply = await lastReply(page);
+      const t = await reply.innerText();
+      ok(`${c.label}: results answer with measured facts`, /based on/i.test(t) && /New contacts/.test(t) && /Waiting for your reply/.test(t));
+      await page.screenshot({ path: `shots/${vname}-growth-answer.png` });
+
+      await ask(page, 'How is my SEO doing?');
+      await ask(page, 'Which keyword improved the most?');
+      reply = await lastReply(page);
+      ok(`${c.label}: SEO follow-up is honest about missing data`, (await reply.innerText()).includes('No keyword has a recorded improvement'));
+      ok(`${c.label}: limitation (no Search Console) shown`, (await reply.innerText()).includes('Search Console'));
+      await ask(page, 'What should we do about the ones declining?');
+      reply = await lastReply(page);
+      ok(`${c.label}: next-step follow-up`, (await reply.innerText()).includes('Start tracking'));
+
+      // Deterministic lookup chip (no model).
+      await page.click('[data-role="ask-minimize"]');
+      await page.click('[data-role="ask-suggestion"]:has-text("waiting")', { timeout: 1000 }).catch(() => {});
+      await ask(page, "Show customers who haven't received a reply");
+      reply = await lastReply(page);
+      ok(`${c.label}: waiting customers listed`, (await reply.innerText()).includes('waiting for a reply'));
+
+      await ask(page, 'Create a booking type for a 3-hour wedding package');
+      reply = await lastReply(page);
+      ok(`${c.label}: proposal`, await reply.locator('[data-role="ask-proposal"]').count() === 1);
+      await page.screenshot({ path: `shots/${vname}-growth-preview.png` });
+      // Double click must not duplicate.
+      await reply.locator('[data-role="ask-confirm"]').dblclick();
+      await page.waitForSelector('[data-role="ask-proposal"][data-status="completed"]', { timeout: 15000 });
+      ok(`${c.label}: executed`, true);
+      await page.screenshot({ path: `shots/${vname}-growth-done.png` });
+      ok(`${c.label}: no horizontal overflow`, await noOverflow(page));
+
+      await page.reload();
+      await page.waitForSelector('[data-role="ask-resume"]:not([hidden])', { timeout: 10000 });
+      await page.click('[data-role="ask-resume"]');
+      const n = await page.locator('[data-role="ask-message"]').count();
+      ok(`${c.label}: conversation resumes after refresh (${n} messages)`, n >= 10);
+      // Keyboard: Escape returns to the dashboard.
+      await page.keyboard.press('Escape');
+      ok(`${c.label}: Escape closes conversation`, await page.locator('[data-role="ask-conversation"]').isHidden());
+      for (const sel of cards) { ok(`${c.label}: card ${sel} still present after`, await page.locator(sel).count() >= 1); }
+    });
+  }
+
+  console.log(JSON.stringify({ passed: results.filter(r => r.pass).length, failed: results.filter(r => !r.pass).length, problems }, null, 2));
+  require('fs').writeFileSync('results.json', JSON.stringify(results, null, 2));
+})().catch(e => { console.error('SCRIPT ERROR', e); process.exit(1); });

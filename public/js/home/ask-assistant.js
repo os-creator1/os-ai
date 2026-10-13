@@ -429,7 +429,8 @@
     if (minimizeBtn) {
         minimizeBtn.addEventListener('click', function () { setOpen(false); input.focus(); });
     }
-    panel.addEventListener('keydown', function (e) { if (e.key === 'Escape') { setOpen(false); input.focus(); } });
+    // Escape (from the box or anywhere in the conversation) goes back to the dashboard; the conversation is kept.
+    section.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !panel.hidden) { setOpen(false); input.focus(); } });
 
     if (newBtn) {
         newBtn.addEventListener('click', function () {
