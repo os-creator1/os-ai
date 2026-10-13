@@ -450,6 +450,21 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
         return $this->subscriptionSnapshot($subscription);
     }
 
+    public function cancelSubscriptionNow(string $providerSubscriptionId, string $idempotencyKey): PlatformSubscriptionSnapshot
+    {
+        try {
+            $subscription = $this->client()->subscriptions->cancel(
+                $providerSubscriptionId,
+                ['prorate' => false, 'invoice_now' => false],
+                ['idempotency_key' => $idempotencyKey],
+            );
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        return $this->subscriptionSnapshot($subscription);
+    }
+
     public function createBillingPortalSession(string $providerCustomerId, string $returnUrl, ?string $flow = null): string
     {
         $params = ['customer' => $providerCustomerId, 'return_url' => $returnUrl];

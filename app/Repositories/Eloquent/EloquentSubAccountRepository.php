@@ -227,6 +227,8 @@
          */
         public function batchEnable(array $ids): bool
         {
+            \App\Library\PlatformOwner\AccountDeletion\ClosedAccountGuard::assertMayActivate($ids);
+
             DB::transaction(function () use ($ids) {
                 if ($this->ownedQuery()->whereIn('uid', $ids)
                     ->update(['status' => true])

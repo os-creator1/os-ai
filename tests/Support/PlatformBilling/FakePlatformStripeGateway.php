@@ -559,6 +559,18 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         return $this->subscriptionSnapshot($providerSubscriptionId);
     }
 
+    public function cancelSubscriptionNow(string $providerSubscriptionId, string $idempotencyKey): PlatformSubscriptionSnapshot
+    {
+        $this->record('cancelSubscriptionNow', [
+            'subscription' => $providerSubscriptionId,
+            'idempotency_key' => $idempotencyKey,
+        ]);
+
+        $this->setSubscriptionStatus($providerSubscriptionId, PlatformSubscriptionStatus::Canceled);
+
+        return $this->subscriptionSnapshot($providerSubscriptionId);
+    }
+
     public function createBillingPortalSession(string $providerCustomerId, string $returnUrl, ?string $flow = null): string
     {
         $this->record('createBillingPortalSession', [

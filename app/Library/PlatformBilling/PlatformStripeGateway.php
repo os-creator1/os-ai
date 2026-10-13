@@ -102,6 +102,20 @@ interface PlatformStripeGateway
     public function setCancelAtPeriodEnd(string $providerSubscriptionId, bool $cancelAtPeriodEnd): PlatformSubscriptionSnapshot;
 
     /**
+     * Terminate the subscription NOW (no further invoice, no proration refund).
+     * Only the Platform Owner's account-closure lifecycle uses this; a
+     * customer's own cancellation is always {@see setCancelAtPeriodEnd()}.
+     *
+     * `$idempotencyKey` is derived from the closure and subscription, so a
+     * retry after an uncertain outcome reuses it. Cancelling a subscription the
+     * provider already reports as ended is the caller's concern (it reads the
+     * authoritative state first).
+     *
+     * @throws PlatformBillingException
+     */
+    public function cancelSubscriptionNow(string $providerSubscriptionId, string $idempotencyKey): PlatformSubscriptionSnapshot;
+
+    /**
      * §7 — retire an OPEN Checkout Session so it can never be paid.
      *
      * Verified against the current reference: `POST
