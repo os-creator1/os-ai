@@ -23,6 +23,9 @@
      */
     class EloquentCustomerRepository extends EloquentBaseRepository implements CustomerRepository
     {
+        /** Customer hard deletion is retired; see PlatformAccountClosureManager. */
+        public const HARD_DELETE_RETIRED = 'Customer hard deletion is retired. Use the Platform Owner account closure flow.';
+
 
 
         /**
@@ -233,15 +236,7 @@
          */
         public function destroy(User $customer): bool
         {
-            if ( ! $customer->can_delete) {
-                throw new GeneralException(__('locale.exceptions.first_user_cannot_be_destroyed'));
-            }
-
-            if ( ! $customer->delete()) {
-                throw new GeneralException(__('locale.exceptions.delete'));
-            }
-
-            return true;
+            throw new GeneralException(self::HARD_DELETE_RETIRED);
         }
 
 
@@ -259,7 +254,13 @@
                     throw new GeneralException(__('locale.exceptions.super_admin_protect'));
                 }
 
-                $affected = $this->query()->whereIn('uid', $ids)->pluck('id')->map(fn ($id) => (int) $id)->all();
+                // Lock all selected users and reject the ENTIRE batch if a closure
+                // exists. No user is enabled and no status event is emitted.
+                $selected = $this->query()->whereIn('uid', $ids)->lockForUpdate()->get(['id', 'uid']);
+                if (\App\Models\PlatformAccountClosure::query()->whereIn('user_uid', $selected->pluck('uid'))->exists()) {
+                    throw new GeneralException('Cannot enable an account that is closing or closed.');
+                }
+                $affected = $selected->pluck('id')->map(fn ($id) => (int) $id)->all();
 
                 if ($this->query()->whereIn('uid', $ids)->update(['status' => true])) {
                     // The single canonical seam for "user reactivated": one event per account, after commit.
@@ -318,21 +319,7 @@
          */
         public function batchDelete(array $ids): bool
         {
-            DB::transaction(function () use ($ids) {
-                $superAdminUid = $this->query()->where('id', 1)->value('uid');
-
-                if (in_array($superAdminUid, $ids, true)) {
-                    throw new GeneralException(__('locale.exceptions.super_admin_delete'));
-                }
-
-                if ($this->query()->whereIn('uid', $ids)->delete()) {
-                    return true;
-                }
-
-                throw new GeneralException(__('locale.exceptions.delete'));
-            });
-
-            return true;
+            throw new GeneralException(self::HARD_DELETE_RETIRED);
         }
 
 

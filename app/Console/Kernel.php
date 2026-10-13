@@ -96,6 +96,9 @@
             // so withoutOverlapping() is protection against a slow run
             // stacking on the next tick, not a correctness requirement.
             $schedule->command('workspaces:advance-account-lifecycle')->hourly()->withoutOverlapping();
+            // Platform Owner account deletion: retry provider cancellations and
+            // other prerequisites of unfinished closures. Idempotent and claim-guarded.
+            $schedule->command('platform:advance-account-closures')->everyTenMinutes()->withoutOverlapping();
             // Customer Experience Slice 3 §4.2 — retention/disposal for the
             // bounded webhook rejection audit.
             $schedule->command('messaging:purge-webhook-rejections')->daily();

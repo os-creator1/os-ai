@@ -494,6 +494,25 @@ class FakeAgencyStripeGateway implements AgencyStripeGateway
         return $this->subscriptionSnapshot($providerSubscriptionId);
     }
 
+    public function cancelSubscriptionNow(
+        string $connectedAccountId,
+        string $providerSubscriptionId,
+        string $idempotencyKey,
+    ): AgencySubscriptionSnapshot {
+        $this->record('cancelSubscriptionNow', [
+            'account' => $connectedAccountId,
+            'subscription' => $providerSubscriptionId,
+            'idempotency_key' => $idempotencyKey,
+        ]);
+        $this->assertSubscriptionOnAccount($providerSubscriptionId, $connectedAccountId);
+
+        $this->subscriptions[$providerSubscriptionId]['status'] = AgencyClientSubscriptionStatus::Canceled;
+        $this->subscriptions[$providerSubscriptionId]['canceled_at'] ??= \Carbon\CarbonImmutable::now()->startOfSecond();
+        $this->subscriptions[$providerSubscriptionId]['ended_at'] ??= \Carbon\CarbonImmutable::now()->startOfSecond();
+
+        return $this->subscriptionSnapshot($providerSubscriptionId);
+    }
+
     public function createBillingPortalSession(
         string $connectedAccountId,
         string $providerCustomerId,

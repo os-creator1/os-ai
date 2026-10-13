@@ -46,7 +46,9 @@
                         <tr>
                             <td><strong>{{ trim($u->first_name . ' ' . $u->last_name) ?: '—' }}</strong><div class="text-muted small">{{ $u->email }}</div></td>
                             <td>
-                                @if ($u->status)
+                                @if ($u->closure_state)
+                                    <span class="badge badge-light-danger">{{ $u->closure_state }}</span>
+                                @elseif ($u->status)
                                     <span class="badge badge-light-success">Active</span>
                                 @else
                                     <span class="badge badge-light-danger">Suspended</span>
