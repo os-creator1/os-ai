@@ -17,3 +17,4 @@
     this application; results of Ask are built with textContent.
 --}}
 <script src="{{ asset('js/home/command-center.js') }}?v={{ @filemtime(public_path('js/home/command-center.js')) }}" defer></script>
+<script src="{{ asset('js/home/ask-assistant.js') }}?v={{ @filemtime(public_path('js/home/ask-assistant.js')) }}" defer></script>

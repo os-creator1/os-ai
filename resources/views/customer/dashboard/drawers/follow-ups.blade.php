@@ -34,7 +34,10 @@
 
             <label class="visually-hidden" for="reply-{{ $loop->index }}">Your reply to {{ $item['name'] }}</label>
             <textarea id="reply-{{ $loop->index }}" name="message" class="form-control mb-50" rows="3" maxlength="1600" required
-                      placeholder="Write a reply — you review it before it is sent"></textarea>
+                      placeholder="Write a reply — you review it before it is sent">{{ $item['draft'] ?? '' }}</textarea>
+            @if(! empty($item['draft']))
+                <p class="text-caption text-muted mb-50" data-role="follow-up-draft-note">Prepared by Ask MotionGrove — nothing has been sent. Edit it if you like, then press Send.</p>
+            @endif
             <x-button type="submit" size="sm" data-role="follow-up-send">Send reply</x-button>
         </form>
     @endforeach

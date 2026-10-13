@@ -34,6 +34,20 @@ final readonly class AssistantContext
     ) {
     }
 
+    /**
+     * A context for deciding which tools are OFFERED (chip availability), built from the identity Home already holds —
+     * no extra query. It carries no loaded Workspace row and must never be handed to a tool's read()/execute().
+     *
+     * @param  array<string, array{drawer: ?string, drawerUrl: ?string, fullUrl: ?string, label: string}|null>  $actions
+     * @param  array<int, string>  $scoped
+     */
+    public static function forOffering(int $workspaceId, string $workspaceUid, Business $business, User $user, CustomerContext $customer, MenuEntitlements $entitlements, array $actions, array $scoped): self
+    {
+        $workspace = (new Workspace())->forceFill(['id' => $workspaceId, 'uid' => $workspaceUid]);
+
+        return new self($workspace, $business, $user, $customer, $entitlements, $actions, $scoped);
+    }
+
     public function can(string $permission): bool
     {
         return Gate::forUser($this->user)->allows($permission);

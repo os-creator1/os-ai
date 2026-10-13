@@ -77,7 +77,7 @@ class HomeActionsController extends Controller
         $common = ['action' => $action, 'scoped' => $scoped, 'business' => $business, 'viewingAs' => $context->isViewingAsClient()];
 
         return match ($drawer) {
-            'follow-ups' => $this->followUps($business, $user, $common),
+            'follow-ups' => $this->followUps($request, $business, $user, $common),
             'booking-type' => $this->bookingTypeForm($workspaceUid, $businessUid, $business, $user, $common),
             'appointment' => $this->appointmentForm($request, $workspace, $business, $user, $common),
             'upcoming' => $this->upcoming($business, $user, $common),
@@ -108,8 +108,10 @@ class HomeActionsController extends Controller
 
     // ─── drawers ──────────────────────────────────────────────────────────
 
-    private function followUps(Business $business, User $user, array $common): View
+    private function followUps(Request $request, Business $business, User $user, array $common): View
     {
+        $draft = $this->assistantDraft($request, $business, $user);
+
         $rows = $this->conversations->awaitingReplyConversations($business, (int) $user->id, 5);
         $names = ChatBox::displayNamesFor($business, array_map(fn (array $r): object => (object) ['id' => $r['id'], 'to' => $r['to']], $rows));
         [$workspaceUid, $businessUid] = $common['scoped'];
@@ -121,12 +123,40 @@ class HomeActionsController extends Controller
             'at' => $r['at'],
             'token' => (string) Str::uuid(),
             'replyUrl' => route('customer.workspaces.businesses.conversations.reply', [$workspaceUid, $businessUid, $r['uid']]),
+            // Ask MotionGrove prepared this text; it is only pre-filled. Sending is still the customer pressing Send.
+            'draft' => $draft !== null && $draft['conversation_uid'] === $r['uid'] ? $draft['message'] : null,
         ], $rows);
 
         return view('customer.dashboard.drawers.follow-ups', $common + [
             'items' => $items,
             'total' => $this->conversations->awaitingReplyCount($business, null, (int) $user->id),
         ]);
+    }
+
+    /**
+     * The reply Ask MotionGrove prepared for this customer, if the drawer was opened from its proposal: found only by
+     * uid AND this Business AND this actor, and only a `draft_reply` the customer has already approved. Pre-fills a
+     * textarea and nothing else.
+     *
+     * @return array{conversation_uid: string, message: string}|null
+     */
+    private function assistantDraft(Request $request, Business $business, User $user): ?array
+    {
+        $uid = (string) $request->query('proposal', '');
+
+        if ($uid === '') {
+            return null;
+        }
+
+        $proposal = \App\Models\AssistantActionProposal::query()
+            ->where('uid', $uid)
+            ->where('business_id', $business->id)
+            ->where('user_id', $user->id)
+            ->where('tool_key', 'draft_reply')
+            ->where('status', \App\Models\AssistantActionProposal::HANDED_OFF)
+            ->first();
+
+        return $proposal === null ? null : ['conversation_uid' => (string) ($proposal->params['conversation_uid'] ?? ''), 'message' => (string) ($proposal->params['message'] ?? '')];
     }
 
     private function bookingTypeForm(string $workspaceUid, string $businessUid, Business $business, User $user, array $common): View
