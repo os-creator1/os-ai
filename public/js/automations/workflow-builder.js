@@ -3715,8 +3715,17 @@ function initChooser(root) {
     card.appendChild(el('span', 'wf-chooser-card__title', labelSet.title || recipe.titleKey));
     card.appendChild(el('span', 'wf-chooser-card__description', labelSet.description || recipe.descriptionKey));
     var trigger = triggerLine(recipe);
+    var foot = el('span', 'wf-chooser-card__foot');
     if (trigger) {
-      card.appendChild(el('span', 'wf-chooser-card__trigger', trigger));
+      foot.appendChild(el('span', 'wf-chooser-card__trigger', trigger));
+    }
+    if (!unavailable) {
+      var use = el('span', 'wf-chooser-card__use', text.use_template || '');
+      use.appendChild(chooserIcon('arrow-right'));
+      foot.appendChild(use);
+    }
+    if (trigger || !unavailable) {
+      card.appendChild(foot);
     }
     tile.appendChild(card);
 
@@ -3791,6 +3800,20 @@ function initChooser(root) {
     });
     body.appendChild(el('span', 'wf-chooser-banner__text', sentences.join(' ')));
     banner.appendChild(body);
+
+    // One shortcut per missing product, only where this person may open its setup.
+    var actions = el('span', 'wf-chooser-banner__actions');
+    needed.forEach(function (kind) {
+      if (setupLinks[kind]) {
+        var link = el('a', 'btn btn-outline-secondary btn-sm', text["banner_".concat(kind)] || '');
+        link.href = setupLinks[kind];
+        link.dataset.role = 'wf-chooser-banner-link';
+        actions.appendChild(link);
+      }
+    });
+    if (actions.childNodes.length > 0) {
+      banner.appendChild(actions);
+    }
     banner.hidden = false;
   }
 }

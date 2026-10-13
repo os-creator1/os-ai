@@ -76,6 +76,7 @@
                     <span class="wf-chooser-scratch__title">{{ __('automations.v2.chooser.from_scratch_title') }}</span>
                     <span class="wf-chooser-scratch__desc">{{ __('automations.v2.chooser.from_scratch_description') }}</span>
                 </span>
+                <x-ds-icon class="wf-chooser-scratch__arrow" name="arrow-right" size="16" aria-hidden="true" />
             </button>
         </div>
 

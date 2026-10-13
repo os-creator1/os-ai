@@ -8,8 +8,8 @@
         .mg-appt{max-width:68rem}
         .mg-appt-back{display:inline-flex;align-items:center;gap:.25rem;margin-bottom:1rem;font-size:.875rem;color:var(--color-text-muted)}
         .mg-appt-head{display:flex;align-items:center;gap:1rem;margin-bottom:1.25rem}
-        .mg-appt-tile{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:4.5rem;padding:.5rem 0;border:1px solid var(--color-border-neutral,#e5e5e5);border-radius:.75rem;background:var(--color-surface,#fff);line-height:1.1}
-        .mg-appt-tile__month{font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--color-primary)}
+        .mg-appt-tile{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:4.5rem;padding:0 0 .4rem;overflow:hidden;border:1px solid var(--color-border-neutral,#e5e5e5);border-radius:.75rem;background:var(--color-surface,#fff);line-height:1.1}
+        .mg-appt-tile__month{align-self:stretch;text-align:center;padding:.2rem 0;margin-bottom:.3rem;font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#fff;background:var(--color-primary)}
         .mg-appt-tile__day{font-size:1.6rem;font-weight:700}
         .mg-appt-tile__weekday{font-size:.7rem;color:var(--color-text-muted)}
         .mg-appt-head__title{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:0 0 .25rem}
@@ -17,9 +17,23 @@
         .mg-appt-grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:1rem;align-items:start}
         .mg-appt-col{display:flex;flex-direction:column;gap:1rem;min-width:0}
         .mg-appt-grid.is-single{grid-template-columns:minmax(0,1fr)}
-        .mg-appt-details{display:grid;grid-template-columns:8rem minmax(0,1fr);gap:.6rem 1rem;margin:0}
-        .mg-appt-details dt{font-weight:500;color:var(--color-text-muted)}
-        .mg-appt-details dd{margin:0;overflow-wrap:anywhere}
+        .mg-appt-col>.card{margin-bottom:0}
+        .mg-appt-details{margin:0}
+        .mg-appt-row{display:flex;align-items:center;gap:.85rem;padding:.75rem 0;border-top:1px solid var(--color-border-neutral,#e5e5e5)}
+        .mg-appt-row:first-child{border-top:0;padding-top:0}
+        .mg-appt-row:last-child{padding-bottom:0}
+        .mg-appt-row__icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:2.25rem;height:2.25rem;border-radius:999px;background:var(--color-surface-muted,#f1efea);color:var(--color-text-muted)}
+        .mg-appt-row__body{min-width:0;flex:1 1 auto}
+        .mg-appt-details dt{font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-muted)}
+        .mg-appt-details dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+        .mg-appt-help{margin:-.25rem 0 .75rem;font-size:.8rem;color:var(--color-text-muted)}
+        .mg-appt-resched-foot{display:flex;align-items:center;justify-content:flex-end;gap:.75rem;padding-top:1rem;border-top:1px solid var(--color-border-neutral,#e5e5e5)}
+        .mg-appt .btn.mg-appt-complete{background:#1f7a4d!important;border-color:#1f7a4d!important;color:#fff!important}
+        .mg-appt-tile.is-cancelled .mg-appt-tile__month{background:#8a8680}
+        .mg-appt-tile.is-cancelled .mg-appt-tile__day{text-decoration:line-through;color:var(--color-text-muted)}
+        .mg-appt-banner__note{margin-top:.15rem;font-size:.85rem;color:var(--color-text-muted)}
+        .mg-appt .mg-appt-danger .btn.btn-danger{background:transparent!important;color:var(--color-danger,#c0392b)!important;border:1px solid #e3b4ae!important}
+        .mg-appt .mg-appt-danger .btn.btn-danger:hover{background:var(--color-danger,#c0392b)!important;color:#fff!important;border-color:var(--color-danger,#c0392b)!important}
         .mg-appt-resched{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin-bottom:1rem}
         .mg-appt-resched .form-control{min-width:0;width:100%}
         .mg-appt-outcome{display:flex;flex-direction:column;gap:.5rem}
@@ -32,9 +46,7 @@
         @media (max-width:767.98px){
             .mg-appt-grid{grid-template-columns:minmax(0,1fr)}
             .mg-appt-resched{grid-template-columns:minmax(0,1fr)}
-            .mg-appt-details{grid-template-columns:minmax(0,1fr);gap:.1rem}
-            .mg-appt-details dd{margin-bottom:.6rem}
-            .mg-appt-head{align-items:flex-start}
+                        .mg-appt-head{align-items:flex-start}
         }
     </style>
 @endsection
@@ -52,7 +64,7 @@
         $isScheduled = $appointment->status === \App\Enums\Calendar\AppointmentStatus::Scheduled;
         $statusLabels = ['scheduled' => 'Scheduled', 'cancelled' => 'Cancelled', 'completed' => 'Completed', 'no_show' => 'No-show'];
         $statusVariant = match ($appointment->status->value) {
-            'completed' => 'success', 'cancelled' => 'neutral', 'no_show' => 'danger', default => 'accent',
+            'completed' => 'success', 'cancelled' => 'danger', 'no_show' => 'warning', default => 'accent',
         };
     @endphp
 
@@ -62,6 +74,7 @@
             && \Illuminate\Support\Facades\Route::has('customer.workspaces.businesses.people.show')) {
             $contactUrl = route('customer.workspaces.businesses.people.show', [$workspace->uid, $business->uid, $contact['uid']]);
         }
+        $isCancelled = $appointment->status === \App\Enums\Calendar\AppointmentStatus::Cancelled;
         $statusText = $statusLabels[$appointment->status->value] ?? $appointment->status->value;
     @endphp
 
@@ -73,7 +86,7 @@
         </a>
 
         <section class="mg-appt-head">
-            <div class="mg-appt-tile" data-role="appointment-date-tile" aria-hidden="true">
+            <div class="mg-appt-tile {{ $isCancelled ? 'is-cancelled' : '' }}" data-role="appointment-date-tile" aria-hidden="true">
                 <span class="mg-appt-tile__month">{{ $startLocal->format('M') }}</span>
                 <span class="mg-appt-tile__day">{{ $startLocal->format('j') }}</span>
                 <span class="mg-appt-tile__weekday">{{ $startLocal->format('D') }}</span>
@@ -99,10 +112,16 @@
             <x-alert variant="danger" class="mb-2" role="alert">{{ $errors->first() }}</x-alert>
         @endif
 
-        @if (! $isScheduled && $appointment->cancellation_reason)
+        @if ($isCancelled)
             <div class="mg-appt-banner is-cancelled" data-role="appointment-cancellation-banner">
-                <x-ds-icon name="circle-alert" size="18" aria-hidden="true" />
-                <div><strong>Cancellation reason</strong><div>{{ $appointment->cancellation_reason }}</div></div>
+                <x-ds-icon name="calendar-x" size="18" aria-hidden="true" />
+                <div>
+                    <strong>This appointment was cancelled</strong>
+                    @if ($appointment->cancellation_reason)
+                        <div>Cancellation reason: <strong>{{ $appointment->cancellation_reason }}</strong></div>
+                    @endif
+                    <div class="mg-appt-banner__note" data-role="appointment-closed">This appointment is cancelled and can no longer be changed.</div>
+                </div>
             </div>
         @endif
 
@@ -110,24 +129,31 @@
             <div class="mg-appt-col">
                 <x-card title="Details" data-section="appointment-details">
                     <dl class="mg-appt-details">
-                        <dt>Customer</dt>
-                        <dd>
-                            {{ $contact['name'] ?? $contact['phone'] ?? '—' }}
+                        <div class="mg-appt-row">
+                            <span class="mg-appt-row__icon" aria-hidden="true"><x-ds-icon name="user" size="16" /></span>
+                            <div class="mg-appt-row__body"><dt>Customer</dt><dd>{{ $contact['name'] ?? $contact['phone'] ?? '—' }}
                             @if ($contactUrl)
-                                <a href="{{ $contactUrl }}" class="ms-1" data-role="appointment-contact-link">View contact</a>
-                            @endif
-                        </dd>
-                        <dt>Location</dt>
-                        <dd>{{ $location->name ?: 'This location' }}</dd>
-                        <dt>Staff</dt>
-                        <dd>{{ $appointment->staff ? $staffName($appointment->staff) : '—' }}</dd>
-                        <dt>Rescheduled</dt>
-                        <dd>{{ (int) $appointment->reschedule_count }} time(s)</dd>
+                                <a href="{{ $contactUrl }}" class="ms-1 fw-normal" data-role="appointment-contact-link">View contact</a>
+                            @endif</dd></div>
+                        </div>
+                        <div class="mg-appt-row">
+                            <span class="mg-appt-row__icon" aria-hidden="true"><x-ds-icon name="map-pin" size="16" /></span>
+                            <div class="mg-appt-row__body"><dt>Location</dt><dd>{{ $location->name ?: 'This location' }}</dd></div>
+                        </div>
+                        <div class="mg-appt-row">
+                            <span class="mg-appt-row__icon" aria-hidden="true"><x-ds-icon name="user-round" size="16" /></span>
+                            <div class="mg-appt-row__body"><dt>Staff</dt><dd>{{ $appointment->staff ? $staffName($appointment->staff) : '—' }}</dd></div>
+                        </div>
+                        <div class="mg-appt-row">
+                            <span class="mg-appt-row__icon" aria-hidden="true"><x-ds-icon name="refresh-cw" size="16" /></span>
+                            <div class="mg-appt-row__body"><dt>Rescheduled</dt><dd>{{ (int) $appointment->reschedule_count }} time(s)</dd></div>
+                        </div>
                     </dl>
                 </x-card>
 
                 @if ($isScheduled)
                     <x-card title="Reschedule" data-section="appointment-reschedule">
+                        <p class="mg-appt-help">Pick a new date, time or staff member.</p>
                         <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.appointments.reschedule', $withAppointment) }}">
                             @csrf
                             <div class="mg-appt-resched">
@@ -149,8 +175,10 @@
                                     </select>
                                 </div>
                             </div>
-                            <x-button type="submit" variant="primary" data-role="reschedule">Reschedule</x-button>
-                            <span class="text-caption ms-1">Times are in {{ $timezone }}.</span>
+                            <div class="mg-appt-resched-foot">
+                                <span class="text-caption">Times are in {{ $timezone }}.</span>
+                                <x-button type="submit" variant="primary" data-role="reschedule">Reschedule</x-button>
+                            </div>
                         </form>
                     </x-card>
                 @endif
@@ -159,10 +187,11 @@
             @if ($isScheduled)
                 <div class="mg-appt-col">
                     <x-card title="Outcome" data-section="appointment-outcome">
+                        <p class="mg-appt-help">How did it go?</p>
                         <div class="mg-appt-outcome">
                             <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.appointments.complete', $withAppointment) }}">
                                 @csrf
-                                <x-button type="submit" variant="primary" icon="check" data-role="complete">Mark completed</x-button>
+                                <x-button type="submit" variant="primary" icon="check" class="mg-appt-complete" data-role="complete">Mark completed</x-button>
                             </form>
 
                             <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.appointments.no-show', $withAppointment) }}">
@@ -173,6 +202,7 @@
                     </x-card>
 
                     <x-card title="Cancel appointment" class="mg-appt-danger" data-section="appointment-cancel">
+                        <p class="mg-appt-help">Once cancelled, it can no longer be changed.</p>
                         <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.appointments.cancel', $withAppointment) }}">
                             @csrf
                             <div class="form-group">
@@ -186,10 +216,10 @@
             @endif
         </div>
 
-        @unless ($isScheduled)
+        @if (! $isScheduled && ! $isCancelled)
             <p class="mg-appt-closed" data-role="appointment-closed">
                 This appointment is {{ strtolower($statusText) }} and can no longer be changed.
             </p>
-        @endunless
+        @endif
     </div>
 @endsection

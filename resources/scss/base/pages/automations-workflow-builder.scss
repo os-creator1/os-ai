@@ -1292,7 +1292,8 @@ $wf-panel-width: 24rem;
     padding: 0.75rem 1.25rem;
     text-align: left;
 
-    &__text { display: flex; flex-direction: column; }
+    &__text { display: flex; flex-direction: column; text-align: left; }
+    &__arrow { margin-left: auto; }
     &__title { font-weight: 600; }
     &__desc { font-size: 0.75rem; opacity: 0.85; }
 }
@@ -1315,8 +1316,11 @@ $wf-panel-width: 24rem;
 
     &[hidden] { display: none; }
     &__icon { color: var(--color-warning, #b45309); display: inline-flex; }
-    &__body { display: flex; flex-direction: column; gap: 0.125rem; }
+    &__body { display: flex; flex-direction: column; gap: 0.125rem; flex: 1 1 auto; min-width: 0; }
+    &__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-left: auto; }
     &__text { font-size: 0.8125rem; color: var(--color-text-secondary, #676664); }
+    &__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-left: auto; }
+    &__body { flex: 1 1 auto; min-width: 0; }
 }
 
 .wf-chooser-group {
@@ -1392,14 +1396,36 @@ $wf-panel-width: 24rem;
     &--setup { background: var(--color-warning-soft-bg, #fdf6e7); color: var(--color-warning, #b45309); }
 }
 
+.wf-chooser-card__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    width: 100%;
+    margin-top: auto;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--color-border, #e5e5e5);
+}
+
 .wf-chooser-card__trigger {
-    margin-top: 0.375rem;
     font-size: 0.75rem;
     color: var(--color-text-muted, #8a8987);
 }
 
+.wf-chooser-card__use {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-primary, #7367f0);
+    white-space: nowrap;
+}
+
 @media (max-width: 767.98px) {
+    .wf-chooser-banner { flex-wrap: wrap; }
     .wf-chooser-create { flex-direction: column; align-items: stretch; }
+    .wf-chooser-create .wf-chooser__name { flex: 0 0 auto; }
     .wf-chooser-scratch { justify-content: center; }
     .wf-chooser-grid { grid-template-columns: minmax(0, 1fr); }
 }

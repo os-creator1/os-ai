@@ -40,7 +40,8 @@
         .mg-settings-card[data-tone="communication"] .mg-settings-icon{background:#e6eefb;color:#2b5fb8}
         .mg-settings-card[data-tone="billing-team"] .mg-settings-icon{background:#e3f1e8;color:#2f7a52}
         .mg-settings-text{flex:1 1 auto;min-width:0}
-        .mg-settings-name{display:block;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+        .mg-settings .mg-settings-row,.mg-settings .mg-settings-row:hover{color:var(--color-text-primary,#262522)}
+        .mg-settings-name{color:var(--color-text-primary,#262522);display:block;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
         .mg-settings-desc{display:block;font-size:.8rem;color:var(--color-text-muted,#6f6d67);line-height:1.35;overflow-wrap:anywhere}
         .mg-settings-chev{flex:none;color:#a9a59d}
         .mg-settings-features{grid-column:1 / -1}

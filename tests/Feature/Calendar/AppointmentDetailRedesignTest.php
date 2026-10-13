@@ -103,10 +103,11 @@ class AppointmentDetailRedesignTest extends TestCase
 
         $this->assertMatchesRegularExpression('/data-role="appointment-status"[^>]*>\s*Cancelled\s*</', $html);
         $this->assertStringContainsString('data-role="appointment-cancellation-banner"', $html);
-        $this->assertStringContainsString('Customer rang to cancel', $html);
+        $this->assertStringContainsString('Cancellation reason: <strong>Customer rang to cancel</strong>', $html);
         $this->assertStringContainsString('data-section="appointment-details"', $html);
         $this->assertStringContainsString('This appointment is cancelled and can no longer be changed.', $html);
         $this->assertStringContainsString('mg-appt-grid is-single', $html);
+        $this->assertStringContainsString('mg-appt-tile is-cancelled', $html);
 
         foreach (['appointment-reschedule', 'appointment-outcome', 'appointment-cancel'] as $section) {
             $this->assertStringNotContainsString('data-section="' . $section . '"', $html);
@@ -117,12 +118,15 @@ class AppointmentDetailRedesignTest extends TestCase
         }
     }
 
-    public function test_cancelled_without_a_reason_shows_no_empty_banner(): void
+    public function test_cancelled_without_a_reason_shows_the_banner_without_inventing_one(): void
     {
         $appointment = $this->booked();
         $this->post($this->url('cancel', $appointment))->assertRedirect();
 
-        $this->assertStringNotContainsString('appointment-cancellation-banner', $this->show($appointment));
+        $html = $this->show($appointment);
+
+        $this->assertStringContainsString('This appointment was cancelled', $html);
+        $this->assertStringNotContainsString('Cancellation reason:', $html, 'No reason was given, so none is invented.');
     }
 
     public function test_completed_and_no_show_are_read_only_with_accurate_wording(): void
