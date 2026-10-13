@@ -19,6 +19,7 @@
             /* the shared block renderer reads these; point them at the Business brand */
             --color-primary:var(--pd-accent);
             --color-primary-soft-bg:var(--pd-soft);
+            --color-primary-border:var(--pd-line);
             --color-link:var(--pd-accent);
         }
         body{margin:0;background:#f6f5f2;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--pd-text);line-height:1.5}
@@ -106,7 +107,7 @@
         <h1 class="pd-title">Kitchen renovation proposal</h1>
     </div>
 
-    
+
     <aside class="pd-summary" data-role="summary" aria-label="Summary">
         <div class="pd-summary-card">
             <div class="pd-eyebrow">Total</div>
@@ -123,7 +124,7 @@
     </aside>
 
     <main class="pd-main">
-        
+
         <section class="pd-card" aria-label="Proposal">
             <div class="pd-issuer">
                                     <span class="pd-logo" aria-hidden="true">H</span>
@@ -132,12 +133,12 @@
                     <p class="pd-sub">Main</p>                </div>
             </div>
 
-            
-            
-            
+
+
+
             <div class="pd-legacy">
-            
-            
+
+
             <table data-role="lines">
                 <thead>
                 <tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr>
@@ -169,7 +170,7 @@
                         </tr>
                                         </tbody>
                 </table>
-                
+
                 <div id="pay"><p class="muted" data-role="payment-note">
                                     This document can be paid once it has been signed.
                             </p>
@@ -180,9 +181,9 @@
                     <fieldset class="pd-sign" id="sign" data-role="sign-form">
             <legend>Sign this document</legend>
 
-            
+
             <form method="POST" action="http://localhost/documents/UID/TOKEN/sign">
-                <input type="hidden" name="_token" value="X" autocomplete="off">                
+                <input type="hidden" name="_token" value="X" autocomplete="off">
                 <input type="hidden" name="displayed_version_uid" value="VUID">
                 <div class="pd-row">
                     <div>
@@ -198,7 +199,7 @@
                 <label for="typed_name">Type your name to sign</label>
                 <input id="typed_name" type="text" name="typed_name" maxlength="160" value="" placeholder="Your name" autocomplete="off" required>
 
-                
+
                 <label class="consent" for="consent_ack" data-role="consent-statement">
                     <input id="consent_ack" type="checkbox" required>
                     <span>By typing my name below and submitting this form, I agree to the contents of this document as shown on this page, and I intend my typed name to act as my signature.</span>
