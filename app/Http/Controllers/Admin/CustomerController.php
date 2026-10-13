@@ -2,6 +2,8 @@
 
     namespace App\Http\Controllers\Admin;
 
+    use App\Library\PlatformOwner\AccountDeletion\AccountClosureRefused;
+    use App\Library\PlatformOwner\AccountDeletion\ClosedAccountGuard;
     use App\Exceptions\GeneralException;
     use App\Http\Requests\Customer\AddSendingServerRequest;
     use App\Http\Requests\Customer\AddUnitRequest;
@@ -520,6 +522,11 @@
 
                 $this->authorize('edit customer');
 
+                if ( ! $customer->status) {
+                    // Switching ON: never for a closed/closing account.
+                    ClosedAccountGuard::assertMayActivate([(string) $customer->uid]);
+                }
+
                 $customer->status = ! $customer->status;
 
                 if ($customer->save()) {
@@ -534,7 +541,7 @@
                     'message' => __('locale.exceptions.something_went_wrong'),
                 ]);
 
-            } catch (ModelNotFoundException|AuthorizationException $exception) {
+            } catch (ModelNotFoundException|AuthorizationException|AccountClosureRefused $exception) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => $exception->getMessage(),
@@ -568,7 +575,14 @@
 
                     $this->authorize('edit customer');
 
-                    $this->customers->batchEnable($ids);
+                    try {
+                        $this->customers->batchEnable($ids);
+                    } catch (AccountClosureRefused $exception) {
+                        return response()->json([
+                            'status'  => 'error',
+                            'message' => $exception->getMessage(),
+                        ]);
+                    }
 
                     return response()->json([
                         'status'  => 'success',

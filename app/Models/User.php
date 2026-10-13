@@ -141,6 +141,14 @@
         {
             parent::boot();
 
+            // A closed/closing account can never be switched back on, by any caller.
+            static::saving(function ($item) {
+                if ($item->exists && $item->isDirty('status') && $item->status
+                    && \App\Models\PlatformAccountClosure::query()->where('user_uid', $item->uid)->exists()) {
+                    throw new \App\Library\PlatformOwner\AccountDeletion\AccountClosureRefused(__('A closed or closing account cannot be reactivated. Nothing was changed.'));
+                }
+            });
+
             // Create uid when creating list.
             static::creating(function ($item) {
                 // Create new uid

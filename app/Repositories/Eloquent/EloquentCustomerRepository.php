@@ -254,6 +254,9 @@
                     throw new GeneralException(__('locale.exceptions.super_admin_protect'));
                 }
 
+                // Reject the WHOLE batch before any write or queued event.
+                \App\Library\PlatformOwner\AccountDeletion\ClosedAccountGuard::assertMayActivate($ids);
+
                 $affected = $this->query()->whereIn('uid', $ids)->pluck('id')->map(fn ($id) => (int) $id)->all();
 
                 if ($this->query()->whereIn('uid', $ids)->update(['status' => true])) {
