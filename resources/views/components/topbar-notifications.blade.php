@@ -9,18 +9,10 @@
     assistive technology, never invented or capped here.
 --}}
 @php
-    // Shared customer request query-budget optimization
-    // (Automations V2 §18) — one read of this customer's
-    // unread notifications serves both the unread indicator
-    // and the dropdown's latest-10 list below, instead of
-    // querying the identical `user_id`/`mark_read` scope
-    // twice.
-    $unreadNotifications = \App\Models\Notifications::where('user_id', Auth::user()->id)->where('mark_read', 0)->latest()->get();
-    // Implementation Contract 17 §12.G — a SEPARATE substrate
-    // (platform_database_notifications), already filtered to
-    // exactly what this actor is authorized to see right now.
+    // Only current, re-authorized MotionGrove activity belongs in this bell.
+    // Inherited Ultimate SMS notification rows are legacy and must not surface.
     $documentActivity = app(\App\Library\Documents\DocumentActivityCenterReader::class)->unreadFor(Auth::user());
-    $count = $unreadNotifications->count() + $documentActivity->count();
+    $count = $documentActivity->count();
 @endphp
 <li class="nav-item dropdown dropdown-notification mg-topbar-item" data-role="topbar-notifications">
     <button type="button" class="mg-topbar-btn mg-topbar-icon-btn" id="dropdown-notifications"
@@ -41,165 +33,10 @@
         </li>
         <li class="scrollable-container media-list">
 
-            @foreach($unreadNotifications->take(10) as $value)
-
-                <a class="d-flex" href="{{ route('user.account', ['tab' => 'notification']) }}">
-                    <div class="list-item d-flex align-items-start">
-                        @switch($value->notification_type)
-
-                            @case('user')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-primary">
-                                        <div class="avatar-content"><x-ds-icon name="user" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span
-                                                class="fw-bolder">{{__('locale.labels.you_have_new_user')}}
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                </div>
-                                @break
-
-                            @case('plan')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-success">
-                                        <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span
-                                                class="fw-bolder">{{__('locale.labels.you_have_new_subscription')}}
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                </div>
-
-                                @break
-
-                            @case('senderid')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-danger">
-                                        <div class="avatar-content"><x-ds-icon name="user-check" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span
-                                                class="fw-bolder">{{__('locale.labels.new_sender_id_notification')}}
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                </div>
-                                @break
-
-                            @case('number')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-info">
-                                        <div class="avatar-content"><x-ds-icon name="phone" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span class="fw-bolder">New Number sales</span>
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                </div>
-                                @break
-
-                            @case('keyword')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-warning">
-                                        <div class="avatar-content"><x-ds-icon name="clipboard" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span class="fw-bolder">New Keyword sales</span>
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                </div>
-                                @break
-
-                            @case('chatbox')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-danger">
-                                        <div class="avatar-content"><x-ds-icon name="message-square" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span class="fw-bolder">New Inbox Message</span>
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                </div>
-                                @break
-
-
-                            @case('subscription')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-danger">
-                                        <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span class="fw-bolder">Subscription Expired!</span>
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
-                                </div>
-                                @break
-
-                            @case('smsunit')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-danger">
-                                        <div class="avatar-content"><x-ds-icon name="message-square" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span class="fw-bolder">SMS Unit Running Low!</span>
-                                    </p>
-                                    <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
-                                </div>
-                                @break
-
-                            @case('topup')
-                                <div class="me-1">
-                                    <div class="avatar bg-light-danger">
-                                        <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="list-item-body flex-grow-1">
-                                    <p class="media-heading"><span class="fw-bolder">Offline Topup Payment!</span>
-                                    </p>
-                                    <small class="notification-text">{{ str_limit($value->message, 60) }}</small>
-                                </div>
-                                @break
-                        @endswitch
-                        <small>
-                            <time class="media-meta">{{ \App\Library\Tool::formatHumanTime($value->created_at) }}</time>
-                        </small>
-
-                    </div>
-                </a>
-
-            @endforeach
-
             {{-- Implementation Contract 17 §12.G, Blueprint §24 — Payments &
                  Contracts document/payment activity. A SEPARATE producer
                  (platform_database_notifications, via
-                 DocumentActivityCenterReader) from the legacy list above: each
+                 DocumentActivityCenterReader) from legacy Ultimate SMS notifications: each
                  row here has already been re-authorized right now, so nothing
                  further to check at render time. --}}
             @foreach($documentActivity->take(10) as $activityItem)
@@ -224,9 +61,8 @@
                 </a>
             @endforeach
         </li>
-        <li class="dropdown-menu-footer">
-            <a class="btn btn-primary w-100"
-               href="{{ route('user.account', ['tab' => 'notification']) }}">{{__('locale.labels.read_all_notifications')}}</a>
-        </li>
+        @if($documentActivity->isEmpty())
+            <li class="px-2 py-2 text-muted">No new notifications.</li>
+        @endif
     </ul>
 </li>
