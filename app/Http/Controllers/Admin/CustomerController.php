@@ -2,8 +2,6 @@
 
     namespace App\Http\Controllers\Admin;
 
-    use App\Library\PlatformOwner\AccountDeletion\AccountClosureRefused;
-    use App\Library\PlatformOwner\AccountDeletion\ClosedAccountGuard;
     use App\Exceptions\GeneralException;
     use App\Http\Requests\Customer\AddSendingServerRequest;
     use App\Http\Requests\Customer\AddUnitRequest;
@@ -522,14 +520,18 @@
 
                 $this->authorize('edit customer');
 
-                if ( ! $customer->status) {
-                    // Switching ON: never for a closed/closing account.
-                    ClosedAccountGuard::assertMayActivate([(string) $customer->uid]);
-                }
+                // The legacy toggle must not re-enable a customer whose closure
+                // has begun, even if the request was made from the older admin UI.
+                $saved = \Illuminate\Support\Facades\DB::transaction(function () use ($customer) {
+                    $locked = User::query()->whereKey($customer->id)->lockForUpdate()->firstOrFail();
+                    if (\App\Models\PlatformAccountClosure::query()->where('user_uid', $locked->uid)->exists()) {
+                        throw new GeneralException('This account is closing or closed and cannot be reactivated.');
+                    }
+                    $locked->status = ! $locked->status;
+                    return $locked->save();
+                });
 
-                $customer->status = ! $customer->status;
-
-                if ($customer->save()) {
+                if ($saved) {
                     return response()->json([
                         'status'  => 'success',
                         'message' => __('locale.customer.customer_successfully_change'),
@@ -541,7 +543,7 @@
                     'message' => __('locale.exceptions.something_went_wrong'),
                 ]);
 
-            } catch (ModelNotFoundException|AuthorizationException|AccountClosureRefused $exception) {
+            } catch (ModelNotFoundException|AuthorizationException|GeneralException $exception) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => $exception->getMessage(),
@@ -577,11 +579,8 @@
 
                     try {
                         $this->customers->batchEnable($ids);
-                    } catch (AccountClosureRefused $exception) {
-                        return response()->json([
-                            'status'  => 'error',
-                            'message' => $exception->getMessage(),
-                        ]);
+                    } catch (GeneralException $e) {
+                        return response()->json(['status' => 'error', 'message' => $e->getMessage()]);
                     }
 
                     return response()->json([

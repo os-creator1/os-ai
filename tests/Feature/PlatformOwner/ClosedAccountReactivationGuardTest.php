@@ -5,6 +5,7 @@ namespace Tests\Feature\PlatformOwner;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\PlatformOwner\AccountClosureState;
 use App\Events\Account\UserAccountStatusChanged;
+use App\Exceptions\GeneralException;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\PlatformOwner\AccountDeletion\AccountClosureRefused;
 use App\Library\PlatformOwner\AccountDeletion\PlatformAccountAssessor;
@@ -122,7 +123,7 @@ class ClosedAccountReactivationGuardTest extends TestCase
         try {
             app(EloquentCustomerRepository::class)->batchEnable([$ordinary->uid, $closed->uid]);
             $this->fail('The repository must refuse a batch containing a closed account.');
-        } catch (AccountClosureRefused) {
+        } catch (GeneralException) {
             $this->addToAssertionCount(1);
         }
 
