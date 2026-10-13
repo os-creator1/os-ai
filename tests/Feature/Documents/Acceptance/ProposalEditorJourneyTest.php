@@ -331,7 +331,7 @@ class ProposalEditorJourneyTest extends TestCase
         $this->assertStringContainsString('data-role="payment-section"', $html);
         // The page owns its background: dark text on a UA-dark canvas was unreadable around the paper.
         $this->assertStringContainsString('color-scheme:light', $html);
-        $this->assertStringContainsString('background:#eceae5', $html);
+        $this->assertStringContainsString('background:#f6f5f2', $html);
         $this->assertStringContainsString('data-kind="deposit"', $html);
         $this->assertStringContainsString('data-kind="balance"', $html);
         $this->assertStringContainsString('345.67', $html);

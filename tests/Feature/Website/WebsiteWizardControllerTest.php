@@ -37,7 +37,7 @@ class WebsiteWizardControllerTest extends TestCase
         $this->seed(PhotoboothWebsiteSetupQuestionnaireSeeder::class);
     }
 
-    public function test_a_business_that_has_not_chosen_sees_the_three_website_choices(): void
+    public function test_a_business_that_has_not_chosen_sees_the_two_website_choices(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
@@ -49,7 +49,7 @@ class WebsiteWizardControllerTest extends TestCase
             ->assertSee('Build my website')
             ->assertSee('Use my existing website')
             ->assertSee('Connect existing website')
-            ->assertSee('Do this later')
+            ->assertDontSee('Do this later')
             ->assertDontSee('Manage pages')
             ->assertDontSee('Publish');
     }
