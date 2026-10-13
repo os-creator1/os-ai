@@ -83,6 +83,7 @@ final class CustomerMenuBuilder
         'locations' => 'Addresses and the areas this business serves.',
         'custom-fields' => 'The extra details you keep about contacts, like event date or venue.',
         'text-messaging' => 'This business’s number and whether texting is ready.',
+        'email' => 'The mailbox this business sends and receives email from.',
         'usage-billing' => 'Balance, top-ups, payment method and spending limits.',
         'plan' => 'What your plan includes and your subscription.',
         'team' => 'Who can work here, their role and what they can open.',
