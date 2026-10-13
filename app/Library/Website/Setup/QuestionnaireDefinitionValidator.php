@@ -354,7 +354,7 @@ final class QuestionnaireDefinitionValidator
      */
     private function validateStepFlags(string $key, array $step, string $inputType, string $targetModule): void
     {
-        foreach (['suggest', 'shared_fact'] as $flag) {
+        foreach (['suggest', 'shared_fact', 'area_pages', 'complete_list', 'owner_confirms'] as $flag) {
             if (! array_key_exists($flag, $step)) {
                 continue;
             }
@@ -368,8 +368,114 @@ final class QuestionnaireDefinitionValidator
             throw new DomainException("Step '{$key}' enables suggestions, which only a business_location string_list supports.");
         }
 
+        if (array_key_exists('owner_confirms', $step) && $targetModule !== 'knowledge_profile') {
+            throw new DomainException("Step '{$key}' sets owner_confirms, which only a knowledge_profile step supports.");
+        }
+
+        if (array_key_exists('template_hint', $step)) {
+            $hint = $step['template_hint'];
+            $options = array_map('strval', array_keys((array) ($step['options'] ?? [])));
+
+            if ($inputType !== 'select' || ! is_array($hint) || $hint === [] || array_diff(array_map('strval', array_keys($hint)), $options) !== []
+                || collect($hint)->contains(fn ($template) => ! is_string($template) || preg_match('/^[a-z0-9_]{1,40}$/', $template) !== 1)) {
+                throw new DomainException("Step '{$key}' has an invalid template_hint (a select step maps its own option values to template keys).");
+            }
+        }
+
+        if (array_key_exists('defaults', $step)) {
+            $ok = ($step['defaults'] === 'about' && $inputType === 'textarea' && $targetModule === 'answers')
+                || ($step['defaults'] === 'faq' && $inputType === 'repeatable_group' && $targetModule === 'faq');
+
+            if (! $ok) {
+                throw new DomainException("Step '{$key}' declares defaults that this question type cannot be prefilled with ('about' for an answers textarea, 'faq' for an FAQ list).");
+            }
+        }
+
+        if (array_key_exists('complete_list', $step) && ! ($inputType === 'repeatable_group' && $targetModule === 'backdrop')) {
+            throw new DomainException("Step '{$key}' sets complete_list, which only a backdrop repeatable group supports.");
+        }
+
+        if (array_key_exists('area_pages', $step) && ! ($inputType === 'string_list' && $targetModule === 'business_location')) {
+            throw new DomainException("Step '{$key}' sets area_pages, which only a business_location string_list supports.");
+        }
+
         if (($step['shared_fact'] ?? false) && ! in_array($targetModule, ['business', 'business_location'], true)) {
             throw new DomainException("Step '{$key}' is marked a shared fact but does not target a Business or its location.");
+        }
+
+        $this->validateCardListShape($key, $step, $inputType, $targetModule);
+    }
+
+    /** The per-card fields a service / add-on card list may offer. */
+    public const ROW_FIELDS = ['name', 'description', 'features', 'price', 'visible', 'cover', 'extra_images'];
+
+    public const MAX_PRESETS = 20;
+
+    /**
+     * `presets` (selectable starting points with a professionally written
+     * default description), `row_fields` (which inputs each card shows),
+     * `item_kind` (a business_service step's rows are 'service' booths or
+     * 'event' types) and `item_type` (a catalog_item card list's rows are
+     * 'package' or 'product' add-ons) only mean something on a
+     * business_service / catalog_item repeatable group; anywhere else they
+     * would be dead data, so they are refused.
+     */
+    private function validateCardListShape(string $key, array $step, string $inputType, string $targetModule): void
+    {
+        $isCardList = $inputType === 'repeatable_group' && in_array($targetModule, ['business_service', 'catalog_item'], true);
+
+        foreach (['presets', 'row_fields', 'item_kind', 'item_type'] as $field) {
+            if (array_key_exists($field, $step) && ! $isCardList) {
+                throw new DomainException("Step '{$key}' declares {$field}, which only a business_service or catalog_item repeatable group supports.");
+            }
+        }
+
+        if (! $isCardList) {
+            return;
+        }
+
+        if (isset($step['item_kind']) && ! ($targetModule === 'business_service' && in_array($step['item_kind'], ['service', 'event'], true))) {
+            throw new DomainException("Step '{$key}' has an invalid item_kind.");
+        }
+
+        if (isset($step['item_type']) && ! ($targetModule === 'catalog_item' && in_array($step['item_type'], ['package', 'product'], true))) {
+            throw new DomainException("Step '{$key}' has an invalid item_type.");
+        }
+
+        if (isset($step['row_fields'])) {
+            $fields = $step['row_fields'];
+
+            if (! is_array($fields) || $fields === [] || ! array_is_list($fields) || array_diff($fields, self::ROW_FIELDS) !== [] || ! in_array('name', $fields, true)) {
+                throw new DomainException("Step '{$key}' has invalid row_fields (a list of name plus any of " . implode(', ', self::ROW_FIELDS) . ').');
+            }
+        }
+
+        if (isset($step['presets'])) {
+            $presets = $step['presets'];
+
+            if (! is_array($presets) || $presets === [] || ! array_is_list($presets) || count($presets) > self::MAX_PRESETS) {
+                throw new DomainException("Step '{$key}' requires 1 to " . self::MAX_PRESETS . ' presets.');
+            }
+
+            $seen = [];
+            foreach ($presets as $preset) {
+                $presetKey = is_array($preset) ? ($preset['key'] ?? null) : null;
+                $label = is_array($preset) ? ($preset['label'] ?? null) : null;
+                $description = is_array($preset) ? ($preset['description'] ?? null) : null;
+
+                if (! is_string($presetKey) || preg_match('/^[a-z0-9_]{1,40}$/', $presetKey) !== 1 || isset($seen[$presetKey])) {
+                    throw new DomainException("Step '{$key}' has an invalid or repeated preset key.");
+                }
+                $seen[$presetKey] = true;
+
+                if (! is_string($label) || trim($label) === '' || mb_strlen($label) > self::MAX_OPTION_LABEL) {
+                    throw new DomainException("Step '{$key}' has an invalid preset label.");
+                }
+
+                if ($description !== null && (! is_string($description) || mb_strlen($description) > 500)) {
+                    throw new DomainException("Step '{$key}' has a preset description that is too long.");
+                }
+            }
         }
     }
 

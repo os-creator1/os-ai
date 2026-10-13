@@ -102,6 +102,66 @@
             });
         }
         updateMoveButtons(container);
+        refreshPresets();
+    }
+
+    // ------------------------------------------------ preset chips (booth types, events…)
+    function presetContainer(bar) {
+        var host = bar.closest('[data-step]');
+        return host ? host.querySelector('[data-repeatable]') : null;
+    }
+
+    function refreshPresets() {
+        if (!screen) { return; }
+        screen.querySelectorAll('[data-preset-bar]').forEach(function (bar) {
+            var container = presetContainer(bar);
+            if (!container) { return; }
+            var used = {};
+            directRows(container).forEach(function (row) {
+                var hidden = row.querySelector('[data-preset-value]');
+                if (hidden && hidden.value) { used[hidden.value] = true; }
+            });
+            bar.querySelectorAll('[data-preset-add]').forEach(function (chip) {
+                var on = !!used[chip.getAttribute('data-preset-key')];
+                chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+                chip.classList.toggle('btn-primary', on);
+                chip.classList.toggle('btn-outline-primary', !on);
+                var mark = chip.querySelector('[data-preset-mark]');
+                if (mark) { mark.textContent = on ? '\u2713 ' : ''; }
+            });
+        });
+    }
+
+    function presetAdd(chip) {
+        var container = presetContainer(chip.closest('[data-preset-bar]'));
+        if (!container) { return; }
+        var key = chip.getAttribute('data-preset-key');
+        var rows = directRows(container);
+        var existing = rows.filter(function (row) { var h = row.querySelector('[data-preset-value]'); return h && h.value === key; })[0];
+
+        if (existing) {
+            var existingName = existing.querySelector('[data-item-name]');
+            existing.scrollIntoView({ block: 'center' });
+            if (existingName) { existingName.focus(); }
+            return;
+        }
+
+        // The list starts with one blank card: use it for the first choice rather than leaving it empty.
+        var row = rows.filter(function (candidate) {
+            var name = candidate.querySelector('[data-item-name]');
+            var preset = candidate.querySelector('[data-preset-value]');
+            return name && name.value.trim() === '' && !(preset && preset.value);
+        })[0];
+
+        if (!row) { addRow(container); var all = directRows(container); row = all[all.length - 1]; }
+
+        row.querySelector('[data-item-name]').value = chip.getAttribute('data-preset-label');
+        var description = row.querySelector('[data-item-description]');
+        if (description) { description.value = chip.getAttribute('data-preset-description') || ''; }
+        row.querySelector('[data-preset-value]').value = key;
+        refreshPresets();
+        row.scrollIntoView({ block: 'nearest' });
+        wizard.markDirty(0);
     }
 
     function addRow(container) {
@@ -115,6 +175,10 @@
         var wrap = document.createElement('div');
         wrap.innerHTML = template.innerHTML.replace(/__INDEX__/g, String(rows.length)).trim();
         var row = wrap.firstElementChild;
+        // The template's stable item key is rendered once; every added card needs its own.
+        row.querySelectorAll('input[name$="[key]"]').forEach(function (k) {
+            k.value = (window.crypto && crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : String(Date.now()) + Math.random().toString(36).slice(2)).slice(0, 12);
+        });
         holderOf(container).appendChild(row);
 
         if (container.hasAttribute('data-nested')) { nameNested(container, outerIndexOf(container)); }
@@ -463,6 +527,134 @@
         });
     }
 
+    // ------------------------------------------------------------- quote form
+    function formPreviewRender(box) {
+        var holder = box.querySelector('[data-form-preview-fields]');
+        if (!holder) { return; }
+        holder.textContent = '';
+        var checked = box.querySelectorAll('input[type="checkbox"]:checked');
+        if (checked.length === 0) {
+            var none = document.createElement('p');
+            none.className = 'text-caption mb-0';
+            none.textContent = 'Choose at least one field.';
+            holder.appendChild(none);
+            return;
+        }
+        checked.forEach(function (box) {
+            var wrap = document.createElement('div');
+            wrap.className = 'mb-2';
+            var label = document.createElement('label');
+            label.className = 'form-label mb-1';
+            label.textContent = box.getAttribute('data-form-field-label');
+            var input = document.createElement(/message/i.test(box.value) ? 'textarea' : 'input');
+            input.className = 'form-control';
+            input.disabled = true;
+            wrap.appendChild(label); wrap.appendChild(input);
+            holder.appendChild(wrap);
+        });
+    }
+
+    // ------------------------------------------------------------ duplicate a package
+    function duplicatePackage(button) {
+        var source = button.closest('[data-row]');
+        var container = containerOf(source);
+        if (!container) { return; }
+        var value = function (suffix) { var el = source.querySelector('[name$="' + suffix + '"]'); return el ? el.value : ''; };
+
+        addRow(container);
+        var rows = directRows(container);
+        var copy = rows[rows.length - 1];
+        // A freshly added row is an ordinary NEW package (no uid), so saving creates a second catalog package.
+        var set = function (suffix, text) { var el = copy.querySelector('[name$="' + suffix + '"]'); if (el) { el.value = text; } };
+        var name = value('[name]');
+        set('[name]', name ? name + ' (copy)' : '');
+        set('[price]', value('[price]'));
+        set('[currency_code]', value('[currency_code]') || 'USD');
+        set('[description]', value('[description]'));
+        var link = copy.querySelector('[data-package-link]');
+        var sourceLink = source.querySelector('[data-package-link]');
+        if (link && sourceLink) { link.value = sourceLink.value; }
+
+        var features = Array.prototype.slice.call(source.querySelectorAll('input[name$="[features][]"]')).map(function (i) { return i.value.trim(); }).filter(Boolean);
+        var featureBox = copy.querySelector('[data-repeatable][data-nested]');
+        features.forEach(function (text, i) {
+            if (featureBox) {
+                if (i > 0 || directRows(featureBox).length === 0) { addRow(featureBox); }
+                var featureRows = directRows(featureBox);
+                var input = featureRows[featureRows.length - 1].querySelector('input[type="text"]');
+                if (input) { input.value = text; }
+            }
+        });
+        reindex(container);
+        copy.scrollIntoView({ block: 'nearest' });
+        var nameInput = copy.querySelector('[name$="[name]"]');
+        if (nameInput) { nameInput.focus(); nameInput.select(); }
+        wizard.markDirty(0);
+    }
+
+    // ---------------------------------------------- About / FAQ default copy
+    function defaultFetch(url, params, done) {
+        var query = new URLSearchParams(params).toString();
+        fetch(url + '?' + query, { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) { done(res.ok && res.data ? res.data : null); })
+            .catch(function () { done(null); });
+    }
+
+    function aboutAction(button) {
+        var box = button.closest('[data-about-box]');
+        var text = box.querySelector('[data-about-text]');
+        var status = box.querySelector('[data-about-status]');
+        var action = button.getAttribute('data-about-action');
+        function say(message) { status.textContent = message; show(status, !!message); }
+
+        if (action === 'keep') { text.readOnly = true; say('Kept \u2014 you can still change it later.'); return; }
+        if (action === 'edit') { text.readOnly = false; text.focus(); say('Edit it however you like.'); return; }
+
+        var last = box.getAttribute('data-last');
+        var changed = last !== null ? text.value !== last : false;
+        if (changed && !window.confirm('Replace the text you edited?')) { return; }
+
+        var variant = parseInt(box.getAttribute('data-variant') || '0', 10);
+        var next = action === 'another' ? variant + 1 : 0;
+        button.disabled = true;
+        say('Writing\u2026');
+        defaultFetch(box.getAttribute('data-default-url'), { kind: 'about', variant: String(next) }, function (data) {
+            button.disabled = false;
+            if (!data || !data.text) { say('Couldn\u2019t load a suggestion right now.'); return; }
+            text.value = data.text;
+            text.readOnly = true;
+            box.setAttribute('data-variant', String(next % (data.variants || 4)));
+            box.setAttribute('data-last', data.text);
+            say(action === 'another' ? 'Here\u2019s another suggestion.' : 'Restored the default.');
+            wizard.markDirty(0);
+        });
+    }
+
+    function faqRestore(button) {
+        var host = button.closest('[data-faq-defaults]');
+        var container = host.parentElement.querySelector('[data-repeatable]');
+        var status = host.querySelector('[data-faq-status]');
+        if (!container) { return; }
+        if (!window.confirm('Replace your questions with the default set? Your changes to the current list will be lost.')) { return; }
+        button.disabled = true;
+        defaultFetch(host.getAttribute('data-default-url'), { kind: 'faq' }, function (data) {
+            button.disabled = false;
+            if (!data || !data.items || !data.items.length) { status.textContent = 'Couldn\u2019t load the defaults right now.'; show(status, true); return; }
+            directRows(container).slice(1).forEach(function (row) { row.remove(); });
+            data.items.forEach(function (item, i) {
+                if (i > 0) { addRow(container); }
+                var row = directRows(container)[i];
+                row.querySelector('input[name$="[key]"]').value = item.key || '';
+                row.querySelector('input[name$="[question]"]').value = item.question;
+                row.querySelector('textarea[name$="[answer]"], input[name$="[answer]"]').value = item.answer;
+            });
+            reindex(container);
+            status.textContent = 'Restored the default questions.'; show(status, true);
+            wizard.markDirty(0);
+        });
+    }
+
     // ------------------------------------------- nearby service-area suggestions
     function areaValues(container) {
         return directRows(container).map(function (row) { var i = row.querySelector('input[type="text"]'); return i ? i.value.trim() : ''; }).filter(Boolean);
@@ -567,6 +759,29 @@
             wizard.markDirty(0);
             return;
         }
+        if ((el = target.closest('[data-duplicate-package]'))) { event.preventDefault(); duplicatePackage(el); return; }
+        if ((el = target.closest('[data-form-recommended]'))) {
+            event.preventDefault();
+            var formBox = el.closest('[data-form-fields]');
+            var recommended = JSON.parse(formBox.getAttribute('data-recommended') || '[]');
+            formBox.querySelectorAll('input[type="checkbox"]').forEach(function (cb) { cb.checked = recommended.indexOf(cb.value) !== -1; });
+            formPreviewRender(formBox);
+            wizard.markDirty(0);
+            return;
+        }
+        if ((el = target.closest('[data-form-preview-toggle]'))) {
+            event.preventDefault();
+            var previewBox = el.closest('[data-form-fields]');
+            var panel = previewBox.querySelector('[data-form-preview]');
+            var open = panel.classList.contains('d-none');
+            panel.classList.toggle('d-none', !open);
+            el.setAttribute('aria-expanded', open ? 'true' : 'false');
+            if (open) { formPreviewRender(previewBox); }
+            return;
+        }
+        if ((el = target.closest('[data-about-action]'))) { event.preventDefault(); aboutAction(el); return; }
+        if ((el = target.closest('[data-faq-restore]'))) { event.preventDefault(); faqRestore(el); return; }
+        if ((el = target.closest('[data-preset-add]'))) { event.preventDefault(); presetAdd(el); return; }
         if ((el = target.closest('[data-logo-remove]'))) { event.preventDefault(); logoRemove(el.closest('[data-logo-box]')); return; }
         if ((el = target.closest('[data-area-suggest-more]'))) { event.preventDefault(); areaSuggestMore(el); return; }
         if ((el = target.closest('[data-area-refresh]'))) { event.preventDefault(); areaRefresh(el); return; }
@@ -597,6 +812,8 @@
     root.addEventListener('change', function (event) {
         var target = event.target;
         var box;
+
+        if (target.matches('[data-form-fields] input[type="checkbox"]')) { formPreviewRender(target.closest('[data-form-fields]')); }
 
         if (target.matches('[data-logo-input]')) {
             if (target.files && target.files[0]) { logoUpload(target.closest('[data-logo-box]'), target.files[0]); }
@@ -630,6 +847,8 @@
             var hidden = box.querySelector('[data-image-path]');
             setPickerImage(box, hidden.value, '');
         });
+
+        refreshPresets();
     }
 
     // =====================================================================

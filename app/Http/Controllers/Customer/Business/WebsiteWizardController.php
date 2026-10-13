@@ -104,6 +104,7 @@ class WebsiteWizardController extends CustomerBaseController
         private readonly \App\Library\Website\Design\WebsiteTemplatePreviewRenderer $templatePreviews,
         private readonly \App\Library\Website\Setup\ServiceAreaSuggestions $areaSuggestions,
         private readonly \App\Library\Website\Setup\WizardSharedFactWriter $sharedFacts,
+        private readonly \App\Library\Website\Setup\WizardContentDefaults $contentDefaults,
     ) {
     }
 
@@ -258,6 +259,8 @@ class WebsiteWizardController extends CustomerBaseController
         // Precedence: the owner's saved answer, then the canonical record, then (service areas only) a grounded suggestion.
         $shown = $answers + \App\Library\Website\Setup\WizardPrefill::forSteps($business, $screen, $answers);
         $areaState = $this->serviceAreaState($business, $workspaceUid, $businessUid, $screen, $answers, $shown);
+        $defaultsState = $this->withContentDefaults($business, $workspaceUid, $businessUid, $screen, $answers, $areaState['answers']);
+        $areaState['answers'] = $defaultsState['answers'];
 
         return view('customer.business.website.wizard.steps.question', [
             'workspaceUid' => $workspaceUid,
@@ -270,9 +273,11 @@ class WebsiteWizardController extends CustomerBaseController
             'step' => $screen[0],
             'previousStepKey' => $previousStepKey ?? self::TEMPLATE_STEP,
             'areaState' => $areaState['state'],
+            'defaultsState' => $defaultsState['state'],
             'answers' => $areaState['answers'],
             'answer' => $areaState['answers'][$stepKey] ?? null,
             'packageRows' => $this->packageRowsFor($business, $screen, $answers),
+            'serviceChoices' => $this->serviceChoices($answers + $areaState['answers']),
             'reviewSource' => $this->reviewSources->forBusiness($business, $screen),
             // Screens, then the Review screen (the look is chosen there — no separate style step).
             'progress' => ['current' => $position !== false ? $position + 1 : 1, 'total' => count($screens) + 1, 'label' => $screen[0]['prompt']],
@@ -324,6 +329,103 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         return ['answers' => $shown, 'state' => $state];
+    }
+
+    /**
+     * About / FAQ screens: when the owner has no saved answer, the screen starts from complete default copy
+     * written from their confirmed facts (never blank boxes, never invented claims). Display only until they
+     * continue; a saved answer always wins.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @param  array<string, mixed>  $answers  the owner's saved answers
+     * @param  array<string, mixed>  $shown
+     * @return array{answers: array<string, mixed>, state: array<string, array<string, mixed>>}
+     */
+    private function withContentDefaults(Business $business, string $workspaceUid, string $businessUid, array $screen, array $answers, array $shown): array
+    {
+        $state = [];
+
+        foreach ($screen as $screenStep) {
+            $kind = $screenStep['defaults'] ?? null;
+
+            if ($kind === null) {
+                continue;
+            }
+
+            $key = $screenStep['key'];
+            $saved = $answers[$key] ?? null;
+            $hasSaved = is_string($saved) ? trim($saved) !== '' : (is_array($saved) && $saved !== []);
+
+            if (! $hasSaved) {
+                $shown[$key] = $kind === 'about'
+                    ? $this->contentDefaults->about($business, $answers)
+                    : $this->contentDefaults->faq($business, $answers);
+            }
+
+            $state[$key] = [
+                'kind' => $kind,
+                'source' => $hasSaved ? 'saved' : 'default',
+                'url' => route('customer.workspaces.businesses.website.setup.content-default', [$workspaceUid, $businessUid]),
+            ];
+        }
+
+        return ['answers' => $shown, 'state' => $state];
+    }
+
+    /**
+     * "Try another suggestion" / "Restore default" for About, "Restore defaults" for the FAQ. Read-only: nothing
+     * is saved until the owner continues.
+     */
+    public function contentDefault(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+
+        $data = $request->validate([
+            'kind' => 'required|in:about,faq',
+            'variant' => 'nullable|integer|min:0|max:1000',
+        ]);
+
+        $answers = $response->answers ?? [];
+
+        return response()->json($data['kind'] === 'about'
+            ? ['text' => $this->contentDefaults->about($business, $answers, (int) ($data['variant'] ?? 0)), 'variants' => \App\Library\Website\Setup\WizardContentDefaults::ABOUT_VARIANTS]
+            : ['items' => $this->contentDefaults->faq($business, $answers)]);
+    }
+
+    /**
+     * The brand-style answer names the look the site starts with: when it CHANGES, a website that has no pages
+     * yet (just the setup shell) takes the matching template. A site that is already built is never re-skinned
+     * by an answer (a deliberate rebuild is the only thing that changes its layout), and the template picked on
+     * the Review screen afterwards always wins.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @param  array<string, mixed>  $previous  answers before this save
+     * @param  array<string, mixed>  $values  step key => value just saved
+     */
+    private function applyTemplateHint(QuestionnaireResponse $response, array $screen, array $previous, array $values): void
+    {
+        $website = $response->website;
+
+        if ($website === null || $response->edit_mode || $website->pages()->exists()) {
+            return;
+        }
+
+        foreach ($screen as $step) {
+            $hint = $step['template_hint'] ?? null;
+            $chosen = $values[$step['key']] ?? null;
+
+            if (! is_array($hint) || ! is_string($chosen) || ! isset($hint[$chosen]) || ($previous[$step['key']] ?? null) === $chosen) {
+                continue;
+            }
+
+            $template = WebsiteTemplate::where('key', $hint[$chosen])->where('is_active', true)->first();
+
+            if ($template !== null && $website->template_key !== $template->key) {
+                $this->starterDrafts->updateShellTemplate($website, $template);
+            }
+        }
     }
 
     /**
@@ -487,6 +589,8 @@ class WebsiteWizardController extends CustomerBaseController
             }
         }
 
+        $previousAnswers = $response->answers ?? [];
+
         try {
             $response = $this->sessionManager->saveAnswers($response, $screenKey, $values, $expectedRevision);
         } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
@@ -497,6 +601,8 @@ class WebsiteWizardController extends CustomerBaseController
                 : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
+        $this->applyTemplateHint($response, $screen, $previousAnswers, $values);
+
         // Independent-review correction round 3 (item 11) — FAQ and
         // custom-section answers are the two presentation-only surfaces
         // that reach real generated page content through
@@ -504,7 +610,7 @@ class WebsiteWizardController extends CustomerBaseController
         // edit-mode session saving either after the website already has
         // generated pages must flag that a deliberate rebuild is still
         // needed — never silently imply the live pages already changed.
-        if ($response->website !== null && collect($screen)->contains(fn (array $s) => in_array($s['target_module'], ['custom_section', 'faq'], true))) {
+        if ($response->website !== null && collect($screen)->contains(fn (array $s) => in_array($s['target_module'], ['custom_section', 'faq', 'business_service', 'backdrop'], true))) {
             $this->markPresentationChangePending($response->website);
         }
 
@@ -744,6 +850,7 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         $lastAttempt = $response->website?->guidedGenerationAttempts()->latest('id')->first();
+        $guidedReview = app(\App\Library\Website\Setup\GuidedReviewSnapshot::class)->forResponse($business, $response);
 
         return view('customer.business.website.wizard.steps.generating', [
             'workspaceUid' => $workspaceUid,
@@ -757,7 +864,9 @@ class WebsiteWizardController extends CustomerBaseController
                 return $screens !== [] ? (string) end($screens)[0]['key'] : (string) $response->current_step_key;
             })(),
             'lastAttemptFailed' => $lastAttempt !== null && $lastAttempt->status === WebsiteGuidedGenerationAttempt::STATUS_FAILED,
-            'generationAvailable' => (bool) config('services.openai.active'),
+            // The guided builder writes from template defaults and needs no AI at all.
+            'generationAvailable' => $guidedReview !== null || (bool) config('services.openai.active'),
+            'guidedReview' => $guidedReview,
             'answerSummary' => $this->answerSummary($response),
         ] + $this->lookAndPlanData($business, $response));
     }
@@ -1057,7 +1166,7 @@ class WebsiteWizardController extends CustomerBaseController
                 $customerFaq = WizardPresentationAnswers::customerFaq($response);
                 $idempotencyKey = $this->stableIdempotencyKey($response, $website);
 
-                $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($response), WizardPresentationAnswers::serviceAreas($response));
+                $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($response), WizardPresentationAnswers::serviceAreas($response), WizardPresentationAnswers::blueprintContext($response));
 
                 if ($attempt->status !== WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
                     $this->sessionManager->recordGenerationFailure($response);
@@ -1109,7 +1218,7 @@ class WebsiteWizardController extends CustomerBaseController
      * generate() above, which detects `edit_mode` and reconciles facts
      * without ever regenerating pages.
      */
-    public function editSetupAnswers(string $workspaceUid, string $businessUid): RedirectResponse
+    public function editSetupAnswers(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -1134,6 +1243,15 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         $response = $this->sessionManager->beginEdit($business, $completed);
+
+        // "Add the missing photos" deep-links to the question that takes them.
+        $requested = (string) $request->query('step', '');
+        if ($requested !== '' && $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $requested) !== []) {
+            $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $requested);
+            $this->sessionManager->goToStep($response, $screen[0]['key']);
+
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screen[0]['key']]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
     }
@@ -1469,7 +1587,7 @@ class WebsiteWizardController extends CustomerBaseController
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
-        $stepKey = $this->stepKeyForModule($response, 'backdrop');
+        $stepKey = $this->photoStepKey($response);
 
         $request->validate([
             'photo' => 'required|image|mimes:jpeg,jpg,png,webp|max:8192',
@@ -1504,7 +1622,7 @@ class WebsiteWizardController extends CustomerBaseController
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
-        $this->stepKeyForModule($response, 'backdrop');
+        $this->photoStepKey($response);
 
         $path = (string) $request->validate(['path' => 'required|string|max:255'])['path'];
         $this->businessImages->deleteIfUnreferenced($business, $path);
@@ -2023,6 +2141,19 @@ class WebsiteWizardController extends CustomerBaseController
                 $items = array_slice($items, 0, 1);
             }
 
+            // Every card has its OWN stable key (it is what a saved record is matched by): a repeated key — a
+            // submission that cloned one — would make two cards overwrite one record, so a duplicate gets a new key.
+            $seenKeys = [];
+            $items = array_map(function (array $item) use (&$seenKeys) {
+                $key = (string) ($item['key'] ?? '');
+                if ($key === '' || isset($seenKeys[$key])) {
+                    $item['key'] = Str::random(12);
+                }
+                $seenKeys[(string) $item['key']] = true;
+
+                return $item;
+            }, $items);
+
             return array_values(array_map(fn (array $item) => $this->normalizeRepeatableItem($item, $step, $website), $items));
         }
 
@@ -2099,6 +2230,25 @@ class WebsiteWizardController extends CustomerBaseController
         return $rows;
     }
 
+    /**
+     * The booths the owner has entered (or already has), as `card key => name`, for pairing a package with a booth photo.
+     *
+     * @param  array<string, mixed>  $answers  saved answers with canonical prefill
+     * @return array<string, string>
+     */
+    private function serviceChoices(array $answers): array
+    {
+        $choices = [];
+
+        foreach ((array) ($answers['booth_services'] ?? []) as $row) {
+            if (is_array($row) && trim((string) ($row['name'] ?? '')) !== '' && is_string($row['key'] ?? null) && ($row['visible'] ?? true)) {
+                $choices[$row['key']] = trim((string) $row['name']);
+            }
+        }
+
+        return $choices;
+    }
+
     private function repeatableItemNonEmptyCheck(array $step): \Closure
     {
         if ($step['target_module'] === 'faq') {
@@ -2165,6 +2315,59 @@ class WebsiteWizardController extends CustomerBaseController
                 ? array_values(array_filter(array_map(fn ($f) => trim((string) $f), $item['features']), fn ($f) => $f !== ''))
                 : array_values(array_filter(array_map('trim', explode("\n", (string) ($item['features_text'] ?? '')))));
             $normalized['image'] = null; // per-item package image upload is an explicitly deferred follow-up — not wired into this generic form
+        }
+
+        if ($targetModule === 'business_service' && isset($step['row_fields'])) {
+            $fields = $step['row_fields'];
+            $business = $website?->business;
+
+            $normalized['kind'] = $step['item_kind'] ?? 'service';
+            $normalized['preset'] = trim((string) ($item['preset'] ?? '')) ?: null;
+            // A card that does not offer the switch is simply shown.
+            $normalized['visible'] = in_array('visible', $fields, true) ? ! empty($item['visible']) : true;
+
+            $normalized['features'] = in_array('features', $fields, true)
+                ? array_values(array_filter(array_map(fn ($f) => trim((string) $f), (array) ($item['features'] ?? [])), fn ($f) => $f !== ''))
+                : [];
+
+            $priceText = in_array('price', $fields, true) ? trim((string) ($item['price'] ?? '')) : '';
+            $priceText = str_replace([',', ' '], '', $priceText);
+            if ($priceText !== '' && ! is_numeric($priceText)) {
+                throw new InvalidAnswerException('Enter a price as a number, like 299 or 299.50 — or leave it blank.');
+            }
+            $normalized['starting_price'] = $priceText !== '' ? round((float) $priceText, 2) : null;
+            $normalized['currency_code'] = $normalized['starting_price'] !== null
+                ? strtoupper(trim((string) ($item['currency_code'] ?? '')) ?: (string) ($business?->currency_code ?: 'USD'))
+                : null;
+
+            // Photos were stored the moment they were chosen; only their paths travel here and every fact
+            // about a file is re-derived from the file itself. The cover comes first, then up to a few extras.
+            $paths = [];
+            if (in_array('cover', $fields, true) && trim((string) ($item['image_path'] ?? '')) !== '') {
+                $paths[] = trim((string) $item['image_path']);
+            }
+            if (in_array('extra_images', $fields, true)) {
+                foreach ((array) ($item['extra_image_paths'] ?? []) as $extra) {
+                    if (is_string($extra) && trim($extra) !== '') {
+                        $paths[] = trim($extra);
+                    }
+                }
+            }
+            $paths = array_values(array_unique($paths));
+
+            $normalized['image_path'] = in_array('cover', $fields, true) ? ($paths[0] ?? null) : null;
+            $normalized['extra_image_paths'] = in_array('extra_images', $fields, true) ? array_slice($paths, in_array('cover', $fields, true) && $normalized['image_path'] !== null ? 1 : 0) : [];
+
+            $normalized['images'] = [];
+            foreach ($paths as $path) {
+                $described = $business !== null ? $this->businessImages->describe($business, $path) : null;
+
+                if ($described === null) {
+                    throw new InvalidAnswerException('A service photo is no longer available — add it again.');
+                }
+
+                $normalized['images'][] = $described + ['alt_text' => ImageAltText::suggest($normalized['name'], null, $business?->name)];
+            }
         }
 
         if ($targetModule === 'backdrop') {
@@ -2255,6 +2458,21 @@ class WebsiteWizardController extends CustomerBaseController
      * source of the real answer-storage/redirect key every caller below
      * uses instead of a hardcoded literal.
      */
+    /**
+     * The visible step a card photo upload belongs to: a backdrop list, or a booth-service list whose cards take
+     * photos. A questionnaire with neither (or one the owner's answers currently hide) has nothing to upload to.
+     */
+    private function photoStepKey(QuestionnaireResponse $response): string
+    {
+        $visible = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);
+        $step = collect($visible)->first(fn (array $s) => ($s['target_module'] ?? null) === 'backdrop'
+            || (($s['target_module'] ?? null) === 'business_service' && array_intersect(['cover', 'extra_images'], (array) ($s['row_fields'] ?? [])) !== []));
+
+        abort_unless($step !== null, 404);
+
+        return $step['key'];
+    }
+
     private function stepKeyForModule(QuestionnaireResponse $response, string $targetModule): string
     {
         $visible = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);

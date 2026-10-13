@@ -45,10 +45,13 @@ class PhotoboothWebsiteSetupQuestionnaireV2Seeder extends Seeder
             $definition = QuestionnaireDefinition::where('key', PhotoboothWebsiteSetupQuestionnaireSeeder::KEY)->firstOrFail();
         }
 
-        $published = $definition->publishedVersion();
-
-        if ($published !== null && self::canonical($published->storedSteps()) === self::canonical(self::steps())) {
-            return;
+        // Already part of this definition's history (published now, or since superseded by a later version such
+        // as v3): never republish it on top of a newer version.
+        $tree = self::canonical(self::steps());
+        foreach ($definition->versions()->get() as $version) {
+            if (self::canonical($version->storedSteps()) === $tree) {
+                return;
+            }
         }
 
         $publisher = app(QuestionnaireVersionPublisher::class);

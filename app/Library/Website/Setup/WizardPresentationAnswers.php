@@ -94,6 +94,16 @@ final class WizardPresentationAnswers
             return null;
         }
 
+        // A package step that the owner's answers hid (quote-only pricing) means "no predefined packages" —
+        // an explicit empty choice, never "show every catalog item".
+        if ($step['conditional_visibility'] ?? null) {
+            $visible = collect((new QuestionnaireStepResolver())->visibleSteps($response->version->steps(), $response->answers ?? []))->contains('key', $step['key']);
+
+            if (! $visible) {
+                return [];
+            }
+        }
+
         $answer = $response->answer($step['key']);
 
         if (! is_array($answer)) {
@@ -120,7 +130,7 @@ final class WizardPresentationAnswers
         $rows = [];
 
         foreach ($response->version->steps() as $step) {
-            if (($step['target_module'] ?? null) !== 'business_service') {
+            if (($step['target_module'] ?? null) !== 'business_service' || ($step['item_kind'] ?? null) === 'event') {
                 continue;
             }
 
@@ -133,7 +143,7 @@ final class WizardPresentationAnswers
             foreach ($answer as $item) {
                 $name = trim((string) (is_array($item) ? ($item['name'] ?? '') : ''));
 
-                if ($name !== '') {
+                if ($name !== '' && (! is_array($item) || ($item['visible'] ?? true))) {
                     $rows[] = ['name' => $name, 'description' => isset($item['description']) ? trim((string) $item['description']) : null];
                 }
             }
@@ -186,9 +196,76 @@ final class WizardPresentationAnswers
             return null;
         }
 
+        // A guided questionnaire that collects areas for the business's own records only (never for
+        // separate city SEO pages) says so; a v1/v2 list keeps planning area pages as before.
+        if (($step['area_pages'] ?? true) === false) {
+            return null;
+        }
+
         $answer = $response->answer($step['key']);
 
         return is_array($answer) && $answer !== [] ? ServiceAreaList::normalize($answer) : null;
+    }
+
+    /**
+     * Everything the deterministic Photo Booth blueprint needs from a GUIDED setup (v3): the brand tone, the booking
+     * action, the pricing style, the owner's About text and FAQ, the packages they chose and which booth each one is
+     * paired with. Null for an older questionnaire — those keep the AI-written path.
+     *
+     * @return ?array{tone: ?string, cta: ?string, pricing: ?string, about: ?string, customer_faq: array<int, array{question: string, answer: string}>, catalog_uids: ?array<int, string>, package_links: array<string, string>, answers: array<string, mixed>}
+     */
+    public static function blueprintContext(?QuestionnaireResponse $response): ?array
+    {
+        if ($response === null) {
+            return null;
+        }
+
+        $guided = collect($response->version->steps())->contains(
+            fn (array $s) => ($s['target_module'] ?? null) === 'business_service' && in_array('cover', (array) ($s['row_fields'] ?? []), true)
+        );
+
+        if (! $guided) {
+            return null;
+        }
+
+        $links = [];
+        $step = collect($response->version->steps())->first(fn (array $s) => ($s['input_type'] ?? null) === 'catalog_selection');
+        foreach ((array) ($step !== null ? $response->answer($step['key']) : []) as $entry) {
+            if (is_array($entry) && is_string($entry['uid'] ?? null) && is_string($entry['service_key'] ?? null) && $entry['service_key'] !== '') {
+                $links[$entry['uid']] = $entry['service_key'];
+            }
+        }
+
+        $tone = $response->answer('brand_personality');
+        $cta = $response->answer('primary_cta');
+
+        return [
+            'tone' => is_string($tone) ? $tone : null,
+            'cta' => is_string($cta) ? $cta : null,
+            'pricing' => self::pricingStrategy($response),
+            'about' => self::aboutText($response),
+            'customer_faq' => self::customerFaq($response) ?? [],
+            'catalog_uids' => self::catalogSelection($response),
+            'package_links' => $links,
+            'answers' => (array) ($response->answers ?? []),
+        ];
+    }
+
+    /** One of 'fixed_packages' | 'starting_from' | 'custom_quote'; null when the questionnaire never asked. */
+    public static function pricingStrategy(?QuestionnaireResponse $response): ?string
+    {
+        $value = $response === null ? null : $response->answer('pricing_strategy');
+
+        return in_array($value, ['fixed_packages', 'starting_from', 'custom_quote'], true) ? $value : null;
+    }
+
+    /** The owner's About copy (kept, edited or replaced) from a guided questionnaire; null when not collected. */
+    public static function aboutText(?QuestionnaireResponse $response): ?string
+    {
+        $value = $response === null ? null : $response->answer('about_story');
+        $value = is_string($value) ? trim($value) : '';
+
+        return $value === '' ? null : $value;
     }
 
     /**

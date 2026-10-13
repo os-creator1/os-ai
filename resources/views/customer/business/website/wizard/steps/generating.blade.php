@@ -37,6 +37,10 @@
                     </div>
                 @endif
 
+                @if (! empty($guidedReview))
+                    @include('customer.business.website.wizard.steps._guided-review')
+                @endif
+
                 @if (! empty($templateCards))
                     @include('customer.business.website.wizard.steps._look')
                     @include('customer.business.website.wizard.steps._plan')

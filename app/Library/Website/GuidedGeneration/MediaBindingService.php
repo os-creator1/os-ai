@@ -7,6 +7,8 @@ use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Website\WebsiteStarterDraftService;
 use App\Models\BusinessBackdrop;
 use App\Models\CatalogItem;
+use App\Models\BusinessService;
+use App\Models\BusinessServiceImage;
 use App\Models\CatalogItemImage;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
@@ -163,6 +165,7 @@ final class MediaBindingService
         // catalog, never trusted from AI output.
         $pages = $this->linkAreaPages($pages);
         $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);
+        $pages = $this->mirrorServiceImages($website, $pages);
         $pages = $this->mirrorPackageImages($website, $pages);
 
         // Independent-review correction round 2 — only GALLERY-purpose
@@ -214,7 +217,9 @@ final class MediaBindingService
                     continue;
                 }
 
-                if ($type === 'image_text' && empty($section['data']['image'])) {
+                // A photo slot that belongs to ONE service is that service's own picture or nothing (it was
+                // already decided by mirrorServiceImages()) — never filled with an unrelated gallery photo.
+                if ($type === 'image_text' && empty($section['data']['image']) && empty($section['data']['service_uid'])) {
                     $imageTextSlotsSeen++;
 
                     // roundRobinPool is never empty once $assets itself
@@ -477,45 +482,127 @@ final class MediaBindingService
      */
     private function mirrorPackageImages(Website $website, array $pages): array
     {
-        $catalogItemsByName = CatalogItem::where('business_id', $website->business_id)
+        $catalogItems = CatalogItem::where('business_id', $website->business_id)
             ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
             ->with('images')
-            ->get()
-            ->keyBy(fn (CatalogItem $item) => mb_strtolower(trim($item->name)));
+            ->get();
 
-        if ($catalogItemsByName->isEmpty()) {
+        if ($catalogItems->isEmpty()) {
             return $pages;
         }
 
-        foreach ($pages as $index => $page) {
-            if (($page['page_type'] ?? null) !== 'packages') {
-                continue;
-            }
+        $byUid = $catalogItems->keyBy('uid');
+        $byName = $catalogItems->keyBy(fn (CatalogItem $item) => mb_strtolower(trim($item->name)));
 
+        foreach ($pages as $index => $page) {
             foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
                 if (($section['type'] ?? null) !== 'services') {
                     continue;
                 }
 
                 foreach (($section['data']['items'] ?? []) as $itemIndex => $item) {
-                    if (! empty($item['image'])) {
+                    $isPackage = ! empty($item['catalog_item_uid']) || ($page['page_type'] ?? null) === 'packages';
+                    $linkKey = $item['link_service_key'] ?? null;
+                    unset($pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['link_service_key']);
+
+                    if (! $isPackage || ! empty($item['image'])) {
                         continue;
                     }
 
-                    $catalogItem = $catalogItemsByName->get(mb_strtolower(trim($item['name'] ?? '')));
+                    $catalogItem = (! empty($item['catalog_item_uid']) ? $byUid->get($item['catalog_item_uid']) : null)
+                        ?? $byName->get(mb_strtolower(trim($item['name'] ?? '')));
+
+                    // 1. the package's own photo; 2. the photo of the booth the owner explicitly linked it to;
+                    // 3. nothing — the card is then a designed text-only card (never an empty frame or a stray photo).
                     $cover = $catalogItem?->coverImage();
 
-                    if ($cover === null) {
+                    if ($cover !== null) {
+                        $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredAssetFor($website, $cover)->uid;
+
                         continue;
                     }
 
-                    $mirrored = $this->mirroredAssetFor($website, $cover);
-                    $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $mirrored->uid;
+                    $service = is_string($linkKey) && $linkKey !== '' ? $this->serviceForKey($website, $linkKey) : null;
+                    $serviceCover = $service?->coverImage();
+
+                    if ($serviceCover !== null) {
+                        $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredServiceAsset($website, $serviceCover)->uid;
+                    }
                 }
             }
         }
 
         return $pages;
+    }
+
+    /**
+     * A booth service's own photo, attached by the service's stable id: on its card (a `services` item carrying
+     * `service_uid`) and beside its own page copy (an `image_text` carrying `service_uid`). A service with no photo
+     * gets none — and an `image_text` slot that belongs to it is removed rather than filled with another booth's
+     * picture or an unrelated gallery photo.
+     */
+    private function mirrorServiceImages(Website $website, array $pages): array
+    {
+        $services = BusinessService::where('business_id', $website->business_id)->with('images')->get()->keyBy('uid');
+
+        foreach ($pages as $index => $page) {
+            foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
+                $type = $section['type'] ?? null;
+
+                if ($type === 'services') {
+                    foreach (($section['data']['items'] ?? []) as $itemIndex => $item) {
+                        $cover = empty($item['image']) && ! empty($item['service_uid']) ? $services->get($item['service_uid'])?->coverImage() : null;
+
+                        if ($cover !== null) {
+                            $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredServiceAsset($website, $cover)->uid;
+                        }
+                    }
+                }
+
+                if ($type === 'image_text' && ! empty($section['data']['service_uid']) && empty($section['data']['image'])) {
+                    $cover = $services->get($section['data']['service_uid'])?->coverImage();
+
+                    if ($cover !== null) {
+                        $pages[$index]['sections'][$sectionIndex]['data']['image'] = $this->mirroredServiceAsset($website, $cover)->uid;
+                    }
+                }
+            }
+        }
+
+        return $pages;
+    }
+
+    /** The booth a package was explicitly linked to: by its wizard card key, or `svc:<uid>` for a service that already existed. */
+    private function serviceForKey(Website $website, string $key): ?BusinessService
+    {
+        $query = BusinessService::where('business_id', $website->business_id)->with('images');
+
+        return str_starts_with($key, 'svc:')
+            ? $query->where('uid', substr($key, 4))->first()
+            : $query->where('source_questionnaire_item_key', $key)->first();
+    }
+
+    private function mirroredServiceAsset(Website $website, BusinessServiceImage $cover): WebsiteAsset
+    {
+        $existing = WebsiteAsset::where('website_id', $website->id)->where('source_business_service_image_id', $cover->id)->first();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        return WebsiteAsset::create([
+            'website_id' => $website->id,
+            'disk' => $cover->disk,
+            'path' => $cover->path,
+            'mime_type' => $cover->mime_type,
+            'size' => $cover->size,
+            'width' => $cover->width,
+            'height' => $cover->height,
+            'alt_text' => $cover->alt_text,
+            'source_business_service_image_id' => $cover->id,
+            // A derived copy for rendering only: never in the hero/gallery pool, never counted as an upload.
+            'purpose' => WebsiteAssetPurpose::ServiceMirror->value,
+        ]);
     }
 
     /**

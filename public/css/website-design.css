@@ -506,6 +506,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd .website-form-preview-note { font-size: 0.9rem; color: var(--wd-t-muted); }
 
 /* Backdrops + custom section */
+.wd .website-backdrops-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 380px)); justify-content: center; }
 .wd .website-backdrop-card { margin: 0; padding: 0; overflow: hidden; background: var(--wd-card); color: var(--wd-card-ink); border-radius: var(--wd-radius); box-shadow: var(--wd-shadow); }
 .wd .website-backdrop-card img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 0; margin: 0; }
 .wd .website-backdrop-card figcaption { padding: 1rem 1.2rem 1.3rem; }

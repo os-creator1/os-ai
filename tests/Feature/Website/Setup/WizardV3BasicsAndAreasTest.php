@@ -3,11 +3,9 @@
 namespace Tests\Feature\Website\Setup;
 
 use App\Models\BusinessLocation;
-use App\Models\QuestionnaireResponse;
-use Database\Seeders\PhotoboothWebsiteSetupQuestionnaireV3Seeder;
-use Database\Seeders\WebsiteTemplateSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
+use Tests\Feature\Website\Concerns\DrivesGuidedWizard;
 use Tests\TestCase;
 
 /**
@@ -19,64 +17,12 @@ class WizardV3BasicsAndAreasTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesWebsiteFixtures;
-
-    private $customer;
-
-    private $business;
-
-    private $workspace;
+    use DrivesGuidedWizard;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->seed(WebsiteTemplateSeeder::class);
-        $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
-    }
-
-    private function tenant(array $business = [], ?array $location = null, bool $start = true): void
-    {
-        [$this->customer, $this->business, $this->workspace] = $this->entitledTenant($business);
-        $this->authenticateAsCustomer($this->customer);
-
-        if ($location !== null) {
-            $existing = $this->business->primaryLocation()->first();
-
-            if ($existing !== null) {
-                $existing->forceFill($location)->save();
-            } else {
-                $created = $this->business->locations()->create($location + ['name' => 'Primary Location', 'service_mode' => 'service_area', 'country_code' => 'US']);
-                $created->forceFill(['is_primary' => true])->save();
-            }
-        }
-
-        if ($start) {
-            $this->get($this->url('start'));
-        }
-    }
-
-    protected function url(string $name, ?string $step = null): string
-    {
-        $params = [$this->workspace->uid, $this->business->uid];
-        if ($step !== null) {
-            $params[] = $step;
-        }
-
-        return route('customer.workspaces.businesses.website.setup.' . $name, $params);
-    }
-
-    protected function wizardSession(): QuestionnaireResponse
-    {
-        return QuestionnaireResponse::where('business_id', $this->business->id)->where('status', 'in_progress')->firstOrFail();
-    }
-
-    private function jpost(string $url, array $data = [])
-    {
-        return $this->withHeaders(['Accept' => 'application/json', 'X-Requested-With' => 'XMLHttpRequest'])->post($url, $data);
-    }
-
-    private function jget(string $url, array $query = [])
-    {
-        return $this->withHeaders(['Accept' => 'application/json'])->getJson($url . ($query ? '?' . http_build_query($query) : ''));
+        $this->seedGuidedWizard();
     }
 
     private function basics(array $values = []): array
@@ -241,7 +187,7 @@ class WizardV3BasicsAndAreasTest extends TestCase
             ->assertSee('+ Add another location')
             ->getContent();
 
-        preg_match_all('/name="value\[\]" class="form-control" value="([^"]*)"/', $html, $m);
+        preg_match_all('/name="value\[\]"[^>]*value="([^"]*)"/', $html, $m);
         $rows = array_values(array_filter($m[1]));
         $this->assertCount(10, $rows);
         $this->assertSame('Irvine, CA', $rows[0]);
@@ -264,7 +210,7 @@ class WizardV3BasicsAndAreasTest extends TestCase
             ->assertDontSee('data-area-note="suggested"', false)
             ->getContent();
 
-        preg_match_all('/name="value\[\]" class="form-control" value="([^"]*)"/', $html, $m);
+        preg_match_all('/name="value\[\]"[^>]*value="([^"]*)"/', $html, $m);
         $this->assertSame(['Tustin', 'Orange', 'Brea'], array_values(array_filter($m[1])));
     }
 
@@ -280,7 +226,7 @@ class WizardV3BasicsAndAreasTest extends TestCase
         $this->assertSame(1, BusinessLocation::where('business_id', $this->business->id)->count(), 'A service area is never turned into a physical branch.');
 
         $html = $this->get($this->url('step', 'service_area_cities'))->getContent();
-        preg_match_all('/name="value\[\]" class="form-control" value="([^"]*)"/', $html, $m);
+        preg_match_all('/name="value\[\]"[^>]*value="([^"]*)"/', $html, $m);
         $this->assertSame($mine, array_values(array_filter($m[1])));
     }
 
@@ -301,7 +247,7 @@ class WizardV3BasicsAndAreasTest extends TestCase
             ->assertSee('Replace them with fresh suggestions')
             ->getContent();
 
-        preg_match_all('/name="value\[\]" class="form-control" value="([^"]*)"/', $html, $m);
+        preg_match_all('/name="value\[\]"[^>]*value="([^"]*)"/', $html, $m);
         $this->assertSame($mine, array_values(array_filter($m[1])), 'The owner\'s areas are unchanged.');
     }
 

@@ -121,6 +121,9 @@ final class WebsiteHealthChecker
         // 7. Photos exist and have descriptions.
         $this->photoChecks($add, $website, $pages, $links);
 
+        // 7b. The guided builder's required photographs: homepage cover, one per shown booth, one per backdrop.
+        $this->requiredPhotosCheck($add, $website, $links);
+
         // 8. Links on your pages.
         $brokenLinks = $this->brokenInternalLinks($pages);
         $add('links', $brokenLinks === [] ? self::OK : self::WARN, 'Links between your pages', $brokenLinks === [] ? 'Every link points to a page that exists.' : count($brokenLinks).' button(s) point to a page that no longer exists. They are hidden on your live website until you fix them.', $brokenLinks === [] ? null : 'Manage pages', $links['pages'] ?? null, $brokenLinks);
@@ -325,6 +328,40 @@ final class WebsiteHealthChecker
 
         $withoutAlt = $existing === [] ? 0 : $website->assets()->whereIn('uid', $existing)->where(fn ($q) => $q->whereNull('alt_text')->orWhere('alt_text', ''))->count();
         $add('alt_text', $withoutAlt === 0 ? self::OK : self::WARN, 'Photo descriptions (alt text)', $withoutAlt === 0 ? 'Every photo on your pages has a description for people using screen readers and for search.' : $withoutAlt.' photo(s) on your pages have no description.', $withoutAlt === 0 ? null : 'Review photos', $links['photos'] ?? null);
+    }
+
+    /**
+     * Publishing needs real photographs of what the business offers (see WebsiteMediaRequirements). Listed here as the
+     * "what is still missing" checklist, each item naming exactly which photo and the setup question where it is added.
+     */
+    private function requiredPhotosCheck(callable $add, Website $website, array $links): void
+    {
+        $requirements = app(WebsiteMediaRequirements::class);
+
+        if (! $requirements->appliesTo($website)) {
+            return;
+        }
+
+        $missing = $requirements->missing($website);
+
+        if ($missing === []) {
+            $add('required_photos', self::OK, 'Required photos', 'Your homepage, every booth and every backdrop have a real photo.');
+
+            return;
+        }
+
+        $answers = $links['answers'] ?? null;
+        $first = $missing[0]['step'];
+
+        $add(
+            'required_photos',
+            self::FAIL,
+            'Required photos',
+            count($missing) . ' photo(s) are still needed before you can publish. Each one must be a real photo of what you offer.',
+            'Add the missing photos',
+            $answers !== null ? $answers . (str_contains($answers, '?') ? '&' : '?') . 'step=' . $first : null,
+            array_column($missing, 'title'),
+        );
     }
 
     private function contactCheck(callable $add, Collection $pages, $business, array $links): void

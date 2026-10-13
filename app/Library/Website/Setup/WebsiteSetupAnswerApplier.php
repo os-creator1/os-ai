@@ -47,6 +47,7 @@ final class WebsiteSetupAnswerApplier
         private readonly BusinessBackdropManager $backdrops,
         private readonly \App\Library\Business\BusinessImageStore $imageStore,
         private readonly QuestionnaireStepResolver $stepResolver,
+        private readonly \App\Library\Business\BusinessServiceImageManager $serviceImages,
     ) {
     }
 
@@ -137,12 +138,12 @@ final class WebsiteSetupAnswerApplier
                 match ($module) {
                     'business' => $this->applyBusinessField($business, $step['target_field'], $value),
                     'business_location' => $this->applyLocationFields($business, $value),
-                    'knowledge_profile' => $this->applyKnowledgeProfileField($business, $step['target_field'], $value, $actorUserId),
-                    'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys, $this->applyServices($business, $value, $servicePosition)),
+                    'knowledge_profile' => $this->applyKnowledgeProfileField($business, $step['target_field'], $this->profileValue($business, $step, $value), $actorUserId, (bool) ($step['owner_confirms'] ?? false)),
+                    'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys, $this->applyServices($business, $value, $servicePosition, $step)),
                     'catalog_item' => ($step['input_type'] ?? null) === 'catalog_selection'
                         ? null
-                        : $submittedPackageKeys = array_merge($submittedPackageKeys, $this->applyPackages($business, $value)),
-                    'backdrop' => $submittedBackdropKeys = array_merge($submittedBackdropKeys, $this->applyBackdrops($business, $value)),
+                        : $submittedPackageKeys = array_merge($submittedPackageKeys, $this->applyPackages($business, $value, $step)),
+                    'backdrop' => $submittedBackdropKeys = array_merge($submittedBackdropKeys, $this->applyBackdrops($business, $value, $step)),
                     'website_form' => $this->applyForm($business, $website, $value),
                     // 'gallery', 'answers', 'custom_section': presentation-
                     // only or already-canonical-elsewhere — left in
@@ -206,22 +207,56 @@ final class WebsiteSetupAnswerApplier
         ], fn ($v) => $v !== null));
     }
 
-    private function applyKnowledgeProfileField(Business $business, ?string $field, mixed $value, int $actorUserId): void
+    /**
+     * A multi-select answer is a list of OPTION KEYS; the profile stores the facts themselves. For the
+     * business's advantages that means the option labels — and a fact the owner already confirmed that this
+     * question never offered is kept, not silently dropped by someone ticking a few boxes.
+     *
+     * @param  array<string, mixed>  $step
+     */
+    private function profileValue(Business $business, array $step, mixed $value): mixed
+    {
+        if (($step['target_field'] ?? null) !== 'differentiators' || ! is_array($value) || ! is_array($step['options'] ?? null)) {
+            return $value;
+        }
+
+        $options = $step['options'];
+        $labels = [];
+        foreach ($value as $key) {
+            $labels[] = (string) ($options[(string) $key] ?? $key);
+        }
+
+        $offered = array_map(fn ($label) => mb_strtolower(trim((string) $label)), array_values($options));
+        $kept = array_values(array_filter(
+            (array) (\App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->value('differentiators') ?? []),
+            fn ($fact) => ! in_array(mb_strtolower(trim((string) $fact)), $offered, true),
+        ));
+
+        return array_values(array_unique(array_merge($kept, $labels)));
+    }
+
+    /**
+     * `$ownerConfirms`: the screen asked the owner to confirm this as a fact about their business (their own
+     * advantages, their own real reviews), so it is recorded as customer-confirmed — which is exactly what lets the
+     * website state it. Anything not so flagged stays unverified and is never published as a claim.
+     */
+    private function applyKnowledgeProfileField(Business $business, ?string $field, mixed $value, int $actorUserId, bool $ownerConfirms = false): void
     {
         if ($field === null) {
             return;
         }
 
-        $this->profiles->updateFields($business, [$field => $value], 'website_setup', $actorUserId);
+        $this->profiles->updateFields($business, [$field => $value], 'website_setup', $actorUserId, $ownerConfirms, $ownerConfirms ? [$field] : []);
     }
 
     /**
      * @param  array<int, array{key: string, name: string, description: ?string, starting_price: ?int, currency_code: ?string}>  $items
      * @return array<int, string> the submitted entries' own source keys (nulls excluded), for reconcileRemovedServices()
      */
-    private function applyServices(Business $business, array $items, int &$nextPosition = 0): array
+    private function applyServices(Business $business, array $items, int &$nextPosition = 0, array $step = []): array
     {
         $submittedKeys = [];
+        $submittedAdopted = [];
 
         foreach (array_values($items) as $index => $item) {
             $position = $nextPosition + $index;
@@ -231,11 +266,16 @@ final class WebsiteSetupAnswerApplier
             }
 
             $name = (string) ($item['name'] ?? '');
+            $features = array_values(array_filter((array) ($item['features'] ?? []), fn ($f) => is_string($f) && trim($f) !== ''));
             $attributes = [
                 'business_id' => $business->id,
                 'name' => $name,
                 'slug' => Str::slug($name) ?: 'service-' . ($sourceKey ?? $position),
-                'description' => $item['description'] ?? null,
+                // Real features the owner confirmed ride in the description (the same convention a package uses),
+                // so they render as a bullet list wherever the service is shown.
+                'description' => $features !== []
+                    ? \App\Library\Catalog\CatalogFeatureList::join((string) ($item['description'] ?? ''), $features)
+                    : ($item['description'] ?? null),
                 'starting_price' => $item['starting_price'] ?? null,
                 'currency_code' => $item['currency_code'] ?? null,
                 'status' => BusinessServiceStatus::Active->value,
@@ -243,16 +283,36 @@ final class WebsiteSetupAnswerApplier
                 'source_questionnaire_item_key' => $sourceKey,
             ];
 
-            $existing = $sourceKey !== null
-                ? BusinessService::where('business_id', $business->id)->where('source_questionnaire_item_key', $sourceKey)->first()
-                : null;
+            // Only a card list that models them sets these; v1/v2 service rows keep the column defaults.
+            if (isset($step['row_fields'])) {
+                $attributes['kind'] = $item['kind'] ?? ($step['item_kind'] ?? BusinessService::KIND_SERVICE);
+                $attributes['website_visible'] = (bool) ($item['visible'] ?? true);
+            }
+
+            // A card prefilled from an existing service carries `svc:<uid>`: that exact record is updated (and
+            // keeps whatever source key it has — a manually created service stays manual).
+            $adoptUid = is_string($sourceKey) && str_starts_with($sourceKey, 'svc:') ? substr($sourceKey, 4) : null;
+            if ($adoptUid !== null) {
+                unset($attributes['source_questionnaire_item_key']);
+                $attributes['slug'] = BusinessService::where('business_id', $business->id)->where('uid', $adoptUid)->value('slug') ?? $attributes['slug'];
+                $submittedAdopted[] = $adoptUid;
+            }
+
+            $existing = $adoptUid !== null
+                ? BusinessService::where('business_id', $business->id)->where('uid', $adoptUid)->first()
+                : ($sourceKey !== null
+                    ? BusinessService::where('business_id', $business->id)->where('source_questionnaire_item_key', $sourceKey)->first()
+                    : null);
 
             try {
                 if ($existing !== null) {
                     $existing->fill($attributes)->save();
+                    $service = $existing;
                 } else {
-                    BusinessService::create($attributes);
+                    $service = BusinessService::create($attributes);
                 }
+
+                $this->syncServicePhotos($business, $service, $item, $step);
             } catch (UniqueConstraintViolationException) {
                 // Independent-review correction round: two concurrent
                 // submissions can both miss the find-by-source-key lookup
@@ -269,12 +329,43 @@ final class WebsiteSetupAnswerApplier
                 }
 
                 $winner->fill($attributes)->save();
+                $this->syncServicePhotos($business, $winner, $item, $step);
             }
         }
 
         $nextPosition += count($items);
 
+        // A guided card list is the COMPLETE list of what the website shows for this kind: an existing service
+        // that was not kept as a card is hidden from the website (never deactivated or deleted for the rest of
+        // MotionGrove), so removing a card really removes it from the site.
+        if (isset($step['row_fields'])) {
+            $kept = array_merge($submittedAdopted, BusinessService::where('business_id', $business->id)
+                ->whereIn('source_questionnaire_item_key', $submittedKeys === [] ? [''] : $submittedKeys)->pluck('uid')->all());
+
+            BusinessService::where('business_id', $business->id)
+                ->where('kind', $step['item_kind'] ?? BusinessService::KIND_SERVICE)
+                ->where('status', BusinessServiceStatus::Active->value)
+                ->whereNotIn('uid', $kept === [] ? [''] : $kept)
+                ->update(['website_visible' => false]);
+        }
+
         return $submittedKeys;
+    }
+
+    /**
+     * The photos a service card carries become the service's own canonical
+     * images (attached by its id). Only a card list that offers photos touches
+     * them; an older questionnaire's rows never do.
+     */
+    private function syncServicePhotos(Business $business, BusinessService $service, array $item, array $step): void
+    {
+        $fields = $step['row_fields'] ?? [];
+
+        if (! in_array('cover', $fields, true) && ! in_array('extra_images', $fields, true)) {
+            return;
+        }
+
+        $this->serviceImages->sync($business, $service, array_values((array) ($item['images'] ?? [])));
     }
 
     /**
@@ -298,7 +389,7 @@ final class WebsiteSetupAnswerApplier
      * @param  array<int, array{key: string, name: string, description: ?string, price_minor: ?int, currency_code: ?string, featured: bool, features: array<int, string>, image: ?array}>  $items
      * @return array<int, string> the submitted entries' own source keys (nulls excluded), for reconcileRemovedPackages()
      */
-    private function applyPackages(Business $business, array $items): array
+    private function applyPackages(Business $business, array $items, array $step = []): array
     {
         $submittedKeys = [];
 
@@ -309,7 +400,8 @@ final class WebsiteSetupAnswerApplier
             }
 
             $attributes = [
-                'type' => 'package',
+                // A guided "extras" card list creates add-on products; every other list creates packages.
+                'type' => $step['item_type'] ?? 'package',
                 'name' => (string) ($item['name'] ?? ''),
                 'description' => $this->describeWithFeatures($item['description'] ?? null, $item['features'] ?? []),
                 'price_minor' => $item['price_minor'] ?? null,
@@ -363,9 +455,10 @@ final class WebsiteSetupAnswerApplier
      * @param  array<int, array{key: string, name: string, description: ?string, availability: bool, images: array<int, array>}>  $items
      * @return array<int, string> the submitted entries' own source keys (nulls excluded), for reconcileRemovedBackdrops()
      */
-    private function applyBackdrops(Business $business, array $items): array
+    private function applyBackdrops(Business $business, array $items, array $step = []): array
     {
         $submittedKeys = [];
+        $keptUids = [];
 
         foreach ($items as $item) {
             $sourceKey = $item['key'] ?? null;
@@ -386,7 +479,16 @@ final class WebsiteSetupAnswerApplier
                 $attributes['category'] = $item['category'];
             }
 
-            $existing = $sourceKey !== null ? $this->backdrops->findBySourceKey($business, $sourceKey) : null;
+            // A card prefilled from an existing backdrop carries `bd:<uid>`: that record is updated, and a
+            // backdrop created elsewhere stays "manual" (its own source key is left alone).
+            $adoptUid = is_string($sourceKey) && str_starts_with($sourceKey, 'bd:') ? substr($sourceKey, 3) : null;
+            if ($adoptUid !== null) {
+                unset($attributes['source_questionnaire_item_key']);
+            }
+
+            $existing = $adoptUid !== null
+                ? BusinessBackdrop::where('business_id', $business->id)->where('uid', $adoptUid)->first()
+                : ($sourceKey !== null ? $this->backdrops->findBySourceKey($business, $sourceKey) : null);
 
             try {
                 $backdrop = $existing !== null
@@ -402,6 +504,7 @@ final class WebsiteSetupAnswerApplier
                 $backdrop = $this->backdrops->update($business, $winner, $attributes);
             }
 
+            $keptUids[] = $backdrop->uid;
             $images = $item['images'] ?? [];
 
             if ($images === []) {
@@ -421,6 +524,15 @@ final class WebsiteSetupAnswerApplier
 
         // The owner's list order is the order the backdrops are shown in.
         $this->backdrops->reorderBySourceKeys($business, $submittedKeys);
+
+        // A guided list is the COMPLETE list of backdrops the website offers: one that is not kept as a card is
+        // simply no longer offered (its photos are left alone), never deleted.
+        if ($step['complete_list'] ?? false) {
+            BusinessBackdrop::where('business_id', $business->id)
+                ->where('availability', true)
+                ->whereNotIn('uid', $keptUids === [] ? [''] : $keptUids)
+                ->update(['availability' => false]);
+        }
 
         return $submittedKeys;
     }

@@ -8,6 +8,7 @@ use App\Enums\Catalog\CatalogItemLifecycleState;
 use App\Enums\Website\WebsiteAssetPurpose;
 use App\Models\Business;
 use App\Models\BusinessBackdrop;
+use App\Models\BusinessService;
 use App\Models\BusinessKnowledgeProfileFieldState;
 use App\Models\CatalogItem;
 use App\Models\CatalogItemLocationOverride;
@@ -161,8 +162,28 @@ final class WebsitePageStrategy
      */
     public function eligibleServices(Business $business): Collection
     {
+        // The booth experiences the owner shows on the website: active, not hidden from the site, and not an
+        // event type (those are presented as events — see eligibleEventTypes()).
         return $business->services()
             ->where('status', BusinessServiceStatus::Active->value)
+            ->where('website_visible', true)
+            ->where('kind', '!=', BusinessService::KIND_EVENT)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * The event types the owner serves ("Weddings", "Corporate events"), in their order.
+     *
+     * @return Collection<int, BusinessService>
+     */
+    public function eligibleEventTypes(Business $business): Collection
+    {
+        return $business->services()
+            ->where('status', BusinessServiceStatus::Active->value)
+            ->where('website_visible', true)
+            ->where('kind', BusinessService::KIND_EVENT)
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();

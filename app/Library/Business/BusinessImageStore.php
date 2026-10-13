@@ -130,7 +130,7 @@ final class BusinessImageStore
             return;
         }
 
-        if (BusinessBackdropImage::where('path', $path)->exists() || CatalogItemImage::where('path', $path)->exists()) {
+        if (BusinessBackdropImage::where('path', $path)->exists() || CatalogItemImage::where('path', $path)->exists() || \App\Models\BusinessServiceImage::where('path', $path)->exists()) {
             return;
         }
 

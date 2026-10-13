@@ -28,4 +28,7 @@ enum WebsiteAssetPurpose: string
 
     /** A package's cover image, mirrored purely for section-validator purposes — never a customer-uploaded asset, never counted against upload limits. */
     case PackageMirror = 'package_mirror';
+
+    /** A booth service's own photo, mirrored purely so a services section can reference it — never a customer-uploaded asset, never counted against upload limits. */
+    case ServiceMirror = 'service_mirror';
 }

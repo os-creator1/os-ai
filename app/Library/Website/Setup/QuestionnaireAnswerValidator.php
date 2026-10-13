@@ -188,6 +188,11 @@ final class QuestionnaireAnswerValidator
                 throw new InvalidAnswerException('A selected package is not valid.');
             }
 
+            $serviceKey = $entry['service_key'] ?? null;
+            if ($serviceKey !== null && (! is_string($serviceKey) || preg_match('/^[A-Za-z0-9:_-]{1,64}$/', $serviceKey) !== 1)) {
+                throw new InvalidAnswerException('A package\'s linked booth is not valid.');
+            }
+
             $seen[$uid] = true;
         }
     }
@@ -366,6 +371,10 @@ final class QuestionnaireAnswerValidator
                 $this->validateCatalogItemEntry($item);
             }
 
+            if ($targetModule === 'business_service') {
+                $this->validateServiceEntry($item);
+            }
+
             if ($targetModule === 'backdrop') {
                 $this->validateBackdropEntry($step, $item);
             }
@@ -468,6 +477,61 @@ final class QuestionnaireAnswerValidator
         $imagePath = $item['image_path'] ?? null;
         if ($imagePath !== null && (! is_string($imagePath) || mb_strlen($imagePath) > 255)) {
             throw new InvalidAnswerException('A backdrop image reference is invalid.');
+        }
+    }
+
+    /**
+     * A booth service / event type card: optional starting price, features,
+     * website visibility, the preset it started from and its photo references
+     * (files this Business's own upload endpoint already stored — their facts
+     * are re-derived from the file, never trusted from the form).
+     */
+    private function validateServiceEntry(array $item): void
+    {
+        $price = $item['starting_price'] ?? null;
+        if ($price !== null && (! is_numeric($price) || $price < 0 || $price > 10_000_000)) {
+            throw new InvalidAnswerException('A starting price must be a non-negative amount.');
+        }
+
+        $currency = $item['currency_code'] ?? null;
+        if ($currency !== null && (! is_string($currency) || strlen($currency) !== 3)) {
+            throw new InvalidAnswerException('A currency must be a 3-letter code.');
+        }
+
+        $features = $item['features'] ?? [];
+        if (! is_array($features) || count($features) > self::MAX_FEATURES) {
+            throw new InvalidAnswerException('Too many features — the limit is ' . self::MAX_FEATURES . '.');
+        }
+        foreach ($features as $feature) {
+            if (! is_string($feature) || mb_strlen($feature) > self::MAX_FEATURE_LENGTH) {
+                throw new InvalidAnswerException('A feature is too long.');
+            }
+        }
+
+        if (array_key_exists('visible', $item) && ! is_bool($item['visible'])) {
+            throw new InvalidAnswerException('Visibility must be on or off.');
+        }
+
+        $preset = $item['preset'] ?? null;
+        if ($preset !== null && (! is_string($preset) || preg_match('/^[a-z0-9_]{1,40}$/', $preset) !== 1)) {
+            throw new InvalidAnswerException('That starting point is not valid.');
+        }
+
+        foreach (['image_path'] as $field) {
+            $path = $item[$field] ?? null;
+            if ($path !== null && (! is_string($path) || mb_strlen($path) > 255)) {
+                throw new InvalidAnswerException('An image reference is invalid.');
+            }
+        }
+
+        $extras = $item['extra_image_paths'] ?? [];
+        if (! is_array($extras) || count($extras) > \App\Library\Business\BusinessServiceImageManager::MAX_IMAGES - 1) {
+            throw new InvalidAnswerException('A service may have up to ' . (\App\Library\Business\BusinessServiceImageManager::MAX_IMAGES - 1) . ' additional photos.');
+        }
+        foreach ($extras as $extra) {
+            if (! is_string($extra) || mb_strlen($extra) > 255) {
+                throw new InvalidAnswerException('An image reference is invalid.');
+            }
         }
     }
 

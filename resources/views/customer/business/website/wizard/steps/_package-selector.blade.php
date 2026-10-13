@@ -54,10 +54,12 @@
                             <textarea name="{{ $f($i, 'description') }}" rows="2" class="form-control">{{ $row['prose'] }}</textarea>
                         </div>
                         @include('customer.business.website.wizard.steps._feature-list', ['features' => $row['features'], 'nameTemplate' => $fieldBase . '[{i}][features][]', 'index' => $i])
+                        @include('customer.business.website.wizard.steps._package-link', ['linkName' => $f($i, 'service_key'), 'linked' => $row['service_key'] ?? null])
                         <label class="form-check mb-0 mt-2">
                             <input class="form-check-input" type="checkbox" name="{{ $f($i, 'featured') }}" value="1" @checked($item->featured)>
                             <span class="form-check-label">Feature this package</span>
                         </label>
+                        <div class="mt-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-duplicate-package>Duplicate</button></div>
                     </div>
                 </details>
             </div>

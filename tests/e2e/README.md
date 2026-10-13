@@ -14,3 +14,12 @@ suites or CI; run them by hand against a disposable test database.
    `PW_MODULE_DIR=/path/to/node_modules WIZARD_E2E_OUT=/tmp/fixture.json node tests/e2e/wizard-navigation.mjs`
 
 Each script prints PASS/FAIL per check and exits non-zero on any failure.
+
+## Walkthroughs
+
+- `wizard-navigation.mjs` — one-question-per-page navigation without a document reload, Back/Skip,
+  autosave indicators, offline Retry, resume.
+- `guided-setup.mjs` — the full guided photo booth flow: confirm basics → service areas → booths (preset
+  photos) → backdrops → gallery → About → review → generate the deterministic website → Studio preview →
+  strict publish gate. Needs a folder of sample photos: `IMG_DIR=/path/to/photos` (default `/tmp/claude-0/imgs`);
+  screenshots go to `E2E_SHOTS` (default `/tmp`).

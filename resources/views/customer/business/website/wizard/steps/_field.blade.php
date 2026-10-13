@@ -33,7 +33,11 @@
             @break
 
         @case('textarea')
-            <textarea name="{{ $n('value') }}" rows="4" class="form-control" @if($step['required']) required @endif>{{ is_string($answer) ? $answer : '' }}</textarea>
+            @if (($step['defaults'] ?? null) === 'about')
+                @include('customer.business.website.wizard.steps._about')
+            @else
+                <textarea name="{{ $n('value') }}" rows="4" class="form-control" @if($step['required']) required @endif>{{ is_string($answer) ? $answer : '' }}</textarea>
+            @endif
             @break
 
         @case('boolean')
@@ -50,6 +54,10 @@
             @break
 
         @case('select')
+            @if (count($step['options'] ?? []) <= 5)
+                @include('customer.business.website.wizard.steps._choice-cards')
+                @break
+            @endif
             <select name="{{ $n('value') }}" class="form-select" @if($step['required']) required @endif>
                 <option value="">Choose one&hellip;</option>
                 @foreach ($step['options'] ?? [] as $optionValue => $optionLabel)
@@ -59,13 +67,37 @@
             @break
 
         @case('multi_select')
-            <div>
+            @if ($step['target_module'] === 'knowledge_profile')
+                {{-- Facts about the business: tappable cards, none preselected unless already confirmed. --}}
+                <div class="row g-2">
+                    @foreach ($step['options'] ?? [] as $optionValue => $optionLabel)
+                        <div class="col-md-6">
+                            <input type="checkbox" class="btn-check" name="{{ $n('value') }}[]" id="{{ $stepKey }}-{{ $optionValue }}" value="{{ $optionValue }}" autocomplete="off" @checked(is_array($answer) && in_array($optionValue, $answer, true))>
+                            <label class="btn btn-outline-primary w-100 text-start py-3" for="{{ $stepKey }}-{{ $optionValue }}">{{ $optionLabel }}</label>
+                        </div>
+                    @endforeach
+                </div>
+                @break
+            @endif
+            @php $isFormFields = $step['target_module'] === 'website_form'; @endphp
+            <div @if($isFormFields) data-form-fields data-recommended='@json(array_keys($step['options'] ?? []))' @endif>
                 @foreach ($step['options'] ?? [] as $optionValue => $optionLabel)
                     <div class="form-check">
-                        <input class="form-check-input" type="checkbox" name="{{ $n('value') }}[]" id="{{ $stepKey }}-{{ $optionValue }}" value="{{ $optionValue }}" @checked(is_array($answer) && in_array($optionValue, $answer, true))>
+                        <input class="form-check-input" type="checkbox" name="{{ $n('value') }}[]" id="{{ $stepKey }}-{{ $optionValue }}" value="{{ $optionValue }}" data-form-field-label="{{ $optionLabel }}" @checked(is_array($answer) && in_array($optionValue, $answer, true))>
                         <label class="form-check-label" for="{{ $stepKey }}-{{ $optionValue }}">{{ $optionLabel }}</label>
                     </div>
                 @endforeach
+                @if ($isFormFields)
+                    <div class="d-flex flex-wrap gap-2 mt-3">
+                        <button type="button" class="btn btn-sm btn-primary" data-form-recommended>Use the recommended form</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-form-preview-toggle aria-expanded="false">Preview form</button>
+                    </div>
+                    <div class="border rounded p-3 mt-3 d-none" data-form-preview aria-live="polite">
+                        <div class="text-caption mb-2">This is what a visitor will see. You can test-submit the live form from Website Studio once your site is generated.</div>
+                        <div data-form-preview-fields></div>
+                        <button type="button" class="btn btn-primary btn-sm mt-2" disabled>Request a quote</button>
+                    </div>
+                @endif
             </div>
             @break
 
