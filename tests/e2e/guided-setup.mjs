@@ -173,18 +173,31 @@ await page.goto(studioUrl, { waitUntil: 'load' });
 await Promise.all([page.waitForLoadState('load'), page.locator('form[action$="/website/publish"] button[type="submit"]').first().click()]);
 check('after adding the photo the website publishes', /No unpublished changes|Published/.test(await stateText()) && !/Not published yet/.test(await page.evaluate(() => document.body.innerText)));
 
-// 13. the live site, desktop and phone
+// 13. the PUBLISHED public site (/sites/{public_id}), every page, desktop and phone
+const publicUrl = await page.evaluate(() => [...document.querySelectorAll('a')].map((a) => a.href).find((h) => /\/sites\/[0-9a-f-]{36}/.test(h)));
+check('the Studio links to the published public site', !!publicUrl, String(publicUrl));
+const home = String(publicUrl || '').replace(/(\/sites\/[0-9a-f-]{36}).*/, '$1');
 const live = await context.newPage();
-await live.goto(`${BASE}/workspaces/${fixture.workspace}/businesses/${fixture.business}/website/preview`, { waitUntil: 'load' });
-await settle(live);
-await live.screenshot({ path: `${SHOTS}/site-desktop.png`, fullPage: true });
-const html = await live.content();
-check('no empty picture frames or broken images on the site', await live.evaluate(() => [...document.images].every((i) => i.complete && i.naturalWidth > 0)));
-await live.setViewportSize({ width: 390, height: 844 });
-await live.reload({ waitUntil: 'load' });
-await settle(live);
-await live.screenshot({ path: `${SHOTS}/site-mobile.png`, fullPage: true });
-check('the site has no horizontal scroll on a phone', await live.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
+await live.goto(home, { waitUntil: 'load' });
+check('the public site is live (no draft banner)', !/draft content, not yet published/.test(await live.content()));
+const pages = await live.evaluate((h) => [...new Set([...document.querySelectorAll('header a, nav a')].map((a) => a.href.split('#')[0]).filter((u) => u.startsWith(h)))], home);
+const urls = [home, ...pages.filter((u) => u !== home && u !== home + '/')];
+check('the site has several pages', urls.length >= 4, String(urls.length));
+let n = 0;
+for (const [label, vp] of [['desktop', { width: 1280, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+  await live.setViewportSize(vp);
+  for (const u of urls) {
+    await live.goto(u, { waitUntil: 'load' });
+    await settle(live);
+    const slug = u === home ? 'home' : u.split('/').pop();
+    await live.screenshot({ path: `${SHOTS}/public-${slug}-${label}.png`, fullPage: true });
+    check(`${slug} (${label}): no broken or empty images`, await live.evaluate(() => [...document.images].every((i) => i.complete && i.naturalWidth > 0)));
+    check(`${slug} (${label}): no horizontal scroll`, await live.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
+    check(`${slug} (${label}): no empty section`, await live.evaluate(() => [...document.querySelectorAll('main section, section.website-section')].every((sec) => sec.innerText.trim().length > 0 || sec.querySelector('img, form, iframe'))));
+    n++;
+  }
+}
+check('captured every page at both widths', n === urls.length * 2, String(n));
 
 await browser.close();
 finish();

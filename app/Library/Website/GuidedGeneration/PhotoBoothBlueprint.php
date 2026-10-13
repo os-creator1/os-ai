@@ -139,7 +139,7 @@ final class PhotoBoothBlueprint
         $sections[] = $this->process($f);
 
         if ($f['advantages'] !== []) {
-            $sections[] = ['type' => 'services', 'data' => ['heading' => 'Why choose ' . Str::limit($f['name'], 80, ''), 'items' => array_map(fn (string $a) => ['name' => Str::limit($a, 120, '')], array_slice($f['advantages'], 0, 12))]];
+            $sections[] = ['type' => 'services', 'data' => ['heading' => 'Why choose ' . Str::limit($f['name'], 80, ''), 'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12))]];
         }
 
         if ($f['testimonials'] !== []) {
@@ -219,7 +219,7 @@ final class PhotoBoothBlueprint
         return array_filter([
             $this->hero('About ' . $f['name'], null),
             ['type' => 'text', 'data' => ['heading' => 'Our story', 'body' => $text]],
-            $f['advantages'] === [] ? null : ['type' => 'services', 'data' => ['heading' => 'What you can expect', 'items' => array_map(fn (string $a) => ['name' => Str::limit($a, 120, '')], array_slice($f['advantages'], 0, 12))]],
+            $f['advantages'] === [] ? null : ['type' => 'services', 'data' => ['heading' => 'What you can expect', 'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12))]],
             $f['testimonials'] === [] ? null : ['type' => 'testimonials', 'data' => ['heading' => 'What customers say', 'items' => array_slice($f['testimonials'], 0, 10)]],
             $this->contactDetails($f['business']),
         ]);
@@ -282,21 +282,60 @@ final class PhotoBoothBlueprint
         return ['type' => 'hero', 'data' => $data];
     }
 
+    /**
+     * The owner's confirmed advantages. The wizard's standard choices carry a one-line plain restatement so a card is
+     * never a bare title; a custom advantage is shown exactly as written.
+     *
+     * @param  array<int, string>  $advantages
+     * @return array<int, array<string, string>>
+     */
+    private function advantageItems(array $advantages): array
+    {
+        $describe = [
+            'custom print designs' => 'Prints designed around your event, so every strip is a keepsake.',
+            'digital photo sharing' => 'Guests get their photos on their phones right away.',
+            'professional attendant' => 'A friendly attendant runs the booth and helps your guests.',
+            'custom backdrops' => 'Backdrops chosen or made to match your event.',
+            'unlimited sessions' => 'Guests can go back as often as they like during your booking.',
+            'premium equipment' => 'Quality cameras and lighting for photos that look great.',
+            'setup and teardown handled for you' => 'We set up before your event and pack down after.',
+            'props included' => 'A box of fun props is part of every booking.',
+        ];
+
+        return array_map(function (string $a) use ($describe) {
+            $item = ['name' => Str::limit($a, 120, '')];
+            $text = $describe[Str::lower(trim($a))] ?? null;
+
+            return $text === null ? $item : $item + ['description' => $text];
+        }, $advantages);
+    }
+
     /** @param array<string, mixed> $f */
     private function process(array $f): array
     {
         $steps = match ($f['cta']) {
-            'call' => ['Call us and tell us about your event: the date, the place and the kind of celebration.', 'Together we choose the booth that fits.', 'We bring the booth and your guests enjoy it.'],
-            'book_now' => ['Choose the booth and the date you\'d like.', 'Send your booking request with a few details about your event.', 'We bring the booth and your guests enjoy it.'],
-            default => ['Tell us about your event: the date, the place and the kind of celebration.', 'We\'ll follow up with a quote for the booth that fits.', 'We bring the booth and your guests enjoy it.'],
+            'call' => [
+                ['Call us', 'Tell us about your event: the date, the place and the kind of celebration.'],
+                ['Choose your booth', 'Together we choose the booth that fits.'],
+                ['Enjoy the booth', 'We bring the booth and your guests enjoy it.'],
+            ],
+            'book_now' => [
+                ['Pick your booth and date', 'Choose the booth and the date you\'d like.'],
+                ['Send your request', 'Share a few details about your event.'],
+                ['Enjoy the booth', 'We bring the booth and your guests enjoy it.'],
+            ],
+            default => [
+                ['Tell us about your event', 'The date, the place and the kind of celebration.'],
+                ['Get your quote', 'We\'ll follow up with a quote for the booth that fits.'],
+                ['Enjoy the booth', 'We bring the booth and your guests enjoy it.'],
+            ],
         };
 
-        $body = '';
-        foreach ($steps as $i => $step) {
-            $body .= ($i + 1) . '. ' . $step . "\n\n";
-        }
-
-        return ['type' => 'text', 'data' => ['heading' => 'How booking works', 'body' => trim($body)]];
+        return ['type' => 'services', 'data' => ['heading' => 'How booking works', 'items' => array_map(
+            fn (array $step, int $i) => ['name' => ($i + 1) . '. ' . $step[0], 'description' => $step[1]],
+            $steps,
+            array_keys($steps),
+        )]];
     }
 
     /**

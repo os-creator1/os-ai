@@ -75,7 +75,7 @@ class GuidedWebsiteGenerationTest extends TestCase
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $website->guidedGenerationAttempts()->latest('id')->value('status'));
         $home = $this->home($website);
 
-        foreach (['hero', 'services', 'gallery', 'backdrops', 'text', 'faq', 'cta', 'contact_details'] as $type) {
+        foreach (['hero', 'services', 'gallery', 'backdrops', 'faq', 'cta', 'contact_details'] as $type) {
             $this->assertArrayHasKey($type, $home, "The homepage has a {$type} section.");
         }
 
@@ -87,7 +87,7 @@ class GuidedWebsiteGenerationTest extends TestCase
         $this->assertSame('Request a quote', $home['hero'][0]['primary_cta']['label']);
 
         $headings = array_map(fn ($d) => $d['heading'] ?? '', $home['services']);
-        $this->assertSame(['Our photo booths', 'Packages', 'Events we cover', 'Why choose Glow Booths'], $headings, 'Booths, packages, events and the confirmed advantages — in that order, each from real facts.');
+        $this->assertSame(['Our photo booths', 'Packages', 'Events we cover', 'How booking works', 'Why choose Glow Booths'], $headings, 'Booths, packages, events, how booking works and the confirmed advantages — in that order, each from real facts.');
 
         // Nothing is an empty shell: every list has items, every text has a body.
         foreach ($home['services'] as $section) {
@@ -96,8 +96,14 @@ class GuidedWebsiteGenerationTest extends TestCase
                 $this->assertNotSame('', trim($item['name']));
             }
         }
-        foreach ($home['text'] as $section) {
-            $this->assertGreaterThan(40, mb_strlen($section['body']));
+        $process = collect($home['services'])->firstWhere('heading', 'How booking works');
+        $this->assertCount(3, $process['items'], 'Booking is explained as three numbered steps, each with its own sentence.');
+        foreach ($process['items'] as $step) {
+            $this->assertNotSame('', trim($step['description']));
+        }
+        $advantages = collect($home['services'])->firstWhere('heading', 'Why choose Glow Booths');
+        foreach ($advantages['items'] as $advantage) {
+            $this->assertNotEmpty($advantage['description'] ?? null, 'A standard advantage is never a bare title.');
         }
         $this->assertCount(6, $home['faq'][0]['items']);
         $this->assertGreaterThanOrEqual(3, count($home['gallery'][0]['items']));

@@ -19,7 +19,10 @@ Each script prints PASS/FAIL per check and exits non-zero on any failure.
 
 - `wizard-navigation.mjs` — one-question-per-page navigation without a document reload, Back/Skip,
   autosave indicators, offline Retry, resume.
+- `wizard-popstate.mjs` — regression: a failed save (offline, HTTP 500, revision conflict, or a history entry the
+  wizard has no record of) during browser Back/Forward keeps the screen, the typed input and the history position.
 - `guided-setup.mjs` — the full guided photo booth flow: confirm basics → service areas → booths (preset
   photos) → backdrops → gallery → About → review → generate the deterministic website → Studio preview →
-  strict publish gate. Needs a folder of sample photos: `IMG_DIR=/path/to/photos` (default `/tmp/claude-0/imgs`);
+  strict publish gate → every page of the published `/sites/{id}` site at desktop and phone width (broken image,
+  overflow and empty-section checks). Needs a folder of sample photos: `IMG_DIR=/path/to/photos` (default `/tmp/claude-0/imgs`);
   screenshots go to `E2E_SHOTS` (default `/tmp`).

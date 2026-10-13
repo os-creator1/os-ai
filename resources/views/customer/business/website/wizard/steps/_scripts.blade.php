@@ -868,7 +868,7 @@
     // =====================================================================
     var wizard = (function () {
         var DEBOUNCE_MS = 800;
-        var state = { dirty: false, inflight: null, timer: null, lastResult: { ok: true }, navigating: false, ownBumps: 0 };
+        var state = { dirty: false, inflight: null, timer: null, lastResult: { ok: true }, navigating: false, ownBumps: 0, popSeq: 0, restoreTo: null };
         // The screens visited through this page load, in order, and where we are in them: the in-app Back button
         // steps back through browser history when it can (so the browser's Forward button then works) instead of
         // stacking a duplicate entry.
@@ -1170,12 +1170,52 @@
             if ((el = event.target.closest('[data-wizard-exit]'))) { event.preventDefault(); exitWizard(); }
         });
 
+        // Browser Back/Forward. By the time `popstate` fires the address bar has ALREADY moved, but the page still
+        // shows the screen we were on, with whatever was typed into it. So: save that screen first; only when the
+        // save succeeded swap to the screen the address bar names. If it could not be saved (offline, a revision
+        // conflict, a server or session error) nothing is discarded: the history position is put back to the screen
+        // that is still showing (`trailAt` always indexes the displayed screen), the unsaved input stays in place,
+        // and the owner gets the Retry. `popSeq` lets only the newest of several rapid Back/Forward presses decide.
         window.addEventListener('popstate', function () {
-            if (!isWizardUrl(window.location.href)) { return; }
-            var known = trail.lastIndexOf(window.location.href);
-            if (known === -1) { trail = [window.location.href]; trailAt = 0; } else { trailAt = known; }
-            flush(true).then(function () {
-                return navigate(window.location.href, false).then(function () {
+            var target = window.location.href;
+            if (state.restoreTo && target === state.restoreTo) { state.restoreTo = null; return; }
+            state.restoreTo = null;
+            if (!isWizardUrl(target)) { return; }
+            var seq = ++state.popSeq;
+            var shownUrl = trail[trailAt];
+            if (target === shownUrl) { return; }
+
+            function putHistoryBack() {
+                var known = trail.lastIndexOf(shownUrl);
+                var at = trail.lastIndexOf(target);
+                if (at !== -1 && known !== -1 && known !== at) {
+                    state.restoreTo = shownUrl;
+                    window.history.go(known - at);
+                } else {
+                    // The entry we moved to is not one we know (e.g. from before a reload): re-establish the
+                    // screen that is still showing as the current entry instead of guessing a distance.
+                    window.history.pushState({ wizard: true }, '', shownUrl);
+                    trail = trail.slice(0, trailAt + 1);
+                    trail.push(shownUrl);
+                    trailAt = trail.length - 1;
+                }
+            }
+
+            flush(true).then(function (result) {
+                if (seq !== state.popSeq) { return null; }
+                if (!result.ok && !(result.kind === 'invalid'
+                    && window.confirm('Part of this screen can\u2019t be saved yet (' + (result.message || 'it is incomplete') + '). Leave without saving that part?'))) {
+                    putHistoryBack();
+                    clearError();
+                    showError(result.kind === 'invalid'
+                        ? (result.message || 'Please finish this field first.')
+                        : 'Your changes could not be saved, so we stayed on this screen. Check your connection and use Retry \u2014 nothing you typed has been lost.');
+                    return null;
+                }
+                var known = trail.lastIndexOf(target);
+                if (known === -1) { trail = [target]; trailAt = 0; } else { trailAt = known; }
+                state.dirty = false;
+                return navigate(target, false).then(function () {
                     // Browser Back/Forward changes screens without a save: record the resume position.
                     var host = screen;
                     if (host && host.getAttribute('data-visit-url')) { postJson(host.getAttribute('data-visit-url'), new FormData()); }

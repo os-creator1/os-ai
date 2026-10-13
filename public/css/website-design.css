@@ -199,6 +199,8 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 /* Legacy generic component decoration (website-public.css) is reset here: a design
    decides its own cards, bands and buttons. */
 .wd .website-btn { margin: 0; }
+/* The quote form's submit uses the platform button class: give it the design's own button colours (it rendered white text on the yellow accent). */
+.wd .website-btn-primary { background: var(--wd-btn-bg, var(--wd-accent)); color: var(--wd-btn-ink, var(--wd-accent-ink)); border-color: var(--wd-btn-bg, var(--wd-accent)); }
 .wd .website-cta { background: transparent; border: 0; border-radius: 0; padding: 0; }
 .wd .website-testimonial-card { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0; transition: none; color: inherit; }
 .wd .website-testimonial-card:hover { transform: none; box-shadow: none; }
@@ -424,7 +426,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-packages .website-service-price { text-align: center; font-size: 2rem; margin-top: 0.25rem; }
 .wd-packages .wd-card p { text-align: center; }
 .wd-packages .wd-card { align-items: stretch; }
-.wd-packages .wd-card img { display: none; }
+.wd-packages-hairline .wd-card img { display: none; }
 .wd-packages-ruled .wd-card { border-top: 4px solid var(--wd-accent); background: #fff; color: #14181f; box-shadow: 0 6px 22px rgba(6, 22, 51, 0.1); }
 .wd-packages-ruled .wd-card-featured { border-top-width: 8px; box-shadow: 0 14px 34px rgba(6, 22, 51, 0.2); }
 .wd-packages-hairline .wd-grid { display: block; }
@@ -506,10 +508,19 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd .website-form-preview-note { font-size: 0.9rem; color: var(--wd-t-muted); }
 
 /* Backdrops + custom section */
-.wd .website-backdrops-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 380px)); justify-content: center; }
+.wd .website-backdrops-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 380px)); justify-content: center; }
 .wd .website-backdrop-card { margin: 0; padding: 0; overflow: hidden; background: var(--wd-card); color: var(--wd-card-ink); border-radius: var(--wd-radius); box-shadow: var(--wd-shadow); }
-.wd .website-backdrop-card img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 0; margin: 0; }
+.wd .website-backdrop-card img { width: 100%; height: auto; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 0; margin: 0; }
 .wd .website-backdrop-card figcaption { padding: 1rem 1.2rem 1.3rem; }
+@media (max-width: 599px) { .wd .website-backdrop-card img { aspect-ratio: 1 / 1; } }
+
+/* Service / booth cards: photos share one frame so a row of cards lines up whatever the photo's own shape. */
+.wd .website-service-card img { flex: none; }
+:where(.wd .website-service-card) img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; margin-bottom: 1rem; border-radius: calc(var(--wd-radius) * 0.6); }
+/* Package cards: a package with a photo and one without sit side by side, so cards keep their own natural height
+   (a text-only card is never stretched into an empty tile) and the photo uses a shorter, wider frame. */
+.wd .wd-packages .website-services-grid { align-items: start; }
+.wd-packages .wd-card img { aspect-ratio: 16 / 9; }
 .wd .website-backdrop-card h3 { font-size: 1.1rem; margin: 0 0 0.3rem; }
 .wd .website-backdrop-card p { margin: 0; font-size: 0.95rem; color: var(--wd-t-muted); }
 .wd .website-custom-section { display: grid; gap: 2rem; align-items: center; grid-template-columns: minmax(0, 1fr); }
