@@ -529,167 +529,42 @@
             ]);
         }
 
-        #[NoReturn]
-        public function notifications(Request $request): void
+        /**
+         * The inherited Ultimate SMS notification feed is retired from the
+         * product UI. These endpoints stay routable (old bookmarks and open tabs
+         * must not 500) but expose and change nothing: no row is listed, marked
+         * or deleted, and the historical `notifications` rows are left intact.
+         */
+        public function notifications(Request $request): JsonResponse
         {
-
-            $columns = [
-                0 => 'responsive_id',
-                1 => 'uid',
-                2 => 'uid',
-                3 => 'notification_type',
-                4 => 'message',
-                5 => 'mark_read',
-                6 => 'action',
-            ];
-
-            $totalData = Notifications::where('user_id', Auth::user()->id)->count();
-
-            $totalFiltered = $totalData;
-
-            $limit = $request->input('length');
-            $start = $request->input('start');
-            $order = $columns[$request->input('order.0.column')];
-            $dir   = $request->input('order.0.dir');
-
-            if (empty($request->input('search.value'))) {
-                $notifications = Notifications::where('user_id', Auth::user()->id)->offset($start)
-                    ->limit($limit)
-                    ->orderBy($order, $dir)
-                    ->get();
-            } else {
-                $search = $request->input('search.value');
-
-                $notifications = Notifications::where('user_id', Auth::user()->id)->whereLike(['uid', 'notification_type', 'message'], $search)
-                    ->offset($start)
-                    ->limit($limit)
-                    ->orderBy($order, $dir)
-                    ->get();
-
-                $totalFiltered = Notifications::where('user_id', Auth::user()->id)->whereLike(['uid', 'notification_type', 'message'], $search)->count();
-            }
-
-            $data = [];
-            if ( ! empty($notifications)) {
-                foreach ($notifications as $notification) {
-
-                    if ($notification->mark_read == 1) {
-                        $status = 'checked';
-                    } else {
-                        $status = '';
-                    }
-
-                    $nestedData['responsive_id']     = '';
-                    $nestedData['uid']               = $notification->uid;
-                    $nestedData['notification_type'] = ucfirst($notification->notification_type);
-                    $nestedData['message']           = $notification->message;
-                    $nestedData['mark_read']         = "<div class='form-check form-switch form-check-primary'>
-                <input type='checkbox' class='form-check-input get_status' id='status_$notification->uid' data-id='$notification->uid' name='status' $status>
-                <label class='form-check-label' for='status_$notification->uid'>
-                  <span class='switch-icon-left'><i data-feather='check'></i> </span>
-                  <span class='switch-icon-right'><i data-feather='x'></i> </span>
-                </label>
-              </div>";
-                    $data[]                          = $nestedData;
-
-                }
-            }
-
-            $json_data = [
+            return response()->json([
                 'draw'            => intval($request->input('draw')),
-                'recordsTotal'    => $totalData,
-                'recordsFiltered' => $totalFiltered,
-                'data'            => $data,
-            ];
-
-            echo json_encode($json_data);
-            exit();
+                'recordsTotal'    => 0,
+                'recordsFiltered' => 0,
+                'data'            => [],
+            ]);
         }
 
-        /**
-         * mark notification status
-         *
-         *
-         * @throws GeneralException
-         */
         public function notificationToggle(Notifications $notification): JsonResponse
         {
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-            try {
-
-                if ($notification->update(['mark_read' => ! $notification->mark_read])) {
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => 'Notification read status was successfully changed',
-                    ]);
-                }
-
-                throw new GeneralException(__('locale.exceptions.something_went_wrong'));
-            } catch (ModelNotFoundException $exception) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => $exception->getMessage(),
-                ]);
-            }
-
+            return $this->legacyNotificationsRetired();
         }
 
         public function notificationBatchAction(Request $request): JsonResponse
         {
-
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-            $action = $request->get('action');
-            $ids    = $request->get('ids');
-
-            switch ($action) {
-                case 'destroy':
-
-                    Notifications::where('user_id', Auth::user()->id)->whereIn('uid', $ids)->delete();
-
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => 'Notifications was successfully deleted',
-                    ]);
-
-                case 'read':
-
-                    Notifications::where('user_id', Auth::user()->id)->whereIn('uid', $ids)->update([
-                        'mark_read' => true,
-                    ]);
-
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => 'Mark notifications as read',
-                    ]);
-
-            }
-
-            return response()->json([
-                'status'  => 'error',
-                'message' => __('locale.exceptions.invalid_action'),
-            ]);
-
+            return $this->legacyNotificationsRetired();
         }
 
         public function deleteNotification(Notifications $notification): JsonResponse
         {
-            Notifications::where('uid', $notification->uid)->where('user_id', Auth::user()->id)->delete();
+            return $this->legacyNotificationsRetired();
+        }
 
+        private function legacyNotificationsRetired(): JsonResponse
+        {
             return response()->json([
-                'status'  => 'success',
-                'message' => 'Notification was successfully deleted',
+                'status'  => 'error',
+                'message' => __('This notification list has been retired.'),
             ]);
         }
 

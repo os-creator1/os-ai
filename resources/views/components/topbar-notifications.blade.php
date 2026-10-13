@@ -11,7 +11,11 @@
 @php
     // Only current, re-authorized MotionGrove activity belongs in this bell.
     // Inherited Ultimate SMS notification rows are legacy and must not surface.
-    $documentActivity = app(\App\Library\Documents\DocumentActivityCenterReader::class)->unreadFor(Auth::user());
+    //
+    // What is listed is exactly what is counted: the badge, the header and the
+    // hidden screen-reader count all describe the rows shown below (the most
+    // recent ten authorized unread ones), never a larger hidden total.
+    $documentActivity = app(\App\Library\Documents\DocumentActivityCenterReader::class)->unreadFor(Auth::user())->take(10)->values();
     $count = $documentActivity->count();
 @endphp
 <li class="nav-item dropdown dropdown-notification mg-topbar-item" data-role="topbar-notifications">
@@ -39,7 +43,7 @@
                  DocumentActivityCenterReader) from legacy Ultimate SMS notifications: each
                  row here has already been re-authorized right now, so nothing
                  further to check at render time. --}}
-            @foreach($documentActivity->take(10) as $activityItem)
+            @foreach($documentActivity as $activityItem)
                 <a class="d-flex" href="{{ $activityItem->url }}">
                     <div class="list-item d-flex align-items-start">
                         <div class="me-1">
