@@ -121,6 +121,9 @@ final class WebsiteHealthChecker
         // 7. Photos exist and have descriptions.
         $this->photoChecks($add, $website, $pages, $links);
 
+        // 7b. The guided builder's required photographs: homepage cover, one per shown booth, one per backdrop.
+        $this->requiredPhotosCheck($add, $website, $links);
+
         // 8. Links on your pages.
         $brokenLinks = $this->brokenInternalLinks($pages);
         $add('links', $brokenLinks === [] ? self::OK : self::WARN, 'Links between your pages', $brokenLinks === [] ? 'Every link points to a page that exists.' : count($brokenLinks).' button(s) point to a page that no longer exists. They are hidden on your live website until you fix them.', $brokenLinks === [] ? null : 'Manage pages', $links['pages'] ?? null, $brokenLinks);
@@ -136,6 +139,10 @@ final class WebsiteHealthChecker
 
         // 10b. The quote form must be connected to a Location, or every inquiry is turned away.
         $this->quoteFormCheck($add, $website, $pages, $links);
+
+        // 10c. A site that collects inquiries should point visitors to the owner's own privacy notice. Their address,
+        // never platform text; a warning (not a block) because only the owner can supply it.
+        $this->privacyLinkCheck($add, $website, $pages, $links);
 
         // 11. Service pages.
         $services = $this->strategy->eligibleServices($business);
@@ -196,6 +203,28 @@ final class WebsiteHealthChecker
      * Locations (Forms V1 fails closed and never guesses among several). A site that shows such a form while refusing
      * its visitors is the worst kind of "published": nobody is told, and the lead is gone.
      */
+    private function privacyLinkCheck(callable $add, Website $website, Collection $pages, array $links): void
+    {
+        $hasForm = $pages->contains(fn ($page) => collect($page->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'));
+
+        if (! $hasForm) {
+            return;
+        }
+
+        $privacy = \App\Library\Website\Design\WebsiteLegalLinks::fromTheme($website->theme ?? [])['privacy'];
+
+        $add(
+            'privacy_notice',
+            $privacy === null ? self::WARN : self::OK,
+            'Privacy notice link',
+            $privacy === null
+                ? 'Your website collects inquiries but has no link to your privacy notice. Add the address of your own published notice in "Your website\'s look" before you launch to real customers. We do not write one for you.'
+                : 'Your privacy notice is linked in your footer and next to your quote form.',
+            $privacy === null ? 'Add privacy link' : null,
+            $privacy === null ? ($links['look'] ?? ($links['answers'] ?? null)) : null,
+        );
+    }
+
     private function quoteFormCheck(callable $add, Website $website, Collection $pages, array $links): void
     {
         $placed = $pages->flatMap(fn ($page) => collect($page->sections ?? [])
@@ -325,6 +354,40 @@ final class WebsiteHealthChecker
 
         $withoutAlt = $existing === [] ? 0 : $website->assets()->whereIn('uid', $existing)->where(fn ($q) => $q->whereNull('alt_text')->orWhere('alt_text', ''))->count();
         $add('alt_text', $withoutAlt === 0 ? self::OK : self::WARN, 'Photo descriptions (alt text)', $withoutAlt === 0 ? 'Every photo on your pages has a description for people using screen readers and for search.' : $withoutAlt.' photo(s) on your pages have no description.', $withoutAlt === 0 ? null : 'Review photos', $links['photos'] ?? null);
+    }
+
+    /**
+     * Publishing needs real photographs of what the business offers (see WebsiteMediaRequirements). Listed here as the
+     * "what is still missing" checklist, each item naming exactly which photo and the setup question where it is added.
+     */
+    private function requiredPhotosCheck(callable $add, Website $website, array $links): void
+    {
+        $requirements = app(WebsiteMediaRequirements::class);
+
+        if (! $requirements->appliesTo($website)) {
+            return;
+        }
+
+        $missing = $requirements->missing($website);
+
+        if ($missing === []) {
+            $add('required_photos', self::OK, 'Required photos', 'Your homepage, every booth and every backdrop have a real photo.');
+
+            return;
+        }
+
+        $answers = $links['answers'] ?? null;
+        $first = $missing[0]['step'];
+
+        $add(
+            'required_photos',
+            self::FAIL,
+            'Required photos',
+            count($missing) . ' photo(s) are still needed before you can publish. Each one must be a real photo of what you offer.',
+            'Add the missing photos',
+            $answers !== null ? $answers . (str_contains($answers, '?') ? '&' : '?') . 'step=' . $first : null,
+            array_column($missing, 'title'),
+        );
     }
 
     private function contactCheck(callable $add, Collection $pages, $business, array $links): void

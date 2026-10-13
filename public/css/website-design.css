@@ -199,6 +199,8 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 /* Legacy generic component decoration (website-public.css) is reset here: a design
    decides its own cards, bands and buttons. */
 .wd .website-btn { margin: 0; }
+/* The quote form's submit uses the platform button class: give it the design's own button colours (it rendered white text on the yellow accent). */
+.wd .website-btn-primary { background: var(--wd-btn-bg, var(--wd-accent)); color: var(--wd-btn-ink, var(--wd-accent-ink)); border-color: var(--wd-btn-bg, var(--wd-accent)); }
 .wd .website-cta { background: transparent; border: 0; border-radius: 0; padding: 0; }
 .wd .website-testimonial-card { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0; transition: none; color: inherit; }
 .wd .website-testimonial-card:hover { transform: none; box-shadow: none; }
@@ -414,17 +416,18 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 
 /* Services — event tiles (Party Luxe): white rounded tiles with an arrow badge. */
 .wd-services-event-tiles .wd-card { background: #fff; color: var(--wd-ink); box-shadow: var(--wd-shadow); border-radius: 24px; padding: 1rem; flex-direction: column; }
+.wd-services-event-tiles .wd-card-linked { padding-bottom: 4rem; }
 .wd-services-event-tiles .wd-card img { aspect-ratio: 1 / 1; border-radius: 16px; margin-bottom: 0.5rem; }
 .wd-services-event-tiles .wd-card p { color: var(--wd-muted); }
 .wd-services-event-tiles .wd-card h3 { font-size: 1.2rem; padding-right: 3rem; }
-.wd-services-event-tiles .wd-card::after { content: "\2192"; position: absolute; right: 1.1rem; bottom: 1.1rem; width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--wd-accent); color: var(--wd-accent-ink); display: grid; place-items: center; font-weight: 800; }
+.wd-services-event-tiles .wd-card-linked::after { content: "\2192"; position: absolute; right: 1.1rem; bottom: 1.1rem; width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--wd-accent); color: var(--wd-accent-ink); display: grid; place-items: center; font-weight: 800; }
 
 /* Packages — shared */
 .wd-packages .wd-card h3 { text-align: center; }
 .wd-packages .website-service-price { text-align: center; font-size: 2rem; margin-top: 0.25rem; }
 .wd-packages .wd-card p { text-align: center; }
 .wd-packages .wd-card { align-items: stretch; }
-.wd-packages .wd-card img { display: none; }
+.wd-packages-hairline .wd-card img { display: none; }
 .wd-packages-ruled .wd-card { border-top: 4px solid var(--wd-accent); background: #fff; color: #14181f; box-shadow: 0 6px 22px rgba(6, 22, 51, 0.1); }
 .wd-packages-ruled .wd-card-featured { border-top-width: 8px; box-shadow: 0 14px 34px rgba(6, 22, 51, 0.2); }
 .wd-packages-hairline .wd-grid { display: block; }
@@ -506,9 +509,19 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd .website-form-preview-note { font-size: 0.9rem; color: var(--wd-t-muted); }
 
 /* Backdrops + custom section */
+.wd .website-backdrops-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 380px)); justify-content: center; }
 .wd .website-backdrop-card { margin: 0; padding: 0; overflow: hidden; background: var(--wd-card); color: var(--wd-card-ink); border-radius: var(--wd-radius); box-shadow: var(--wd-shadow); }
-.wd .website-backdrop-card img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 0; margin: 0; }
+.wd .website-backdrop-card img { width: 100%; height: auto; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 0; margin: 0; }
 .wd .website-backdrop-card figcaption { padding: 1rem 1.2rem 1.3rem; }
+@media (max-width: 599px) { .wd .website-backdrop-card img { aspect-ratio: 1 / 1; } }
+
+/* Service / booth cards: photos share one frame so a row of cards lines up whatever the photo's own shape. */
+.wd .website-service-card img { flex: none; }
+:where(.wd .website-service-card) img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; margin-bottom: 1rem; border-radius: calc(var(--wd-radius) * 0.6); }
+/* Package cards: a package with a photo and one without sit side by side, so cards keep their own natural height
+   (a text-only card is never stretched into an empty tile) and the photo uses a shorter, wider frame. */
+.wd .wd-packages .website-services-grid { align-items: start; }
+.wd-packages .wd-card img { aspect-ratio: 16 / 9; }
 .wd .website-backdrop-card h3 { font-size: 1.1rem; margin: 0 0 0.3rem; }
 .wd .website-backdrop-card p { margin: 0; font-size: 0.95rem; color: var(--wd-t-muted); }
 .wd .website-custom-section { display: grid; gap: 2rem; align-items: center; grid-template-columns: minmax(0, 1fr); }
@@ -545,7 +558,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-footer-centered .wd-footer-col ul { grid-auto-flow: row; }
 .wd-footer-centered a:hover { color: var(--wd-accent-text); }
 .wd-footer-centered .wd-footer-legal { border-top-color: var(--wd-line); color: var(--wd-muted); }
-@media (min-width: 760px) { .wd-footer-centered .wd-footer-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); width: 100%; } .wd-footer-centered .wd-footer-brand { grid-column: 1 / -1; } }
+@media (min-width: 760px) { .wd-footer-centered .wd-footer-grid { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 2rem 4.5rem; width: 100%; } .wd-footer-centered .wd-footer-brand { flex: 0 0 100%; } .wd-footer-centered .wd-footer-col { text-align: center; } }
 
 .wd-footer-soft { background: #e9dbe9; color: var(--wd-ink); border-top: 1px solid rgba(42, 29, 69, 0.15); }
 .wd-footer-soft .wd-footer-heading { color: #a8412b; }
@@ -581,3 +594,25 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 /* Call-to-action bands that follow each other read as ONE block (same tone, no double padding between them). */
 .wd-band-cta + .wd-band-cta { border-top: 1px solid var(--wd-t-line); }
 .wd-band-cta + .wd-band-cta > .wd-container { padding-top: 0; }
+
+/* Midnight Gold: the page behind the breadcrumb is dark, so it must read light (it inherited near-black). */
+.wd-luxury .website-breadcrumbs { color: #d4d4d8; }
+.wd-luxury .website-breadcrumbs a { color: #e4e4e7; }
+
+/* A booth card that leads to its detail page: the whole card is the target (stretched heading link), with a visible
+   keyboard focus ring on the card itself. Informational cards stay plain, no arrow. */
+.wd .website-service-link { color: inherit; text-decoration: none; }
+.wd .website-service-link::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
+.wd .wd-card-linked { cursor: pointer; }
+.wd .wd-card-linked:hover .website-service-link { text-decoration: underline; text-underline-offset: 0.2em; }
+.wd .wd-card-linked:focus-within { outline: 3px solid var(--wd-accent); outline-offset: 3px; }
+.wd .website-service-link:focus-visible { outline: none; }
+.wd-services-event-tiles .wd-card-linked::after { pointer-events: none; }
+
+/* Legal links (owner-supplied addresses): quiet, same colour as the footer's own copy. */
+.wd-footer-legal { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; justify-content: space-between; align-items: center; }
+.wd-footer-legal-links { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; }
+.wd-footer-legal-links a { color: inherit; text-decoration: underline; text-underline-offset: 0.2em; }
+.wd-footer-centered .wd-footer-legal { justify-content: center; }
+.wd .website-form-privacy { margin: 0.25rem 0 0; font-size: 0.9rem; text-align: center; }
+.wd .website-form-privacy a { color: inherit; text-decoration: underline; text-underline-offset: 0.2em; }

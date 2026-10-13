@@ -1,6 +1,6 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', $step['prompt'])
+@section('title', $step['screen_prompt'] ?? $step['prompt'])
 
 @section('content')
     @php
@@ -8,16 +8,36 @@
         $answerFormId = 'answer-form-' . $screenKey;
         $allOptional = collect($steps)->every(fn ($s) => ! $s['required']);
         $hasCustomSection = collect($steps)->contains(fn ($s) => $s['target_module'] === 'custom_section');
+        // Canonical Packages & Products rows are written by an explicit save, never by a debounce tick.
+        $debounceAutosave = ! collect($steps)->contains(fn ($s) => $s['input_type'] === 'catalog_selection');
     @endphp
 
-    <div class="row justify-content-center">
-        <div class="col-lg-7" data-wizard-screen>
+    {{--
+        `data-wizard-root` is the persistent shell: the navigation script lives
+        for the whole session and only the `data-wizard-screen` element inside
+        it is replaced when the owner moves between screens (no document reload).
+    --}}
+    <div class="row justify-content-center" data-wizard-root>
+        <div class="col-lg-7" data-wizard-screen
+             data-screen-key="{{ $screenKey }}"
+             data-draft-url="{{ route('customer.workspaces.businesses.website.setup.draft', [$workspaceUid, $businessUid, $screenKey]) }}"
+             data-visit-url="{{ route('customer.workspaces.businesses.website.setup.visit', [$workspaceUid, $businessUid, $screenKey]) }}"
+             data-exit-url="{{ route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]) }}"
+             data-autosave="{{ $debounceAutosave ? 'on' : 'off' }}">
             @include('customer.business.website.wizard._progress', ['progress' => $progress, 'backStepKey' => $screenKey, 'currentStepKey' => $screenKey])
 
             <x-flash-alert class="mb-3" />
+            <div class="alert alert-danger d-none" role="alert" tabindex="-1" data-wizard-error></div>
+
+            @if ($isMultiStep && ! empty($step['screen_prompt']))
+                <h4 class="mb-1" tabindex="-1" data-wizard-heading>{{ $step['screen_prompt'] }}</h4>
+                @if (! empty($step['screen_help']))
+                    <p class="text-caption mb-3">{{ $step['screen_help'] }}</p>
+                @endif
+            @endif
 
             @unless ($isMultiStep)
-                <h4 class="mb-1">{{ $step['prompt'] }}</h4>
+                <h4 class="mb-1" tabindex="-1" data-wizard-heading>{{ $step['prompt'] }}</h4>
                 @if ($step['help_text'])
                     <p class="text-caption mb-3">{!! nl2br(e($step['help_text'])) !!}</p>
                 @endif
@@ -48,10 +68,11 @@
             </form>
 
             <div class="d-flex flex-wrap gap-2 mt-4 mb-2" data-wizard-actions>
-                <x-button type="submit" form="{{ $answerFormId }}" variant="primary">Continue</x-button>
+                <x-button type="submit" form="{{ $answerFormId }}" variant="primary" data-wizard-continue>Continue</x-button>
                 @if ($allOptional)
-                    <x-button type="submit" form="{{ $answerFormId }}" name="skip" value="1" variant="outline">Skip</x-button>
+                    <x-button type="submit" form="{{ $answerFormId }}" name="skip" value="1" variant="outline" data-wizard-skip>Skip</x-button>
                 @endif
+                <button type="button" class="btn btn-link ms-auto" data-wizard-exit>Save &amp; exit</button>
                 @if ($hasCustomSection)
                     {{--
                         A SIBLING button associated with the answer form by id,

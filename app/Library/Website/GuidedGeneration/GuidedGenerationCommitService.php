@@ -63,6 +63,7 @@ final class GuidedGenerationCommitService
         private readonly MediaBindingService $mediaBinding,
         private readonly WebsiteDraftPageService $pages,
         private readonly WebsitePageStrategy $pageStrategy,
+        private readonly PhotoBoothBlueprint $blueprintWriter,
     ) {
     }
 
@@ -76,10 +77,13 @@ final class GuidedGenerationCommitService
      *         in isolation) — never used by either real HTTP controller.
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  the owner's optional custom-section questionnaire answer (Website Builder redesign) — see WebsitePageStrategy::buildPlan()
      * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers, appended verbatim to the FAQ page's section — never sent to AI to rewrite (independent-review correction round 2)
+     * @param  ?array<string, mixed>  $blueprint  the guided builder's context (tone, booking action, pricing style, …): when given, the
+     *         pages are written by PhotoBoothBlueprint — complete default copy from the owner's confirmed facts, no AI call — and
+     *         then bound, validated and committed exactly like AI output. Null keeps the AI-written path.
      */
-    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): WebsiteGuidedGenerationAttempt
+    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas, $blueprint);
     }
 
     /**
@@ -95,9 +99,9 @@ final class GuidedGenerationCommitService
     /**
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection
      */
-    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): WebsiteGuidedGenerationAttempt
+    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas, $blueprint);
     }
 
     /**
@@ -123,12 +127,12 @@ final class GuidedGenerationCommitService
             ]);
     }
 
-    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): WebsiteGuidedGenerationAttempt
+    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
         $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection, $catalogItemUids, $serviceAreas);
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
         $facts = $this->client->canonicalFacts($business);
-        $materialBase = $this->materialIdempotencyBase($template, $mode, $plan, $facts, $callerIdempotencyKey);
+        $materialBase = $this->materialIdempotencyBase($template, $mode, $plan, $facts, $callerIdempotencyKey, $blueprint);
 
         // §8.4/Blocker 6 — serializes every attempt for this ONE website
         // so two genuinely concurrent identical submissions never both
@@ -139,7 +143,7 @@ final class GuidedGenerationCommitService
         // lease (a second real HTTP request never reaches this method at
         // all while a lease is held), but is kept as defense in depth for
         // any direct caller that bypasses the coordinator.
-        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $fenceToken, $customSection, $customerFaq) {
+        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $fenceToken, $customSection, $customerFaq, $blueprint) {
             $existing = WebsiteGuidedGenerationAttempt::where('website_id', $website->id)
                 ->where('idempotency_key', 'like', $materialBase . ':%')
                 ->whereIn('status', [WebsiteGuidedGenerationAttempt::STATUS_PENDING, WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED])
@@ -203,7 +207,7 @@ final class GuidedGenerationCommitService
                 }
             }
 
-            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $fenceToken, $customSection, $customerFaq);
+            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $fenceToken, $customSection, $customerFaq, $blueprint);
         });
     }
 
@@ -318,14 +322,21 @@ final class GuidedGenerationCommitService
         return $host !== '' && $own !== '' && preg_replace('/^www\./', '', $host) === preg_replace('/^www\./', '', $own);
     }
 
-    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
         $prohibitedClaims = BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
 
-        // AI provider calls stay OUTSIDE any database transaction
-        // (Blocker 5) — the only writes below happen after this
-        // returns.
-        [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key);
+        if ($blueprint !== null) {
+            // The guided builder: complete default copy from the owner's confirmed facts. No AI call, so no budget
+            // and nothing that can be unavailable; the same binding, validation and atomic commit follow.
+            $aiPages = $this->blueprintWriter->pages($business, $website, $plan, $blueprint);
+            $retryCount = 0;
+        } else {
+            // AI provider calls stay OUTSIDE any database transaction
+            // (Blocker 5) — the only writes below happen after this
+            // returns.
+            [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key);
+        }
 
         if ($fenceToken !== null && ! Website::where('id', $website->id)->where('generation_lease_token', $fenceToken)->exists()) {
             // Independent-review correction round 4 (item 1) — the AI
@@ -534,9 +545,9 @@ final class GuidedGenerationCommitService
      * submissions that happen to share identical facts — e.g. two
      * different rebuild form renders) but is never trusted alone.
      */
-    private function materialIdempotencyBase(WebsiteTemplate $template, string $mode, array $plan, array $facts, string $callerIdempotencyKey): string
+    private function materialIdempotencyBase(WebsiteTemplate $template, string $mode, array $plan, array $facts, string $callerIdempotencyKey, ?array $blueprint = null): string
     {
-        $material = json_encode([
+        $material = json_encode(($blueprint !== null ? ['blueprint' => $blueprint] : []) + [
             'template_key' => $template->key,
             'manifest_version' => $template->manifest_version,
             'mode' => $mode,

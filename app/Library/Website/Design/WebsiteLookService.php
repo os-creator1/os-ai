@@ -27,7 +27,7 @@ use Illuminate\Validation\ValidationException;
 final class WebsiteLookService
 {
     /** Theme keys that belong to the owner, never to the template. */
-    public const OWNER_THEME_KEYS = ['brand_color', 'logo_asset_uid', 'hero_asset_uid'];
+    public const OWNER_THEME_KEYS = ['brand_color', 'logo_asset_uid', 'hero_asset_uid', 'privacy_notice_url', 'terms_url'];
 
     public function __construct(private readonly WebsiteAssetUploadService $uploads) {}
 
@@ -62,6 +62,35 @@ final class WebsiteLookService
         }
 
         $this->patchTheme($website, ['brand_color' => $hex]);
+    }
+
+    /**
+     * The owner's own privacy-notice and terms addresses (each optional; blank clears it). Addresses only — no legal
+     * text is ever written for the owner.
+     *
+     * @throws ValidationException
+     */
+    public function setLegalLinks(Website $website, ?string $privacyNoticeUrl, ?string $termsUrl): void
+    {
+        $patch = [];
+
+        foreach (['privacy_notice_url' => $privacyNoticeUrl, 'terms_url' => $termsUrl] as $key => $value) {
+            if (trim((string) $value) === '') {
+                $patch[$key] = null;
+
+                continue;
+            }
+
+            $clean = WebsiteLegalLinks::clean($value);
+
+            if ($clean === null) {
+                throw ValidationException::withMessages([$key => ['Enter the full web address, starting with https://']]);
+            }
+
+            $patch[$key] = $clean;
+        }
+
+        $this->patchTheme($website, $patch);
     }
 
     /**

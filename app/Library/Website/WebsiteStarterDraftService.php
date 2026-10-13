@@ -883,6 +883,8 @@ final class WebsiteStarterDraftService
     private function activeServicesSection(Business $business, bool $full): ?array
     {
         $services = $business->services()->where('status', BusinessServiceStatus::Active->value)
+            ->where('website_visible', true)
+            ->where('kind', '!=', \App\Models\BusinessService::KIND_EVENT)
             ->orderBy('sort_order')
             ->limit($full ? self::FULL_ITEM_LIMIT : self::PREVIEW_ITEM_LIMIT)
             ->get();

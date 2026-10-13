@@ -8,16 +8,38 @@
     $rows = array_values($rows);
     $rows = $isCustomSectionGroup ? [$rows[0] ?? []] : ($rows !== [] ? $rows : [[]]);
     $addNoun = match (true) {
+        ($step['target_module'] ?? null) === 'business_service' && ($step['item_kind'] ?? null) === 'event' => 'event type',
         ($step['target_module'] ?? null) === 'business_service' => 'service',
         ($step['target_module'] ?? null) === 'backdrop' => 'backdrop',
         ($step['target_module'] ?? null) === 'faq' => 'question',
         ($step['target_module'] ?? null) === 'knowledge_profile' => 'review',
         default => 'entry',
     };
-    $faqSuggestions = (($step['target_module'] ?? null) === 'faq')
+    $faqSuggestions = (($step['target_module'] ?? null) === 'faq' && empty($step['defaults']))
         ? \App\Library\Website\Setup\NicheFaqSuggestions::for(app(\App\Library\Website\Setup\QuestionnaireResolver::class)->nicheKeyFor($business))
         : [];
 @endphp
+@if (! empty($step['presets']))
+    @php $usedPresets = array_filter(array_map(fn ($r) => is_array($r) ? ($r['preset'] ?? null) : null, $rows)); @endphp
+    <div class="mb-3" data-preset-bar>
+        <div class="text-caption mb-2">Tap everything you offer — each one starts with a ready-to-edit description. Tap again to find it in the list.</div>
+        <div class="d-flex flex-wrap gap-2">
+            @foreach ($step['presets'] as $preset)
+                @php $chosen = in_array($preset['key'], $usedPresets, true); @endphp
+                <button type="button" class="btn btn-sm {{ $chosen ? 'btn-primary' : 'btn-outline-primary' }}" aria-pressed="{{ $chosen ? 'true' : 'false' }}"
+                        data-preset-add data-preset-key="{{ $preset['key'] }}" data-preset-label="{{ $preset['label'] }}" data-preset-description="{{ $preset['description'] ?? '' }}">
+                    <span data-preset-mark aria-hidden="true">{{ $chosen ? '✓ ' : '' }}</span>{{ $preset['label'] }}
+                </button>
+            @endforeach
+        </div>
+    </div>
+@endif
+@if (($step['defaults'] ?? null) === 'faq')
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2" data-faq-defaults data-default-url="{{ $defaultsState[$step['key']]['url'] ?? '' }}">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-faq-restore>Restore default questions</button>
+        <span class="text-caption d-none" data-faq-status role="status"></span>
+    </div>
+@endif
 @if ($faqSuggestions !== [])
     <div class="mb-2" data-testid="faq-suggestions">
         <div class="text-caption mb-1">Common questions for your kind of business — tap one, then write your own answer:</div>
@@ -38,7 +60,7 @@
         @include('customer.business.website.wizard.steps._repeatable-row', ['index' => '__INDEX__', 'row' => []])
     </template>
     @unless ($isCustomSectionGroup)
-        <button type="button" class="btn btn-link px-0" data-add-row>+ Add another {{ $addNoun }}</button>
+        <button type="button" class="btn btn-link px-0" data-add-row>{{ ! empty($step['presets']) ? '+ Add a custom ' . $addNoun : '+ Add another ' . $addNoun }}</button>
     @endunless
 </div>
 

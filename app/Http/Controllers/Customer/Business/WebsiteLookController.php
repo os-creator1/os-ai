@@ -74,6 +74,8 @@ class WebsiteLookController extends CustomerBaseController
             'hero_alt' => 'nullable|string|max:160',
             'remove_logo' => 'nullable|boolean',
             'remove_hero' => 'nullable|boolean',
+            'privacy_notice_url' => 'nullable|string|max:500',
+            'terms_url' => 'nullable|string|max:500',
         ]);
 
         $back = redirect()->back();
@@ -101,6 +103,11 @@ class WebsiteLookController extends CustomerBaseController
                 if ($request->has('brand_color')) {
                     $this->look->setBrandColor($locked, $request->input('brand_color'));
                     $notes[] = 'Brand colour saved.';
+                }
+
+                if ($request->has('privacy_notice_url') || $request->has('terms_url')) {
+                    $this->look->setLegalLinks($locked, $request->input('privacy_notice_url'), $request->input('terms_url'));
+                    $notes[] = 'Legal links saved.';
                 }
 
                 if ($request->boolean('remove_logo')) {

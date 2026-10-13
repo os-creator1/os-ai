@@ -59,6 +59,12 @@ final class WebsiteSetupPackageManager
         $selectedUids = is_array($answer)
             ? array_values(array_filter(array_map(fn ($e) => is_array($e) ? ($e['uid'] ?? null) : null, $answer)))
             : null;
+        $serviceKeys = [];
+        foreach (is_array($answer) ? $answer : [] as $entry) {
+            if (is_array($entry) && is_string($entry['uid'] ?? null) && is_string($entry['service_key'] ?? null)) {
+                $serviceKeys[$entry['uid']] = $entry['service_key'];
+            }
+        }
 
         $ordered = [];
         foreach ($selectedUids ?? [] as $uid) {
@@ -71,7 +77,7 @@ final class WebsiteSetupPackageManager
             $ordered[] = [$item, $selectedUids === null];
         }
 
-        return array_map(function (array $pair) {
+        return array_map(function (array $pair) use ($serviceKeys) {
             [$item, $included] = $pair;
             [$prose, $features] = CatalogFeatureList::split($item->description);
 
@@ -81,6 +87,7 @@ final class WebsiteSetupPackageManager
                 'prose' => $prose,
                 'features' => $features,
                 'price' => CatalogMoney::toInput($item->price_minor, $item->currency_code),
+                'service_key' => $serviceKeys[$item->uid] ?? null,
             ];
         }, $ordered);
     }
@@ -90,7 +97,7 @@ final class WebsiteSetupPackageManager
      * the selection (`[{uid}]`, owner's order).
      *
      * @param  array<int, array<string, mixed>>  $rows  uid?, include, name, description, price, currency_code, features[], featured
-     * @return array<int, array{uid: string}>
+     * @return array<int, array{uid: string, service_key?: string}>
      *
      * @throws InvalidAnswerException
      */
@@ -130,7 +137,15 @@ final class WebsiteSetupPackageManager
                 throw new InvalidAnswerException($e->getMessage());
             }
 
-            $selection[] = ['uid' => (string) $item->uid];
+            // The booth this package visibly pairs with (the owner's explicit choice; its photo is the fallback for the
+            // card when the package has none). A bare wizard card key or `svc:<uid>`; anything else is ignored.
+            $serviceKey = trim((string) ($row['service_key'] ?? ''));
+            $entry = ['uid' => (string) $item->uid];
+            if ($serviceKey !== '' && preg_match('/^[A-Za-z0-9:_-]{1,64}$/', $serviceKey) === 1) {
+                $entry['service_key'] = $serviceKey;
+            }
+
+            $selection[] = $entry;
         }
 
         return $selection;

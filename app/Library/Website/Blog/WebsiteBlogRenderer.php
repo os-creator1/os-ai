@@ -327,6 +327,11 @@ class WebsiteBlogRenderer
             'is_home' => $candidate['is_home'],
             'slug' => $candidate['slug'] ?? null,
             'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
+            // A service-detail page names the catalog service it presents, so a booth card can link to it by id —
+            // never by a guessed address.
+            'service_uid' => str_starts_with((string) ($candidate['slug'] ?? ''), 'service-')
+                ? collect($candidate['sections'] ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
+                : null,
             'url' => $surface->pageUrl($candidate),
         ])->all();
 

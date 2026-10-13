@@ -136,9 +136,14 @@ final class WebsiteCatalogReferences
                 $item['featured'] = (bool) $catalogItem->featured;
 
                 if ($catalogItem->price_minor !== null && $catalogItem->currency_code) {
-                    $item['price_label'] = Str::limit(CatalogMoney::format($catalogItem->price_minor, $catalogItem->currency_code), self::PRICE_LABEL_MAX, '');
+                    $label = CatalogMoney::format($catalogItem->price_minor, $catalogItem->currency_code);
+                    // "Prices starting from…" pricing says so on the card; the amount itself is always the catalog's.
+                    $prefix = trim((string) ($item['price_prefix'] ?? ''));
+                    $item['price_label'] = Str::limit($prefix !== '' ? $prefix . ' ' . $label : $label, self::PRICE_LABEL_MAX, '');
                 } else {
-                    $item['price_label'] = null;
+                    // No price entered: say how to find out (when the page's pricing style asks for it), never a number.
+                    $quote = trim((string) ($item['quote_label'] ?? ''));
+                    $item['price_label'] = $quote !== '' ? Str::limit($quote, self::PRICE_LABEL_MAX, '') : null;
                 }
 
                 $items[] = $item;

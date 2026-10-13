@@ -474,6 +474,9 @@ class WebsiteController extends CustomerBaseController
                 'is_home' => $candidate->is_home,
                 'slug' => $candidate->slug,
                 'has_form' => collect($candidate->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
+                'service_uid' => str_starts_with((string) $candidate->slug, 'service-')
+                    ? collect($candidate->sections ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
+                    : null,
                 'url' => route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid, $candidate->uid]),
             ])->all(),
         ]);
@@ -604,7 +607,19 @@ class WebsiteController extends CustomerBaseController
                 ->with(['status' => 'error', 'message' => $message]);
         }
 
-        $this->publisher->publish($website, (int) Auth::id());
+        try {
+            $this->publisher->publish($website, (int) Auth::id());
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Say plainly what is missing — a refused publish is never a silent bounce.
+            $messages = collect($e->errors())->flatten()->values();
+
+            return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])
+                ->withErrors($e->errors())
+                ->with([
+                    'status' => 'error',
+                    'message' => 'Your website can\'t be published yet. ' . $messages->take(4)->implode(' ') . ($messages->count() > 4 ? ' …and ' . ($messages->count() - 4) . ' more — see the checklist below.' : ''),
+                ]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
@@ -798,8 +813,8 @@ class WebsiteController extends CustomerBaseController
             $customerFaq = WizardPresentationAnswers::customerFaq($completedResponse);
 
             $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
-                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse))
-                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse));
+                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse))
+                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse));
 
             if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
                 return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([

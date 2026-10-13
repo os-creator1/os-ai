@@ -136,6 +136,16 @@ final class WebsitePublisher
         foreach ($pages as $page) {
             $this->sectionValidator->validate($page->sections ?? [], $validAssetUids, true, $validFormUids, true, $validFormsModuleUids);
         }
+
+        // The strict photograph policy of the guided builder: a draft may be built without photos, but it is only
+        // published once the homepage, every shown booth and every backdrop have real ones.
+        $missing = app(WebsiteMediaRequirements::class)->missing($website);
+
+        if ($missing !== []) {
+            throw ValidationException::withMessages([
+                'photos' => array_map(fn (array $item) => $item['detail'], $missing),
+            ]);
+        }
     }
 
     private function markAssetsPublished(array $snapshot): void

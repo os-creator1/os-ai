@@ -45,6 +45,20 @@
     </div>
 </div>
 
+<div class="row g-3 align-items-start mt-1" data-testid="legal-links">
+    <div class="col-md-6">
+        <label class="form-label" for="look-privacy-url">Privacy notice link</label>
+        <input type="url" class="form-control" id="look-privacy-url" name="privacy_notice_url" value="{{ old('privacy_notice_url', $privacyNoticeUrl ?? '') }}" placeholder="https://your-business.example/privacy" maxlength="500" inputmode="url" autocomplete="off">
+        <div class="form-text">Your website collects inquiries, so link to your own published privacy notice. We never write or copy a policy for you; leave blank if you don't have one yet.</div>
+        @error('privacy_notice_url') <div class="text-danger small">{{ $message }}</div> @enderror
+    </div>
+    <div class="col-md-6">
+        <label class="form-label" for="look-terms-url">Terms link (optional)</label>
+        <input type="url" class="form-control" id="look-terms-url" name="terms_url" value="{{ old('terms_url', $termsUrl ?? '') }}" placeholder="https://your-business.example/terms" maxlength="500" inputmode="url" autocomplete="off">
+        @error('terms_url') <div class="text-danger small">{{ $message }}</div> @enderror
+    </div>
+</div>
+
 
 {{-- Only a full page runs inline scripts; Studio (a swappable section) loads the same script from its shell. --}}
 @if (! empty($withScript))

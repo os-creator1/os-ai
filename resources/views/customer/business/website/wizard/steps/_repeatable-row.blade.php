@@ -1,3 +1,6 @@
+@if (isset($step['row_fields']))
+    @include('customer.business.website.wizard.steps._service-row')
+@else
 @php
     $module = $step['target_module'];
     $isFaq = $module === 'faq';
@@ -147,3 +150,5 @@
         </div>
     @endunless
 </div>
+
+@endif
