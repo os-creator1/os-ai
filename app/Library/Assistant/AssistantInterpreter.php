@@ -80,6 +80,14 @@ final class AssistantInterpreter
             $route = $this->routeFor($results, $question);
             $fit = $this->fitter->fit($prompt, $loop, $route);
 
+            // The stronger route's envelope is the smaller of its own ceiling and the route it can be downgraded to. If
+            // the evidence cannot be trimmed into that, ask the ordinary assistant route (larger ceiling, never downgraded)
+            // instead of failing the customer.
+            if ($fit === null && $route !== AiModelRoute::Assistant) {
+                $route = AiModelRoute::Assistant;
+                $fit = $this->fitter->fit($prompt, $loop, $route);
+            }
+
             // Cannot fit even after trimming history, tool results and the summary: say so — never send an oversized
             // request, and never retry an identical one.
             if ($fit === null) {

@@ -24,10 +24,14 @@ final class AssistantPromptFitter
     {
     }
 
-    /** The token budget for the input: the route's ceiling less the headroom. */
+    /**
+     * The token budget for the input: the SMALLEST ceiling the gateway may apply to this route (for `reasoning`, the
+     * `routine` ceiling it can be downgraded to on a thin budget), less the headroom. The downgrade decision is made inside
+     * the gateway from live figures, so the request is fitted to what is acceptable on every route it could land on.
+     */
     public function budget(AiModelRoute $route): int
     {
-        $ceiling = (int) $this->router->config($route)['max_input_tokens'];
+        $ceiling = $this->router->smallestInputCeiling($route);
         $headroom = max(0, min(5000, (int) config('assistant.input_headroom_bps')));
 
         return (int) floor($ceiling * (10_000 - $headroom) / 10_000);

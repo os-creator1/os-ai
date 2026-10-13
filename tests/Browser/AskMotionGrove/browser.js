@@ -50,6 +50,8 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
       await page.waitForFunction(() => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > 0, null, { timeout: 15000 });
       await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true);
       let reply = await lastReply(page);
+      const thread0 = await page.locator('[data-role="ask-conversation"]').innerText();
+      ok(`${c.label}: first-use AI-data notice shown, honest about the provider and about deletion`, thread0.includes('How Ask MotionGrove uses AI') && thread0.includes('third-party provider') && thread0.includes('cannot delete what the AI provider has already received') && thread0.includes('minimal record of any action you approved'));
       ok(`${c.label}: setup guidance answer`, (await reply.innerText()).includes('Start with the basics'));
       ok(`${c.label}: answer shows supporting facts`, await reply.locator('.home-ask-fact').count() > 0);
       await page.screenshot({ path: `shots/${vname}-launch-answer.png` });
@@ -151,6 +153,21 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
       await page.keyboard.press('Escape');
       ok(`${c.label}: Escape closes conversation`, await page.locator('[data-role="ask-conversation"]').isHidden());
       for (const sel of cards) { ok(`${c.label}: card ${sel} still present after`, await page.locator(sel).count() >= 1); }
+
+      // Customer deletes the conversation: two-step, then it is really gone (messages, summary) and cannot be resumed.
+      await page.click('[data-role="ask-resume"]');
+      const del = page.locator('[data-role="ask-delete"]');
+      ok(`${c.label}: delete button offered on a saved conversation`, await del.isVisible());
+      await del.click();
+      ok(`${c.label}: first press only asks (nothing deleted yet)`, (await del.innerText()).includes('Press again') && await page.locator('[data-role="ask-message"]').count() >= 10);
+      await del.click();
+      await page.waitForFunction(() => document.querySelector('[data-role="ask-conversation"]').innerText.includes('Conversation deleted.'), null, { timeout: 15000 });
+      ok(`${c.label}: conversation deleted from the page`, await page.locator('[data-role="ask-message"]').count() === 0);
+      await page.reload();
+      await page.waitForSelector('[data-role="home-ask"]');
+      ok(`${c.label}: nothing left to resume after deletion`, await page.locator('[data-role="ask-resume"]:not([hidden])').count() === 0);
+      const gone = await page.request.get(BASE + `/workspaces/${c.qa.workspace}/businesses/${c.qa.business}/home/assistant`, { headers: { Cookie: 'qa_user=' + c.qa.user } });
+      ok(`${c.label}: server holds no conversation messages after deletion`, gone.status() === 200 && ((await gone.json()).messages || []).length === 0, String(gone.status()));
     });
   }
 

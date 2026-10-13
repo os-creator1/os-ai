@@ -33,7 +33,7 @@ return [
     ],
     'data_notice' => [
         'title' => 'How Ask MotionGrove uses AI',
-        'body' => "To answer, Ask MotionGrove uses an AI service run by a third-party provider. The details relevant to your question — for example appointment details or the wording of a customer message — can be sent to that provider; names and phone numbers are kept to a minimum. Your conversations are saved in MotionGrove for :days days and you can delete one at any time with Delete conversation. Deleting it here removes MotionGrove's copy; it does not control what the provider holds under its own terms.",
+        'body' => "To answer, Ask MotionGrove uses an AI service run by a third-party provider, and the details relevant to your question (for example appointment details or the wording of a customer message) can be sent to it; names and phone numbers are kept to a minimum. Conversations are saved in MotionGrove for :days days, and you can delete one any time with Delete conversation. Deleting it removes its messages and summary from MotionGrove; a minimal record of any action you approved (what, when, by whom) may be kept for accountability. MotionGrove cannot delete what the AI provider has already received; that is governed by the provider's own terms.",
     ],
     'timeout' => [
         'title' => 'That took too long',

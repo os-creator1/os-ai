@@ -5,7 +5,10 @@ namespace App\Library\Assistant;
 use App\Models\AssistantActionAudit;
 use App\Models\AssistantActionProposal;
 use App\Models\AssistantConversation;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -19,6 +22,13 @@ use Illuminate\Support\Facades\DB;
  * which Workspace/Business, when, attempts, failure code) and its audit events reduced to codes — no prompt text, no
  * names, no message text. Removing the whole account removes these too (workspace/user foreign keys cascade).
  *
+ * COORDINATION. A deletion first takes the conversation's TURN LOCK — the same owner-token lock a customer's message holds for
+ * the whole of its (provider-calling) turn — so it can never remove rows underneath a running turn, and no database row lock is
+ * held while a provider is being called. A customer's delete waits a few seconds for it and then answers "busy" (retryable);
+ * the scheduled sweep does not wait at all and simply leaves a busy conversation for its next run. Inside the lock the
+ * proposals are taken with SKIP LOCKED: one that an executor holds (an approved action mid-flight, even past its lease) means
+ * "busy", never a lock-wait. A turn that nevertheless outlived its own lease finds the conversation gone and writes nothing.
+ *
  * Idempotent (a conversation already gone is a no-op) and always scoped to the conversation's own Workspace/Business.
  */
 final class AssistantRetention
@@ -30,17 +40,54 @@ final class AssistantRetention
         return max(1, min(365, (int) config('assistant.retention_days')));
     }
 
-    /** @return bool false when an approved action is still executing (try again later); true when deleted or already gone */
-    public function delete(AssistantConversation $conversation, string $reason): bool
+    /** The one lock a turn holds while it works on a conversation, and a deletion must hold to remove it. */
+    public static function turnLock(int $conversationId, int $seconds): Lock
+    {
+        return Cache::lock('assistant:conversation:' . $conversationId, $seconds);
+    }
+
+    /**
+     * @param  int  $waitSeconds  how long to wait for a running turn to finish (0 = do not wait)
+     * @return bool false when a turn or an approved action is still running (try again later); true when deleted or already gone
+     */
+    public function delete(AssistantConversation $conversation, string $reason, int $waitSeconds = 0): bool
+    {
+        $lock = self::turnLock((int) $conversation->id, 30);
+
+        try {
+            if ($waitSeconds > 0) {
+                $lock->block($waitSeconds);
+            } elseif (! $lock->get()) {
+                return false;
+            }
+        } catch (LockTimeoutException) {
+            return false;
+        }
+
+        try {
+            return $this->deleteLocked($conversation, $reason);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function deleteLocked(AssistantConversation $conversation, string $reason): bool
     {
         return DB::transaction(function () use ($conversation, $reason): bool {
-            $locked = AssistantConversation::query()->whereKey($conversation->id)->lockForUpdate()->first();
+            $locked = AssistantConversation::query()->whereKey($conversation->id)->lock('for update skip locked')->first();
 
             if ($locked === null) {
-                return true;
+                // Gone already (idempotent), or its row is held by someone else right now (busy).
+                return ! AssistantConversation::query()->whereKey($conversation->id)->exists();
             }
 
-            $proposals = AssistantActionProposal::query()->where('conversation_id', $locked->id)->lockForUpdate()->get();
+            $existing = AssistantActionProposal::query()->where('conversation_id', $locked->id)->pluck('id');
+            $proposals = AssistantActionProposal::query()->where('conversation_id', $locked->id)->lock('for update skip locked')->get();
+
+            // A proposal an executor holds is not ours to touch, and never worth a lock wait.
+            if ($proposals->count() !== $existing->count()) {
+                return false;
+            }
 
             foreach ($proposals as $p) {
                 if ($p->status === AssistantActionProposal::EXECUTING && $p->lease_expires_at !== null && $p->lease_expires_at->isFuture()) {
@@ -105,7 +152,7 @@ final class AssistantRetention
                 ->get();
 
             foreach ($batch as $conversation) {
-                if ($this->delete($conversation, 'retention')) {
+                if ($this->delete($conversation, 'retention', 0)) {
                     $deleted++;
                 } else {
                     $skipped[] = $conversation->id;

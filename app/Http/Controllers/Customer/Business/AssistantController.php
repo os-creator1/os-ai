@@ -83,7 +83,7 @@ class AssistantController extends Controller
         $context = $this->context($workspaceUid, $businessUid);
 
         if (! $this->assistant->delete($context, $conversationUid)) {
-            return response()->json(['deleted' => false, 'message' => 'An action you approved is still running. Try again in a moment.'], 409);
+            return response()->json(['deleted' => false, 'message' => 'This conversation is busy right now (a reply or an approved action is still in progress). Nothing was deleted — please try again in a moment.'], 409);
         }
 
         return response()->json(['deleted' => true]);

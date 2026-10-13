@@ -85,13 +85,18 @@ final class AssistantService
         // from the turn's wall-clock budget so it always outlives the work it protects; the lock has an owner token, so
         // only this request can release it, and a request that has lost it writes nothing.
         $budget = max(10, (int) config('assistant.turn_budget_seconds'));
-        $lock = Cache::lock('assistant:conversation:' . $conversation->id, $budget + max(15, (int) config('assistant.turn_lock_margin_seconds')));
+        $lock = AssistantRetention::turnLock((int) $conversation->id, $budget + max(15, (int) config('assistant.turn_lock_margin_seconds')));
 
         if (! $lock->get()) {
             return ['status' => 'busy'] + $this->presenter->conversation($context, $conversation);
         }
 
         try {
+            // Deleted between being found and being locked (a customer's delete or the retention sweep): nothing to write to.
+            if (! AssistantConversation::query()->whereKey($conversation->id)->exists()) {
+                abort(404);
+            }
+
             return $this->handle($context, $conversation, $text, $clientMessageId, $lock, Carbon::now()->getTimestamp() + $budget);
         } finally {
             $lock->release();
@@ -123,7 +128,7 @@ final class AssistantService
     {
         $conversation = $this->find($context, $uid) ?? abort(404);
 
-        return $this->retention->delete($conversation, 'customer_request');
+        return $this->retention->delete($conversation, 'customer_request', max(0, (int) config('assistant.delete_wait_seconds')));
     }
 
     /**
@@ -154,18 +159,25 @@ final class AssistantService
             default => (string) ($result['message'] ?? 'That was not done.'),
         };
 
-        AssistantMessage::create([
-            'conversation_id' => $conversation->id,
-            'uid' => (string) Str::uuid(),
-            'role' => AssistantMessage::ROLE_ASSISTANT,
-            'kind' => 'outcome',
-            'body' => $body,
-            'payload' => ['proposal_uid' => $proposal->uid, 'state' => $result['state'], 'url' => $result['url']],
-            'created_at' => now(),
-        ]);
+        try {
+            AssistantMessage::create([
+                'conversation_id' => $conversation->id,
+                'uid' => (string) Str::uuid(),
+                'role' => AssistantMessage::ROLE_ASSISTANT,
+                'kind' => 'outcome',
+                'body' => $body,
+                'payload' => ['proposal_uid' => $proposal->uid, 'state' => $result['state'], 'url' => $result['url']],
+                'created_at' => now(),
+            ]);
 
-        $conversation->forceFill(['last_message_at' => now()])->save();
-        $conversation->increment('message_count');
+            $conversation->forceFill(['last_message_at' => now()])->save();
+            $conversation->increment('message_count');
+        } catch (QueryException $e) {
+            // The conversation was deleted in the instant between finding it and writing: the outcome has nowhere to go.
+            if (AssistantConversation::query()->whereKey($conversation->id)->exists()) {
+                throw $e;
+            }
+        }
     }
 
     /** @return array<string, mixed> */
@@ -209,19 +221,29 @@ final class AssistantService
     /** @return bool false when the turn lost its lock and therefore wrote nothing */
     private function reply(AssistantContext $context, AssistantConversation $conversation, AssistantMessage $userMessage, string $question, \Illuminate\Contracts\Cache\Lock $lock, int $deadline): bool
     {
-        $turn = $context->viewingAsClient()
-            ? new AssistantTurn(AssistantTurn::UNSUPPORTED, "Ask MotionGrove isn't available while you're viewing as a client. Switch back to your own account to use it.", ['links' => []])
-            : $this->fast->match($context, $question);
+        try {
+            $turn = $context->viewingAsClient()
+                ? new AssistantTurn(AssistantTurn::UNSUPPORTED, "Ask MotionGrove isn't available while you're viewing as a client. Switch back to your own account to use it.", ['links' => []])
+                : $this->fast->match($context, $question);
 
-        if ($turn === null) {
-            $state = $this->allowance->forWorkspace($context->workspace, $context->business);
+            if ($turn === null) {
+                $state = $this->allowance->forWorkspace($context->workspace, $context->business);
 
-            if (! $state->usable()) {
-                $turn = $this->interpreter->limit($context);
-            } else {
-                $this->compactor->maybeCompact($context, $conversation, $userMessage, $deadline);
-                $turn = $this->interpreter->interpret($context, $conversation, $userMessage, $question, $deadline);
+                if (! $state->usable()) {
+                    $turn = $this->interpreter->limit($context);
+                } else {
+                    $this->compactor->maybeCompact($context, $conversation, $userMessage, $deadline);
+                    $turn = $this->interpreter->interpret($context, $conversation, $userMessage, $question, $deadline);
+                }
             }
+        } catch (QueryException $e) {
+            // A turn that outlived its own lock while the conversation was deleted (its proposal or reply has no parent any
+            // more): nothing may be recreated, and it is not a server error.
+            if (! AssistantConversation::query()->whereKey($conversation->id)->exists()) {
+                abort(404);
+            }
+
+            throw $e;
         }
 
         // Ownership is re-checked immediately before anything is written: a turn whose lease lapsed (it should never) must
@@ -230,26 +252,34 @@ final class AssistantService
             return false;
         }
 
-        $payload = $turn->payload;
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($conversation, $turn): bool {
+            // The conversation must still exist at the moment of writing (a deletion cannot run while we hold the lock, but a
+            // stale turn must still never recreate anything beneath a deleted conversation).
+            if (AssistantConversation::query()->whereKey($conversation->id)->lockForUpdate()->first() === null) {
+                abort(404);
+            }
 
-        if ($turn->proposal !== null) {
-            $payload['proposal_uid'] = $turn->proposal->uid;
-            $turn->proposal->forceFill(['conversation_id' => $conversation->id])->save();
-        }
+            $payload = $turn->payload;
 
-        AssistantMessage::create([
-            'conversation_id' => $conversation->id,
-            'uid' => (string) Str::uuid(),
-            'role' => AssistantMessage::ROLE_ASSISTANT,
-            'kind' => $turn->kind,
-            'body' => $turn->body,
-            'payload' => $payload === [] ? null : $payload,
-            'created_at' => now(),
-        ]);
+            if ($turn->proposal !== null) {
+                $payload['proposal_uid'] = $turn->proposal->uid;
+                $turn->proposal->forceFill(['conversation_id' => $conversation->id])->save();
+            }
 
-        $conversation->forceFill(['last_message_at' => now()])->save();
-        $conversation->increment('message_count');
+            AssistantMessage::create([
+                'conversation_id' => $conversation->id,
+                'uid' => (string) Str::uuid(),
+                'role' => AssistantMessage::ROLE_ASSISTANT,
+                'kind' => $turn->kind,
+                'body' => $turn->body,
+                'payload' => $payload === [] ? null : $payload,
+                'created_at' => now(),
+            ]);
 
-        return true;
+            $conversation->forceFill(['last_message_at' => now()])->save();
+            $conversation->increment('message_count');
+
+            return true;
+        });
     }
 }

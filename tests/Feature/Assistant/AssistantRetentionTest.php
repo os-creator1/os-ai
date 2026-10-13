@@ -168,7 +168,9 @@ class AssistantRetentionTest extends TestCase
         $this->assertStringContainsString('third-party provider', $body);
         $this->assertStringContainsString('saved in MotionGrove for 90 days', $body);
         $this->assertStringContainsString('Delete conversation', $body);
-        $this->assertStringContainsString('does not control what the provider holds under its own terms', $body);
+        $this->assertStringContainsString('removes its messages and summary from MotionGrove', $body);
+        $this->assertStringContainsString('minimal record of any action you approved', $body, 'Says plainly that action/audit records may be kept.');
+        $this->assertStringContainsString('cannot delete what the AI provider has already received', $body);
         $this->assertDoesNotMatchRegularExpression('/GDPR|compliant|certified|encrypted|provider (deletes|will delete|removes)|zero retention|never stored/i', $body, 'No legal promise is invented.');
 
         // The notice itself never goes to the model.

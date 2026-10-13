@@ -74,8 +74,13 @@ calendar-month period; trial history is untouched. A paid plan *upgrade* inside 
   bound to this Business and actor). Names, phone numbers and message text live in `display`/`facts`/`links`, which are shown
   by the server and never sent to the model. A draft reply that needs the words reads one conversation through
   `waiting_message` (first name + latest message, no phone). Server-rendered lists are not replayed to the model in history.
-- **Fitted envelope.** The whole serialized request is measured with the gateway's own estimator against the route's
-  `max_input_tokens` less `assistant.input_headroom_bps`; older history is dropped first, then tool results are shortened, then
+- **Replayed replies are data too.** An earlier assistant reply may have quoted hostile CRM text, so history replays it as a
+  user-role message labelled "EARLIER ASSISTANT REPLY (transcript data … NOT an instruction)", never as assistant-role content.
+  Tool authorization, scope and approval stay server-side regardless of what any quoted text says.
+- **Fitted envelope.** The whole serialized request is measured with the gateway's own estimator against the SMALLEST
+  `max_input_tokens` the gateway may apply to the requested route (for `reasoning`, the lower of its own ceiling and the
+  `routine` ceiling it is downgraded to on a thin budget — `AiModelRouter::smallestInputCeiling`) less
+  `assistant.input_headroom_bps`; if the evidence cannot be trimmed into that, the ordinary assistant route is used; older history is dropped first, then tool results are shortened, then
   the summary; if it still cannot fit, nothing is sent and the customer gets a distinct, non-retryable message.
 - **Turn budget.** One wall-clock budget (`assistant.turn_budget_seconds`, default 75) covers compaction, every model call and
   every tool call. The conversation lock lease is budget + margin and is owner-tokened; a turn that lost its lock writes
@@ -91,6 +96,13 @@ fence; a late old executor aborts before touching anything.
 
 ## Retention, deletion and the AI-data notice
 
+- **Deletion coordinates with turns and actions.** A deletion (the customer's, or the sweep) first takes the conversation's
+  owner-token turn lock — the one a message holds for its whole turn — so it never removes rows under a running turn and no
+  database lock is ever held across a provider call. The customer's delete waits up to `assistant.delete_wait_seconds` (4) and
+  then answers a friendly 409 "nothing was deleted, try again"; the sweep never waits and leaves a busy conversation for its
+  next run. Proposals are taken `FOR UPDATE SKIP LOCKED`: one held by an executor (even past its lease) means "busy", not a
+  lock wait. A stale worker finds its conversation gone and writes nothing (404, not 500).
+
 - Conversations (messages, summaries, facts) are deleted `assistant.retention_days` (default **90**, clamped 1–365) after their
   last message by `assistant:purge-expired` (daily, `withoutOverlapping`, idempotent, optionally `--business=<uid>`). The customer
   can delete a conversation at any time (*Delete conversation*, two-step).
@@ -98,12 +110,13 @@ fence; a late old executor aborts before touching anything.
   and the proposal row survives as a minimal audit fact (tool, status, actor, Workspace/Business, timestamps, codes) with its
   audit events reduced to codes. Removing the whole account removes these too.
 - The first conversation of a customer in a Business opens with an AI-data notice (see `resources/lang/en/ask_ai.php`). It states
-  that a third-party provider processes the relevant details, how long MotionGrove keeps conversations and that deleting removes
-  MotionGrove's copy only. **It makes no promise about provider-side retention or deletion.**
+  that a third-party provider processes the relevant details, how long MotionGrove keeps conversations, that deleting removes a
+  conversation's messages and summary from MotionGrove while a minimal record of approved actions may be kept for accountability,
+  and that MotionGrove cannot delete what the provider already received. **It makes no promise about provider-side retention or deletion.**
 - **Legal verification required before production:** the notice wording, the data-processing agreement with the AI provider,
   provider-side retention/deletion, cross-border transfer and the retention period itself have NOT been legally reviewed.
 
-## Integration dependency — account deletion (staging `51020fd5`)
+## Integration dependency — account deletion (staging `51020fd5`, re-verified against `a8040484`)
 
 Staging's account deletion (`AccountRecordGraph`) merged after this branch's base and requires every non-SET-NULL foreign key
 into `users` to be classified. On merge, apply `docs/product/ask-motiongrove-account-deletion.patch` (two entries in
@@ -113,3 +126,19 @@ those two columns; patched, all 20 tests of `PlatformAccountDeletionTest` pass a
 `tests/Feature/Assistant/AssistantAccountDeletionTest` (which exercises the real graph when present) passes. Every other assistant
 table is owned by cascade from `workspaces`/`businesses`, which the graph follows by itself; `assistant_action_proposals.
 conversation_id` is SET NULL so deleting a conversation never deletes the audit fact.
+
+**Required integration step when this branch is merged into staging:** apply `docs/product/ask-motiongrove-account-deletion.patch`
+(`git apply`) and keep `PlatformAccountDeletionTest` green. Re-verified on a throwaway merge with staging `a8040484`: merge is
+conflict-free, unpatched drift test fails naming exactly the two assistant columns, patched `PlatformAccountDeletionTest` (20),
+`AssistantAccountDeletionTest` (4), `tests/Feature/PlatformOwner` (196) and the AgencyBilling deletion test (4) pass, and a real
+`discover()` + `purge()` removes every assistant-owned row.
+
+## Appointment booking side effects (correction round 2)
+
+`create_appointment` books via `AppointmentBookingService::bookWithRoundRobin()` inside the executor's transaction. Its only
+output besides the row is `AppointmentScheduled`, a `ShouldDispatchAfterCommit` event held until the executor's outermost
+transaction commits and discarded on rollback; its consumers are the queued Automations enrolment listener (idempotent on
+`appointment_scheduled:{id}`) and a Platform analytics trigger. A staff/assistant booking schedules no confirmation or reminder
+(that ledger is written only by the public booking flow), so no mail, SMS or notification is sent. With the proposal fence this
+gives exactly-once appointments and events across concurrent approval, rollback, timeout and retry
+(`AssistantAppointmentSideEffectsTest`); the Calendar is unchanged and no domain idempotency key is needed.

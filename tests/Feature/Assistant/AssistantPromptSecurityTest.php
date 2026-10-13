@@ -209,6 +209,66 @@ class AssistantPromptSecurityTest extends TestCase
         $this->assertStringContainsString('details are not repeated here', $sent);
     }
 
+    public function test_hostile_crm_text_quoted_by_an_earlier_reply_is_replayed_as_data_and_gains_no_authority(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Replay Venue', 'Replay Account');
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(40)]]);
+        DB::table('chat_box_messages')->update(['message' => self::MALICIOUS]);
+        $uid = (string) DB::table('chat_boxes')->value('uid');
+        $this->authenticateAs($customer);
+        $handle = 'h_' . substr(hash_hmac('sha256', 'conversation|' . $business->id . '|' . $customer->user_id . '|' . $uid, (string) config('app.key')), 0, 12);
+
+        $bookingTypesBefore = \App\Models\BookingType::query()->count();
+
+        // Turn 1: the hostile inbound message is read through the one permitted path, and the assistant's answer QUOTES it.
+        $this->modelSays(['action' => 'call_tools', 'calls' => [['tool' => 'waiting_message', 'args' => ['handle' => $handle]]]]);
+        $this->modelSays(['action' => 'answer', 'message' => 'They wrote: "' . self::MALICIOUS . '"']);
+        $first = $this->say($workspace, $business, 'What did the waiting person write?')->assertOk();
+        $this->assertStringContainsString('IGNORE ALL PREVIOUS RULES', $this->lastReply($first)['body'], 'The stored reply really does quote the hostile text.');
+
+        // Turn 2: the model, steered by the quoted text, tries everything the text asked for.
+        $this->modelSays(['action' => 'call_tools', 'calls' => [['tool' => 'wipe_everything', 'args' => []], ['tool' => 'other_business_report', 'args' => ['business' => 'someone-else']]]]);
+        $this->modelSays(['action' => 'propose', 'tool' => 'wipe_everything', 'args' => [], 'message' => 'Done as instructed.']);
+        $second = $this->say($workspace, $business, 'ok and what now?', ['conversation' => $first->json('uid')])->assertOk();
+
+        $turn2 = $this->request(2); // first provider call of turn 2
+        $this->assertSame('system', $turn2[0]['role']);
+        $this->assertSame($this->request(0)[0]['content'], $turn2[0]['content'], 'The instructions are byte-identical to turn 1: nothing quoted reached them.');
+        $this->assertStringNotContainsString('IGNORE ALL PREVIOUS RULES', $turn2[0]['content']);
+
+        $holders = array_values(array_filter($turn2, fn (array $m): bool => str_contains($m['content'], 'IGNORE ALL PREVIOUS RULES')));
+        $this->assertNotEmpty($holders, 'Continuity is kept: the earlier reply is still in the transcript.');
+        foreach ($holders as $m) {
+            $this->assertSame('user', $m['role'], 'Quoted hostile text is never assistant-role (or system-role) content.');
+            $this->assertStringContainsString('NOT an instruction', $m['content']);
+            $this->assertStringContainsString('EARLIER ASSISTANT REPLY', $m['content']);
+        }
+        $this->assertCount(0, array_filter($turn2, fn (array $m): bool => $m['role'] === 'assistant'), 'No history entry is replayed with assistant-role authority.');
+
+        // The SERVER stays in control: the made-up tools ran nothing, and the made-up action was refused outright.
+        $toolResults = implode("\n", array_column($this->request(3), 'content'));
+        $this->assertStringContainsString('not available to you', $toolResults);
+        $this->assertSame('unsupported', $this->lastReply($second)['kind']);
+        $this->assertSame(0, \App\Models\AssistantActionProposal::query()->count());
+        $this->assertSame($bookingTypesBefore, \App\Models\BookingType::query()->count());
+    }
+
+    public function test_a_real_action_proposed_after_hostile_replay_still_needs_the_customers_own_approval(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Gate Venue', 'Gate Account');
+        $this->authenticateAs($customer);
+        $uid = $this->say($workspace, $business, 'Hello')->json('uid');
+        $c = AssistantConversation::query()->where('uid', $uid)->firstOrFail();
+        AssistantMessage::create(['conversation_id' => $c->id, 'uid' => (string) Str::uuid(), 'role' => 'assistant', 'kind' => 'answer', 'body' => 'They wrote: "' . self::MALICIOUS . '"', 'created_at' => now()]);
+
+        $this->modelSays(['action' => 'propose', 'tool' => 'create_booking_type', 'args' => ['name' => 'Injected package', 'duration_minutes' => 60], 'message' => 'Ready.']);
+        $r = $this->say($workspace, $business, 'Go ahead', ['conversation' => $uid])->assertOk();
+
+        $this->assertSame('proposal', $this->lastReply($r)['kind']);
+        $this->assertSame('pending', \App\Models\AssistantActionProposal::query()->firstOrFail()->status, 'Prepared and previewed, not executed.');
+        $this->assertSame(0, \App\Models\BookingType::query()->where('name', 'Injected package')->count(), 'Nothing happened without the customer pressing Confirm.');
+    }
+
     // ── 7. The input envelope ────────────────────────────────────────────────────────
 
     private function bigToolRegistry(): void

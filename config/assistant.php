@@ -52,4 +52,7 @@ return [
 
     // How long a prepared reply stays openable (pre-filled) in Follow-ups after it was handed off.
     'handoff_ttl_minutes' => 60,
+
+    // How long a customer's "Delete conversation" waits for a reply that is still being worked on before answering "busy".
+    'delete_wait_seconds' => (int) env('ASSISTANT_DELETE_WAIT_SECONDS', 4),
 ];
