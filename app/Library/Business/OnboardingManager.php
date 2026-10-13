@@ -2,23 +2,31 @@
 
 namespace App\Library\Business;
 
+use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessServiceStatus;
 use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
 use App\Events\Business\CustomerOnboardingCompleted;
 use App\Events\Business\CustomerOnboardingStarted;
 use App\Events\Business\CustomerOnboardingStepCompleted;
-use App\Events\Business\InitialBusinessAnalysisRequested;
-use App\Jobs\Business\BuildInitialBusinessSnapshot;
+use App\Enums\Website\WebsiteMode;
+use App\Enums\Website\WebsiteStatus;
+use App\Library\ExternalSite\ExternalSiteException;
+use App\Library\Website\WebsiteModeManager;
 use App\Models\Business;
+use App\Models\BusinessLocation;
+use App\Models\BusinessService;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
+use App\Models\Website;
 use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -31,28 +39,21 @@ use InvalidArgumentException;
 class OnboardingManager
 {
     /**
-     * Fixed step order (RFC-001 §22). Index position is used for all
-     * "ahead of / behind" comparisons.
+     * The customer-facing step order. Index position is used for every
+     * "ahead of / behind" comparison. Legacy steps from the earlier eight-step
+     * wizard are never in this list: they are resolved onto one of these by
+     * currentStep()/canonicalStep().
      */
     private const STEP_ORDER = [
-        OnboardingStep::Goals,
         OnboardingStep::Business,
         OnboardingStep::Location,
         OnboardingStep::Services,
-        OnboardingStep::Assets,
-        OnboardingStep::Analysis,
-        OnboardingStep::Results,
-        OnboardingStep::Complete,
+        OnboardingStep::Website,
+        OnboardingStep::Finish,
     ];
 
-    /**
-     * Steps that may be completed with no submitted data (RFC-001 §23: "Only
-     * assets can be skipped").
-     */
-    private const SKIPPABLE_STEPS = [
-        OnboardingStep::Services,
-        OnboardingStep::Assets,
-    ];
+    /** The three answers to "How would you like to handle your website?". */
+    public const WEBSITE_CHOICES = ['build', 'existing', 'later'];
 
     public function __construct(
         private readonly CustomerOnboardingRepository $onboardingRepository,
@@ -167,26 +168,62 @@ class OnboardingManager
     }
 
     /**
+     * The step the customer is actually on. The stored bookmark is trusted
+     * for the current steps; a row written by the earlier eight-step wizard
+     * (goals / assets / analysis / results / complete) is resolved from the
+     * PERSISTED Business, Location, Services and Website facts onto the first
+     * step that still needs the customer, so an old partial onboarding resumes
+     * correctly under the new order without skipping a prerequisite.
+     */
+    public function currentStep(CustomerOnboarding $onboarding): OnboardingStep
+    {
+        if ($onboarding->status === OnboardingStatus::Completed) {
+            return OnboardingStep::Finish;
+        }
+
+        return match ($onboarding->current_step) {
+            OnboardingStep::Goals => OnboardingStep::Business,
+            OnboardingStep::Assets,
+            OnboardingStep::Analysis,
+            OnboardingStep::Results,
+            OnboardingStep::Complete => $this->firstUnmetStep($onboarding),
+            default => $onboarding->current_step,
+        };
+    }
+
+    /**
      * Resolve the step that should actually be shown. A null $requested
-     * returns the onboarding's current bookmark. An explicit $requested step
+     * returns the onboarding's current step. An explicit $requested step
      * behind or at the current step is honored (revisiting); one ahead of it
-     * is clamped back — this is what prevents step skipping.
+     * is clamped back — this is what prevents step skipping. A removed legacy
+     * step URL is mapped onto its current equivalent first and then clamped
+     * the same way.
      */
     public function resolveStep(CustomerOnboarding $onboarding, ?OnboardingStep $requested = null): OnboardingStep
     {
+        $current = $this->currentStep($onboarding);
+
         if ($requested === null) {
-            return $onboarding->current_step;
+            return $current;
         }
 
-        return $this->stepIndex($requested) <= $this->stepIndex($onboarding->current_step)
-            ? $requested
-            : $onboarding->current_step;
+        $requested = $this->canonicalStep($requested);
+
+        return $this->stepIndex($requested) <= $this->stepIndex($current) ? $requested : $current;
+    }
+
+    /** The customer-facing step that follows $step (Finish is last). */
+    public function nextStep(OnboardingStep $step): OnboardingStep
+    {
+        $index = min($this->stepIndex($step) + 1, count(self::STEP_ORDER) - 1);
+
+        return self::STEP_ORDER[$index];
     }
 
     /**
      * Mark $completed done and advance to $next. Idempotent: re-completing
      * an already-completed step re-saves its data but never regresses
-     * current_step, and no event fires unless something genuinely changed.
+     * the current step, and no event fires unless something genuinely changed.
      *
      * @throws InvalidArgumentException if $completed is beyond the current
      *                                   step, or $next skips more than one step ahead of $completed.
@@ -195,11 +232,12 @@ class OnboardingManager
     {
         $this->assertValidStepCompletion($onboarding, $completed, $next);
 
+        $currentStep = $this->currentStep($onboarding);
         $alreadyCompleted = in_array($completed->value, $onboarding->completed_steps ?? [], true);
 
-        $effectiveNext = $this->stepIndex($next) > $this->stepIndex($onboarding->current_step)
+        $effectiveNext = $this->stepIndex($next) > $this->stepIndex($currentStep)
             ? $next
-            : $onboarding->current_step;
+            : $currentStep;
         $advancesCurrentStep = $effectiveNext !== $onboarding->current_step;
 
         $updated = $this->onboardingRepository->markStepComplete($onboarding, $completed, $effectiveNext);
@@ -209,21 +247,6 @@ class OnboardingManager
         }
 
         return $updated;
-    }
-
-    /**
-     * Complete a step with no submitted data. Only permitted for steps the
-     * RFC explicitly allows skipping (currently: assets only).
-     *
-     * @throws InvalidArgumentException if $step is not skippable.
-     */
-    public function skipStep(CustomerOnboarding $onboarding, OnboardingStep $step): CustomerOnboarding
-    {
-        if (! in_array($step, self::SKIPPABLE_STEPS, true)) {
-            throw new InvalidArgumentException("Step [{$step->value}] cannot be skipped.");
-        }
-
-        return $this->completeStep($onboarding, $step, $this->nextStep($step));
     }
 
     /**
@@ -257,29 +280,18 @@ class OnboardingManager
             // a customer who genuinely has no Business to continue.
             $existingBusiness ??= $this->provisionedDraftBusinessFor($customer);
 
-            $business = $this->businessManager->createOrUpdateOnboardingBusiness($customer, $existingBusiness, $attributes);
+            // The website address is the Website step's question; this step never touches it.
+            $business = $this->businessManager->createOrUpdateOnboardingBusiness(
+                $customer,
+                $existingBusiness,
+                Arr::except($attributes, ['website_url']),
+            );
 
             if ($onboarding->business_id === null) {
                 $onboarding = $this->onboardingRepository->attachBusiness($onboarding, $business);
             }
 
             return $this->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
-        });
-    }
-
-    /**
-     * Save the goals step (primary_goals) and advance to Business — the one
-     * onboarding step with no BusinessManager involvement, since goals live
-     * on the onboarding row itself, not the Business aggregate.
-     */
-    public function saveGoalsStep(CustomerOnboarding $onboarding, Customer $customer, array $goals): CustomerOnboarding
-    {
-        $this->assertOwnership($customer, $onboarding);
-
-        return DB::transaction(function () use ($onboarding, $goals) {
-            $onboarding = $this->onboardingRepository->updatePrimaryGoals($onboarding, $goals);
-
-            return $this->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
         });
     }
 
@@ -301,8 +313,20 @@ class OnboardingManager
     }
 
     /**
-     * Save the services step through BusinessManager and advance to Assets,
-     * atomically. Requires the business step to already be done.
+     * Save the services step through BusinessManager::syncServices() and
+     * advance to Website, atomically. At least one service is required, with
+     * exactly one primary.
+     *
+     * Services the customer already has are never duplicated or dropped here:
+     * a submitted name that matches an existing service (even an inactive
+     * one) is that service, and an existing active service the submission did
+     * not mention stays as it is. Managing the full list is the Business
+     * services screen's job, not the wizard's.
+     *
+     * @param  array<int, array<string, mixed>>  $services
+     *
+     * @throws InvalidArgumentException if no service is submitted, or the
+     *                                   result would not have exactly one primary active service.
      */
     public function saveServicesStep(CustomerOnboarding $onboarding, Customer $customer, array $services): CustomerOnboarding
     {
@@ -311,78 +335,190 @@ class OnboardingManager
         return DB::transaction(function () use ($onboarding, $customer, $services) {
             $business = $this->resolveOwnedBusiness($onboarding, $customer);
 
-            // No rows is "nothing to change", never "remove every service".
-            if ($services !== []) {
-                $this->businessManager->syncServices($customer, $business, $services);
+            $rows = $this->reconcileServices($business, $services);
+
+            if ($rows === []) {
+                throw new InvalidArgumentException('At least one service is required.');
             }
 
-            return $this->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Assets);
+            $this->businessManager->syncServices($customer, $business, $rows);
+
+            if (! $this->servicesAreComplete($business)) {
+                throw new InvalidArgumentException('Exactly one primary active service is required.');
+            }
+
+            return $this->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Website);
         });
     }
 
     /**
-     * Save the assets step (public profile URLs, via BusinessManager's
-     * identity update) and advance to Analysis, atomically. Requires the
-     * business step to already be done.
-     */
-    public function saveAssetsStep(CustomerOnboarding $onboarding, Customer $customer, array $attributes): CustomerOnboarding
-    {
-        $this->assertOwnership($customer, $onboarding);
-
-        return DB::transaction(function () use ($onboarding, $customer, $attributes) {
-            $business = $this->resolveOwnedBusiness($onboarding, $customer);
-
-            $this->businessManager->updateBusiness($customer, $business, $attributes);
-
-            return $this->completeStep($onboarding, OnboardingStep::Assets, OnboardingStep::Analysis);
-        });
-    }
-
-    /**
-     * Request a new analysis run. Increments analysis_version so any
-     * already-queued job for an older version safely no-ops when it runs
-     * (BuildInitialBusinessSnapshot re-checks the version itself).
+     * Record the customer's answer to "How would you like to handle your
+     * website?" and advance to Finish. Nothing is generated, published,
+     * connected or audited here:
      *
-     * @throws InvalidArgumentException if the prior onboarding steps (business
-     *                                   through assets) aren't done yet.
+     *  - build:    intention recorded; the Business's primary website source
+     *              becomes "hosted" so the Website module opens its own
+     *              creation journey. No site is created.
+     *  - existing: the address is saved in businesses.website_url through
+     *              BusinessManager; the source becomes "external". It is only
+     *              a saved address until the Website module checks it.
+     *  - later:    website setup stays pending; a previously saved address is
+     *              kept.
+     *
+     * A Business that already owns a MotionGrove-hosted Website is never
+     * re-pointed or detached: its website source and address are left alone
+     * and the step simply records that it is built with MotionGrove.
+     *
+     * @throws InvalidArgumentException for an unknown choice or an unusable address.
      */
-    public function requestAnalysis(CustomerOnboarding $onboarding, Customer $customer): CustomerOnboarding
+    public function saveWebsiteStep(CustomerOnboarding $onboarding, Customer $customer, string $choice, ?string $websiteUrl = null): CustomerOnboarding
     {
         $this->assertOwnership($customer, $onboarding);
 
-        if ($this->stepIndex($onboarding->current_step) < $this->stepIndex(OnboardingStep::Analysis)) {
-            throw new InvalidArgumentException('Complete the earlier onboarding steps before requesting analysis.');
+        if (! in_array($choice, self::WEBSITE_CHOICES, true)) {
+            throw new InvalidArgumentException('Choose how you would like to handle your website.');
         }
 
-        return DB::transaction(function () use ($onboarding) {
-            $version = $onboarding->analysis_version + 1;
-            $updated = $this->onboardingRepository->startAnalysis($onboarding, $version);
+        return DB::transaction(function () use ($onboarding, $customer, $choice, $websiteUrl) {
+            $business = $this->resolveOwnedBusiness($onboarding, $customer);
+            $modes = app(WebsiteModeManager::class);
 
-            InitialBusinessAnalysisRequested::dispatch($updated->id, $version);
-            BuildInitialBusinessSnapshot::dispatch($updated->id, $version);
+            if (Website::query()->where('business_id', $business->id)->exists()) {
+                $choice = 'build';
+            } elseif ($choice === 'existing') {
+                try {
+                    $address = $modes->normalizeAddress((string) $websiteUrl);
+                } catch (ExternalSiteException) {
+                    throw new InvalidArgumentException('Enter a valid public website address.');
+                }
 
-            return $updated;
+                // Saved BEFORE the source becomes "external", so the Website
+                // module's address-change listener does not start a crawl:
+                // checking the site is the Website module's own step.
+                if ($this->sameAddress($business->website_url, $address) === false) {
+                    $business = $this->businessManager->updateBusiness($customer, $business, ['website_url' => $address]);
+                }
+
+                $modes->set($business, WebsiteMode::External);
+            } elseif ($choice === 'build') {
+                $modes->set($business, WebsiteMode::Hosted);
+            } else {
+                $modes->set($business, WebsiteMode::None);
+            }
+
+            $onboarding = $this->onboardingRepository->recordWebsiteChoice($onboarding, $choice);
+
+            return $this->completeStep($onboarding, OnboardingStep::Website, OnboardingStep::Finish);
         });
     }
 
     /**
-     * Thin persistence step — OnboardingActionExecutor is responsible for
-     * deciding *whether* an action should be recorded (RFC-001 §14); this
-     * method just performs the recording once that decision is made.
+     * The saved answer to the Website step: the onboarding's own record, or,
+     * for an account that already has a website source (including a managed
+     * Website), what that source says. Null when the question was never answered.
      */
-    public function recordFirstValueAction(CustomerOnboarding $onboarding, Customer $customer, string $actionKey): CustomerOnboarding
+    public function websiteChoice(CustomerOnboarding $onboarding, ?Business $business = null): ?string
     {
-        $this->assertOwnership($customer, $onboarding);
+        $saved = $onboarding->metadata['website']['choice'] ?? null;
 
-        return $this->onboardingRepository->recordFirstValueAction($onboarding, $actionKey);
+        if (is_string($saved) && in_array($saved, self::WEBSITE_CHOICES, true)) {
+            return $saved;
+        }
+
+        $business ??= $onboarding->business;
+
+        if ($business === null) {
+            return null;
+        }
+
+        return match (app(WebsiteModeManager::class)->resolve($business)) {
+            WebsiteMode::Hosted => 'build',
+            WebsiteMode::External => 'existing',
+            WebsiteMode::None => 'later',
+            null => null,
+        };
+    }
+
+    /**
+     * The facts the Finish screen shows and completion enforces, read from
+     * the persisted Business, Location, Services and Website records — never
+     * from completed-step flags. `missing` maps each step that still needs
+     * the customer to a plain-language reason; it is empty exactly when
+     * completion would be accepted.
+     *
+     * @return array{
+     *   business: ?Business,
+     *   location: ?BusinessLocation,
+     *   services: Collection,
+     *   primaryService: ?BusinessService,
+     *   website: array{choice: ?string, url: ?string, status: string},
+     *   missing: array<string, string>
+     * }
+     */
+    public function review(CustomerOnboarding $onboarding): array
+    {
+        // Read fresh: the cached relation may predate a save made in this request.
+        $business = $onboarding->business_id !== null ? $onboarding->business()->first() : null;
+        $location = null;
+        $services = collect();
+        $missing = [];
+
+        if ($business === null || blank($business->name) || $business->industry === null) {
+            $missing[OnboardingStep::Business->value] = 'Add your business name and what kind of business it is.';
+        }
+
+        if ($business !== null) {
+            $primaries = $business->locations()->where('is_primary', true)->get();
+            $location = $primaries->count() === 1 ? $primaries->first() : null;
+
+            $services = $business->services()
+                ->where('status', BusinessServiceStatus::Active)
+                ->orderBy('sort_order')->orderBy('id')
+                ->get();
+        }
+
+        if ($location === null || ! $this->locationIsComplete($location)) {
+            $missing[OnboardingStep::Location->value] = $location === null
+                ? 'Tell us where you work.'
+                : 'Finish the details of where you work.';
+        }
+
+        $primaryService = $services->firstWhere('is_primary', true);
+
+        if ($services->isEmpty() || $services->where('is_primary', true)->count() !== 1) {
+            $missing[OnboardingStep::Services->value] = $services->isEmpty()
+                ? 'Add at least one service you offer.'
+                : 'Choose one primary service.';
+        }
+
+        $choice = $business === null ? null : $this->websiteChoice($onboarding, $business);
+
+        if ($choice === null) {
+            $missing[OnboardingStep::Website->value] = 'Tell us how you would like to handle your website.';
+        }
+
+        return [
+            'business' => $business,
+            'location' => $location,
+            'services' => $services,
+            'primaryService' => $primaryService,
+            'website' => [
+                'choice' => $choice,
+                'url' => $business?->website_url,
+                'status' => $this->websiteStatusText($business, $choice),
+            ],
+            'missing' => $missing,
+        ];
     }
 
     /**
      * Idempotent: a repeat call on an already-completed onboarding returns it
-     * unchanged and dispatches nothing, so resubmission can never double-fire
-     * CustomerOnboardingCompleted.
+     * unchanged and dispatches nothing, so resubmission, a double-click or a
+     * concurrent request can never double-fire CustomerOnboardingCompleted.
+     * The row is re-read under a lock, so of two simultaneous requests the
+     * second one finds the first one's completion.
      *
-     * @throws InvalidArgumentException if any completion prerequisite (RFC-001 §32) isn't met.
+     * @throws InvalidArgumentException if any completion prerequisite isn't met.
      */
     public function complete(CustomerOnboarding $onboarding, Customer $customer): CustomerOnboarding
     {
@@ -392,13 +528,19 @@ class OnboardingManager
             return $onboarding;
         }
 
-        $this->assertCompletionPrerequisites($onboarding, $customer);
-
         return DB::transaction(function () use ($onboarding, $customer) {
-            $updated = $this->onboardingRepository->complete($onboarding);
+            $locked = $this->onboardingRepository->findForUpdate($onboarding->id) ?? $onboarding;
 
-            // RFC-001 §32: a finished onboarding activates the Draft
-            // Business it was completing, through the one activation seam.
+            if ($locked->status === OnboardingStatus::Completed) {
+                return $locked;
+            }
+
+            $this->assertCompletionPrerequisites($locked, $customer);
+
+            $updated = $this->onboardingRepository->complete($locked);
+
+            // A finished onboarding activates the Draft Business it was
+            // completing, through the one activation seam.
             $this->businessManager->activateForCompletedOnboarding(
                 $customer,
                 $this->resolveOwnedBusiness($updated, $customer),
@@ -411,40 +553,187 @@ class OnboardingManager
     }
 
     /**
-     * Exact-cardinality checks against ownership-scoped queries on the
-     * attached Business — a has-one relation (primaryLocation/primaryService)
-     * can only prove "at least one exists", never "exactly one", since
-     * nothing stops inconsistent data (e.g. a repository bug, or a direct
-     * write outside BusinessManager) from leaving two rows flagged primary.
+     * Completion needs the Business, its one primary Location and at least one
+     * active Service with exactly one primary, all proven against the
+     * persisted records (see review()). A website is optional: "later" is a
+     * valid answer, but the question must have been answered.
      *
      * @throws InvalidArgumentException if a prerequisite is missing.
      * @throws AuthorizationException if the attached business doesn't belong to $customer.
      */
     private function assertCompletionPrerequisites(CustomerOnboarding $onboarding, Customer $customer): void
     {
-        // Business identity and its location are what the product needs; everything
-        // after them (services, assets, analysis) can be finished later.
-        foreach ([OnboardingStep::Business, OnboardingStep::Location] as $required) {
-            if (! in_array($required->value, $onboarding->completed_steps ?? [], true)) {
-                throw new InvalidArgumentException("The [{$required->value}] step must be completed before onboarding can be completed.");
+        $this->resolveOwnedBusiness($onboarding, $customer);
+
+        $missing = $this->review($onboarding)['missing'];
+
+        if ($missing !== []) {
+            throw new InvalidArgumentException('Onboarding cannot be completed yet: '.implode(', ', array_keys($missing)).' still need attention.');
+        }
+    }
+
+    /** The first step whose persisted facts are not yet in place, or Finish. */
+    private function firstUnmetStep(CustomerOnboarding $onboarding): OnboardingStep
+    {
+        $missing = $this->review($onboarding)['missing'];
+
+        foreach (self::STEP_ORDER as $step) {
+            if (isset($missing[$step->value])) {
+                return $step;
             }
         }
 
-        $business = $this->resolveOwnedBusiness($onboarding, $customer);
+        return OnboardingStep::Finish;
+    }
 
-        if ($business->locations()->where('is_primary', true)->count() !== 1) {
-            throw new InvalidArgumentException('Exactly one primary location is required before onboarding can be completed.');
+    /** A removed legacy step mapped onto the customer-facing step that now covers it. */
+    private function canonicalStep(OnboardingStep $step): OnboardingStep
+    {
+        return match ($step) {
+            OnboardingStep::Goals => OnboardingStep::Business,
+            OnboardingStep::Assets => OnboardingStep::Website,
+            OnboardingStep::Analysis,
+            OnboardingStep::Results,
+            OnboardingStep::Complete => OnboardingStep::Finish,
+            default => $step,
+        };
+    }
+
+    /** Whether the location has what its service mode needs for local SEO. */
+    private function locationIsComplete(BusinessLocation $location): bool
+    {
+        if (! $location->isActive() || blank($location->country_code)) {
+            return false;
         }
 
-        // Services, the analysis and its recommendations are optional: a customer may
-        // finish without them and add them later. The invariant that DOES hold is that
-        // services, once any exist, have exactly one primary.
+        return match ($location->service_mode) {
+            BusinessServiceMode::ServiceArea => filled($location->city) && filled($location->region),
+            BusinessServiceMode::Storefront,
+            BusinessServiceMode::Hybrid => filled($location->address_line_1) && filled($location->city) && filled($location->region),
+            default => true,
+        };
+    }
+
+    private function servicesAreComplete(Business $business): bool
+    {
         $active = $business->services()->where('status', BusinessServiceStatus::Active);
 
-        if ((clone $active)->count() > 0
-            && (clone $active)->where('is_primary', true)->count() !== 1) {
-            throw new InvalidArgumentException('Exactly one active primary service is required when services are listed.');
+        return (clone $active)->count() > 0
+            && (clone $active)->where('is_primary', true)->count() === 1;
+    }
+
+    /**
+     * Turn the submitted rows into the full list syncServices() expects:
+     * submitted names are matched to existing services (so a retry or a stale
+     * form never duplicates one), repeated names collapse, and existing active
+     * services that were not submitted are carried along untouched.
+     *
+     * @param  array<int, array<string, mixed>>  $submitted
+     * @return array<int, array<string, mixed>>
+     */
+    private function reconcileServices(Business $business, array $submitted): array
+    {
+        $existing = $business->services()->get();
+        $byName = $existing->keyBy(fn (BusinessService $service) => $this->serviceKey($service->name));
+        $rows = [];
+        $seen = [];
+
+        foreach ($submitted as $row) {
+            $name = trim((string) ($row['name'] ?? ''));
+
+            if ($name === '') {
+                continue;
+            }
+
+            $key = $this->serviceKey($name);
+
+            if (isset($row['id']) && $row['id'] !== null) {
+                $match = $existing->firstWhere('id', (int) $row['id']);
+
+                if ($match === null) {
+                    throw new InvalidArgumentException('That service does not belong to this business.');
+                }
+
+                $key = $this->serviceKey($match->name);
+            } elseif ($byName->has($key)) {
+                $row['id'] = $byName->get($key)->id;
+                $row['status'] = BusinessServiceStatus::Active->value;
+            }
+
+            if (isset($seen[$key])) {
+                $rows[$seen[$key]]['is_primary'] = ! empty($rows[$seen[$key]]['is_primary']) || ! empty($row['is_primary']);
+
+                continue;
+            }
+
+            $seen[$key] = count($rows);
+            $rows[] = $row;
         }
+
+        if ($rows === []) {
+            return [];
+        }
+
+        $requestedPrimary = collect($rows)->contains(fn (array $row) => ! empty($row['is_primary']));
+
+        foreach ($existing->where('status', BusinessServiceStatus::Active) as $service) {
+            $key = $this->serviceKey($service->name);
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $rows[] = [
+                'id' => $service->id,
+                'name' => $service->name,
+                'is_primary' => ! $requestedPrimary && $service->is_primary,
+            ];
+        }
+
+        foreach ($rows as $index => $row) {
+            $rows[$index]['sort_order'] = $index;
+        }
+
+        // A single service is the primary one, whatever was ticked.
+        if (count($rows) === 1) {
+            $rows[0]['is_primary'] = true;
+        }
+
+        if (count(array_filter($rows, fn (array $row) => ! empty($row['is_primary']))) !== 1) {
+            throw new InvalidArgumentException('Exactly one primary service is required.');
+        }
+
+        return $rows;
+    }
+
+    private function serviceKey(string $name): string
+    {
+        return mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', $name)));
+    }
+
+    private function sameAddress(?string $current, string $address): bool
+    {
+        return $current !== null
+            && rtrim(mb_strtolower($current), '/') === rtrim(mb_strtolower($address), '/');
+    }
+
+    /** What is actually true of the website today — never what the customer merely intends. */
+    private function websiteStatusText(?Business $business, ?string $choice): string
+    {
+        $website = $business === null ? null : Website::query()->where('business_id', $business->id)->first();
+
+        if ($website !== null) {
+            return $website->status === WebsiteStatus::Published
+                ? 'Your MotionGrove website is published.'
+                : 'Your MotionGrove website is not published yet.';
+        }
+
+        return match ($choice) {
+            'build' => 'Not built yet. You will create it with MotionGrove after setup.',
+            'existing' => 'Address saved. We have not connected or checked it yet.',
+            'later' => 'Not set up yet. You can do this any time from your home page.',
+            default => 'Not answered yet.',
+        };
     }
 
     /**
@@ -468,7 +757,7 @@ class OnboardingManager
 
     private function assertValidStepCompletion(CustomerOnboarding $onboarding, OnboardingStep $completed, OnboardingStep $next): void
     {
-        if ($this->stepIndex($completed) > $this->stepIndex($onboarding->current_step)) {
+        if ($this->stepIndex($completed) > $this->stepIndex($this->currentStep($onboarding))) {
             throw new InvalidArgumentException("Cannot complete step [{$completed->value}] before its prerequisites.");
         }
 
@@ -477,16 +766,9 @@ class OnboardingManager
         }
     }
 
-    private function nextStep(OnboardingStep $step): OnboardingStep
-    {
-        $index = min($this->stepIndex($step) + 1, count(self::STEP_ORDER) - 1);
-
-        return self::STEP_ORDER[$index];
-    }
-
     private function stepIndex(OnboardingStep $step): int
     {
-        return array_search($step, self::STEP_ORDER, true);
+        return array_search($this->canonicalStep($step), self::STEP_ORDER, true);
     }
 
     private function assertOwnership(Customer $customer, CustomerOnboarding $onboarding): void

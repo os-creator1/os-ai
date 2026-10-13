@@ -29,6 +29,7 @@ final class HomeSetupJourney
      *   problemReason: ?string,
      *   websiteStatus: ?string,
      *   websiteApplicable: bool,
+     *   websiteMode?: ?string,
      * }  $facts
      * @param  array{locations: ?string, bookingType: ?string, fixBooking: ?string, website: ?string}  $urls
      * @return array{steps: array<int, array<string, mixed>>, essentialIncomplete: bool, done: int, total: int, nextKey: ?string}
@@ -72,10 +73,19 @@ final class HomeSetupJourney
         }
 
         if ($facts['websiteApplicable']) {
+            // What the customer said about their website during setup shapes the wording only:
+            // "done" is still a published website and nothing else, and a saved address is
+            // never described as connected, checked or live.
+            [$websiteTitle, $websiteOutcome] = match ($facts['websiteMode'] ?? null) {
+                'hosted' => ['Create your website', 'Start from the business, location and services you already entered. Nothing is published until you say so.'],
+                'external' => ['Review your existing website', 'Your website address is saved. Open the website section to have it checked for search.'],
+                default => ['Launch your website', 'People searching for you can find and contact you online.'],
+            };
+
             $steps[] = [
                 'key' => 'website',
-                'title' => 'Launch your website',
-                'outcome' => 'People searching for you can find and contact you online.',
+                'title' => $websiteTitle,
+                'outcome' => $websiteOutcome,
                 'done' => $facts['websiteStatus'] === 'published',
                 'essential' => false,
                 'action' => $urls['website'] === null ? null : ['label' => 'Open website', 'url' => $urls['website'], 'drawer' => null],

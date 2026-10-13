@@ -764,17 +764,22 @@
 
     Route::prefix('onboarding')->name('onboarding.')->middleware('business.onboarding.enabled')->group(function () {
         Route::get('/{step?}', 'BusinessOnboardingController@show')->name('show');
-        Route::post('/goals', 'BusinessOnboardingController@storeGoals')->name('goals.store');
         Route::post('/business', 'BusinessOnboardingController@storeBusiness')->name('business.store');
         Route::post('/location', 'BusinessOnboardingController@storeLocation')->name('location.store');
         Route::post('/services', 'BusinessOnboardingController@storeServices')->name('services.store');
-        Route::post('/assets', 'BusinessOnboardingController@storeAssets')->name('assets.store');
-        Route::post('/assets/skip', 'BusinessOnboardingController@skipAssets')->name('assets.skip');
-        Route::post('/services/skip', 'BusinessOnboardingController@skipServices')->name('services.skip');
+        Route::post('/website', 'BusinessOnboardingController@storeWebsite')->name('website.store');
         Route::post('/later', 'BusinessOnboardingController@complete')->name('later');
-        Route::post('/analysis', 'BusinessOnboardingController@requestAnalysis')->middleware('throttle:5,60')->name('analysis.request');
-        Route::get('/analysis/status', 'BusinessOnboardingController@analysisStatus')->middleware('throttle:60,1')->name('analysis.status');
-        Route::post('/action', 'BusinessOnboardingController@completeAction')->name('action.complete');
+
+        // Goals, Assets, Analysis, Results and the Services "skip" are no longer steps.
+        // Old bookmarks and stale forms are redirected to the step the customer is really
+        // on; none of these writes anything or skips a prerequisite.
+        Route::match(['get', 'post'], '/analysis/status', 'BusinessOnboardingController@retired')->name('analysis.status');
+        Route::post('/goals', 'BusinessOnboardingController@retired')->name('goals.store');
+        Route::post('/assets', 'BusinessOnboardingController@retired')->name('assets.store');
+        Route::post('/assets/skip', 'BusinessOnboardingController@retired')->name('assets.skip');
+        Route::post('/services/skip', 'BusinessOnboardingController@retired')->name('services.skip');
+        Route::post('/analysis', 'BusinessOnboardingController@retired')->name('analysis.request');
+        Route::post('/action', 'BusinessOnboardingController@retired')->name('action.complete');
         Route::post('/complete', 'BusinessOnboardingController@complete')->name('complete');
     });
 

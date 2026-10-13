@@ -84,7 +84,7 @@ final class HomeCommandCenter
         $actions = $this->router->forActor($context, $user, $entitlements, $scoped, $booking['firstLocationUid'] ?? null);
 
         // ── Setup journey (STATE 1) ────────────────────────────────────────
-        $journey = $this->setup($context, $user, $entitlements, $scoped, $status, $booking);
+        $journey = $this->setup($business, $context, $user, $entitlements, $scoped, $status, $booking);
 
         // ── Primary move (one) and its secondary queue ─────────────────────
         $nbmFailed = in_array(DashboardSnapshot::BAND_NEXT_BEST_MOVE, $failed, true);
@@ -442,7 +442,7 @@ final class HomeCommandCenter
      * @param  array<string, mixed>|null  $booking
      * @return array<string, mixed>|null
      */
-    private function setup(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status, ?array $booking): ?array
+    private function setup(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status, ?array $booking): ?array
     {
         $calendar = $booking !== null;
         $firstLoc = $booking['firstLocationUid'] ?? null;
@@ -462,6 +462,8 @@ final class HomeCommandCenter
             'problemReason' => $booking['problems'][0]['reason'] ?? null,
             'websiteStatus' => $status?->websiteStatus,
             'websiteApplicable' => $urls['website'] !== null && $status !== null,
+            // The stored website source (already on the loaded Business: no extra read).
+            'websiteMode' => $business->getRawOriginal('website_mode'),
         ], $urls);
     }
 }
