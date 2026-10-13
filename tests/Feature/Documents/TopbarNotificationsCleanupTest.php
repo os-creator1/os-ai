@@ -76,7 +76,7 @@ class TopbarNotificationsCleanupTest extends TestCase
         $this->assertSame(1, substr_count($html, 'Your proposal was sent.'));
         $this->assertStringNotContainsString('Old SMS platform message', $html);
         $this->assertStringNotContainsString('Legacy two', $html);
-        $this->assertStringContainsString('1 new', $html);
+        $this->assertStringContainsString('1 New', $html);
     }
 
     public function test_zero_notifications_shows_the_empty_state_and_no_badge(): void
@@ -84,7 +84,7 @@ class TopbarNotificationsCleanupTest extends TestCase
         $html = $this->home($this->sendableTenant());
 
         $this->assertStringContainsString('No new notifications.', $html);
-        $this->assertStringContainsString('0 new', $html);
+        $this->assertStringContainsString('0 New', $html);
         $this->assertStringNotContainsString('data-role="notification-unread-dot"', $html);
     }
 
