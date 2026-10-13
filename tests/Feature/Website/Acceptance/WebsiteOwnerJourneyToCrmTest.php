@@ -309,10 +309,10 @@ class WebsiteOwnerJourneyToCrmTest extends TestCase
         [$customer, $business, $workspace] = $this->fixtureTenant();
         $this->authenticateAsCustomer($customer);
 
-        // The Website entry for a Business that has chosen nothing yet offers the three honest options.
+        // The Website entry for a Business that has chosen nothing yet offers the two honest options.
         $this->get($this->wizardUrl($workspace, $business, 'show'))->assertOk()
             ->assertSee('Build with MotionGrove')->assertSee('data-role="choose-hosted"', false)
-            ->assertSee('Use my existing website')->assertSee('Do this later');
+            ->assertSee('Use my existing website')->assertDontSee('Do this later');
 
         $this->post($this->wizardUrl($workspace, $business, 'mode.choose'), ['mode' => 'hosted'])->assertRedirect($this->wizardUrl($workspace, $business, 'setup.start'));
         $this->get($this->wizardUrl($workspace, $business, 'setup.start'))->assertRedirect($this->wizardUrl($workspace, $business, 'setup.step', ['business_name']));
