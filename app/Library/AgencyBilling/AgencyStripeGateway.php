@@ -215,6 +215,18 @@ interface AgencyStripeGateway
     ): AgencySubscriptionSnapshot;
 
     /**
+     * Terminate a client's subscription NOW on the Agency's connected account.
+     * Only the Platform Owner's account-closure lifecycle uses this.
+     *
+     * @throws AgencyBillingException
+     */
+    public function cancelSubscriptionNow(
+        string $connectedAccountId,
+        string $providerSubscriptionId,
+        string $idempotencyKey,
+    ): AgencySubscriptionSnapshot;
+
+    /**
      * A Stripe-hosted Billing Portal session ON THE AGENCY'S ACCOUNT, which is
      * how a client fixes or replaces the card the Agency charges.
      *

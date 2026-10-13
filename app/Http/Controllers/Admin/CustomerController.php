@@ -625,6 +625,19 @@
 
             $this->mayMutateAccount($customer);
 
+            // This legacy path predates Workspaces, subscriptions and usage
+            // ledgers: it hard-deletes invoices and subscription rows without
+            // cancelling anything with a payment provider. Any account that has
+            // Workspaces (or an in-flight closure) must go through the
+            // Platform Owner account deletion lifecycle instead.
+            if (\App\Models\Workspace::where('owner_user_id', $customer->id)->exists()
+                || \App\Models\PlatformAccountClosure::where('user_uid', $customer->uid)->exists()) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('This customer has Workspaces. Delete the account from Platform Owner > Users, which cancels billing safely.'),
+                ]);
+            }
+
             if ($customer->is_super_admin) {
                 return response()->json([
                     'status'  => 'error',

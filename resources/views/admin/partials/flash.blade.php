@@ -1,5 +1,5 @@
 @if (session('message'))
-    <div class="alert alert-{{ session('status') === 'error' ? 'danger' : 'success' }}" role="status">
+    <div class="alert alert-{{ session('status') === 'error' ? 'danger' : (session('status') === 'warning' ? 'warning' : 'success') }}" role="status">
         <div class="alert-body">{{ session('message') }}</div>
     </div>
 @endif

@@ -491,6 +491,24 @@ final class StripeApiAgencyGateway implements AgencyStripeGateway
         return $this->subscriptionSnapshot($subscription, $connectedAccountId);
     }
 
+    public function cancelSubscriptionNow(
+        string $connectedAccountId,
+        string $providerSubscriptionId,
+        string $idempotencyKey,
+    ): AgencySubscriptionSnapshot {
+        try {
+            $subscription = $this->client()->subscriptions->cancel(
+                $providerSubscriptionId,
+                ['prorate' => false, 'invoice_now' => false],
+                self::onAccount($connectedAccountId, ['idempotency_key' => $idempotencyKey]),
+            );
+        } catch (ApiErrorException) {
+            throw AgencyBillingException::because(AgencyBillingException::PROVIDER_FAILED);
+        }
+
+        return $this->subscriptionSnapshot($subscription, $connectedAccountId);
+    }
+
     public function createBillingPortalSession(
         string $connectedAccountId,
         string $providerCustomerId,

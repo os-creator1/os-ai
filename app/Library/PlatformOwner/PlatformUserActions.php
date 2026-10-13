@@ -2,6 +2,7 @@
 
 namespace App\Library\PlatformOwner;
 
+use App\Models\PlatformAccountClosure;
 use App\Models\User;
 use Illuminate\Support\Facades\Password;
 use RuntimeException;
@@ -95,6 +96,12 @@ class PlatformUserActions
 
         if ($target->is_admin || $target->id === $actorId) {
             throw new RuntimeException(__('Administrator accounts are managed under Administrators.'));
+        }
+
+        // A deletion has started or finished: nothing may re-open the account
+        // (reactivating would undo the access block while cleanup is pending).
+        if (PlatformAccountClosure::query()->where('user_uid', $target->uid)->exists()) {
+            throw new RuntimeException(__('This account is being closed or has been closed; it can no longer be changed here.'));
         }
     }
 }

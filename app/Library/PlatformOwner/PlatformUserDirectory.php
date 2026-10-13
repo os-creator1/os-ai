@@ -2,6 +2,7 @@
 
 namespace App\Library\PlatformOwner;
 
+use App\Models\PlatformAccountClosure;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
@@ -91,7 +92,10 @@ class PlatformUserDirectory
 
         $owned = Workspace::query()->whereIn('owner_user_id', $ids)->get(['id', 'uid', 'name', 'owner_user_id'])->groupBy('owner_user_id');
 
+        $closures = PlatformAccountClosure::query()->whereIn('user_uid', $users->pluck('uid')->all())->get(['user_uid', 'state'])->keyBy('user_uid');
+
         foreach ($users as $user) {
+            $user->setRelation('closure_state', $closures->get($user->uid)?->state?->label());
             $rows = [];
 
             foreach ($owned->get($user->id, collect()) as $w) {

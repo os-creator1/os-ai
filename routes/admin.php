@@ -826,6 +826,9 @@
         */
         Route::get('platform-users', 'PlatformUsersController@index')->name('platform-users.index');
         Route::get('platform-users/{uid}', 'PlatformUsersController@show')->name('platform-users.show');
+        Route::get('platform-users/{uid}/delete', 'PlatformUsersController@confirmDelete')->name('platform-users.delete');
+        Route::post('platform-users/{uid}/delete', 'PlatformUsersController@destroy')->name('platform-users.destroy');
+        Route::post('platform-users/{uid}/closure/retry', 'PlatformUsersController@retryClosure')->name('platform-users.closure.retry');
         Route::post('platform-users/{uid}/{action}', 'PlatformUsersController@act')
             ->where('action', 'password-reset|resend-verification|suspend|reactivate|revoke-sessions')->name('platform-users.act');
         Route::get('platform-support', 'PlatformSupportController@index')->name('platform-support.index');
