@@ -270,7 +270,7 @@ class BlockDocumentRenderingAndSchemaTest extends TestCase
 
         $fixture = (string) file_get_contents(__DIR__ . '/fixtures/legacy_public_show.html');
 
-        $this->assertSame($normalise($fixture), $normalise($html), 'the legacy public page markup is byte-for-byte (modulo whitespace) what it was before 17B');
+        $this->assertSame($normalise($fixture), $normalise($html), 'the legacy (non-block) public page markup is pinned (modulo whitespace); it was regenerated deliberately for the Business-branded recipient redesign — regenerate the fixture again only on purpose');
     }
 
     public function test_business_show_renders_the_frozen_blocks_read_only_for_a_block_version(): void

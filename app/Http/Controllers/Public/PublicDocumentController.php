@@ -233,7 +233,7 @@ class PublicDocumentController extends Controller
      * name. Nothing else about the tenant — no id, uid, Workspace or plan —
      * ever reaches the page.
      *
-     * @return array{business_name: string, business_location_name: ?string}
+     * @return array{business_name: string, business_location_name: ?string, recipient_name: ?string}
      */
     private function parties(PublicDocumentAccess $access): array
     {
@@ -242,6 +242,7 @@ class PublicDocumentController extends Controller
         return [
             'business_name' => is_string($frozen['business_name'] ?? null) ? $frozen['business_name'] : (string) $access->business->name,
             'business_location_name' => is_string($frozen['business_location_name'] ?? null) ? $frozen['business_location_name'] : null,
+            'recipient_name' => is_string($frozen['recipient_name'] ?? null) && trim($frozen['recipient_name']) !== '' ? $frozen['recipient_name'] : null,
         ];
     }
 
@@ -287,6 +288,8 @@ class PublicDocumentController extends Controller
         $data = [
             'document' => $access->document,
             'parties' => $this->parties($access),
+            // Presentation only: the ISSUING Business's own name, logo and brand colour.
+            'brand' => $this->brand($access),
             'body' => is_string($version->content['body'] ?? null) ? $version->content['body'] : null,
             'version' => $version,
             'lines' => $version->lineItems()->orderBy('position')->orderBy('id')->get(),
