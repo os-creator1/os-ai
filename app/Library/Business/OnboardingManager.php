@@ -512,6 +512,18 @@ class OnboardingManager
     }
 
     /**
+     * Thin persistence step for the retained OnboardingActionExecutor (the
+     * historical analysis-recommendation flow, no longer reachable from the
+     * wizard): it decides whether an action counts; this only records it.
+     */
+    public function recordFirstValueAction(CustomerOnboarding $onboarding, Customer $customer, string $actionKey): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        return $this->onboardingRepository->recordFirstValueAction($onboarding, $actionKey);
+    }
+
+    /**
      * Idempotent: a repeat call on an already-completed onboarding returns it
      * unchanged and dispatches nothing, so resubmission, a double-click or a
      * concurrent request can never double-fire CustomerOnboardingCompleted.

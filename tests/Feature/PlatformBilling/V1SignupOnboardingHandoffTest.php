@@ -109,10 +109,9 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame($paid ? 1 : 0, WorkspacePlanAssignment::query()->count());
     }
 
-    /** Takes the wizard from Goals through Assets, with an analysis result ready. */
+    /** Takes the wizard from Business through Website ("later"), ready to finish. */
     private function walkWizardToResults(CustomerOnboarding $onboarding): void
     {
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['name' => 'Harbor Lane Studios']));
         $this->post(route('customer.onboarding.location.store'), [
             'service_mode' => 'storefront',
@@ -125,12 +124,7 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->post(route('customer.onboarding.services.store'), [
             'services' => [['name' => 'Digital Photo Booth', 'is_primary' => '1']],
         ]);
-        $this->post(route('customer.onboarding.assets.skip'));
-
-        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding->refresh(), 0, [
-            'version' => 1, 'generated_at' => now()->toIso8601String(), 'profile_completeness_percent' => 100,
-            'facts' => [], 'findings' => [],
-        ]);
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
     }
 
     // A ----------------------------------------------------------------
@@ -146,7 +140,7 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame(1, CustomerOnboarding::query()->count());
         $this->assertSame($business->id, $onboarding->business_id, 'It is attached to the signup\'s own Business.');
         $this->assertTrue((bool) $onboarding->is_required);
-        $this->assertSame(OnboardingStep::Goals, $onboarding->current_step);
+        $this->assertSame(OnboardingStep::Business, $onboarding->current_step);
         $this->assertSame(BusinessStatus::Draft, $business->fresh()->status, 'Nothing activates before onboarding completes.');
     }
 
@@ -158,7 +152,7 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $uid = $business->uid;
 
         // A required, unfinished onboarding is where Home sends the customer.
-        $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'goals']));
+        $this->get(route('user.home'))->assertRedirect(route('customer.onboarding.show', ['step' => 'business']));
 
         $this->get(route('customer.onboarding.show'))->assertOk();
         $this->get(route('customer.onboarding.show'))->assertOk();
@@ -176,7 +170,6 @@ class V1SignupOnboardingHandoffTest extends TestCase
         [$user, , $business] = $this->paidSignup();
         $location = BusinessLocation::query()->sole();
 
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes([
             'name' => 'Harbor Lane Studios Renamed',
             'description' => 'Photo booths for events.',
@@ -213,7 +206,6 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $onboarding = $this->onboardingFor($user);
         $onboarding->forceFill(['business_id' => null])->save();
 
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['name' => 'Adopted']))
             ->assertRedirect(route('customer.onboarding.show', ['step' => 'location']))
             ->assertSessionHasNoErrors();
@@ -226,7 +218,6 @@ class V1SignupOnboardingHandoffTest extends TestCase
     public function test_the_services_step_renders_real_inputs_so_a_service_can_be_added(): void
     {
         $this->paidSignup();
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
         $this->post(route('customer.onboarding.location.store'), [
             'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
@@ -242,7 +233,6 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertStringNotContainsString('<x-input', $html);
         $this->assertStringContainsString('name="services[0][name]"', $html);
         $this->assertMatchesRegularExpression('/<input[^>]+name="services\[0\]\[name\]"/', $html);
-        $this->assertMatchesRegularExpression('/<input[^>]+name="services\[0\]\[starting_price\]"/', $html);
     }
 
     // D ----------------------------------------------------------------
@@ -273,17 +263,12 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame(1, CustomerOnboarding::query()->count());
     }
 
-    public function test_the_complete_step_finishes_onboarding_and_is_not_a_dead_end(): void
+    public function test_the_finish_step_finishes_onboarding_and_is_not_a_dead_end(): void
     {
         [$user, , $business] = $this->paidSignup();
         $this->walkWizardToResults($this->onboardingFor($user));
 
-        // The first-value action sends the customer to the Complete step.
-        $onboarding = $this->onboardingFor($user);
-        app(CustomerOnboardingRepository::class)->recordFirstValueAction($onboarding, 'add_phone');
-        $onboarding->refresh()->forceFill(['current_step' => OnboardingStep::Complete])->save();
-
-        $html = $this->get(route('customer.onboarding.show', ['step' => 'complete']))->assertOk()->getContent();
+        $html = $this->get(route('customer.onboarding.show', ['step' => 'finish']))->assertOk()->getContent();
 
         // The step itself must be able to finish onboarding (it used to offer
         // only a link home, leaving the Business Draft and Home redirecting
@@ -301,30 +286,29 @@ class V1SignupOnboardingHandoffTest extends TestCase
     {
         [$user] = $this->paidSignup();
 
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.complete'))->assertSessionHasErrors('onboarding');
 
         $this->assertSame(BusinessStatus::Draft, Business::query()->sole()->status);
         $this->assertNotSame(OnboardingStatus::Completed, $this->onboardingFor($user)->status);
     }
 
-    public function test_finish_after_the_business_and_location_completes_once_without_services_or_analysis(): void
+    public function test_finish_needs_a_service_and_the_website_answer_and_then_completes_once(): void
     {
         [$user] = $this->paidSignup();
-
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation', 'local_seo', 'reputation', 'automation'], 'priority_goal' => 'reputation'])
-            ->assertSessionHasNoErrors();
-        $this->assertSame('reputation', $this->onboardingFor($user)->primary_goals[0], 'The priority goal comes first; no goal is dropped.');
-        $this->assertCount(4, $this->onboardingFor($user)->primary_goals);
 
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
         $this->post(route('customer.onboarding.location.store'), [
             'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
             'region' => 'TX', 'country_code' => 'US', 'public_address' => '1',
         ]);
-        // Services are skipped; the analysis is never requested.
-        $this->post(route('customer.onboarding.services.skip'))->assertSessionHasNoErrors();
+        // The old skip no longer bypasses the services requirement.
+        $this->post(route('customer.onboarding.services.skip'))
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'services']));
+        $this->post(route('customer.onboarding.complete'))->assertSessionHasErrors('onboarding');
+        $this->assertSame(BusinessStatus::Draft, Business::query()->sole()->status);
 
+        $this->post(route('customer.onboarding.services.store'), ['services' => [['name' => 'Photo Booth Rental']]]);
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
         $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
 
         $this->assertSame(OnboardingStatus::Completed, $this->onboardingFor($user)->status);
@@ -336,10 +320,9 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame(OnboardingStatus::Completed, $this->onboardingFor($user)->status);
     }
 
-    public function test_services_can_be_added_in_one_session_with_blank_prices_and_an_empty_submit_changes_nothing(): void
+    public function test_services_can_be_added_in_one_session_with_blank_prices_and_an_empty_submit_is_refused(): void
     {
         [$user] = $this->paidSignup();
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => []])->assertSessionHasNoErrors();
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
         $this->post(route('customer.onboarding.location.store'), [
             'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
@@ -356,8 +339,8 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame(['Photo booth hire', 'Props package', 'Backdrop rental'], $business->services()->orderBy('sort_order')->pluck('name')->all());
         $this->assertSame(1, $business->services()->where('is_primary', true)->count());
 
-        // Revisiting and submitting nothing keeps the services as they are.
-        $this->post(route('customer.onboarding.services.store'), ['services' => []])->assertSessionHasNoErrors();
+        // Submitting nothing is refused and keeps the services as they are.
+        $this->post(route('customer.onboarding.services.store'), ['services' => []])->assertSessionHasErrors('services');
         $this->assertSame(3, $business->services()->where('status', 'active')->count());
     }
 
@@ -480,7 +463,6 @@ class V1SignupOnboardingHandoffTest extends TestCase
         config(["no-captcha.login" => false]);
         [$user, , $business, $form] = $this->paidSignup();
 
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $before = $this->onboardingFor($user);
         $this->assertSame(OnboardingStep::Business, $before->current_step);
 
@@ -513,7 +495,6 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame(0, Business::query()->count());
 
         app(OnboardingManager::class)->start($customer);
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes())
             ->assertRedirect(route('customer.onboarding.show', ['step' => 'location']));
 
