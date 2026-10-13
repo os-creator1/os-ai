@@ -50,8 +50,8 @@ final class HomeSetupJourney
         if ($facts['calendar']) {
             $steps[] = [
                 'key' => 'booking_type',
-                'title' => 'Add your first service',
-                'outcome' => 'Customers can only book something you offer — a consultation, a visit, a class.',
+                'title' => 'Set up your first bookable service',
+                'outcome' => 'Choose which of your services customers can book online — a consultation, a visit, a class.',
                 'done' => $facts['activeTypeCount'] > 0,
                 'essential' => true,
                 'action' => $facts['hasLocation'] && $urls['bookingType'] !== null
