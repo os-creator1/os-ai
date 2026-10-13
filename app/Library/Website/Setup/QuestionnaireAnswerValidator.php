@@ -79,11 +79,52 @@ final class QuestionnaireAnswerValidator
             'repeatable_group' => $draft ? $this->validateRepeatableGroupDraft($step, $value) : $this->validateRepeatableGroup($step, $value),
             'string_list' => $this->validateStringList($value),
             'catalog_selection' => $this->validateCatalogSelection($value),
+            'location' => $this->validateLocation($value, $draft),
             default => null,
         };
 
         if ($required && $this->isEffectivelyEmpty($value)) {
             throw new InvalidAnswerException('This question requires an answer.');
+        }
+    }
+
+    /**
+     * A base location: {city, region, country_code}. The city is what the
+     * website and the nearby-area suggestions are built on, so Continue
+     * demands it; a draft only bounds the shapes.
+     */
+    private function validateLocation(mixed $value, bool $draft): void
+    {
+        if (! is_array($value) || array_is_list($value)) {
+            throw new InvalidAnswerException('That location is not valid.');
+        }
+
+        $city = $value['city'] ?? null;
+        $region = $value['region'] ?? null;
+        $country = $value['country_code'] ?? null;
+
+        if ($city !== null && (! is_string($city) || mb_strlen($city) > self::MAX_LIST_ITEM_LENGTH)) {
+            throw new InvalidAnswerException('The city must be at most ' . self::MAX_LIST_ITEM_LENGTH . ' characters.');
+        }
+
+        if ($region !== null && (! is_string($region) || mb_strlen($region) > self::MAX_LIST_ITEM_LENGTH)) {
+            throw new InvalidAnswerException('The state or region must be at most ' . self::MAX_LIST_ITEM_LENGTH . ' characters.');
+        }
+
+        if ($country !== null && (! is_string($country) || preg_match('/^[A-Z]{2}$/', $country) !== 1)) {
+            throw new InvalidAnswerException('Choose a country from the list.');
+        }
+
+        if ($draft) {
+            return;
+        }
+
+        if (trim((string) $city) === '') {
+            throw new InvalidAnswerException('Enter the city your business is based in.');
+        }
+
+        if ($country === null || ! array_key_exists($country, app(\App\Library\Business\BusinessLocaleOptions::class)->countries())) {
+            throw new InvalidAnswerException('Choose a country from the list.');
         }
     }
 

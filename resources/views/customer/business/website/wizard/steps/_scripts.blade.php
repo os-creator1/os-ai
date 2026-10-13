@@ -424,6 +424,121 @@
         }).then(function () { button.disabled = false; });
     }
 
+    // ------------------------------------------------------------- logo
+    function logoUpload(box, file) {
+        var error = box.querySelector('[data-upload-error]');
+        var bar = box.querySelector('[data-upload-progress]');
+        var problem = checkFile(file);
+        show(error, false);
+        if (problem) { error.textContent = problem; show(error, true); return; }
+        var body = new FormData();
+        body.append('logo', file);
+        pendingUploads++;
+        show(bar.parentElement, true);
+        bar.style.width = '0%';
+        request('POST', box.getAttribute('data-upload-url'), body, function (pct) { bar.style.width = pct + '%'; }, function (status, data) {
+            pendingUploads--;
+            show(bar.parentElement, false);
+            if (status === 200 && data && data.url) {
+                var preview = box.querySelector('[data-logo-preview]');
+                preview.src = data.url; preview.alt = data.alt_text || 'Your logo';
+                show(preview, true);
+                show(box.querySelector('[data-logo-remove]'), true);
+                var addLabel = box.querySelector('[data-logo-add]');
+                addLabel.firstChild.textContent = 'Replace logo';
+                return;
+            }
+            error.textContent = errorText(status, data); show(error, true);
+        });
+    }
+
+    function logoRemove(box) {
+        var body = new FormData();
+        body.append('_method', 'DELETE');
+        request('POST', box.getAttribute('data-remove-url'), body, null, function (status) {
+            if (status !== 200) { return; }
+            show(box.querySelector('[data-logo-preview]'), false);
+            show(box.querySelector('[data-logo-remove]'), false);
+            box.querySelector('[data-logo-add]').firstChild.textContent = '+ Upload logo';
+        });
+    }
+
+    // ------------------------------------------- nearby service-area suggestions
+    function areaValues(container) {
+        return directRows(container).map(function (row) { var i = row.querySelector('input[type="text"]'); return i ? i.value.trim() : ''; }).filter(Boolean);
+    }
+
+    function areaSay(list, text) {
+        var el = list.parentElement.querySelector('[data-area-status]');
+        if (el) { el.textContent = text; show(el, !!text); }
+    }
+
+    function areaFetch(list, exclude, done) {
+        var params = new URLSearchParams();
+        params.set('city', list.getAttribute('data-base-city') || '');
+        if (list.getAttribute('data-base-region')) { params.set('region', list.getAttribute('data-base-region')); }
+        params.set('country', list.getAttribute('data-base-country') || '');
+        params.set('count', '10');
+        exclude.forEach(function (name) { params.append('exclude[]', name); });
+        fetch(list.getAttribute('data-suggest-url') + '?' + params.toString(), { credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) { done(res.ok && res.data ? res.data : null); })
+            .catch(function () { done(null); });
+    }
+
+    function areaSetRows(container, labels) {
+        directRows(container).slice(1).forEach(function (row) { row.remove(); });
+        var first = directRows(container)[0];
+        if (first) { first.querySelector('input[type="text"]').value = labels[0] || ''; }
+        labels.slice(1).forEach(function (label) {
+            addRow(container);
+            var rows = directRows(container);
+            rows[rows.length - 1].querySelector('input[type="text"]').value = label;
+        });
+        reindex(container);
+    }
+
+    function areaSuggestMore(button) {
+        var list = screen.querySelector('[data-area-list]');
+        var container = screen.querySelector('[data-repeatable]');
+        if (!list || !container) { return; }
+        button.disabled = true;
+        areaSay(list, 'Looking for nearby communities\u2026');
+        areaFetch(list, areaValues(container), function (data) {
+            button.disabled = false;
+            if (!data) { areaSay(list, 'Couldn\u2019t load suggestions right now. Try again in a moment.'); return; }
+            var fresh = (data.suggestions || []).map(function (s) { return s.label; });
+            if (!data.resolved || fresh.length === 0) { areaSay(list, 'No more nearby communities to suggest.'); return; }
+            // Fill blank rows first, then add new ones.
+            var blanks = directRows(container).filter(function (row) { return row.querySelector('input[type="text"]').value.trim() === ''; });
+            fresh.forEach(function (label) {
+                var row = blanks.shift();
+                if (!row) { addRow(container); var rows = directRows(container); row = rows[rows.length - 1]; }
+                row.querySelector('input[type="text"]').value = label;
+            });
+            reindex(container);
+            areaSay(list, 'Added ' + fresh.length + ' suggestion' + (fresh.length === 1 ? '' : 's') + ' \u2014 review them below.');
+            wizard.markDirty(0);
+        });
+    }
+
+    function areaRefresh(button) {
+        var list = screen.querySelector('[data-area-list]');
+        var container = screen.querySelector('[data-repeatable]');
+        if (!list || !container) { return; }
+        if (!window.confirm('Replace your current service areas with fresh suggestions near your new base location? Your edits to the current list will be lost.')) { return; }
+        button.disabled = true;
+        areaFetch(list, [], function (data) {
+            button.disabled = false;
+            var fresh = data && data.resolved ? (data.suggestions || []).map(function (s) { return s.label; }) : [];
+            if (fresh.length === 0) { areaSay(list, 'We couldn\u2019t find nearby communities for that location \u2014 your list is unchanged.'); return; }
+            areaSetRows(container, fresh);
+            var note = list.querySelector('[data-area-note="base-changed"]');
+            if (note) { note.remove(); }
+            wizard.markDirty(0);
+        });
+    }
+
     // ----------------------------------------------------------- wiring
     root.addEventListener('click', function (event) {
         var target = event.target;
@@ -452,6 +567,9 @@
             wizard.markDirty(0);
             return;
         }
+        if ((el = target.closest('[data-logo-remove]'))) { event.preventDefault(); logoRemove(el.closest('[data-logo-box]')); return; }
+        if ((el = target.closest('[data-area-suggest-more]'))) { event.preventDefault(); areaSuggestMore(el); return; }
+        if ((el = target.closest('[data-area-refresh]'))) { event.preventDefault(); areaRefresh(el); return; }
         if ((el = target.closest('[data-add-row]'))) { event.preventDefault(); addRow(el.closest('[data-repeatable]')); wizard.markDirty(0); return; }
         if ((el = target.closest('[data-remove-row]'))) { event.preventDefault(); removeRow(el.closest('[data-row]')); wizard.markDirty(0); return; }
         if ((el = target.closest('[data-move-row]'))) { event.preventDefault(); moveRow(el.closest('[data-row]'), el.getAttribute('data-move-row')); wizard.markDirty(0); return; }
@@ -480,7 +598,10 @@
         var target = event.target;
         var box;
 
-        if (target.matches('[data-image-input]')) {
+        if (target.matches('[data-logo-input]')) {
+            if (target.files && target.files[0]) { logoUpload(target.closest('[data-logo-box]'), target.files[0]); }
+            target.value = '';
+        } else if (target.matches('[data-image-input]')) {
             box = target.closest('[data-image-picker]');
             if (target.files && target.files[0]) { uploadPickerFile(box, target.files[0]); }
             target.value = '';
@@ -529,6 +650,11 @@
     var wizard = (function () {
         var DEBOUNCE_MS = 800;
         var state = { dirty: false, inflight: null, timer: null, lastResult: { ok: true }, navigating: false, ownBumps: 0 };
+        // The screens visited through this page load, in order, and where we are in them: the in-app Back button
+        // steps back through browser history when it can (so the browser's Forward button then works) instead of
+        // stacking a duplicate entry.
+        var trail = [window.location.href];
+        var trailAt = 0;
 
         function statusEl() { return root.querySelector('[data-save-status]'); }
         function errorEl() { return root.querySelector('[data-wizard-error]'); }
@@ -681,7 +807,16 @@
             var current = root.querySelector('[data-wizard-screen]');
             current.replaceWith(document.importNode(incoming, true));
             if (doc.title) { document.title = doc.title; }
-            if (push) { window.history.pushState({ wizard: true }, '', finalUrl); }
+            // The page header (outside the swapped screen) names the screen too.
+            var headerNow = document.querySelector('.content-header-title');
+            var headerNext = doc.querySelector('.content-header-title');
+            if (headerNow && headerNext) { headerNow.textContent = headerNext.textContent; }
+            if (push) {
+                window.history.pushState({ wizard: true }, '', finalUrl);
+                trail = trail.slice(0, trailAt + 1);
+                trail.push(finalUrl);
+                trailAt = trail.length - 1;
+            }
             state.dirty = false;
             state.lastResult = { ok: true };
             state.navigating = false;
@@ -770,7 +905,12 @@
             return leaveAfterSave(function () {
                 return postJson(form.getAttribute('action'), new FormData()).then(function (res) {
                     var data = res.data || {};
-                    if (res.status === 200 && data.ok) { return data.full_page ? window.location.assign(data.url) : navigate(data.url, true); }
+                    if (res.status === 200 && data.ok) {
+                        if (data.full_page) { return window.location.assign(data.url); }
+                        // The previous screen is the previous history entry: go there the way the browser's own Back does.
+                        if (trailAt > 0 && trail[trailAt - 1] === data.url) { window.history.back(); return null; }
+                        return navigate(data.url, true);
+                    }
                     showError(data.message || 'Could not go back right now. Please try again.');
                     return null;
                 });
@@ -813,6 +953,8 @@
 
         window.addEventListener('popstate', function () {
             if (!isWizardUrl(window.location.href)) { return; }
+            var known = trail.lastIndexOf(window.location.href);
+            if (known === -1) { trail = [window.location.href]; trailAt = 0; } else { trailAt = known; }
             flush(true).then(function () {
                 return navigate(window.location.href, false).then(function () {
                     // Browser Back/Forward changes screens without a save: record the resume position.

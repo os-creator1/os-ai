@@ -39,6 +39,7 @@ final class QuestionnaireDefinitionValidator
     private const VALID_TARGET_MODULES = [
         'business', 'business_location', 'knowledge_profile', 'business_service',
         'catalog_item', 'backdrop', 'website_form', 'gallery', 'answers', 'custom_section', 'faq',
+        'website_look',
     ];
 
     /**
@@ -166,6 +167,10 @@ final class QuestionnaireDefinitionValidator
         // response only.
         'string_list' => ['business_location', 'answers'],
         'catalog_selection' => ['catalog_item'],
+        // The owner's base location, written to the primary BusinessLocation.
+        'location' => ['business_location'],
+        // The Website look's logo, uploaded immediately (WebsiteLookService).
+        'image' => ['website_look'],
     ];
 
     /** A screen groups consecutive steps onto one wizard screen (presentation only). */
@@ -254,6 +259,10 @@ final class QuestionnaireDefinitionValidator
                 if (! in_array($inputType, self::KNOWLEDGE_PROFILE_FIELD_TYPES[$targetField], true)) {
                     throw new DomainException("Step '{$key}' combines input_type '{$inputType}' with knowledge_profile field '{$targetField}', which has no real application path for that type.");
                 }
+            } elseif ($targetModule === 'website_look') {
+                if ($targetField !== 'logo') {
+                    throw new DomainException("Step '{$key}' targets 'website_look' with an unsupported or missing target_field (only 'logo').");
+                }
             } elseif (in_array($targetModule, self::MODULES_WITHOUT_TARGET_FIELD, true) && $targetField !== null) {
                 throw new DomainException("Step '{$key}' targets '{$targetModule}' with a target_field, but this codebase has no application path that reads one for that module.");
             }
@@ -269,6 +278,7 @@ final class QuestionnaireDefinitionValidator
             }
 
             $this->validateOptions($key, $step, $inputType);
+            $this->validateStepFlags($key, $step, $inputType, $targetModule);
             $this->validateCategories($key, $step, $inputType, $targetModule);
             $this->validateConditionalVisibility($key, $step, $seenKeys);
         }
@@ -327,6 +337,39 @@ final class QuestionnaireDefinitionValidator
 
                 $currentKeys[$key] = true;
             }
+        }
+    }
+
+    /**
+     * Optional boolean behaviour flags a step may carry. Each is only
+     * meaningful for the pairings that have a real runtime path for it, so
+     * anything else is refused at publish time like every other dead field.
+     *
+     *  - `suggest`: a service-area list that offers grounded nearby-place
+     *    suggestions (string_list -> business_location).
+     *  - `shared_fact`: the answer is a fact shared across MotionGrove (a
+     *    Business or primary-location field); it is written through the
+     *    canonical manager when the owner presses Continue, not only when the
+     *    website is generated.
+     */
+    private function validateStepFlags(string $key, array $step, string $inputType, string $targetModule): void
+    {
+        foreach (['suggest', 'shared_fact'] as $flag) {
+            if (! array_key_exists($flag, $step)) {
+                continue;
+            }
+
+            if (! is_bool($step[$flag])) {
+                throw new DomainException("Step '{$key}' has a non-boolean {$flag} flag.");
+            }
+        }
+
+        if (($step['suggest'] ?? false) && ! ($inputType === 'string_list' && $targetModule === 'business_location')) {
+            throw new DomainException("Step '{$key}' enables suggestions, which only a business_location string_list supports.");
+        }
+
+        if (($step['shared_fact'] ?? false) && ! in_array($targetModule, ['business', 'business_location'], true)) {
+            throw new DomainException("Step '{$key}' is marked a shared fact but does not target a Business or its location.");
         }
     }
 

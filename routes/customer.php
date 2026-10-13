@@ -2124,7 +2124,11 @@
 
                 Route::post('/backdrop-image/upload', 'Business\WebsiteWizardController@uploadBackdropImage')->name('backdrop-image.upload');
                 Route::post('/backdrop-image/remove', 'Business\WebsiteWizardController@removeBackdropImage')->name('backdrop-image.remove');
+                Route::post('/logo', 'Business\WebsiteWizardController@uploadLogo')->name('logo.upload');
+                Route::delete('/logo', 'Business\WebsiteWizardController@removeLogo')->name('logo.remove');
                 Route::post('/service-description', 'Business\WebsiteWizardController@suggestServiceDescription')->name('service-description');
+
+                Route::get('/service-area-suggestions', 'Business\WebsiteWizardController@areaSuggestions')->name('area-suggestions');
 
                 Route::get('/{stepKey}', 'Business\WebsiteWizardController@show')->name('step');
                 Route::post('/{stepKey}/back', 'Business\WebsiteWizardController@goBack')->name('back');

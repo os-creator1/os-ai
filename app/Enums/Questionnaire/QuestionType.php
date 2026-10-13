@@ -41,6 +41,19 @@ enum QuestionType: string
      */
     case CatalogSelection = 'catalog_selection';
 
+    /**
+     * A place: city, region/state and country on one question — the owner's
+     * base location. Answer shape: {city, region, country_code}.
+     */
+    case Location = 'location';
+
+    /**
+     * One brand image uploaded immediately on its own (the business logo),
+     * attached to the Website's look. The answer itself stores nothing: the
+     * asset is the durable record.
+     */
+    case Image = 'image';
+
     // Independent-review correction round 2 — `price_or_quote` was
     // removed: it had no real Blade renderer, no
     // WebsiteWizardController::valueFromRequest() parser, no

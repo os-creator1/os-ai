@@ -1,6 +1,6 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', $step['prompt'])
+@section('title', $step['screen_prompt'] ?? $step['prompt'])
 
 @section('content')
     @php
@@ -28,6 +28,13 @@
 
             <x-flash-alert class="mb-3" />
             <div class="alert alert-danger d-none" role="alert" tabindex="-1" data-wizard-error></div>
+
+            @if ($isMultiStep && ! empty($step['screen_prompt']))
+                <h4 class="mb-1" tabindex="-1" data-wizard-heading>{{ $step['screen_prompt'] }}</h4>
+                @if (! empty($step['screen_help']))
+                    <p class="text-caption mb-3">{{ $step['screen_help'] }}</p>
+                @endif
+            @endif
 
             @unless ($isMultiStep)
                 <h4 class="mb-1" tabindex="-1" data-wizard-heading>{{ $step['prompt'] }}</h4>

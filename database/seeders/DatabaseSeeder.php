@@ -35,6 +35,8 @@
             // publishes v2 as its successor (idempotent). Existing
             // installations get v2 from a data migration instead.
             $this->call(PhotoboothWebsiteSetupQuestionnaireV2Seeder::class);
+            // …then the guided one-question-per-page v3 (idempotent).
+            $this->call(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
             //  $this->call(BlacklistSeeder::class);
             //  $this->call(KeywordsSeeder::class);
             //  $this->call(PhoneNumberSeeder::class);

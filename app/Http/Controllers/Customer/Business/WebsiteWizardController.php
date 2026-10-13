@@ -102,6 +102,8 @@ class WebsiteWizardController extends CustomerBaseController
         private readonly BusinessImageStore $businessImages,
         private readonly \App\Library\Website\Setup\WebsitePlanSummary $planSummary,
         private readonly \App\Library\Website\Design\WebsiteTemplatePreviewRenderer $templatePreviews,
+        private readonly \App\Library\Website\Setup\ServiceAreaSuggestions $areaSuggestions,
+        private readonly \App\Library\Website\Setup\WizardSharedFactWriter $sharedFacts,
     ) {
     }
 
@@ -252,6 +254,11 @@ class WebsiteWizardController extends CustomerBaseController
         $position = array_search($stepKey, array_map(fn (array $s) => $s[0]['key'], $screens), true);
         $previousStepKey = $this->stepResolver->previousStepKey($steps, $answers, $stepKey);
 
+        // "Never ask twice": a question whose answer already lives in the Business OS is shown filled in.
+        // Precedence: the owner's saved answer, then the canonical record, then (service areas only) a grounded suggestion.
+        $shown = $answers + \App\Library\Website\Setup\WizardPrefill::forSteps($business, $screen, $answers);
+        $areaState = $this->serviceAreaState($business, $workspaceUid, $businessUid, $screen, $answers, $shown);
+
         return view('customer.business.website.wizard.steps.question', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
@@ -262,14 +269,90 @@ class WebsiteWizardController extends CustomerBaseController
             'screenKey' => $stepKey,
             'step' => $screen[0],
             'previousStepKey' => $previousStepKey ?? self::TEMPLATE_STEP,
-            // "Never ask twice": a question whose answer already lives in the Business OS is shown filled in.
-            'answers' => $answers + \App\Library\Website\Setup\WizardPrefill::forSteps($business, $screen, $answers),
-            'answer' => $response->answer($stepKey) ?? (\App\Library\Website\Setup\WizardPrefill::forSteps($business, $screen, $answers)[$stepKey] ?? null),
+            'areaState' => $areaState['state'],
+            'answers' => $areaState['answers'],
+            'answer' => $areaState['answers'][$stepKey] ?? null,
             'packageRows' => $this->packageRowsFor($business, $screen, $answers),
             'reviewSource' => $this->reviewSources->forBusiness($business, $screen),
             // Screens, then the Review screen (the look is chosen there — no separate style step).
             'progress' => ['current' => $position !== false ? $position + 1 : 1, 'total' => count($screens) + 1, 'label' => $screen[0]['prompt']],
         ]);
+    }
+
+    /**
+     * Service-area screen state: where the rows came from (saved by the owner,
+     * the canonical location, or fresh suggestions), and whether the base
+     * location moved since the list was saved. Suggestions only ever fill an
+     * EMPTY list; a saved or canonical list is never replaced.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @param  array<string, mixed>  $answers  the owner's saved answers
+     * @param  array<string, mixed>  $shown  saved answers + canonical prefill
+     * @return array{answers: array<string, mixed>, state: array<string, array<string, mixed>>}
+     */
+    private function serviceAreaState(Business $business, string $workspaceUid, string $businessUid, array $screen, array $answers, array $shown): array
+    {
+        $state = [];
+
+        foreach ($screen as $screenStep) {
+            if (! ($screenStep['suggest'] ?? false)) {
+                continue;
+            }
+
+            $key = $screenStep['key'];
+            $base = $this->areaSuggestions->baseFor($business, $answers);
+            $source = ! empty($answers[$key]) ? 'saved' : (! empty($shown[$key]) ? 'canonical' : 'none');
+            $signature = \App\Library\Website\Setup\ServiceAreaSuggestions::signature($base);
+            $savedSignature = $answers['_service_area_base'] ?? null;
+
+            if ($source === 'none' && $base !== null) {
+                $labels = $this->areaSuggestions->labelsFor($base);
+
+                if ($labels !== []) {
+                    $shown[$key] = $labels;
+                    $source = 'suggested';
+                }
+            }
+
+            $state[$key] = [
+                'source' => $source,
+                'base' => $base,
+                'base_label' => $base === null ? null : trim($base['city'] . ($base['region'] ? ', ' . $base['region'] : '')),
+                'base_changed' => $source === 'saved' && $savedSignature !== null && $signature !== null && $savedSignature !== $signature,
+                'url' => route('customer.workspaces.businesses.website.setup.area-suggestions', [$workspaceUid, $businessUid]),
+            ];
+        }
+
+        return ['answers' => $shown, 'state' => $state];
+    }
+
+    /**
+     * Grounded nearby-area suggestions for a base location (see
+     * App\Library\Geo): used by "Suggest more nearby areas" and the deliberate
+     * "Refresh suggestions" after the base moved. Read-only; nothing is saved
+     * until the owner keeps the rows and continues.
+     */
+    public function areaSuggestions(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+
+        $data = $request->validate([
+            'city' => 'required|string|max:120',
+            'region' => 'nullable|string|max:120',
+            'country' => ['required', 'string', 'size:2', 'regex:/^[A-Za-z]{2}$/'],
+            'count' => 'nullable|integer|min:1|max:20',
+            'exclude' => 'nullable|array|max:60',
+            'exclude.*' => 'nullable|string|max:120',
+        ]);
+
+        $result = $this->areaSuggestions->forBase(
+            ['city' => $data['city'], 'region' => $data['region'] ?? null, 'country_code' => strtoupper($data['country'])],
+            (int) ($data['count'] ?? \App\Library\Website\Setup\ServiceAreaSuggestions::DEFAULT_COUNT),
+            array_values(array_filter((array) ($data['exclude'] ?? []), 'is_string')),
+        );
+
+        return response()->json($result);
     }
 
     public function chooseTemplate(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
@@ -383,6 +466,27 @@ class WebsiteWizardController extends CustomerBaseController
                 : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
+        // Shared business facts (name, phone, email, base location, service areas) are written through the
+        // canonical managers NOW, so the correction is the same everywhere in MotionGrove, not only after generation.
+        $sharedUpdated = [];
+        try {
+            $sharedUpdated = $this->sharedFacts->write($business, Auth::user()?->customer, $screen, $values);
+        } catch (Throwable $e) {
+            report($e);
+            $message = 'We couldn\'t update your business profile just now, so nothing was changed. Please try again.';
+
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => 'server', 'message' => $message], 500)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with(['status' => 'error', 'message' => $message]);
+        }
+
+        // The base location the service-area list was chosen against, so a later change of base can be offered as a refresh.
+        foreach ($screen as $screenStep) {
+            if ($screenStep['suggest'] ?? false) {
+                $values['_service_area_base'] = \App\Library\Website\Setup\ServiceAreaSuggestions::signature($this->areaSuggestions->baseFor($business, $response->answers ?? []));
+            }
+        }
+
         try {
             $response = $this->sessionManager->saveAnswers($response, $screenKey, $values, $expectedRevision);
         } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
@@ -423,6 +527,7 @@ class WebsiteWizardController extends CustomerBaseController
                 'ok' => true,
                 'revision' => (int) $response->answers_revision,
                 'next_url' => $nextUrl,
+                'shared_updated' => $sharedUpdated,
                 // The review screen is a different page (generation controls), reached by a normal navigation.
                 'full_page' => $finished,
             ]);
@@ -526,6 +631,11 @@ class WebsiteWizardController extends CustomerBaseController
 
         foreach ($ordered as $screenStep) {
             if ($draft && ! $includeCatalog && $screenStep['input_type'] === 'catalog_selection') {
+                continue;
+            }
+
+            // An uploaded brand image is its own durable record; the screen has no answer to save for it.
+            if ($screenStep['input_type'] === 'image') {
                 continue;
             }
 
@@ -1410,6 +1520,49 @@ class WebsiteWizardController extends CustomerBaseController
      * (a plain message, never an exception) when AI is switched off, out
      * of budget, or returns anything unusable.
      */
+    /**
+     * Business logo, uploaded immediately from the basics screen. The logo is
+     * the Website look's own token (WebsiteLookService — the same code the
+     * Review screen and Studio already use), so there is exactly one place it
+     * lives.
+     */
+    public function uploadLogo(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+        $website = $response->website ?? abort(404);
+
+        $request->validate([
+            'logo' => ['required', 'file', new \App\Rules\ValidWebsiteImageRule()],
+            'logo_alt' => 'nullable|string|max:160',
+        ]);
+
+        try {
+            $asset = $this->sessionManager->runIfNotGenerating($response, fn () => app(\App\Library\Website\Design\WebsiteLookService::class)->setLogo($website->fresh(), $request->file('logo'), $request->input('logo_alt')));
+        } catch (GenerationInProgressException $e) {
+            return $this->jsonError($e->getMessage(), 409);
+        }
+
+        return response()->json(['uid' => $asset->uid, 'url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($asset), 'alt_text' => $asset->alt_text]);
+    }
+
+    public function removeLogo(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+        $website = $response->website ?? abort(404);
+
+        try {
+            $this->sessionManager->runIfNotGenerating($response, fn () => app(\App\Library\Website\Design\WebsiteLookService::class)->removeLogo($website->fresh()));
+        } catch (GenerationInProgressException $e) {
+            return $this->jsonError($e->getMessage(), 409);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
     public function suggestServiceDescription(Request $request, string $workspaceUid, string $businessUid): JsonResponse
     {
         $this->authorize('website');
@@ -1883,6 +2036,18 @@ class WebsiteWizardController extends CustomerBaseController
 
         if ($step['input_type'] === 'multi_select') {
             return array_values((array) $request->input('value', []));
+        }
+
+        if ($step['input_type'] === 'location') {
+            $raw = (array) $request->input('value', []);
+            $clean = fn (string $key) => trim((string) preg_replace('/\s+/u', ' ', (string) ($raw[$key] ?? '')));
+            $place = [
+                'city' => $clean('city') ?: null,
+                'region' => $clean('region') ?: null,
+                'country_code' => strtoupper($clean('country_code')) ?: null,
+            ];
+
+            return array_filter($place) === [] ? null : $place;
         }
 
         if ($step['input_type'] === 'boolean') {

@@ -60,6 +60,10 @@ final class WizardPrefill
             return $value === '' ? null : $value;
         }
 
+        if ($module === 'business_location' && ($step['input_type'] ?? null) === 'location') {
+            return self::primaryLocationPlace($business);
+        }
+
         if ($module === 'business_location' && ($step['input_type'] ?? null) === 'string_list') {
             $cities = $business->primaryLocation()->first()?->service_area_cities;
 
@@ -74,6 +78,33 @@ final class WizardPrefill
         }
 
         return null;
+    }
+
+    /**
+     * The Business's own base place, from its canonical primary location
+     * (falling back to the Business country alone) — what the wizard shows
+     * as "where are you based?" so the owner only confirms or corrects it.
+     *
+     * @return array{city: ?string, region: ?string, country_code: ?string}|null
+     */
+    public static function primaryLocationPlace(Business $business): ?array
+    {
+        $location = $business->primaryLocation()->first();
+
+        $place = [
+            'city' => self::clean($location?->city),
+            'region' => self::clean($location?->region),
+            'country_code' => self::clean($location?->country_code ?: $business->country_code),
+        ];
+
+        return array_filter($place) === [] ? null : $place;
+    }
+
+    private static function clean(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
     }
 
     private static function hasAnswer(mixed $value): bool
