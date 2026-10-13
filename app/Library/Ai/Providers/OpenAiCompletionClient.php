@@ -45,7 +45,7 @@ final class OpenAiCompletionClient implements AiCompletionClient
         try {
             $client = OpenAI::factory()
                 ->withApiKey(config('services.openai.api_key'))
-                ->withHttpClient(new \GuzzleHttp\Client(['timeout' => self::PROVIDER_TIMEOUT_SECONDS, 'connect_timeout' => 10]))
+                ->withHttpClient(new \GuzzleHttp\Client(['timeout' => $request->timeoutSeconds !== null && $request->timeoutSeconds > 0 ? min($request->timeoutSeconds, self::PROVIDER_TIMEOUT_SECONDS) : self::PROVIDER_TIMEOUT_SECONDS, 'connect_timeout' => 10]))
                 ->make();
 
             $payload = [

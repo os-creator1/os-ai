@@ -31,24 +31,33 @@ return [
     */
     'policy_version' => (int) env('AI_BUDGET_POLICY_VERSION', 1),
 
+    /*
+    | The period key a Workspace's whole free trial is accounted under. One constant key per
+    | Workspace means exactly one trial period ever exists for it: a changed trial end date, a
+    | calendar-month boundary, another user or another Business can never open a second one.
+    | Must fit ai_usage_periods.period_key and content_autopilot_decisions.period_key (7).
+    */
+    'trial_period_key' => 'trial',
+
     'budgets' => [
         'trial' => [
-            'workspace_cap_microusd' => (int) env('AI_BUDGET_TRIAL_WORKSPACE_CAP_MICROUSD', 1_500_000),
+            'workspace_cap_microusd' => (int) env('AI_BUDGET_TRIAL_WORKSPACE_CAP_MICROUSD', 3_000_000),
             'business_cap_microusd' => null,
-            'interactive_share_bps' => (int) env('AI_BUDGET_TRIAL_INTERACTIVE_SHARE_BPS', 3000),
-            // The whole 28-day trial is one period, never a calendar month.
+            'interactive_share_bps' => (int) env('AI_BUDGET_TRIAL_INTERACTIVE_SHARE_BPS', 8000),
+            // The whole trial is ONE period for the Workspace, once — never a calendar month,
+            // never per Business, user or day. The period key is the constant below.
             'period' => 'trial',
         ],
         'core' => [
             'workspace_cap_microusd' => (int) env('AI_BUDGET_CORE_WORKSPACE_CAP_MICROUSD', 5_000_000),
             'business_cap_microusd' => null,
-            'interactive_share_bps' => (int) env('AI_BUDGET_CORE_INTERACTIVE_SHARE_BPS', 3000),
+            'interactive_share_bps' => (int) env('AI_BUDGET_CORE_INTERACTIVE_SHARE_BPS', 8000),
             'period' => 'calendar_month',
         ],
         'growth' => [
             'workspace_cap_microusd' => (int) env('AI_BUDGET_GROWTH_WORKSPACE_CAP_MICROUSD', 10_000_000),
             'business_cap_microusd' => null,
-            'interactive_share_bps' => (int) env('AI_BUDGET_GROWTH_INTERACTIVE_SHARE_BPS', 3000),
+            'interactive_share_bps' => (int) env('AI_BUDGET_GROWTH_INTERACTIVE_SHARE_BPS', 8000),
             'period' => 'calendar_month',
         ],
         'agency' => [
@@ -116,12 +125,13 @@ return [
     | conversation_compaction) are ALWAYS hard-enforced regardless of this
     | flag (contract §19.3 rule 2) — see AiUsageCategory::isHardEnforced().
     |
-    | This must be true before broader product launch (§21 launch gate).
-    | AI-1 ships it false; a later slice flips it after one observation
-    | window of real ledger data.
+    | This is the §21 launch gate, and it now defaults to TRUE: every category
+    | is hard-capped. A free trial's cap is hard for every category even if an
+    | operator sets this false (AiGateway never opens the observation bypass for
+    | a trial policy), so no older category can spend past the trial's $3.
     |
     */
-    'enforce_budgets_for_existing_categories' => (bool) env('AI_ENFORCE_BUDGETS_FOR_EXISTING_CATEGORIES', false),
+    'enforce_budgets_for_existing_categories' => (bool) env('AI_ENFORCE_BUDGETS_FOR_EXISTING_CATEGORIES', true),
 
     /*
     |--------------------------------------------------------------------------
@@ -237,6 +247,22 @@ return [
             'max_request_cost_microusd' => (int) env('AI_ROUTE_WEBSITE_GENERATION_MAX_REQUEST_COST_MICROUSD', 6_700),
             'price_version' => (int) env('AI_ROUTE_WEBSITE_GENERATION_PRICE_VERSION', 1),
         ],
+        // Ask MotionGrove — the inexpensive route for tool selection and grounded answers, with an input ceiling sized
+        // for a system prompt + tool catalogue + short history + bounded tool results (see config/assistant.php).
+        // Worst case at these prices: 7,000 x $0.15/M + 700 x $0.60/M = $0.00147 per call, so the 20,000-microusd
+        // per-request cap leaves ample margin for the estimator's framing allowance.
+        'assistant' => [
+            'provider' => 'openai',
+            'model' => env('AI_ROUTE_ASSISTANT_MODEL', 'gpt-4o-mini'),
+            'input_price_microusd_per_mtok' => (int) env('AI_ROUTE_ASSISTANT_INPUT_PRICE_MICROUSD_PER_MTOK', 150_000),
+            'cached_input_price_microusd_per_mtok' => (int) env('AI_ROUTE_ASSISTANT_CACHED_INPUT_PRICE_MICROUSD_PER_MTOK', 75_000),
+            'output_price_microusd_per_mtok' => (int) env('AI_ROUTE_ASSISTANT_OUTPUT_PRICE_MICROUSD_PER_MTOK', 600_000),
+            'max_input_tokens' => (int) env('AI_ROUTE_ASSISTANT_MAX_INPUT_TOKENS', 7000),
+            'max_output_tokens' => (int) env('AI_ROUTE_ASSISTANT_MAX_OUTPUT_TOKENS', 700),
+            'max_request_cost_microusd' => (int) env('AI_ROUTE_ASSISTANT_MAX_REQUEST_COST_MICROUSD', 20_000),
+            'timeout_seconds' => (int) env('AI_ROUTE_ASSISTANT_TIMEOUT_SECONDS', 25),
+            'price_version' => (int) env('AI_ROUTE_ASSISTANT_PRICE_VERSION', 1),
+        ],
         // Content Autopilot — the stronger route for the article draft and meaningful rewrites only (small steps use
         // `routine`). The envelope bounds one article: ~9,000 input tokens (fact pack + brief + link list) and 4,500
         // output tokens. At the prices below the worst case is 9,000 x $2.50/M + 4,500 x $10/M = $0.0675; the real
@@ -290,6 +316,7 @@ return [
         // Content Autopilot's DEFAULT route is the cheap one; the article draft/rewrite call names `content_writer`
         // explicitly (WebsiteAiGenerationClient::complete(route: ...)).
         'content_autopilot' => 'routine',
+        'ask_assistant' => 'assistant',
     ],
 
     /*

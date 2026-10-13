@@ -159,7 +159,13 @@ final class AiGateway
         // §19.3 rule 3 / T-BUD-8: the three pre-existing categories may
         // run over cap, unrefused, for one observation window. New COO
         // categories are never eligible for this bypass.
+        //
+        // A free trial's $3 is a HARD cap for every category, whatever the
+        // observation flag says: the flag exists to protect an established
+        // paying Workspace's existing behaviour, never to let a trial spend
+        // past what it was promised.
         $bypassCapEnforcement = ! $request->category->isAlwaysHardEnforced()
+            && ! $policy->isTrial()
             && ! (bool) config('ai.enforce_budgets_for_existing_categories');
 
         // Gate 3b (§5.7a C, §6.7, R-28) — the SECOND authority boundary, run
@@ -216,6 +222,7 @@ final class AiGateway
             messages: $request->messages,
             maxOutputTokens: $maxOutputTokens,
             jsonMode: $request->jsonMode,
+            timeoutSeconds: isset($routeConfig['timeout_seconds']) ? (int) $routeConfig['timeout_seconds'] : null,
         );
 
         $completionResult = $this->completionClient->complete($completionRequest);

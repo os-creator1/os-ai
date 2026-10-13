@@ -19,4 +19,15 @@ final readonly class AiBudgetPolicy
         public int $interactiveShareBps,
     ) {
     }
+
+    public function isTrial(): bool
+    {
+        return $this->policyKey === 'trial';
+    }
+
+    /** Has an allowance at all (zero cap = unassigned, locked or an expired trial). */
+    public function hasAllowance(): bool
+    {
+        return $this->workspaceCapMicrousd > 0;
+    }
 }
