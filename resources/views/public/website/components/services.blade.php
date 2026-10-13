@@ -17,15 +17,23 @@
     @endif
     <div class="website-services-grid @if ($wd) wd-grid @endif">
         @foreach ($items as $item)
+            @php($detailUrl = ! $isPackages && ! empty($item['service_uid']) ? (($servicePageUrls ?? [])[$item['service_uid']] ?? null) : null)
             @php($itemImage = ! empty($item['image']) && isset($assetsByUid[$item['image']]) ? $assetsByUid[$item['image']] : null)
-            <div class="website-service-card @if ($wd) wd-card @endif @if (! empty($item['featured'])) wd-card-featured @endif" @if ($isPackages) data-package-uid="{{ $item['catalog_item_uid'] ?? '' }}" @endif>
+            <div class="website-service-card @if ($wd) wd-card @endif @if (! empty($item['featured'])) wd-card-featured @endif @if ($detailUrl) wd-card-linked @endif" @if ($isPackages) data-package-uid="{{ $item['catalog_item_uid'] ?? '' }}" @endif>
                 @if ($itemImage)
                     {{ \App\Library\Website\Media\ResponsiveImage::tag($itemImage, '(min-width: 960px) 360px, 100vw') }}
                 @endif
                 @if ($wd && ! empty($item['featured']))
                     <span class="wd-badge">Featured</span>
                 @endif
-                <h3>{{ $item['name'] ?? '' }}</h3>
+                <h3>
+                    @if ($detailUrl)
+                        {{-- A booth card leads to that booth's own detail page, found by its service id in this site's published pages. --}}
+                        <a class="website-service-link" href="{{ $detailUrl }}">{{ $item['name'] ?? '' }}</a>
+                    @else
+                        {{ $item['name'] ?? '' }}
+                    @endif
+                </h3>
                 @php([$descriptionText, $featureList] = \App\Library\Catalog\CatalogFeatureList::split($item['description'] ?? null))
                 @if ($descriptionText !== null)
                     <p>{{ $descriptionText }}</p>

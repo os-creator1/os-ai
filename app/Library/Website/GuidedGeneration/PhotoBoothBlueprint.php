@@ -108,7 +108,7 @@ final class PhotoBoothBlueprint
     {
         $sections = [];
 
-        $hero = $this->hero($f['name'], $this->tagline($f), $this->primaryCta($f), $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null);
+        $hero = $this->hero($this->heroHeadline($f), $this->heroSubline($f), $this->primaryCta($f), $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null);
         $sections[] = $hero;
 
         if ($f['services'] !== []) {
@@ -468,7 +468,15 @@ final class PhotoBoothBlueprint
             ? array_values((array) $profile->testimonials) : [];
 
         $answers = (array) ($context['answers'] ?? []);
-        $city = trim((string) ($business->primaryLocation()->first()?->city ?? '')) ?: null;
+        $primaryLocation = $business->primaryLocation()->first();
+        $city = trim((string) ($primaryLocation?->city ?? '')) ?: null;
+        // The owner's saved service areas, as bare place names ("Santa Ana, CA" -> "Santa Ana"), base city first.
+        $areas = collect(array_merge($city !== null ? [$city] : [], (array) ($primaryLocation?->service_area_cities ?? [])))
+            ->map(fn ($entry) => trim((string) Str::before((string) $entry, ',')))
+            ->filter()
+            ->unique(fn ($place) => mb_strtolower($place))
+            ->values()
+            ->all();
 
         $customerFaq = (array) ($context['customer_faq'] ?? []);
         $faq = $customerFaq !== [] ? $customerFaq : array_map(fn (array $i) => ['question' => $i['question'], 'answer' => $i['answer']], $this->defaults->faq($business, $answers));
@@ -490,6 +498,8 @@ final class PhotoBoothBlueprint
             'business' => $business,
             'name' => $name,
             'city' => $city,
+            'areas' => $areas,
+            'template' => (string) $website->template_key,
             'tone' => $tone,
             'cta' => $cta,
             'pricing' => $pricing,
@@ -506,6 +516,40 @@ final class PhotoBoothBlueprint
             'about' => $about,
             'package_links' => (array) ($context['package_links'] ?? []),
         ];
+    }
+
+    /**
+     * The home page's main headline: what the business does and where, from the confirmed city (the brand name is
+     * already in the header and the title). Each design words it its own way; an owner can edit it like any text.
+     *
+     * @param  array<string, mixed>  $f
+     */
+    private function heroHeadline(array $f): string
+    {
+        $city = $f['city'];
+
+        $headline = match ($f['template']) {
+            'photo_booth_editorial' => $city !== null ? "Photo booth rentals in {$city}" : 'Photo booth rentals for your event',
+            'photo_booth_luxury' => $city !== null ? "Photo booths for events in {$city}" : 'Photo booths for events worth remembering',
+            'photo_booth_conversion' => $city !== null ? "Book a photo booth in {$city}" : 'Book a photo booth for your event',
+            default => $city !== null ? "Photo booth rentals in {$city}" : 'Photo booth rentals for your event',
+        };
+
+        return Str::limit($headline, 120, '');
+    }
+
+    /** @param array<string, mixed> $f */
+    private function heroSubline(array $f): string
+    {
+        $line = $this->tagline($f);
+        $areas = array_slice($f['areas'], 0, 3);
+
+        if (count($areas) >= 2) {
+            $last = array_pop($areas);
+            $line = $this->tagline($f) . ' Serving ' . implode(', ', $areas) . ' and ' . $last . '.';
+        }
+
+        return $line;
     }
 
     /** @param array<string, mixed> $f */

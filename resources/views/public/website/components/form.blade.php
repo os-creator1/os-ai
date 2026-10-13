@@ -54,6 +54,10 @@
                     </div>
                 @endforeach
                 <button type="submit" class="website-btn website-btn-primary">{{ $websiteForm['submit_label'] }}</button>
+                @php($formPrivacyUrl = \App\Library\Website\Design\WebsiteLegalLinks::fromTheme($websiteMeta['theme'] ?? [])['privacy'])
+                @if ($formPrivacyUrl)
+                    <p class="website-form-privacy"><a href="{{ $formPrivacyUrl }}" rel="noopener" data-testid="form-privacy-link">Privacy notice</a></p>
+                @endif
             </form>
         @endif
     </section>

@@ -17,12 +17,14 @@ PASS  no FAQ answer is empty
 PASS  every step so far was in-page
 PASS  review lists the missing photo
 PASS  review shows counts
-PASS  a draft website was generated (no AI)  — http://127.0.0.1:8012/workspaces/02360b11-2118-44d4-a887-3b6869e22d74/businesses/6ace5d0b67ca3/website/preview
+PASS  a draft website was generated (no AI)  — http://127.0.0.1:8012/workspaces/3218af53-07de-48c2-b37d-9e0e421bc9f8/businesses/6ace70645a6a5/website/preview
 PASS  Studio checklist names the missing booth photo
 PASS  publishing is refused while the photo is missing
-PASS  editing answers finished on the review step  — http://127.0.0.1:8012/workspaces/02360b11-2118-44d4-a887-3b6869e22d74/businesses/6ace5d0b67ca3/website/build/review
+PASS  editing answers finished on the review step  — http://127.0.0.1:8012/workspaces/3218af53-07de-48c2-b37d-9e0e421bc9f8/businesses/6ace70645a6a5/website/build/review
+PASS  Studio health warns that the inquiry site has no privacy notice link yet
+PASS  the privacy link is saved in the Studio look card
 PASS  after adding the photo the website publishes
-PASS  the Studio links to the published public site  — http://127.0.0.1:8012/sites/0b9bcaf2-f24f-4c8c-ab72-62e29899b2e3
+PASS  the Studio links to the published public site  — http://127.0.0.1:8012/sites/108adc38-2678-427a-88b1-b993afd056ab
 PASS  the public site is live (no draft banner)
 PASS  the site has several pages  — 11
 PASS  home (desktop): no broken or empty images
@@ -63,6 +65,7 @@ PASS  photo-booth-about (desktop): text/button contrast
 PASS  photo-booth-about (desktop): no empty section
 PASS  photo-booth-contact (desktop): no broken or empty images
 PASS  photo-booth-contact (desktop): no horizontal scroll
+PASS  contact (desktop): privacy link sits with the quote form
 PASS  photo-booth-contact (desktop): text/button contrast
 PASS  photo-booth-contact (desktop): no empty section
 PASS  photo-booth-faq (desktop): no broken or empty images
@@ -107,12 +110,21 @@ PASS  photo-booth-about (mobile): text/button contrast
 PASS  photo-booth-about (mobile): no empty section
 PASS  photo-booth-contact (mobile): no broken or empty images
 PASS  photo-booth-contact (mobile): no horizontal scroll
+PASS  contact (mobile): privacy link sits with the quote form
 PASS  photo-booth-contact (mobile): text/button contrast
 PASS  photo-booth-contact (mobile): no empty section
 PASS  photo-booth-faq (mobile): no broken or empty images
 PASS  photo-booth-faq (mobile): no horizontal scroll
 PASS  photo-booth-faq (mobile): text/button contrast
 PASS  photo-booth-faq (mobile): no empty section
+PASS  booth cards are links  — 3
+PASS  no informational card carries an arrow or other link badge  — 0
+PASS  package cards are not booth links
+PASS  keyboard focus on a booth link shows a focus ring on its card  — solid
+PASS  Enter opens that booth's own page  — Open-Air Photo Booth
+PASS  the owner's privacy link is in the footer, pointing at their address
+PASS  the terms link is in the footer too
+PASS  hero headline states the service and place, not just the brand  — Photo booth rentals in Irvine
 PASS  no broken internal links across every page
 PASS  captured every page at both widths  — 22
 

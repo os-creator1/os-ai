@@ -114,6 +114,7 @@
         <link rel="stylesheet" href="{{ asset('css/website-blog.css') }}?v={{ is_file(public_path('css/website-blog.css')) ? filemtime(public_path('css/website-blog.css')) : 1 }}">
     @endif
     @php($theme = $websiteMeta['theme'] ?? [])
+    @php($servicePageUrls = collect($navigationPages ?? [])->filter(fn ($navPage) => ! empty($navPage['service_uid']) && ! empty($navPage['url']))->mapWithKeys(fn ($navPage) => [$navPage['service_uid'] => $navPage['url']])->all())
     @if (! empty($theme))
         <style>
             :root {
@@ -177,10 +178,10 @@
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
                     <div class="wd-band wd-tone-{{ $design->toneFor($toneKey) }} wd-band-{{ $toneKey }}" data-section="{{ $toneKey }}">
                         @if ($type === 'hero')
-                            @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'heroImageFallback' => $heroImageFallback])
+                            @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'heroImageFallback' => $heroImageFallback])
                         @else
                             <div class="website-container wd-container">
-                                @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null])
+                                @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls])
                             </div>
                         @endif
                     </div>
@@ -271,7 +272,7 @@
                 @foreach ($sections as $section)
                     @php($componentView = 'public.website.components.' . ($section['type'] ?? ''))
                     @if (\Illuminate\Support\Facades\View::exists($componentView))
-                        @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null])
+                        @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls])
                     @endif
                 @endforeach
             </div>

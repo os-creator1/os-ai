@@ -9,6 +9,8 @@
         $lookTheme = $website->theme ?? [];
         $lookAssets = $website->assets()->whereIn('uid', array_filter([$lookTheme['logo_asset_uid'] ?? null, $lookTheme['hero_asset_uid'] ?? null]))->get()->keyBy('uid');
         $brandColor = $lookTheme['brand_color'] ?? null;
+        $privacyNoticeUrl = $lookTheme['privacy_notice_url'] ?? null;
+        $termsUrl = $lookTheme['terms_url'] ?? null;
         $logo = isset($lookTheme['logo_asset_uid'], $lookAssets[$lookTheme['logo_asset_uid']]) ? ['url' => $lookAssets[$lookTheme['logo_asset_uid']]->url(), 'alt' => $lookAssets[$lookTheme['logo_asset_uid']]->alt_text] : null;
         $hero = isset($lookTheme['hero_asset_uid'], $lookAssets[$lookTheme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($lookAssets[$lookTheme['hero_asset_uid']]), 'alt' => $lookAssets[$lookTheme['hero_asset_uid']]->alt_text] : null;
     @endphp
@@ -72,6 +74,15 @@
                     <div class="form-check mt-50"><input class="form-check-input" type="checkbox" name="remove_hero" value="1" id="look-remove-hero"><label class="form-check-label" for="look-remove-hero">Remove hero image</label></div>
                 @endif
                 @error('hero') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
+            </div>
+
+            <div class="website-look-field" data-testid="legal-links">
+                <span class="website-look-label">Privacy notice &amp; legal links</span>
+                <p class="text-caption mb-50">Your website collects inquiries, so link to <em>your own</em> published privacy notice. We never write or copy a policy for you; leave blank if you don't have one yet.</p>
+                <input type="url" class="form-control" id="look-privacy-url" name="privacy_notice_url" value="{{ old('privacy_notice_url', $privacyNoticeUrl) }}" placeholder="https://your-business.example/privacy" maxlength="500" inputmode="url" autocomplete="off" aria-label="Privacy notice web address">
+                @error('privacy_notice_url') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
+                <input type="url" class="form-control mt-50" id="look-terms-url" name="terms_url" value="{{ old('terms_url', $termsUrl) }}" placeholder="Terms of service address (optional)" maxlength="500" inputmode="url" autocomplete="off" aria-label="Terms web address (optional)">
+                @error('terms_url') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
             </div>
 
             <div class="d-flex justify-content-end mt-2">

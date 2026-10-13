@@ -198,6 +198,15 @@ await page.waitForSelector('#rebuild-confirm-go', { state: 'visible' });
 await Promise.all([page.waitForLoadState('load'), page.click('#rebuild-confirm-go')]);
 await page.waitForTimeout(1500);
 await page.goto(studioUrl, { waitUntil: 'load' });
+check('Studio health warns that the inquiry site has no privacy notice link yet', (await page.locator('[data-health-check="privacy_notice"]').getAttribute('data-health-status')) === 'warn');
+await page.goto(`${studioUrl}/settings`, { waitUntil: 'load' });
+// The owner supplies their OWN privacy notice address (we never write a policy); invalid ones are refused.
+await page.fill('#look-privacy-url', 'https://glowbooths.example/privacy');
+await page.fill('#look-terms-url', 'https://glowbooths.example/terms');
+await Promise.all([page.waitForLoadState('load'), page.click('[data-testid="look-save"]')]);
+await page.goto(`${studioUrl}/settings`, { waitUntil: 'load' });
+check('the privacy link is saved in the Studio look card', (await page.inputValue('#look-privacy-url')) === 'https://glowbooths.example/privacy');
+await page.goto(studioUrl, { waitUntil: 'load' });
 await Promise.all([page.waitForLoadState('load'), page.locator('form[action$="/website/publish"] button[type="submit"]').first().click()]);
 check('after adding the photo the website publishes', /No unpublished changes|Published/.test(await stateText()) && !/Not published yet/.test(await page.evaluate(() => document.body.innerText)));
 
@@ -241,11 +250,33 @@ for (const [label, vp] of [['desktop', { width: 1280, height: 900 }], ['mobile',
       }
       return out.slice(0, 8);
     });
+    if (slug === 'photo-booth-contact') { check(`contact (${label}): privacy link sits with the quote form`, (await live.locator('[data-testid="form-privacy-link"]').count()) === 1); }
     check(`${slug} (${label}): text/button contrast`, bad.length === 0, bad.join(' | '));
     check(`${slug} (${label}): no empty section`, await live.evaluate(() => [...document.querySelectorAll('main section, section.website-section')].every((sec) => sec.innerText.trim().length > 0 || sec.querySelector('img, form, iframe'))));
     n++;
   }
 }
+// Link affordances: booth cards are real, keyboard-reachable links to their own detail pages; informational cards
+// (events, steps, advantages, packages) carry no link and no arrow.
+await live.setViewportSize({ width: 1280, height: 900 });
+await live.goto(home, { waitUntil: 'load' });
+const linked = live.locator('.wd-card-linked a.website-service-link');
+const nLinked = await linked.count();
+check('booth cards are links', nLinked >= 2, String(nLinked));
+const decorated = await live.evaluate(() => [...document.querySelectorAll('.website-service-card:not(.wd-card-linked)')].filter((c) => { const a = getComputedStyle(c, '::after').content; return a && a !== 'none' && a !== 'normal'; }).length);
+check('no informational card carries an arrow or other link badge', decorated === 0, String(decorated));
+check('package cards are not booth links', (await live.locator('[data-package-uid] a.website-service-link').count()) === 0);
+await linked.first().focus();
+const ring = await linked.first().evaluate((a) => getComputedStyle(a.closest('.wd-card')).outlineStyle);
+check('keyboard focus on a booth link shows a focus ring on its card', ring !== 'none', ring);
+const wantedName = (await linked.first().innerText()).trim();
+await live.keyboard.press('Enter');
+await live.waitForURL(/\/service-/);
+check('Enter opens that booth\'s own page', (await live.locator('h1').first().innerText()).toLowerCase().includes(wantedName.toLowerCase()), wantedName);
+check('the owner\'s privacy link is in the footer, pointing at their address', (await live.locator('[data-testid="privacy-notice-link"]').first().getAttribute('href')) === 'https://glowbooths.example/privacy');
+check('the terms link is in the footer too', (await live.locator('[data-testid="terms-link"]').count()) >= 1);
+const heroText = await (async () => { await live.goto(home, { waitUntil: 'load' }); return (await live.locator('h1').first().innerText()).trim(); })();
+check('hero headline states the service and place, not just the brand', /photo booth/i.test(heroText) && /irvine/i.test(heroText) && !/^glow booths co$/i.test(heroText), heroText);
 const hrefs = [...allHrefs];
 let deadLinks = [];
 for (const h of hrefs.slice(0, 60)) { const r = await context.request.get(h); if (r.status() >= 400) { deadLinks.push(`${r.status()} ${h}`); } }

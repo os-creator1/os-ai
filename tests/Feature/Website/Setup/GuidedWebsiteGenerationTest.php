@@ -70,6 +70,7 @@ class GuidedWebsiteGenerationTest extends TestCase
     public function test_a_guided_setup_generates_a_complete_homepage_with_every_section_populated_and_no_ai_call(): void
     {
         $this->fullSetup();
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_modern']);
         $website = $this->generate();
 
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $website->guidedGenerationAttempts()->latest('id')->value('status'));
@@ -81,7 +82,8 @@ class GuidedWebsiteGenerationTest extends TestCase
 
         $this->assertCount(1, $home['hero']);
         $this->assertCount(1, $home['cta'], 'Exactly one closing call to action — never duplicated.');
-        $this->assertSame('Glow Booths', $home['hero'][0]['heading']);
+        $this->assertSame('Photo booth rentals in Irvine', $home['hero'][0]['heading'], 'The headline says what the business does and where; the brand name is already in the header.');
+        $this->assertStringContainsString('Serving Irvine,', $home['hero'][0]['subheading'], 'The saved service areas appear in the supporting line.');
         $this->assertNotEmpty($home['hero'][0]['subheading']);
         $this->assertNotEmpty($home['hero'][0]['background_image'], 'The hero shows the owner\'s chosen cover photo.');
         $this->assertSame('Request a quote', $home['hero'][0]['primary_cta']['label']);
@@ -303,5 +305,97 @@ class GuidedWebsiteGenerationTest extends TestCase
         $this->assertSame($snapshot, $revision->fresh()->snapshot, 'A published revision is a frozen snapshot.');
         $this->assertSame($revision->id, $website->fresh()->published_revision_id);
         $this->assertSame(0, $website->assets()->whereNotNull('first_published_at')->count() === 0 ? 1 : 0, 'Assets used by the live revision are marked published and kept.');
+    }
+
+    /** @return array<string, array{0: string, 1: string}> */
+    public static function heroHeadlines(): array
+    {
+        return [
+            'Bold Event' => ['photo_booth_modern', 'Photo booth rentals in Irvine'],
+            'Classic Gold' => ['photo_booth_editorial', 'Photo booth rentals in Irvine'],
+            'Midnight Gold' => ['photo_booth_luxury', 'Photo booths for events in Irvine'],
+            'Party Luxe' => ['photo_booth_conversion', 'Book a photo booth in Irvine'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('heroHeadlines')]
+    public function test_each_design_words_its_own_headline_from_the_confirmed_city(string $templateKey, string $expected): void
+    {
+        $this->fullSetup();
+        Website::where('business_id', $this->business->id)->update(['template_key' => $templateKey]);
+
+        $home = $this->home($this->generate());
+
+        $this->assertSame($expected, $home['hero'][0]['heading']);
+        $this->assertStringNotContainsString('Glow Booths', $home['hero'][0]['heading']);
+    }
+
+    private function publishedHomeHtml(): string
+    {
+        $this->fullSetup();
+        $website = $this->generate();
+        app(WebsitePublisher::class)->publish($website, (int) $this->customer->user_id);
+
+        return $this->get(route('public.website.home', $website->fresh()->public_id))->assertOk()->getContent();
+    }
+
+    public function test_booth_cards_link_to_their_own_service_pages_and_nothing_else_is_a_fake_link(): void
+    {
+        $html = $this->publishedHomeHtml();
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+
+        $slugs = $website->pages()->where('slug', 'like', 'service-%')->pluck('slug')->all();
+        $this->assertGreaterThanOrEqual(2, count($slugs));
+
+        preg_match_all('/<a class="website-service-link" href="([^"]+)">([^<]+)<\/a>/', $html, $m);
+        $this->assertCount(count($slugs), $m[1], 'Exactly the booths that HAVE a detail page are links — events, steps, advantages, packages and booths without a page are not.');
+        foreach ($slugs as $slug) {
+            $this->assertContains(route('public.website.page', [$website->public_id, $slug]), $m[1]);
+        }
+        // Each link leads to the page of the booth it names.
+        foreach ($m[1] as $i => $url) {
+            $this->get($url)->assertOk()->assertSee(trim(html_entity_decode($m[2][$i])), false);
+        }
+        $this->assertSame(count($slugs), substr_count($html, 'wd-card-linked'));
+        $this->assertStringNotContainsString('<a class="website-service-link" href="#"', $html);
+    }
+
+    public function test_the_owner_supplies_the_privacy_notice_address_and_nothing_is_invented(): void
+    {
+        $this->fullSetup();
+        $website = $this->generate();
+        $look = route('customer.workspaces.businesses.website.look.update', [$this->workspace->uid, $this->business->uid]);
+        $health = fn () => collect(app(WebsiteHealthChecker::class)->check($website->fresh(), ['publish' => '/p'])['checks'])->firstWhere('key', 'privacy_notice');
+
+        // Not configured: a launch warning, and the live site shows no privacy text at all.
+        $this->assertSame(WebsiteHealthChecker::WARN, $health()['status']);
+        app(WebsitePublisher::class)->publish($website, (int) $this->customer->user_id);
+        $home = $this->get(route('public.website.home', $website->fresh()->public_id))->getContent();
+        $this->assertStringNotContainsString('Privacy notice', $home);
+        $this->assertStringNotContainsString('data-testid="privacy-notice-link"', $home);
+
+        // Anything that is not an absolute https address is refused and nothing is stored.
+        foreach (['javascript:alert(1)', 'http://insecure.example/p', '/privacy', 'https://', 'https://user:pw@x.example/p', 'not a url'] as $bad) {
+            $response = $this->postJson($look, ['privacy_notice_url' => $bad]);
+            $this->assertSame(422, $response->getStatusCode(), "'{$bad}' must be refused");
+            $this->assertStringContainsString('https://', (string) $response->json('message'));
+        }
+        $this->assertArrayNotHasKey('privacy_notice_url', $website->fresh()->theme ?? []);
+
+        $this->postJson($look, ['privacy_notice_url' => 'https://glowbooths.example/privacy', 'terms_url' => 'https://glowbooths.example/terms'])->assertRedirect();
+        $this->assertSame(WebsiteHealthChecker::OK, $health()['status']);
+
+        app(WebsitePublisher::class)->publish($website->fresh(), (int) $this->customer->user_id);
+        $public = $website->fresh();
+        $home = $this->get(route('public.website.home', $public->public_id))->getContent();
+        $this->assertStringContainsString('<a href="https://glowbooths.example/privacy" rel="noopener" data-testid="privacy-notice-link">Privacy notice</a>', $home);
+        $this->assertStringContainsString('href="https://glowbooths.example/terms"', $home);
+
+        $contact = $this->get(route('public.website.page', [$public->public_id, 'photo-booth-contact']))->getContent();
+        $this->assertStringContainsString('data-testid="form-privacy-link"', $contact, 'The link sits with the inquiry form.');
+
+        // The owner's address survives a clear; blank removes it.
+        $this->postJson($look, ['privacy_notice_url' => '', 'terms_url' => ''])->assertRedirect();
+        $this->assertArrayNotHasKey('privacy_notice_url', $website->fresh()->theme ?? []);
     }
 }

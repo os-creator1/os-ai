@@ -903,6 +903,8 @@ class WebsiteWizardController extends CustomerBaseController
                 'html' => $this->templatePreviews->render($business, $website, $template),
             ])->all(),
             'brandColor' => $theme['brand_color'] ?? null,
+            'privacyNoticeUrl' => $theme['privacy_notice_url'] ?? null,
+            'termsUrl' => $theme['terms_url'] ?? null,
             'logo' => isset($theme['logo_asset_uid'], $assets[$theme['logo_asset_uid']]) ? ['url' => $assets[$theme['logo_asset_uid']]->url(), 'alt' => $assets[$theme['logo_asset_uid']]->alt_text] : null,
             'hero' => isset($theme['hero_asset_uid'], $assets[$theme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($assets[$theme['hero_asset_uid']]), 'alt' => $assets[$theme['hero_asset_uid']]->alt_text] : null,
             'plan' => $current !== null ? $this->planSummary->forResponse($business, $website, $current, $response) : null,

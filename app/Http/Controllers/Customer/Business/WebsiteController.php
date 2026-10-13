@@ -474,6 +474,9 @@ class WebsiteController extends CustomerBaseController
                 'is_home' => $candidate->is_home,
                 'slug' => $candidate->slug,
                 'has_form' => collect($candidate->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
+                'service_uid' => str_starts_with((string) $candidate->slug, 'service-')
+                    ? collect($candidate->sections ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
+                    : null,
                 'url' => route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid, $candidate->uid]),
             ])->all(),
         ]);

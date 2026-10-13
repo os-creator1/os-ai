@@ -69,6 +69,7 @@ class WebsiteStudioController extends CustomerBaseController
 
         return [
             'publish' => route('customer.workspaces.businesses.website.studio.show', $params),
+            'look' => route('customer.workspaces.businesses.website.studio.show', array_merge($params, ['settings'])) . '#look-privacy-url',
             'domains' => route('customer.workspaces.businesses.website.domains.index', $params),
             'photos' => route('customer.workspaces.businesses.website.photos.index', $params),
             'pages' => route('customer.workspaces.businesses.website.pages.index', $params),

@@ -62,5 +62,13 @@
     </div>
     <div class="website-container wd-footer-legal">
         <p>&copy; {{ date('Y') }} {{ $websiteMeta['name'] }}</p>
+        {{-- The owner's own notice addresses only (https, validated); nothing is written or implied on their behalf. --}}
+        @php($legalLinks = \App\Library\Website\Design\WebsiteLegalLinks::fromTheme($websiteMeta['theme'] ?? []))
+        @if ($legalLinks['privacy'] || $legalLinks['terms'])
+            <nav class="wd-footer-legal-links" aria-label="Legal">
+                @if ($legalLinks['privacy'])<a href="{{ $legalLinks['privacy'] }}" rel="noopener" data-testid="privacy-notice-link">Privacy notice</a>@endif
+                @if ($legalLinks['terms'])<a href="{{ $legalLinks['terms'] }}" rel="noopener" data-testid="terms-link">Terms</a>@endif
+            </nav>
+        @endif
     </div>
 </footer>

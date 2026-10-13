@@ -140,6 +140,10 @@ final class WebsiteHealthChecker
         // 10b. The quote form must be connected to a Location, or every inquiry is turned away.
         $this->quoteFormCheck($add, $website, $pages, $links);
 
+        // 10c. A site that collects inquiries should point visitors to the owner's own privacy notice. Their address,
+        // never platform text; a warning (not a block) because only the owner can supply it.
+        $this->privacyLinkCheck($add, $website, $pages, $links);
+
         // 11. Service pages.
         $services = $this->strategy->eligibleServices($business);
         $servicePageSlugs = $pages->pluck('slug')->filter(fn ($slug) => str_starts_with((string) $slug, 'service-'))->all();
@@ -199,6 +203,28 @@ final class WebsiteHealthChecker
      * Locations (Forms V1 fails closed and never guesses among several). A site that shows such a form while refusing
      * its visitors is the worst kind of "published": nobody is told, and the lead is gone.
      */
+    private function privacyLinkCheck(callable $add, Website $website, Collection $pages, array $links): void
+    {
+        $hasForm = $pages->contains(fn ($page) => collect($page->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'));
+
+        if (! $hasForm) {
+            return;
+        }
+
+        $privacy = \App\Library\Website\Design\WebsiteLegalLinks::fromTheme($website->theme ?? [])['privacy'];
+
+        $add(
+            'privacy_notice',
+            $privacy === null ? self::WARN : self::OK,
+            'Privacy notice link',
+            $privacy === null
+                ? 'Your website collects inquiries but has no link to your privacy notice. Add the address of your own published notice in "Your website\'s look" before you launch to real customers. We do not write one for you.'
+                : 'Your privacy notice is linked in your footer and next to your quote form.',
+            $privacy === null ? 'Add privacy link' : null,
+            $privacy === null ? ($links['look'] ?? ($links['answers'] ?? null)) : null,
+        );
+    }
+
     private function quoteFormCheck(callable $add, Website $website, Collection $pages, array $links): void
     {
         $placed = $pages->flatMap(fn ($page) => collect($page->sections ?? [])
