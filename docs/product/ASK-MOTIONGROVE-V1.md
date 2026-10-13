@@ -54,10 +54,62 @@ No billable external AI tool exists in V1, so none needs metering.
 | Growth | 10,000,000 | calendar month |
 | Agency | 25,000,000 Workspace / 6,000,000 per Business | calendar month |
 
-Interactive share is 8000 bps for trial/Core/Growth (Agency unchanged at 3000). Every category is hard-capped
-(`AI_ENFORCE_BUDGETS_FOR_EXISTING_CATEGORIES` now defaults to true, and a trial policy never opens the observation bypass).
+Interactive share is 8000 bps for trial/Core/Growth (Agency unchanged at 3000). Every category is hard-capped, for every
+plan and for the Platform scope: the §19.3 observation window is closed and `AI_ENFORCE_BUDGETS_FOR_EXISTING_CATEGORIES` is
+no longer read by the gateway (retained only so old env files do not error).
 The trial is derived from the canonical lifecycle (`trial_ends_at` outstanding, no grace/lock); an ended or unconverted trial,
 or a lock, gets no AI; grace after a failed *paid* renewal keeps the paid allowance. A provider-confirmed conversion
 (`EntitlementManager::recoverAccess`) clears `trial_ends_at`, so the next call resolves the paid policy and opens a
 calendar-month period; trial history is untouched. A paid plan *upgrade* inside an open month raises that period's cap
 (explicit, upward-only, `AiUsageLedgerManager::adoptUpgradedCap`).
+
+
+## Prompt structure and data minimisation (correction round 1)
+
+- **One high-priority message.** The system message is fixed server text: rules, reply format, and the catalogue of tools this
+  actor may use. Everything else — server context (date, time zone, business name), the compacted earlier-conversation summary,
+  recent turns, the customer's message, every tool result — is a quoted user-role message that says it is data. A summary
+  (which is derived from customer-written text) is explicitly labelled untrusted and has no authority.
+- **Minimal data to the provider.** Tools return aggregates and opaque handles (`AssistantHandles`: an HMAC of the record uid
+  bound to this Business and actor). Names, phone numbers and message text live in `display`/`facts`/`links`, which are shown
+  by the server and never sent to the model. A draft reply that needs the words reads one conversation through
+  `waiting_message` (first name + latest message, no phone). Server-rendered lists are not replayed to the model in history.
+- **Fitted envelope.** The whole serialized request is measured with the gateway's own estimator against the route's
+  `max_input_tokens` less `assistant.input_headroom_bps`; older history is dropped first, then tool results are shortened, then
+  the summary; if it still cannot fit, nothing is sent and the customer gets a distinct, non-retryable message.
+- **Turn budget.** One wall-clock budget (`assistant.turn_budget_seconds`, default 75) covers compaction, every model call and
+  every tool call. The conversation lock lease is budget + margin and is owner-tokened; a turn that lost its lock writes
+  nothing. A turn that runs out of budget stops with a retryable message.
+
+## Action execution lease (correction round 1)
+
+A claim takes a fresh `lease_token`, bumps `fence` and sets `lease_expires_at`. The executor's transaction re-locks the proposal
+and verifies token, fence and `executing` before doing anything (`AssistantLeaseLost` otherwise — nothing written); it holds
+the row lock until it commits the domain write and the recorded result together. A live executor is never superseded (a second
+claimant waits on the lock and is told "busy"); an expired lease is re-claimed only by taking the lock, with a new token and
+fence; a late old executor aborts before touching anything.
+
+## Retention, deletion and the AI-data notice
+
+- Conversations (messages, summaries, facts) are deleted `assistant.retention_days` (default **90**, clamped 1–365) after their
+  last message by `assistant:purge-expired` (daily, `withoutOverlapping`, idempotent, optionally `--business=<uid>`). The customer
+  can delete a conversation at any time (*Delete conversation*, two-step).
+- Deleting scrubs each prepared action: params, preview, drafted text and result text are removed, an open action is declined,
+  and the proposal row survives as a minimal audit fact (tool, status, actor, Workspace/Business, timestamps, codes) with its
+  audit events reduced to codes. Removing the whole account removes these too.
+- The first conversation of a customer in a Business opens with an AI-data notice (see `resources/lang/en/ask_ai.php`). It states
+  that a third-party provider processes the relevant details, how long MotionGrove keeps conversations and that deleting removes
+  MotionGrove's copy only. **It makes no promise about provider-side retention or deletion.**
+- **Legal verification required before production:** the notice wording, the data-processing agreement with the AI provider,
+  provider-side retention/deletion, cross-border transfer and the retention period itself have NOT been legally reviewed.
+
+## Integration dependency — account deletion (staging `51020fd5`)
+
+Staging's account deletion (`AccountRecordGraph`) merged after this branch's base and requires every non-SET-NULL foreign key
+into `users` to be classified. On merge, apply `docs/product/ask-motiongrove-account-deletion.patch` (two entries in
+`USER_OWNED`: `assistant_conversations.user_id`, `assistant_action_proposals.user_id`). Verified in a throwaway merge of this
+branch with staging: unpatched, staging's `test_every_foreign_key_into_users_is_consciously_classified` fails naming exactly
+those two columns; patched, all 20 tests of `PlatformAccountDeletionTest` pass and
+`tests/Feature/Assistant/AssistantAccountDeletionTest` (which exercises the real graph when present) passes. Every other assistant
+table is owned by cascade from `workspaces`/`businesses`, which the graph follows by itself; `assistant_action_proposals.
+conversation_id` is SET NULL so deleting a conversation never deletes the audit fact.
