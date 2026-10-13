@@ -520,9 +520,18 @@
 
                 $this->authorize('edit customer');
 
-                $customer->status = ! $customer->status;
+                // The legacy toggle must not re-enable a customer whose closure
+                // has begun, even if the request was made from the older admin UI.
+                $saved = \Illuminate\Support\Facades\DB::transaction(function () use ($customer) {
+                    $locked = User::query()->whereKey($customer->id)->lockForUpdate()->firstOrFail();
+                    if (\App\Models\PlatformAccountClosure::query()->where('user_uid', $locked->uid)->exists()) {
+                        throw new GeneralException('This account is closing or closed and cannot be reactivated.');
+                    }
+                    $locked->status = ! $locked->status;
+                    return $locked->save();
+                });
 
-                if ($customer->save()) {
+                if ($saved) {
                     return response()->json([
                         'status'  => 'success',
                         'message' => __('locale.customer.customer_successfully_change'),
@@ -534,7 +543,7 @@
                     'message' => __('locale.exceptions.something_went_wrong'),
                 ]);
 
-            } catch (ModelNotFoundException|AuthorizationException $exception) {
+            } catch (ModelNotFoundException|AuthorizationException|GeneralException $exception) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => $exception->getMessage(),
@@ -568,7 +577,11 @@
 
                     $this->authorize('edit customer');
 
-                    $this->customers->batchEnable($ids);
+                    try {
+                        $this->customers->batchEnable($ids);
+                    } catch (GeneralException $e) {
+                        return response()->json(['status' => 'error', 'message' => $e->getMessage()]);
+                    }
 
                     return response()->json([
                         'status'  => 'success',
