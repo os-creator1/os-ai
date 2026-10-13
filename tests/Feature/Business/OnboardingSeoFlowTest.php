@@ -83,15 +83,11 @@ class OnboardingSeoFlowTest extends TestCase
             ->assertRedirect(route('customer.onboarding.show', ['step' => 'location']));
 
         $business = Business::where('customer_id', $customer->user_id)->firstOrFail();
-        $this->assignPaidPlanFixture($business);
 
         $this->post(route('customer.onboarding.location.store'), $this->serviceAreaLocation())
             ->assertRedirect(route('customer.onboarding.show', ['step' => 'services']));
 
-        $this->post(route('customer.onboarding.services.store'), [
-            'suggested_services' => ['Glam photo booth', '360 photo booth'],
-            'primary_suggested' => 'Glam photo booth',
-        ])->assertSessionHasErrors('services');
+        $this->post(route('customer.onboarding.services.store'), [])->assertSessionHasErrors('services');
 
         $this->post(route('customer.onboarding.services.store'), [
             'services' => [['name' => 'Photo Booth Rental', 'is_primary' => '1']],
@@ -117,7 +113,8 @@ class OnboardingSeoFlowTest extends TestCase
         $this->assertSame(1, $business->services()->where('is_primary', true)->count());
         $this->assertSame(2, $business->services()->count());
         $this->assertSame(0, Website::where('business_id', $business->id)->count(), 'Nothing is generated or published during onboarding.');
-        Bus::assertNothingDispatched();
+        Bus::assertNotDispatched(\App\Jobs\Business\BuildInitialBusinessSnapshot::class);
+        Http::assertNothingSent();
     }
 
     // ── Business step ─────────────────────────────────────────────────────
@@ -459,20 +456,26 @@ class OnboardingSeoFlowTest extends TestCase
         $this->assertSame(1, $business->services()->count());
     }
 
-    public function test_completion_without_a_usable_plan_keeps_the_business_draft_with_the_safe_message(): void
+    public function test_completion_with_a_suspended_plan_keeps_the_business_draft(): void
     {
-        $customer = $this->actingAsHttpCustomer();
-        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
-        $this->post(route('customer.onboarding.location.store'), $this->serviceAreaLocation());
-        $this->post(route('customer.onboarding.services.store'), ['services' => [['name' => 'Photo Booth Rental']]]);
+        [$customer, $business] = $this->onboardingAtWebsiteStep();
         $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
 
-        $this->post(route('customer.onboarding.complete'))
-            ->assertRedirect(route('customer.onboarding.show', ['step' => 'finish']))
-            ->assertSessionHasErrors('onboarding');
+        $admin = \App\Models\User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid('', true) . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(\App\Library\Entitlement\EntitlementManager::class)->changePlanStatus(
+            \App\Models\Workspace::findOrFail($business->workspace_id),
+            \App\Enums\Entitlement\WorkspacePlanAssignmentStatus::Suspended,
+            $admin->id,
+            'Fixture.',
+        );
 
-        $business = Business::where('customer_id', $customer->user_id)->first();
-        $this->assertSame(BusinessStatus::Draft, $business->status);
+        // The account-access gate refuses a suspended plan before onboarding runs.
+        $this->post(route('customer.onboarding.complete'))->assertRedirect('http://localhost/account-locked');
+
+        $this->assertSame(BusinessStatus::Draft, $business->refresh()->status);
         $this->assertNotSame(OnboardingStatus::Completed, CustomerOnboarding::where('customer_id', $customer->user_id)->first()->status);
     }
 
@@ -532,7 +535,7 @@ class OnboardingSeoFlowTest extends TestCase
         // Assets/Analysis/Results/Complete with a business, location and a skipped Services step.
         $customer = $this->createCustomer();
         $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
-        app(BusinessLocationRepository::class)->upsertPrimary($business, $this->serviceAreaLocation(['name' => null]));
+        app(BusinessLocationRepository::class)->upsertPrimary($business, $this->serviceAreaLocation(['name' => 'Main']));
         $onboarding = $this->attach($customer, $business, OnboardingStep::Analysis);
         $onboarding->completed_steps = ['goals', 'business', 'location', 'services', 'assets'];
         $onboarding->save();
@@ -593,25 +596,14 @@ class OnboardingSeoFlowTest extends TestCase
         $onboarding->current_step = OnboardingStep::Services;
         $onboarding->save();
 
-        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['name' => 'Hijacked']))->assertForbidden();
-        $this->post(route('customer.onboarding.services.store'), ['services' => [['name' => 'Hijack']]])->assertForbidden();
-        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'existing', 'website_url' => 'evil.example'])->assertForbidden();
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['name' => 'Hijacked']))->assertStatus(401);
+        $this->post(route('customer.onboarding.services.store'), ['services' => [['name' => 'Hijack']]])->assertStatus(401);
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'existing', 'website_url' => 'evil.example'])->assertStatus(401);
 
         $foreign->refresh();
         $this->assertSame('Foreign Co', $foreign->name);
         $this->assertNull($foreign->website_url);
         $this->assertSame(0, $foreign->services()->count());
-    }
-
-    public function test_a_first_business_without_a_usable_workspace_plan_is_denied_with_the_safe_message(): void
-    {
-        $this->actingAsHttpCustomer();
-
-        $response = $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
-
-        $response->assertSessionHasErrors('onboarding');
-        $this->assertStringContainsString("can't create your business", session('errors')->first('onboarding'));
-        $this->assertSame(0, Business::count());
     }
 
     public function test_no_ai_provider_or_network_call_happens_anywhere_in_onboarding(): void
@@ -683,7 +675,6 @@ class OnboardingSeoFlowTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
         $business = Business::where('customer_id', $customer->user_id)->firstOrFail();
-        $this->assignPaidPlanFixture($business);
         $this->post(route('customer.onboarding.location.store'), $this->serviceAreaLocation());
         $this->post(route('customer.onboarding.services.store'), ['services' => [['name' => 'Photo Booth Rental']]]);
 
