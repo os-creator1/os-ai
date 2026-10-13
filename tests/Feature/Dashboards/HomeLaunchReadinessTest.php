@@ -44,9 +44,19 @@ class HomeLaunchReadinessTest extends TestCase
             'name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US',
         ]);
         $this->primaryService($business);
+        $this->adoptSeoFirstPolicy($customer, $business);
         $this->authenticateAs($customer);
 
         return [$customer, $business];
+    }
+
+    /** What OnboardingManager::complete() leaves on a Business that finished the SEO-first onboarding. */
+    private function adoptSeoFirstPolicy($customer, Business $business): void
+    {
+        DB::table('customer_onboardings')->insert([
+            'customer_id' => $customer->user_id, 'business_id' => $business->id, 'status' => 'completed', 'current_step' => 'finish',
+            'metadata' => json_encode(['readiness_policy' => 'seo_first_v1']), 'created_at' => now(), 'updated_at' => now(),
+        ]);
     }
 
     private function command($customer): array
@@ -69,27 +79,47 @@ class HomeLaunchReadinessTest extends TestCase
 
     private function liveForm(Business $business, string $state = 'active'): void
     {
-        DB::table('forms')->insert([
-            'uid' => (string) Str::uuid(), 'business_id' => $business->id, 'name' => 'Enquiry', 'lifecycle_state' => $state,
-            'activated_at' => $state === 'active' ? now() : null, 'created_at' => now(), 'updated_at' => now(),
-        ]);
+        $this->usableForm($business, ['state' => $state]);
     }
 
-    private function websiteForm(Business $business): void
+    private function websiteForm(Business $business, ?int $locationId = null, bool $useLocation = true): void
     {
         $websiteId = (int) DB::table('websites')->where('business_id', $business->id)->value('id');
+        $locationId ??= $useLocation ? (int) DB::table('business_locations')->where('business_id', $business->id)->value('id') : null;
         DB::table('website_forms')->insert([
-            'uid' => (string) Str::uuid(), 'website_id' => $websiteId, 'business_id' => $business->id, 'type' => 'quote_request',
+            'uid' => (string) Str::uuid(), 'website_id' => $websiteId, 'business_id' => $business->id, 'location_id' => $locationId, 'type' => 'quote_request',
             'name' => 'Quote', 'fields' => '[]', 'is_active' => 1, 'created_at' => now(), 'updated_at' => now(),
         ]);
     }
 
-    private function audit(Business $business, string $status = ExternalSiteCrawl::COMPLETED): void
+    private function audit(Business $business, string $status = ExternalSiteCrawl::COMPLETED, string $url = 'https://orangeglam.example', int $pages = 5, ?string $finishedAt = null): void
     {
         DB::table('external_site_crawls')->insert([
-            'uid' => (string) Str::uuid(), 'business_id' => $business->id, 'start_url' => 'https://orangeglam.example', 'host' => 'orangeglam.example',
-            'status' => $status, 'trigger' => 'manual', 'created_at' => now(), 'updated_at' => now(),
+            'uid' => (string) Str::uuid(), 'business_id' => $business->id, 'start_url' => $url, 'host' => parse_url($url, PHP_URL_HOST),
+            'status' => $status, 'trigger' => 'manual', 'pages_fetched' => $pages, 'finished_at' => $finishedAt ?? now(),
+            'created_at' => $finishedAt ?? now(), 'updated_at' => $finishedAt ?? now(),
         ]);
+    }
+
+    /** A form a visitor can submit, by the Forms module's own rules. */
+    private function usableForm(Business $business, array $overrides = []): int
+    {
+        $locationId = (int) DB::table('business_locations')->where('business_id', $business->id)->value('id');
+        $formId = DB::table('forms')->insertGetId([
+            'uid' => (string) Str::uuid(), 'business_id' => $business->id, 'name' => 'Enquiry', 'lifecycle_state' => $overrides['state'] ?? 'active',
+            'current_version' => 1, 'activated_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        if ($overrides['version'] ?? true) {
+            DB::table('form_versions')->insert(['form_id' => $formId, 'version' => 1, 'content_hash' => str_repeat('a', 64), 'submit_label' => 'Send', 'success_message' => 'Thanks', 'fields' => '[]', 'created_at' => now()]);
+        }
+        if ($overrides['deployment'] ?? true) {
+            DB::table('form_deployments')->insert([
+                'uid' => (string) Str::uuid(), 'form_id' => $formId, 'business_location_id' => $overrides['location'] ?? $locationId,
+                'source' => $overrides['source'] ?? 'direct_link', 'is_enabled' => $overrides['enabled'] ?? true, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        return $formId;
     }
 
     // ── foundation ───────────────────────────────────────────────────────
@@ -115,6 +145,7 @@ class HomeLaunchReadinessTest extends TestCase
     public function test_a_missing_foundation_is_derived_from_records_and_offers_the_wizard_only_for_it(): void
     {
         [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Bare Booths', 'Bare Account');
+        $this->adoptSeoFirstPolicy($customer, $business);
         $this->authenticateAs($customer);
 
         $steps = $this->steps($customer);
@@ -124,10 +155,7 @@ class HomeLaunchReadinessTest extends TestCase
         $this->assertSame(route('customer.onboarding.show', ['step' => 'services']), $steps['service']['action']['url']);
 
         // Step flags are irrelevant: a row claiming every step is done changes nothing.
-        DB::table('customer_onboardings')->insert([
-            'customer_id' => $customer->user_id, 'business_id' => $business->id, 'status' => 'completed', 'current_step' => 'finish',
-            'completed_steps' => json_encode(['business', 'location', 'services', 'website']), 'created_at' => now(), 'updated_at' => now(),
-        ]);
+        DB::table('customer_onboardings')->where('business_id', $business->id)->update(['completed_steps' => json_encode(['business', 'location', 'services', 'website'])]);
         $this->assertFalse($this->steps($customer)['service']['done']);
     }
 
@@ -342,6 +370,231 @@ class HomeLaunchReadinessTest extends TestCase
         }
     }
 
+    // ── correction round 1 ────────────────────────────────────────────
+
+    public function test_an_audit_of_the_old_address_does_not_validate_a_new_one(): void
+    {
+        [$customer, $business] = $this->onboarded();
+        $this->setMode($business, 'external', 'https://old.example');
+        $this->audit($business, ExternalSiteCrawl::COMPLETED, 'https://old.example');
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'Precondition: the checked address qualifies.');
+
+        // The address changes (canonical_domain deliberately left stale: it must not be trusted).
+        DB::table('businesses')->where('id', $business->id)->update(['website_url' => 'https://new.example']);
+        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state']);
+        $this->assertSame('Review your existing website', $this->steps($customer)['website']['title']);
+
+        $this->audit($business, ExternalSiteCrawl::COMPLETED, 'https://www.new.example/');
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'A qualifying check of the new address (www and path normalised) restores readiness.');
+    }
+
+    public function test_only_a_usable_recent_completed_check_qualifies(): void
+    {
+        [$customer, $business] = $this->onboarded();
+        $this->setMode($business, 'external', 'https://orangeglam.example');
+
+        $this->audit($business, ExternalSiteCrawl::FAILED);
+        $this->audit($business, ExternalSiteCrawl::QUEUED);
+        $this->audit($business, ExternalSiteCrawl::RUNNING);
+        $this->audit($business, ExternalSiteCrawl::COMPLETED, pages: 0);
+        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'Failed, queued, running and zero-page checks do not count.');
+
+        $this->audit($business, ExternalSiteCrawl::COMPLETED, finishedAt: '2026-08-01 00:00:00');
+        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'A check older than two re-check intervals no longer describes the site.');
+    }
+
+    public function test_only_a_form_visitors_can_actually_submit_counts_as_an_enquiry_path(): void
+    {
+        [$customer, $business] = $this->onboarded();
+        $otherLocation = (int) DB::table('business_locations')->insertGetId([
+            'uid' => (string) Str::uuid(), 'business_id' => $this->bareTenant(WorkspacePlanTier::Growth, 'Other Biz', 'Other Account')[1]->id, 'name' => 'Elsewhere', 'service_mode' => 'online', 'country_code' => 'US',
+            'is_primary' => 1, 'lifecycle_state' => 'active', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->authenticateAs($customer);
+
+        $bad = [
+            'draft form' => ['state' => 'draft'],
+            'inactive form' => ['state' => 'inactive'],
+            'no deployment' => ['deployment' => false],
+            'disabled deployment' => ['enabled' => false],
+            'unsupported source' => ['source' => 'carrier_pigeon'],
+            'missing current version' => ['version' => false],
+            'another business\'s location' => ['location' => $otherLocation],
+        ];
+
+        foreach ($bad as $label => $overrides) {
+            $this->usableForm($business, $overrides);
+            $this->assertFalse($this->steps($customer)['lead_capture']['done'], "{$label} must not count.");
+        }
+
+        // An archived Location of this Business.
+        $archived = (int) DB::table('business_locations')->insertGetId([
+            'uid' => (string) Str::uuid(), 'business_id' => $business->id, 'name' => 'Old', 'service_mode' => 'online', 'country_code' => 'US', 'is_primary' => 0,
+            'lifecycle_state' => 'archived', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->usableForm($business, ['location' => $archived]);
+        $this->assertFalse($this->steps($customer)['lead_capture']['done'], 'An archived Location must not count.');
+
+        $this->usableForm($business);
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'A genuinely usable form is a working path.');
+    }
+
+    public function test_a_website_form_needs_an_active_location_of_this_business_and_a_published_site(): void
+    {
+        [$customer, $business] = $this->onboarded();
+        $this->setMode($business, 'hosted');
+        $this->website($business, 'draft');
+        $this->websiteForm($business);
+        $this->assertFalse($this->steps($customer)['lead_capture']['done'], 'Draft site.');
+
+        $this->website($business, 'published');
+        DB::table('website_forms')->delete();
+        $this->websiteForm($business, useLocation: false);
+        $status = app(\App\Library\Dashboard\DashboardStatusReader::class)->forBusiness($business->id);
+        $this->assertFalse($status->hasActiveWebsiteForm, 'A quote form with no Location turns visitors away.');
+
+        DB::table('website_forms')->delete();
+        $this->websiteForm($business);
+        $this->assertTrue(app(\App\Library\Dashboard\DashboardStatusReader::class)->forBusiness($business->id)->hasActiveWebsiteForm);
+    }
+
+    public function test_owner_and_restricted_staff_get_the_same_stage_but_staff_get_no_unauthorised_links(): void
+    {
+        [$owner, $business, $workspace] = array_merge($this->bareTenant(WorkspacePlanTier::Growth, 'Shared Booths', 'Shared Account'));
+        app(BusinessLocationRepository::class)->upsertPrimary($business, ['name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US']);
+        $this->primaryService($business);
+        $this->adoptSeoFirstPolicy($owner, $business);
+        app(\App\Library\Entitlement\EntitlementManager::class)->createOrChangeOverride($workspace, \App\Enums\Entitlement\PlatformFeature::Calendar, \App\Enums\Entitlement\WorkspaceEntitlementOverrideState::Deny, $this->platformAdminId(), 'fixture');
+
+        $staff = $this->createCustomer();
+        $membership = $this->member($workspace, $staff->user, \App\Enums\Workspace\WorkspaceMembershipRole::Staff, \App\Enums\Workspace\WorkspaceBusinessAccessScope::Selected);
+        $this->assign($membership, $business);
+
+        $this->authenticateAs($owner);
+        $ownerHtml = $this->get(route('user.home'))->assertOk()->getContent();
+        $this->authenticateAs($staff, []);
+        $staffHtml = $this->get(route('user.home'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-home-state="setup"', $ownerHtml);
+        $this->assertStringContainsString('data-home-state="setup"', $staffHtml, 'Reach is not waived because the viewer lacks permission.');
+        $this->assertStringContainsString('data-step="website"', $staffHtml);
+
+        preg_match('#<section[^>]*data-role="home-setup".*?</section>#s', $staffHtml, $staffSetup);
+        $this->assertStringNotContainsString('data-role="setup-step-action"', $staffSetup[0], 'No unauthorised setup links for restricted staff.');
+        preg_match('#<section[^>]*data-role="home-setup".*?</section>#s', $ownerHtml, $ownerSetup);
+        $this->assertStringContainsString('data-role="setup-step-action"', $ownerSetup[0]);
+    }
+
+    public function test_business_wide_booking_readiness_is_the_same_for_a_staff_member_scoped_to_another_location(): void
+    {
+        [$owner, $business, $workspace] = array_merge($this->bareTenant(WorkspacePlanTier::Growth, 'Two Sites', 'Two Sites Account'));
+        app(BusinessLocationRepository::class)->upsertPrimary($business, ['name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US']);
+        $this->primaryService($business);
+        $this->adoptSeoFirstPolicy($owner, $business);
+        // A second, bookable Location that the restricted staff member cannot reach.
+        $second = \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $typeId = DB::table('booking_types')->insertGetId([
+            'uid' => (string) Str::uuid(), 'public_booking_uuid' => (string) Str::uuid(), 'business_location_id' => $second->id,
+            'name' => 'Consult', 'duration_minutes' => 30, 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('booking_type_staff')->insert(['booking_type_id' => $typeId, 'staff_user_id' => $owner->user_id, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('staff_availability_rules')->insert(['business_location_id' => $second->id, 'staff_user_id' => $owner->user_id, 'day_of_week' => 1, 'start_time' => '09:00:00', 'end_time' => '17:00:00', 'created_at' => now(), 'updated_at' => now()]);
+
+        $this->authenticateAs($owner);
+        $ownerState = $this->command($owner)['state'];
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $ownerState, 'A bookable Location anywhere in the Business is reach.');
+
+        $this->assertTrue(app(\App\Library\Dashboard\Home\HomeBookingReader::class)->businessWideBookingReady($business));
+    }
+
+    public function test_an_unreadable_status_shows_no_false_checkmarks_and_no_growth_claim(): void
+    {
+        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Unread Booths', 'Unread Account');
+        $this->adoptSeoFirstPolicy($customer, $business);
+        $this->authenticateAs($customer);
+
+        $listener = function ($q) {
+            if (str_contains($q->sql, 'business_usage_wallets')) {
+                throw new \RuntimeException('status read failed');
+            }
+        };
+        DB::listen($listener);
+        $broken = $this->command($customer);
+
+        $this->assertTrue($broken['readinessUnknown']);
+        $this->assertNull($broken['setup'], 'Nothing is shown as done, or as not done.');
+        $this->assertNotSame(HomeCommandCenter::STATE_GROWING, $broken['state']);
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $broken['state']);
+        $this->assertFalse($broken['caughtUp']);
+    }
+
+    public function test_the_unavailable_notice_renders_and_normal_service_resumes(): void
+    {
+        [$customer, $business] = $this->onboarded();
+        $this->setMode($business, 'hosted');
+        $this->website($business, 'published');
+
+        $fail = true;
+        DB::listen(function ($q) use (&$fail) {
+            if ($fail && str_contains($q->sql, 'business_usage_wallets')) {
+                throw new \RuntimeException('status read failed');
+            }
+        });
+
+        $html = $this->get(route('user.home'))->assertOk()->getContent();
+        $this->assertStringContainsString('data-band="setup" data-band-state="failed"', $html);
+        $this->assertStringNotContainsString('data-role="home-setup"', $html);
+
+        $fail = false;
+        $recovered = $this->get(route('user.home'))->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-band="setup" data-band-state="failed"', $recovered);
+        $this->assertFalse($this->command($customer)['readinessUnknown']);
+    }
+
+    public function test_an_established_business_keeps_its_original_home_treatment(): void
+    {
+        // No SEO-first marker: an account that predates the policy, with no Service and no website.
+        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Established Co', 'Established Account');
+        $this->completeCalendarSetup($business);
+        DB::table('business_services')->where('business_id', $business->id)->delete();
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer);
+
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $home['state'], 'No new requirement reclassifies it into Launch.');
+        $this->assertNull($home['setup']);
+    }
+
+    public function test_an_established_business_with_a_broken_google_connection_still_shows_broken_attention(): void
+    {
+        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Broken Established', 'Broken Established Account');
+        $this->completeCalendarSetup($business);
+        DB::table('business_services')->where('business_id', $business->id)->delete();
+        $this->googleConnection($business, GoogleConnectionState::Revoked);
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer);
+
+        $this->assertSame(HomeCommandCenter::STATE_BROKEN, $home['state']);
+        $this->assertSame('google_connection_lost', $home['primary']['key']);
+        $this->assertStringContainsString('data-home-state="broken"', $this->get(route('user.home'))->assertOk()->getContent());
+    }
+
+    public function test_only_a_business_that_completed_the_new_onboarding_follows_the_new_policy(): void
+    {
+        $user = $this->createCustomer();
+        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Policy Booths', 'Policy Account');
+        $status = fn () => app(\App\Library\Dashboard\DashboardStatusReader::class)->forBusiness($business->id)->readinessPolicy;
+        $this->assertNull($status(), 'No onboarding: legacy.');
+
+        DB::table('customer_onboardings')->insert(['customer_id' => $customer->user_id, 'business_id' => $business->id, 'status' => 'completed', 'current_step' => 'complete', 'created_at' => now(), 'updated_at' => now()]);
+        $this->assertNull($status(), 'Previously completed legacy onboarding stays legacy.');
+
+        $row = \App\Models\CustomerOnboarding::query()->where('business_id', $business->id)->first();
+        app(\App\Repositories\Contracts\CustomerOnboardingRepository::class)->recordReadinessPolicy($row, \App\Library\Business\OnboardingManager::READINESS_POLICY);
+        $this->assertSame('seo_first_v1', $status());
+    }
+
     // ── cost and isolation ───────────────────────────────────────────────
 
     public function test_the_new_facts_ride_the_existing_status_statement_and_add_no_query(): void
@@ -356,11 +609,10 @@ class HomeLaunchReadinessTest extends TestCase
         $statusStatements = array_values(array_filter($sql, fn (string $s) => str_contains($s, 'business_usage_wallets')));
         $this->assertCount(1, $statusStatements, 'Exactly one status statement.');
 
-        foreach (['business_services', 'external_site_crawls', 'website_forms', 'from `forms`'] as $table) {
+        foreach (['business_services', 'external_site_crawls', 'website_forms', 'from `forms`', 'form_deployments', 'form_versions', 'customer_onboardings'] as $table) {
             $readers = array_values(array_filter($sql, fn (string $s) => str_contains($s, $table)));
             $this->assertSame([], array_values(array_diff($readers, $statusStatements)), "{$table} is read only inside the status statement.");
         }
-        $this->assertNotContains('customer_onboardings', array_map(fn (string $s) => preg_match('/customer_onboardings/', $s) ? 'customer_onboardings' : '', $sql), 'Home never reads onboarding rows.');
     }
 
     public function test_the_query_count_does_not_grow_with_how_much_is_set_up(): void
@@ -399,6 +651,7 @@ class HomeLaunchReadinessTest extends TestCase
         $this->audit($businessA);
 
         [$customerB, $businessB] = $this->bareTenant(WorkspacePlanTier::Growth, 'Bravo Booths', 'Bravo Account');
+        $this->adoptSeoFirstPolicy($customerB, $businessB);
 
         $this->authenticateAs($customerB);
         $home = $this->command($customerB);

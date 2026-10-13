@@ -149,10 +149,14 @@ final class HomeCommandCenter
 
         $growing = $primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY || $queue !== [];
 
+        // Readiness is UNKNOWN when the status could not be read: neither "still setting up" nor "ready" may be
+        // claimed, and "growing" is never presented without the readiness it depends on.
+        $readinessUnknown = $status === null || ! $status->known;
+
         $state = match (true) {
             $journey !== null && $journey['essentialIncomplete'] => self::STATE_SETUP,
             $problem => self::STATE_BROKEN,
-            $growing => self::STATE_GROWING,
+            $growing && ! $readinessUnknown => self::STATE_GROWING,
             default => self::STATE_NORMAL,
         };
 
@@ -170,10 +174,11 @@ final class HomeCommandCenter
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
             'setup' => $state === self::STATE_SETUP ? $journey : null,
+            'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
-            'caughtUp' => $primary === null && ! $nbmFailed && $state !== self::STATE_SETUP,
+            'caughtUp' => $primary === null && ! $nbmFailed && ! $readinessUnknown && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
             'queueLabel' => is_array($growth) ? (string) $growth['open_count'] : (string) ($nbm['recommendations']['label'] ?? '0'),
@@ -440,20 +445,26 @@ final class HomeCommandCenter
     }
 
     /**
-     * The Launch journey's facts, assembled from what this request has ALREADY read:
-     *  - the Business row (name, niche, website source, address) the presenter loaded;
-     *  - the BusinessStatusRow (website status, primary Location/Service, live forms and a completed
-     *    external-site check: EXISTS probes inside the status statement it already issues);
+     * The Launch journey, from facts this request has ALREADY read:
+     *  - the Business row the presenter loaded (name, niche, website source and address);
+     *  - the BusinessStatusRow: website status, primary Location/Service, usable forms, a matching external-site
+     *    check and the readiness policy, all inside the one status statement the presenter already issues;
      *  - the Calendar summary, only when Calendar is in play for this actor.
-     * This method issues no query of its own. When the status row could not be read, foundation facts
-     * are treated as satisfied and the website as not applicable, so a failed read never shows a gap
-     * the customer may not have.
+     * It issues no query of its own, with one bounded exception: a Business-wide booking-readiness boolean is read
+     * only when it is needed to classify the Business (no other reach evidence) and the actor's own Calendar summary
+     * does not already cover every active Location.
+     *
+     * Returns null when the status could not be read: nothing is then known, so nothing is shown as done.
      *
      * @param  array<string, mixed>|null  $booking
      * @return array<string, mixed>|null
      */
     private function setup(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status, ?array $booking): ?array
     {
+        if ($status === null || ! $status->known) {
+            return null;
+        }
+
         $calendar = $booking !== null;
         $firstLoc = $booking['firstLocationUid'] ?? null;
         $owns = ! $context->isViewingAsClient() && (int) $business->customer_id === (int) $user->id;
@@ -470,25 +481,64 @@ final class HomeCommandCenter
             'service' => $onboardingOn ? route('customer.onboarding.show', ['step' => 'services']) : null,
         ];
 
-        $known = $status !== null;
+        // The website source: the stored choice, or "hosted" for a Business that already owns a site.
+        $websiteMode = ((string) $business->getRawOriginal('website_mode')) ?: ($status->websiteStatus !== null ? 'hosted' : null);
+
+        if ($status->readinessPolicy !== HomeSetupJourney::POLICY_SEO_FIRST) {
+            // An established Business that predates the SEO-first policy keeps its original Home-stage rules.
+            return $this->journey->build([
+                'policy' => 'legacy',
+                'hasLocation' => $calendar ? ($booking['locationIds'] !== []) : true,
+                'calendar' => $calendar,
+                'activeTypeCount' => (int) ($booking['activeTypeCount'] ?? 0),
+                'readyCount' => (int) ($booking['readyCount'] ?? 0),
+                'problemReason' => $booking['problems'][0]['reason'] ?? null,
+                'websiteStatus' => $status->websiteStatus,
+                'websiteApplicable' => $urls['website'] !== null,
+            ], $urls);
+        }
+
+        // ── SEO-first policy: Business-wide readiness, independent of who is looking ─────────────────────
+        $websiteCapable = $entitlements->allows('website_generation');
+        $formsCapable = $entitlements->allows('forms');
+        $calendarCapable = $entitlements->allows('calendar');
+
+        $websiteUsable = $status->websiteStatus === 'published'
+            || ($websiteMode === 'external' && $status->hasCompletedExternalAudit);
+        $formReady = ($formsCapable && $status->hasLiveForm)
+            || ($websiteCapable && $status->websiteStatus === 'published' && $status->hasActiveWebsiteForm);
+
+        $foundation = filled($business->name) && $business->industry !== null && $status->hasPrimaryLocation && $status->hasPrimaryService;
+        $bookingPathReady = false;
+
+        // Needed only while the journey can still be shown: some reach evidence is missing, or the foundation is.
+        if ($calendarCapable && ! $formReady && (! $foundation || ! $websiteUsable)) {
+            // The actor's own summary is Business-wide only when it covers every active Location.
+            $bookingPathReady = $booking !== null && count($booking['locationIds']) === $status->activeLocationCount
+                ? (int) $booking['readyCount'] > 0
+                : app(HomeBookingReader::class)->businessWideBookingReady($business);
+        }
 
         return $this->journey->build([
-            'hasIdentity' => ! $known || (filled($business->name) && $business->industry !== null),
-            'hasLocation' => ! $known || $status->hasPrimaryLocation,
-            'hasPrimaryService' => ! $known || $status->hasPrimaryService,
+            'policy' => HomeSetupJourney::POLICY_SEO_FIRST,
+            'hasIdentity' => filled($business->name) && $business->industry !== null,
+            'hasLocation' => $status->hasPrimaryLocation,
+            'hasPrimaryService' => $status->hasPrimaryService,
+            'websiteCapable' => $websiteCapable,
+            'formsCapable' => $formsCapable,
+            'calendarCapable' => $calendarCapable,
+            'bookingPathReady' => $bookingPathReady,
+            'websiteStatus' => $status->websiteStatus,
+            'websiteMode' => $websiteMode,
+            'hasCompletedExternalAudit' => $status->hasCompletedExternalAudit,
+            'hasLiveForm' => $status->hasLiveForm,
+            'hasActiveWebsiteForm' => $status->hasActiveWebsiteForm,
+            // Actor-scoped display detail only (never an input to readiness).
             'calendar' => $calendar,
             'typeCount' => (int) ($booking['typeCount'] ?? 0),
             'activeTypeCount' => (int) ($booking['activeTypeCount'] ?? 0),
             'readyCount' => (int) ($booking['readyCount'] ?? 0),
             'problemReason' => $booking['problems'][0]['reason'] ?? null,
-            'websiteStatus' => $status?->websiteStatus,
-            'websiteApplicable' => $urls['website'] !== null && $known,
-            // The website source: the stored choice, or "hosted" for a legacy Business that already owns a site.
-            'websiteMode' => ((string) $business->getRawOriginal('website_mode')) ?: ($status?->websiteStatus !== null ? 'hosted' : null),
-            'hasCompletedExternalAudit' => $status?->hasCompletedExternalAudit ?? false,
-            'hasLiveForm' => $status?->hasLiveForm ?? false,
-            'hasActiveWebsiteForm' => $status?->hasActiveWebsiteForm ?? false,
-            'formsApplicable' => $urls['forms'] !== null && $known,
         ], $urls);
     }
 }

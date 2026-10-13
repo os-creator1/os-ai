@@ -2,6 +2,10 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Enums\Business\BusinessServiceMode;
+use App\Library\Business\BusinessAddressRules;
+use Illuminate\Contracts\Validation\Validator;
+
 /**
  * Onboarding step 2: the standard primary-location rules (storefront and
  * hybrid need an address, a service-area business only a city and region,
@@ -10,6 +14,33 @@ namespace App\Http\Requests\Business;
  */
 class OnboardingLocationRequest extends UpsertBusinessLocationRequest
 {
+    /**
+     * Same conditional requirements as every location form, except that a region (state / province) is required
+     * only where it is a standard part of the country's addresses (BusinessAddressRules). Storefront and hybrid
+     * still need a street address and city; a service-area business needs a city; online-only needs only a country.
+     */
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator) {
+            $mode = $this->input('service_mode');
+            $required = match ($mode) {
+                BusinessServiceMode::Storefront->value, BusinessServiceMode::Hybrid->value => ['address_line_1', 'city'],
+                BusinessServiceMode::ServiceArea->value => ['city'],
+                default => [],
+            };
+
+            if ($required !== [] && BusinessAddressRules::regionRequired((string) $this->input('country_code'))) {
+                $required[] = 'region';
+            }
+
+            foreach ($required as $field) {
+                if (! $this->filled($field)) {
+                    $validator->errors()->add($field, __('The :attribute field is required.', ['attribute' => $field]));
+                }
+            }
+        });
+    }
+
     public function messages(): array
     {
         return [

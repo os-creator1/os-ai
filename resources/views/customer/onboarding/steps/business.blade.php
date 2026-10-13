@@ -52,7 +52,12 @@
         var select = document.getElementById('industry');
         var holder = document.querySelector('[data-role="industry-other"]');
         if (!select || !holder) { return; }
-        function sync() { holder.hidden = select.value !== 'other'; }
+        function sync() {
+            var other = select.value === 'other';
+            holder.hidden = !other;
+            // A hidden field must not resubmit a stale value.
+            holder.querySelectorAll('input').forEach(function (i) { i.disabled = !other; });
+        }
         select.addEventListener('change', sync);
         if (window.jQuery) { window.jQuery(select).on('change', sync); }
         sync();

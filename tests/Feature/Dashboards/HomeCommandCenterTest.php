@@ -59,8 +59,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertTrue($home['setup']['essentialIncomplete']);
         $steps = array_column($home['setup']['steps'], 'done', 'key');
         $this->assertFalse($steps['location'], 'No Location row exists, so the first step is not done.');
-        $this->assertFalse($steps['service'], 'No primary Service exists, so the Service step is not done.');
-        $this->assertArrayNotHasKey('booking_type', $steps, 'Calendar is optional: no booking steps until the customer uses it.');
+        $this->assertFalse($steps['booking_type']);
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-home-state="setup"', $html);

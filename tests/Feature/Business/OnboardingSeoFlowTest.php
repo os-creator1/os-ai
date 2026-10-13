@@ -246,6 +246,103 @@ class OnboardingSeoFlowTest extends TestCase
         $this->assertSame('Irvine', $business->primaryLocation->city);
     }
 
+    public function test_region_is_required_only_where_addresses_carry_one(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['country_code' => 'SG', 'timezone' => 'Asia/Singapore', 'currency_code' => 'SGD']));
+
+        // A country with administrative regions still needs one for a service area ...
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'service_area', 'country_code' => 'US', 'city' => 'Orange'])
+            ->assertSessionHasErrors('region');
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'service_area', 'country_code' => 'AU', 'city' => 'Sydney'])
+            ->assertSessionHasErrors('region');
+
+        // ... one without them continues on city + country.
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'service_area', 'country_code' => 'SG', 'city' => 'Singapore'])
+            ->assertSessionHasNoErrors()
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'services']));
+
+        $business = Business::where('customer_id', $customer->user_id)->first();
+        $this->assertNull($business->primaryLocation->region);
+        $this->assertSame('SG', $business->primaryLocation->country_code);
+
+        // A storefront still needs its street address and city everywhere, and a region where one applies.
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'storefront', 'country_code' => 'SG', 'city' => 'Singapore'])
+            ->assertSessionHasErrors('address_line_1');
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'storefront', 'country_code' => 'SG', 'address_line_1' => '1 Raffles Pl'])
+            ->assertSessionHasErrors('city');
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'storefront', 'country_code' => 'US', 'address_line_1' => '1 Main St', 'city' => 'Austin'])
+            ->assertSessionHasErrors('region');
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'storefront', 'country_code' => 'SG', 'address_line_1' => '1 Raffles Pl', 'city' => 'Singapore'])
+            ->assertSessionHasNoErrors();
+    }
+
+    public function test_a_regionless_country_service_area_can_finish_onboarding(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['country_code' => 'SG', 'timezone' => 'Asia/Singapore', 'currency_code' => 'SGD']));
+        $this->post(route('customer.onboarding.location.store'), ['service_mode' => 'service_area', 'country_code' => 'SG', 'city' => 'Singapore']);
+        $this->post(route('customer.onboarding.services.store'), ['services' => [['name' => 'Photo Booth Rental']]]);
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
+
+        $this->get(route('customer.onboarding.show', ['step' => 'finish']))->assertOk()->assertSee('Singapore, SG')->assertSee('Enter MotionGrove');
+        $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
+        $this->assertSame(OnboardingStatus::Completed, CustomerOnboarding::where('customer_id', $customer->user_id)->first()->status);
+    }
+
+    public function test_changing_from_other_to_a_predefined_industry_clears_the_custom_niche(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['industry' => 'other', 'industry_other' => 'Mobile mixology']));
+        $business = Business::where('customer_id', $customer->user_id)->first();
+        $this->assertSame('Mobile mixology', $business->industry_other);
+
+        // The hidden field resubmits the stale value; the server discards it.
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['industry' => 'photo_booth_service', 'industry_other' => 'Mobile mixology']))
+            ->assertSessionHasNoErrors();
+
+        $business->refresh();
+        $this->assertSame('photo_booth_service', $business->industry->value);
+        $this->assertNull($business->industry_other);
+
+        // Refresh and resume: nothing contradictory comes back.
+        $html = $this->get(route('customer.onboarding.show', ['step' => 'business']))->assertOk()->getContent();
+        $this->assertStringNotContainsString('Mobile mixology', $html);
+        $this->assertSame(1, Business::where('customer_id', $customer->user_id)->count());
+
+        // And Other still works, and still requires its description.
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['industry' => 'other', 'industry_other' => '']))->assertSessionHasErrors('industry_other');
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['industry' => 'other', 'industry_other' => 'Mobile mixology']))->assertSessionHasNoErrors();
+        $this->assertSame('Mobile mixology', $business->refresh()->industry_other);
+    }
+
+    public function test_completing_the_new_onboarding_stamps_the_readiness_policy_once_and_a_legacy_completion_gets_none(): void
+    {
+        [$customer, $business, $onboarding] = $this->onboardingAtWebsiteStep();
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
+        $this->assertNull($onboarding->refresh()->metadata['readiness_policy'] ?? null, 'Nothing is stamped before completion.');
+
+        $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
+        $this->post(route('customer.onboarding.complete'));
+
+        $this->assertSame(OnboardingManager::READINESS_POLICY, $onboarding->refresh()->metadata['readiness_policy']);
+        $this->assertSame('later', $onboarding->metadata['website']['choice'], 'Existing metadata is preserved.');
+        $this->assertSame(
+            OnboardingManager::READINESS_POLICY,
+            app(\App\Library\Dashboard\DashboardStatusReader::class)->forBusiness($business->id)->readinessPolicy,
+        );
+
+        // A legacy completed onboarding (completed before the policy existed) is never retro-stamped by visiting.
+        $legacyCustomer = $this->actingAsHttpCustomer();
+        $legacyBusiness = $this->createBusinessWithWorkspace($legacyCustomer, $this->businessAttributes(['name' => 'Legacy Co']));
+        $legacy = $this->attach($legacyCustomer, $legacyBusiness, OnboardingStep::Complete);
+        $legacy->status = OnboardingStatus::Completed;
+        $legacy->save();
+        $this->get(route('customer.onboarding.show'))->assertOk();
+        $this->post(route('customer.onboarding.complete'));
+        $this->assertNull($legacy->refresh()->metadata['readiness_policy'] ?? null);
+    }
+
     // ── Services step ─────────────────────────────────────────────────────
 
     public function test_services_are_required_and_the_old_skip_cannot_bypass_them(): void

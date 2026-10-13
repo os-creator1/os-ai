@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Business;
 
+use App\Enums\Business\BusinessIndustry;
 use Illuminate\Support\Arr;
 
 /**
@@ -14,6 +15,20 @@ class OnboardingBusinessRequest extends UpsertBusinessIdentityRequest
     public function rules(): array
     {
         return Arr::except(parent::rules(), ['website_url']);
+    }
+
+    /**
+     * A custom niche description belongs only to the "Other" industry. Whatever else is chosen, the posted value
+     * (a hidden field can still resubmit one) is discarded and any stored one is cleared, so a stale
+     * "Mobile mixology" never sits beside "Photo booth" as a contradictory fact.
+     */
+    protected function prepareForValidation(): void
+    {
+        parent::prepareForValidation();
+
+        if ((string) $this->input('industry') !== BusinessIndustry::Other->value) {
+            $this->merge(['industry_other' => null]);
+        }
     }
 
     public function messages(): array

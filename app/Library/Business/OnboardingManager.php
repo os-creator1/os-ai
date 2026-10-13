@@ -55,6 +55,9 @@ class OnboardingManager
     /** The three answers to "How would you like to handle your website?". */
     public const WEBSITE_CHOICES = ['build', 'existing', 'later'];
 
+    /** Stamped on an onboarding at completion; see HomeSetupJourney for what the policy means. */
+    public const READINESS_POLICY = 'seo_first_v1';
+
     public function __construct(
         private readonly CustomerOnboardingRepository $onboardingRepository,
         private readonly BusinessRepository $businessRepository,
@@ -333,7 +336,21 @@ class OnboardingManager
         $this->assertOwnership($customer, $onboarding);
 
         return DB::transaction(function () use ($onboarding, $customer, $services) {
-            $business = $this->resolveOwnedBusiness($onboarding, $customer);
+            // The Business row is locked FIRST (the order BusinessLocationManager uses), before any read, so a
+            // concurrent identical submission waits here and then reconciles against the committed services of the
+            // first one instead of racing it into a duplicate-slug failure. Nothing may be read before this line:
+            // a read would pin a stale snapshot.
+            $locked = $onboarding->business_id === null ? null : $this->businessRepository->findForUpdate((int) $onboarding->business_id);
+
+            if ($locked === null) {
+                throw new InvalidArgumentException('The business step must be completed before this step.');
+            }
+
+            if ((int) $locked->customer_id !== (int) $customer->user_id) {
+                throw new AuthorizationException('The onboarding record references a business that does not belong to this customer.');
+            }
+
+            $business = $locked;
 
             $rows = $this->reconcileServices($business, $services);
 
@@ -550,6 +567,7 @@ class OnboardingManager
             $this->assertCompletionPrerequisites($locked, $customer);
 
             $updated = $this->onboardingRepository->complete($locked);
+            $updated = $this->onboardingRepository->recordReadinessPolicy($updated, self::READINESS_POLICY);
 
             // A finished onboarding activates the Draft Business it was
             // completing, through the one activation seam.
@@ -619,9 +637,9 @@ class OnboardingManager
         }
 
         return match ($location->service_mode) {
-            BusinessServiceMode::ServiceArea => filled($location->city) && filled($location->region),
+            BusinessServiceMode::ServiceArea => filled($location->city) && (filled($location->region) || ! BusinessAddressRules::regionRequired($location->country_code)),
             BusinessServiceMode::Storefront,
-            BusinessServiceMode::Hybrid => filled($location->address_line_1) && filled($location->city) && filled($location->region),
+            BusinessServiceMode::Hybrid => filled($location->address_line_1) && filled($location->city) && (filled($location->region) || ! BusinessAddressRules::regionRequired($location->country_code)),
             default => true,
         };
     }

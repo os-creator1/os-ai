@@ -39,13 +39,20 @@ final class BusinessStatusRow
         public readonly bool $hasLiveForm = false,
         public readonly bool $hasActiveWebsiteForm = false,
         public readonly bool $hasCompletedExternalAudit = false,
+        // Business-wide count of ACTIVE Locations, so a caller can tell whether an actor-scoped Calendar summary
+        // covers every Location or only the ones that actor may reach.
+        public readonly int $activeLocationCount = 0,
+        // Which Home readiness policy governs this Business: 'seo_first_v1' (new onboarding) or null (legacy).
+        public readonly ?string $readinessPolicy = null,
+        // False for a placeholder row: nothing was actually read, so no readiness fact may be trusted.
+        public readonly bool $known = true,
     ) {
     }
 
     /** A Business the reader found no row for at all. */
     public static function empty(int $businessId): self
     {
-        return new self($businessId, false, null, '0', false, '0', null, false, 0, '0', null, null, null, null, null, 0);
+        return new self($businessId, false, null, '0', false, '0', null, false, 0, '0', null, null, null, null, null, 0, false, false, false, false, false, 0, null, false);
     }
 
     /**
