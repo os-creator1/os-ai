@@ -130,4 +130,68 @@ class TransactionalEmailDesignTest extends TestCase
         $this->assertStringNotContainsString('<img', $html);
         $this->assertStringContainsString('>ZC<', $html);
     }
+
+    private function platformHtml(): string
+    {
+        return (string) app(Markdown::class)->render('emails.auth.verify_email', ['content' => 'Verify.', 'url' => 'https://app.example.test/t/abc']);
+    }
+
+    public function test_platform_email_uses_the_owner_configured_logo_as_absolute_https_raster(): void
+    {
+        config(['app.url' => 'https://app.example.test', 'app.name' => 'MotionGrove', 'app.logo' => 'images/branding/logo/owner-logo.png']);
+
+        $url = MailBrand::platformLogoUrl();
+        $this->assertSame('https://app.example.test/images/branding/logo/owner-logo.png', $url);
+
+        $html = $this->platformHtml();
+        $this->assertStringContainsString('<img src="' . $url . '" alt="MotionGrove"', $html);
+        $this->assertStringContainsString('width:auto;max-width:100%', $html);
+        $this->assertStringNotContainsString('border-radius:8px;color', $html, 'no initials tile');
+        $this->assertStringNotContainsString('>MG<', $html);
+        $this->assertStringNotContainsString('>MotionGrove</a>', $html, 'wordmark is not repeated beside the logo');
+    }
+
+    public function test_platform_svg_logo_uses_a_sibling_png_or_falls_back_to_wordmark_without_a_tile(): void
+    {
+        config(['app.url' => 'https://app.example.test', 'app.name' => 'MotionGrove']);
+        $dir = public_path('images/branding/logo');
+        @mkdir($dir, 0755, true);
+        $svg = 'images/branding/logo/zz-mail-test.svg';
+        file_put_contents(public_path($svg), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+
+        try {
+            config(['app.logo' => $svg]);
+            $this->assertNull(MailBrand::platformLogoUrl());
+
+            $html = $this->platformHtml();
+            $this->assertStringNotContainsString('<img', $html);
+            $this->assertStringNotContainsString('>MG<', $html);
+            $this->assertStringContainsString('>MotionGrove</a>', $html);
+
+            file_put_contents(public_path('images/branding/logo/zz-mail-test.png'), 'png');
+            $this->assertSame('https://app.example.test/images/branding/logo/zz-mail-test.png', MailBrand::platformLogoUrl());
+        } finally {
+            @unlink(public_path($svg));
+            @unlink(public_path('images/branding/logo/zz-mail-test.png'));
+        }
+    }
+
+    public function test_bundled_default_logo_is_never_the_platform_email_identity(): void
+    {
+        config(['app.url' => 'https://app.example.test', 'app.logo' => 'images/branding/default-logo.svg']);
+        $this->assertNull(MailBrand::platformLogoUrl());
+        $this->assertStringNotContainsString('AI Business OS', $this->platformHtml());
+    }
+
+    public function test_business_and_agency_logos_are_never_replaced_by_the_platform_logo(): void
+    {
+        config(['app.url' => 'https://app.example.test', 'app.logo' => 'images/branding/logo/owner-logo.png']);
+
+        foreach ([MailBrand::business('Acme', '#1a56db', self::LOGO), MailBrand::agency('Agency Co', '#1a56db', self::LOGO)] as $brand) {
+            $this->assertSame(self::LOGO, $brand->logoUrl);
+        }
+
+        $noLogo = MailBrand::business('Acme', '#1a56db', null);
+        $this->assertNull($noLogo->logoUrl);
+    }
 }

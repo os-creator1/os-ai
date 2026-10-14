@@ -19,6 +19,8 @@ final class MailBrand
 {
     public const PLATFORM_ACCENT = '#b4483d';
 
+    private const BUNDLED_DEFAULT_LOGO = 'images/branding/default-logo.svg';
+
     private const NEUTRAL_INK = '#ffffff';
 
     public readonly string $accent;
@@ -51,7 +53,7 @@ final class MailBrand
         return new self(
             name: $name,
             accent: self::PLATFORM_ACCENT,
-            logoUrl: self::emailSafeLogo((string) config('app.logo')),
+            logoUrl: self::platformLogoUrl(),
             kind: 'platform',
             footerLines: ['© ' . date('Y') . ' ' . $name . '. All rights reserved.'],
             homeUrl: (string) config('app.url') ?: null,
@@ -104,6 +106,44 @@ final class MailBrand
         }
 
         return $letters !== '' ? $letters : '•';
+    }
+
+    /**
+     * The owner's own platform logo (Platform Settings → config('app.logo')) as an email-safe
+     * absolute HTTPS raster URL, or null. The stored value is a relative public path, and may be
+     * an SVG that mail clients cannot render; in that case a same-named PNG beside it is used.
+     * The bundled neutral default is never a platform identity, and nothing is invented.
+     */
+    public static function platformLogoUrl(): ?string
+    {
+        $path = ltrim(trim((string) config('app.logo')), '/');
+
+        if ($path === '' || $path === self::BUNDLED_DEFAULT_LOGO) {
+            return null;
+        }
+
+        if (! preg_match('/\.(png|jpe?g|gif)$/i', $path)) {
+            if (! preg_match('/\.svg$/i', $path) || str_contains($path, '..')) {
+                return null;
+            }
+
+            $path = substr($path, 0, -4) . '.png';
+
+            if (! is_file(public_path($path))) {
+                return null;
+            }
+        }
+
+        return self::emailSafeLogo(self::absoluteHttps(preg_match('#^https?://#i', $path) ? $path : asset($path)));
+    }
+
+    private static function absoluteHttps(string $url): string
+    {
+        $appUrl = (string) config('app.url');
+
+        return str_starts_with($appUrl, 'https://') && str_starts_with($url, 'http://')
+            ? 'https://' . substr($url, 7)
+            : $url;
     }
 
     /** Absolute HTTPS raster image only: Gmail/Outlook do not render SVG, and http images are blocked or flagged. */

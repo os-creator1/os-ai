@@ -34,12 +34,16 @@
 <tr>
 <td align="center" style="padding:0 0 20px 0;">
 <table cellpadding="0" cellspacing="0" role="presentation" align="center"><tr>
-@if ($brand->logoUrl)
+@if ($brand->logoUrl && $brand->kind === 'platform')
+<td valign="middle" align="center"><a href="{{ $brand->homeUrl ?: '#' }}" style="text-decoration:none;font:600 18px/1.2 {!! $font !!};color:#2b2623;"><img src="{{ $brand->logoUrl }}" alt="{{ $brand->name }}" height="36" style="display:block;height:36px;max-height:36px;width:auto;max-width:100%;border:0;font:600 18px/36px {!! $font !!};color:#2b2623;" /></a></td>
+@elseif ($brand->logoUrl)
 <td style="padding-right:10px;" valign="middle"><img src="{{ $brand->logoUrl }}" alt="{{ $brand->name }}" height="32" style="display:block;height:32px;max-width:160px;width:auto;border:0;font-size:14px;color:#2b2623;" /></td>
-@else
+@elseif ($brand->kind !== 'platform')
 <td valign="middle" align="center" width="32" height="32" bgcolor="{{ $brand->accent }}" style="width:32px;height:32px;background-color:{{ $brand->accent }};border-radius:8px;color:{{ $brand->accentInk }};font:700 13px/32px {!! $font !!};">{{ $brand->initials() }}</td>
 @endif
-<td valign="middle" style="@if (! $brand->logoUrl)padding-left:10px;@endif font:600 18px/1.2 {!! $font !!};color:#2b2623;">@if ($brand->homeUrl)<a href="{{ $brand->homeUrl }}" style="color:#2b2623;text-decoration:none;">{{ $brand->name }}</a>@else{{ $brand->name }}@endif</td>
+@if (! ($brand->logoUrl && $brand->kind === 'platform'))
+<td valign="middle" style="@if ($brand->kind !== 'platform' && ! $brand->logoUrl)padding-left:10px;@endif font:600 18px/1.2 {!! $font !!};color:#2b2623;">@if ($brand->homeUrl)<a href="{{ $brand->homeUrl }}" style="color:#2b2623;text-decoration:none;">{{ $brand->name }}</a>@else{{ $brand->name }}@endif</td>
+@endif
 </tr></table>
 </td>
 </tr>
