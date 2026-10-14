@@ -28,10 +28,14 @@ final class BrightFrameProvisioner
         AutomationsStage::class,
         WebsiteStage::class,
         GoogleAndAdsStage::class,
+        SeoStage::class,
+        PaymentsStage::class,
     ];
 
-    public function __construct(private readonly AccountStage $account)
-    {
+    public function __construct(
+        private readonly AccountStage $account,
+        private readonly DemoSafetyAudit $audit,
+    ) {
     }
 
     /**
@@ -46,6 +50,14 @@ final class BrightFrameProvisioner
         foreach ($this->stages() as $stage) {
             DB::transaction(fn () => $stage->run($context));
         }
+
+        $violations = $this->audit->violations($context);
+
+        if ($violations !== []) {
+            throw new \RuntimeException('Demo safety audit FAILED: ' . json_encode($violations));
+        }
+
+        $context->note('safety_audit', 'clear: no sender, sending server, email account, provider token, live Stripe or customer notification');
 
         return ['context' => $context, 'password_set' => $passwordSet];
     }
