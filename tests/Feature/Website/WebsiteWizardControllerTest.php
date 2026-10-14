@@ -586,6 +586,25 @@ class WebsiteWizardControllerTest extends TestCase
         $this->assertNull($response->fresh()->generation_started_at);
     }
 
+    public function test_a_failing_diagnostic_logger_does_not_change_the_customer_outcome_or_retryability(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+
+        $response = $this->completeAllRequiredSteps($workspace, $business);
+
+        \App\Models\WebsiteTemplate::query()->update(['is_active' => false]);
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('error')->andThrow(new \RuntimeException('log channel down'));
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('message', 'Something went wrong while generating your website. Please try again.');
+
+        $this->assertSame('in_progress', $response->fresh()->status->value);
+        $this->assertNull($response->fresh()->generation_started_at);
+    }
+
     public function test_a_duplicate_generation_submission_does_not_duplicate_canonical_records_or_pages(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
