@@ -188,7 +188,7 @@ class TransactionalEmailDesignTest extends TestCase
 
     public function test_bundled_default_logo_is_never_the_platform_email_identity(): void
     {
-        config(['app.url' => 'https://app.example.test', 'app.logo' => 'images/branding/default-logo.svg']);
+        config(['app.name' => 'MotionGrove', 'app.url' => 'https://app.example.test', 'app.logo' => 'images/branding/default-logo.svg']);
         $this->assertNull(MailBrand::platformLogoUrl());
         $this->assertStringNotContainsString('AI Business OS', $this->platformHtml());
     }
