@@ -35,6 +35,13 @@ async function ask(page, text) {
   await page.waitForFunction((n) => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > n, before, { timeout: 15000 });
   await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true, null, { timeout: 15000 });
 }
+// For a turn after which the page re-renders a DIFFERENT (new) conversation, so the count of messages cannot be compared.
+async function askAndWaitFor(page, text, expected) {
+  await page.fill('[data-role="ask-input"]', text);
+  await page.click('[data-role="ask-submit"]');
+  await page.waitForFunction((t) => document.querySelector('[data-role="ask-conversation"]').innerText.includes(t), expected, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true, null, { timeout: 15000 });
+}
 async function lastReply(page) { return page.locator('[data-role="ask-message"][data-from="assistant"]').last(); }
 async function noOverflow(page) { return page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1); }
 
@@ -134,6 +141,25 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
         && sql(`SELECT COUNT(*) FROM ai_usage_ledger WHERE status='committed' AND workspace_id=(SELECT id FROM workspaces WHERE uid='${c.qa.workspace}')`) === '1',
         sql(`SELECT COUNT(*) FROM ai_usage_ledger WHERE status='committed'`));
     }, ['net::ERR_FAILED']);
+
+    // ───────── A conversation that has reached its message cap rolls a follow-up into a new conversation ─────────
+    await run(`Cap/${vname}`, viewport, 'launch', async (page, c) => {
+      await ask(page, 'Help me create a booking type');
+      const biz = `(SELECT id FROM businesses WHERE uid='${c.qa.business}')`;
+      sql(`UPDATE assistant_conversations SET message_count=120 WHERE business_id=${biz}`);
+      const oldUid = sql(`SELECT uid FROM assistant_conversations WHERE business_id=${biz} ORDER BY id LIMIT 1`);
+
+      await askAndWaitFor(page, 'Help me set up a booking type please', 'What should it be called'); // an addressed follow-up (the page names the current conversation)
+      ok(`${c.label}: the follow-up at the cap is answered`, (await (await lastReply(page)).innerText()).includes('What should it be called'));
+      ok(`${c.label}: a new conversation was started and the full one kept untouched`,
+        sql(`SELECT COUNT(*) FROM assistant_conversations WHERE business_id=${biz}`) === '2'
+        && sql(`SELECT message_count FROM assistant_conversations WHERE uid='${oldUid}'`) === '120'
+        && sql(`SELECT COUNT(*) FROM assistant_messages WHERE body='Help me set up a booking type please'`) === '1');
+
+      await askAndWaitFor(page, 'And one more thing about booking types', 'And one more thing about booking types'); // the browser now continues in the NEW conversation
+      await page.waitForFunction(() => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length >= 2, null, { timeout: 15000 });
+      ok(`${c.label}: the next turn stays in the new conversation (still two conversations)`, sql(`SELECT COUNT(*) FROM assistant_conversations WHERE business_id=${biz}`) === '2');
+    });
 
     // ───────── Core allowance used up, then upgraded to Growth inside the same month ─────────
     await run(`Upgrade/${vname}`, viewport, 'core', async (page, c) => {

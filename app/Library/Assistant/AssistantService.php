@@ -60,32 +60,50 @@ final class AssistantService
     {
         $text = trim(Str::limit(trim($text), (int) config('assistant.question_max_chars'), ''));
 
-        if ($conversationUid !== null) {
-            $conversation = $this->find($context, $conversationUid) ?? abort(404);
-        } else {
-            // No conversation named (a first message, or "new"): the message's own id decides. The same client_message_id from
-            // the same actor in the same Business is the SAME message — a retry whose first response was lost must land in the
-            // conversation it created, not make another one and use the model again. The find-or-create runs under a short lock
-            // keyed by actor + Business + message id so two identical first requests cannot both create (the loser waits, then
-            // finds the winner's message); and the user's message is stored before the lock is released, so that is what it finds.
-            $first = Cache::lock('assistant:first:' . sha1($context->workspace->id . '|' . $context->business->id . '|' . $context->user->id . '|' . $clientMessageId), 20);
+        // Which conversation does this message belong to? One short, serialized step per actor + Business, for addressed and
+        // unaddressed requests alike:
+        //   1. a message id this actor has already put into a conversation in this Business is a REPLAY: it belongs where its
+        //      original result is, whatever uid the (possibly stale) browser names and however full that conversation now is;
+        //   2. otherwise the named conversation (or, when none is named, the latest — or a new one for "new") is used;
+        //   3. a conversation that has reached `conversation_max_messages` is not grown: a genuinely new turn starts a new one
+        //      (the full one is kept untouched). A twin request that already rolled it over is joined, not duplicated.
+        // The lock covers only this resolution and the creation of a replacement (with its first user message stored before the
+        // lock is released, which is what a duplicate then finds); the turn itself runs under the conversation's own lock.
+        $resolve = Cache::lock('assistant:resolve:' . sha1($context->workspace->id . '|' . $context->business->id . '|' . $context->user->id), 20);
 
-            if (! AssistantRetention::acquireWithin($first, max(1, (int) config('assistant.first_message_lock_wait_seconds')))) {
-                return ['status' => 'busy', 'uid' => null, 'messages' => []];
-            }
+        if (! AssistantRetention::acquireWithin($resolve, max(1, (int) config('assistant.first_message_lock_wait_seconds')))) {
+            return ['status' => 'busy', 'uid' => null, 'messages' => []];
+        }
 
-            try {
-                $conversation = $this->conversationOfMessage($context, $clientMessageId)
-                    ?? ($startNew ? null : $this->latest($context));
-                $replay = $conversation !== null && $this->messageInConversation($conversation, $clientMessageId);
+        try {
+            $conversation = $this->conversationOfMessage($context, $clientMessageId);
 
-                if ($conversation === null || (! $replay && $conversation->message_count >= (int) config('assistant.conversation_max_messages'))) {
+            if ($conversation === null) {
+                $conversation = $conversationUid !== null
+                    ? ($this->find($context, $conversationUid) ?? abort(404))
+                    : ($startNew ? null : $this->latest($context));
+
+                if ($conversation !== null && $conversation->message_count >= (int) config('assistant.conversation_max_messages')) {
+                    // The newest conversation of this actor in this Business, by creation (a replacement that is still being
+                    // answered has no last-message time yet, so the "latest" ordering cannot be relied on to see it).
+                    $newer = AssistantConversation::query()
+                        ->where('workspace_id', $context->workspace->id)
+                        ->where('business_id', $context->business->id)
+                        ->where('user_id', $context->user->id)
+                        ->orderByDesc('id')
+                        ->first();
+                    $conversation = $newer !== null && $newer->id > $conversation->id && $newer->message_count < (int) config('assistant.conversation_max_messages')
+                        ? $newer
+                        : null;
+                }
+
+                if ($conversation === null) {
                     $conversation = $this->startConversation($context, $text);
                     $this->storeUserMessage($conversation, $clientMessageId, $text);
                 }
-            } finally {
-                $first->release();
             }
+        } finally {
+            $resolve->release();
         }
 
         // One turn at a time per conversation: ordering, and a duplicate in flight, are settled here. The lease is derived
@@ -125,11 +143,6 @@ final class AssistantService
             ->value('conversation_id');
 
         return $conversationId === null ? null : AssistantConversation::query()->find($conversationId);
-    }
-
-    private function messageInConversation(AssistantConversation $conversation, string $clientMessageId): bool
-    {
-        return AssistantMessage::query()->where('conversation_id', $conversation->id)->where('client_message_id', $clientMessageId)->exists();
     }
 
     private function startConversation(AssistantContext $context, string $text): AssistantConversation
