@@ -54,7 +54,7 @@
             .mg-cf-head{flex-direction:column}
             .mg-cf-table th,.mg-cf-table td{padding:.6rem .6rem}
             .mg-cf-hint{display:none}
-            .mg-cf-col-merge{display:none}
+            .mg-cf-col-merge,.mg-cf-col-type{display:none}
         }
     </style>
 
@@ -173,7 +173,7 @@
                                     <thead>
                                         <tr>
                                             <th scope="col">Field</th>
-                                            <th scope="col">Type</th>
+                                            <th scope="col" class="mg-cf-col-type">Type</th>
                                             <th scope="col" class="mg-cf-col-merge">Merge field</th>
                                             <th scope="col" class="mg-cf-end">Actions</th>
                                         </tr>
@@ -201,10 +201,10 @@
                                                             </div>
                                                         @endif
                                                         <span class="mg-cf-typeicon"><x-ds-icon :name="$typeIcons[$field->type] ?? 'type'" size="16" aria-hidden="true" /></span>
-                                                        <span class="mg-cf-label">{{ $field->label }}</span>
+                                                        <span class="mg-cf-label">{{ $field->label }}</span><span class="visually-hidden d-sm-none"> ({{ \App\Enums\CustomFields\CustomFieldType::from($field->type)->label() }})</span>
                                                     </div>
                                                 </td>
-                                                <td><span class="mg-cf-badge">{{ \App\Enums\CustomFields\CustomFieldType::from($field->type)->label() }}</span></td>
+                                                <td class="mg-cf-col-type"><span class="mg-cf-badge">{{ \App\Enums\CustomFields\CustomFieldType::from($field->type)->label() }}</span></td>
                                                 <td class="mg-cf-col-merge">
                                                     <code data-role="custom-field-token" class="visually-hidden">{{ $field->token() }}</code>
                                                     <button type="button" class="mg-cf-iconbtn" data-copy="{{ $field->token() }}" data-role="custom-field-copy" aria-label="Copy merge field {{ $field->token() }}" title="Copy {{ $field->token() }}"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
