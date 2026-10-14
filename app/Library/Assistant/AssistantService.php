@@ -60,24 +60,31 @@ final class AssistantService
     {
         $text = trim(Str::limit(trim($text), (int) config('assistant.question_max_chars'), ''));
 
-        $conversation = $conversationUid !== null
-            ? ($this->find($context, $conversationUid) ?? abort(404))
-            : ($startNew ? null : $this->latest($context));
+        if ($conversationUid !== null) {
+            $conversation = $this->find($context, $conversationUid) ?? abort(404);
+        } else {
+            // No conversation named (a first message, or "new"): the message's own id decides. The same client_message_id from
+            // the same actor in the same Business is the SAME message — a retry whose first response was lost must land in the
+            // conversation it created, not make another one and use the model again. The find-or-create runs under a short lock
+            // keyed by actor + Business + message id so two identical first requests cannot both create (the loser waits, then
+            // finds the winner's message); and the user's message is stored before the lock is released, so that is what it finds.
+            $first = Cache::lock('assistant:first:' . sha1($context->workspace->id . '|' . $context->business->id . '|' . $context->user->id . '|' . $clientMessageId), 20);
 
-        if ($conversation === null || $conversation->message_count >= (int) config('assistant.conversation_max_messages')) {
-            $firstUse = $this->latest($context) === null;
+            if (! AssistantRetention::acquireWithin($first, max(1, (int) config('assistant.first_message_lock_wait_seconds')))) {
+                return ['status' => 'busy', 'uid' => null, 'messages' => []];
+            }
 
-            $conversation = AssistantConversation::create([
-                'uid' => (string) Str::uuid(),
-                'workspace_id' => $context->workspace->id,
-                'business_id' => $context->business->id,
-                'user_id' => $context->user->id,
-                'title' => Str::limit($text, 60, ''),
-                'message_count' => 0,
-            ]);
+            try {
+                $conversation = $this->conversationOfMessage($context, $clientMessageId)
+                    ?? ($startNew ? null : $this->latest($context));
+                $replay = $conversation !== null && $this->messageInConversation($conversation, $clientMessageId);
 
-            if ($firstUse) {
-                $this->recordNotice($conversation);
+                if ($conversation === null || (! $replay && $conversation->message_count >= (int) config('assistant.conversation_max_messages'))) {
+                    $conversation = $this->startConversation($context, $text);
+                    $this->storeUserMessage($conversation, $clientMessageId, $text);
+                }
+            } finally {
+                $first->release();
             }
         }
 
@@ -101,6 +108,64 @@ final class AssistantService
         } finally {
             $lock->release();
         }
+    }
+
+    /** The conversation this actor already put this client_message_id into, in this Business — or null. */
+    private function conversationOfMessage(AssistantContext $context, string $clientMessageId): ?AssistantConversation
+    {
+        $conversationId = AssistantMessage::query()
+            ->where('client_message_id', $clientMessageId)
+            ->where('role', AssistantMessage::ROLE_USER)
+            ->whereIn('conversation_id', AssistantConversation::query()
+                ->where('workspace_id', $context->workspace->id)
+                ->where('business_id', $context->business->id)
+                ->where('user_id', $context->user->id)
+                ->select('id'))
+            ->orderBy('id')
+            ->value('conversation_id');
+
+        return $conversationId === null ? null : AssistantConversation::query()->find($conversationId);
+    }
+
+    private function messageInConversation(AssistantConversation $conversation, string $clientMessageId): bool
+    {
+        return AssistantMessage::query()->where('conversation_id', $conversation->id)->where('client_message_id', $clientMessageId)->exists();
+    }
+
+    private function startConversation(AssistantContext $context, string $text): AssistantConversation
+    {
+        $firstUse = $this->latest($context) === null;
+
+        $conversation = AssistantConversation::create([
+            'uid' => (string) Str::uuid(),
+            'workspace_id' => $context->workspace->id,
+            'business_id' => $context->business->id,
+            'user_id' => $context->user->id,
+            'title' => Str::limit($text, 60, ''),
+            'message_count' => 0,
+        ]);
+
+        if ($firstUse) {
+            $this->recordNotice($conversation);
+        }
+
+        return $conversation;
+    }
+
+    private function storeUserMessage(AssistantConversation $conversation, string $clientMessageId, string $text): AssistantMessage
+    {
+        $message = AssistantMessage::create([
+            'conversation_id' => $conversation->id,
+            'uid' => (string) Str::uuid(),
+            'client_message_id' => $clientMessageId,
+            'role' => AssistantMessage::ROLE_USER,
+            'kind' => 'text',
+            'body' => $text,
+            'created_at' => now(),
+        ]);
+        $conversation->increment('message_count');
+
+        return $message;
     }
 
     /** The AI-data notice, as the first message of a customer's first conversation in a Business. */
@@ -180,6 +245,28 @@ final class AssistantService
         }
     }
 
+    /**
+     * Has this user message actually been ANSWERED? Only an assistant reply counts — not an action outcome (an approval can be
+     * recorded at any moment, concurrently with a turn) nor the first-use notice — and only one that comes before the next user
+     * message, so a later turn's answer is never borrowed for an earlier question.
+     */
+    private function hasAnswer(AssistantConversation $conversation, AssistantMessage $userMessage): bool
+    {
+        $nextUser = AssistantMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', AssistantMessage::ROLE_USER)
+            ->where('id', '>', $userMessage->id)
+            ->min('id');
+
+        return AssistantMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', AssistantMessage::ROLE_ASSISTANT)
+            ->whereNotIn('kind', ['outcome', 'notice'])
+            ->where('id', '>', $userMessage->id)
+            ->when($nextUser !== null, fn ($q) => $q->where('id', '<', $nextUser))
+            ->exists();
+    }
+
     /** @return array<string, mixed> */
     private function handle(AssistantContext $context, AssistantConversation $conversation, string $text, string $clientMessageId, \Illuminate\Contracts\Cache\Lock $lock, int $deadline): array
     {
@@ -203,11 +290,7 @@ final class AssistantService
             }
         }
 
-        $replied = AssistantMessage::query()
-            ->where('conversation_id', $conversation->id)
-            ->where('role', AssistantMessage::ROLE_ASSISTANT)
-            ->where('id', '>', $existing->id)
-            ->exists();
+        $replied = $this->hasAnswer($conversation, $existing);
 
         if (! $replied) {
             if (! $this->reply($context, $conversation, $existing, $existing->body, $lock, $deadline)) {

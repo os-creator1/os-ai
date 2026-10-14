@@ -216,6 +216,14 @@ final class AssistantActionService
     /** @return array{0: string, 1: string}|null [code, customer message] when the proposal must not run */
     private function revalidate(AssistantContext $context, AssistantActionProposal $proposal, ?ActionTool $tool): ?array
     {
+        // Writes are never made on a client's behalf while an agency is viewing as them. Proposal creation already refuses it
+        // (AssistantToolRegistry::availableActions); the approval route is only BusinessScoped, so a proposal prepared with the
+        // actor's own direct access must not be carried into a view-as session. Checked first, for every tool, before anything
+        // about the proposal is looked at, and fails closed: nothing is claimed, executed or revealed.
+        if ($context->viewingAsClient()) {
+            return ['view_as_client', "Ask MotionGrove can't make changes while you're viewing as a client, so nothing was done. Switch back to your own account and ask again."];
+        }
+
         if ($tool === null || ! $tool->available($context)) {
             return ['authorization_changed', "You no longer have access to do this, so nothing was changed."];
         }

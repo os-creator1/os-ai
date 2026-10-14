@@ -82,19 +82,28 @@ final class AiUsageReadModel
      * cap that call could have met: the policy has no per-Business cap, or the
      * call carried no Business, so there was no Business row to refuse it.
      */
-    public function workspaceStanding(int $workspaceId, AiBudgetPolicy $policy): AiUsageStanding
+    public function workspaceStanding(int $workspaceId, AiBudgetPolicy $policy, bool $supersedeRefusalsThatNowFit = false): AiUsageStanding
     {
         $period = AiUsagePeriod::query()
             ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
             ->where('scope_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
-            ->first(['cap_microusd', 'committed_microusd']);
+            ->first(['cap_microusd', 'committed_microusd', 'reserved_microusd']);
+
+        // OPT-IN (the allowance preflight asks for it; the billing page and the other readers keep the plain rule): a refusal is a
+        // fact about a REQUEST that did not fit. Once the cap has been raised (a paid plan upgrade inside the month adopts the
+        // larger cap) a refusal whose request would fit in the room that now exists is history, not a state, and must not keep
+        // saying "limit reached" for the rest of the month. A refusal that still would not fit still counts.
+        $room = $period !== null
+            ? max(0, (int) $period->cap_microusd - (int) $period->committed_microusd - (int) $period->reserved_microusd)
+            : $policy->workspaceCapMicrousd;
 
         $refused = AiUsageLedgerEntry::query()
             ->where('workspace_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::BudgetExhausted->value)
+            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
             ->where(function (Builder $query) use ($policy): void {
                 $query->whereIn('refusal_scope', self::scopesIncludingWorkspace())
                     ->orWhere(function (Builder $legacy) use ($policy): void {
@@ -183,7 +192,7 @@ final class AiUsageReadModel
      * A different fact from the overall allowance being used up: the product
      * lane's protected share may be entirely unspent.
      */
-    public function interactiveShareSpent(int $workspaceId, AiBudgetPolicy $policy): bool
+    public function interactiveShareSpent(int $workspaceId, AiBudgetPolicy $policy, bool $supersedeRefusalsThatNowFit = false): bool
     {
         $period = AiUsagePeriod::query()
             ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
@@ -193,16 +202,21 @@ final class AiUsageReadModel
 
         $cap = $period !== null ? (int) $period->cap_microusd : $policy->workspaceCapMicrousd;
         $interactiveCap = intdiv($cap * $policy->interactiveShareBps, 10_000);
+        $spent = $period !== null ? (int) $period->interactive_reserved_microusd + (int) $period->interactive_committed_microusd : 0;
 
-        if ($period !== null && (int) $period->interactive_reserved_microusd + (int) $period->interactive_committed_microusd >= $interactiveCap) {
+        if ($period !== null && $spent >= $interactiveCap) {
             return true;
         }
+
+        // As for the overall cap: a refusal that would fit in the interactive room that exists NOW (after a cap raise) is history.
+        $room = max(0, $interactiveCap - $spent);
 
         return AiUsageLedgerEntry::query()
             ->where('workspace_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::InteractiveShareExhausted->value)
+            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
             ->exists();
     }
 

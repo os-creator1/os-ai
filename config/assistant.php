@@ -53,6 +53,10 @@ return [
     // How long a prepared reply stays openable (pre-filled) in Follow-ups after it was handed off.
     'handoff_ttl_minutes' => 60,
 
+    // How long a first message (no conversation named) waits for an identical in-flight first message to finish creating its
+    // conversation, so the pair cannot both create one. Creation takes milliseconds; this is only a safety bound.
+    'first_message_lock_wait_seconds' => 3,
+
     // How long a customer's "Delete conversation" waits for a reply that is still being worked on before answering "busy".
     'delete_wait_seconds' => (int) env('ASSISTANT_DELETE_WAIT_SECONDS', 4),
 ];

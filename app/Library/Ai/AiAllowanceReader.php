@@ -15,7 +15,9 @@ use Carbon\CarbonImmutable;
  * the billing sentence does not need: the INTERACTIVE share being spent is not
  * the overall allowance being used up.
  *
- * Reads only. Never reserves, routes or refuses a call.
+ * Never reserves, routes or refuses a call. Its one write is the ledger's own upward-only adoption of an upgraded plan's cap
+ * (AiUsageLedgerManager::reconcileUpgradedCaps), done before the standing is read so a Workspace that upgraded inside the month is
+ * not shown — and not blocked by — the smaller cap its period snapshotted under the old plan.
  */
 final class AiAllowanceReader
 {
@@ -23,6 +25,7 @@ final class AiAllowanceReader
         private readonly AiBudgetPolicyResolver $policyResolver,
         private readonly AiUsageReadModel $readModel,
         private readonly AiUsagePresenter $presenter,
+        private readonly AiUsageLedgerManager $ledger,
     ) {
     }
 
@@ -34,9 +37,11 @@ final class AiAllowanceReader
             return new AiAllowance(AiAllowance::UNAVAILABLE, false, $policy->policyKey, null);
         }
 
+        $this->ledger->reconcileUpgradedCaps((int) $workspace->id, $policy);
+
         $renews = $policy->isTrial() ? null : $this->renewalDate($policy);
 
-        $overall = $this->presenter->stateFor($this->readModel->workspaceStanding((int) $workspace->id, $policy));
+        $overall = $this->presenter->stateFor($this->readModel->workspaceStanding((int) $workspace->id, $policy, supersedeRefusalsThatNowFit: true));
 
         // An Agency Business that has spent its OWN allowance is limited even when the Workspace is not.
         if ($overall !== AiUsageState::LimitReached && $business !== null && $policy->businessCapMicrousd !== null) {
@@ -51,7 +56,7 @@ final class AiAllowanceReader
             return new AiAllowance($policy->isTrial() ? AiAllowance::TRIAL_LIMIT_REACHED : AiAllowance::LIMIT_REACHED, $policy->isTrial(), $policy->policyKey, $renews);
         }
 
-        if ($this->readModel->interactiveShareSpent((int) $workspace->id, $policy)) {
+        if ($this->readModel->interactiveShareSpent((int) $workspace->id, $policy, supersedeRefusalsThatNowFit: true)) {
             return new AiAllowance(AiAllowance::INTERACTIVE_LIMIT, $policy->isTrial(), $policy->policyKey, $renews);
         }
 

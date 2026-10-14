@@ -58,6 +58,10 @@ class SeedBrowserFixtures extends TestCase
         ]);
         $out['capped'] = $this->row($c3, $b3, $w3);
 
+        // A paid Core account: browser.js exhausts its month and then upgrades it to Growth inside the same month.
+        [$c4, $b4, $w4] = $this->tenant(WorkspacePlanTier::Core, 'Core Studio', 'Core Account');
+        $out['core'] = $this->row($c4, $b4, $w4);
+
         $out['permissions'] = array_merge(['access_backend'], $this->allCustomerPermissions());
         file_put_contents(__DIR__ . '/qa.json', json_encode($out, JSON_PRETTY_PRINT));
         $this->assertFileExists(__DIR__ . '/qa.json');

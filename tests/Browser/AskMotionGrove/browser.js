@@ -3,9 +3,12 @@ const qa = require('./qa.json');
 const BASE = process.env.QA_BASE || 'http://127.0.0.1:8099';
 const results = [];
 const problems = [];
+const { execSync } = require('child_process');
+// One statement against the disposable test database (same MYSQL_CMD reset.sh uses).
+function sql(q) { return execSync(`${process.env.MYSQL_CMD || 'mysql -uroot ultimatesms_testing'} -N -e "${q.replace(/"/g, '\\"')}"`, { encoding: 'utf8' }).trim(); }
 function ok(name, cond, extra) { results.push({ name, pass: !!cond, extra: extra || '' }); if (!cond) problems.push(name + ' ' + (extra || '')); }
 
-async function run(label, viewport, userKey, fn) {
+async function run(label, viewport, userKey, fn, expectedErrors = []) {
   require('child_process').execSync('sh reset.sh', { cwd: __dirname });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport });
@@ -19,7 +22,9 @@ async function run(label, viewport, userKey, fn) {
   await page.goto(home);
   await page.waitForSelector('[data-role="home-ask"]');
   await fn(page, { label, home, qa: qa[userKey] });
-  ok(`${label}: no console errors / 5xx`, errs.length === 0, errs.join(' | '));
+  // `expectedErrors` are errors a scenario causes ON PURPOSE (a deliberately dropped response); anything else still fails.
+  const unexpected = errs.filter(e => !expectedErrors.some(x => e.includes(x)));
+  ok(`${label}: no console errors / 5xx`, unexpected.length === 0, unexpected.join(' | '));
   await browser.close();
 }
 
@@ -98,6 +103,60 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
       await page.click('[data-role="ask-minimize"]');
       const r2 = await page.request.get(c.home, { headers: { Cookie: 'qa_user=' + c.qa.user } });
       ok(`${c.label}: Home and non-AI features unchanged`, r2.status() === 200);
+    });
+
+
+    // ───────── First message whose response is lost, then retried ─────────
+    await run(`Retry/${vname}`, viewport, 'launch', async (page, c) => {
+      let dropped = false;
+      await page.route('**/home/assistant/messages', async (route) => {
+        if (!dropped) {
+          dropped = true;
+          await route.fetch();          // the server handles it (conversation created, model used, allowance charged) ...
+          await route.abort('failed');  // ... but the browser never receives the response
+          return;
+        }
+        await route.continue();
+      });
+      await page.fill('[data-role="ask-input"]', 'Help me create a booking type');
+      await page.click('[data-role="ask-submit"]');
+      await page.waitForSelector('[data-role="ask-message"][data-kind="error"]', { timeout: 15000 });
+      ok(`${c.label}: lost response is reported as retryable`, dropped && (await page.locator('[data-role="ask-conversation"]').innerText()).includes("We couldn't reach MotionGrove"));
+
+      await page.fill('[data-role="ask-input"]', 'Help me create a booking type'); // the customer sends the same question again
+      await page.click('[data-role="ask-submit"]');
+      await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true, null, { timeout: 15000 });
+      await page.waitForFunction(() => /called/i.test(document.querySelector('[data-role="ask-conversation"]').innerText), null, { timeout: 15000 });
+      ok(`${c.label}: the retry is answered`, (await page.locator('[data-role="ask-conversation"]').innerText()).includes('What should it be called'));
+      ok(`${c.label}: one conversation, one user message, one model call charged`,
+        sql(`SELECT COUNT(*) FROM assistant_conversations WHERE business_id=(SELECT id FROM businesses WHERE uid='${c.qa.business}')`) === '1'
+        && sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='Help me create a booking type'`) === '1'
+        && sql(`SELECT COUNT(*) FROM ai_usage_ledger WHERE status='committed' AND workspace_id=(SELECT id FROM workspaces WHERE uid='${c.qa.workspace}')`) === '1',
+        sql(`SELECT COUNT(*) FROM ai_usage_ledger WHERE status='committed'`));
+    }, ['net::ERR_FAILED']);
+
+    // ───────── Core allowance used up, then upgraded to Growth inside the same month ─────────
+    await run(`Upgrade/${vname}`, viewport, 'core', async (page, c) => {
+      const ws = c.qa.workspace;
+      sql(`UPDATE workspace_plan_assignments a JOIN workspaces w ON w.id=a.workspace_id SET a.workspace_plan_catalog_id=(SELECT id FROM workspace_plan_catalog WHERE tier='core') WHERE w.uid='${ws}'`);
+      sql(`DELETE FROM ai_usage_periods WHERE workspace_id=(SELECT id FROM workspaces WHERE uid='${ws}')`);
+      sql(`INSERT INTO ai_usage_periods (scope_type,scope_id,workspace_id,period_key,policy_key,policy_version,cap_microusd,reserved_microusd,committed_microusd,interactive_reserved_microusd,interactive_committed_microusd,created_at,updated_at) SELECT 'workspace',id,id,DATE_FORMAT(UTC_TIMESTAMP(),'%Y-%m'),'core',1,5000000,0,5000000,0,0,NOW(),NOW() FROM workspaces WHERE uid='${ws}'`);
+      await page.reload();
+      await page.waitForSelector('[data-role="home-ask"]');
+
+      await ask(page, 'Help me create a booking type');
+      let card = page.locator('[data-role="ask-message"][data-kind="limit"]').last();
+      ok(`${c.label}: used-up Core allowance is stated plainly, with no trial wording`, await card.count() === 1 && !/trial/i.test(await card.innerText()));
+
+      // Provider-confirmed upgrade to Growth, same billing month.
+      sql(`UPDATE workspace_plan_assignments a JOIN workspaces w ON w.id=a.workspace_id SET a.workspace_plan_catalog_id=(SELECT id FROM workspace_plan_catalog WHERE tier='growth') WHERE w.uid='${ws}'`);
+
+      await ask(page, 'Help me set up a booking type please');
+      const last = await lastReply(page);
+      ok(`${c.label}: the larger Growth allowance is available at once`, (await last.getAttribute('data-kind')) !== 'limit' && (await last.innerText()).includes('What should it be called'), await last.innerText());
+      ok(`${c.label}: the open period adopted the Growth cap and kept its spend`,
+        sql(`SELECT CONCAT(cap_microusd,'/',policy_key) FROM ai_usage_periods WHERE workspace_id=(SELECT id FROM workspaces WHERE uid='${ws}') AND scope_type='workspace'`) === '10000000/growth'
+        && Number(sql(`SELECT committed_microusd FROM ai_usage_periods WHERE workspace_id=(SELECT id FROM workspaces WHERE uid='${ws}') AND scope_type='workspace'`)) >= 5000000);
     });
 
     // ───────── Growth Home ─────────

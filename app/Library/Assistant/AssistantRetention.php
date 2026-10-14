@@ -6,7 +6,6 @@ use App\Models\AssistantActionAudit;
 use App\Models\AssistantActionProposal;
 use App\Models\AssistantConversation;
 use Illuminate\Contracts\Cache\Lock;
-use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -47,6 +46,25 @@ final class AssistantRetention
     }
 
     /**
+     * Take a lock, waiting at most `$seconds` (0 = try once). The wait is measured on the real monotonic clock, never the
+     * application clock: a frozen or adjusted clock must not be able to stall a request forever.
+     */
+    public static function acquireWithin(Lock $lock, int $seconds): bool
+    {
+        $deadline = hrtime(true) + max(0, $seconds) * 1_000_000_000;
+
+        while (! $lock->get()) {
+            if (hrtime(true) >= $deadline) {
+                return false;
+            }
+
+            usleep(25_000);
+        }
+
+        return true;
+    }
+
+    /**
      * @param  int  $waitSeconds  how long to wait for a running turn to finish (0 = do not wait)
      * @return bool false when a turn or an approved action is still running (try again later); true when deleted or already gone
      */
@@ -54,13 +72,7 @@ final class AssistantRetention
     {
         $lock = self::turnLock((int) $conversation->id, 30);
 
-        try {
-            if ($waitSeconds > 0) {
-                $lock->block($waitSeconds);
-            } elseif (! $lock->get()) {
-                return false;
-            }
-        } catch (LockTimeoutException) {
+        if (! self::acquireWithin($lock, $waitSeconds)) {
             return false;
         }
 
