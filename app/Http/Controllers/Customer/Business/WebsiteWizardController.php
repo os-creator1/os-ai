@@ -1151,6 +1151,9 @@ class WebsiteWizardController extends CustomerBaseController
                 ]);
             }
 
+            // Which step was running if something unexpected throws (see GenerationFailureLogger).
+            $stage = 'apply_answers';
+
             try {
                 $this->answerApplier->apply($business, $website, $response, $actorUserId);
 
@@ -1163,11 +1166,14 @@ class WebsiteWizardController extends CustomerBaseController
                     ]);
                 }
 
+                $stage = 'resolve_template';
                 $template = WebsiteTemplate::where('key', $website->template_key)->where('is_active', true)->firstOrFail();
+                $stage = 'presentation_answers';
                 $customSection = WizardPresentationAnswers::customSection($response);
                 $customerFaq = WizardPresentationAnswers::customerFaq($response);
                 $idempotencyKey = $this->stableIdempotencyKey($response, $website);
 
+                $stage = 'generate_full';
                 $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($response), WizardPresentationAnswers::serviceAreas($response), WizardPresentationAnswers::blueprintContext($response));
 
                 if ($attempt->status !== WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
@@ -1199,6 +1205,8 @@ class WebsiteWizardController extends CustomerBaseController
                 // genuinely retryable in_progress state, and the
                 // customer sees a plain redirect rather than a raw 500.
                 report($e);
+                // report() skips whole exception classes (ModelNotFound, Validation, …); log this one explicitly.
+                \App\Library\Website\GuidedGeneration\GenerationFailureLogger::log($e, $stage, $website->id, $response->id);
                 $this->sessionManager->recordGenerationFailure($response);
 
                 return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
