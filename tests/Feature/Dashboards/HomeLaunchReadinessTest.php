@@ -143,14 +143,17 @@ class HomeLaunchReadinessTest extends TestCase
         $this->assertTrue($steps['business']['done']);
         $this->assertFalse($steps['location']['done']);
         $this->assertFalse($steps['service']['done']);
-        $this->assertSame(route('customer.onboarding.show', ['step' => 'services']), $steps['service']['action']['url']);
+        $this->assertStringNotContainsString('/onboarding', $steps['service']['action']['url'], 'The wizard is not bound to this Business, so it is not offered.');
 
-        // Step flags are irrelevant: a row claiming every step is done changes nothing.
+        // Step flags are irrelevant: a row claiming every step is done changes nothing. Once the customer's wizard IS
+        // bound to this Business it is the editor offered for the missing step.
         DB::table('customer_onboardings')->insert([
             'customer_id' => $customer->user_id, 'business_id' => $business->id, 'status' => 'completed', 'current_step' => 'finish',
             'completed_steps' => json_encode(['business', 'location', 'services', 'website']), 'created_at' => now(), 'updated_at' => now(),
         ]);
-        $this->assertFalse($this->steps($customer)['service']['done']);
+        $steps = $this->steps($customer);
+        $this->assertFalse($steps['service']['done']);
+        $this->assertSame(route('customer.onboarding.show', ['step' => 'services']), $steps['service']['action']['url']);
     }
 
     public function test_an_archived_primary_location_or_inactive_service_is_not_a_foundation(): void
