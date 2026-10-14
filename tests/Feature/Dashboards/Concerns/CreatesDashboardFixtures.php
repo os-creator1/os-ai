@@ -17,8 +17,11 @@ use App\Models\BusinessLocation;
 use App\Models\ContactGroups;
 use App\Models\Contacts;
 use App\Models\Currency;
+use App\Models\Customer;
 use App\Models\User;
+use App\Models\Workspace;
 use App\Enums\Business\BusinessServiceMode;
+use App\Enums\Business\BusinessStatus;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
@@ -39,7 +42,34 @@ use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 trait CreatesDashboardFixtures
 {
     use CreatesCustomerContextFixtures {
-        tenant as protected bareTenant;
+        tenant as protected rawTenant;
+        addBusiness as protected rawAddBusiness;
+    }
+
+    /**
+     * Every fixture Business is, unless a test says otherwise, an ESTABLISHED one that predates the SEO-first readiness
+     * policy (businesses.readiness_policy NULL), so the Home behaviour these suites pin is the legacy behaviour. A test of
+     * the new policy opts in with adoptSeoFirstPolicy().
+     */
+    protected function addBusiness(Customer $customer, Workspace $workspace, string $name, BusinessStatus $status = BusinessStatus::Active): Business
+    {
+        $business = $this->rawAddBusiness($customer, $workspace, $name, $status);
+        DB::table('businesses')->where('id', $business->id)->update(['readiness_policy' => null]);
+
+        return $business->fresh();
+    }
+
+    protected function adoptSeoFirstPolicy(Business $business): void
+    {
+        DB::table('businesses')->where('id', $business->id)->update(['readiness_policy' => Business::READINESS_POLICY_SEO_FIRST]);
+    }
+
+    protected function bareTenant(
+        \App\Enums\Entitlement\WorkspacePlanTier $tier = \App\Enums\Entitlement\WorkspacePlanTier::Growth,
+        string $businessName = 'Harbor Lane Studios',
+        string $workspaceName = 'Harbor Lane',
+    ): array {
+        return $this->rawTenant($tier, $businessName, $workspaceName);
     }
 
     /**

@@ -316,31 +316,21 @@ class OnboardingSeoFlowTest extends TestCase
         $this->assertSame('Mobile mixology', $business->refresh()->industry_other);
     }
 
-    public function test_completing_the_new_onboarding_stamps_the_readiness_policy_once_and_a_legacy_completion_gets_none(): void
+    public function test_the_business_carries_the_readiness_policy_from_creation_and_completion_does_not_change_it(): void
     {
         [$customer, $business, $onboarding] = $this->onboardingAtWebsiteStep();
-        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
-        $this->assertNull($onboarding->refresh()->metadata['readiness_policy'] ?? null, 'Nothing is stamped before completion.');
+        $this->assertSame(Business::READINESS_POLICY_SEO_FIRST, $business->fresh()->readiness_policy, 'Set when the Business was created.');
 
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
         $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
         $this->post(route('customer.onboarding.complete'));
 
-        $this->assertSame(OnboardingManager::READINESS_POLICY, $onboarding->refresh()->metadata['readiness_policy']);
-        $this->assertSame('later', $onboarding->metadata['website']['choice'], 'Existing metadata is preserved.');
+        $this->assertSame(Business::READINESS_POLICY_SEO_FIRST, $business->fresh()->readiness_policy);
+        $this->assertArrayNotHasKey('readiness_policy', $onboarding->refresh()->metadata ?? [], 'The policy is a Business fact, not onboarding metadata.');
         $this->assertSame(
-            OnboardingManager::READINESS_POLICY,
+            Business::READINESS_POLICY_SEO_FIRST,
             app(\App\Library\Dashboard\DashboardStatusReader::class)->forBusiness($business->id)->readinessPolicy,
         );
-
-        // A legacy completed onboarding (completed before the policy existed) is never retro-stamped by visiting.
-        $legacyCustomer = $this->actingAsHttpCustomer();
-        $legacyBusiness = $this->createBusinessWithWorkspace($legacyCustomer, $this->businessAttributes(['name' => 'Legacy Co']));
-        $legacy = $this->attach($legacyCustomer, $legacyBusiness, OnboardingStep::Complete);
-        $legacy->status = OnboardingStatus::Completed;
-        $legacy->save();
-        $this->get(route('customer.onboarding.show'))->assertOk();
-        $this->post(route('customer.onboarding.complete'));
-        $this->assertNull($legacy->refresh()->metadata['readiness_policy'] ?? null);
     }
 
     // ── Services step ─────────────────────────────────────────────────────

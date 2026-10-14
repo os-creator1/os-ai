@@ -88,13 +88,98 @@ class OnboardingServicesConcurrencyTest extends TestCase
         $outputs = $this->race($customer, ['Photo Booth Rental', 'photo  booth rental', 'Audio Guestbook']);
         $this->assertSame(['OK', 'OK', 'OK'], $outputs);
 
-        $this->assertSame(1, DB::table('business_services')->where('business_id', $business->id)->whereRaw('LOWER(name) = ?', ['photo booth rental'])->count());
+        $normalised = DB::table('business_services')->where('business_id', $business->id)->pluck('name')
+            ->map(fn (string $name) => mb_strtolower(trim((string) preg_replace('/\s+/', ' ', $name))))->all();
+        $this->assertSame(1, count(array_keys($normalised, 'photo booth rental', true)), 'One logical service, however it was spaced or cased.');
         $this->assertSame(1, DB::table('business_services')->where('business_id', $business->id)->where('is_primary', 1)->where('status', 'active')->count());
 
         // Safe repeated navigation / submit afterwards.
         $again = $this->race($customer, ['Photo Booth Rental']);
         $this->assertSame(['OK'], $again);
         $this->assertSame(1, DB::table('business_services')->where('business_id', $business->id)->where('is_primary', 1)->where('status', 'active')->count());
+    }
+
+    public function test_a_stale_services_submission_and_finish_cannot_deadlock_and_cannot_reopen_a_completed_onboarding(): void
+    {
+        [$customer, $business] = $this->customerAtFinishStep();
+        $php = (new PhpExecutableFinder())->find() ?: 'php';
+        $env = ['DB_DATABASE' => TestDatabaseSafety::activeTestDatabase(), 'EXPECTED_TEST_DATABASE' => TestDatabaseSafety::activeTestDatabase()];
+
+        // A holder keeps the Business row locked so BOTH racing requests queue behind it before either can take a
+        // second lock. With the old order (Services: Business then onboarding; Finish: onboarding then Business) this
+        // forces the cycle; with one order (onboarding first) it cannot form.
+        $holder = new Process([$php, self::RUNNER, 'hold-business', (string) $business->id, '5'], null, $env);
+        $holder->setTimeout(120)->start();
+        $deadline = microtime(true) + 30;
+        while (! str_contains($holder->getOutput(), 'LOCKED') && microtime(true) < $deadline) {
+            usleep(100000);
+        }
+        $this->assertStringContainsString('LOCKED', $holder->getOutput(), 'Precondition: the holder owns the Business lock.');
+
+        // The Services request queues first, then Finish: with the old orders this is exactly the interleaving that
+        // forms the cycle (Services holds Business and wants the onboarding row, Finish holds the onboarding row and
+        // wants Business).
+        $stale = new Process([$php, self::RUNNER, 'services', (string) $customer->user_id, (string) microtime(true), 'Photo Booth Rental'], null, $env);
+        $stale->setTimeout(120)->start();
+        usleep(1500000);
+        $finish = new Process([$php, self::RUNNER, 'complete', (string) $customer->user_id, (string) microtime(true)], null, $env);
+        $finish->setTimeout(120)->start();
+
+        foreach ([$holder, $finish, $stale] as $process) {
+            $process->wait();
+        }
+
+        $this->assertSame('OK', trim($finish->getOutput()), 'Finish completes with no rolled-back (deadlock-retried) attempt: ' . $finish->getErrorOutput());
+        $this->assertSame('OK', trim($stale->getOutput()), 'The stale Services submission succeeds first time, with no deadlock victim or raw exception: ' . $stale->getErrorOutput());
+
+        $onboarding = DB::table('customer_onboardings')->where('customer_id', $customer->user_id)->first();
+        $this->assertSame('completed', $onboarding->status, 'Completed once, and not reopened.');
+        $this->assertSame('finish', $onboarding->current_step, 'The stale request did not move the bookmark back.');
+        $this->assertSame(['business', 'location', 'services', 'website'], json_decode($onboarding->completed_steps, true), 'The stale request did not overwrite the progress record.');
+        $this->assertSame('active', DB::table('businesses')->where('id', $business->id)->value('status'));
+
+        $services = DB::table('business_services')->where('business_id', $business->id)->get();
+        $this->assertCount(1, $services, 'No duplicate Service or slug.');
+        $this->assertSame(1, $services->where('is_primary', 1)->count());
+    }
+
+    public function test_finish_and_a_burst_of_identical_services_submissions_stay_consistent(): void
+    {
+        [$customer, $business] = $this->customerAtFinishStep();
+        $php = (new PhpExecutableFinder())->find() ?: 'php';
+        $env = ['DB_DATABASE' => TestDatabaseSafety::activeTestDatabase(), 'EXPECTED_TEST_DATABASE' => TestDatabaseSafety::activeTestDatabase()];
+        $start = microtime(true) + 6.0;
+
+        $processes = [
+            new Process([$php, self::RUNNER, 'complete', (string) $customer->user_id, (string) $start], null, $env),
+            new Process([$php, self::RUNNER, 'services', (string) $customer->user_id, (string) $start, 'Photo Booth Rental'], null, $env),
+            new Process([$php, self::RUNNER, 'services', (string) $customer->user_id, (string) $start, 'Photo Booth Rental'], null, $env),
+        ];
+
+        foreach ($processes as $process) {
+            $process->setTimeout(120)->start();
+        }
+        foreach ($processes as $process) {
+            $process->wait();
+        }
+
+        $this->assertSame(['OK', 'OK', 'OK'], array_map(fn (Process $p) => trim($p->getOutput()) ?: 'NO-OUTPUT ' . $p->getErrorOutput(), $processes));
+        $this->assertSame('completed', DB::table('customer_onboardings')->where('customer_id', $customer->user_id)->value('status'));
+        $this->assertSame(1, DB::table('business_services')->where('business_id', $business->id)->where('is_primary', 1)->where('status', 'active')->count());
+        $this->assertSame(1, DB::table('business_services')->where('business_id', $business->id)->count());
+    }
+
+    /** A customer with a Business, Location, one Service and "later" answered: ready to press Finish, on a paid plan. */
+    private function customerAtFinishStep(): array
+    {
+        [$customer, $business] = $this->customerAtServicesStep();
+        $manager = app(OnboardingManager::class);
+        $onboarding = \App\Models\CustomerOnboarding::query()->where('customer_id', $customer->user_id)->firstOrFail();
+        $onboarding = $manager->saveServicesStep($onboarding, $customer, [['name' => 'Photo Booth Rental', 'is_primary' => true]]);
+        $manager->saveWebsiteStep($onboarding, $customer, 'later');
+
+        // saveBusinessStep's legacy resolver already assigned the Workspace's plan; the account is usable.
+        return [$customer, $business->fresh()];
     }
 
     /** @return array{0: Customer, 1: Business} */
@@ -124,7 +209,7 @@ class OnboardingServicesConcurrencyTest extends TestCase
         $processes = [];
 
         foreach ($names as $name) {
-            $process = new Process([$php, self::RUNNER, (string) $customer->user_id, (string) $start, $name], null, ['DB_DATABASE' => $database, 'EXPECTED_TEST_DATABASE' => $database]);
+            $process = new Process([$php, self::RUNNER, 'services', (string) $customer->user_id, (string) $start, $name], null, ['DB_DATABASE' => $database, 'EXPECTED_TEST_DATABASE' => $database]);
             $process->setTimeout(120);
             $process->start();
             $processes[] = $process;

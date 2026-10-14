@@ -44,19 +44,10 @@ class HomeLaunchReadinessTest extends TestCase
             'name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US',
         ]);
         $this->primaryService($business);
-        $this->adoptSeoFirstPolicy($customer, $business);
+        $this->adoptSeoFirstPolicy($business);
         $this->authenticateAs($customer);
 
         return [$customer, $business];
-    }
-
-    /** What OnboardingManager::complete() leaves on a Business that finished the SEO-first onboarding. */
-    private function adoptSeoFirstPolicy($customer, Business $business): void
-    {
-        DB::table('customer_onboardings')->insert([
-            'customer_id' => $customer->user_id, 'business_id' => $business->id, 'status' => 'completed', 'current_step' => 'finish',
-            'metadata' => json_encode(['readiness_policy' => 'seo_first_v1']), 'created_at' => now(), 'updated_at' => now(),
-        ]);
     }
 
     private function command($customer): array
@@ -145,7 +136,7 @@ class HomeLaunchReadinessTest extends TestCase
     public function test_a_missing_foundation_is_derived_from_records_and_offers_the_wizard_only_for_it(): void
     {
         [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Bare Booths', 'Bare Account');
-        $this->adoptSeoFirstPolicy($customer, $business);
+        $this->adoptSeoFirstPolicy($business);
         $this->authenticateAs($customer);
 
         $steps = $this->steps($customer);
@@ -155,7 +146,10 @@ class HomeLaunchReadinessTest extends TestCase
         $this->assertSame(route('customer.onboarding.show', ['step' => 'services']), $steps['service']['action']['url']);
 
         // Step flags are irrelevant: a row claiming every step is done changes nothing.
-        DB::table('customer_onboardings')->where('business_id', $business->id)->update(['completed_steps' => json_encode(['business', 'location', 'services', 'website'])]);
+        DB::table('customer_onboardings')->insert([
+            'customer_id' => $customer->user_id, 'business_id' => $business->id, 'status' => 'completed', 'current_step' => 'finish',
+            'completed_steps' => json_encode(['business', 'location', 'services', 'website']), 'created_at' => now(), 'updated_at' => now(),
+        ]);
         $this->assertFalse($this->steps($customer)['service']['done']);
     }
 
@@ -463,7 +457,7 @@ class HomeLaunchReadinessTest extends TestCase
         [$owner, $business, $workspace] = array_merge($this->bareTenant(WorkspacePlanTier::Growth, 'Shared Booths', 'Shared Account'));
         app(BusinessLocationRepository::class)->upsertPrimary($business, ['name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US']);
         $this->primaryService($business);
-        $this->adoptSeoFirstPolicy($owner, $business);
+        $this->adoptSeoFirstPolicy($business);
         app(\App\Library\Entitlement\EntitlementManager::class)->createOrChangeOverride($workspace, \App\Enums\Entitlement\PlatformFeature::Calendar, \App\Enums\Entitlement\WorkspaceEntitlementOverrideState::Deny, $this->platformAdminId(), 'fixture');
 
         $staff = $this->createCustomer();
@@ -490,7 +484,7 @@ class HomeLaunchReadinessTest extends TestCase
         [$owner, $business, $workspace] = array_merge($this->bareTenant(WorkspacePlanTier::Growth, 'Two Sites', 'Two Sites Account'));
         app(BusinessLocationRepository::class)->upsertPrimary($business, ['name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US']);
         $this->primaryService($business);
-        $this->adoptSeoFirstPolicy($owner, $business);
+        $this->adoptSeoFirstPolicy($business);
         // A second, bookable Location that the restricted staff member cannot reach.
         $second = \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
         $typeId = DB::table('booking_types')->insertGetId([
@@ -510,7 +504,7 @@ class HomeLaunchReadinessTest extends TestCase
     public function test_an_unreadable_status_shows_no_false_checkmarks_and_no_growth_claim(): void
     {
         [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Unread Booths', 'Unread Account');
-        $this->adoptSeoFirstPolicy($customer, $business);
+        $this->adoptSeoFirstPolicy($business);
         $this->authenticateAs($customer);
 
         $listener = function ($q) {
@@ -580,21 +574,6 @@ class HomeLaunchReadinessTest extends TestCase
         $this->assertStringContainsString('data-home-state="broken"', $this->get(route('user.home'))->assertOk()->getContent());
     }
 
-    public function test_only_a_business_that_completed_the_new_onboarding_follows_the_new_policy(): void
-    {
-        $user = $this->createCustomer();
-        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Policy Booths', 'Policy Account');
-        $status = fn () => app(\App\Library\Dashboard\DashboardStatusReader::class)->forBusiness($business->id)->readinessPolicy;
-        $this->assertNull($status(), 'No onboarding: legacy.');
-
-        DB::table('customer_onboardings')->insert(['customer_id' => $customer->user_id, 'business_id' => $business->id, 'status' => 'completed', 'current_step' => 'complete', 'created_at' => now(), 'updated_at' => now()]);
-        $this->assertNull($status(), 'Previously completed legacy onboarding stays legacy.');
-
-        $row = \App\Models\CustomerOnboarding::query()->where('business_id', $business->id)->first();
-        app(\App\Repositories\Contracts\CustomerOnboardingRepository::class)->recordReadinessPolicy($row, \App\Library\Business\OnboardingManager::READINESS_POLICY);
-        $this->assertSame('seo_first_v1', $status());
-    }
-
     // ── cost and isolation ───────────────────────────────────────────────
 
     public function test_the_new_facts_ride_the_existing_status_statement_and_add_no_query(): void
@@ -651,7 +630,7 @@ class HomeLaunchReadinessTest extends TestCase
         $this->audit($businessA);
 
         [$customerB, $businessB] = $this->bareTenant(WorkspacePlanTier::Growth, 'Bravo Booths', 'Bravo Account');
-        $this->adoptSeoFirstPolicy($customerB, $businessB);
+        $this->adoptSeoFirstPolicy($businessB);
 
         $this->authenticateAs($customerB);
         $home = $this->command($customerB);

@@ -31,13 +31,6 @@ interface CustomerOnboardingRepository extends BaseRepository
      * onboarding's scoped metadata. The choice is state about onboarding only:
      * the Business's website fields are written by their own owners.
      */
-    /**
-     * Durably marks which Home readiness policy governs the Business this onboarding completed. Written once, at
-     * completion, so a Business that finished the SEO-first onboarding is distinguishable from an established one
-     * that predates it. Idempotent.
-     */
-    public function recordReadinessPolicy(CustomerOnboarding $onboarding, string $policy): CustomerOnboarding;
-
     public function recordWebsiteChoice(CustomerOnboarding $onboarding, string $choice): CustomerOnboarding;
 
     /**

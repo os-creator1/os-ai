@@ -56,6 +56,9 @@ class OnboardingManager
     public const WEBSITE_CHOICES = ['build', 'existing', 'later'];
 
     /** Stamped on an onboarding at completion; see HomeSetupJourney for what the policy means. */
+    /** Bounded retry for a transaction chosen as a deadlock victim; every closure re-reads under its locks and its events are after-commit. */
+    private const TRANSACTION_ATTEMPTS = 3;
+
     public const READINESS_POLICY = 'seo_first_v1';
 
     public function __construct(
@@ -171,6 +174,31 @@ class OnboardingManager
     }
 
     /**
+     * The ONE lock order for every onboarding transaction: the onboarding row first, then (where the step needs
+     * it) the Workspace, then the Business -- the order complete() has always used and the Workspace -> Business order
+     * the rest of the application relies on. Taking the onboarding row first also serialises overlapping submissions
+     * of the same customer, and returns a FRESH copy: a request that raced a completion would otherwise write its
+     * stale step list and bookmark over the completed record.
+     *
+     * @throws InvalidArgumentException if the onboarding row no longer exists
+     * @throws AuthorizationException if it belongs to someone else
+     */
+    private function lockOnboarding(CustomerOnboarding $onboarding): CustomerOnboarding
+    {
+        $fresh = $this->onboardingRepository->findForUpdate((int) $onboarding->id);
+
+        if ($fresh === null) {
+            throw new InvalidArgumentException('That onboarding no longer exists.');
+        }
+
+        if ((int) $fresh->customer_id !== (int) $onboarding->customer_id) {
+            throw new AuthorizationException('This onboarding record does not belong to the given customer.');
+        }
+
+        return $fresh;
+    }
+
+    /**
      * The step the customer is actually on. The stored bookmark is trusted
      * for the current steps; a row written by the earlier eight-step wizard
      * (goals / assets / analysis / results / complete) is resolved from the
@@ -233,6 +261,12 @@ class OnboardingManager
      */
     public function completeStep(CustomerOnboarding $onboarding, OnboardingStep $completed, OnboardingStep $next): CustomerOnboarding
     {
+        // A finished onboarding is never reopened or overwritten by a step save (for example a stale form that was
+        // submitted just as Finish completed): the data the step wrote stands, the record of progress does not move.
+        if ($onboarding->status === OnboardingStatus::Completed) {
+            return $onboarding;
+        }
+
         $this->assertValidStepCompletion($onboarding, $completed, $next);
 
         $currentStep = $this->currentStep($onboarding);
@@ -267,6 +301,7 @@ class OnboardingManager
         $this->assertOwnership($customer, $onboarding);
 
         return DB::transaction(function () use ($onboarding, $customer, $attributes) {
+            $onboarding = $this->lockOnboarding($onboarding);
             $existingBusiness = null;
 
             if ($onboarding->business_id !== null) {
@@ -295,7 +330,7 @@ class OnboardingManager
             }
 
             return $this->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
-        });
+        }, self::TRANSACTION_ATTEMPTS);
     }
 
     /**
@@ -307,12 +342,13 @@ class OnboardingManager
         $this->assertOwnership($customer, $onboarding);
 
         return DB::transaction(function () use ($onboarding, $customer, $attributes) {
+            $onboarding = $this->lockOnboarding($onboarding);
             $business = $this->resolveOwnedBusiness($onboarding, $customer);
 
             $this->businessManager->upsertPrimaryLocation($customer, $business, $attributes);
 
             return $this->completeStep($onboarding, OnboardingStep::Location, OnboardingStep::Services);
-        });
+        }, self::TRANSACTION_ATTEMPTS);
     }
 
     /**
@@ -336,10 +372,12 @@ class OnboardingManager
         $this->assertOwnership($customer, $onboarding);
 
         return DB::transaction(function () use ($onboarding, $customer, $services) {
-            // The Business row is locked FIRST (the order BusinessLocationManager uses), before any read, so a
-            // concurrent identical submission waits here and then reconciles against the committed services of the
-            // first one instead of racing it into a duplicate-slug failure. Nothing may be read before this line:
-            // a read would pin a stale snapshot.
+            // Lock order (see lockOnboarding()): the onboarding row, then the Business -- the order complete() takes
+            // them in, so a Services save and Finish can never wait on each other in a cycle. A concurrent identical
+            // submission waits on the first lock and then reconciles against the first one's committed services
+            // instead of racing it into a duplicate-slug failure. Nothing may be read before these two locks: a read
+            // would pin a stale snapshot.
+            $onboarding = $this->lockOnboarding($onboarding);
             $locked = $onboarding->business_id === null ? null : $this->businessRepository->findForUpdate((int) $onboarding->business_id);
 
             if ($locked === null) {
@@ -365,7 +403,7 @@ class OnboardingManager
             }
 
             return $this->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Website);
-        });
+        }, self::TRANSACTION_ATTEMPTS);
     }
 
     /**
@@ -397,6 +435,7 @@ class OnboardingManager
         }
 
         return DB::transaction(function () use ($onboarding, $customer, $choice, $websiteUrl) {
+            $onboarding = $this->lockOnboarding($onboarding);
             $business = $this->resolveOwnedBusiness($onboarding, $customer);
             $modes = app(WebsiteModeManager::class);
 
@@ -426,7 +465,7 @@ class OnboardingManager
             $onboarding = $this->onboardingRepository->recordWebsiteChoice($onboarding, $choice);
 
             return $this->completeStep($onboarding, OnboardingStep::Website, OnboardingStep::Finish);
-        });
+        }, self::TRANSACTION_ATTEMPTS);
     }
 
     /**
@@ -567,19 +606,22 @@ class OnboardingManager
             $this->assertCompletionPrerequisites($locked, $customer);
 
             $updated = $this->onboardingRepository->complete($locked);
-            $updated = $this->onboardingRepository->recordReadinessPolicy($updated, self::READINESS_POLICY);
 
             // A finished onboarding activates the Draft Business it was
             // completing, through the one activation seam.
-            $this->businessManager->activateForCompletedOnboarding(
-                $customer,
-                $this->resolveOwnedBusiness($updated, $customer),
-            );
+            $business = $this->resolveOwnedBusiness($updated, $customer);
+
+            $this->businessManager->activateForCompletedOnboarding($customer, $business);
+
+            // A Draft Business that predates the policy and finished the new onboarding now follows it. Written to the
+            // BUSINESS (NULL -> policy only), so it is durable, independent of the customer, and never applied to an
+            // established Business that merely exists.
+            $this->businessRepository->adoptReadinessPolicy($business);
 
             CustomerOnboardingCompleted::dispatch($updated->id, $customer->user_id);
 
             return $updated;
-        });
+        }, self::TRANSACTION_ATTEMPTS);
     }
 
     /**

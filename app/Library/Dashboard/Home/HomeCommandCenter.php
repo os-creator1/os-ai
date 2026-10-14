@@ -468,7 +468,14 @@ final class HomeCommandCenter
         $calendar = $booking !== null;
         $firstLoc = $booking['firstLocationUid'] ?? null;
         $owns = ! $context->isViewingAsClient() && (int) $business->customer_id === (int) $user->id;
-        $onboardingOn = $owns && (bool) config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show');
+        // The wizard edits the customer's ONE onboarding Business. It is offered for a missing foundation step only when it
+        // is bound to THIS Business; a secondary Business is edited through its own scoped settings, never through the
+        // wizard of the Business the customer originally onboarded.
+        $wizard = $owns && $status->onboardingBound && (bool) config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show');
+        $settings = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.settings.show', $scoped, ['access_backend']);
+        $primaryDetails = $owns && $business->is_primary
+            ? $this->links->url($context, $user, $entitlements, 'customer.business.edit', [], ['access_backend'])
+            : null;
 
         $urls = [
             'locations' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.locations.index', $scoped, ['access_backend']),
@@ -476,9 +483,10 @@ final class HomeCommandCenter
             'fixBooking' => $firstLoc === null ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.booking-types.index', array_merge($scoped, [$firstLoc]), ['access_backend'], 'calendar'),
             'website' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.website.show', $scoped, ['website'], 'website_generation'),
             'forms' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.forms.index', $scoped, ['forms'], 'forms'),
-            // The wizard already holds these answers; it is only offered for one that is genuinely missing.
-            'business' => $onboardingOn ? route('customer.onboarding.show', ['step' => 'business']) : null,
-            'service' => $onboardingOn ? route('customer.onboarding.show', ['step' => 'services']) : null,
+            'business' => $wizard ? route('customer.onboarding.show', ['step' => 'business']) : ($primaryDetails ?? $settings),
+            'businessLabel' => $wizard ? 'Add details' : 'Open settings',
+            'service' => $wizard ? route('customer.onboarding.show', ['step' => 'services']) : $settings,
+            'serviceLabel' => $wizard ? 'Add service' : 'Open settings',
         ];
 
         // The website source: the stored choice, or "hosted" for a Business that already owns a site.

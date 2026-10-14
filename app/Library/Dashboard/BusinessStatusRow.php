@@ -42,10 +42,12 @@ final class BusinessStatusRow
         // Business-wide count of ACTIVE Locations, so a caller can tell whether an actor-scoped Calendar summary
         // covers every Location or only the ones that actor may reach.
         public readonly int $activeLocationCount = 0,
-        // Which Home readiness policy governs this Business: 'seo_first_v1' (new onboarding) or null (legacy).
+        // Which Home readiness policy governs this Business (businesses.readiness_policy): 'seo_first_v1' or null (legacy).
         public readonly ?string $readinessPolicy = null,
         // False for a placeholder row: nothing was actually read, so no readiness fact may be trusted.
         public readonly bool $known = true,
+        // True when the customer's onboarding wizard is bound to this very Business, so its steps edit THIS Business.
+        public readonly bool $onboardingBound = false,
     ) {
     }
 

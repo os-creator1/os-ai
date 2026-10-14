@@ -142,6 +142,7 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertTrue((bool) $onboarding->is_required);
         $this->assertSame(OnboardingStep::Business, $onboarding->current_step);
         $this->assertSame(BusinessStatus::Draft, $business->fresh()->status, 'Nothing activates before onboarding completes.');
+        $this->assertSame('seo_first_v1', $business->fresh()->readiness_policy, 'The signup Business follows the SEO-first readiness policy from creation.');
     }
 
     // B ----------------------------------------------------------------

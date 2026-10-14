@@ -37,21 +37,6 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
         return $this->query()->whereKey($id)->lockForUpdate()->first();
     }
 
-    public function recordReadinessPolicy(CustomerOnboarding $onboarding, string $policy): CustomerOnboarding
-    {
-        $metadata = $onboarding->metadata ?? [];
-
-        if (($metadata['readiness_policy'] ?? null) === $policy) {
-            return $onboarding;
-        }
-
-        $metadata['readiness_policy'] = $policy;
-        $onboarding->metadata = $metadata;
-        $onboarding->save();
-
-        return $onboarding;
-    }
-
     public function recordWebsiteChoice(CustomerOnboarding $onboarding, string $choice): CustomerOnboarding
     {
         $metadata = $onboarding->metadata ?? [];

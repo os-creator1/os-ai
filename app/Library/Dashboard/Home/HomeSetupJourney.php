@@ -91,7 +91,7 @@ final class HomeSetupJourney
 
         $steps[] = $identity
             ? $this->step('business', 'Business details', 'Your business name and niche are saved.', true, true, null, '')
-            : $this->step('business', 'Add your business details', 'MotionGrove needs your business name and what kind of business it is.', false, true, $urls['business'] ?? null, 'Add details');
+            : $this->step('business', 'Add your business details', 'MotionGrove needs your business name and what kind of business it is.', false, true, $urls['business'] ?? null, $urls['businessLabel'] ?? 'Add details');
 
         $steps[] = $this->step(
             'location',
@@ -110,7 +110,7 @@ final class HomeSetupJourney
             $service,
             true,
             $urls['service'] ?? null,
-            'Add service',
+            $urls['serviceLabel'] ?? 'Add service',
         );
 
         $foundation = $identity && $facts['hasLocation'] && $service;

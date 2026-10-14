@@ -6,18 +6,23 @@ which fields happen to be missing.
 
 ## Which policy governs a Business
 
-| Business | Policy |
-| --- | --- |
-| Completed the SEO-first onboarding (Business → Location → Services → Website → Finish), including a partial legacy onboarding finished in the new flow | `seo_first_v1` |
-| Established before the policy: completed the earlier onboarding, or never had one | legacy |
+The policy is a fact of the **Business**: `businesses.readiness_policy` (nullable, additive, no backfill).
 
-`OnboardingManager::complete()` writes `readiness_policy = seo_first_v1` into `customer_onboardings.metadata`, once, in the
-completion transaction. Nothing else writes it, so visiting `/onboarding` never reclassifies an established Business and a
-legacy completed onboarding is never retro-stamped. The status statement Home already issues reads it with the other
-readiness facts (no extra query).
+| Business | `readiness_policy` | Policy |
+| --- | --- | --- |
+| Created from now on, by any path (signup, onboarding, Workspace management, Agency provisioning), first or secondary, in any Workspace | `seo_first_v1` | SEO-first |
+| A Draft Business that predates the column and finishes the SEO-first onboarding | `NULL` → `seo_first_v1` at completion | SEO-first from then on |
+| Established before the policy (completed the earlier onboarding, or never onboarded) | `NULL` | legacy |
 
-**Legacy Businesses keep exactly the Home-stage eligibility they always had**: Calendar setup (a Location, a booking type,
-bookability) is essential when Calendar is in play and the website is a non-essential growth step. A broken integration or
+There is exactly one creation seam, `BusinessRepository::createForCustomerInWorkspace()`, and it writes the marker, so no creation
+path can forget it and none duplicates the logic. The only other writer is `OnboardingManager::complete()`, which calls
+`BusinessRepository::adoptReadinessPolicy()` (NULL → policy only) in the completion transaction. Visiting `/onboarding`, completing a
+legacy onboarding again, moving a Business to another Workspace, or a different user acting on it never changes the column, so
+the policy is durable and independent of the customer who created the Business. Home reads it inside the status statement it
+already issues (no extra query). The one-per-customer `customer_onboardings` row carries no policy.
+
+**Legacy Businesses keep exactly the Home-stage eligibility they always had**: Calendar setup (a Location, a booking
+type, bookability) is essential when Calendar is in play and the website is a non-essential growth step. A broken integration or
 critical attention item keeps its treatment (a legacy Business with a revoked Google connection stays in the *broken* state).
 
 ## `seo_first_v1`: foundation + reach
@@ -48,6 +53,14 @@ actor-scoped (the viewer's own Locations) and is display-only; the Business-wide
 name or reason, and is read only when needed (no other reach evidence) and only when the actor's summary does not already cover
 every active Location.
 
+## Setup links belong to the Business being viewed
+
+A missing foundation step opens the editor of **that** Business. The onboarding wizard is offered only when the customer's
+one onboarding is bound to this very Business (so it edits it) and the viewer is its owner; a secondary Business, or a
+viewer who is not the owner, is sent to that Business's own scoped Settings (and Locations). The primary Business's details
+page is used for the primary Business only. Every link passes `DashboardLinkGate` (permission, view-as and entitlement).
+There is no per-Business Service editor yet: for a secondary Business a missing primary Service points to its Settings.
+
 ## Unknown is not ready
 
 If the status could not be read, Home shows a neutral "Setup progress could not be loaded" notice. No step is marked
@@ -64,5 +77,6 @@ opportunities, rankings and activity come from their own modules' measurements.
 The readiness facts are `EXISTS` / scalar probes inside the single `DashboardStatusReader` statement, each on an existing index
 (`business_locations (business_id,is_primary)` and `(business_id,lifecycle_state)`, `business_services (business_id,is_primary)`,
 `forms (business_id,lifecycle_state)`, `form_deployments (form_id,…)` unique, `form_versions (form_id,version)` unique,
-`website_forms (website_id)`, `external_site_crawls (business_id,id)`, `customer_onboardings (business_id)`). No migration or
-index was needed.
+`website_forms (website_id)`, `external_site_crawls (business_id,id)`, `customer_onboardings (business_id)`); the policy itself is a column of the
+Business row the statement already reads. The only schema change is the additive nullable `businesses.readiness_policy` (migration
+`2026_11_21_100001`, reversible, no backfill, no index: it is never a filter). No index was needed.

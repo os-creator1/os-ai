@@ -120,7 +120,9 @@ final class DashboardStatusReader
             // against the Business's CURRENT address; an old address's check must never validate a new one.
             ->selectRaw("(SELECT ec.start_url FROM external_site_crawls ec WHERE ec.business_id = b.id AND ec.status = ? AND ec.pages_fetched > 0 ORDER BY ec.id DESC LIMIT 1) AS ext_audit_url", [ExternalSiteCrawl::COMPLETED])
             ->selectRaw("(SELECT ec2.finished_at FROM external_site_crawls ec2 WHERE ec2.business_id = b.id AND ec2.status = ? AND ec2.pages_fetched > 0 ORDER BY ec2.id DESC LIMIT 1) AS ext_audit_finished_at", [ExternalSiteCrawl::COMPLETED])
-            ->selectRaw("(SELECT JSON_UNQUOTE(JSON_EXTRACT(co.metadata, '$.readiness_policy')) FROM customer_onboardings co WHERE co.business_id = b.id ORDER BY co.id DESC LIMIT 1) AS readiness_policy")
+            // Whether the customer's (one) onboarding wizard is bound to THIS Business, i.e. whether the wizard can edit it.
+            ->selectRaw('EXISTS (SELECT 1 FROM customer_onboardings co WHERE co.business_id = b.id AND co.customer_id = b.customer_id) AS onboarding_bound')
+            ->addSelect('b.readiness_policy')
             ->addSelect('b.website_url as business_website_url')
             ->selectSub(
                 DB::table('business_google_locations as l')
@@ -165,6 +167,7 @@ final class DashboardStatusReader
                 hasCompletedExternalAudit: $this->auditMatchesCurrentSite($row->business_website_url, $row->ext_audit_url, $row->ext_audit_finished_at),
                 activeLocationCount: (int) $row->active_location_count,
                 readinessPolicy: is_string($row->readiness_policy) && $row->readiness_policy !== '' ? $row->readiness_policy : null,
+                onboardingBound: (bool) $row->onboarding_bound,
             );
         }
 
