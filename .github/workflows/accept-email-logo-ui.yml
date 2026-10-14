@@ -1,0 +1,108 @@
+name: Acceptance fix-platform-email-logo (temporary, branch-only)
+
+# Temporary and isolated: runs only on pushes to the ci/accept-email-logo-ui branch, never on
+# pull_request, so it cannot touch the AI Subscription gates or the autonomous loop. Each job has
+# its OWN disposable MySQL 8 service container (no shared or real database). Not for merging.
+on:
+  push:
+    branches: [ci/accept-email-logo-ui]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_ENV: testing
+  APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  DB_CONNECTION: mysql
+  DB_HOST: 127.0.0.1
+  DB_PORT: "3306"
+  DB_DATABASE: ultimatesms_testing
+  DB_USERNAME: ultimatesms_test
+  DB_PASSWORD: Choose-A-Local-Test-Password
+  EXPECTED_TEST_DATABASE: ultimatesms_testing
+
+jobs:
+  head:
+    name: Branch under test
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    outputs:
+      failed: ${{ steps.run.outputs.failed }}
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - name: Runner scripts (this CI branch)
+        uses: actions/checkout@v4
+        with: { path: ci }
+      - name: Code under test (fix/platform-email-logo)
+        uses: actions/checkout@v4
+        with: { ref: fix/platform-email-logo, path: app }
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, bcmath, pdo_mysql, intl, xml, curl, zip, gd, dom
+          coverage: none
+          tools: composer:v2
+      - name: Install locked dependencies
+        working-directory: app
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Prove the database is the disposable one
+        working-directory: app
+        run: |
+          git rev-parse HEAD
+          php artisan config:clear
+          php artisan db:show | head -20
+          [ "$DB_HOST" = "127.0.0.1" ] && [ "$DB_DATABASE" = "ultimatesms_testing" ]
+      - name: Run suites sequentially
+        id: run
+        run: bash ci/.ci-accept/run-suites.sh "$GITHUB_WORKSPACE/app"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: head-logs, path: out }
+
+  base:
+    name: Staging baseline (only the suites that failed above)
+    needs: head
+    if: needs.head.outputs.failed != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: ci }
+      - name: Original staging (3a5296b6)
+        uses: actions/checkout@v4
+        with: { ref: 3a5296b671de655b2578ccff3a444463520f75d0, path: app }
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, bcmath, pdo_mysql, intl, xml, curl, zip, gd, dom
+          coverage: none
+          tools: composer:v2
+      - working-directory: app
+        run: composer install --no-interaction --prefer-dist --no-progress && php artisan config:clear
+      - name: Re-run the failed suites on staging
+        run: bash ci/.ci-accept/run-suites.sh "$GITHUB_WORKSPACE/app" ${{ needs.head.outputs.failed }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: base-logs, path: out }
