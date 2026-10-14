@@ -162,6 +162,34 @@ class CustomFieldsHttpTest extends TestCase
         $this->get(route('customer.workspaces.businesses.custom-fields.index', $this->args($workspaceA, $businessA)))->assertOk()->assertDontSee('Secret');
     }
 
+    public function test_the_redesigned_page_shows_real_counts_tokens_and_keeps_archived_fields_manageable(): void
+    {
+        [$customer, $business, $workspace] = $this->crmTenant();
+        $this->authenticateAs($customer);
+        $url = route('customer.workspaces.businesses.custom-fields.index', $this->args($workspace, $business));
+
+        $empty = $this->get($url)->assertOk();
+        $empty->assertSee('data-role="custom-fields-empty"', false);
+        $empty->assertSee('Back to Settings');
+        $empty->assertSee('Active · <span data-role="custom-field-count-active">0</span>', false);
+
+        $date = $this->manager()->create($business, 'Event date', 'date');
+        $this->manager()->create($business, 'Venue name', 'text');
+        $this->manager()->create($business, 'Guest count', 'number');
+        $this->manager()->archive($business, $date);
+
+        $page = $this->get($url)->assertOk();
+        $page->assertSee('Active · <span data-role="custom-field-count-active">2</span>', false);
+        $page->assertSee('Archived · <span data-role="custom-field-count-archived">1</span>', false);
+        $page->assertSee('data-copy="{{contact.venue_name}}"', false);
+        $page->assertSee('data-copy="{{contact.event_date}}"', false);
+        $page->assertSee('data-role="custom-field-restore"', false);
+        $page->assertSee('data-role="custom-field-archive"', false);
+        $page->assertSee('data-role="custom-field-move-down"', false);
+        $page->assertSee('Renaming is safe.');
+        $this->assertSame(1, substr_count($page->getContent(), 'Custom fields</h1>'));
+    }
+
     public function test_view_only_staff_see_the_list_but_cannot_change_it(): void
     {
         [, $business, $workspace] = $this->crmTenant();
@@ -172,6 +200,9 @@ class CustomFieldsHttpTest extends TestCase
         $page = $this->get(route('customer.workspaces.businesses.custom-fields.index', $this->args($workspace, $business)))->assertOk();
         $page->assertSee('Venue');
         $page->assertDontSee('data-role="custom-field-add"', false);
+        $page->assertDontSee('data-role="custom-field-edit"', false);
+        $page->assertDontSee('data-role="custom-field-move-up"', false);
+        $page->assertDontSee('data-role="custom-field-archive"', false);
 
         $this->post(route('customer.workspaces.businesses.custom-fields.store', $this->args($workspace, $business)), ['label' => 'New', 'type' => 'text'])->assertStatus(401);
         $this->post(route('customer.workspaces.businesses.custom-fields.archive', $this->args($workspace, $business, [$field->uid])))->assertStatus(401);

@@ -6,6 +6,7 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Calendar\CalendarScheduleService;
 use App\Library\Contacts\ContactDirectory;
 use App\Library\Crm\CrmLocationScope;
 use App\Library\CustomFields\CustomFieldRuleException;
@@ -99,9 +100,13 @@ class ContactDirectoryController extends CustomerBaseController
         $contact = $this->directory->findForBusiness($business, $contactUid, (int) Auth::id());
         abort_if($contact === null, 404);
 
+        $canConverse = $this->canSeeConversations($workspace, $business);
+        $profile = $this->directory->profile($business, $contact, $canConverse);
+
         return view('customer.people.show', [
             'contactUid' => (string) $contact->uid,
-            'profile' => $this->directory->profile($business, $contact, $this->canSeeConversations($workspace, $business)),
+            'profile' => $profile,
+            'actions' => $this->profileActions($workspace, $business, $contact, $profile, $canConverse),
             // Business-defined Custom Fields: only shown for a Contact whose
             // Location the actor may access (the existing Contact Location ACL).
             'customFields' => $this->locationAccessible($contact)
@@ -133,6 +138,49 @@ class ContactDirectoryController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contactUid])
             ->with('flash_success', 'Custom fields saved.');
+    }
+
+    /**
+     * The profile's header actions, each only when it has a real, authorized
+     * destination (otherwise null and the view shows nothing):
+     *  - messageUrl: the existing Inbox / new-conversation screens. They cannot be
+     *    pre-filled with this Contact's number today, so this opens the screen only.
+     *  - bookUrl: the existing "New appointment" screen at the Contact's Location (or
+     *    the actor's only Location) with the Contact pre-searched via `q`; the Contact
+     *    still has to be chosen there because that screen has no contact preselection.
+     *
+     * @return array{messageUrl: ?string, messageIsInbox: bool, bookUrl: ?string}
+     */
+    private function profileActions(Workspace $workspace, Business $business, Contacts $contact, array $profile, bool $canConverse): array
+    {
+        $scope = [$workspace->uid, $business->uid];
+
+        $messageUrl = null;
+
+        if ($canConverse) {
+            $messageUrl = route('customer.workspaces.businesses.conversations.' . ($profile['conversation'] !== null ? 'index' : 'new'), $scope);
+        }
+
+        $bookUrl = null;
+
+        try {
+            $calendar = $this->entitlementManager->decide($workspace, $business, PlatformFeature::Calendar->value, (int) Auth::id())->allowed;
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            $calendar = false;
+        }
+
+        if ($calendar) {
+            $locations = app(CalendarScheduleService::class)->accessibleLocations($business, (int) Auth::id());
+            $location = $contact->location_id !== null
+                ? $locations->firstWhere('id', (int) $contact->location_id)
+                : ($locations->count() === 1 ? $locations->first() : null);
+
+            if ($location !== null) {
+                $bookUrl = route('customer.workspaces.businesses.calendar.appointments.create', [...$scope, $location->uid]) . '?q=' . urlencode((string) $profile['phone']);
+            }
+        }
+
+        return ['messageUrl' => $messageUrl, 'messageIsInbox' => $profile['conversation'] !== null, 'bookUrl' => $bookUrl];
     }
 
     /** A Contact with no Location is governed by Business access alone; otherwise the Location must be the actor's. */
