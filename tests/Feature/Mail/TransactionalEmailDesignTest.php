@@ -139,6 +139,9 @@ class TransactionalEmailDesignTest extends TestCase
     public function test_platform_email_uses_the_owner_configured_logo_as_absolute_https_raster(): void
     {
         config(['app.url' => 'https://app.example.test', 'app.name' => 'MotionGrove', 'app.logo' => 'images/branding/logo/owner-logo.png']);
+        @mkdir(public_path('images/branding/logo'), 0755, true);
+        file_put_contents(public_path('images/branding/logo/owner-logo.png'), 'png');
+        $this->beforeApplicationDestroyed(fn () => @unlink(public_path('images/branding/logo/owner-logo.png')));
 
         $url = MailBrand::platformLogoUrl();
         $this->assertSame('https://app.example.test/images/branding/logo/owner-logo.png', $url);
@@ -174,6 +177,13 @@ class TransactionalEmailDesignTest extends TestCase
             @unlink(public_path($svg));
             @unlink(public_path('images/branding/logo/zz-mail-test.png'));
         }
+    }
+
+    public function test_a_missing_logo_file_is_never_referenced(): void
+    {
+        config(['app.url' => 'https://app.example.test', 'app.logo' => 'images/branding/logo/does-not-exist.png']);
+        $this->assertNull(MailBrand::platformLogoUrl());
+        $this->assertStringNotContainsString('<img', $this->platformHtml());
     }
 
     public function test_bundled_default_logo_is_never_the_platform_email_identity(): void

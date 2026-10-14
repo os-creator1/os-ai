@@ -122,14 +122,18 @@ final class MailBrand
             return null;
         }
 
-        if (! preg_match('/\.(png|jpe?g|gif)$/i', $path)) {
-            if (! preg_match('/\.svg$/i', $path) || str_contains($path, '..')) {
+        // An owner logo is a relative public path written by Platform Settings. Only a file that
+        // really exists is ever referenced; an SVG is replaced by an existing same-named PNG.
+        if (! preg_match('#^https?://#i', $path)) {
+            if (str_contains($path, '..')) {
                 return null;
             }
 
-            $path = substr($path, 0, -4) . '.png';
+            if (preg_match('/\.svg$/i', $path)) {
+                $path = substr($path, 0, -4) . '.png';
+            }
 
-            if (! is_file(public_path($path))) {
+            if (! preg_match('/\.(png|jpe?g|gif)$/i', $path) || ! is_file(public_path($path))) {
                 return null;
             }
         }
