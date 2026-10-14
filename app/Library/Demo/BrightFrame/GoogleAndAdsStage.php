@@ -2,6 +2,10 @@
 
 namespace App\Library\Demo\BrightFrame;
 
+use App\Library\Acquisition\AcquisitionPurposeManager;
+use App\Models\AcquisitionPurpose;
+use App\Models\GoogleAdsCampaign;
+use App\Models\MetaAdsCampaign;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -16,11 +20,37 @@ use Illuminate\Support\Str;
  */
 final class GoogleAndAdsStage implements DemoStage
 {
+    public function __construct(private readonly AcquisitionPurposeManager $purposes)
+    {
+    }
+
     public function run(DemoContext $context): void
     {
         $this->businessProfile($context);
         $this->googleAds($context);
         $this->metaAds($context);
+        $this->goal($context);
+    }
+
+    /** One ad goal ("Book a photo booth event") assigned to every campaign, so Ads shows judged results rather than a setup prompt. */
+    private function goal(DemoContext $context): void
+    {
+        $business = $context->business;
+        $purpose = AcquisitionPurpose::query()->where('business_id', $business->id)->where('name', 'Book a photo booth event')->first();
+
+        if ($purpose === null) {
+            $purpose = $this->purposes->createManual($business, 'Book a photo booth event', (int) $context->refs['pipeline']->id);
+            $this->purposes->saveEconomics($business, $purpose, ['answers' => [
+                'qualified_to_customer_pct' => 28, 'target_cac' => 180, 'hard_cac' => 260, 'target_qualified_cpl' => 38, 'hard_cpl' => 60,
+            ]]);
+        }
+
+        foreach (GoogleAdsCampaign::query()->where('business_id', $business->id)->whereNull('acquisition_purpose_id')->get() as $campaign) {
+            $this->purposes->assignCampaign($business, 'google', $campaign->uid, $purpose->uid);
+        }
+        foreach (MetaAdsCampaign::query()->where('business_id', $business->id)->whereNull('acquisition_purpose_id')->get() as $campaign) {
+            $this->purposes->assignCampaign($business, 'meta', $campaign->uid, $purpose->uid);
+        }
     }
 
     private function uuid(): string
@@ -98,7 +128,7 @@ final class GoogleAndAdsStage implements DemoStage
             'uid' => $this->uuid(), 'business_id' => $business->id, 'business_google_connection_id' => $connectionId,
             'customer_id' => '5550100142', 'descriptive_name' => 'SIMULATED DEMO: BrightFrame Search Ads', 'currency_code' => 'USD',
             'time_zone' => BrightFrameData::TIMEZONE, 'is_test_account' => true, 'selected_at' => $now, 'selected_by_user_id' => $context->user->id,
-            'monthly_budget_target_micros' => 2400 * 1_000_000, 'target_cpl_micros' => 38 * 1_000_000,
+            'monthly_budget_target_micros' => 3200 * 1_000_000, 'target_cpl_micros' => 38 * 1_000_000,
             'last_sync_started_at' => $now->copy()->subHours(7), 'last_successful_sync_at' => $now->copy()->subHours(7), 'data_through_date' => $through,
             'created_at' => $now, 'updated_at' => $now,
         ]);

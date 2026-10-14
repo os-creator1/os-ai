@@ -90,7 +90,14 @@ final class CalendarStage implements DemoStage
 
         foreach (self::APPOINTMENTS as [$contactIndex, $typeIndex, $dayOffset, $hour, $minute, $status, $dealTitle]) {
             $type = $types[$typeIndex];
-            $start = $context->daysFromNow($dayOffset, $hour, $minute);
+            // Keep every booking inside the weekly hours set above: no Sundays, Saturdays only 10:00-14:00.
+            $day = $context->now->setTimezone($context->business->timezone)->addDays($dayOffset);
+            if ($day->dayOfWeekIso === 7) {
+                $dayOffset++;
+            } elseif ($day->dayOfWeekIso === 6) {
+                [$hour, $minute] = [11, 0];
+            }
+            $start = $context->localTime($dayOffset, $hour, $minute);
 
             $exists = Appointment::query()
                 ->where('business_location_id', $location->id)

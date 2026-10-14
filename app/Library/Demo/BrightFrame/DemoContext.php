@@ -43,6 +43,15 @@ final class DemoContext
         $this->report[$key] = $value;
     }
 
+    /**
+     * A wall-clock time in the BUSINESS's timezone, `$days` from today, returned in the application
+     * timezone, which is what the database stores. Used for anything the UI shows as a local time.
+     */
+    public function localTime(int $days, int $hour, int $minute = 0): CarbonImmutable
+    {
+        return $this->now->setTimezone($this->business->timezone)->addDays($days)->setTime($hour, $minute)->setTimezone(config('app.timezone'));
+    }
+
     /** A moment relative to the provisioning day, so the demo always looks current. */
     public function daysFromNow(int $days, int $hour = 10, int $minute = 0): CarbonImmutable
     {

@@ -5,6 +5,8 @@ namespace App\Library\Demo\BrightFrame;
 use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Website\Design\WebsiteLookService;
 use App\Library\Website\Gallery\WebsiteGalleryManager;
+use App\Library\Website\Media\ImageVariants;
+use App\Library\Website\Media\WebsiteMediaPayload;
 use App\Library\Website\WebsiteAssetUploadService;
 use App\Library\Website\WebsiteDraftPageService;
 use App\Library\Website\WebsitePublisher;
@@ -168,15 +170,43 @@ final class WebsiteStage implements DemoStage
     {
         $destination = public_path($asset->path);
 
-        if (! is_file($destination)) {
-            @mkdir(dirname($destination), 0755, true);
-            copy($source, $destination);
+        if (is_file($destination)) {
+            return;
         }
+
+        @mkdir(dirname($destination), 0755, true);
+        copy($source, $destination);
+
+        // The responsive WebP variants sit beside the original and are lost with it.
+        $purpose = $asset->purpose instanceof WebsiteAssetPurpose
+            ? $asset->purpose
+            : (WebsiteAssetPurpose::tryFrom((string) $asset->purpose) ?? WebsiteAssetPurpose::Gallery);
+        app(ImageVariants::class)->generate($asset->path, WebsiteMediaPayload::stepsFor($purpose));
+    }
+
+    /** MySQL's JSON type reorders object keys, so compare structure, never key order. */
+    private function canonical(mixed $value): string
+    {
+        $sort = function (mixed $node) use (&$sort): mixed {
+            if (! is_array($node)) {
+                return $node;
+            }
+
+            $node = array_map($sort, $node);
+
+            if (! array_is_list($node)) {
+                ksort($node);
+            }
+
+            return $node;
+        };
+
+        return (string) json_encode($sort($value));
     }
 
     private function differs(WebsitePage $page, array $attributes): bool
     {
-        return json_encode($page->sections) !== json_encode($attributes['sections'])
+        return $this->canonical($page->sections) !== $this->canonical($attributes['sections'])
             || (string) $page->title !== $attributes['title']
             || (string) $page->seo_title !== (string) $attributes['seo_title']
             || (string) $page->meta_description !== (string) $attributes['meta_description']

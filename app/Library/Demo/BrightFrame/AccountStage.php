@@ -120,7 +120,11 @@ final class AccountStage
         // and edits it, or creates it only when the Business has none.
         $location = $this->locations->upsertPrimaryLocation($business, [
             'name' => 'Charlotte Studio',
-            'service_mode' => 'storefront',
+            'service_mode' => 'hybrid',
+            'latitude' => 35.2271,
+            'longitude' => -80.8431,
+            'service_area_cities' => ['Charlotte', 'Concord', 'Huntersville', 'Matthews', 'Fort Mill', 'Gastonia'],
+            'service_radius_km' => 60,
             'address_line_1' => '212 Mill Street',
             'city' => BrightFrameData::CITY,
             'region' => BrightFrameData::REGION,

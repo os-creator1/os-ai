@@ -70,7 +70,7 @@ final class ContactsStage implements DemoStage
                     'phone' => $person['phone'],
                     'status' => Contacts::STATUS_SUBSCRIBE,
                 ]);
-                $contact->forceFill(['location_id' => $context->location->id, 'created_at' => $context->daysFromNow(-(5 + $i * 3), 9 + $i % 8), 'updated_at' => $context->now])->save();
+                $contact->forceFill(['location_id' => $context->location->id, 'created_at' => $context->daysFromNow(-(1 + $i * 2), 9 + $i % 8), 'updated_at' => $context->now])->save();
                 $created++;
             }
 
