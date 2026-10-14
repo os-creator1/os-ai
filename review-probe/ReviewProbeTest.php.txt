@@ -1,0 +1,92 @@
+<?php
+
+namespace Tests\Feature\ReviewProbe;
+
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Models\Business;
+use App\Models\BusinessService;
+use App\Models\Workspace;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
+use Tests\TestCase;
+
+class ReviewProbeTest extends TestCase
+{
+    use CreatesDashboardFixtures;
+    use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->freezeClock();
+        config(['business.onboarding.enabled' => true]);
+        $this->platformAdminId();
+    }
+
+    private function u(string $r, Workspace $w, Business $b, $s = null): string
+    {
+        return route('customer.workspaces.businesses.services.' . $r, array_filter([$w->uid, $b->uid, $s?->uid]));
+    }
+
+    public function test_view_as_client_business(): void
+    {
+        $pair = $this->createAgencyManagedClient(clientBusinessName: 'Harbor Lane Studios', clientWorkspaceName: 'Harbor Lane', agencyBusinessName: 'Northwind House', agencyWorkspaceName: 'Northwind Agency');
+        $this->assignTier($pair['clientWorkspace'], WorkspacePlanTier::Growth);
+        $client = $pair['clientBusiness'];
+        fwrite(STDERR, "\nPROBE client policy=" . var_export(DB::table('businesses')->where('id', $client->id)->value('readiness_policy'), true) . "\n");
+        $this->nextRequest();
+        $this->authenticateAs($pair['agencyOwner']);
+        $this->post(route('customer.workspaces.clients.view-as', [$pair['agencyWorkspace']->uid, $pair['clientWorkspace']->uid]))->assertRedirect(route('user.home'));
+
+        $r = $this->get($this->u('index', $pair['clientWorkspace'], $client));
+        fwrite(STDERR, "PROBE viewas index=" . $r->getStatusCode() . "\n");
+        $home = $this->get(route('user.home'));
+        $html = $home->getContent();
+        fwrite(STDERR, "PROBE viewas home=" . $home->getStatusCode() . ' state=' . (preg_match('/data-home-state="(\w+)"/', $html, $m) ? $m[1] : '-') . ' hasServiceLink=' . (int) str_contains($html, '/services') . " addPrimary=" . (int) str_contains($html, 'Add your primary service') . "\n");
+        $p = $this->post($this->u('store', $pair['clientWorkspace'], $client), ['name' => 'Viewed Service']);
+        fwrite(STDERR, "PROBE viewas store=" . $p->getStatusCode() . ' rows=' . BusinessService::where('business_id', $client->id)->count() . "\n");
+        // agency's own business through the client's scope / own scope while viewing
+        $own = $this->post($this->u('store', $pair['agencyWorkspace'], $pair['agencyBusiness']), ['name' => 'Own While Viewing']);
+        fwrite(STDERR, "PROBE viewas own-store=" . $own->getStatusCode() . ' rows=' . BusinessService::where('business_id', $pair['agencyBusiness']->id)->count() . "\n");
+        $x = $this->post($this->u('store', $pair['clientWorkspace'], $pair['agencyBusiness']), ['name' => 'Mismatch']);
+        fwrite(STDERR, "PROBE viewas mismatch=" . $x->getStatusCode() . "\n");
+        $foreign = $this->createIndependentWorkspaceBusiness(businessName: 'Unrelated Co');
+        $f = $this->post($this->u('store', $foreign['workspace'], $foreign['business']), ['name' => 'Foreign']);
+        fwrite(STDERR, "PROBE viewas foreign=" . $f->getStatusCode() . ' rows=' . BusinessService::where('business_id', $foreign['business']->id)->count() . "\n");
+        $this->assertTrue(true);
+    }
+
+    public function test_admin_scope_inactive_workspace_and_deactivate_home(): void
+    {
+        [$customer, $business, $workspace] = $this->bareTenant(WorkspacePlanTier::Growth, 'P Co', 'P Account');
+        $this->adoptSeoFirstPolicy($business);
+        // Admin assigned to a Selected scope that does NOT include this business
+        $admin = $this->createCustomer();
+        $m = $this->member($workspace, $admin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected);
+        $this->authenticateAs($admin);
+        $r = $this->post($this->u('store', $workspace, $business), ['name' => 'Admin Unassigned']);
+        fwrite(STDERR, "\nPROBE admin-unassigned store=" . $r->getStatusCode() . ' get=' . $this->get($this->u('index', $workspace, $business))->getStatusCode() . "\n");
+        $this->assign($m, $business);
+        $r = $this->post($this->u('store', $workspace, $business), ['name' => 'Admin Assigned']);
+        fwrite(STDERR, "PROBE admin-assigned store=" . $r->getStatusCode() . ' rows=' . BusinessService::where('business_id', $business->id)->count() . "\n");
+        $this->switchTo($workspace, $business);
+        $html = $this->get(route('user.home'))->getContent();
+        fwrite(STDERR, "PROBE admin home has services link=" . (int) str_contains($html, $this->u('index', $workspace, $business)) . "\n");
+
+        // deactivate the only primary as owner, check Home
+        $this->authenticateAs($customer);
+        $this->switchTo($workspace, $business);
+        $svc = BusinessService::where('business_id', $business->id)->first();
+        $this->post($this->u('deactivate', $workspace, $business, $svc));
+        $html = $this->get(route('user.home'))->getContent();
+        fwrite(STDERR, "PROBE after deactivate: addPrimary=" . (int) str_contains($html, 'Add your primary service') . ' link=' . (int) str_contains($html, $this->u('index', $workspace, $business)) . "\n");
+
+        // inactive workspace
+        DB::table('workspaces')->where('id', $workspace->id)->update(['is_active' => 0]);
+        fwrite(STDERR, "PROBE inactive ws get=" . $this->get($this->u('index', $workspace, $business))->getStatusCode() . ' post=' . $this->post($this->u('store', $workspace, $business), ['name' => 'Inactive'])->getStatusCode() . "\n");
+        $this->assertTrue(true);
+    }
+}

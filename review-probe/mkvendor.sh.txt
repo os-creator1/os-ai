@@ -1,0 +1,10 @@
+#!/bin/bash
+# Build an ISOLATED vendor dir for a worktree: shared package dirs via symlinks, but its own composer autoload so App\/Tests\ resolve inside the worktree.
+w=$1
+rm -rf $w/vendor; mkdir $w/vendor
+for d in /home/user/os-ai/vendor/*; do n=$(basename $d); if [ "$n" != composer ] && [ "$n" != autoload.php ]; then ln -s $d $w/vendor/$n; fi; done
+cp -a /home/user/os-ai/vendor/composer $w/vendor/composer
+cp /home/user/os-ai/vendor/autoload.php $w/vendor/autoload.php
+cp -a /home/user/os-ai/vendor/vonage $w/vendor/vonage_tmp && rm $w/vendor/vonage && mv $w/vendor/vonage_tmp $w/vendor/vonage
+cd $w && COMPOSER_ALLOW_SUPERUSER=1 composer dump-autoload --no-scripts --no-plugins -q 2>&1 | tail -2
+php -r 'require "vendor/autoload.php"; echo (new ReflectionClass("App\\Library\\Business\\OnboardingManager"))->getFileName(),"\n";'
