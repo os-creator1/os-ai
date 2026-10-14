@@ -34,6 +34,10 @@ final class ScriptedClient implements App\Library\Ai\Contracts\AiCompletionClien
         if (str_contains($r->messages[0]['content'], 'Summarise this conversation')) {
             return App\Library\Ai\AiCompletionResult::success('The owner asked about SEO.', 'gpt-4o-mini', 300, 30);
         }
+        // Deterministic provider outage for the retry-binding scenario: fails only while the flag file exists.
+        if (str_contains($q, 'outage') && is_file(sys_get_temp_dir() . '/mg-browser-outage.flag')) {
+            return App\Library\Ai\AiCompletionResult::failure();
+        }
         if (str_contains($q, 'set up first')) {
             return $afterTools ? $json(['action' => 'answer', 'message' => "Start with the basics: your website is still a draft, so publishing it comes first. Then add a booking type so customers can book you.", 'suggestions' => ['Help me create a booking type', 'Is my website ready to go live?']]) : $tool('website_and_listings', 'schedule');
         }

@@ -183,6 +183,24 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
       ok(`${c.label}: A was answered once, and B (never retried) was not sent to the model`, sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='Help me create a booking type'`) === '1' && sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='How is my SEO doing?'`) === '0');
     }, ['net::ERR_FAILED', '429']);
 
+    // A STORED failed turn is rebuilt from the server after a later turn succeeds; its retry must still resend ITS question.
+    await run(`RetryBinding/stored-error-then-success/${vname}`, viewport, 'launch', async (page, c) => {
+      const flag = require('os').tmpdir() + '/mg-browser-outage.flag';
+      require('fs').writeFileSync(flag, '1');
+      try {
+        await loaded(page);
+        const sent = posts(page);
+        await send(page, 'Outage question one');           // A: the provider fails, a retryable error turn is stored
+        require('fs').unlinkSync(flag);                    // the provider recovers
+        await send(page, 'How is my SEO doing?');          // B: succeeds; the thread is rebuilt from the server
+        const text = await page.locator('[data-role="ask-conversation"]').innerText();
+        ok(`${c.label}: A's stored error is rebuilt after B succeeded and still offers its retry`, text.includes('Outage question one') && await retryButtons(page).count() === 1, text.slice(-300));
+        await retryAndSettle(page, 0);
+        ok(`${c.label}: the retry resends A (not the newer B) as a new request`, sent.length === 3 && sent[2].q === 'Outage question one' && sent[2].client_message_id !== sent[0].client_message_id && sent[2].client_message_id !== sent[1].client_message_id, JSON.stringify(sent));
+        ok(`${c.label}: A is now answered, and B was asked exactly once`, sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='How is my SEO doing?'`) === '1' && sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='Outage question one'`) === '2' && (await page.locator('[data-role="ask-conversation"]').innerText()).includes('I can help with that'));
+      } finally { try { require('fs').unlinkSync(flag); } catch (e) { /* already gone */ } }
+    });
+
     await run(`RetryBinding/multiple-failures/${vname}`, viewport, 'launch', async (page, c) => {
       await loaded(page);
       const sent = posts(page); let n = 0;

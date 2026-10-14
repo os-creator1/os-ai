@@ -350,8 +350,15 @@
 
     function render(data) {
         thread.textContent = '';
+        var asked = '';
         (data.messages || []).forEach(function (m) {
             if (m.kind === 'outcome') { return; } // shown on its proposal card
+            if (m.role === 'user') { asked = m.body; }
+            if (m.kind === 'error' && m.payload && m.payload.retryable && !m.payload.attempt && asked) {
+                // A stored failed turn is rebuilt from the server: bind its retry to the question asked just before IT, never to a
+                // newer one. The turn was answered (with an error), so the retry is a new request and takes a fresh client id.
+                m.payload.attempt = { q: asked, id: null, uid: data.uid, startNew: false };
+            }
             thread.appendChild(bubble(m));
         });
         state.uid = data.uid || state.uid;
@@ -404,6 +411,7 @@
         // answers (and charges) it exactly once even if the first response was lost; a newer question has its own record.
         // Typing the same question again after it failed is the same logical request too.
         var attempt = retryOf || state.failed[question] || { q: question, id: uuid(), uid: state.uid, startNew: state.startNew };
+        if (!attempt.id) { attempt.id = uuid(); }
         state.failed[question] = attempt;
 
         thread.appendChild(bubble({ role: 'user', kind: 'text', body: question, payload: {} }));
