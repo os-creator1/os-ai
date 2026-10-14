@@ -52,6 +52,13 @@ final class PageHeadingResolver
 
         $wanted = self::normalise($title);
 
+        // Cheap pre-pass: most pages have no <h1> and no heading equal to the title, and then
+        // the (comparatively costly) DOM parse below is skipped. It can only ever say "no" early;
+        // whether a candidate really is the page heading is still decided by the DOM pass.
+        if (! self::hasCandidate($content, $wanted)) {
+            return false;
+        }
+
         $dom = new DOMDocument();
         $previous = libxml_use_internal_errors(true);
         $dom->loadHTML('<?xml encoding="UTF-8"><body>' . $content . '</body>', LIBXML_NOWARNING | LIBXML_NOERROR);
@@ -71,6 +78,25 @@ final class PageHeadingResolver
             }
 
             if ($wanted !== '' && self::normalise($heading->textContent) === $wanted) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function hasCandidate(string $content, string $wanted): bool
+    {
+        if (preg_match('/<h1[\s>]/i', $content) === 1) {
+            return true;
+        }
+
+        if ($wanted === '' || preg_match_all('#<h[2-4](?:\s[^>]*)?>(.*?)</h[2-4]>#is', $content, $matches) < 1) {
+            return false;
+        }
+
+        foreach ($matches[1] as $inner) {
+            if (self::normalise($inner) === $wanted) {
                 return true;
             }
         }

@@ -211,9 +211,8 @@
                                                 </td>
                                                 <td class="mg-cf-end">
                                                     <span class="mg-cf-actions">
-                                                        @unless ($canManage)
-                                                            <button type="button" class="mg-cf-iconbtn d-sm-none" data-copy="{{ $field->token() }}" aria-label="Copy merge field {{ $field->token() }}"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
-                                                        @endunless
+                                                        {{-- The Merge field column is hidden on phones, so the copy action moves here. --}}
+                                                        <button type="button" class="mg-cf-iconbtn d-sm-none" data-copy="{{ $field->token() }}" aria-label="Copy merge field {{ $field->token() }}" title="Copy {{ $field->token() }}"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
                                                         @if ($canManage)
                                                             <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#custom-field-edit-{{ $field->uid }}" data-role="custom-field-edit">Edit</button>
                                                             <div class="dropdown mg-cf-menu">

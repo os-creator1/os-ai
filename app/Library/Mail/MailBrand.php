@@ -138,7 +138,14 @@ final class MailBrand
             }
         }
 
-        return self::emailSafeLogo(self::absoluteHttps(preg_match('#^https?://#i', $path) ? $path : asset($path)));
+        if (! preg_match('#^https?://#i', $path)) {
+            // Built from configuration, not asset()/request(): mail is rendered from queued jobs
+            // with no request, so the URL generator's root cannot be trusted to be the public host.
+            $root = rtrim((string) (config('app.asset_url') ?: config('app.url')), '/');
+            $path = $root . '/' . $path;
+        }
+
+        return self::emailSafeLogo(self::absoluteHttps($path));
     }
 
     private static function absoluteHttps(string $url): string
