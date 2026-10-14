@@ -2,7 +2,7 @@
 
 @section('title', 'Business Setup')
 
-@if ($step->value === 'business')
+@if (in_array($step->value, ['business', 'location'], true))
     @section('vendor-style')
         <link rel="stylesheet" href="{{ asset(mix('vendors/css/forms/select/select2.min.css')) }}">
     @endsection
@@ -17,13 +17,18 @@
         <div class="row">
             <div class="col-12">
                 <x-card title="Business Setup">
-                    <ul class="nav nav-pills mb-2 text-uppercase">
-                        @foreach (['goals' => 'Goals', 'business' => 'Business', 'location' => 'Location', 'services' => 'Services', 'assets' => 'Assets', 'analysis' => 'Analysis', 'results' => 'Results', 'complete' => 'Complete'] as $stepValue => $label)
+                    <ol class="nav nav-pills mb-2 text-uppercase list-unstyled" aria-label="Setup progress">
+                        @foreach ($steps as $number => $item)
+                            @php($reachable = in_array($item->value, $reachableSteps, true))
                             <li class="nav-item">
-                                <span class="nav-link {{ $step->value === $stepValue ? 'active' : '' }}" @if ($step->value === $stepValue) aria-current="step" @endif>{{ $label }}</span>
+                                @if ($reachable && $item !== $step)
+                                    <a class="nav-link" href="{{ route('customer.onboarding.show', ['step' => $item->value]) }}">{{ $number + 1 }}. {{ $item->label() }}</a>
+                                @else
+                                    <span class="nav-link {{ $item === $step ? 'active' : '' }}" @if ($item === $step) aria-current="step" @endif>{{ $number + 1 }}. {{ $item->label() }}</span>
+                                @endif
                             </li>
                         @endforeach
-                    </ul>
+                    </ol>
 
                     @if ($errors->any())
                         <x-alert variant="danger">

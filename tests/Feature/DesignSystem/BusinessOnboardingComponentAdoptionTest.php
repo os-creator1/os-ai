@@ -5,53 +5,68 @@ namespace Tests\Feature\DesignSystem;
 use Tests\TestCase;
 
 /**
- * Design System M2 A1 (Business Onboarding) — component-adoption assertions.
- * Asserts ONLY the exact locked adoption set from the final contract's §11
- * matrix: 3 <x-card>, 1 <x-alert>, 12 <x-button>, 20 <x-input> (17 since the
- * Business step's locale fields moved to a shared partial), 2 <x-select>,
- * 1 <x-empty-state> — with an exact per-file breakdown — and explicitly
- * proves the §12 non-adoption carve-outs (native textarea, native
- * checkbox/radio, native btn-success "Finish setup") introduced zero
- * forbidden markers. Never a generic "every X adopts" assumption.
+ * Design System M2 A1 (Business Onboarding) — component-adoption assertions,
+ * updated for the five-step flow (Business → Location → Services → Website →
+ * Finish). The Goals, Assets, Analysis, Results and Complete views were removed
+ * with their steps, so the allowlist is now show + the five step views and the
+ * locked totals are: 3 <x-card>, 2 <x-alert>, 6 <x-button>, 12 <x-input>,
+ * 2 <x-select>, 0 <x-empty-state> — with an exact per-file breakdown. The §12
+ * non-adoption carve-outs (native textarea, native checkbox/radio) still hold.
+ * Never a generic "every X adopts" assumption.
  */
 class BusinessOnboardingComponentAdoptionTest extends TestCase
 {
     private const A1_VIEWS = [
         'resources/views/customer/onboarding/show.blade.php',
-        'resources/views/customer/onboarding/steps/goals.blade.php',
         'resources/views/customer/onboarding/steps/business.blade.php',
         'resources/views/customer/onboarding/steps/location.blade.php',
         'resources/views/customer/onboarding/steps/services.blade.php',
+        'resources/views/customer/onboarding/steps/website.blade.php',
+        'resources/views/customer/onboarding/steps/finish.blade.php',
+    ];
+
+    /** Views of the removed steps must really be gone, so nothing can silently point at them again. */
+    private const REMOVED_VIEWS = [
+        'resources/views/customer/onboarding/steps/goals.blade.php',
         'resources/views/customer/onboarding/steps/assets.blade.php',
         'resources/views/customer/onboarding/steps/analysis.blade.php',
         'resources/views/customer/onboarding/steps/results.blade.php',
         'resources/views/customer/onboarding/steps/complete.blade.php',
     ];
 
+    public function test_the_views_of_the_removed_steps_are_gone_and_the_five_step_views_exist(): void
+    {
+        foreach (self::REMOVED_VIEWS as $view) {
+            $this->assertFileDoesNotExist(base_path($view));
+        }
+        foreach (self::A1_VIEWS as $view) {
+            $this->assertFileExists(base_path($view));
+        }
+    }
+
     public function test_exactly_3_card_markers_are_present(): void
     {
         $this->assertMarkerTotal('<x-card', 3);
     }
 
-    public function test_exactly_1_alert_marker_is_present(): void
+    public function test_exactly_2_alert_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-alert', 1);
+        $this->assertMarkerTotal('<x-alert', 2);
     }
 
-    public function test_exactly_12_button_markers_are_present(): void
+    public function test_exactly_6_button_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-button', 12);
+        $this->assertMarkerTotal('<x-button', 6);
     }
 
     /**
-     * 20 in the A1 contract; the Business step's country, timezone and
-     * currency x-inputs moved into the shared
-     * customer/business/partials/locale-fields partial (three x-selects of
-     * canonical values), leaving 17 here.
+     * 20 in the A1 contract. The Business step's country, timezone and currency
+     * moved into the shared locale-fields partial, and the removed steps took their
+     * inputs with them: 4 (business) + 5 (location) + 2 (services) + 1 (website).
      */
-    public function test_exactly_17_input_markers_are_present(): void
+    public function test_exactly_12_input_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-input', 17);
+        $this->assertMarkerTotal('<x-input', 12);
     }
 
     public function test_exactly_2_select_markers_are_present(): void
@@ -59,23 +74,20 @@ class BusinessOnboardingComponentAdoptionTest extends TestCase
         $this->assertMarkerTotal('<x-select', 2);
     }
 
-    public function test_exactly_1_empty_state_marker_is_present(): void
+    public function test_no_empty_state_marker_remains_because_the_results_step_is_gone(): void
     {
-        $this->assertMarkerTotal('<x-empty-state', 1);
+        $this->assertMarkerTotal('<x-empty-state', 0);
     }
 
     public function test_exact_per_file_marker_breakdown(): void
     {
         $expected = [
             'resources/views/customer/onboarding/show.blade.php' => ['<x-card' => 1, '<x-alert' => 1, '<x-button' => 0, '<x-input' => 0, '<x-select' => 0, '<x-empty-state' => 0],
-            'resources/views/customer/onboarding/steps/goals.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 0, '<x-select' => 0, '<x-empty-state' => 0],
             'resources/views/customer/onboarding/steps/business.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 4, '<x-select' => 1, '<x-empty-state' => 0],
             'resources/views/customer/onboarding/steps/location.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 5, '<x-select' => 1, '<x-empty-state' => 0],
-            'resources/views/customer/onboarding/steps/services.blade.php' => ['<x-card' => 2, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 4, '<x-select' => 0, '<x-empty-state' => 0],
-            'resources/views/customer/onboarding/steps/assets.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 2, '<x-input' => 3, '<x-select' => 0, '<x-empty-state' => 0],
-            'resources/views/customer/onboarding/steps/analysis.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 3, '<x-input' => 0, '<x-select' => 0, '<x-empty-state' => 0],
-            'resources/views/customer/onboarding/steps/results.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 2, '<x-input' => 1, '<x-select' => 0, '<x-empty-state' => 1],
-            'resources/views/customer/onboarding/steps/complete.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 0, '<x-select' => 0, '<x-empty-state' => 0],
+            'resources/views/customer/onboarding/steps/services.blade.php' => ['<x-card' => 2, '<x-alert' => 0, '<x-button' => 2, '<x-input' => 2, '<x-select' => 0, '<x-empty-state' => 0],
+            'resources/views/customer/onboarding/steps/website.blade.php' => ['<x-card' => 0, '<x-alert' => 1, '<x-button' => 1, '<x-input' => 1, '<x-select' => 0, '<x-empty-state' => 0],
+            'resources/views/customer/onboarding/steps/finish.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 0, '<x-select' => 0, '<x-empty-state' => 0],
         ];
 
         foreach ($expected as $view => $markers) {
@@ -104,20 +116,21 @@ class BusinessOnboardingComponentAdoptionTest extends TestCase
         $this->assertMatchesRegularExpression('/@php\(\$newIndex = \$services->count\(\)\)\s*<x-card/s', $contents);
     }
 
-    public function test_results_go_fix_this_and_save_use_the_locked_variants_and_sizes(): void
+    public function test_finish_uses_the_primary_button_for_completion_and_a_plain_link_once_complete(): void
     {
-        $contents = file_get_contents(base_path('resources/views/customer/onboarding/steps/results.blade.php'));
+        $contents = file_get_contents(base_path('resources/views/customer/onboarding/steps/finish.blade.php'));
 
-        $this->assertStringContainsString('<x-button type="submit" variant="outline" size="sm">Go fix this</x-button>', $contents);
-        $this->assertStringContainsString('<x-button type="submit" variant="primary" size="sm">Save</x-button>', $contents);
+        $this->assertStringContainsString('<x-button type="submit" variant="primary">Enter MotionGrove</x-button>', $contents);
+        $this->assertStringContainsString('class="btn btn-primary" href="{{ route(\'user.home\') }}"', $contents);
     }
 
-    public function test_results_value_input_has_no_old_binding_forwarding_only_pattern(): void
+    public function test_website_step_uses_the_shared_input_for_the_address_and_a_primary_continue(): void
     {
-        $contents = file_get_contents(base_path('resources/views/customer/onboarding/steps/results.blade.php'));
+        $contents = file_get_contents(base_path('resources/views/customer/onboarding/steps/website.blade.php'));
 
-        $this->assertStringContainsString('<x-input name="value" type="text" placeholder="Enter a value" maxlength="2048"', $contents);
-        $this->assertStringNotContainsString("old('value'", $contents);
+        $this->assertStringContainsString('<x-input name="website_url"', $contents);
+        $this->assertStringContainsString('<x-button type="submit" variant="primary"', $contents);
+        $this->assertStringContainsString('<x-alert variant="info">', $contents);
     }
 
     // -----------------------------------------------------------------
@@ -132,7 +145,7 @@ class BusinessOnboardingComponentAdoptionTest extends TestCase
         }
     }
 
-    public function test_native_textarea_checkbox_and_btn_success_are_never_wrapped(): void
+    public function test_native_textarea_checkbox_and_radio_are_never_wrapped(): void
     {
         foreach (self::A1_VIEWS as $view) {
             $contents = file_get_contents(base_path($view));
@@ -141,10 +154,6 @@ class BusinessOnboardingComponentAdoptionTest extends TestCase
             $this->assertStringNotContainsString('<x-checkbox', $contents, "{$view} must never adopt a non-existent x-checkbox component.");
             $this->assertStringNotContainsString('<x-radio', $contents, "{$view} must never adopt a non-existent x-radio component.");
         }
-
-        $results = file_get_contents(base_path('resources/views/customer/onboarding/steps/results.blade.php'));
-        $this->assertStringContainsString('btn-success', $results);
-        $this->assertStringNotContainsString('variant="success"', $results);
     }
 
     public function test_no_shared_component_source_file_was_modified_to_force_an_adoption(): void
@@ -172,6 +181,6 @@ class BusinessOnboardingComponentAdoptionTest extends TestCase
             $total += substr_count($contents, $marker);
         }
 
-        $this->assertSame($expected, $total, "Expected exactly {$expected} occurrences of {$marker} across the 9-view allowlist.");
+        $this->assertSame($expected, $total, "Expected exactly {$expected} occurrences of {$marker} across the six-view allowlist.");
     }
 }

@@ -91,7 +91,12 @@
 
                 if (timezone.value === '') {
                     try {
-                        choose(timezone, Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+                        // A browser that reports plain UTC usually does not know the real
+                        // zone; leave the choice to the customer rather than save a wrong one.
+                        var detected = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+                        if (detected !== 'UTC' && detected.indexOf('Etc/') !== 0) {
+                            choose(timezone, detected);
+                        }
                     } catch (error) {
                         // No usable browser timezone: the customer chooses one.
                     }

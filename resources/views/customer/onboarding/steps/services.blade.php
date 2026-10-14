@@ -1,31 +1,57 @@
-@php($services = $onboarding->business?->services ?? collect())
+@php
+    $business = $onboarding->business;
+    $services = $business?->services()->where('status', \App\Enums\Business\BusinessServiceStatus::Active)->orderBy('sort_order')->orderBy('id')->get() ?? collect();
+    $savedNames = $services->map(fn ($service) => mb_strtolower(trim($service->name)))->all();
+    $suggestions = collect(\App\Library\Business\OnboardingServiceSuggestions::for($business?->industry))
+        ->reject(fn ($name) => in_array(mb_strtolower($name), $savedNames, true))
+        ->values();
+    $pickedSuggestions = collect(old('suggested_services', []))->map(fn ($name) => mb_strtolower($name))->all();
+    $primarySuggested = mb_strtolower((string) old('primary_suggested', ''));
+    $hasSavedPrimary = $services->contains(fn ($service) => $service->is_primary);
+@endphp
 
-<p>List the services you offer, in the order you want them. Prices are optional and you can add or change services at any time. You can also skip this and finish later.</p>
+<h5>What do you offer?</h5>
+<p class="text-muted">
+    List each service as customers would search for it, for example “Photo Booth Rental”.
+    Put places like “Orange County” in the previous step, not in the service name.
+    Choose one primary service. Prices and details can be added later.
+</p>
 
 <form method="POST" action="{{ route('customer.onboarding.services.store') }}" data-role="services-form">
     @csrf
+
+    @if ($suggestions->isNotEmpty())
+        <fieldset class="mb-2" data-role="suggestions">
+            <legend class="form-label text-label">Pick the ones that fit</legend>
+            @foreach ($suggestions as $index => $name)
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-50">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="suggested_services[]" id="suggested-{{ $index }}" value="{{ $name }}" @checked(in_array(mb_strtolower($name), $pickedSuggestions, true))>
+                        <label class="form-check-label" for="suggested-{{ $index }}">{{ $name }}</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="primary_suggested" id="primary-suggested-{{ $index }}" value="{{ $name }}" data-primary @checked($primarySuggested === mb_strtolower($name))>
+                        <label class="form-check-label text-muted" for="primary-suggested-{{ $index }}">Primary</label>
+                    </div>
+                </div>
+            @endforeach
+        </fieldset>
+    @endif
 
     <div data-role="rows">
         @foreach ($services as $index => $service)
             <x-card class="mb-1" data-row="saved">
                 <input type="hidden" name="services[{{ $index }}][id]" value="{{ $service->id }}">
                 <div class="row">
-                    <div class="col-md-6">
+                    <div class="col-md-9">
                         <x-input name="services[{{ $index }}][name]" label="Service name" type="text" :value="old('services.'.$index.'.name', $service->name)" required />
-                    </div>
-                    <div class="col-md-3">
-                        <x-input name="services[{{ $index }}][starting_price]" label="Starting price (optional)" type="number" step="0.01" :value="old('services.'.$index.'.starting_price', $service->starting_price)" />
                     </div>
                     <div class="col-md-3 mb-1 d-flex align-items-end">
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="services[{{ $index }}][is_primary]" id="primary-{{ $index }}" value="1" data-primary @checked(old("services.$index.is_primary", $service->is_primary))>
+                            <input class="form-check-input" type="checkbox" name="services[{{ $index }}][is_primary]" id="primary-{{ $index }}" value="1" data-primary @checked(old('services', null) === null ? $service->is_primary : old("services.$index.is_primary"))>
                             <label class="form-check-label" for="primary-{{ $index }}">Primary</label>
                         </div>
                     </div>
-                </div>
-                <div data-controls hidden>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-act="up">Move up</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-act="down">Move down</button>
                 </div>
             </x-card>
         @endforeach
@@ -33,11 +59,8 @@
         @php($newIndex = $services->count())
         <x-card class="mb-1" data-row="new">
             <div class="row">
-                <div class="col-md-6">
-                    <x-input name="services[{{ $newIndex }}][name]" label="New service name" type="text" :value="old('services.'.$newIndex.'.name')" />
-                </div>
-                <div class="col-md-3">
-                    <x-input name="services[{{ $newIndex }}][starting_price]" label="Starting price (optional)" type="number" step="0.01" :value="old('services.'.$newIndex.'.starting_price')" />
+                <div class="col-md-9">
+                    <x-input name="services[{{ $newIndex }}][name]" label="{{ $services->isEmpty() && $suggestions->isEmpty() ? 'Service name' : 'Add another service' }}" type="text" :value="old('services.'.$newIndex.'.name')" />
                 </div>
                 <div class="col-md-3 mb-1 d-flex align-items-end">
                     <div class="form-check">
@@ -47,8 +70,6 @@
                 </div>
             </div>
             <div data-controls hidden>
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-act="up">Move up</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-act="down">Move down</button>
                 <button type="button" class="btn btn-sm btn-outline-danger" data-act="del">Remove</button>
             </div>
         </x-card>
@@ -56,18 +77,15 @@
 
     <div class="d-flex flex-wrap gap-1 mt-1">
         <x-button type="button" variant="outline" size="sm" data-role="add-service" hidden>Add another service</x-button>
-        <x-button type="submit" variant="primary">Save and continue</x-button>
+        <x-button type="submit" variant="primary">Continue</x-button>
     </div>
-</form>
-
-<form method="POST" action="{{ route('customer.onboarding.services.skip') }}" class="mt-2" data-role="skip-services">
-    @csrf
-    <x-button type="submit" variant="outline">Set up services later</x-button>
+    <p class="text-caption mt-1 mb-0">With a single service, it is your primary one automatically.</p>
 </form>
 
 <script>
-    // Progressive enhancement: the form above works without script. With it, rows can be
-    // added, unsaved rows removed, and every row moved; names are re-indexed in page order.
+    // Progressive enhancement: the form works without script. With it, more rows can be
+    // added, unsaved rows removed, and only one "Primary" can be chosen across every row
+    // and suggestion. Row names are re-indexed in page order.
     (function () {
         var form = document.querySelector('[data-role="services-form"]');
         if (!form) { return; }
@@ -82,40 +100,29 @@
                 });
                 row.querySelectorAll('[id^="primary-"]').forEach(function (f) { f.id = 'primary-' + i; });
                 row.querySelectorAll('label[for^="primary-"]').forEach(function (l) { l.setAttribute('for', 'primary-' + i); });
-                var rows = holder.querySelectorAll('[data-row]');
-                var up = row.querySelector('[data-act="up"]'), down = row.querySelector('[data-act="down"]');
-                if (up) { up.disabled = i === 0; }
-                if (down) { down.disabled = i === rows.length - 1; }
             });
         }
-        function enhance() {
-            addBtn.hidden = false;
-            holder.querySelectorAll('[data-controls]').forEach(function (c) { c.hidden = false; });
-            reindex();
-        }
-        holder.addEventListener('change', function (e) {
+        form.addEventListener('change', function (e) {
             if (e.target.matches('[data-primary]') && e.target.checked) {
-                holder.querySelectorAll('[data-primary]').forEach(function (o) { if (o !== e.target) { o.checked = false; } });
+                form.querySelectorAll('[data-primary]').forEach(function (o) { if (o !== e.target) { o.checked = false; } });
             }
         });
         holder.addEventListener('click', function (e) {
-            var b = e.target.closest('[data-act]');
+            var b = e.target.closest('[data-act="del"]');
             if (!b) { return; }
-            var row = b.closest('[data-row]');
-            var act = b.getAttribute('data-act');
-            if (act === 'del') { row.remove(); }
-            if (act === 'up' && row.previousElementSibling) { holder.insertBefore(row, row.previousElementSibling); }
-            if (act === 'down' && row.nextElementSibling) { holder.insertBefore(row.nextElementSibling, row); }
+            b.closest('[data-row]').remove();
             reindex();
         });
         addBtn.addEventListener('click', function () {
             var fresh = template.cloneNode(true);
-            fresh.querySelectorAll('input[type="text"],input[type="number"]').forEach(function (i) { i.value = ''; });
+            fresh.querySelectorAll('input[type="text"]').forEach(function (i) { i.value = ''; });
             fresh.querySelectorAll('input[type="checkbox"]').forEach(function (i) { i.checked = false; });
             fresh.querySelectorAll('[data-controls]').forEach(function (c) { c.hidden = false; });
             holder.appendChild(fresh);
             reindex();
         });
-        enhance();
+        addBtn.hidden = false;
+        holder.querySelectorAll('[data-controls]').forEach(function (c) { c.hidden = false; });
+        reindex();
     })();
 </script>
