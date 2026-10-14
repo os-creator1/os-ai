@@ -82,6 +82,7 @@ class HomeSetupJourneyV1Test extends TestCase
             'archived' => [['websiteMode' => 'hosted', 'websiteStatus' => 'archived'], 'Republish your website', false],
             'published' => [['websiteMode' => 'hosted', 'websiteStatus' => 'published'], 'Your website is live', true],
             'existing, unchecked' => [['websiteMode' => 'external'], 'Review your existing website', false],
+            'existing, address saved, not audited' => [['websiteMode' => 'external', 'hasExternalWebsiteAddress' => true], 'Your existing website', true],
             'existing, checked' => [['websiteMode' => 'external', 'hasCompletedExternalAudit' => true], 'Your existing website', true],
             'later' => [['websiteMode' => 'none'], 'Set up your website', false],
         ];
@@ -93,12 +94,23 @@ class HomeSetupJourneyV1Test extends TestCase
         }
     }
 
-    public function test_a_saved_existing_address_is_not_evidence_of_reach(): void
+    public function test_an_external_mode_without_a_saved_address_is_not_a_connection(): void
     {
-        $j = $this->build(['websiteMode' => 'external']);
+        $j = $this->build(['websiteMode' => 'external', 'hasExternalWebsiteAddress' => false]);
 
         $this->assertFalse($j['reachComplete']);
         $this->assertTrue($j['essentialIncomplete']);
+    }
+
+    public function test_a_connected_existing_website_leaves_launch_without_any_audit_or_booking_setup(): void
+    {
+        // The SEO audit is a separate optional module and a MotionGrove calendar is optional: neither may trap the Business.
+        $j = $this->build(['websiteMode' => 'external', 'hasExternalWebsiteAddress' => true, 'hasCompletedExternalAudit' => false, 'calendarCapable' => true, 'bookingPathReady' => false]);
+
+        $this->assertTrue($j['reachComplete']);
+        $this->assertFalse($j['essentialIncomplete']);
+        $this->assertTrue($this->step($j, 'website')['done']);
+        $this->assertStringNotContainsString('checked your existing website', $this->step($j, 'website')['outcome'], 'It must not claim an audit that never ran.');
     }
 
     public function test_a_published_site_or_a_checked_existing_site_leaves_launch(): void

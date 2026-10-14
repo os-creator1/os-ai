@@ -205,35 +205,40 @@ class HomeLaunchReadinessTest extends TestCase
         $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'A published site with the foundation leaves Launch.');
     }
 
-    public function test_a_saved_existing_address_is_not_verified_published_or_indexed(): void
+    public function test_a_saved_existing_address_is_a_connection_that_leaves_launch_with_no_audit_at_all(): void
     {
         [$customer, $business] = $this->onboarded();
+        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'Precondition: foundation without any reach is Launch.');
+
         $this->setMode($business, 'external', 'https://orangeglam.example');
 
-        $step = $this->steps($customer)['website'];
-        $this->assertSame('Review your existing website', $step['title']);
-        $this->assertFalse($step['done']);
-        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'A bare URL does not leave Launch.');
-
-        $html = $this->get(route('user.home'))->assertOk()->getContent();
-        $this->assertSame(1, preg_match('#<section[^>]*data-role="home-setup".*?</section>#s', $html, $section));
-        $text = $this->mainText('<main>'.$section[0].'</main>');
-        foreach (['is live', 'published', 'indexed', 'verified'] as $claim) {
-            $this->assertStringNotContainsString($claim, strtolower($text), "Home must not claim the site is {$claim}.");
-        }
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'The saved address IS the connection; the unfinished SEO audit is never a precondition.');
+        $this->get(route('user.home'))->assertOk();
     }
 
-    public function test_a_completed_check_of_the_existing_site_is_evidence_but_a_failed_or_queued_one_is_not(): void
+    public function test_external_mode_without_a_saved_address_stays_in_launch(): void
+    {
+        [$customer, $business] = $this->onboarded();
+        $this->setMode($business, 'external', null);
+
+        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state']);
+        $this->assertSame('Review your existing website', $this->steps($customer)['website']['title']);
+    }
+
+    public function test_a_failed_queued_or_completed_check_never_changes_whether_the_site_is_connected(): void
     {
         [$customer, $business] = $this->onboarded();
         $this->setMode($business, 'external', 'https://orangeglam.example');
 
-        $this->audit($business, ExternalSiteCrawl::FAILED);
-        $this->audit($business, ExternalSiteCrawl::QUEUED);
-        $this->assertFalse($this->steps($customer)['website']['done']);
+        foreach ([ExternalSiteCrawl::FAILED, ExternalSiteCrawl::QUEUED, ExternalSiteCrawl::RUNNING, ExternalSiteCrawl::COMPLETED] as $state) {
+            $this->audit($business, $state);
+            $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], "A {$state} check must not undo the connection.");
+        }
 
-        $this->audit($business, ExternalSiteCrawl::COMPLETED);
-        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state']);
+        // The customer's setup survives the website being unreachable: the address is still saved and still external.
+        $row = DB::table('businesses')->where('id', $business->id)->first(['website_mode', 'website_url']);
+        $this->assertSame('external', $row->website_mode);
+        $this->assertSame('https://orangeglam.example', $row->website_url);
     }
 
     public function test_an_unavailable_website_is_not_offered_and_the_remaining_route_to_reach_is(): void
@@ -370,35 +375,29 @@ class HomeLaunchReadinessTest extends TestCase
 
     // ── correction round 1 ────────────────────────────────────────────
 
-    public function test_an_audit_of_the_old_address_does_not_validate_a_new_one(): void
+    public function test_changing_the_address_keeps_the_site_connected(): void
     {
         [$customer, $business] = $this->onboarded();
         $this->setMode($business, 'external', 'https://old.example');
         $this->audit($business, ExternalSiteCrawl::COMPLETED, 'https://old.example');
-        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'Precondition: the checked address qualifies.');
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state']);
 
-        // The address changes (canonical_domain deliberately left stale: it must not be trusted).
         DB::table('businesses')->where('id', $business->id)->update(['website_url' => 'https://new.example']);
-        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state']);
-        $this->assertSame('Review your existing website', $this->steps($customer)['website']['title']);
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'The new address is still a connected website, with or without a stale audit of the old one.');
 
-        $this->audit($business, ExternalSiteCrawl::COMPLETED, 'https://www.new.example/');
-        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'A qualifying check of the new address (www and path normalised) restores readiness.');
+        // Removing the address removes the connection.
+        DB::table('businesses')->where('id', $business->id)->update(['website_url' => null]);
+        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state']);
     }
 
-    public function test_only_a_usable_recent_completed_check_qualifies(): void
+    public function test_a_stale_or_empty_check_does_not_matter_to_a_connected_site(): void
     {
         [$customer, $business] = $this->onboarded();
         $this->setMode($business, 'external', 'https://orangeglam.example');
 
-        $this->audit($business, ExternalSiteCrawl::FAILED);
-        $this->audit($business, ExternalSiteCrawl::QUEUED);
-        $this->audit($business, ExternalSiteCrawl::RUNNING);
         $this->audit($business, ExternalSiteCrawl::COMPLETED, pages: 0);
-        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'Failed, queued, running and zero-page checks do not count.');
-
         $this->audit($business, ExternalSiteCrawl::COMPLETED, finishedAt: '2026-08-01 00:00:00');
-        $this->assertSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state'], 'A check older than two re-check intervals no longer describes the site.');
+        $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $this->command($customer)['state']);
     }
 
     public function test_only_a_form_visitors_can_actually_submit_counts_as_an_enquiry_path(): void

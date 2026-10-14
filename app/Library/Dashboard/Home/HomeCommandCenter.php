@@ -519,7 +519,7 @@ final class HomeCommandCenter
         $calendarCapable = $entitlements->allows('calendar');
 
         $websiteUsable = $status->websiteStatus === 'published'
-            || ($websiteMode === 'external' && $status->hasCompletedExternalAudit);
+            || ($websiteMode === 'external' && ($status->hasCompletedExternalAudit || filled($business->website_url)));
         $formReady = ($formsCapable && $status->hasLiveForm)
             || ($websiteCapable && $status->websiteStatus === 'published' && $status->hasActiveWebsiteForm);
 
@@ -546,6 +546,7 @@ final class HomeCommandCenter
             'websiteStatus' => $status->websiteStatus,
             'websiteMode' => $websiteMode,
             'hasCompletedExternalAudit' => $status->hasCompletedExternalAudit,
+            'hasExternalWebsiteAddress' => filled($business->website_url),
             'hasLiveForm' => $status->hasLiveForm,
             'hasActiveWebsiteForm' => $status->hasActiveWebsiteForm,
             // Actor-scoped display detail only (never an input to readiness).

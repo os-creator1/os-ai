@@ -120,12 +120,16 @@ final class HomeSetupJourney
         $mode = $facts['websiteMode'];
         $published = $status === 'published';
         $externalChecked = $mode === 'external' && $facts['hasCompletedExternalAudit'];
-        $websiteUsable = $published || $externalChecked;
+        // A saved address on an external website source IS the connection: the SEO check is a separate, optional
+        // module and is never a precondition for leaving Launch.
+        $externalConnected = $mode === 'external' && ($facts['hasExternalWebsiteAddress'] ?? false);
+        $websiteUsable = $published || $externalChecked || $externalConnected;
 
         if ($facts['websiteCapable']) {
             [$title, $outcome, $label] = match (true) {
                 $published => ['Your website is live', 'Your MotionGrove website is published.', 'Open website'],
                 $externalChecked => ['Your existing website', 'We have checked your existing website. Open the website section to see the results.', 'Open website'],
+                $externalConnected => ['Your existing website', 'Your website address is saved and connected. It has not been checked for search yet; you can run that check from the website section whenever you like.', 'Open website'],
                 $mode === 'external' => ['Review your existing website', 'Your website address is saved but has not been checked yet. Open the website section to check it for search.', 'Review website'],
                 $status === 'draft' => ['Finish and publish your website', 'Your website is not published yet, so search engines and customers cannot see it.', 'Open website'],
                 $status === 'archived' => ['Republish your website', 'Your website is archived and not visible to customers.', 'Open website'],
