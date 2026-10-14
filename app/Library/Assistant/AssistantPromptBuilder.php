@@ -87,10 +87,8 @@ TXT;
         $turns = [];
 
         foreach ($rows as $row) {
-            // A server-rendered list (names, snippets) was for the customer's eyes: the provider only learns that one was shown.
-            $text = ($row->payload['deterministic'] ?? false) === true
-                ? '[The server showed the customer a list of records. Its details are not repeated here.]'
-                : Str::limit(trim((string) $row->body), 600);
+            // What the provider may see of a stored message is decided in one place (shared with compaction).
+            $text = AssistantTranscript::forProvider($row, 600);
 
             if ($row->role === AssistantMessage::ROLE_USER) {
                 $turns[] = ['role' => 'user', 'content' => 'CUSTOMER MESSAGE (data): ' . json_encode($text, JSON_UNESCAPED_UNICODE)];

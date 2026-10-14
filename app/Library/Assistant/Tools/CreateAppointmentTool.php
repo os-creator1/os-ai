@@ -76,16 +76,6 @@ final class CreateAppointmentTool implements ActionTool
         $type = $this->resolveType($location, $args['service'] ?? null);
         $contact = $this->resolveContact($context, $location, (string) $args['contact']);
 
-        $notifies = [];
-
-        if ($type->notifiesByEmail()) {
-            $notifies[] = 'email';
-        }
-
-        if ($type->notifiesBySms()) {
-            $notifies[] = 'text message';
-        }
-
         $name = $contact['name'] ?: $contact['phone'];
 
         return new ActionPreview(
@@ -99,9 +89,13 @@ final class CreateAppointmentTool implements ActionTool
             ],
             effects: array_values(array_filter([
                 'The appointment is added to your calendar if the time is still free; if it is not, nothing is booked and you will be told why.',
-                $notifies === [] ? 'No confirmation is sent to the customer for this booking type.' : 'This booking type sends the customer a confirmation by ' . implode(' and ', $notifies) . '.',
+                // The assistant's booking path writes no confirmation or reminder (only the public booking flow does), whatever the
+                // type's notification settings say, so the preview must never promise one.
+                ($type->notifiesByEmail() || $type->notifiesBySms())
+                    ? 'This service sends automatic confirmations for online bookings, but not for bookings made here, so ' . $name . ' will NOT be sent a confirmation or reminder automatically. Let them know yourself.'
+                    : 'No confirmation or reminder is sent to the customer by this action.',
             ])),
-            recipients: $notifies === [] ? [] : [$name],
+            recipients: [],
             cost: null,
             resolved: [
                 'location_uid' => (string) $location->uid,
@@ -128,8 +122,8 @@ final class CreateAppointmentTool implements ActionTool
             throw new AssistantActionRefused('contact_changed', 'That customer can no longer be booked at this location, so nothing was booked.');
         }
 
-        // Everything the preview described: the service as it is NOW (length, notices), the customer, the slot.
-        return hash('sha256', json_encode([(int) $type->id, (int) $type->duration_minutes, $type->notifiesByEmail(), $type->notifiesBySms(), (int) $contact->id, $resolved['start_utc']]));
+        // Everything the preview described: the service as it is NOW (length), the customer, the slot.
+        return hash('sha256', json_encode([(int) $type->id, (int) $type->duration_minutes, (int) $contact->id, $resolved['start_utc']]));
     }
 
     public function execute(AssistantContext $context, array $resolved): ActionOutcome
