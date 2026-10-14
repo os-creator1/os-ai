@@ -44,6 +44,7 @@ final class CustomerMenuBuilder
         'customer.workspaces.businesses.settings.',
         'customer.business.',
         'customer.workspaces.businesses.locations.',
+        'customer.workspaces.businesses.services.',
         'customer.workspaces.businesses.text-messaging.',
         'customer.workspaces.businesses.usage-billing.',
         'customer.workspaces.plan.',
@@ -81,6 +82,7 @@ final class CustomerMenuBuilder
     public const SETTINGS_DESCRIPTIONS = [
         'business-details' => 'Name, contact details and what the business does.',
         'locations' => 'Addresses and the areas this business serves.',
+        'services' => 'What this business offers, and which service comes first.',
         'custom-fields' => 'The extra details you keep about contacts, like event date or venue.',
         'text-messaging' => 'This business’s number and whether texting is ready.',
         'email' => 'The mailbox this business sends and receives email from.',
@@ -734,6 +736,11 @@ final class CustomerMenuBuilder
         // a switcher level; the destination enforces its own tenancy.
         $setup[] = $this->item($user, 'locations', 'Locations', 'map', ['access_backend'], 'customer.workspaces.businesses.locations.index', $scoped, $current, [
             'customer.workspaces.businesses.locations.',
+        ]);
+
+        // The services this Business offers (BusinessService, not catalog items); Business-scoped.
+        $setup[] = $this->item($user, 'services', 'Services', 'list', ['access_backend'], 'customer.workspaces.businesses.services.index', $scoped, $current, [
+            'customer.workspaces.businesses.services.',
         ]);
 
         // Business-wide Custom Fields — definitions are Business-level, so they

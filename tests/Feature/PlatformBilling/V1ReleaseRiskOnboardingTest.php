@@ -89,7 +89,6 @@ class V1ReleaseRiskOnboardingTest extends TestCase
 
     private function walkWizardToResults(User $user): void
     {
-        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
         $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['name' => 'Harbor Lane Studios']));
         $this->post(route('customer.onboarding.location.store'), [
             'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
@@ -98,13 +97,7 @@ class V1ReleaseRiskOnboardingTest extends TestCase
         $this->post(route('customer.onboarding.services.store'), [
             'services' => [['name' => 'Digital Photo Booth', 'is_primary' => '1']],
         ]);
-        $this->post(route('customer.onboarding.assets.skip'));
-
-        $onboarding = CustomerOnboarding::query()->where('customer_id', $user->id)->sole();
-        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding->refresh(), 0, [
-            'version' => 1, 'generated_at' => now()->toIso8601String(), 'profile_completeness_percent' => 100,
-            'facts' => [], 'findings' => [],
-        ]);
+        $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later']);
     }
 
     // ----------------------------------------------------------------- 2

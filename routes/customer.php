@@ -764,17 +764,22 @@
 
     Route::prefix('onboarding')->name('onboarding.')->middleware('business.onboarding.enabled')->group(function () {
         Route::get('/{step?}', 'BusinessOnboardingController@show')->name('show');
-        Route::post('/goals', 'BusinessOnboardingController@storeGoals')->name('goals.store');
         Route::post('/business', 'BusinessOnboardingController@storeBusiness')->name('business.store');
         Route::post('/location', 'BusinessOnboardingController@storeLocation')->name('location.store');
         Route::post('/services', 'BusinessOnboardingController@storeServices')->name('services.store');
-        Route::post('/assets', 'BusinessOnboardingController@storeAssets')->name('assets.store');
-        Route::post('/assets/skip', 'BusinessOnboardingController@skipAssets')->name('assets.skip');
-        Route::post('/services/skip', 'BusinessOnboardingController@skipServices')->name('services.skip');
+        Route::post('/website', 'BusinessOnboardingController@storeWebsite')->name('website.store');
         Route::post('/later', 'BusinessOnboardingController@complete')->name('later');
-        Route::post('/analysis', 'BusinessOnboardingController@requestAnalysis')->middleware('throttle:5,60')->name('analysis.request');
-        Route::get('/analysis/status', 'BusinessOnboardingController@analysisStatus')->middleware('throttle:60,1')->name('analysis.status');
-        Route::post('/action', 'BusinessOnboardingController@completeAction')->name('action.complete');
+
+        // Goals, Assets, Analysis, Results and the Services "skip" are no longer steps.
+        // Old bookmarks and stale forms are redirected to the step the customer is really
+        // on; none of these writes anything or skips a prerequisite.
+        Route::match(['get', 'post'], '/analysis/status', 'BusinessOnboardingController@retired')->name('analysis.status');
+        Route::post('/goals', 'BusinessOnboardingController@retired')->name('goals.store');
+        Route::post('/assets', 'BusinessOnboardingController@retired')->name('assets.store');
+        Route::post('/assets/skip', 'BusinessOnboardingController@retired')->name('assets.skip');
+        Route::post('/services/skip', 'BusinessOnboardingController@retired')->name('services.skip');
+        Route::post('/analysis', 'BusinessOnboardingController@retired')->name('analysis.request');
+        Route::post('/action', 'BusinessOnboardingController@retired')->name('action.complete');
         Route::post('/complete', 'BusinessOnboardingController@complete')->name('complete');
     });
 
@@ -1153,6 +1158,22 @@
             Route::post('/{locationUid}/archive', 'Business\BusinessLocationsController@archive')->name('archive');
             Route::post('/{locationUid}/reactivate', 'Business\BusinessLocationsController@reactivate')->name('reactivate');
             Route::post('/{locationUid}/primary', 'Business\BusinessLocationsController@makePrimary')->name('primary');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | Settings -> Business -> Services (BusinessService editor)
+        |----------------------------------------------------------------------
+        | The services THIS Business offers, Business-scoped, so a secondary Business can satisfy the primary-Service
+        | readiness step without the customer's one onboarding wizard. Writes go through BusinessServiceManager.
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/services')->name('businesses.services.')->group(function () {
+            Route::get('/', 'Business\BusinessServicesController@index')->name('index');
+            Route::post('/', 'Business\BusinessServicesController@store')->middleware('throttle:60,1')->name('store');
+            Route::post('/{serviceUid}/rename', 'Business\BusinessServicesController@rename')->middleware('throttle:60,1')->name('rename');
+            Route::post('/{serviceUid}/activate', 'Business\BusinessServicesController@activate')->middleware('throttle:60,1')->name('activate');
+            Route::post('/{serviceUid}/deactivate', 'Business\BusinessServicesController@deactivate')->middleware('throttle:60,1')->name('deactivate');
+            Route::post('/{serviceUid}/primary', 'Business\BusinessServicesController@makePrimary')->middleware('throttle:60,1')->name('primary');
         });
 
         Route::prefix('{workspaceUid}/businesses/{businessUid}/analytics')->name('businesses.analytics.')->group(function () {

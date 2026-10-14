@@ -43,6 +43,11 @@
         @include('customer.dashboard.home._setup', ['setup' => $home['setup']])
     @endif
 
+    @if($home['readinessUnknown'] ?? false)
+        {{-- Setup progress could not be read: say so plainly, claim nothing either way. --}}
+        @include('customer.dashboard.band-failed', ['band' => 'setup', 'title' => 'Setup progress'])
+    @endif
+
     @if($liftAttention)
         {{-- STATE 3 — an operational problem is the first thing on the page. --}}
         <div class="mb-2">
