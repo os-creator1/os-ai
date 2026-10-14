@@ -120,6 +120,25 @@ final class ConversationsStage implements DemoStage
             }
             DB::table('chat_box_messages')->insert($rows);
 
+            // The message log Home and Analytics read. Delivered/received history only, no provider involved.
+            DB::table('reports')->insert(array_map(fn (array $row): array => [
+                'uid' => (string) \Illuminate\Support\Str::uuid(),
+                'user_id' => $business->customer_id,
+                'business_id' => $business->id,
+                'from' => $row['direction'] === 'incoming' ? $phone : self::BUSINESS_NUMBER,
+                'to' => $row['direction'] === 'incoming' ? self::BUSINESS_NUMBER : $phone,
+                'message' => $row['message'],
+                'sms_type' => 'plain',
+                'status' => $row['direction'] === 'incoming' ? 'Received' : 'Delivered',
+                'customer_status' => $row['direction'] === 'incoming' ? 'Received' : 'Delivered',
+                'send_by' => $row['send_by'],
+                'direction' => $row['direction'],
+                'cost' => '0',
+                'sms_count' => 1,
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['created_at'],
+            ], $rows));
+
             $last = end($messages);
             if ($awaiting) {
                 $trailing = 0;

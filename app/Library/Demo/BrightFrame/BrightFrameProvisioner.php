@@ -26,6 +26,8 @@ final class BrightFrameProvisioner
         CalendarStage::class,
         FormsStage::class,
         AutomationsStage::class,
+        WebsiteStage::class,
+        GoogleAndAdsStage::class,
     ];
 
     public function __construct(private readonly AccountStage $account)
