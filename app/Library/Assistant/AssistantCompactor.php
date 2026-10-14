@@ -49,7 +49,7 @@ final class AssistantCompactor
             return;
         }
 
-        $transcript = $toFold->map(fn (AssistantMessage $m): string => strtoupper($m->role) . ': ' . Str::limit(trim((string) $m->body), 500))->implode("\n");
+        $transcript = $toFold->map(fn (AssistantMessage $m): string => strtoupper($m->role) . ': ' . AssistantTranscript::forProvider($m, 500))->implode("\n");
         $prior = $conversation->summary ? "PREVIOUS SUMMARY: {$conversation->summary}\n" : '';
         $through = (int) $toFold->last()->id;
 
