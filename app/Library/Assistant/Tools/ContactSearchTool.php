@@ -22,7 +22,7 @@ final class ContactSearchTool implements ReadTool
 
     public function description(): string
     {
-        return 'Check whether a contact/lead exists by name or phone: returns how many match and a short label for each (no phone numbers). The customer sees the full details. args: query (string, 2-60 chars).';
+        return 'Check whether a contact/lead exists by name or phone: returns how many match and an opaque handle for each (no names or phone numbers). The customer sees the full details. args: query (string, 2-60 chars).';
     }
 
     public function rules(): array
@@ -52,7 +52,7 @@ final class ContactSearchTool implements ReadTool
 
         return new ToolResult(
             $this->key(),
-            ['match_count' => count($found), 'matches' => array_map(fn (array $c): array => ['handle' => AssistantHandles::for($context, 'contact', (string) $c['uid']), 'label' => AssistantHandles::shortLabel($c['name'] ?? null, $c['phone'])], $found)],
+            ['match_count' => count($found), 'matches' => array_map(fn (array $c): array => ['handle' => AssistantHandles::for($context, 'contact', (string) $c['uid'])], $found)],
             array_slice($facts, 0, 8),
             $links,
             $found === [] ? ['No contact matched that search among the contacts you can see.'] : [],

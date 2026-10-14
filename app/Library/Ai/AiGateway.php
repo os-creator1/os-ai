@@ -217,7 +217,7 @@ final class AiGateway
             messages: $request->messages,
             maxOutputTokens: $maxOutputTokens,
             jsonMode: $request->jsonMode,
-            timeoutSeconds: isset($routeConfig['timeout_seconds']) ? (int) $routeConfig['timeout_seconds'] : null,
+            timeoutSeconds: $this->effectiveTimeout(isset($routeConfig['timeout_seconds']) ? (int) $routeConfig['timeout_seconds'] : null, $request->timeoutSeconds),
         );
 
         $completionResult = $this->completionClient->complete($completionRequest);
@@ -267,5 +267,13 @@ final class AiGateway
         );
 
         return AiResult::success($completionResult->content, $committedEntry);
+    }
+
+    /** The shorter of the route's own timeout and the caller's (never longer than either; null means "the client's ceiling"). */
+    private function effectiveTimeout(?int $route, ?int $caller): ?int
+    {
+        $limits = array_filter([$route, $caller], static fn (?int $t): bool => $t !== null && $t > 0);
+
+        return $limits === [] ? null : min($limits);
     }
 }

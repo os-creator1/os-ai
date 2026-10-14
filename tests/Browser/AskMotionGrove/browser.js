@@ -21,6 +21,9 @@ async function run(label, viewport, userKey, fn, expectedErrors = []) {
   const home = `${BASE}/dashboard`;
   await page.goto(home);
   await page.waitForSelector('[data-role="home-ask"]');
+  // The page reads the saved conversation on load; a question sent before that waits for it (first use: for the notice). A scenario
+  // that is not about that race starts once it has loaded, like a person who has looked at the page first.
+  await page.waitForSelector('[data-role="ask-notice"]:not([hidden])', { timeout: 15000 }).catch(() => {});
   await fn(page, { label, home, qa: qa[userKey] });
   // `expectedErrors` are errors a scenario causes ON PURPOSE (a deliberately dropped response); anything else still fails.
   const unexpected = errs.filter(e => !expectedErrors.some(x => e.includes(x)));
@@ -183,6 +186,38 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
       ok(`${c.label}: A was answered once, and B (never retried) was not sent to the model`, sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='Help me create a booking type'`) === '1' && sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='How is my SEO doing?'`) === '0');
     }, ['net::ERR_FAILED', '429']);
 
+    // ───────── First use: the AI-data disclosure is on screen before anything can be sent (no idle callback to race) ─────────
+    await run(`Disclosure/${vname}`, viewport, 'launch', async (page, c) => {
+      const sent = posts(page);
+      await page.waitForSelector('[data-role="ask-notice"]:not([hidden])', { timeout: 15000 });
+      const txt = await page.locator('[data-role="ask-notice"]').innerText();
+      ok(`${c.label}: the notice is visible under the input on load, before any submit`, txt.includes('How Ask MotionGrove uses AI') && txt.includes('third-party provider') && sent.length === 0);
+    });
+
+    await run(`Disclosure-early-submit/${vname}`, viewport, 'launch', async (page, c) => {
+      // The saved-conversation read is held back; an early submit must not reach the provider before the notice is shown.
+      const sent = posts(page); let release;
+      const gate = new Promise((r) => { release = r; });
+      await page.route('**/home/assistant/messages', async (route) => {
+        if (route.request().method() === 'GET') { await gate; }
+        await route.continue();
+      });
+      await page.reload();
+      await page.waitForSelector('[data-role="home-ask"]');
+      await page.fill('[data-role="ask-input"]', 'Help me create a booking type');
+      await page.click('[data-role="ask-submit"]');
+      await page.waitForTimeout(500);
+      ok(`${c.label}: nothing is sent while the notice has not loaded`, sent.length === 0);
+      release();
+      await page.waitForSelector('[data-role="ask-notice"]:not([hidden])', { timeout: 15000 });
+      await page.waitForTimeout(300);
+      ok(`${c.label}: once the notice is on screen the question is still NOT sent (the customer confirms by sending again)`, sent.length === 0 && (await page.inputValue('[data-role="ask-input"]')) === 'Help me create a booking type');
+      await page.click('[data-role="ask-submit"]');
+      await page.waitForFunction(() => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > 0, null, { timeout: 15000 });
+      await page.waitForTimeout(300);
+      ok(`${c.label}: the second send goes through, and the notice is gone after the first answer`, sent.length === 1 && await page.locator('[data-role="ask-notice"]:not([hidden])').count() === 0, JSON.stringify([sent.length, await page.locator('[data-role="ask-notice"]:not([hidden])').count()]));
+    });
+
     // A STORED failed turn is rebuilt from the server after a later turn succeeds; its retry must still resend ITS question.
     await run(`RetryBinding/stored-error-then-success/${vname}`, viewport, 'launch', async (page, c) => {
       const flag = require('os').tmpdir() + '/mg-browser-outage.flag';
@@ -262,7 +297,7 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
       sql(`INSERT INTO ai_usage_periods (scope_type,scope_id,workspace_id,period_key,policy_key,policy_version,cap_microusd,reserved_microusd,committed_microusd,interactive_reserved_microusd,interactive_committed_microusd,created_at,updated_at) SELECT 'workspace',id,id,DATE_FORMAT(UTC_TIMESTAMP(),'%Y-%m'),'core',1,5000000,0,5000000,0,0,NOW(),NOW() FROM workspaces WHERE uid='${ws}'`);
       await page.reload();
       await page.waitForSelector('[data-role="home-ask"]');
-
+      await page.waitForSelector('[data-role="ask-notice"]:not([hidden])', { timeout: 15000 }); // first use: the notice precedes the first send
       await ask(page, 'Help me create a booking type');
       let card = page.locator('[data-role="ask-message"][data-kind="limit"]').last();
       ok(`${c.label}: used-up Core allowance is stated plainly, with no trial wording`, await card.count() === 1 && !/trial/i.test(await card.innerText()));

@@ -190,4 +190,17 @@ class AssistantAppointmentSideEffectsTest extends TestCase
         $this->assertSame('appointment_scheduled:' . $id, $event->occurrenceKey());
         $this->assertInstanceOf(\Illuminate\Contracts\Events\ShouldDispatchAfterCommit::class, $event);
     }
+
+    // PR #460 review: authorization is not lifecycle — a location archived during the approval window takes no booking.
+    public function test_approval_is_refused_when_the_location_was_archived_after_the_preview(): void
+    {
+        DB::table('business_locations')->update(['lifecycle_state' => 'archived', 'archived_at' => now()]);
+
+        $result = $this->svc->approve($this->ctx, $this->proposal->uid);
+
+        $this->assertNotSame('completed', $result['state']);
+        $this->assertSame(0, $this->appointments(), 'Nothing was booked at an archived location.');
+        $this->assertSame(0, $this->scheduledEvents);
+        $this->assertNoCustomerFacingMessage();
+    }
 }

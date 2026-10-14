@@ -105,7 +105,15 @@ final class AssistantInterpreter
                 $fit['messages'],
                 600,
                 true,
+                // The provider may not run past the turn deadline: its timeout is what is left of the turn.
+                max(1, $deadline - Carbon::now()->getTimestamp()),
             );
+
+            // A response that arrives after the deadline is not used (the call is already settled by the gateway): the turn
+            // stays retryable, exactly as when no budget was left to start one.
+            if ($result->refusalReason === null && Carbon::now()->getTimestamp() > $deadline) {
+                return $this->error(__('ask_ai.timeout.title'), __('ask_ai.timeout.body'));
+            }
 
             if ($result->refusalReason !== null) {
                 return $this->refused($result->refusalReason, $context);

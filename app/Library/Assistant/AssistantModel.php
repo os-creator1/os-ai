@@ -38,6 +38,7 @@ final class AssistantModel
         array $messages,
         int $maxOutputTokens,
         bool $json,
+        ?int $timeoutSeconds = null,
     ): AiResult {
         $attempt = $this->ledger->idempotencyFamily($familyPrefix)['attempts'] + 1;
 
@@ -53,6 +54,7 @@ final class AssistantModel
             idempotencyKey: $familyPrefix . $attempt,
             actorUserId: (int) $context->user->id,
             jsonMode: $json,
+            timeoutSeconds: $timeoutSeconds,
         ));
     }
 }

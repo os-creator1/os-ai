@@ -35,6 +35,12 @@ class AssistantTurnLockTest extends TestCase
 
             public ?\Closure $during = null;
 
+            /** @var array<int, int> per-call durations, consumed first; then $seconds */
+            public array $sequence = [];
+
+            /** @var array<int, ?int> the provider timeout each call was given */
+            public array $timeouts = [];
+
             public function __construct(private $inner)
             {
             }
@@ -45,7 +51,8 @@ class AssistantTurnLockTest extends TestCase
                     ($this->during)();
                 }
 
-                Carbon::setTestNow(Carbon::now()->addSeconds($this->seconds));
+                $this->timeouts[] = $request->timeoutSeconds;
+                Carbon::setTestNow(Carbon::now()->addSeconds($this->sequence !== [] ? array_shift($this->sequence) : $this->seconds));
 
                 return $this->inner->complete($request);
             }
@@ -97,6 +104,31 @@ class AssistantTurnLockTest extends TestCase
         $this->modelSays(['action' => 'answer', 'message' => 'Back on track.']);
         $retry = $this->say($workspace, $business, 'Take your time', ['conversation' => $r->json('uid')])->assertOk();
         $this->assertSame('Back on track.', $this->lastReply($retry)['body'], json_encode($this->lastReply($retry)));
+    }
+
+    // PR #460 review: a provider call is bounded by what is LEFT of the turn, and a late response does not bypass the deadline.
+    public function test_each_provider_call_is_bounded_by_the_remaining_turn_budget_and_a_late_response_is_not_used(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Late Venue', 'Late Account');
+        $this->authenticateAs($customer);
+        config(['assistant.turn_budget_seconds' => 75, 'assistant.min_seconds_for_model_call' => 30]);
+        config(['ai.routes.assistant.timeout_seconds' => 0]); // no route timeout of its own (as on the reasoning/routine routes): only the turn bounds the call
+        $this->provider->sequence = [40, 60]; // the first call takes 40s (35s left), the second takes 60s: well past the deadline
+
+        $this->modelSays(['action' => 'call_tools', 'calls' => [['tool' => 'recent_work', 'args' => []]]]);
+        $this->modelSays(['action' => 'answer', 'message' => 'A very late answer.']);
+
+        $r = $this->say($workspace, $business, 'Be slow')->assertOk();
+        $reply = $this->lastReply($r);
+
+        $this->assertSame(2, $this->aiCalls());
+        $this->assertSame(75, $this->provider->timeouts[0], 'The first call may use the whole turn budget.');
+        $this->assertNotNull($this->provider->timeouts[1]);
+        $this->assertLessThanOrEqual(35, $this->provider->timeouts[1], 'The second call is bounded by the time that was left (35s), not the client default.');
+        $this->assertSame('error', $reply['kind'], 'The late answer was not used.');
+        $this->assertSame('That took too long', $reply['payload']['title']);
+        $this->assertTrue($reply['payload']['retryable']);
+        $this->assertStringNotContainsString('A very late answer.', json_encode($r->json('messages')));
     }
 
     public function test_the_lock_is_held_for_the_whole_turn_its_lease_exceeds_the_budget_and_a_second_request_waits_its_turn(): void

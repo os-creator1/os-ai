@@ -215,4 +215,39 @@ class AiPlanUpgradeAllowanceTest extends TestCase
         $this->assertSame(1, AiUsagePeriod::query()->where('workspace_id', $workspace->id)->where('scope_type', 'workspace')->count());
         $this->assertSame((int) $period->committed_microusd - 5_000_000, (int) AiUsageLedgerEntry::query()->where('workspace_id', $workspace->id)->where('status', 'committed')->sum('actual_cost_microusd'));
     }
+
+    private function askAs(Workspace $workspace, ?Business $business, AiUsageCategory $category, int $maxOutputTokens): \App\Library\Ai\AiResult
+    {
+        return app(AiGateway::class)->complete(AiRequest::forWorkspace(
+            $workspace, $business, $category, AiLane::Interactive, AiModelRoute::Assistant,
+            [['role' => 'user', 'content' => 'hello']], $maxOutputTokens, (string) Str::uuid(), null,
+        ));
+    }
+
+    // PR #460 review: a refusal of an UNRELATED, bigger request must not block a cheaper Ask MotionGrove turn.
+    public function test_a_refused_website_generation_does_not_block_an_affordable_assistant_turn(): void
+    {
+        [$workspace, $business] = $this->account(WorkspacePlanTier::Core);
+        $this->period($workspace, '2026-09', 'core', 5_000_000, 4_940_000); // a little room left, not none
+
+        // A website generation estimated at 67,000 µUSD was refused earlier this period (room is only 60,000).
+        DB::table('ai_usage_ledger')->insert([
+            'uid' => (string) Str::uuid(), 'workspace_id' => $workspace->id, 'business_id' => $business->id, 'category' => 'website_generation',
+            'lane' => 'interactive', 'model_route' => 'reasoning', 'provider' => 'openai', 'price_version' => 1, 'status' => 'refused',
+            'refusal_reason' => 'budget_exhausted', 'refusal_scope' => 'workspace', 'estimated_cost_microusd' => 67_000, 'period_key' => '2026-09',
+            'idempotency_key' => 'website-' . Str::uuid(), 'created_at' => now(),
+        ]);
+
+        $this->assertTrue($this->reader($workspace, $business)->usable(), 'The assistant preflight is not blocked by that unrelated refusal.');
+        $this->assertTrue($this->askAs($workspace, $business, AiUsageCategory::AskAssistant, 300)->ok, 'And the gateway (the authority) accepts the cheaper assistant call.');
+    }
+
+    public function test_a_refused_assistant_request_that_still_would_not_fit_still_blocks_the_preflight(): void
+    {
+        [$workspace, $business] = $this->account(WorkspacePlanTier::Core);
+        $this->period($workspace, '2026-09', 'core', 5_000_000, 4_999_990);
+
+        $this->assertSame(AiRefusalReason::BudgetExhausted, $this->askAs($workspace, $business, AiUsageCategory::AskAssistant, 300)->refusalReason);
+        $this->assertSame(AiAllowance::LIMIT_REACHED, $this->reader($workspace, $business)->status, 'Hard cap behaviour for assistant requests is unchanged.');
+    }
 }

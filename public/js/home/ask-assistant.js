@@ -33,7 +33,7 @@
     var newBtn = section.querySelector('[data-role="ask-new"]');
     if (!cfg.message || !form || !input || !panel || !thread) { return; }
 
-    var state = { uid: null, startNew: false, busy: false, failed: {} };
+    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null };
     var narrow = window.matchMedia ? window.matchMedia('(max-width: 767.98px)') : { matches: false };
 
     function csrf() {
@@ -405,6 +405,23 @@
     function send(question, retryOf) {
         question = (question || '').trim();
         if (question === '' || state.busy) { return; }
+
+        // The saved conversation (and, on first use, the AI-data notice) is read eagerly. A question sent before that has finished
+        // waits for it: if this turns out to be first use the notice is shown first and the customer sends again, so nothing reaches
+        // the AI provider before the disclosure was on screen.
+        if (!retryOf && !state.loaded) {
+            input.value = question;
+            loadSaved().then(function () {
+                if (!state.loaded) {
+                    setOpen(true);
+                    thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't load Ask MotionGrove just now. Nothing was sent. Please try again.", payload: { title: "I couldn't start", retryable: false } }));
+                    return;
+                }
+                if (state.firstUse) { input.focus(); return; }
+                send(question);
+            });
+            return;
+        }
         setOpen(true);
 
         // One logical request = one attempt record. A retry reuses the ORIGINAL client id and conversation target, so the server
@@ -441,6 +458,7 @@
             if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
             // Only the conversation that was current when this request was sent may be cleared by its answer.
             delete state.failed[question];
+            if (state.firstUse) { state.firstUse = false; showNotice(null); }
             if (attempt.startNew && state.startNew) { state.startNew = false; }
             render(res.body);
         }).catch(function () {
@@ -510,17 +528,36 @@
 
     // Reading the saved conversation never calls a model; it only lets Home offer to continue it (and, on first use,
     // carries the AI-data notice shown when the panel opens).
+    function showNotice(notice) {
+        if (!state.notice) {
+            state.notice = el('div', 'home-ask-notice text-caption text-muted mt-1');
+            state.notice.setAttribute('data-role', 'ask-notice');
+            form.parentNode.insertBefore(state.notice, form.nextSibling);
+        }
+        state.notice.textContent = '';
+        if (!notice) { state.notice.hidden = true; return; }
+        state.notice.appendChild(el('strong', null, notice.title || ''));
+        state.notice.appendChild(document.createTextNode(' ' + (notice.body || '')));
+        state.notice.hidden = false;
+    }
+
+    // Returns a promise that settles once the read has finished (state.loaded says whether it worked).
     function loadSaved() {
-        if (!cfg.show) { return; }
-        request(cfg.show).then(function (res) {
+        if (!cfg.show) { state.loaded = true; return Promise.resolve(); }
+        return request(cfg.show).then(function (res) {
             if (!res.ok || !res.body) { return; }
+            state.loaded = true;
+            var any = (res.body.messages || []).length > 0;
+            state.firstUse = !any && !!res.body.notice;
+            // First use: the disclosure sits right under the input, on screen before anything can be sent.
+            showNotice(state.firstUse ? res.body.notice : null);
             render(res.body);
-            if ((res.body.messages || []).length && resumeBtn) {
+            if (any && resumeBtn) {
                 resumeBtn.setAttribute('data-has-conversation', '1');
                 resumeBtn.hidden = false;
             }
-        }).catch(function () { /* the box still works */ });
+        }).catch(function () { /* the box still works once the read succeeds; until then nothing is sent */ });
     }
 
-    if (window.requestIdleCallback) { window.requestIdleCallback(loadSaved); } else { window.setTimeout(loadSaved, 300); }
+    loadSaved();
 })();

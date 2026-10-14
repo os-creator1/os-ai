@@ -4,6 +4,7 @@ namespace App\Library\Ai;
 
 use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Ai\Enums\AiRefusalScope;
+use App\Library\Ai\Enums\AiUsageCategory;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\AiUsagePeriod;
@@ -103,7 +104,10 @@ final class AiUsageReadModel
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::BudgetExhausted->value)
-            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
+            // The preflight is for ONE kind of request (Ask MotionGrove). A refusal of a different, usually larger, request (a website
+            // generation) says nothing about whether a cheaper assistant turn fits, so it must not block it; the gateway decides each
+            // request on its own cost. A refusal of an assistant request that still would not fit still counts.
+            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where('category', AiUsageCategory::AskAssistant->value)->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
             ->where(function (Builder $query) use ($policy): void {
                 $query->whereIn('refusal_scope', self::scopesIncludingWorkspace())
                     ->orWhere(function (Builder $legacy) use ($policy): void {
@@ -216,7 +220,10 @@ final class AiUsageReadModel
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::InteractiveShareExhausted->value)
-            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
+            // The preflight is for ONE kind of request (Ask MotionGrove). A refusal of a different, usually larger, request (a website
+            // generation) says nothing about whether a cheaper assistant turn fits, so it must not block it; the gateway decides each
+            // request on its own cost. A refusal of an assistant request that still would not fit still counts.
+            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where('category', AiUsageCategory::AskAssistant->value)->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
             ->exists();
     }
 
