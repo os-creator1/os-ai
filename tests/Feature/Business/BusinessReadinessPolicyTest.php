@@ -197,10 +197,10 @@ class BusinessReadinessPolicyTest extends TestCase
 
         $this->authenticateAs($customer);
 
-        // The primary Business, which the wizard is bound to, may use the wizard for its missing Service.
+        // The primary Business, which the wizard is bound to, is also sent to its own Services editor.
         $this->switchTo($firstWorkspace, $first);
         $primaryHtml = $this->get(route('user.home'))->assertOk()->getContent();
-        $this->assertStringContainsString(route('customer.onboarding.show', ['step' => 'services']), $primaryHtml);
+        $this->assertStringContainsString(route('customer.workspaces.businesses.services.index', [$firstWorkspace->uid, $first->uid]), $primaryHtml);
 
         // The secondary Business must not send the customer into the wizard of the OTHER Business.
         $this->switchTo($secondWorkspace, $second);
@@ -210,6 +210,8 @@ class BusinessReadinessPolicyTest extends TestCase
         $this->assertStringNotContainsString(route('customer.onboarding.show', ['step' => 'business']), $html);
         $this->assertStringContainsString(route('customer.workspaces.businesses.settings.show', [$secondWorkspace->uid, $second->uid]), $html, 'Its own Settings.');
         $this->assertStringContainsString(route('customer.workspaces.businesses.locations.index', [$secondWorkspace->uid, $second->uid]), $html, 'Its own Locations.');
+        $this->assertStringContainsString(route('customer.workspaces.businesses.services.index', [$secondWorkspace->uid, $second->uid]), $html, 'Its own Services editor.');
+        $this->assertStringNotContainsString(route('customer.workspaces.businesses.services.index', [$firstWorkspace->uid, $first->uid]), $html);
     }
 
     public function test_setup_links_are_authorised_per_actor_and_never_cross_businesses(): void
@@ -223,6 +225,7 @@ class BusinessReadinessPolicyTest extends TestCase
         $this->authenticateAs($staff);
         $html = $this->get(route('user.home'))->assertOk()->getContent();
         $this->assertStringNotContainsString(route('customer.onboarding.show', ['step' => 'services']), $html, 'Staff never get the owner\'s wizard.');
+        $this->assertStringNotContainsString(route('customer.workspaces.businesses.services.index', [$workspace->uid, $business->uid]), $html, 'Staff cannot change services, so Home offers no editor.');
         $this->assertStringNotContainsString(route('customer.business.edit'), $html);
 
         // Another customer cannot open this Business's settings at all.

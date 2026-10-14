@@ -1160,6 +1160,22 @@
             Route::post('/{locationUid}/primary', 'Business\BusinessLocationsController@makePrimary')->name('primary');
         });
 
+        /*
+        |----------------------------------------------------------------------
+        | Settings -> Business -> Services (BusinessService editor)
+        |----------------------------------------------------------------------
+        | The services THIS Business offers, Business-scoped, so a secondary Business can satisfy the primary-Service
+        | readiness step without the customer's one onboarding wizard. Writes go through BusinessServiceManager.
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/services')->name('businesses.services.')->group(function () {
+            Route::get('/', 'Business\BusinessServicesController@index')->name('index');
+            Route::post('/', 'Business\BusinessServicesController@store')->middleware('throttle:60,1')->name('store');
+            Route::post('/{serviceUid}/rename', 'Business\BusinessServicesController@rename')->middleware('throttle:60,1')->name('rename');
+            Route::post('/{serviceUid}/activate', 'Business\BusinessServicesController@activate')->middleware('throttle:60,1')->name('activate');
+            Route::post('/{serviceUid}/deactivate', 'Business\BusinessServicesController@deactivate')->middleware('throttle:60,1')->name('deactivate');
+            Route::post('/{serviceUid}/primary', 'Business\BusinessServicesController@makePrimary')->middleware('throttle:60,1')->name('primary');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/analytics')->name('businesses.analytics.')->group(function () {
             Route::get('/', 'Business\AnalyticsController@overview')->name('overview');
             Route::get('/campaigns', 'Business\AnalyticsController@campaigns')->name('campaigns');

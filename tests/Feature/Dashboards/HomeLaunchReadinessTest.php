@@ -135,15 +135,16 @@ class HomeLaunchReadinessTest extends TestCase
 
     public function test_a_missing_foundation_is_derived_from_records_and_offers_the_wizard_only_for_it(): void
     {
-        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Bare Booths', 'Bare Account');
+        [$customer, $business, $workspace] = $this->bareTenant(WorkspacePlanTier::Growth, 'Bare Booths', 'Bare Account');
         $this->adoptSeoFirstPolicy($business);
         $this->authenticateAs($customer);
 
+        $servicesUrl = route('customer.workspaces.businesses.services.index', [$workspace->uid, $business->uid]);
         $steps = $this->steps($customer);
         $this->assertTrue($steps['business']['done']);
         $this->assertFalse($steps['location']['done']);
         $this->assertFalse($steps['service']['done']);
-        $this->assertStringNotContainsString('/onboarding', $steps['service']['action']['url'], 'The wizard is not bound to this Business, so it is not offered.');
+        $this->assertSame($servicesUrl, $steps['service']['action']['url'], 'The Business-scoped Services editor, never a wizard.');
 
         // Step flags are irrelevant: a row claiming every step is done changes nothing. Once the customer's wizard IS
         // bound to this Business it is the editor offered for the missing step.
@@ -153,7 +154,7 @@ class HomeLaunchReadinessTest extends TestCase
         ]);
         $steps = $this->steps($customer);
         $this->assertFalse($steps['service']['done']);
-        $this->assertSame(route('customer.onboarding.show', ['step' => 'services']), $steps['service']['action']['url']);
+        $this->assertSame($servicesUrl, $steps['service']['action']['url'], 'Even a wizard bound to this Business: the one Services editor.');
     }
 
     public function test_an_archived_primary_location_or_inactive_service_is_not_a_foundation(): void

@@ -59,7 +59,14 @@ A missing foundation step opens the editor of **that** Business. The onboarding 
 one onboarding is bound to this very Business (so it edits it) and the viewer is its owner; a secondary Business, or a
 viewer who is not the owner, is sent to that Business's own scoped Settings (and Locations). The primary Business's details
 page is used for the primary Business only. Every link passes `DashboardLinkGate` (permission, view-as and entitlement).
-There is no per-Business Service editor yet: for a secondary Business a missing primary Service points to its Settings.
+
+A missing primary Service always opens the Business-scoped **Settings → Services** editor
+(`customer.workspaces.businesses.services.*`), for every Business, so a secondary Business never needs (or is sent into)
+the onboarding wizard of another Business. It is offered only to a Workspace owner or active Admin; anyone else sees the
+step without an action. The editor adds, renames, turns off/on and picks the primary of `BusinessService` rows (not catalog
+items) through `BusinessServiceManager`, which writes only via the canonical `BusinessManager::syncServices` seam under the
+Business row lock: services are never deleted (turned off instead), slugs are stable, and exactly one active service is
+primary whenever any is active.
 
 ## Unknown is not ready
 

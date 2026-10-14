@@ -485,8 +485,13 @@ final class HomeCommandCenter
             'forms' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.forms.index', $scoped, ['forms'], 'forms'),
             'business' => $wizard ? route('customer.onboarding.show', ['step' => 'business']) : ($primaryDetails ?? $settings),
             'businessLabel' => $wizard ? 'Add details' : 'Open settings',
-            'service' => $wizard ? route('customer.onboarding.show', ['step' => 'services']) : $settings,
-            'serviceLabel' => $wizard ? 'Add service' : 'Open settings',
+            // The Business-scoped Services editor works for EVERY Business (the wizard edits only the customer's one onboarding
+            // Business), so a secondary Business is never sent into another Business's wizard. Only an actor who may change the
+            // services is offered it; anyone else sees the step without an action.
+            'service' => $context->canManageWorkspace()
+                ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.services.index', $scoped, ['access_backend'])
+                : null,
+            'serviceLabel' => 'Add service',
         ];
 
         // The website source: the stored choice, or "hosted" for a Business that already owns a site.
