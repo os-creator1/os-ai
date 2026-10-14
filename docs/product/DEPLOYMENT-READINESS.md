@@ -593,3 +593,13 @@ this against the canonical or any `ultimatesms_testing*` database.**
 
 The full repository suite was **not** run for this documentation/readiness pass; only the files
 above were executed.
+
+---
+
+## 10. Production site (getmotiongrove.com)
+
+The generic checklist in section 8 is implemented for the production host by
+[`FORGE-PRODUCTION.md`](FORGE-PRODUCTION.md) (exact Forge, DNS, SSL, worker, scheduler, environment, install and
+Stripe steps), the production-only scripts in `deploy/forge/production/`, and the variable template
+[`production-getmotiongrove.env.example`](production-getmotiongrove.env.example). Production deploys `main` only, by
+hand; staging (`FORGE-STAGING.md`) is unchanged and remains test-only.

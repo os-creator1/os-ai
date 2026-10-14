@@ -32,6 +32,9 @@ interface BusinessRepository extends BaseRepository
      */
     public function findForUpdate(int $id): ?Business;
 
+    /** NULL -> seo_first_v1 on the Business row (a no-op when it already carries a policy). Used when the SEO-first onboarding completes. */
+    public function adoptReadinessPolicy(Business $business): void;
+
     public function findOwnedByCustomer(int $businessId, int $customerId): ?Business;
 
     public function findPrimaryByCustomer(int $customerId): ?Business;

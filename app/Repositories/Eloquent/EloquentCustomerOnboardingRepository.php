@@ -32,6 +32,23 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
         return $this->query()->whereKey($id)->first();
     }
 
+    public function findForUpdate(int $id): ?CustomerOnboarding
+    {
+        return $this->query()->whereKey($id)->lockForUpdate()->first();
+    }
+
+    public function recordWebsiteChoice(CustomerOnboarding $onboarding, string $choice): CustomerOnboarding
+    {
+        $metadata = $onboarding->metadata ?? [];
+        $metadata['website'] = ['choice' => $choice, 'chosen_at' => now()->toIso8601String()];
+
+        $onboarding->metadata = $metadata;
+        $onboarding->last_activity_at = now();
+        $onboarding->save();
+
+        return $onboarding;
+    }
+
     /**
      * business_id has no unique database constraint — only customer_id does
      * (see the class-level migration) — so this orders by id descending
@@ -64,7 +81,7 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
             $onboarding->customer_id = $customer->user_id;
             $onboarding->is_required = $required;
             $onboarding->status = OnboardingStatus::Started;
-            $onboarding->current_step = OnboardingStep::Goals;
+            $onboarding->current_step = OnboardingStep::Business;
             $onboarding->started_at = now();
             $onboarding->last_activity_at = now();
             $onboarding->save();
@@ -174,7 +191,7 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
     public function complete(CustomerOnboarding $onboarding): CustomerOnboarding
     {
         $onboarding->status = OnboardingStatus::Completed;
-        $onboarding->current_step = OnboardingStep::Complete;
+        $onboarding->current_step = OnboardingStep::Finish;
         $onboarding->completed_at = now();
         $onboarding->last_activity_at = now();
         $onboarding->save();

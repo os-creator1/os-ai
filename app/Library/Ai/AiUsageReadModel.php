@@ -4,6 +4,7 @@ namespace App\Library\Ai;
 
 use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Ai\Enums\AiRefusalScope;
+use App\Library\Ai\Enums\AiUsageCategory;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\AiUsagePeriod;
@@ -82,19 +83,31 @@ final class AiUsageReadModel
      * cap that call could have met: the policy has no per-Business cap, or the
      * call carried no Business, so there was no Business row to refuse it.
      */
-    public function workspaceStanding(int $workspaceId, AiBudgetPolicy $policy): AiUsageStanding
+    public function workspaceStanding(int $workspaceId, AiBudgetPolicy $policy, bool $supersedeRefusalsThatNowFit = false): AiUsageStanding
     {
         $period = AiUsagePeriod::query()
             ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
             ->where('scope_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
-            ->first(['cap_microusd', 'committed_microusd']);
+            ->first(['cap_microusd', 'committed_microusd', 'reserved_microusd']);
+
+        // OPT-IN (the allowance preflight asks for it; the billing page and the other readers keep the plain rule): a refusal is a
+        // fact about a REQUEST that did not fit. Once the cap has been raised (a paid plan upgrade inside the month adopts the
+        // larger cap) a refusal whose request would fit in the room that now exists is history, not a state, and must not keep
+        // saying "limit reached" for the rest of the month. A refusal that still would not fit still counts.
+        $room = $period !== null
+            ? max(0, (int) $period->cap_microusd - (int) $period->committed_microusd - (int) $period->reserved_microusd)
+            : $policy->workspaceCapMicrousd;
 
         $refused = AiUsageLedgerEntry::query()
             ->where('workspace_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::BudgetExhausted->value)
+            // The preflight is for ONE kind of request (Ask MotionGrove). A refusal of a different, usually larger, request (a website
+            // generation) says nothing about whether a cheaper assistant turn fits, so it must not block it; the gateway decides each
+            // request on its own cost. A refusal of an assistant request that still would not fit still counts.
+            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where('category', AiUsageCategory::AskAssistant->value)->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
             ->where(function (Builder $query) use ($policy): void {
                 $query->whereIn('refusal_scope', self::scopesIncludingWorkspace())
                     ->orWhere(function (Builder $legacy) use ($policy): void {
@@ -129,7 +142,7 @@ final class AiUsageReadModel
      * @param  array<int, int>  $businessIds
      * @return array<int, AiUsageStanding> keyed by Business id
      */
-    public function businessStandings(int $workspaceId, array $businessIds, AiBudgetPolicy $policy): array
+    public function businessStandings(int $workspaceId, array $businessIds, AiBudgetPolicy $policy, bool $assistantPreflight = false): array
     {
         $businessIds = array_values(array_unique(array_map('intval', $businessIds)));
 
@@ -142,23 +155,38 @@ final class AiUsageReadModel
             ->whereIn('scope_id', $businessIds)
             ->where('workspace_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
-            ->get(['scope_id', 'cap_microusd', 'committed_microusd'])
+            ->get(['scope_id', 'cap_microusd', 'committed_microusd', 'reserved_microusd'])
             ->keyBy('scope_id');
 
-        $refusedIds = AiUsageLedgerEntry::query()
+        $refusals = AiUsageLedgerEntry::query()
             ->whereIn('business_id', $businessIds)
             ->where('workspace_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::BudgetExhausted->value)
+            // OPT-IN (the assistant preflight): as for the Workspace, a refusal speaks only for ITS kind of request, so a large
+            // unrelated operation that failed against the Business sub-cap does not block a cheaper Ask MotionGrove turn.
+            ->when($assistantPreflight, fn (Builder $query) => $query->where('category', AiUsageCategory::AskAssistant->value))
             ->where(function (Builder $query): void {
                 $query->whereIn('refusal_scope', self::scopesIncludingBusiness())
                     ->orWhereNull('refusal_scope');
             })
-            ->distinct()
-            ->pluck('business_id')
-            ->map(fn ($id): int => (int) $id)
-            ->all();
+            ->get(['business_id', 'estimated_cost_microusd']);
+
+        $refusedIds = [];
+
+        foreach ($refusals as $refusal) {
+            $id = (int) $refusal->business_id;
+            $period = $periods->get($id);
+            $room = $period !== null ? max(0, (int) $period->cap_microusd - (int) $period->committed_microusd - (int) $period->reserved_microusd) : $policy->businessCapMicrousd;
+
+            // An assistant refusal that would fit in the room that exists NOW is history (same rule as the Workspace preflight).
+            if (! $assistantPreflight || $refusal->estimated_cost_microusd === null || (int) $refusal->estimated_cost_microusd > $room) {
+                $refusedIds[$id] = true;
+            }
+        }
+
+        $refusedIds = array_keys($refusedIds);
 
         $standings = [];
 
@@ -173,6 +201,45 @@ final class AiUsageReadModel
         }
 
         return $standings;
+    }
+
+    /**
+     * Has the Workspace's INTERACTIVE share (the customer-asked lane) been
+     * spent, independently of the overall allowance? Committed plus live
+     * reservations against `cap x share`, or any interactive-share refusal this
+     * period — the same arithmetic AiUsageLedgerManager::reserve() refuses on.
+     * A different fact from the overall allowance being used up: the product
+     * lane's protected share may be entirely unspent.
+     */
+    public function interactiveShareSpent(int $workspaceId, AiBudgetPolicy $policy, bool $supersedeRefusalsThatNowFit = false): bool
+    {
+        $period = AiUsagePeriod::query()
+            ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
+            ->where('scope_id', $workspaceId)
+            ->where('period_key', $policy->periodKey)
+            ->first(['cap_microusd', 'interactive_reserved_microusd', 'interactive_committed_microusd']);
+
+        $cap = $period !== null ? (int) $period->cap_microusd : $policy->workspaceCapMicrousd;
+        $interactiveCap = intdiv($cap * $policy->interactiveShareBps, 10_000);
+        $spent = $period !== null ? (int) $period->interactive_reserved_microusd + (int) $period->interactive_committed_microusd : 0;
+
+        if ($period !== null && $spent >= $interactiveCap) {
+            return true;
+        }
+
+        // As for the overall cap: a refusal that would fit in the interactive room that exists NOW (after a cap raise) is history.
+        $room = max(0, $interactiveCap - $spent);
+
+        return AiUsageLedgerEntry::query()
+            ->where('workspace_id', $workspaceId)
+            ->where('period_key', $policy->periodKey)
+            ->where('status', AiUsageEntryStatus::Refused->value)
+            ->where('refusal_reason', AiRefusalReason::InteractiveShareExhausted->value)
+            // The preflight is for ONE kind of request (Ask MotionGrove). A refusal of a different, usually larger, request (a website
+            // generation) says nothing about whether a cheaper assistant turn fits, so it must not block it; the gateway decides each
+            // request on its own cost. A refusal of an assistant request that still would not fit still counts.
+            ->when($supersedeRefusalsThatNowFit, fn (Builder $query) => $query->where('category', AiUsageCategory::AskAssistant->value)->where(fn (Builder $q) => $q->whereNull('estimated_cost_microusd')->orWhere('estimated_cost_microusd', '>', $room)))
+            ->exists();
     }
 
     /**
