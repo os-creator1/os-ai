@@ -12,7 +12,9 @@
     $currencyCode = $currencyCode ?? null;
 @endphp
 
-<x-card title="Custom fields" data-role="contact-custom-fields">
+<div class="mg-cp-card" data-role="contact-custom-fields">
+    <h2 class="mg-cp-card-title">{{ $customFieldsHeading ?? 'Custom details' }}</h2>
+    <p class="mg-cp-card-sub">Custom fields for this contact.@if ($cfCanEdit) <a href="{{ $cfSettings }}">Manage fields</a>@endif</p>
     @if (session('flash_success'))
         <x-alert variant="success" class="mb-1" role="status" data-role="custom-fields-saved">{{ session('flash_success') }}</x-alert>
     @endif
@@ -28,6 +30,7 @@
     @else
         <form method="POST" action="{{ $cfRoute }}" data-role="custom-fields-form">
             @csrf
+            <div class="mg-cp-fields">
             @foreach ($customFields['editable'] as $entry)
                 @php
                     $field = $entry['definition'];
@@ -36,9 +39,9 @@
                     $id = 'cf-' . $field->uid;
                     $type = $field->type;
                 @endphp
-                <div class="row mb-1 align-items-start" data-role="custom-field" data-key="{{ $field->key }}">
-                    <label class="col-sm-4 col-form-label" for="{{ $id }}">{{ $field->label }}</label>
-                    <div class="col-sm-8">
+                <div class="mg-cp-field {{ in_array($type, ['long_text', 'multi_select'], true) ? 'is-wide' : '' }}" data-role="custom-field" data-key="{{ $field->key }}">
+                    <label class="mg-cp-flabel" for="{{ $id }}">{{ $field->label }}</label>
+                    <div>
                         @if ($type === 'long_text')
                             <textarea id="{{ $id }}" name="{{ $name }}" rows="3" class="form-control" maxlength="5000" @disabled(! $cfCanEdit)>{{ $value }}</textarea>
                         @elseif ($type === 'number' || $type === 'currency')
@@ -78,19 +81,19 @@
                     </div>
                 </div>
             @endforeach
-
             @foreach ($customFields['archived'] as $entry)
-                <div class="row mb-1" data-role="custom-field-archived">
-                    <span class="col-sm-4 text-muted">{{ $entry['definition']->label }} <small>(archived)</small></span>
-                    <span class="col-sm-8">{{ $entry['display'] }}</span>
+                <div class="mg-cp-field" data-role="custom-field-archived">
+                    <span class="mg-cp-flabel text-muted">{{ $entry['definition']->label }} <small>(archived)</small></span>
+                    <span>{{ $entry['display'] }}</span>
                 </div>
             @endforeach
+            </div>
 
             @if ($cfCanEdit && ! empty($customFields['editable']))
-                <div class="text-end">
-                    <x-button type="submit" variant="primary" size="sm">Save custom fields</x-button>
+                <div class="mg-cp-save">
+                    <x-button type="submit" variant="primary" data-role="custom-fields-save">Save</x-button>
                 </div>
             @endif
         </form>
     @endif
-</x-card>
+</div>

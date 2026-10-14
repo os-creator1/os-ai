@@ -323,17 +323,42 @@ class ContactsPersonFirstTest extends TestCase
 
         $page = $this->profile($workspace, $business, $ana);
 
-        $this->assertSame('Ana Petrauskaite', trim(strip_tags($this->between($page->getContent(), 'data-role="contact-name">', '</h3>'))));
+        $this->assertSame('Ana Petrauskaite', trim(strip_tags($this->between($page->getContent(), 'data-role="contact-name">', '</span>'))));
         $page->assertSee('ana@example.test');
         $page->assertSee('Harbor Bakery');
         $page->assertSee('Gedimino pr. 1, Vilnius');
         $page->assertSee('href="' . route('customer.workspaces.businesses.contacts.show', [$workspace->uid, $business->uid, $group->uid]) . '"', false);
-        $page->assertSee('No messages with this contact yet.');
+        $page->assertSee('No activity yet');
 
         $body = $this->between($page->getContent(), '<section id="contact-profile">', '</section>');
         foreach (['Source', 'Submitted via', 'Form', 'Notes', 'Tags', 'Lead score'] as $notStored) {
             $this->assertStringNotContainsString($notStored, $body, "{$notStored} is not stored for contacts, so it is not shown.");
         }
+    }
+
+    public function test_the_redesigned_profile_header_identity_copy_actions_and_empty_activity(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $group = $this->group($business, 'Customers');
+        $ana = $this->person($group, ['FIRST_NAME' => 'Ana', 'LAST_NAME' => 'Petrauskaite', 'EMAIL' => 'ana@example.test']);
+        $bare = $this->person($group, []);
+        $this->authenticateAs($owner);
+
+        $page = $this->profile($workspace, $business, $ana);
+        $page->assertSee('>AP<', false);
+        $page->assertSee('Subscribed');
+        $page->assertSee('data-role="contact-copy-phone"', false);
+        $page->assertSee('data-copy="ana@example.test"', false);
+        $page->assertSee('data-role="contact-edit"', false);
+        $page->assertSee('No activity yet');
+        $page->assertSee('Messages and campaigns with Ana will appear here.');
+        $page->assertDontSee('Event date');
+        $page->assertDontSee('content-header-title', false); // the page owns its heading, so the shell prints none
+
+        // Missing optional data: no email row, no copy-email action, still a usable header.
+        $plain = $this->profile($workspace, $business, $bare);
+        $plain->assertDontSee('data-role="contact-copy-email"', false);
+        $plain->assertSee('data-role="contact-copy-phone"', false);
     }
 
     /**
