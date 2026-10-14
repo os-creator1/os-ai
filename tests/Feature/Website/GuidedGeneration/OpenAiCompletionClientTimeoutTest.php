@@ -45,18 +45,16 @@ class OpenAiCompletionClientTimeoutTest extends TestCase
         );
     }
 
-    public function test_the_completion_client_constructs_its_http_client_with_the_documented_options(): void
+    public function test_the_http_timeout_is_the_requests_own_bound_but_never_above_the_provider_ceiling(): void
     {
-        // Independent-review correction round 4 (item 1/8) — proves the
-        // ACTUAL source wires `timeout` and `connect_timeout` into the
-        // Guzzle client passed to OpenAI::factory()->withHttpClient(...),
-        // rather than merely trusting the docblock, without ever making a
-        // real network call (this suite never contacts a real provider or
-        // any outbound address).
-        $source = file_get_contents((new \ReflectionClass(OpenAiCompletionClient::class))->getFileName());
+        // Behaviour, not source text: the value the client hands to its HTTP layer.
+        $ceiling = (new \ReflectionClass(OpenAiCompletionClient::class))->getConstant('PROVIDER_TIMEOUT_SECONDS');
 
-        $this->assertStringContainsString('withHttpClient', $source);
-        $this->assertStringContainsString("'timeout' => self::PROVIDER_TIMEOUT_SECONDS", $source);
-        $this->assertStringContainsString("'connect_timeout'", $source);
+        $this->assertSame($ceiling, OpenAiCompletionClient::effectiveTimeoutSeconds(null), 'No request bound: the provider ceiling applies.');
+        $this->assertSame($ceiling, OpenAiCompletionClient::effectiveTimeoutSeconds(0), 'A zero or negative bound is ignored.');
+        $this->assertSame($ceiling, OpenAiCompletionClient::effectiveTimeoutSeconds(-5));
+        $this->assertSame(25, OpenAiCompletionClient::effectiveTimeoutSeconds(25), 'A shorter request bound is honoured.');
+        $this->assertSame($ceiling, OpenAiCompletionClient::effectiveTimeoutSeconds($ceiling + 500), 'A request can never extend the provider ceiling.');
+        $this->assertLessThan(WebsiteGenerationCoordinator::LEASE_SECONDS, OpenAiCompletionClient::effectiveTimeoutSeconds(PHP_INT_MAX), 'Whatever is requested, a call ends before the generation lease can be reclaimed.');
     }
 }

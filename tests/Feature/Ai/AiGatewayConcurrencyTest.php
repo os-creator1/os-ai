@@ -249,9 +249,8 @@ function waitForSignal(string \$path): void
 \$signalPath = \$argv[2];
 \$idempotencyKey = \$argv[3];
 
-// §19.3 rule 3 — enforce the pre-existing categories inside the child, so
-// the raced category's cap is genuinely hard rather than observation-only.
-config(['ai.enforce_budgets_for_existing_categories' => true]);
+// The retired observation flag is OFF in every child: the cap must be hard regardless of it.
+config(['ai.enforce_budgets_for_existing_categories' => false]);
 
 \$fake = new App\Library\Ai\Providers\FakeAiCompletionClient();
 \$fake->setDefaultResult(App\Library\Ai\AiCompletionResult::success(

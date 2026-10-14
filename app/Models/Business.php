@@ -16,6 +16,13 @@ class Business extends Model
 {
     use HasUid;
 
+    /**
+     * The Home readiness policy of every Business created since the SEO-first onboarding (businesses.readiness_policy).
+     * A NULL column is an established Business that predates it. Not mass-assignable: written only by
+     * BusinessRepository (at creation) and OnboardingManager (on completing the new flow).
+     */
+    public const READINESS_POLICY_SEO_FIRST = 'seo_first_v1';
+
     protected $fillable = [
         'customer_id',
         'name',

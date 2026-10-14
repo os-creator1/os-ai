@@ -494,11 +494,103 @@ final class AiUsageLedgerManager
             ]);
         }
 
-        return AiUsagePeriod::query()
+        $period = AiUsagePeriod::query()
             ->where('scope_type', $scopeType)
             ->where('scope_id', $scopeId)
             ->where('period_key', $policy->periodKey)
             ->lockForUpdate()
             ->firstOrFail();
+
+        return $this->adoptUpgradedCap($period, $policy, $capMicrousd);
+    }
+
+    /**
+     * Brings an OPEN paid period up to a plan the Workspace has since upgraded to, without waiting for a call to reserve.
+     *
+     * adoptUpgradedCap() is the one place a period's snapshotted cap may rise, and it ran only inside reserve(). So a Workspace
+     * that used up Core and then upgraded to Growth in the same month was still shown Core's cap by everything that reads the
+     * period first (the allowance preflight), and so never reached reserve() to have it adopted. This runs the very same rule,
+     * under the same row locks and in the same order (Workspace period, then Business periods), for the Workspace's current
+     * period only. It is upward-only, never touches a trial's period, never changes spend, and is a no-op in the ordinary case
+     * (an unlocked probe finds nothing to adopt, so a plain read takes no lock and writes nothing).
+     */
+    public function reconcileUpgradedCaps(int $workspaceId, AiBudgetPolicy $policy): void
+    {
+        if ($policy->isTrial() || ! $policy->hasAllowance()) {
+            return;
+        }
+
+        $stale = fn (string $scope, int $cap) => AiUsagePeriod::query()
+            ->where('workspace_id', $workspaceId)
+            ->where('scope_type', $scope)
+            ->where('period_key', $policy->periodKey)
+            ->where('policy_key', '!=', $policy->policyKey)
+            ->where('policy_key', '!=', 'trial')
+            ->where('cap_microusd', '<', $cap);
+
+        $workspaceStale = $stale(AiUsagePeriod::SCOPE_WORKSPACE, $policy->workspaceCapMicrousd)->exists();
+        $businessStale = $policy->businessCapMicrousd !== null && $stale(AiUsagePeriod::SCOPE_BUSINESS, $policy->businessCapMicrousd)->exists();
+
+        if (! $workspaceStale && ! $businessStale) {
+            return;
+        }
+
+        DB::transaction(function () use ($workspaceId, $policy, $workspaceStale, $businessStale): void {
+            if ($workspaceStale) {
+                $period = AiUsagePeriod::query()
+                    ->where('workspace_id', $workspaceId)
+                    ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
+                    ->where('period_key', $policy->periodKey)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($period !== null) {
+                    $this->adoptUpgradedCap($period, $policy, $policy->workspaceCapMicrousd);
+                }
+            }
+
+            if ($businessStale) {
+                AiUsagePeriod::query()
+                    ->where('workspace_id', $workspaceId)
+                    ->where('scope_type', AiUsagePeriod::SCOPE_BUSINESS)
+                    ->where('period_key', $policy->periodKey)
+                    ->orderBy('scope_id')
+                    ->lockForUpdate()
+                    ->get()
+                    ->each(fn (AiUsagePeriod $period) => $this->adoptUpgradedCap($period, $policy, (int) $policy->businessCapMicrousd));
+            }
+        });
+    }
+
+    /**
+     * The one explicit exception to "a period keeps the cap it snapshotted".
+     *
+     * A paid plan change inside an OPEN calendar-month period (Core -> Growth,
+     * say) must not leave the customer on the old, smaller allowance for the
+     * rest of the month they just paid more for. It happens only when ALL of:
+     * the period was opened under a different policy key, the policy now
+     * resolved offers a strictly larger cap, and the period is not a trial's
+     * (a trial period is never reused as a paid one — conversion simply opens
+     * the calendar-month period). It is upward only: a downgrade or a changed
+     * config amount never rewrites an open period, and spend already
+     * committed or reserved is untouched. Runs under the period row lock the
+     * caller already holds.
+     */
+    private function adoptUpgradedCap(AiUsagePeriod $period, AiBudgetPolicy $policy, int $capMicrousd): AiUsagePeriod
+    {
+        if ($period->policy_key === $policy->policyKey
+            || $period->policy_key === 'trial'
+            || $policy->isTrial()
+            || $capMicrousd <= (int) $period->cap_microusd) {
+            return $period;
+        }
+
+        $period->forceFill([
+            'policy_key' => $policy->policyKey,
+            'policy_version' => $policy->policyVersion,
+            'cap_microusd' => $capMicrousd,
+        ])->save();
+
+        return $period;
     }
 }

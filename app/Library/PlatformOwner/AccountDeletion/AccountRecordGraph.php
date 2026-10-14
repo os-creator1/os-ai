@@ -51,6 +51,8 @@ final class AccountRecordGraph
      */
     public const USER_OWNED = [
         'announcements_user.user_id',
+        'assistant_action_proposals.user_id',
+        'assistant_conversations.user_id',
         'automations.user_id',
         'blacklists.user_id',
         'booking_type_staff.staff_user_id',

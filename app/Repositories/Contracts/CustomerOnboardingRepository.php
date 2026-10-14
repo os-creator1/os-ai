@@ -23,6 +23,16 @@ interface CustomerOnboardingRepository extends BaseRepository
      */
     public function findById(int $id): ?CustomerOnboarding;
 
+    /** Row-locked read, for the completion path to re-check state under the lock. */
+    public function findForUpdate(int $id): ?CustomerOnboarding;
+
+    /**
+     * Records the Website step's intention (build / existing / later) in the
+     * onboarding's scoped metadata. The choice is state about onboarding only:
+     * the Business's website fields are written by their own owners.
+     */
+    public function recordWebsiteChoice(CustomerOnboarding $onboarding, string $choice): CustomerOnboarding;
+
     /**
      * Equivalent to findByCustomer(), but scoped by the raw customer_id
      * (users.id) directly, for callers that don't already have a Customer
