@@ -77,7 +77,7 @@ final class ExternalAuditCatalog
             'what' => 'When our crawler asked for your home page, your website answered with an error instead of the page.',
             'why' => 'The home page is the first page most visitors and search engines reach. A page that answers with an error cannot be shown to anyone who asks for it the same way.',
             'proposal' => 'Make the home page load normally again (or point the address to the right page).',
-            'steps' => ['Open your website address in a browser to see what visitors see.', 'If it is also broken for you, contact your hosting provider or whoever built the site, and give them the status code shown below.', 'If it loads fine for you, the error may depend on location or timing: ask your host to check the server logs for that status code.'],
+            'steps' => ['Open your website address in a browser to see what visitors see.', 'If it is also broken for you, contact your hosting provider or whoever built the site, and give them the status code shown above.', 'If it loads fine for you, the error may depend on location or timing: ask your host to check the server logs for that status code.'],
             'verify' => 'On the next check MotionGrove requests the home page again; the finding disappears when it answers with a normal page.',
         ],
         'home_page_unreachable' => [
@@ -102,13 +102,23 @@ final class ExternalAuditCatalog
         ],
         'robots_blocks_pages' => [
             'category' => 'crawl', 'kind' => 'problem', 'site_level' => false, 'confidence' => 'confirmed', 'effort' => 'moderate',
-            'priority' => ['home' => 'critical', 'key' => 'high', 'standard' => 'medium', 'utility' => 'info'],
+            'priority' => ['home' => 'critical', 'key' => 'high', 'standard' => 'low', 'utility' => 'info'],
             'title' => 'robots.txt asks crawlers to stay away from these pages',
-            'what' => 'Your robots.txt file asks crawlers like ours not to fetch this page, although the page is linked from your site or listed in your sitemap. MotionGrove obeyed it and did not fetch the page.',
-            'why' => 'robots.txt controls crawling. A page that crawlers are told to avoid is often missing from search results, or shown without a description.',
+            'what' => 'Your robots.txt file asks crawlers like ours not to fetch this page, although the page is linked from your site. MotionGrove obeyed it and did not fetch the page.',
+            'why' => 'robots.txt controls crawling. A page that crawlers are told to avoid is often missing from search results, or shown without a description. If you meant to keep it out (a members area, say), nothing needs to change.',
             'proposal' => 'If the page should be found, remove or narrow the Disallow rule that matches it in robots.txt.',
             'steps' => ['Open yourdomain.com/robots.txt in a browser and find the Disallow line that matches the page\'s address.', 'If the page should appear in search, remove or narrow that rule. Keep Disallow rules for private areas such as admin and checkout.', 'Many SEO plugins edit robots.txt for you under their "Tools" or "Crawl settings" screen.'],
             'verify' => 'The next check reads robots.txt again; the finding disappears when the page is no longer disallowed for our crawler.',
+        ],
+        'robots_unreadable' => [
+            'category' => 'crawl', 'kind' => 'problem', 'site_level' => true, 'confidence' => 'confirmed', 'effort' => 'technical',
+            'priority' => ['*' => 'medium'],
+            'title' => 'robots.txt could not be read',
+            'what' => 'We asked for your robots.txt file and your website answered with an error (or refused the request) instead of the file. A site with no robots.txt at all (a plain 404) is fine and is not reported.',
+            'why' => 'Search engines may treat a robots.txt that errors as an instruction to stay away for a while, and a firewall that blocks that file may be blocking crawlers generally.',
+            'proposal' => 'Make /robots.txt return the file (or a clean 404 if you do not have one).',
+            'steps' => ['Open yourdomain.com/robots.txt in a browser. If you see an error page, ask your host or developer why that address fails.', 'If a security plugin or CDN is blocking it, allow requests for /robots.txt.'],
+            'verify' => 'The next check requests robots.txt again; the finding disappears when it answers with the file or a plain 404.',
         ],
         'site_not_https' => [
             'category' => 'crawl', 'kind' => 'problem', 'site_level' => true, 'confidence' => 'confirmed', 'effort' => 'technical',
@@ -197,7 +207,7 @@ final class ExternalAuditCatalog
             'what' => 'These links on your pages lead to addresses on your own site that answered with an error (such as 404 Not Found).',
             'why' => 'A visitor who clicks lands on an error page. When the broken link is in a menu or leads to a page where people contact or book you, it can cost enquiries.',
             'proposal' => 'Update each link to the right page, or remove it; restore or redirect the missing page if it should exist.',
-            'steps' => ['For each row below, open the source page in your editor and find the link to the destination address.', 'Point the link at the correct page, or remove it. If the destination page was deleted by mistake, restore it or add a redirect to the best replacement.'],
+            'steps' => ['For each affected page listed above, open the source page in your editor and find the link to the destination address.', 'Point the link at the correct page, or remove it. If the destination page was deleted by mistake, restore it or add a redirect to the best replacement.'],
             'verify' => 'The next check re-reads the source pages and the destinations; each row disappears when the link works or is gone.',
         ],
         'internal_link_to_redirect' => [
@@ -421,7 +431,7 @@ final class ExternalAuditCatalog
             'what' => 'These https:// pages reference images, scripts or stylesheets at http:// addresses.',
             'why' => 'Browsers may block insecure scripts and styles or show a "Not secure" warning, which can break the page or worry visitors.',
             'proposal' => 'Change each http:// resource address to https://.',
-            'steps' => ['Find the file addresses listed below in your page or theme and change http:// to https://. Many sites fix this site-wide with a "search and replace" plugin or by re-saving the media settings.'],
+            'steps' => ['Find the file addresses listed above in your page or theme and change http:// to https://. Many sites fix this site-wide with a "search and replace" plugin or by re-saving the media settings.'],
             'verify' => 'The next check re-reads each page and lists any remaining http:// resources.',
         ],
         'og_missing' => [

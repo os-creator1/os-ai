@@ -214,9 +214,38 @@ final class ExternalWebsiteReader
             }
         }
 
-        usort($out, fn (array $a, array $b): int => [ExternalAuditCatalog::priorityWeight($b['priority']), $b['importance_weight'], $b['row_count'], $a['title']] <=> [ExternalAuditCatalog::priorityWeight($a['priority']), $a['importance_weight'], $a['row_count'], $b['title']]);
+        usort($out, fn (array $a, array $b): int => [self::rank($b), $a['title']] <=> [self::rank($a), $b['title']]);
 
         return $out;
+    }
+
+    /**
+     * The ONE ordering of issues, used by the Audit list and the Improvement Plan alike: priority first, then whether it
+     * touches a contact/booking page, then the home page, then problems before improvements before opportunities, then the part
+     * of the site (crawl access and links before metadata ...), then how many pages. A long list of low-impact pages never
+     * outranks one booking-critical problem.
+     *
+     * @param  array<string, mixed>  $group
+     * @return list<int>
+     */
+    public static function rank(array $group): array
+    {
+        $hasKey = false;
+        $hasHome = false;
+
+        foreach ($group['rows'] as $row) {
+            $hasKey = $hasKey || $row['importance'] === ExternalPageImportance::KEY;
+            $hasHome = $hasHome || $row['importance'] === ExternalPageImportance::HOME;
+        }
+
+        return [
+            ExternalAuditCatalog::priorityWeight($group['priority']),
+            $hasKey ? 2 : ($hasHome ? 1 : 0),
+            ['problem' => 3, 'improvement' => 2, 'opportunity' => 1][$group['kind']] ?? 0,
+            ['crawl' => 6, 'links' => 5, 'metadata' => 4, 'headings' => 3, 'structured' => 2, 'images' => 1][$group['category']] ?? 0,
+            (int) $group['page_count'],
+            (int) $group['row_count'],
+        ];
     }
 
     /**

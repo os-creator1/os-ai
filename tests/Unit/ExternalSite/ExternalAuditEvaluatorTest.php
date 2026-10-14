@@ -625,6 +625,65 @@ class ExternalAuditEvaluatorTest extends TestCase
         $this->assertSame('heuristic', $rows[0]->confidence, 'Orphans are CANDIDATES.');
     }
 
+    // ---------------------------------------------------------------- connection failures are told apart
+
+    public function test_each_kind_of_connection_failure_is_classified_separately_and_never_called_a_site_outage(): void
+    {
+        // A name that does not resolve: a network problem (perhaps a typo), not "an invalid address".
+        $outcome = $this->crawlerWith()->crawl('https://does-not-resolve.example/');
+        $this->assertSame(ConnectionResult::NETWORK_ERROR, $outcome->connection->state);
+        $this->assertSame('dns_failed', $outcome->failureCode);
+        $this->assertSame([], $this->transport->requests, 'Nothing is requested for a name that does not resolve.');
+
+        // A certificate / handshake failure.
+        $site = $this->fakeSite('tlsbroken.example');
+        $this->transport->set($site->url('/'), ['status' => 0, 'error' => 'tls_failed']);
+        $this->assertSame(ConnectionResult::TLS_ERROR, $this->crawlSite($site)->connection->state);
+
+        // A timeout is retried once and then reported as "could not connect", not "down".
+        $this->bootFakeInternet();
+        $slow = $this->fakeSite('slowhost.example');
+        $this->transport->set($slow->url('/'), ['status' => 0, 'error' => 'timeout']);
+        $outcome = $this->crawlSite($slow);
+        $this->assertSame(ConnectionResult::NETWORK_ERROR, $outcome->connection->state);
+        $this->assertSame('timeout', $outcome->connection->reason);
+        $this->assertCount(2, array_filter($this->transport->requestedUrls(), fn ($u) => $u === $slow->url('/')), 'One retry, no more.');
+
+        // A redirect loop on the start address is the website's own error.
+        $this->bootFakeInternet();
+        $loop = $this->fakeSite('loophost.example');
+        $loop->redirect('/', $loop->url('/again'))->redirect('/again', $loop->url('/'));
+        $this->assertSame(ConnectionResult::HTTP_ERROR, $this->crawlSite($loop)->connection->state);
+
+        // None of them is ever worded as "visitors cannot see your website".
+        foreach (['network_error', 'tls_error', 'http_error', 'crawler_blocked', 'reachable'] as $state) {
+            $this->assertStringNotContainsString('cannot see', strtolower(implode(' ', \App\Library\ExternalSite\ExternalAuditPresenter::connection($state))));
+        }
+    }
+
+    public function test_a_robots_txt_that_cannot_be_read_does_not_stop_the_audit_or_block_it_silently(): void
+    {
+        $site = $this->fakeSite()->healthy();
+        $site->raw('/robots.txt', 503, ['content-type' => 'text/html'], 'unavailable');
+
+        $outcome = $this->crawlSite($site);
+
+        $this->assertCount(4, $outcome->audited(), 'Public pages are still read, politely, one at a time.');
+        $this->assertFalse($outcome->robots->readable);
+        $this->assertSame(503, $outcome->robots->status);
+        $this->assertContains('robots_unreadable', $this->ruleKeys($this->auditOutcome($outcome)));
+    }
+
+    public function test_a_site_with_no_robots_txt_at_all_is_not_a_problem(): void
+    {
+        $site = $this->fakeSite()->healthy();
+        $site->missing('/robots.txt');
+
+        $result = $this->auditOutcome($this->crawlSite($site));
+
+        $this->assertNotContains('robots_unreadable', $this->ruleKeys($result));
+    }
+
     // ---------------------------------------------------------------- determinism and stable keys
 
     public function test_the_same_crawl_always_gives_identical_findings_and_stable_keys(): void

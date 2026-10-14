@@ -58,7 +58,7 @@ final class ExternalSiteCrawler
 
             $target = $this->guard->validate($start);
         } catch (ExternalSiteException $e) {
-            return new ConnectionResult(ConnectionResult::INVALID_ADDRESS, null, null, $e->reason);
+            return new ConnectionResult($this->stateForRefusal($e->reason), null, null, $e->reason);
         }
 
         $hosts = $this->siteHosts($target->host);
@@ -86,7 +86,7 @@ final class ExternalSiteCrawler
 
             $startTarget = $this->guard->validate($start);
         } catch (ExternalSiteException $e) {
-            return new CrawlOutcome([], 0, CrawlOutcome::UNREACHABLE, false, $e->reason, CrawlOutcome::FINISH_COMPLETED, new ConnectionResult(ConnectionResult::INVALID_ADDRESS, null, null, $e->reason));
+            return new CrawlOutcome([], 0, CrawlOutcome::UNREACHABLE, false, $e->reason, CrawlOutcome::FINISH_COMPLETED, new ConnectionResult($this->stateForRefusal($e->reason), null, null, $e->reason));
         }
 
         $hosts = $this->siteHosts($startTarget->host);
@@ -399,6 +399,12 @@ final class ExternalSiteCrawler
         }
 
         return new ConnectionResult(ConnectionResult::REACHABLE, UrlResolver::normalize($raw->finalUrl) ?: $raw->finalUrl, $raw->status, null, $chain);
+    }
+
+    /** A name that does not resolve is a network problem (the owner may have mistyped it); every other refusal says the address itself cannot be audited. */
+    private function stateForRefusal(string $reason): string
+    {
+        return $reason === 'dns_failed' ? ConnectionResult::NETWORK_ERROR : ConnectionResult::INVALID_ADDRESS;
     }
 
     private function failureFor(ConnectionResult $connection): string

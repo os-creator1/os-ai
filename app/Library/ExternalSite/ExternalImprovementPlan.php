@@ -98,7 +98,6 @@ final class ExternalImprovementPlan
      */
     private function item(array $group, Business $business, ExternalSiteCrawl $crawl, ?ExternalSitePlanItem $tracking, ?string $helperEmail): array
     {
-        $kindRank = ['problem' => 3, 'improvement' => 2, 'opportunity' => 1][$group['kind']] ?? 0;
         $hasKey = false;
         $hasHome = false;
 
@@ -113,7 +112,7 @@ final class ExternalImprovementPlan
 
         return $group + [
             'item_key' => ExternalSitePlanItem::keyFor($group['rule_key']),
-            'sort' => [ExternalAuditCatalog::priorityWeight($group['priority']), $hasKey ? 2 : ($hasHome ? 1 : 0), $kindRank, $group['page_count'], $group['row_count']],
+            'sort' => ExternalWebsiteReader::rank($group),
             'relevance' => $this->relevance($group, $hasKey, $hasHome),
             'urls' => $this->urls($group),
             'tracking' => [

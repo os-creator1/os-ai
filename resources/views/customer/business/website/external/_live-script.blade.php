@@ -60,6 +60,14 @@
 
                     region.innerHTML = fresh.innerHTML;
                     started = Date.now();
+
+                    // "We are checking your website now" is no longer true once the check has finished.
+                    var flash = document.querySelector('[data-role="live-flash"]');
+
+                    if (flash && !isActive()) {
+                        flash.remove();
+                    }
+
                     schedule();
                 })
                 .catch(function () { window.location.reload(); });

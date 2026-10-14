@@ -16,6 +16,7 @@
         <h2 class="h4 mb-1">{{ $page->displayPath() }}</h2>
         <p class="mb-1">
             <a href="{{ $page->url }}" target="_blank" rel="noopener noreferrer" data-role="open-page">Open page</a>
+            @if($audited)&middot; <a href="{{ $auditUrl }}?page_id={{ $page->id }}" data-role="page-in-audit">Show this page in the audit</a>@endif
             &middot; {{ P::kindLabel((string) $page->kind) }}
             &middot; checked {{ $page->fetched_at?->diffForHumans() ?? 'not fetched' }}
             @if($page->fetched_at)<span class="text-muted">({{ $page->fetched_at->toDayDateTimeString() }})</span>@endif

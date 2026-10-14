@@ -122,6 +122,14 @@ final class ExternalAuditEvaluator
             }
         }
 
+        // robots.txt that errors (a missing one is fine).
+        if ($outcome->robots !== null && ! $outcome->robots->found && ! $outcome->robots->readable && $outcome->robots->status !== null) {
+            $this->add('robots_unreadable', null, null, '', '', [
+                'observed' => 'Requesting /robots.txt answered with HTTP '.$outcome->robots->status.' instead of the file.',
+                'values' => ['http_status' => $outcome->robots->status],
+            ]);
+        }
+
         // HTTPS.
         if ($home !== null && $home->isAudited() && str_starts_with((string) $home->finalUrl, 'http://')) {
             $this->add('site_not_https', $home->url, null, '', '', [
@@ -615,13 +623,11 @@ final class ExternalAuditEvaluator
         // ---- a way to contact or book, from the home page ----
         if ($home !== null && $home->isAudited()) {
             $f = $home->facts;
-            $paths = [];
             $hasContactLink = false;
 
             foreach ($f->linkDetails as $link) {
                 if ($this->isInternal($link['url']) && ExternalPageImportance::isConversionPage($link['url'])) {
                     $hasContactLink = true;
-                    $paths[] = $link['url'];
                 }
             }
 

@@ -52,7 +52,7 @@
                                     <a href="{{ route('customer.workspaces.businesses.website.external.page', [$workspaceUid, $businessUid, $page->id]) }}">{{ $page->displayPath() }}</a>
                                     <div class="text-caption text-muted">{{ P::importanceLabel((string) $page->importance) }}</div>
                                 </td>
-                                <td>{{ $page->title ?: '—' }}</td>
+                                <td>{{ \Illuminate\Support\Str::limit((string) $page->title, 70) ?: '—' }}</td>
                                 <td data-cell="status">{{ $page->http_status ?: '—' }}@if(! empty($page->redirect_chain)) <span class="text-caption text-muted">via redirect</span>@endif</td>
                                 <td data-cell="visibility">{{ P::pageIndexability($page->indexable ?? ! $page->noindex, ($page->evidence['canonical_status'] ?? null), (string) $page->kind) }}</td>
                                 <td data-cell="canonical">{{ P::canonicalLabel($page->evidence['canonical_status'] ?? null) }}</td>
