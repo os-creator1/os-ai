@@ -7,7 +7,7 @@
     own partials (billing strip, performance), so the figures here are the very
     ones Results and the legacy Home show.
 
-    Order is the mobile order (greeting → move → attention → ask → performance
+    Order is the mobile order (greeting → ask → move → attention → performance
     → handled work); on desktop the move and attention share a row.
 
     State changes emphasis only — never a second page: `setup` puts the guided
@@ -34,6 +34,9 @@
 
     {{-- A · greeting and briefing --}}
     @include('customer.dashboard.home._briefing', ['home' => $home])
+
+    {{-- F · Ask MotionGrove — directly beneath the greeting, on every Home state. --}}
+    @include('customer.dashboard.home._ask', ['home' => $home])
 
     @if($state === HomeCommandCenter::STATE_SETUP)
         {{-- STATE 1 — a guided journey, driven by real readiness checks. --}}
@@ -69,9 +72,6 @@
     @if($dashboard->has(DashboardSnapshot::BAND_GROWTH))
         @include('customer.dashboard.home._growth-insights', ['growth' => $dashboard->band(DashboardSnapshot::BAND_GROWTH)])
     @endif
-
-    {{-- F · Ask MotionGrove --}}
-    @include('customer.dashboard.home._ask', ['home' => $home])
 
     {{-- D · Business performance (the existing band, unchanged) --}}
     @if($dashboard->failed(DashboardSnapshot::BAND_HEADLINES))

@@ -490,7 +490,7 @@ class AiGatewayTest extends TestCase
     // T-BUD-8 — observation mode vs. hard enforcement
     // =================================================================
 
-    public function test_existing_category_over_cap_is_recorded_and_counted_but_never_refused_while_observation_mode_is_on(): void
+    public function test_existing_category_over_cap_is_refused_whatever_the_retired_observation_flag_says(): void
     {
         [, , $workspace] = $this->tenant(WorkspacePlanTier::Core);
         config(['ai.enforce_budgets_for_existing_categories' => false]);
@@ -511,12 +511,13 @@ class AiGatewayTest extends TestCase
         $request = $this->buildRequest($workspace, category: AiUsageCategory::WebsiteGeneration);
         $result = $this->gateway()->complete($request);
 
-        $this->assertTrue($result->ok, 'An existing category must not be refused solely for exceeding its budget during observation mode.');
-        $this->assertSame(1, $this->fakeClient->callCount(), 'The call must still reach the provider.');
-        $this->assertSame(AiUsageEntryStatus::Committed, $result->ledgerEntry->fresh()->status, 'The call must still be recorded in the ledger.');
+        // Correction round 1: the §19.3 observation window is closed. The retired flag no longer opens any bypass.
+        $this->assertFalse($result->ok, 'An existing category is hard-capped like every other.');
+        $this->assertSame(AiRefusalReason::BudgetExhausted, $result->refusalReason);
+        $this->assertSame(0, $this->fakeClient->callCount(), 'A refused call never reaches the provider.');
 
         $period = AiUsagePeriod::query()->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)->where('scope_id', $workspace->id)->first();
-        $this->assertGreaterThan($cap, $period->committed_microusd, 'Usage must still be counted toward the Workspace total even past the nominal cap.');
+        $this->assertSame($cap, (int) $period->committed_microusd, 'Spend never moves past the cap.');
     }
 
     public function test_hard_enforced_category_refuses_at_cap_regardless_of_the_observation_flag(): void

@@ -68,7 +68,7 @@ class BusinessHomeTest extends TestCase
         // the Google tile is absent because Core is not entitled to it — the
         // Visibility band still renders for the website alone.
         $this->assertSame(
-            ['billing_exception', 'needs_attention', 'next_best_move', 'ask', 'headlines', 'handling', 'visibility', 'conversations', 'actions'],
+            ['billing_exception', 'ask', 'needs_attention', 'next_best_move', 'headlines', 'handling', 'visibility', 'conversations', 'actions'],
             $this->bandOrder($html),
             'Billing speaks first only when it is a real exception, then what changed, then what to do about it.'
         );
@@ -686,7 +686,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['billing_exception', 'next_best_move', 'needs_attention', 'ask', 'headlines', 'handling', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
+        $this->assertSame(['billing_exception', 'ask', 'next_best_move', 'needs_attention', 'headlines', 'handling', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
         $this->assertStringContainsString('data-band="next_best_move" data-band-state="failed"', $html);
         $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'next_best_move'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));

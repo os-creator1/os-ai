@@ -43,6 +43,8 @@ final readonly class AiRequest
         public ?int $actorUserId,
         public bool $jsonMode = false,
         public AiScope $scope = AiScope::Workspace,
+        // A caller-imposed provider timeout (e.g. the time left in an interactive turn). Only ever SHORTENS the route's own timeout.
+        public ?int $timeoutSeconds = null,
     ) {
         $valid = match ($this->scope) {
             AiScope::Workspace => $this->workspace !== null,
@@ -71,6 +73,7 @@ final readonly class AiRequest
         string $idempotencyKey,
         ?int $actorUserId,
         bool $jsonMode = false,
+        ?int $timeoutSeconds = null,
     ): self {
         return new self(
             workspace: $workspace,
@@ -84,6 +87,7 @@ final readonly class AiRequest
             actorUserId: $actorUserId,
             jsonMode: $jsonMode,
             scope: AiScope::Workspace,
+            timeoutSeconds: $timeoutSeconds,
         );
     }
 

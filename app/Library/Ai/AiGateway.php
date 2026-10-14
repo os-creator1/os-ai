@@ -156,11 +156,12 @@ final class AiGateway
             maxRequestCostMicrousd: (int) $routeConfig['max_request_cost_microusd'],
         );
 
-        // §19.3 rule 3 / T-BUD-8: the three pre-existing categories may
-        // run over cap, unrefused, for one observation window. New COO
-        // categories are never eligible for this bypass.
-        $bypassCapEnforcement = ! $request->category->isAlwaysHardEnforced()
-            && ! (bool) config('ai.enforce_budgets_for_existing_categories');
+        // Every cap is HARD, for every category and every scope. The §19.3 observation window (the three pre-existing
+        // categories running over cap, unrefused) is closed: customer plan caps (trial, Core, Growth, Agency) and the
+        // Platform's own cap are enforced by reserve() whatever `ai.enforce_budgets_for_existing_categories` says — that
+        // flag is no longer read here. The parameter stays so reserve()'s signature and its refusal arithmetic are
+        // untouched; nothing may pass true.
+        $bypassCapEnforcement = false;
 
         // Gate 3b (§5.7a C, §6.7, R-28) — the SECOND authority boundary, run
         // fresh, immediately before the reservation and therefore before any
@@ -216,6 +217,7 @@ final class AiGateway
             messages: $request->messages,
             maxOutputTokens: $maxOutputTokens,
             jsonMode: $request->jsonMode,
+            timeoutSeconds: $this->effectiveTimeout(isset($routeConfig['timeout_seconds']) ? (int) $routeConfig['timeout_seconds'] : null, $request->timeoutSeconds),
         );
 
         $completionResult = $this->completionClient->complete($completionRequest);
@@ -265,5 +267,13 @@ final class AiGateway
         );
 
         return AiResult::success($completionResult->content, $committedEntry);
+    }
+
+    /** The shorter of the route's own timeout and the caller's (never longer than either; null means "the client's ceiling"). */
+    private function effectiveTimeout(?int $route, ?int $caller): ?int
+    {
+        $limits = array_filter([$route, $caller], static fn (?int $t): bool => $t !== null && $t > 0);
+
+        return $limits === [] ? null : min($limits);
     }
 }
