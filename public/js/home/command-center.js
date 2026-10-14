@@ -179,67 +179,10 @@
     });
 
     // ── Ask MotionGrove ─────────────────────────────────────────────────
-    var askForm = root.querySelector('[data-role="ask-form"]');
-    var askResult = root.querySelector('[data-role="ask-result"]');
-
-    function renderAsk(r, from) {
-        askResult.textContent = '';
-        askResult.hidden = false;
-
-        var title = document.createElement('p');
-        title.className = 'fw-bold mb-25';
-        title.textContent = r.title;
-        askResult.appendChild(title);
-
-        var msg = document.createElement('p');
-        msg.className = 'mb-50';
-        msg.textContent = r.message;
-        askResult.appendChild(msg);
-
-        if (r.status === 'drawer' && r.drawerUrl) {
-            open(r.drawerUrl, r.title, r.url, from);
-        } else if (r.status === 'link' && r.url) {
-            var a = document.createElement('a');
-            a.className = 'btn btn-primary btn-sm';
-            a.href = r.url; a.textContent = 'Open';
-            askResult.appendChild(a);
-        } else if (r.status === 'post' && r.url) {
-            // The Advisor can use AI allowance, so it is its own explicit, confirmed submit.
-            var f = document.createElement('form');
-            f.method = 'POST'; f.action = r.url;
-            var t = document.createElement('input'); t.type = 'hidden'; t.name = '_token'; t.value = token(); f.appendChild(t);
-            Object.keys(r.post || {}).forEach(function (k) {
-                var h = document.createElement('input'); h.type = 'hidden'; h.name = k; h.value = r.post[k]; f.appendChild(h);
-            });
-            var b = document.createElement('button');
-            b.type = 'submit'; b.className = 'btn btn-primary btn-sm'; b.textContent = 'Ask the Advisor';
-            f.appendChild(b);
-            askResult.appendChild(f);
-        }
-    }
-
-    function ask(q, from) {
-        askResult.hidden = false;
-        askResult.textContent = 'Checking…';
-
-        fetch(askForm.getAttribute('data-ask-url'), {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': token(), 'X-Requested-With': 'XMLHttpRequest' },
-            body: JSON.stringify({ q: q })
-        }).then(function (r) { if (!r.ok) { throw new Error('status ' + r.status); } return r.json(); })
-          .then(function (r) { renderAsk(r, from); })
-          .catch(function () { askResult.textContent = "We couldn't process that just now. Nothing was changed."; });
-    }
-
-    if (askForm) {
-        askForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            var input = askForm.querySelector('[data-role="ask-input"]');
-            if (input.value.trim() !== '') { ask(input.value.trim(), input); }
-        });
-
-        root.querySelectorAll('[data-role="ask-suggestion"]').forEach(function (chip) {
-            chip.addEventListener('click', function () { ask(chip.getAttribute('data-q'), chip); });
-        });
-    }
+    // The conversation itself lives in ask-assistant.js. The one thing it needs from here is the drawer: a reply
+    // the assistant prepared is reviewed and sent in Follow-ups, on the module's own form.
+    root.addEventListener('home:open-drawer', function (e) {
+        var d = e.detail || {};
+        if (d.url) { open(d.url, d.title || 'Action', d.full || null, d.from || null); }
+    });
 })();

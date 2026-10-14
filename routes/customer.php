@@ -1719,6 +1719,13 @@
         Route::prefix('{workspaceUid}/businesses/{businessUid}/home')->name('businesses.home.')->group(function () {
             Route::get('/drawers/{drawer}', 'Business\HomeActionsController@drawer')->name('drawer');
             Route::post('/ask', 'Business\HomeActionsController@ask')->middleware('throttle:30,1')->name('ask');
+
+            // Ask MotionGrove — the conversation and the approval of the actions it prepares.
+            Route::get('/assistant', 'Business\AssistantController@show')->middleware('throttle:60,1')->name('assistant.show');
+            Route::post('/assistant/messages', 'Business\AssistantController@message')->middleware('throttle:20,1')->name('assistant.message');
+            Route::post('/assistant/conversations/{conversationUid}/delete', 'Business\\AssistantController@destroy')->middleware('throttle:20,1')->name('assistant.delete');
+            Route::post('/assistant/proposals/{proposalUid}/approve', 'Business\AssistantController@approve')->middleware('throttle:20,1')->name('assistant.approve');
+            Route::post('/assistant/proposals/{proposalUid}/decline', 'Business\AssistantController@decline')->middleware('throttle:20,1')->name('assistant.decline');
         });
 
         Route::prefix('{workspaceUid}/businesses/{businessUid}/conversations')->name('businesses.conversations.')->group(function () {

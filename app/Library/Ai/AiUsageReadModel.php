@@ -176,6 +176,37 @@ final class AiUsageReadModel
     }
 
     /**
+     * Has the Workspace's INTERACTIVE share (the customer-asked lane) been
+     * spent, independently of the overall allowance? Committed plus live
+     * reservations against `cap x share`, or any interactive-share refusal this
+     * period — the same arithmetic AiUsageLedgerManager::reserve() refuses on.
+     * A different fact from the overall allowance being used up: the product
+     * lane's protected share may be entirely unspent.
+     */
+    public function interactiveShareSpent(int $workspaceId, AiBudgetPolicy $policy): bool
+    {
+        $period = AiUsagePeriod::query()
+            ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
+            ->where('scope_id', $workspaceId)
+            ->where('period_key', $policy->periodKey)
+            ->first(['cap_microusd', 'interactive_reserved_microusd', 'interactive_committed_microusd']);
+
+        $cap = $period !== null ? (int) $period->cap_microusd : $policy->workspaceCapMicrousd;
+        $interactiveCap = intdiv($cap * $policy->interactiveShareBps, 10_000);
+
+        if ($period !== null && (int) $period->interactive_reserved_microusd + (int) $period->interactive_committed_microusd >= $interactiveCap) {
+            return true;
+        }
+
+        return AiUsageLedgerEntry::query()
+            ->where('workspace_id', $workspaceId)
+            ->where('period_key', $policy->periodKey)
+            ->where('status', AiUsageEntryStatus::Refused->value)
+            ->where('refusal_reason', AiRefusalReason::InteractiveShareExhausted->value)
+            ->exists();
+    }
+
+    /**
      * Admin — the period counter rows for one period key, with the account
      * and Business they belong to.
      *

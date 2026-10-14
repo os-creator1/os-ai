@@ -32,4 +32,12 @@ enum AiModelRoute: string
      * path targets it: an unaffordable request is refused, never silently written by a weaker model.
      */
     case ContentWriter = 'content_writer';
+
+    /**
+     * Ask MotionGrove's own bounded envelope: a system prompt, the authorised tool catalogue, a short conversation
+     * and a few tool results do not fit `routine`'s 4,000-token input ceiling. Same inexpensive model and prices;
+     * only the ceilings differ. No downgrade path targets it: an unaffordable request is refused, never run on a
+     * different model.
+     */
+    case Assistant = 'assistant';
 }

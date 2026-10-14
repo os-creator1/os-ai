@@ -494,11 +494,45 @@ final class AiUsageLedgerManager
             ]);
         }
 
-        return AiUsagePeriod::query()
+        $period = AiUsagePeriod::query()
             ->where('scope_type', $scopeType)
             ->where('scope_id', $scopeId)
             ->where('period_key', $policy->periodKey)
             ->lockForUpdate()
             ->firstOrFail();
+
+        return $this->adoptUpgradedCap($period, $policy, $capMicrousd);
+    }
+
+    /**
+     * The one explicit exception to "a period keeps the cap it snapshotted".
+     *
+     * A paid plan change inside an OPEN calendar-month period (Core -> Growth,
+     * say) must not leave the customer on the old, smaller allowance for the
+     * rest of the month they just paid more for. It happens only when ALL of:
+     * the period was opened under a different policy key, the policy now
+     * resolved offers a strictly larger cap, and the period is not a trial's
+     * (a trial period is never reused as a paid one — conversion simply opens
+     * the calendar-month period). It is upward only: a downgrade or a changed
+     * config amount never rewrites an open period, and spend already
+     * committed or reserved is untouched. Runs under the period row lock the
+     * caller already holds.
+     */
+    private function adoptUpgradedCap(AiUsagePeriod $period, AiBudgetPolicy $policy, int $capMicrousd): AiUsagePeriod
+    {
+        if ($period->policy_key === $policy->policyKey
+            || $period->policy_key === 'trial'
+            || $policy->isTrial()
+            || $capMicrousd <= (int) $period->cap_microusd) {
+            return $period;
+        }
+
+        $period->forceFill([
+            'policy_key' => $policy->policyKey,
+            'policy_version' => $policy->policyVersion,
+            'cap_microusd' => $capMicrousd,
+        ])->save();
+
+        return $period;
     }
 }

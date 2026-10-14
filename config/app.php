@@ -549,6 +549,7 @@
             App\Providers\RouteServiceProvider::class,
             App\Providers\MenuServiceProvider::class,
             App\Providers\JobServiceProvider::class,
+            App\Providers\AssistantServiceProvider::class,
         ],
 
         /*

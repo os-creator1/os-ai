@@ -8,6 +8,8 @@ use App\Library\Coo\NextBestMove;
 use App\Library\Dashboard\AttentionItem;
 use App\Library\Dashboard\BusinessStatusRow;
 use App\Library\Dashboard\DashboardLinkGate;
+use App\Library\Assistant\AssistantContext;
+use App\Library\Assistant\AssistantSuggestions;
 use App\Library\Dashboard\DashboardSnapshot;
 use App\Library\Dashboard\HomeActivityWindow;
 use App\Library\Navigation\CustomerContext;
@@ -56,7 +58,7 @@ final class HomeCommandCenter
         private readonly HomeBriefing $briefing,
         private readonly HomeSetupJourney $journey,
         private readonly HomeActionRouter $router,
-        private readonly HomeAskRegistry $ask,
+        private readonly AssistantSuggestions $assistantSuggestions,
         private readonly DashboardLinkGate $links,
     ) {
     }
@@ -188,22 +190,22 @@ final class HomeCommandCenter
             'handling' => $this->handling($bands, $growth),
             'actions' => $actions,
             'ask' => [
-                'suggestions' => array_map(function (array $s) use ($actions): array {
-                    return $s + ['available' => $this->suggestionAvailable($s['key'], $actions)];
-                }, $this->ask->suggestions()),
+                // Contextual chips: setup help while launching, performance and optimisation once running. Each is the
+                // literal question it sends, and is offered only when the tool that answers it is open to this actor.
+                'suggestions' => $this->assistantSuggestions->for(
+                    AssistantContext::forOffering((int) $context->frameWorkspace()->id, (string) $context->frameWorkspace()->uid, $business, $user, $context, $entitlements, $actions, $scoped),
+                    $state === self::STATE_SETUP,
+                ),
                 'url' => route('customer.workspaces.businesses.home.ask', $scoped),
+                'assistant' => [
+                    'show' => route('customer.workspaces.businesses.home.assistant.show', $scoped),
+                    'message' => route('customer.workspaces.businesses.home.assistant.message', $scoped),
+                    'approve' => route('customer.workspaces.businesses.home.assistant.approve', array_merge($scoped, ['__UID__'])),
+                    'decline' => route('customer.workspaces.businesses.home.assistant.decline', array_merge($scoped, ['__UID__'])),
+                    'delete' => route('customer.workspaces.businesses.home.assistant.delete', array_merge($scoped, ['__UID__'])),
+                ],
             ],
         ];
-    }
-
-    private function suggestionAvailable(string $key, array $actions): bool
-    {
-        $map = [
-            'follow_up' => 'follow-ups', 'booking_type' => 'booking-type', 'appointment' => 'appointment',
-            'upcoming' => 'upcoming', 'ads' => 'ads', 'website' => 'website', 'contact' => 'contact', 'explain' => 'advisor',
-        ];
-
-        return ($actions[$map[$key] ?? ''] ?? null) !== null;
     }
 
     /** "Good morning" — in the Business's own timezone, never the server's. */
