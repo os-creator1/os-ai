@@ -557,6 +557,25 @@ class WebsiteWizardControllerTest extends TestCase
         $this->assertSame('completed', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
     }
 
+    public function test_every_primary_cta_choice_including_book_now_applies_and_generates_a_website(): void
+    {
+        foreach (['quote_request', 'call', 'book_now'] as $cta) {
+            [$customer, $business, $workspace] = $this->entitledTenant();
+            $this->authenticateAsCustomer($customer);
+            $this->bindPlanEchoingAiClient();
+
+            $this->completeAllRequiredSteps($workspace, $business, ['primary_cta' => ['value' => $cta]]);
+
+            $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+                ->assertRedirect(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]));
+
+            $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+            $this->assertSame('completed', $response->status->value, $cta);
+            $this->assertSame($cta, $response->answers['primary_cta'], 'The saved answer is preserved.');
+            $this->assertGreaterThan(0, Website::where('business_id', $business->id)->sole()->pages()->count(), $cta);
+        }
+    }
+
     public function test_an_unreportable_generation_failure_is_logged_server_side_but_never_shown_to_the_customer(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

@@ -95,6 +95,10 @@ final class WizardPrefill
             $goal = BusinessKnowledgeProfile::where('business_id', $business->id)->value('primary_conversion_goal');
             $options = array_keys((array) ($step['options'] ?? []));
 
+            // A canonical goal that the wizard offers under a different word ("Book now" = calendar_booking).
+            $goal = $goal instanceof \BackedEnum ? $goal->value : $goal;
+            $goal = is_string($goal) ? (array_search($goal, \App\Library\Website\Setup\WebsiteSetupAnswerApplier::PRIMARY_CTA_TO_GOAL, true) ?: $goal) : null;
+
             return is_string($goal) && in_array($goal, $options, true) ? $goal : null;
         }
 
