@@ -250,4 +250,33 @@ class AiPlanUpgradeAllowanceTest extends TestCase
         $this->assertSame(AiRefusalReason::BudgetExhausted, $this->askAs($workspace, $business, AiUsageCategory::AskAssistant, 300)->refusalReason);
         $this->assertSame(AiAllowance::LIMIT_REACHED, $this->reader($workspace, $business)->status, 'Hard cap behaviour for assistant requests is unchanged.');
     }
+
+    // PR #460 review: the per-Business (Agency) preflight is request-aware too.
+    public function test_a_refused_big_agency_business_operation_does_not_block_an_affordable_assistant_turn(): void
+    {
+        [$workspace, $business] = $this->account(WorkspacePlanTier::Agency);
+        $this->period($workspace, '2026-09', 'agency', 25_000_000, 1_000_000);
+        $this->period($workspace, '2026-09', 'agency', 6_000_000, 5_940_000, 'business', (int) $business->id); // 60,000 left under the Business sub-cap
+        DB::table('ai_usage_ledger')->insert([
+            'uid' => (string) Str::uuid(), 'workspace_id' => $workspace->id, 'business_id' => $business->id, 'category' => 'website_generation',
+            'lane' => 'interactive', 'model_route' => 'reasoning', 'provider' => 'openai', 'price_version' => 1, 'status' => 'refused',
+            'refusal_reason' => 'budget_exhausted', 'refusal_scope' => 'business', 'estimated_cost_microusd' => 67_000, 'period_key' => '2026-09',
+            'idempotency_key' => 'website-' . Str::uuid(), 'created_at' => now(),
+        ]);
+
+        $this->assertTrue($this->reader($workspace, $business)->usable(), 'An unrelated Business-scoped refusal does not block the assistant preflight.');
+        $this->assertTrue($this->askAs($workspace, $business, AiUsageCategory::AskAssistant, 300)->ok, 'The gateway accepts the cheaper assistant call.');
+        $this->assertSame(6_000_000, (int) AiUsagePeriod::query()->where('scope_type', 'business')->where('scope_id', $business->id)->value('cap_microusd'), 'The per-Business cap is untouched.');
+    }
+
+    public function test_an_agency_business_with_no_room_for_an_assistant_call_is_still_limited_and_the_gateway_still_refuses(): void
+    {
+        [$workspace, $business] = $this->account(WorkspacePlanTier::Agency);
+        $this->period($workspace, '2026-09', 'agency', 25_000_000, 1_000_000);
+        $this->period($workspace, '2026-09', 'agency', 6_000_000, 5_999_990, 'business', (int) $business->id);
+
+        $this->assertSame(AiRefusalReason::BudgetExhausted, $this->askAs($workspace, $business, AiUsageCategory::AskAssistant, 300)->refusalReason);
+        $this->assertSame(AiAllowance::LIMIT_REACHED, $this->reader($workspace, $business)->status);
+        $this->assertSame(0, $this->fake->callCount());
+    }
 }

@@ -1,12 +1,10 @@
 #!/bin/sh
 # Clears the assistant's own rows (and the rows the scenarios create) between runs; keeps the seeded tenants.
 #
-# DESTRUCTIVE (TRUNCATE / DELETE), so it fails closed: before any destructive SQL it asks the SAME MySQL command which database it is
-# actually connected to (SELECT DATABASE()) and has Tests\Support\TestDatabaseSafety — the repository's single authority — approve it.
-# That is the canonical `ultimatesms_testing` or a validated disposable sibling (e.g. `ultimatesms_testing_lane_e`, one per parallel lane,
-# via MYSQL_CMD="mysql ... ultimatesms_testing_lane_e"). Anything else — production-shaped, unsafe, empty (no database selected), or
-# different from EXPECTED_TEST_DATABASE when that is set — aborts with nothing modified. A bad override never falls back to the default.
-# MYSQL_CMD defaults to the canonical disposable database on a local root socket, and the default is validated like any override.
+# DESTRUCTIVE (TRUNCATE / DELETE), so it fails closed. Before any destructive SQL it asks the SAME MySQL command which database it is
+# connected to (SELECT DATABASE()) and delegates the decision to Tests\Support\TestDatabaseSafety, the repository's single authority
+# (see AGENTS.md); this script restates none of its rules. Anything it does not approve aborts with nothing modified, and a rejected
+# override never falls back to the default. MYSQL_CMD defaults to a local root socket; the default is validated like any override.
 set -eu
 
 MYSQL_CMD="${MYSQL_CMD:-mysql -uroot ultimatesms_testing}"

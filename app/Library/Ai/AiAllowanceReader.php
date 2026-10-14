@@ -45,7 +45,7 @@ final class AiAllowanceReader
 
         // An Agency Business that has spent its OWN allowance is limited even when the Workspace is not.
         if ($overall !== AiUsageState::LimitReached && $business !== null && $policy->businessCapMicrousd !== null) {
-            $standing = $this->readModel->businessStandings((int) $workspace->id, [(int) $business->id], $policy)[(int) $business->id] ?? null;
+            $standing = $this->readModel->businessStandings((int) $workspace->id, [(int) $business->id], $policy, assistantPreflight: true)[(int) $business->id] ?? null;
 
             if ($standing !== null && $this->presenter->stateFor($standing) === AiUsageState::LimitReached) {
                 $overall = AiUsageState::LimitReached;

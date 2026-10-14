@@ -142,7 +142,7 @@ final class AiUsageReadModel
      * @param  array<int, int>  $businessIds
      * @return array<int, AiUsageStanding> keyed by Business id
      */
-    public function businessStandings(int $workspaceId, array $businessIds, AiBudgetPolicy $policy): array
+    public function businessStandings(int $workspaceId, array $businessIds, AiBudgetPolicy $policy, bool $assistantPreflight = false): array
     {
         $businessIds = array_values(array_unique(array_map('intval', $businessIds)));
 
@@ -155,23 +155,38 @@ final class AiUsageReadModel
             ->whereIn('scope_id', $businessIds)
             ->where('workspace_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
-            ->get(['scope_id', 'cap_microusd', 'committed_microusd'])
+            ->get(['scope_id', 'cap_microusd', 'committed_microusd', 'reserved_microusd'])
             ->keyBy('scope_id');
 
-        $refusedIds = AiUsageLedgerEntry::query()
+        $refusals = AiUsageLedgerEntry::query()
             ->whereIn('business_id', $businessIds)
             ->where('workspace_id', $workspaceId)
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::BudgetExhausted->value)
+            // OPT-IN (the assistant preflight): as for the Workspace, a refusal speaks only for ITS kind of request, so a large
+            // unrelated operation that failed against the Business sub-cap does not block a cheaper Ask MotionGrove turn.
+            ->when($assistantPreflight, fn (Builder $query) => $query->where('category', AiUsageCategory::AskAssistant->value))
             ->where(function (Builder $query): void {
                 $query->whereIn('refusal_scope', self::scopesIncludingBusiness())
                     ->orWhereNull('refusal_scope');
             })
-            ->distinct()
-            ->pluck('business_id')
-            ->map(fn ($id): int => (int) $id)
-            ->all();
+            ->get(['business_id', 'estimated_cost_microusd']);
+
+        $refusedIds = [];
+
+        foreach ($refusals as $refusal) {
+            $id = (int) $refusal->business_id;
+            $period = $periods->get($id);
+            $room = $period !== null ? max(0, (int) $period->cap_microusd - (int) $period->committed_microusd - (int) $period->reserved_microusd) : $policy->businessCapMicrousd;
+
+            // An assistant refusal that would fit in the room that exists NOW is history (same rule as the Workspace preflight).
+            if (! $assistantPreflight || $refusal->estimated_cost_microusd === null || (int) $refusal->estimated_cost_microusd > $room) {
+                $refusedIds[$id] = true;
+            }
+        }
+
+        $refusedIds = array_keys($refusedIds);
 
         $standings = [];
 

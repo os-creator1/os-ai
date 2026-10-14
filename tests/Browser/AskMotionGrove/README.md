@@ -3,7 +3,7 @@
 Deterministic Launch / Growth / exhausted-trial scenarios on desktop (1280x900) and mobile (390x844), driven by Playwright
 against the real Home page. **No real AI provider is called**: `router.php` swaps `AiCompletionClient` for a scripted client.
 Use the disposable test database only (`ultimatesms_testing`, see `AGENTS.md`); never run it beside another database-writing lane.
-`reset.sh` is destructive and fails closed: it asks the `MYSQL_CMD` connection which database it is on and requires `Tests\Support\TestDatabaseSafety` to approve it (the canonical database or a validated sibling such as `ultimatesms_testing_lane_e`, one per parallel lane) before any `TRUNCATE`/`DELETE`.
+`reset.sh` is destructive and fails closed: it delegates the choice of database to `Tests\Support\TestDatabaseSafety` (the single authority, see `AGENTS.md`) before any `TRUNCATE`/`DELETE`.
 
 ```sh
 vendor/bin/phpunit tests/Browser/AskMotionGrove/SeedBrowserFixtures.php        # writes qa.json (commits rows)

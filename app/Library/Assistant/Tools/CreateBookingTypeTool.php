@@ -142,8 +142,15 @@ final class CreateBookingTypeTool implements ActionTool
     private function locationOrRefuse(AssistantContext $context, string $uid): BusinessLocation
     {
         // Re-derived through the module's own Location resolver; a stale or unreachable uid is a refusal.
-        return $this->locations->resolveForActor($context->business, $uid, (int) $context->user->id)
+        $location = $this->locations->resolveForActor($context->business, $uid, (int) $context->user->id)
             ?? throw new AssistantActionRefused('location_unreachable', 'You no longer have access to that location, so nothing was changed.');
+
+        // Authorization is not lifecycle: a location archived (or otherwise no longer active) since the preview takes no new booking type.
+        if (! $location->isActive()) {
+            throw new AssistantActionRefused('location_inactive', 'That location is no longer active, so nothing was created.');
+        }
+
+        return $location;
     }
 
     private static function duration(int $minutes): string

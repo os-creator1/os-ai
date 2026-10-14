@@ -213,7 +213,7 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
       await page.waitForTimeout(300);
       ok(`${c.label}: once the notice is on screen the question is still NOT sent (the customer confirms by sending again)`, sent.length === 0 && (await page.inputValue('[data-role="ask-input"]')) === 'Help me create a booking type');
       await page.click('[data-role="ask-submit"]');
-      await page.waitForFunction(() => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > 0, null, { timeout: 15000 });
+      await page.waitForSelector('[data-role="ask-message"][data-from="assistant"]:not([data-kind="notice"])', { timeout: 15000 }); // a real answer (the first-use notice is itself an assistant bubble)
       await page.waitForTimeout(300);
       ok(`${c.label}: the second send goes through, and the notice is gone after the first answer`, sent.length === 1 && await page.locator('[data-role="ask-notice"]:not([hidden])').count() === 0, JSON.stringify([sent.length, await page.locator('[data-role="ask-notice"]:not([hidden])').count()]));
     });
