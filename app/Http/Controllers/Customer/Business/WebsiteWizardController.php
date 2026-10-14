@@ -279,6 +279,8 @@ class WebsiteWizardController extends CustomerBaseController
             'packageRows' => $this->packageRowsFor($business, $screen, $answers),
             'serviceChoices' => $this->serviceChoices($answers + $areaState['answers']),
             'reviewSource' => $this->reviewSources->forBusiness($business, $screen),
+            // An Edit link from the Review page asks to come back to it after this one screen is saved.
+            'returnToReview' => request()->query('return') === 'review',
             // Screens, then the Review screen (the look is chosen there — no separate style step).
             'progress' => ['current' => $position !== false ? $position + 1 : 1, 'total' => count($screens) + 1, 'label' => $screen[0]['prompt']],
         ]);
@@ -615,7 +617,7 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         if ($this->stepResolver->isComplete($response->version->steps(), $response->answers ?? [])
-            && $this->stepResolver->nextStepKey($response->version->steps(), $response->answers ?? [], $screenKey) === null) {
+            && ($request->input('return_to') === 'review' || $this->stepResolver->nextStepKey($response->version->steps(), $response->answers ?? [], $screenKey) === null)) {
             // Independent-review correction round: this used to redirect
             // to setup.generate, a POST-only route — a browser following
             // a redirect always issues GET, which returned a 405. The
@@ -868,6 +870,7 @@ class WebsiteWizardController extends CustomerBaseController
             'generationAvailable' => $guidedReview !== null || (bool) config('services.openai.active'),
             'guidedReview' => $guidedReview,
             'answerSummary' => $this->answerSummary($response),
+            'review' => $guidedReview !== null ? app(\App\Library\Website\Setup\WebsiteReviewPresenter::class)->forResponse($business, $response) : null,
         ] + $this->lookAndPlanData($business, $response));
     }
 
@@ -902,6 +905,8 @@ class WebsiteWizardController extends CustomerBaseController
                 // The real renderer, embedded (srcdoc): no extra request per card.
                 'html' => $this->templatePreviews->render($business, $website, $template),
             ])->all(),
+            // A built website changes layout only through the rebuild flow (WebsiteLookController refuses it here).
+            'templateLocked' => $website->pages()->exists(),
             'brandColor' => $theme['brand_color'] ?? null,
             'privacyNoticeUrl' => $theme['privacy_notice_url'] ?? null,
             'termsUrl' => $theme['terms_url'] ?? null,

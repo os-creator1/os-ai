@@ -74,7 +74,7 @@ class WebsiteLookAndReviewTest extends TestCase
         $response = $this->get($this->wizardUrl($workspace, $business, 'setup.review'))->assertOk();
 
         $response->assertSee('data-testid="website-plan"', false);
-        $response->assertSee('Your website plan');
+        $response->assertSee('Website plan');
         $response->assertSee('pages will be built');
         $response->assertSee('Service areas saved 3 / local pages planned 3');
         $response->assertSee('Open Air Booth');

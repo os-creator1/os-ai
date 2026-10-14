@@ -26,6 +26,10 @@
              data-autosave="{{ $debounceAutosave ? 'on' : 'off' }}">
             @include('customer.business.website.wizard._progress', ['progress' => $progress, 'backStepKey' => $screenKey, 'currentStepKey' => $screenKey])
 
+            @if ($returnToReview ?? false)
+                <a class="d-inline-block mb-2 small" data-testid="back-to-review" href="{{ route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]) }}">&larr; Back to review</a>
+            @endif
+
             <x-flash-alert class="mb-3" />
             <div class="alert alert-danger d-none" role="alert" tabindex="-1" data-wizard-error></div>
 
@@ -57,6 +61,9 @@
             <form id="{{ $answerFormId }}" method="POST" action="{{ route('customer.workspaces.businesses.website.setup.autosave', [$workspaceUid, $businessUid, $screenKey]) }}">
                 @csrf
                 <input type="hidden" name="answers_revision" value="{{ $response->answers_revision }}">
+                @if ($returnToReview ?? false)
+                    <input type="hidden" name="return_to" value="review">
+                @endif
 
                 @foreach ($steps as $screenStep)
                     @include('customer.business.website.wizard.steps._field', [

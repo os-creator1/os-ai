@@ -41,6 +41,17 @@ final class GuidedReviewSnapshot
         $hasHero = $gallery->isNotEmpty() || ($website !== null && is_string($website->theme['hero_asset_uid'] ?? null));
 
         $missing = [];
+        $thumb = fn (array $row) => ! empty($row['image_path']) ? asset((string) $row['image_path']) : (! empty($row['images'][0]['path']) ? asset((string) $row['images'][0]['path']) : null);
+        $cover = $gallery->first();
+        $checklist = [['title' => 'Homepage hero photo', 'done' => $hasHero, 'step' => 'gallery', 'thumb' => $cover ? asset($cover->path) : null]];
+
+        foreach ($booths as $row) {
+            $checklist[] = ['title' => (string) $row['name'], 'done' => ! empty($row['image_path']), 'step' => 'booth_services', 'thumb' => $thumb($row)];
+        }
+
+        foreach ($backdrops as $row) {
+            $checklist[] = ['title' => (string) $row['name'], 'done' => ! empty($row['image_path']) || ! empty($row['images']), 'step' => 'backdrops', 'thumb' => $thumb($row)];
+        }
 
         if (! $hasHero) {
             $missing[] = ['title' => 'Homepage cover photo', 'detail' => 'Upload at least one real event photo and choose it as your homepage cover.', 'step' => 'gallery'];
@@ -86,6 +97,7 @@ final class GuidedReviewSnapshot
                 'pricing' => $answers['pricing_strategy'] ?? null,
             ],
             'missing' => $missing,
+            'checklist' => $checklist,
             'template' => $website?->template_key,
             'booking' => $booking,
         ];

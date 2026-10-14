@@ -33,7 +33,7 @@
 
             started = true;
 
-            Array.prototype.forEach.call(form.querySelectorAll('button[type="submit"], input[type="submit"]'), function (button) {
+            Array.prototype.forEach.call(document.querySelectorAll('[data-generation-form] button[type="submit"], [data-generation-form] input[type="submit"]'), function (button) {
                 button.disabled = true;
                 button.setAttribute('aria-disabled', 'true');
             });
