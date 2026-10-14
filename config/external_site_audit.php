@@ -55,8 +55,27 @@ return [
 
     // Re-crawl cadence for the scheduler, and how soon the owner may ask for another crawl by hand.
     'recrawl_interval_days' => 7,
-    'manual_throttle_minutes' => 15,
+    'manual_throttle_minutes' => 5,
 
-    // Crawls kept per Business (older ones, with their pages and findings, are pruned).
-    'retained_crawls' => 5,
+    // Crawls whose full detail (pages, links, findings) is kept per Business. Older crawls keep their summary row
+    // (date, status, counts) forever, so the audit history is never silently erased; only the bulky detail goes.
+    'retained_crawls' => 10,
+
+    // A queued crawl nobody picked up, or a running crawl that stopped reporting progress, is failed after this
+    // many minutes so it can never block a Business forever (the heartbeat is refreshed after every page).
+    'stale_queued_minutes' => 15,
+    'stale_running_minutes' => 10,
+
+    // URLs recorded per crawl (audited or not) and internal links stored per page / per crawl: keeps storage bounded.
+    'max_recorded_urls' => 400,
+    'max_links_per_page' => 150,
+    'max_links_per_crawl' => 6000,
+
+    // Image checks: how many distinct same-site images are probed (status and Content-Length only; the body is
+    // never read past a few bytes), and the size above which an image is called large.
+    'max_image_checks' => 25,
+    'large_image_bytes' => 1_000_000,
+
+    // Pages deeper than this many clicks from the home page are reported as an advisory.
+    'deep_page_depth' => 4,
 ];

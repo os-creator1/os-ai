@@ -125,13 +125,27 @@ class SafeFetcherAndCrawlerTest extends TestCase
     public function test_the_redirect_limit_is_enforced(): void
     {
         $this->resolver->set('loop.example', ['93.184.216.34']);
-        $this->transport->set('https://loop.example/a', ['status' => 302, 'headers' => ['location' => '/b']]);
-        $this->transport->set('https://loop.example/b', ['status' => 302, 'headers' => ['location' => '/a']]);
+        foreach (['a' => 'b', 'b' => 'c', 'c' => 'd', 'd' => 'e', 'e' => 'f'] as $from => $to) {
+            $this->transport->set('https://loop.example/'.$from, ['status' => 302, 'headers' => ['location' => '/'.$to]]);
+        }
 
         $result = $this->fetcher(['max_redirects' => 3])->fetch('https://loop.example/a', ['loop.example']);
 
         $this->assertSame('too_many_redirects', $result->error);
         $this->assertCount(4, $this->transport->requests);
+        $this->assertCount(4, $result->chain, 'Every followed hop is kept, so the audit can show where a redirect went.');
+    }
+
+    public function test_a_redirect_loop_is_detected_as_soon_as_an_address_repeats(): void
+    {
+        $this->resolver->set('loop.example', ['93.184.216.34']);
+        $this->transport->set('https://loop.example/a', ['status' => 302, 'headers' => ['location' => '/b']]);
+        $this->transport->set('https://loop.example/b', ['status' => 302, 'headers' => ['location' => '/a']]);
+
+        $result = $this->fetcher(['max_redirects' => 10])->fetch('https://loop.example/a', ['loop.example']);
+
+        $this->assertSame('redirect_loop', $result->error);
+        $this->assertCount(2, $this->transport->requests, 'The loop is cut after one lap, not after ten redirects.');
     }
 
     public function test_the_response_byte_limit_is_enforced(): void
@@ -171,16 +185,24 @@ class SafeFetcherAndCrawlerTest extends TestCase
         return $this->crawler($config)->crawl(FixtureSite::BASE.'/');
     }
 
-    /** @return array<string, \App\Library\ExternalSite\CrawledPage> keyed by path */
+    /** @return array<string, \App\Library\ExternalSite\CrawledPage> keyed by path: the pages that were FETCHED and answered (audited or an error) */
     private function byPath(CrawlOutcome $outcome): array
     {
         $out = [];
 
         foreach ($outcome->pages as $page) {
-            $out[(string) parse_url($page->url, PHP_URL_PATH)] = $page;
+            if (in_array($page->kind, ['html', 'error'], true)) {
+                $out[(string) parse_url($page->url, PHP_URL_PATH)] = $page;
+            }
         }
 
         return $out;
+    }
+
+    /** URLs the crawl actually requested as pages (not excluded, not robots-disallowed, not left unchecked). */
+    private function fetchedCount(CrawlOutcome $outcome): int
+    {
+        return count(array_filter($outcome->pages, fn (\App\Library\ExternalSite\CrawledPage $p): bool => in_array($p->kind, ['html', 'error', 'redirect', 'blocked', 'unreachable', 'non_html'], true)));
     }
 
     public function test_the_crawl_discovers_pages_from_links_and_the_sitemap_and_records_their_facts(): void
@@ -199,7 +221,8 @@ class SafeFetcherAndCrawlerTest extends TestCase
         $this->assertSame(2, $pages['/birthday']->facts->h1Count);
         $this->assertSame(1, $pages['/classes']->facts->imagesMissingAlt);
         $this->assertSame(404, $pages['/old-page']->status);
-        $this->assertSame(1, $pages['/classes']->brokenLinks, 'The link to the 404 page is counted against the page that carries it.');
+        $this->assertContains('/home', array_map(fn ($p) => (string) parse_url($p->url, PHP_URL_PATH), array_filter($outcome->pages, fn ($p) => $p->kind === 'redirect')), 'The redirecting address is recorded as a redirect, not as a second copy of the home page.');
+        $this->assertSame(['excluded'], array_values(array_unique(array_map(fn ($p) => $p->kind, array_filter($outcome->pages, fn ($p) => str_ends_with($p->url, '.pdf'))))), 'A linked PDF is an excluded file, never an audited page.');
     }
 
     public function test_robots_txt_is_obeyed_and_foreign_links_and_files_are_never_fetched(): void
@@ -230,15 +253,16 @@ class SafeFetcherAndCrawlerTest extends TestCase
     {
         $outcome = $this->crawlFixture(['max_pages' => 3]);
 
-        $this->assertCount(3, $outcome->pages);
+        $this->assertSame(3, $this->fetchedCount($outcome));
         $this->assertTrue($outcome->truncated);
+        $this->assertNotEmpty(array_filter($outcome->pages, fn ($p) => $p->kind === 'skipped' && $p->reason === 'crawl_limit'), 'What the budget left unchecked is recorded, with the reason, not forgotten.');
     }
 
     public function test_the_time_budget_bounds_the_crawl(): void
     {
         $outcome = $this->crawlFixture(['max_total_seconds' => 1, 'request_delay_ms' => 1200]);
 
-        $this->assertLessThan(7, count($outcome->pages));
+        $this->assertLessThan(7, $this->fetchedCount($outcome));
         $this->assertTrue($outcome->truncated);
     }
 
@@ -250,7 +274,8 @@ class SafeFetcherAndCrawlerTest extends TestCase
         $outcome = $this->crawler()->crawl('https://closed.example/');
 
         $this->assertSame(CrawlOutcome::BLOCKED_BY_ROBOTS, $outcome->indexability);
-        $this->assertSame([], $outcome->pages);
+        $this->assertSame(['robots_disallowed'], array_map(fn ($p) => $p->kind, $outcome->pages));
+        $this->assertSame('blocked_by_robots', $outcome->connection->reason);
         $this->assertSame(['https://closed.example/robots.txt'], $this->transport->requestedUrls());
     }
 

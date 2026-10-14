@@ -101,6 +101,46 @@ final class ExternalSiteConfig
 
     public function retainedCrawls(): int
     {
-        return max(1, (int) ($this->values['retained_crawls'] ?? 5));
+        return max(1, (int) ($this->values['retained_crawls'] ?? 10));
+    }
+
+    public function staleQueuedMinutes(): int
+    {
+        return max(1, (int) ($this->values['stale_queued_minutes'] ?? 15));
+    }
+
+    public function staleRunningMinutes(): int
+    {
+        return max(1, (int) ($this->values['stale_running_minutes'] ?? 10));
+    }
+
+    public function maxRecordedUrls(): int
+    {
+        return max(10, (int) ($this->values['max_recorded_urls'] ?? 400));
+    }
+
+    public function maxLinksPerPage(): int
+    {
+        return max(10, (int) ($this->values['max_links_per_page'] ?? 150));
+    }
+
+    public function maxLinksPerCrawl(): int
+    {
+        return max(100, (int) ($this->values['max_links_per_crawl'] ?? 6000));
+    }
+
+    public function maxImageChecks(): int
+    {
+        return max(0, (int) ($this->values['max_image_checks'] ?? 25));
+    }
+
+    public function largeImageBytes(): int
+    {
+        return max(10_000, (int) ($this->values['large_image_bytes'] ?? 1_000_000));
+    }
+
+    public function deepPageDepth(): int
+    {
+        return max(2, (int) ($this->values['deep_page_depth'] ?? 4));
     }
 }

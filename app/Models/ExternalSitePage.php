@@ -28,7 +28,19 @@ class ExternalSitePage extends Model
         'has_json_ld' => 'boolean',
         'word_count' => 'integer',
         'fetched_at' => 'datetime',
+        'redirect_chain' => 'array',
+        'depth' => 'integer',
+        'in_sitemap' => 'boolean',
+        'indexable' => 'boolean',
+        'inlink_count' => 'integer',
+        'evidence' => 'array',
     ];
+
+    /** An audited HTML page (as opposed to a redirect, a blocked or excluded URL, ...). Rows from the first version are all pages. */
+    public function isAuditedPage(): bool
+    {
+        return (string) $this->kind === 'html';
+    }
 
     public function crawl(): BelongsTo
     {

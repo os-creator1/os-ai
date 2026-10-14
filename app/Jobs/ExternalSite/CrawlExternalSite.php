@@ -38,4 +38,17 @@ class CrawlExternalSite implements ShouldQueue
             $runner->run($crawl);
         }
     }
+
+    /**
+     * The worker died or the job timed out: record that and RELEASE the Business's crawl lock, so the owner is never
+     * stuck behind a crawl that will not finish. (A job whose process vanishes entirely is recovered by the stale
+     * window in ExternalSiteCrawlManager.)
+     */
+    public function failed(\Throwable $e): void
+    {
+        ExternalSiteCrawl::query()
+            ->whereKey($this->crawlId)
+            ->whereIn('status', [ExternalSiteCrawl::QUEUED, ExternalSiteCrawl::RUNNING])
+            ->update(['status' => ExternalSiteCrawl::FAILED, 'stage' => null, 'failure_code' => 'job_failed', 'active_lock' => null, 'finished_at' => now()]);
+    }
 }
