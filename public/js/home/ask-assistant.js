@@ -33,7 +33,7 @@
     var newBtn = section.querySelector('[data-role="ask-new"]');
     if (!cfg.message || !form || !input || !panel || !thread) { return; }
 
-    var state = { uid: null, startNew: false, busy: false, lastQuestion: '', pendingId: null };
+    var state = { uid: null, startNew: false, busy: false, failed: {} };
     var narrow = window.matchMedia ? window.matchMedia('(max-width: 767.98px)') : { matches: false };
 
     function csrf() {
@@ -307,11 +307,17 @@
             box.classList.add('is-error');
             box.appendChild(el('p', 'home-ask-title mb-25', p.title || "I couldn't complete that"));
             box.appendChild(el('p', 'mb-50', m.body));
-            if (p.retryable && state.lastQuestion) {
+            if (p.retryable && p.attempt) {
+                // Bound to THIS error's own attempt (question, client id, conversation target): a newer question never changes it.
+                var attempt = p.attempt;
                 var retry = el('button', 'btn btn-outline-secondary btn-sm', 'Try again');
                 retry.type = 'button';
                 retry.setAttribute('data-role', 'ask-retry');
-                retry.addEventListener('click', function () { send(state.lastQuestion); });
+                retry.addEventListener('click', function () {
+                    if (state.busy || retry.disabled) { return; }
+                    retry.disabled = true; // one retry per error bubble; a new failure gets its own button
+                    send(attempt.q, attempt);
+                });
                 box.appendChild(retry);
             }
             row.appendChild(box);
@@ -389,45 +395,48 @@
     }
 
     // ── sending ────────────────────────────────────────────────────────
-    function send(question) {
+    function send(question, retryOf) {
         question = (question || '').trim();
         if (question === '' || state.busy) { return; }
         setOpen(true);
-        state.lastQuestion = question;
 
-        // A resent question keeps its client id until it is answered, so the server answers it exactly once.
-        var id = state.pendingId && state.pendingId.q === question ? state.pendingId.id : uuid();
-        state.pendingId = { q: question, id: id };
+        // One logical request = one attempt record. A retry reuses the ORIGINAL client id and conversation target, so the server
+        // answers (and charges) it exactly once even if the first response was lost; a newer question has its own record.
+        // Typing the same question again after it failed is the same logical request too.
+        var attempt = retryOf || state.failed[question] || { q: question, id: uuid(), uid: state.uid, startNew: state.startNew };
+        state.failed[question] = attempt;
 
         thread.appendChild(bubble({ role: 'user', kind: 'text', body: question, payload: {} }));
         scrollToEnd();
         input.value = '';
         setBusy(true);
 
-        var body = { q: question, client_message_id: id };
-        if (state.uid && !state.startNew) { body.conversation = state.uid; }
-        if (state.startNew) { body.new = true; }
+        var body = { q: question, client_message_id: attempt.id };
+        if (attempt.uid && !attempt.startNew) { body.conversation = attempt.uid; }
+        if (attempt.startNew) { body.new = true; }
 
         request(cfg.message, { method: 'POST', body: body }).then(function (res) {
             if (res.status === 409) {
-                thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: 'I am still working on your last message. Try again in a moment.', payload: { title: 'One at a time', retryable: true } }));
+                thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: 'I am still working on your last message. Try again in a moment.', payload: { title: 'One at a time', retryable: true, attempt: attempt } }));
                 return;
             }
             if (res.status === 422) {
+                delete state.failed[question];
                 var first = res.body && res.body.errors ? res.body.errors[Object.keys(res.body.errors)[0]][0] : 'That could not be sent.';
                 thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: first, payload: { title: "That couldn't be sent", retryable: false } }));
                 return;
             }
             if (res.status === 429) {
-                thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: 'You are asking quickly. Wait a moment and try again.', payload: { title: 'Slow down a little', retryable: true } }));
+                thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: 'You are asking quickly. Wait a moment and try again.', payload: { title: 'Slow down a little', retryable: true, attempt: attempt } }));
                 return;
             }
             if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
-            state.startNew = false;
-            state.pendingId = null;
+            // Only the conversation that was current when this request was sent may be cleared by its answer.
+            delete state.failed[question];
+            if (attempt.startNew && state.startNew) { state.startNew = false; }
             render(res.body);
         }).catch(function () {
-            thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't reach MotionGrove. Nothing was changed. Please try again.", payload: { title: "I couldn't complete that", retryable: true } }));
+            thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't reach MotionGrove. Nothing was changed. Please try again.", payload: { title: "I couldn't complete that", retryable: true, attempt: attempt } }));
         }).then(function () { setBusy(false); scrollToEnd(); });
     }
 
@@ -450,6 +459,7 @@
         newBtn.addEventListener('click', function () {
             state.uid = null;
             state.startNew = true;
+            state.failed = {};
             thread.textContent = '';
             thread.appendChild(el('p', 'text-muted mb-0', 'New conversation. Ask anything about your business.'));
             input.focus();
@@ -475,6 +485,7 @@
                 if (!res.ok) { throw new Error('status ' + res.status); }
                 state.uid = null;
                 state.startNew = false;
+                state.failed = {};
                 thread.textContent = '';
                 thread.appendChild(el('p', 'text-muted mb-0', 'Conversation deleted.'));
                 if (resumeBtn) { resumeBtn.removeAttribute('data-has-conversation'); resumeBtn.hidden = true; }

@@ -142,6 +142,81 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
         sql(`SELECT COUNT(*) FROM ai_usage_ledger WHERE status='committed'`));
     }, ['net::ERR_FAILED']);
 
+    // ───────── Each "Try again" belongs to ITS OWN failed question (and client id), however many newer ones came after ─────────
+    const posts = (page) => { const l = []; page.on('request', (r) => { if (r.method() === 'POST' && r.url().endsWith('/home/assistant/messages')) { l.push(JSON.parse(r.postData())); } }); return l; };
+    const retryButtons = (page) => page.locator('[data-role="ask-retry"]');
+    const replies = (page) => page.locator('[data-role="ask-message"][data-from="assistant"]').count();
+    // Waits for the NEXT assistant bubble (answer or error) and for the request to finish, so a click is never raced by an early "idle".
+    const settle = async (page, before) => {
+      await page.waitForFunction((n) => document.querySelectorAll('[data-role="ask-message"][data-from="assistant"]').length > n, before, { timeout: 15000 });
+      await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true, null, { timeout: 15000 });
+    };
+    const send = async (page, q) => { const b = await replies(page); await page.fill('[data-role="ask-input"]', q); await page.click('[data-role="ask-submit"]'); await settle(page, b); };
+    // The page reads the saved conversation once on load (idle callback); wait for it so its late render cannot interleave with a scenario.
+    const loaded = (page) => page.waitForFunction(() => /How Ask MotionGrove uses AI/.test(document.querySelector('[data-role="ask-conversation"]').innerText), null, { timeout: 15000 });
+    // A successful retry re-renders the whole thread (fewer bubbles than before), so wait on the request itself, not on a bubble count.
+    const afterRequest = async (page, act) => {
+      const finished = Promise.race([page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith('/home/assistant/messages'), { timeout: 15000 }), page.waitForEvent('requestfailed', { timeout: 15000 })]);
+      await act();
+      await finished;
+      await page.waitForFunction(() => document.querySelector('[data-role="ask-working"]').hidden === true, null, { timeout: 15000 });
+      await page.waitForTimeout(150);
+    };
+    const retryAndSettle = (page, nth) => afterRequest(page, () => retryButtons(page).nth(nth).dispatchEvent('click'));
+
+    await run(`RetryBinding/A-fails-then-newer-question/${vname}`, viewport, 'launch', async (page, c) => {
+      await loaded(page);
+      const sent = posts(page); let n = 0;
+      await page.route('**/home/assistant/messages', (route) => {
+        if (route.request().method() !== 'POST') { return route.continue(); }
+        const i = n++;
+        if (i === 0) { return route.abort('failed'); }                                                   // A: never reaches the server
+        if (i === 1) { return route.fulfill({ status: 429, contentType: 'application/json', body: '{}' }); }   // B: throttled (also retryable)
+        return route.continue();
+      });
+      await send(page, 'Help me create a booking type');   // A
+      await send(page, 'How is my SEO doing?');           // B: a NEWER question whose own outcome is a retryable error
+      ok(`${c.label}: both errors keep their own retry`, await retryButtons(page).count() === 2);
+      await retryAndSettle(page, 0);                       // retry A, not B
+      const a = sent[0], retryA = sent[2];
+      ok(`${c.label}: A's retry resends A (not the newer B) with A's original client id`, sent.length === 3 && retryA.q === 'Help me create a booking type' && retryA.client_message_id === a.client_message_id && a.client_message_id !== sent[1].client_message_id, JSON.stringify(sent));
+      ok(`${c.label}: A was answered once, and B (never retried) was not sent to the model`, sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='Help me create a booking type'`) === '1' && sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='How is my SEO doing?'`) === '0');
+    }, ['net::ERR_FAILED', '429']);
+
+    await run(`RetryBinding/multiple-failures/${vname}`, viewport, 'launch', async (page, c) => {
+      await loaded(page);
+      const sent = posts(page); let n = 0;
+      await page.route('**/home/assistant/messages', (route) => (route.request().method() !== 'POST' ? route.continue() : n++ < 3 ? route.abort('failed') : route.continue()));   // A, B and B's first retry are all lost
+      await send(page, 'Help me create a booking type');   // A fails
+      await send(page, 'How is my SEO doing?');           // B fails
+      ok(`${c.label}: two failed questions have two independent retries`, await retryButtons(page).count() === 2);
+      await retryAndSettle(page, 1);   // B's retry first (fails again: a third, independent error bubble appears)
+      ok(`${c.label}: a used retry stays disabled and the new failure has its own`, await retryButtons(page).count() === 3 && await retryButtons(page).nth(1).isDisabled() && await retryButtons(page).nth(2).isEnabled());
+      await retryAndSettle(page, 0);   // then A's
+      ok(`${c.label}: each retry carries its own question and original id`,
+        sent.length === 4 && sent[2].q === 'How is my SEO doing?' && sent[2].client_message_id === sent[1].client_message_id
+        && sent[3].q === 'Help me create a booking type' && sent[3].client_message_id === sent[0].client_message_id, JSON.stringify(sent));
+    }, ['net::ERR_FAILED']);
+
+    await run(`RetryBinding/lost-response-and-double-click/${vname}`, viewport, 'launch', async (page, c) => {
+      await loaded(page);
+      const sent = posts(page); let n = 0;
+      await page.route('**/home/assistant/messages', async (route) => {
+        if (route.request().method() !== 'POST') { await route.continue(); return; }
+        if (n++ === 0) { await route.fetch(); await route.abort('failed'); return; }  // processed and charged server-side, response lost
+        await new Promise((r) => setTimeout(r, 400));                                  // keep the retry in flight so a second click can race it
+        await route.continue();
+      });
+      await send(page, 'Help me create a booking type');
+      const btn = retryButtons(page).first();
+      await afterRequest(page, async () => { await btn.dispatchEvent('click'); await btn.dispatchEvent('click', undefined, { timeout: 1000 }).catch(() => {}); });   // an impatient second click
+      ok(`${c.label}: a double click sends exactly one retry, with the original id`, sent.length === 2 && sent[1].client_message_id === sent[0].client_message_id, JSON.stringify(sent));
+      ok(`${c.label}: retrying a request that had succeeded is answered without a second charge`,
+        sql(`SELECT COUNT(*) FROM assistant_messages WHERE role='user' AND body='Help me create a booking type'`) === '1'
+        && sql(`SELECT COUNT(*) FROM ai_usage_ledger WHERE status='committed'`) === '1');
+      ok(`${c.label}: the answer is shown`, (await page.locator('[data-role="ask-conversation"]').innerText()).includes('What should it be called'));
+    }, ['net::ERR_FAILED']);
+
     // ───────── A conversation that has reached its message cap rolls a follow-up into a new conversation ─────────
     await run(`Cap/${vname}`, viewport, 'launch', async (page, c) => {
       await ask(page, 'Help me create a booking type');
@@ -258,4 +333,4 @@ async function noOverflow(page) { return page.evaluate(() => document.documentEl
 
   console.log(JSON.stringify({ passed: results.filter(r => r.pass).length, failed: results.filter(r => !r.pass).length, problems }, null, 2));
   require('fs').writeFileSync('results.json', JSON.stringify(results, null, 2));
-})().catch(e => { console.error('SCRIPT ERROR', e); process.exit(1); });
+})().catch(e => { console.error('SCRIPT ERROR', e, JSON.stringify(results.filter(r => !r.pass))); process.exit(1); });
