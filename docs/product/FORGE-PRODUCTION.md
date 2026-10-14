@@ -274,3 +274,24 @@ Review at the time of merge; these were read from the branches/config as of 2026
 4. Stripe: live prices and the four webhooks; production-only secrets in Forge.
 5. Merge this branch's scripts and the finished product into `main`; deploy that exact `main` by hand (section 3); then the one-time install (section 7).
 6. Leave registration closed until final approval.
+
+## 13. AI (Ask MotionGrove V1 and website generation) — production requirements
+
+Read from PR #460 (`integration/ask-motiongrove-v1`, head `78b7c821`) and the staging AI gateway. **No value below is a secret; the key itself is entered in Forge only.**
+Both website generation and Ask MotionGrove go through one gateway (`AiGateway`). It **fails closed**: when anything below is not satisfied, the feature refuses
+(website generation shows its "unavailable" message), it never calls the provider.
+
+| # | Requirement | Production setting |
+|---|---|---|
+| 1 | Master switch | `OPENAI_ACTIVE=true` (default **false**). Flip last, after 2-6. Platform Owner -> Settings can also set it and rewrites `.env`; run `config:cache` afterwards. |
+| 2 | Provider credentials | `OPENAI_API_KEY` = a key created **for this site only** (never the developer's or staging's). Optional: `OPENAI_ORGANIZATION`, `OPENAI_PROJECT`; `OPENAI_MODEL` defaults to `gpt-4o`. |
+| 3 | Budget enforcement | Leave `AI_ENFORCE_BUDGETS_FOR_EXISTING_CATEGORIES=true` (default). Set explicit caps: `AI_PLATFORM_MONTHLY_CAP_MICROUSD` (default 20,000,000 = $20) and `AI_BUDGET_{TRIAL,CORE,GROWTH}_WORKSPACE_CAP_MICROUSD`. **A Workspace with no valid plan has a zero cap**, so generation is refused until the account has a trial or paid plan. |
+| 4 | Shared cache locks | Ask MotionGrove serialises turns and deletions with `Cache::lock`. On the single production server `CACHE_DRIVER=file` is sufficient (web, scheduler and workers share one `storage/`). Move to `redis`/`database` before adding a second server. Never `array` (the preflight refuses it). |
+| 5 | Queue worker | The Forge worker from section 2.9 (`database`, `automation,default,batch`) and the cron scheduler. Nothing else to add. |
+| 6 | Scheduler | `assistant:purge-expired` (daily, no-overlap) rides the existing `schedule:run`. After deploy, `php8.3 artisan schedule:list` must show it. `ASSISTANT_RETENTION_DAYS=90` by default. |
+| 7 | Timeouts | Defaults (`ASSISTANT_TURN_BUDGET_SECONDS=75`, `AI_ROUTE_ASSISTANT_TIMEOUT_SECONDS=25`) are consistent; keep the route timeout well below the turn budget. |
+| 8 | Privacy / legal (not a code item) | The first-use AI-data notice, data-processing agreement, provider subprocessor disclosure, provider-side retention and cross-border transfer have **not** been legally reviewed (PR #460 doc, prerequisite 4). Keep `OPENAI_ACTIVE=false` until you have accepted that risk or completed the review. |
+
+Smallest safe production check once enabled: with the owner account, run **one** website generation and one Ask MotionGrove question under a trial plan, then
+read Platform Owner -> AI usage and confirm the ledger shows an *ok* entry and the cost is within the cap. If generation reports an error, the cause is recorded in
+`ai_usage_ledger.refusal_reason` (`ai_disabled`, `plan_unavailable`, `entitlement_missing`, `dormant`, `budget_exhausted`, ...) or, for a provider failure, in `storage/logs`.
