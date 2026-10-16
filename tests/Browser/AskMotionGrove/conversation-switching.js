@@ -128,3 +128,121 @@ async function runConversationSwitchingChecks() {
 
     return results;
 }
+
+/*
+ * The first read of the saved conversation (and the one the first send waits for) can answer late. The script re-initialises the Ask
+ * card with the stub already in place, so the very first GET is held, then proves a late or overlapping read never replaces the
+ * conversation the customer chose, never auto-sends into it, and still shows the first-use disclosure before anything is sent.
+ *
+ *   (the same evaluate pattern as above) + '; runSavedLoadChecks()'
+ */
+async function runSavedLoadChecks() {
+    var results = [];
+    var realFetch = window.fetch;
+    var scriptUrl = document.querySelector('script[src*="ask-assistant.js"]').src.split('?')[0] + '?fresh=' + Date.now();
+    var scriptText = await realFetch(scriptUrl).then(function (r) { return r.text(); });
+    var tick = function (ms) { return new Promise(function (r) { window.setTimeout(r, ms || 30); }); };
+    var calls = [];
+    var pending = [];
+    var hold = { initial: true };
+    var allow = { status: 'ok', usable: true, nearing: false, blocked: null };
+    var msg = function (uid, role, body) { return { uid: uid, role: role, kind: role === 'user' ? 'text' : 'answer', body: body, payload: {}, proposal: null, at: new Date().toISOString() }; };
+    var convo = function (uid, bodies) { return { uid: uid, title: 'Chat ' + uid, messages: bodies.map(function (b, i) { return msg(uid + '-m' + i, i % 2 === 0 ? 'user' : 'assistant', b); }), page: { has_more: false, before: null }, allowance: allow }; };
+    var saved = { B: convo('B', ['asked in B', 'answer in B']) };
+    var list = { conversations: [{ uid: 'B', title: 'Chat B', preview: 'answer in B', last_message_at: new Date().toISOString(), message_count: 2 }], has_more: false, next: null };
+
+    window.fetch = function (url, opts) {
+        url = String(url);
+        var method = (opts && opts.method) || 'GET';
+        var entry = { url: url, method: method, body: opts && opts.body ? JSON.parse(opts.body) : null };
+        calls.push(entry);
+        var make = function (status, body) { return { ok: status < 400, status: status, json: function () { return Promise.resolve(body); } }; };
+        var m = /conversation=([^&]+)/.exec(url);
+        var isList = /assistant\/conversations/.test(url);
+        var isSavedRead = method === 'GET' && !m && !isList;
+        var held = method === 'POST' ? true : (isSavedRead ? hold.initial : false);
+        return new Promise(function (resolve) {
+            entry.release = function (reply) {
+                resolve(make(200, reply || (isList ? list : (m ? saved[decodeURIComponent(m[1])] : convo('L', ['asked in L', 'answer in L'])))));
+            };
+            if (held) { pending.push(entry); } else { entry.release(); }
+        });
+    };
+
+    var section;
+    var q = function (sel) { return section.querySelector(sel); };
+    var threadText = function () { return q('[data-role="ask-thread"]').textContent; };
+    var posts = function () { return calls.filter(function (c) { return c.method === 'POST'; }); };
+    var savedReads = function () { return pending.filter(function (c) { return c.method === 'GET' && !/conversation=/.test(c.url) && !/assistant\/conversations/.test(c.url); }); };
+    var check = function (name, ok, detail) { results.push({ name: name, ok: !!ok, detail: ok ? undefined : detail }); };
+    var type = function (text) { var i = q('[data-role="ask-input"]'); i.value = text; i.dispatchEvent(new Event('input', { bubbles: true })); };
+    var submit = function () { q('[data-role="ask-form"]').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); };
+    var openHistoryItem = function (uid) {
+        q('[data-role="ask-history"]').click();
+        return tick(40).then(function () {
+            [].slice.call(section.querySelectorAll('[data-role="ask-history-item"]')).filter(function (b) { return b.parentNode.getAttribute('data-uid') === uid; })[0].click();
+        });
+    };
+
+    // A fresh Ask card: the old one is replaced by a listener-free clone and the real script runs again with the stub in place.
+    var boot = async function () {
+        calls.length = 0; pending.length = 0; hold.initial = true;
+        var old = document.querySelector('[data-role="home-ask"]');
+        var clone = old.cloneNode(true);
+        clone.dataset.assistantWired = '0';
+        clone.classList.remove('is-conversation-open');
+        old.parentNode.replaceChild(clone, old);
+        section = clone;
+        (0, eval)(scriptText);
+        await tick(60);
+    };
+
+    try {
+        // 1 - the initial GET is held; another conversation is opened and resolved first; the initial GET is released last
+        await boot();
+        type('my draft');
+        await openHistoryItem('B'); await tick(80);
+        savedReads()[0].release(convo('L', ['asked in L', 'answer in L'])); await tick(80);
+        check('1 - a late initial read does not replace the selected conversation', /answer in B/.test(threadText()) && !/answer in L/.test(threadText()), threadText().slice(0, 140));
+        check('1 - and leaves the composer alone', q('[data-role="ask-input"]').value === 'my draft', q('[data-role="ask-input"]').value);
+        check('1 - no assistant call', posts().length === 0, posts().length);
+
+        // 2 - two saved reads overlap; the older one answers last
+        await boot();
+        type('a question'); submit(); await tick(60); // the not-yet-loaded send asks for the saved chat again: two reads in flight
+        var reads = savedReads();
+        check('2 - two saved reads are in flight', reads.length === 2, reads.length);
+        reads[1].release(convo('NEWER', ['asked in NEWER', 'answer in NEWER'])); await tick(60);
+        reads[0].release(convo('OLDER', ['asked in OLDER', 'answer in OLDER'])); await tick(80);
+        check('2 - the newest read wins; the stale one is ignored', /answer in NEWER/.test(threadText()) && !/answer in OLDER/.test(threadText()), threadText().slice(0, 140));
+
+        // 3 - a pending first send must not fire into a conversation chosen meanwhile
+        await boot();
+        type('hold this question'); submit(); await tick(60);
+        await openHistoryItem('B'); await tick(80);
+        savedReads().forEach(function (r) { r.release(convo('L', ['asked in L', 'answer in L'])); }); await tick(100);
+        check('3 - nothing is sent into the other conversation', posts().length === 0, JSON.stringify(posts().map(function (p) { return p.body; })));
+        check('3 - the question stays in the composer', q('[data-role="ask-input"]').value === 'hold this question', q('[data-role="ask-input"]').value);
+        check('3 - the chosen conversation stays on screen', /answer in B/.test(threadText()), threadText().slice(0, 140));
+
+        // 4 - control: with no selection change, the waiting send goes out once
+        await boot();
+        type('go ahead'); submit(); await tick(60);
+        savedReads().forEach(function (r) { r.release(convo('L', ['asked in L', 'answer in L'])); }); await tick(100);
+        check('4 - an undisturbed waiting send is sent exactly once', posts().length === 1 && posts()[0].body.q === 'go ahead', JSON.stringify(posts().map(function (p) { return p.body; })));
+
+        // 5 - first use: the disclosure is on screen and nothing is sent until the customer sends again
+        await boot();
+        type('first ever question'); submit(); await tick(60);
+        savedReads().forEach(function (r) { r.release({ uid: null, messages: [], notice: { title: 'How Ask MotionGrove uses AI', body: 'DISCLOSURE TEXT' }, allowance: allow }); }); await tick(100);
+        var notice = q('[data-role="ask-notice"]');
+        check('5 - the first-use disclosure is shown', !!notice && !notice.hidden && /DISCLOSURE TEXT/.test(notice.textContent), notice && notice.textContent);
+        check('5 - and nothing reached the assistant before it', posts().length === 0, posts().length);
+    } catch (e) {
+        check('script ran to the end', false, String((e && e.stack) || e));
+    } finally {
+        window.fetch = realFetch;
+    }
+
+    return results;
+}

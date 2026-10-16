@@ -41,7 +41,7 @@
     if (!cfg.message || !form || !input || !panel || !thread) { return; }
     input.setAttribute('data-placeholder', input.getAttribute('placeholder') || '');
 
-    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null, stick: true, epoch: 0, opening: false, histSeq: 0, seen: {}, topEl: null, hasMore: false, before: null, loadingOlder: false, olderFailed: false, historyNext: null };
+    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null, stick: true, epoch: 0, opening: false, histSeq: 0, loadSeq: 0, loadPromise: null, seen: {}, topEl: null, hasMore: false, before: null, loadingOlder: false, olderFailed: false, historyNext: null };
     var narrow = window.matchMedia ? window.matchMedia('(max-width: 767.98px)') : { matches: false };
 
     function csrf() {
@@ -671,7 +671,13 @@
         // the AI provider before the disclosure was on screen.
         if (!retryOf && !state.loaded) {
             input.value = question;
+            var epochAtAsk = state.epoch;
             loadSaved().then(function () {
+                if (epochAtAsk !== state.epoch) {
+                    // The customer picked another conversation while this waited: the question stays in the box, unsent.
+                    flash('Your question is still in the box. Send it when you are ready.');
+                    return;
+                }
                 if (!state.loaded) {
                     setOpen(true);
                     thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't load Ask MotionGrove just now. Nothing was sent. Please try again.", payload: { title: "I couldn't start", retryable: false } }));
@@ -841,22 +847,31 @@
         state.notice.hidden = false;
     }
 
-    // Returns a promise that settles once the read has finished (state.loaded says whether it worked).
+    // Returns a promise that settles once the LATEST read has finished (state.loaded says whether it worked).
+    // A saved-chat read may answer late, or two may overlap (the first-send path asks again). Only the newest read applies (a sequence
+    // number); and a read that finishes after the customer chose a conversation (New chat, another one from History) may record
+    // what is true of the account — that it loaded, and the first-use disclosure — but never replaces what is on screen.
     function loadSaved() {
         if (!cfg.show) { state.loaded = true; return Promise.resolve(); }
-        return request(cfg.show).then(function (res) {
+        var seq = ++state.loadSeq;
+        var epoch = state.epoch;
+        var p = request(cfg.show).then(function (res) {
+            if (seq !== state.loadSeq) { return state.loadPromise; } // a newer read superseded this one
             if (!res.ok || !res.body) { return; }
             state.loaded = true;
             var any = (res.body.messages || []).length > 0;
             state.firstUse = !any && !!res.body.notice;
             // First use: the disclosure sits right under the input, on screen before anything can be sent.
             showNotice(state.firstUse ? res.body.notice : null);
+            if (epoch !== state.epoch) { return; } // the customer already selected something: leave the screen as it is
             render(res.body);
             if (any && resumeBtn) {
                 resumeBtn.setAttribute('data-has-conversation', '1');
                 resumeBtn.hidden = false;
             }
         }).catch(function () { /* the box still works once the read succeeds; until then nothing is sent */ });
+        state.loadPromise = p;
+        return p;
     }
 
     // ── chat history: this customer's conversations in this Business (never the inbox, never a teammate's) ────────────────────
