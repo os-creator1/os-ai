@@ -209,6 +209,7 @@ final class HomeCommandCenter
                 // Contextual chips: setup help while launching, performance and optimisation once running. Each is the
                 // literal question it sends, and is offered only when the tool that answers it is open to this actor.
                 'suggestions' => $this->assistantSuggestions->for($offering, $state === self::STATE_SETUP),
+                'disclosure' => \App\Library\Assistant\AssistantRetention::disclosure(),
                 'url' => route('customer.workspaces.businesses.home.ask', $scoped),
                 'assistant' => [
                     'show' => route('customer.workspaces.businesses.home.assistant.show', $scoped),

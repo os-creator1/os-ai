@@ -184,7 +184,7 @@ final class AssistantService
     /** The AI-data notice, as the first message of a customer's first conversation in a Business. */
     public function noticeText(): string
     {
-        return __('ask_ai.data_notice.body', ['days' => AssistantRetention::retentionDays()]);
+        return AssistantRetention::disclosure();
     }
 
     private function recordNotice(AssistantConversation $conversation): void

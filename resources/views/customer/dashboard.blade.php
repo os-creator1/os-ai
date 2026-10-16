@@ -101,7 +101,8 @@
                             // No contact in the whole period: say so instead of drawing a flat line that looks like a result.
                             var hasActivity = chart.series.new_contacts.some(function (n) { return Number(n) > 0; });
                             if (!hasActivity) {
-                                mount.innerHTML = '<div class="home-chart-empty" data-role="chart-empty"><strong>No activity to chart yet</strong><span>New contacts will appear here as people get in touch.</span></div>';
+                                mount.style.minHeight = '0';
+                                mount.innerHTML = '<div class="home-chart-empty" data-role="chart-empty"><strong>No activity to chart yet</strong><span>The trend chart appears once something happens in this period.</span></div>';
                                 return;
                             }
 

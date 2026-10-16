@@ -13,14 +13,14 @@
     $failedBand = $dashboard->failed(DashboardSnapshot::BAND_RECENT_WORK);
 @endphp
 
-<section class="mb-2" aria-labelledby="home-handling-heading" data-band="handling" data-role="home-handling">
-    <x-card>
-        <h2 class="h5 text-section-heading mb-1" id="home-handling-heading">What MotionGrove is handling</h2>
+<section class="h-100" aria-labelledby="home-handling-heading" data-band="handling" data-role="home-handling">
+    <x-card class="h-100 home-panel">
+        <h2 class="home-panel-title mb-1" id="home-handling-heading">What MotionGrove is handling</h2>
 
         @if($failedBand)
             <p class="mb-0 text-muted" data-role="handling-unavailable">We couldn't load recent work just now.</p>
         @elseif($home['handling'] === [])
-            <p class="mb-0 text-muted" data-role="handling-empty">Nothing to report yet. Completed work — published website updates, finished recommendations, automations — will be listed here.</p>
+            <p class="mb-0 text-muted text-center py-2" data-role="handling-empty">Nothing to report yet. Completed work — published website updates, finished recommendations, automations — will be listed here.</p>
         @else
             <ul class="list-unstyled mb-0" data-role="handling-items">
                 @foreach($home['handling'] as $row)

@@ -32,8 +32,9 @@
     var minimizeBtn = section.querySelector('[data-role="ask-minimize"]');
     var newBtn = section.querySelector('[data-role="ask-new"]');
     if (!cfg.message || !form || !input || !panel || !thread) { return; }
+    input.setAttribute('data-placeholder', input.getAttribute('placeholder') || '');
 
-    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null };
+    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null, stick: true };
     var narrow = window.matchMedia ? window.matchMedia('(max-width: 767.98px)') : { matches: false };
 
     function csrf() {
@@ -74,17 +75,84 @@
             });
     }
 
-    // ── open / minimise ────────────────────────────────────────────────
-    function setOpen(open) {
+    // ── open / close ───────────────────────────────────────────────────
+    // The Ask card GROWS into the conversation: the same element, so a View Transition morphs it from its Home position to the
+    // full conversation (and back). Without that API, or with reduced motion, the state simply switches (CSS fades the content).
+    // Opening, closing, scrolling and the history entry never call the assistant; only an intentional send does.
+    var root = section.closest('[data-role="command-center"]') || document.body;
+    var reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+    var opener = null;
+    var savedScroll = 0;
+
+    function isOpen() { return !panel.hidden; }
+
+    function apply(open) {
         panel.hidden = !open;
         section.classList.toggle('is-conversation-open', open);
+        root.classList.toggle('is-chat-open', open);
+        var ph = open ? input.getAttribute('data-placeholder-open') : input.getAttribute('data-placeholder');
+        if (ph) { input.placeholder = ph; }
         if (resumeBtn) { resumeBtn.hidden = open || !resumeBtn.getAttribute('data-has-conversation'); }
         if (narrow.matches) { document.body.style.overflow = open ? 'hidden' : ''; }
-        if (open) { scrollToEnd(); }
+        if (open) { window.scrollTo(0, 0); scrollToEnd(true); } else { window.scrollTo(0, savedScroll); }
     }
 
-    function scrollToEnd() { thread.scrollTop = thread.scrollHeight; }
+    function transition(open, done) {
+        var ran = false;
+        var run = function () { if (!ran) { ran = true; apply(open); } };
+        if (document.startViewTransition && !reduceMotion.matches && !document.hidden) {
+            var vt = document.startViewTransition(run);
+            // The browser runs the callback on its next paint. If painting is throttled (a covered or background tab) the state
+            // must still change, so the same switch is made after a short bound; whichever comes first wins, the other is a no-op.
+            window.setTimeout(run, 350);
+            if (done) {
+                var fired = false;
+                var once = function () { if (!fired) { fired = true; done(); } };
+                vt.finished.then(once, once);
+                window.setTimeout(once, 700);
+            }
+        } else {
+            run();
+            if (done) { done(); }
+        }
+    }
 
+    function setOpen(open) {
+        if (open === isOpen()) { return; }
+        if (open) {
+            savedScroll = window.pageYOffset || 0;
+            var a = document.activeElement;
+            opener = a && a !== document.body && a !== input && section.contains(a) === false ? a : null;
+            if (window.location.hash !== '#ask') { window.history.pushState({ ask: 1 }, '', '#ask'); }
+            transition(true, function () { input.focus({ preventScroll: true }); });
+        } else {
+            // Closing through the page's own history entry keeps Back/Forward honest; the popstate handler does the work.
+            if (window.history.state && window.history.state.ask) { window.history.back(); return; }
+            if (window.location.hash === '#ask') { window.history.replaceState(null, '', window.location.pathname + window.location.search); }
+            closeNow();
+        }
+    }
+
+    function closeNow() {
+        transition(false, function () {
+            var back = opener && document.contains(opener) ? opener : input;
+            back.focus({ preventScroll: true });
+            opener = null;
+        });
+    }
+
+    window.addEventListener('popstate', function () {
+        var wantsOpen = !!(window.history.state && window.history.state.ask) || window.location.hash === '#ask';
+        if (!wantsOpen && isOpen()) { closeNow(); }
+        if (wantsOpen && !isOpen()) { transition(true, function () { input.focus({ preventScroll: true }); }); }
+    });
+
+    function nearBottom() { return thread.scrollHeight - thread.scrollTop - thread.clientHeight < 120; }
+
+    // The view follows new messages only while the customer is already at the bottom (or just sent something).
+    function scrollToEnd(force) {
+        if (force || state.stick) { thread.scrollTop = thread.scrollHeight; }
+    }
     // ── rendering ──────────────────────────────────────────────────────
     function linkList(links, cls) {
         var ul = el('ul', cls || 'home-ask-links list-unstyled mb-0');
@@ -343,10 +411,42 @@
         }
 
         row.appendChild(box);
+        if (m.kind === 'answer' && (m.body || '') !== '') { row.appendChild(copyAction(m.body)); }
         return row;
     }
 
     function announce() { scrollToEnd(); }
+
+    // A conversation with nothing in it yet: a short invitation and the same suggestions the card offers (each is the literal question).
+    function emptyState() {
+        var wrap = el('div', 'home-ask-empty');
+        wrap.setAttribute('data-role', 'ask-empty');
+        wrap.appendChild(el('p', 'home-ask-title mb-0', 'Ask anything about your business.'));
+        var list = [];
+        section.querySelectorAll('[data-role="ask-suggestion"]').forEach(function (c) { list.push(c.getAttribute('data-q')); });
+        if (list.length) { wrap.appendChild(chips(list, function (t) { send(t); })); }
+        return wrap;
+    }
+
+    // Copy is a plain client-side action on an answer's own text; there is no feedback endpoint, so none is offered.
+    function copyAction(text) {
+        var bar = el('div', 'home-ask-actions');
+        var copy = el('button', 'home-ask-action', 'Copy');
+        copy.type = 'button';
+        copy.setAttribute('data-role', 'ask-copy');
+        copy.setAttribute('aria-label', 'Copy this answer');
+        copy.addEventListener('click', function () {
+            var done = function (ok) {
+                copy.textContent = ok ? 'Copied' : 'Press Ctrl+C to copy';
+                window.setTimeout(function () { copy.textContent = 'Copy'; }, 1800);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+            } else { done(false); }
+        });
+        bar.appendChild(copy);
+        return bar;
+    }
 
     function render(data) {
         thread.textContent = '';
@@ -365,6 +465,8 @@
         if (deleteBtn) { deleteBtn.hidden = !state.uid; }
         if (!(data.messages || []).length && data.notice) {
             thread.appendChild(bubble({ role: 'assistant', kind: 'notice', body: data.notice.body, payload: { title: data.notice.title } }));
+        } else if (!(data.messages || []).length) {
+            thread.appendChild(emptyState());
         }
         renderAllowance(data.allowance);
         if (resumeBtn) { resumeBtn.setAttribute('data-has-conversation', (data.messages || []).length ? '1' : ''); }
@@ -396,7 +498,8 @@
 
     function setBusy(b) {
         state.busy = b;
-        if (submitBtn) { submitBtn.disabled = b; }
+        if (submitBtn) { submitBtn.disabled = b; submitBtn.setAttribute('aria-label', b ? 'Working' : 'Ask'); }
+        section.classList.toggle('is-busy', b);
         if (working) { working.hidden = !b; }
         panel.setAttribute('aria-busy', b ? 'true' : 'false');
     }
@@ -431,9 +534,12 @@
         if (!attempt.id) { attempt.id = uuid(); }
         state.failed[question] = attempt;
 
+        state.stick = true;
         thread.appendChild(bubble({ role: 'user', kind: 'text', body: question, payload: {} }));
-        scrollToEnd();
+        scrollToEnd(true);
         input.value = '';
+        autosize();
+        saveDraft();
         setBusy(true);
 
         var body = { q: question, client_message_id: attempt.id };
@@ -481,10 +587,15 @@
     });
 
     if (minimizeBtn) {
-        minimizeBtn.addEventListener('click', function () { setOpen(false); input.focus(); });
+        minimizeBtn.addEventListener('click', function () { setOpen(false); });
     }
-    // Escape (from the box or anywhere in the conversation) goes back to the dashboard; the conversation is kept.
-    section.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !panel.hidden) { setOpen(false); input.focus(); } });
+    // Escape anywhere goes back to Home; the conversation and any unsent draft are kept. An open <details> menu or a composing IME owns Escape first.
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || !isOpen()) { return; }
+        var menu = section.querySelector('details[open]');
+        if (menu) { menu.removeAttribute('open'); return; }
+        setOpen(false);
+    });
 
     if (newBtn) {
         newBtn.addEventListener('click', function () {
@@ -492,7 +603,8 @@
             state.startNew = true;
             state.failed = {};
             thread.textContent = '';
-            thread.appendChild(el('p', 'text-muted mb-0', 'New conversation. Ask anything about your business.'));
+            thread.appendChild(emptyState());
+            if (deleteBtn) { deleteBtn.hidden = true; }
             input.focus();
         });
     }
@@ -528,7 +640,7 @@
     }
 
     if (resumeBtn) {
-        resumeBtn.addEventListener('click', function () { setOpen(true); input.focus(); });
+        resumeBtn.addEventListener('click', function () { setOpen(true); });
     }
 
     // Reading the saved conversation never calls a model; it only lets Home offer to continue it (and, on first use,
@@ -564,5 +676,38 @@
         }).catch(function () { /* the box still works once the read succeeds; until then nothing is sent */ });
     }
 
-    loadSaved();
+    // ── composer: multiline, Enter sends, Shift+Enter breaks the line; the unsent draft survives Back to Home and a reload ───────
+    var draftKey = 'homeAskDraft:' + (cfg.message || '');
+
+    function autosize() {
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 168) + 'px';
+    }
+
+    function saveDraft() {
+        try {
+            if (input.value) { window.sessionStorage.setItem(draftKey, input.value); } else { window.sessionStorage.removeItem(draftKey); }
+        } catch (e) { /* storage unavailable: the draft just lives for the page */ }
+    }
+
+    try {
+        var saved = window.sessionStorage.getItem(draftKey);
+        if (saved && !input.value) { input.value = saved; autosize(); }
+    } catch (e) { /* ignore */ }
+
+    input.addEventListener('input', function () { autosize(); saveDraft(); });
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            if (typeof form.requestSubmit === 'function') { form.requestSubmit(); } else { send(input.value); }
+        }
+    });
+    thread.addEventListener('scroll', function () { state.stick = nearBottom(); }, { passive: true });
+
+    var initialLoad = loadSaved();
+
+    // A reload or a shared link on #ask lands back in the conversation (it is read from the server, never lost).
+    if (window.location.hash === '#ask') {
+        initialLoad.then(function () { if (!isOpen()) { apply(true); input.focus({ preventScroll: true }); } });
+    }
 })();

@@ -39,6 +39,12 @@ final class AssistantRetention
         return max(1, min(365, (int) config('assistant.retention_days')));
     }
 
+    /** The AI-data disclosure, with the retention this installation actually applies. The ONE source of that sentence. */
+    public static function disclosure(): string
+    {
+        return __('ask_ai.data_notice.body', ['days' => self::retentionDays()]);
+    }
+
     /** The one lock a turn holds while it works on a conversation, and a deletion must hold to remove it. */
     public static function turnLock(int $conversationId, int $seconds): Lock
     {

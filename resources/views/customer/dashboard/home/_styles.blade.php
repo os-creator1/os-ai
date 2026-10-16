@@ -46,7 +46,7 @@
 
     /* Ask MotionGrove — the conversation lives inside the Ask card. */
     .home-command .home-ask-panel { border-top: 1px solid var(--color-border-subtle, #EEEAE3); padding-top: .75rem; }
-    .home-command .home-ask-thread { max-height: 34rem; overflow-y: auto; display: flex; flex-direction: column; gap: .625rem; padding: .25rem 0 .5rem; }
+    .home-command .home-ask-thread { overflow-y: auto; display: flex; flex-direction: column; gap: .625rem; padding: .25rem 0 .5rem; }
     .home-command .home-ask-msg[data-from="user"] { align-self: flex-end; max-width: 85%; }
     .home-command .home-ask-msg[data-from="assistant"] { align-self: flex-start; max-width: 100%; }
     .home-command .home-ask-bubble { border-radius: .75rem; padding: .625rem .875rem; background: var(--color-surface-secondary, #F4F1EC); color: var(--color-text-primary, #1F1D1A); overflow-wrap: anywhere; }
@@ -69,17 +69,6 @@
     .home-command .home-ask-banner[data-kind="limit"] { background: var(--color-primary-soft-bg, #F7E9E4); }
     .home-command .home-ask-links a { text-decoration: underline; }
 
-    @media (max-width: 767.98px) {
-        /* On a phone an open conversation takes the whole screen: the card becomes a sheet, the box stays reachable. */
-        .home-command .home-ask.is-conversation-open { position: fixed; inset: 0; z-index: 1045; margin: 0 !important; background: var(--color-canvas, #FAF8F5); overflow: hidden; display: flex; flex-direction: column; padding: .5rem; }
-        .home-command .home-ask.is-conversation-open > .card { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; margin: 0; }
-        .home-command .home-ask.is-conversation-open .card-body { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-        .home-command .home-ask.is-conversation-open .home-ask-panel { order: 3; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-        .home-command .home-ask.is-conversation-open .home-ask-thread { flex: 1 1 auto; max-height: none; }
-        .home-command .home-ask.is-conversation-open [data-role="ask-suggestions"] { display: none !important; }
-        .home-command .home-ask.is-conversation-open .home-ask-form { order: 4; padding-top: .5rem; }
-        .home-command .home-ask-msg[data-from="user"] { max-width: 92%; }
-    }
 
     .home-command .home-handled-row { display: flex; gap: .75rem; align-items: baseline; padding: .5rem 0; border-top: 1px solid var(--color-border-subtle, #EEEAE3); }
     .home-command .home-handled-row:first-child { border-top: 0; }
@@ -168,5 +157,84 @@
         .home-command .home-ask-form { flex-wrap: wrap; }
         .home-command .home-ask-input { flex-basis: calc(100% - 2rem); }
         .home-performance .home-metric-value { font-size: 1.5rem; }
+    }
+    /* ── Ask MotionGrove: one card, two states. Collapsed = the compact box; `.is-conversation-open` = the full conversation. ─── */
+    .home-command .home-ask-card { view-transition-name: home-ask-card; }
+    .home-command .home-ask-head, .home-command .home-ask-foot { display: none; }
+    .home-command .home-ask-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; margin: 0; font-size: 1rem; }
+    .home-command .home-ask-input { resize: none; overflow-y: auto; line-height: 1.5; max-height: 10.5rem; }
+    .home-command .home-ask-submit-icon { display: none; }
+    .home-command .home-ask-panel[hidden] { display: none; }
+
+    /* Everything else on Home recedes; the Ask card is the page. */
+    .home-command.is-chat-open > *:not(.home-ask) { display: none !important; }
+    .home-command.is-chat-open .home-ask { margin: 0 !important; }
+    .home-command .home-ask.is-conversation-open .home-ask-card { display: flex; flex-direction: column; height: calc(100vh - 14.5rem); height: calc(100dvh - 14.5rem); min-height: 26rem; border-radius: 1rem; }
+    .home-command .home-ask.is-conversation-open .home-ask-card > .card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; padding: 0; }
+    .home-command .home-ask.is-conversation-open .home-ask-head { display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: .75rem; padding: .75rem 1rem; border-bottom: 1px solid var(--color-border-subtle, #EEEAE3); flex: 0 0 auto; }
+    .home-command .home-ask.is-conversation-open .home-ask-heading { position: static; width: auto; height: auto; clip: auto; grid-column: 3; justify-self: center; font-size: .9375rem; font-weight: 600; margin: 0; }
+    .home-command .home-ask-head-actions { display: flex; align-items: center; gap: .5rem; grid-column: 4; }
+    .home-command .home-ask-newchat { background: var(--color-surface-secondary, #F4F1EC); border: 0; font-weight: 500; }
+    .home-command .home-ask-esc kbd { font-size: .6875rem; padding: .0625rem .375rem; border: 1px solid var(--color-border, #E5E1DA); border-radius: .25rem; background: var(--color-surface, #fff); color: inherit; }
+    .home-command .home-ask.is-conversation-open .home-ask-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; border: 0; padding: 0; margin: 0 !important; }
+    .home-command .home-ask.is-conversation-open .home-ask-thread { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; width: 100%; padding: 1.25rem max(1rem, calc((100% - 46rem) / 2)) 1rem; gap: 1.25rem; }
+    .home-command .home-ask.is-conversation-open .home-ask-banner { margin: .5rem 1rem 0; }
+    .home-command .home-ask.is-conversation-open .home-ask-working { max-width: 46rem; width: 100%; margin: 0 auto !important; padding: 0 1rem .5rem; font-size: .875rem; }
+    .home-command .home-ask.is-conversation-open [data-role="ask-suggestions"] { display: none !important; }
+    .home-command .home-ask.is-conversation-open .home-ask-icon { display: none; }
+    .home-command .home-ask.is-conversation-open .home-ask-resume { display: none; }
+    .home-command .home-ask.is-conversation-open .home-ask-form { flex: 0 0 auto; align-items: flex-end; width: calc(100% - 2rem); max-width: 46rem; margin: 0 auto; padding: .625rem .75rem .625rem 1rem; border: 1px solid var(--color-border, #E5E1DA); border-radius: 1rem; background: var(--color-surface, #fff); box-shadow: 0 2px 8px rgba(0, 0, 0, .06); }
+    .home-command .home-ask.is-conversation-open .home-ask-form:focus-within { border-color: var(--color-border-strong, #C9C3B8); }
+    .home-command .home-ask.is-conversation-open .home-ask-submit { width: 2.25rem; height: 2.25rem; padding: 0; border-radius: 50%; background: var(--color-text-primary, #1F1D1A) !important; border-color: var(--color-text-primary, #1F1D1A) !important; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .home-command .home-ask.is-conversation-open .home-ask-submit-label { display: none; }
+    .home-command .home-ask.is-conversation-open .home-ask-submit-icon { display: inline-block; width: .75rem; height: .75rem; border-top: 2px solid #fff; border-left: 2px solid #fff; transform: translateY(2px) rotate(45deg); }
+    .home-command .home-ask.is-conversation-open.is-busy .home-ask-submit-icon { width: .625rem; height: .625rem; border: 0; background: #fff; border-radius: .125rem; transform: none; animation: home-ask-pulse 1.1s ease-in-out infinite; }
+    .home-command .home-ask.is-conversation-open .home-ask-foot { display: block; text-align: center; padding: .5rem 1rem .75rem; flex: 0 0 auto; }
+    .home-command .home-ask-foot summary { cursor: pointer; display: inline-block; text-decoration: underline; list-style: none; }
+    .home-command .home-ask-foot summary::-webkit-details-marker { display: none; }
+    .home-command .home-ask-foot p { max-width: 46rem; margin-left: auto !important; margin-right: auto !important; text-align: left; }
+
+    /* Messages: the customer's on the right in a neutral bubble; MotionGrove's on the left as plain text with its evidence beneath. */
+    .home-command .home-ask-msg[data-from="user"] .home-ask-bubble { background: var(--color-surface-secondary, #F4F1EC); border-radius: 1rem; }
+    .home-command .home-ask-msg[data-from="assistant"] .home-ask-bubble { background: transparent; padding: .125rem 0; border-radius: 0; }
+    .home-command .home-ask-msg[data-from="assistant"] .home-ask-bubble.is-limit,
+    .home-command .home-ask-msg[data-from="assistant"] .home-ask-bubble.is-error,
+    .home-command .home-ask-msg[data-from="assistant"] .home-ask-bubble.is-notice { padding: .75rem 1rem; border-radius: .75rem; }
+    .home-command .home-ask-msg[data-from="assistant"] .home-ask-bubble.is-notice { background: var(--color-surface-secondary, #F4F1EC); }
+    .home-command .home-ask-facts { border: 1px solid var(--color-border-subtle, #EEEAE3); border-radius: .75rem; background: var(--color-surface-secondary, #F7F4EF); padding: .5rem 1rem .625rem; margin-top: .75rem; }
+    .home-command .home-ask-facts .home-ask-fact { border-top: 1px solid var(--color-border-subtle, #EEEAE3); padding: .5rem 0; }
+    .home-command .home-ask-facts .home-ask-fact:first-child { border-top: 0; }
+    .home-command .home-ask-actions { display: flex; gap: .5rem; margin-top: .375rem; }
+    .home-command .home-ask-action { border: 0; background: transparent; padding: .125rem .375rem; border-radius: .375rem; font-size: .75rem; color: var(--color-text-muted, #6F6D67); }
+    .home-command .home-ask-action:hover { background: var(--color-surface-secondary, #F4F1EC); }
+    .home-command .home-ask-empty { text-align: center; padding: 3rem 0 1rem; }
+    .home-command .home-ask-empty ul { justify-content: center; }
+    @keyframes home-ask-pulse { 50% { opacity: .45; } }
+    @keyframes home-ask-fade { from { opacity: 0; } to { opacity: 1; } }
+    .home-command .home-ask.is-conversation-open .home-ask-head, .home-command .home-ask.is-conversation-open .home-ask-thread, .home-command .home-ask.is-conversation-open .home-ask-foot { animation: home-ask-fade .22s ease both; }
+    ::view-transition-group(home-ask-card) { animation-duration: .28s; animation-timing-function: cubic-bezier(.2, .7, .2, 1); }
+    ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .2s; }
+    @media (prefers-reduced-motion: reduce) {
+        .home-command .home-ask.is-conversation-open .home-ask-head, .home-command .home-ask.is-conversation-open .home-ask-thread, .home-command .home-ask.is-conversation-open .home-ask-foot { animation: none; }
+        ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation-duration: 0s !important; }
+    }
+
+    /* On a phone the open conversation is the whole screen: the card becomes a sheet and the composer rides above the keyboard. */
+    @media (max-width: 767.98px) {
+        .home-command .home-ask.is-conversation-open { position: fixed; inset: 0; z-index: 1045; margin: 0 !important; background: var(--color-canvas, #FAF8F5); }
+        .home-command .home-ask.is-conversation-open .home-ask-card { height: 100%; border-radius: 0; border: 0; }
+        .home-command .home-ask.is-conversation-open .home-ask-head { grid-template-columns: auto 1fr auto; padding: .5rem .75rem; }
+        .home-command .home-ask.is-conversation-open .home-ask-esc { display: none; }
+        .home-command .home-ask.is-conversation-open .home-ask-heading { grid-column: 2; }
+        .home-command .home-ask.is-conversation-open .home-ask-head-actions { grid-column: 3; }
+        .home-command .home-ask.is-conversation-open .home-ask-form { width: calc(100% - 1rem); margin-bottom: .25rem; }
+        .home-command .home-ask-msg[data-from="user"] { max-width: 92%; }
+        .home-command .home-ask.is-conversation-open .home-ask-head { gap: .5rem; }
+        .home-command .home-ask.is-conversation-open .home-ask-back { white-space: nowrap; }
+        .home-command .home-ask.is-conversation-open .home-ask-heading { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .home-command .home-ask.is-conversation-open .home-ask-newchat { white-space: nowrap; }
+        .home-command .home-ask.is-conversation-open [data-role="ask-delete"] { display: none; }
+        .home-command .home-ask.is-conversation-open .home-ask-form { flex-wrap: nowrap; }
+        .home-command .home-ask.is-conversation-open .home-ask-input { flex: 1 1 auto; }
     }
 </style>

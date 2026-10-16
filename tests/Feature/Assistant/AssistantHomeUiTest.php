@@ -36,7 +36,7 @@ class AssistantHomeUiTest extends TestCase
         $this->assertSame(0, $this->aiCalls());
         $this->assertStringContainsString('js/home/ask-assistant.js', $html);
         $this->assertStringContainsString('data-role="ask-conversation"', $html);
-        $this->assertStringContainsString('Back to dashboard', $html);
+        $this->assertStringContainsString('Back to Home', $html);
     }
 
     public function test_launch_and_growth_homes_offer_different_contextual_suggestions(): void
@@ -84,6 +84,24 @@ class AssistantHomeUiTest extends TestCase
         }
     }
 
+    public function test_the_ask_card_is_one_element_that_opens_into_a_full_conversation(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Expand Venue', 'Expand Account');
+        $this->authenticateAs($customer);
+
+        $html = $this->get(route('user.home'))->assertOk()->getContent();
+
+        // One card holds the compact box AND the conversation: header, thread, composer (a multiline field) and the AI disclosure.
+        $this->assertSame(1, substr_count($html, 'data-role="home-ask"'));
+        $this->assertStringContainsString('data-role="ask-minimize"', $html);
+        $this->assertStringContainsString('Back to Home', $html);
+        $this->assertStringContainsString('data-role="ask-new"', $html);
+        $this->assertMatchesRegularExpression('#<textarea[^>]*data-role="ask-input"#', $html);
+        $this->assertStringContainsString('How Ask MotionGrove uses AI', $html);
+        $this->assertStringContainsString(e(\App\Library\Assistant\AssistantRetention::disclosure()), $html, 'The disclosure shown here is the one the assistant itself records.');
+        $this->assertSame(1, substr_count($html, 'id="home-ask-heading"'), 'One Ask heading, whether collapsed or open.');
+        $this->assertSame(0, $this->aiCalls(), 'Rendering Home, with the conversation closed, calls no model.');
+    }
     public function test_the_ask_script_never_builds_markup_from_text(): void
     {
         $js = (string) file_get_contents(public_path('js/home/ask-assistant.js'));
