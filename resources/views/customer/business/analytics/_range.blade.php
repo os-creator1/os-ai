@@ -33,7 +33,7 @@
 <form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
     <div class="{{ $segmented ? 'visually-hidden' : 'col-md-3 col-sm-6' }}">
         <label class="form-label" for="range">Date range</label>
-        <select id="range" name="range" class="form-select" data-role="range-preset" @if($segmented) tabindex="-1" @endif>
+        <select id="range" name="range" class="form-select" data-role="range-preset" @if($segmented) inert @endif>
             @foreach(AnalyticsDateRange::SELECTABLE_PRESETS as $value)
                 <option value="{{ $value }}" @selected($range->preset === $value)>{{ $presetLabels[$value] }}</option>
             @endforeach

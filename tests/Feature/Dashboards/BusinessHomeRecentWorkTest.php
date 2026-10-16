@@ -266,8 +266,8 @@ class BusinessHomeRecentWorkTest extends TestCase
         $order = $this->bandOrder($this->home()->assertOk()->getContent());
 
         $this->assertSame(
-            ['headlines', 'handling', 'visibility', 'conversations', 'automations', 'actions'],
-            array_values(array_filter($order, fn (string $band) => in_array($band, ['headlines', 'handling', 'visibility', 'conversations', 'automations', 'actions'], true))),
+            ['headlines', 'handling', 'automations', 'visibility', 'conversations', 'actions'],
+            array_values(array_filter($order, fn (string $band) => in_array($band, ['headlines', 'handling', 'automations', 'visibility', 'conversations', 'actions'], true))),
         );
     }
 
