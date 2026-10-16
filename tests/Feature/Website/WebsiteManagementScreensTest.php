@@ -137,4 +137,42 @@ class WebsiteManagementScreensTest extends TestCase
         $this->assertStringContainsString('Featured', $html);
         $this->assertStringContainsString(route('customer.workspaces.businesses.catalog.edit', [...$ids, $item->uid]), $html);
     }
+
+    public function test_the_pages_checklist_reflects_real_state_and_groups_service_and_location_pages(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $website = Website::where('business_id', $business->id)->firstOrFail();
+        $this->subPage($website, 'service-mirror-booth', ['title' => 'Mirror booth']);
+        $this->subPage($website, 'serving-charlotte', ['title' => 'Serving Charlotte']);
+        $ids = [$workspace->uid, $business->uid];
+        $url = route('customer.workspaces.businesses.website.pages.index', $ids);
+
+        $html = $this->get($url)->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('#data-checklist-key="photos" data-done="0"#', $html);
+        $this->assertMatchesRegularExpression('#data-checklist-key="quote_form" data-done="0"#', $html);
+        $this->assertMatchesRegularExpression('#\d of 6 done#', $html);
+        $this->assertStringContainsString('Service pages', $html);
+        $this->assertStringContainsString('Location pages', $html);
+        $this->assertStringContainsString('Homepage', $html);
+        $this->assertSame($website->pages()->count(), substr_count($html, 'data-testid="page-row"'));
+        $this->assertSame(1, substr_count($html, 'data-testid="back-to-website"'));
+        $this->assertStringContainsString(route('customer.workspaces.businesses.website.preview', [...$ids, $website->pages()->first()->uid]), $html);
+
+        // A real upload completes the Photos row; nothing else changes by itself.
+        $this->post(route('customer.workspaces.businesses.website.assets.store', $ids), ['image' => $this->fakeImageUpload('a.png'), 'alt_text' => 'Booth at an event'])->assertRedirect();
+        $after = $this->get($url)->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('#data-checklist-key="photos" data-done="1"#', $after);
+        $this->assertMatchesRegularExpression('#data-checklist-key="quote_form" data-done="0"#', $after);
+    }
+
+    public function test_the_pages_screen_is_not_reachable_from_another_customers_business(): void
+    {
+        [$business, $workspace] = $this->site();
+        [$other] = $this->entitledTenant();
+        $this->authenticateAsCustomer($other);
+
+        $this->get(route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]))->assertNotFound();
+    }
 }
