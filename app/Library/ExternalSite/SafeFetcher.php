@@ -37,16 +37,17 @@ final class SafeFetcher
     ): FetchResult {
         $current = $url;
         $redirects = 0;
+        $chain = [];
 
         while (true) {
             try {
                 $target = $this->guard->validate($current);
             } catch (ExternalSiteException $e) {
-                return new FetchResult($url, $current, 0, '', '', $e->reason, $redirects);
+                return new FetchResult($url, $current, 0, '', '', $e->reason, $redirects, null, $chain);
             }
 
             if (! in_array($target->host, $allowedHosts, true)) {
-                return new FetchResult($url, $current, 0, '', '', 'foreign_domain', $redirects);
+                return new FetchResult($url, $current, 0, '', '', 'foreign_domain', $redirects, null, $chain);
             }
 
             $response = $this->transport->get(new TransportRequest(
@@ -60,18 +61,27 @@ final class SafeFetcher
             ));
 
             if ($response->error !== null) {
-                return new FetchResult($url, $target->url, 0, '', '', $response->error, $redirects);
+                // The server answered but its body was refused (too large / wrong type): keep the real status and headers.
+                $answered = in_array($response->error, ['too_large', 'content_type_not_allowed'], true) && $response->status > 0;
+
+                return new FetchResult($url, $target->url, $answered ? $response->status : 0, $answered ? $response->contentType() : '', '', $response->error, $redirects, null, $chain, $answered ? $this->keepHeaders($response) : []);
             }
 
             if ($response->status >= 300 && $response->status < 400 && $response->header('location') !== null) {
+                $chain[] = ['url' => $target->url, 'status' => $response->status];
+
                 if ($redirects >= $this->config->maxRedirects()) {
-                    return new FetchResult($url, $target->url, $response->status, '', '', 'too_many_redirects', $redirects);
+                    return new FetchResult($url, $target->url, $response->status, '', '', 'too_many_redirects', $redirects, null, $chain);
                 }
 
                 $next = UrlResolver::resolve($target->url, (string) $response->header('location'));
 
                 if ($next === null) {
-                    return new FetchResult($url, $target->url, $response->status, '', '', 'url_malformed', $redirects);
+                    return new FetchResult($url, $target->url, $response->status, '', '', 'url_malformed', $redirects, null, $chain);
+                }
+
+                if (in_array($next, array_column($chain, 'url'), true) || $next === $target->url) {
+                    return new FetchResult($url, $next, $response->status, '', '', 'redirect_loop', $redirects, null, $chain);
                 }
 
                 $current = $next;
@@ -89,7 +99,25 @@ final class SafeFetcher
                 null,
                 $redirects,
                 $response->header('x-robots-tag'),
+                $chain,
+                $this->keepHeaders($response),
             );
         }
+    }
+
+    /** @return array<string, string> the response headers the audit reads */
+    private function keepHeaders(TransportResponse $response): array
+    {
+        $kept = [];
+
+        foreach (['content-length', 'server', 'retry-after', 'cf-mitigated', 'cf-ray', 'x-sucuri-id', 'x-iinfo', 'x-cdn', 'location', 'link', 'last-modified', 'content-encoding'] as $name) {
+            $value = $response->header($name);
+
+            if ($value !== null) {
+                $kept[$name] = mb_substr($value, 0, 300);
+            }
+        }
+
+        return $kept;
     }
 }

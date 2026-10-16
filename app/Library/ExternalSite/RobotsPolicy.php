@@ -88,6 +88,12 @@ final class RobotsPolicy
         return new self(array_slice($named !== [] ? $named : $wildcard, 0, self::MAX_RULES), $sitemaps);
     }
 
+    /** True when robots.txt asks this crawler to stay away from the whole site (the home page is disallowed). */
+    public function blocksWholeSite(): bool
+    {
+        return ! $this->allows('/');
+    }
+
     /** @return list<string> */
     public function sitemaps(): array
     {

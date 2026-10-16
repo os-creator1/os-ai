@@ -2111,11 +2111,17 @@
             Route::prefix('external')->name('external.')->group(function () {
                 Route::get('/', 'Business\ExternalWebsiteController@overview')->name('overview');
                 Route::get('/audit', 'Business\ExternalWebsiteController@audit')->name('audit');
+                Route::get('/plan', 'Business\ExternalWebsiteController@plan')->name('plan');
+                Route::post('/plan/{itemKey}', 'Business\ExternalWebsiteController@updatePlanItem')->where('itemKey', '[a-f0-9]{40}')->middleware('throttle:60,1')->name('plan.update');
+                Route::get('/status', 'Business\ExternalWebsiteController@status')->middleware('throttle:120,1')->name('status');
                 Route::get('/pages', 'Business\ExternalWebsiteController@pages')->name('pages');
                 Route::get('/pages/{pageId}', 'Business\ExternalWebsiteController@page')->whereNumber('pageId')->name('page');
                 Route::get('/settings', 'Business\ExternalWebsiteController@settings')->name('settings');
                 Route::post('/settings', 'Business\ExternalWebsiteController@saveSettings')->middleware('throttle:20,1')->name('settings.update');
+                Route::post('/settings/test', 'Business\ExternalWebsiteController@testConnection')->middleware('throttle:10,1')->name('settings.test');
                 Route::post('/crawl', 'Business\ExternalWebsiteController@crawl')->middleware('throttle:10,1')->name('crawl');
+                Route::post('/crawl/cancel', 'Business\ExternalWebsiteController@cancel')->middleware('throttle:10,1')->name('crawl.cancel');
+                Route::post('/stop', 'Business\ExternalWebsiteController@stop')->middleware('throttle:10,1')->name('stop');
             });
 
             Route::prefix('studio')->name('studio.')->group(function () {

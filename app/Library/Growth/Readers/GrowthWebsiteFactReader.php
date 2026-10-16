@@ -100,7 +100,7 @@ final class GrowthWebsiteFactReader implements GrowthFactReader
                 'issues' => (int) $crawl->warning_count + (int) $crawl->info_count,
                 'broken_links' => (int) $crawl->broken_links,
                 'indexability' => (string) $crawl->indexability,
-                'pages' => (int) $crawl->pages_fetched,
+                'pages' => (int) ($crawl->pages_audited ?: $crawl->pages_fetched),
                 'checked_at' => $crawl->finished_at?->toIso8601String(),
             ];
         }

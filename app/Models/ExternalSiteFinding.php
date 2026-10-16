@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\Seo\SeoAuditSeverity;
+use App\Library\ExternalSite\Audit\ExternalAuditCatalog;
 use App\Library\Seo\SeoAuditRuleRegistry;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -21,6 +22,7 @@ class ExternalSiteFinding extends Model
 
     protected $casts = [
         'facts' => 'array',
+        'evidence' => 'array',
         'created_at' => 'datetime',
     ];
 
@@ -36,11 +38,26 @@ class ExternalSiteFinding extends Model
 
     public function title(): string
     {
-        return SeoAuditRuleRegistry::titleFor((string) $this->rule_key);
+        return ExternalAuditCatalog::maybe((string) $this->rule_key)['title'] ?? SeoAuditRuleRegistry::titleFor((string) $this->rule_key);
     }
 
+    /** The finding's specific observation (what was seen on THIS page), or the earlier-format sentence. */
     public function description(): string
     {
+        if (is_array($this->evidence) && ($this->evidence['observed'] ?? '') !== '') {
+            return (string) $this->evidence['observed'];
+        }
+
         return SeoAuditRuleRegistry::describe((string) $this->rule_key, is_array($this->facts) ? $this->facts : []);
+    }
+
+    /** critical|high|medium|low|info; an earlier-format finding maps from its three-level severity. */
+    public function priority(): string
+    {
+        return (string) ($this->getAttribute('priority') ?: match ($this->severity) {
+            'critical' => 'critical',
+            'warning' => 'medium',
+            default => 'low',
+        });
     }
 }

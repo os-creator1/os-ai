@@ -47,6 +47,12 @@ class GoalsViewAsAndRoutesTest extends TestCase
             'customer.workspaces.businesses.website.external.settings',
             'customer.workspaces.businesses.website.external.settings.update',
             'customer.workspaces.businesses.website.external.crawl',
+            'customer.workspaces.businesses.website.external.crawl.cancel',
+            'customer.workspaces.businesses.website.external.plan',
+            'customer.workspaces.businesses.website.external.plan.update',
+            'customer.workspaces.businesses.website.external.settings.test',
+            'customer.workspaces.businesses.website.external.status',
+            'customer.workspaces.businesses.website.external.stop',
         ], $names, 'No publish, template, domain, rebuild or "apply fix" route exists for an external website.');
     }
 }
