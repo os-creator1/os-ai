@@ -187,6 +187,39 @@ class HomeCommandCenterTest extends TestCase
         $this->assertSame('1 thing needs you', $home['status']['pill']);
     }
 
+    public function test_a_billing_exception_is_never_all_caught_up(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Billing Venue', 'Billing Account');
+        $this->wallet($business, ['available_balance_micro' => 3000000, 'billing_status' => 'suspended']);
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame(HomeCommandCenter::STATE_BROKEN, $home['state']);
+        $this->assertSame('attention', $home['status']['key'], 'Billing needs the customer, so the status cannot say all caught up.');
+        $this->assertGreaterThanOrEqual(1, $home['status']['count']);
+        $this->assertFalse($home['caughtUp']);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-band="billing_exception"', $html);
+        $this->assertStringNotContainsString('data-role="home-status" data-status="clear"', $html);
+        $this->assertStringNotContainsString('data-band="quiet_steps"', $html, 'No quiet-time suggestions over a billing problem.');
+    }
+
+    public function test_an_automations_read_failure_stays_visible_in_the_quiet_layout(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Fail Venue', 'Quiet Fail Account');
+        $this->authenticateAs($customer);
+
+        // Every analytics read fails (an unexpected call on a strict mock throws), so the B5 comparison — and with it Automations — is unreadable.
+        $this->app->instance(\App\Library\Analytics\BusinessAnalyticsQueries::class, \Mockery::mock(\App\Library\Analytics\BusinessAnalyticsQueries::class));
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-band="quiet_steps"', $html, 'The layout under test is the quiet one.');
+        $this->assertStringContainsString('data-role="automations-unavailable"', $html, 'An unreadable Automations says so even when there is no column for it.');
+    }
+
     public function test_a_quiet_business_offers_only_steps_whose_pages_exist_for_the_actor(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Steps Venue', 'Quiet Steps Account');

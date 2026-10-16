@@ -465,6 +465,7 @@
     function reselect() {
         state.epoch++;
         state.opening = false;
+        disarmDelete();
         if (state.busy) { setBusy(false); }
         return state.epoch;
     }
@@ -795,6 +796,14 @@
         });
     }
 
+    // The first press of Delete only arms it. It disarms itself after a few seconds AND whenever the selected conversation changes, so a
+    // second press can never delete a conversation the first press was not about.
+    var disarmTimer = null;
+    function disarmDelete() {
+        if (disarmTimer) { window.clearTimeout(disarmTimer); disarmTimer = null; }
+        if (deleteBtn) { deleteBtn.removeAttribute('data-armed'); deleteBtn.textContent = 'Delete conversation'; }
+    }
+
     if (deleteBtn) {
         deleteBtn.addEventListener('click', function () {
             if (!state.uid || !cfg.remove) { return; }
@@ -802,16 +811,27 @@
             if (deleteBtn.getAttribute('data-armed') !== '1') {
                 deleteBtn.setAttribute('data-armed', '1');
                 deleteBtn.textContent = 'Press again to delete';
-                window.setTimeout(function () { deleteBtn.removeAttribute('data-armed'); deleteBtn.textContent = 'Delete conversation'; }, 5000);
+                disarmTimer = window.setTimeout(disarmDelete, 5000);
                 return;
             }
+            // What this press is about: the conversation and selection it was made under. A slow answer may only act on THAT conversation.
+            var deletedUid = state.uid;
+            var deletedEpoch = state.epoch;
+            disarmDelete();
             deleteBtn.disabled = true;
-            request(cfg.remove.replace('__UID__', encodeURIComponent(state.uid)), { method: 'POST', body: {} }).then(function (res) {
+            request(cfg.remove.replace('__UID__', encodeURIComponent(deletedUid)), { method: 'POST', body: {} }).then(function (res) {
                 if (res.status === 409) {
                     thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: (res.body && res.body.message) || 'An action is still running. Try again in a moment.', payload: { title: 'Not deleted yet', retryable: false } }));
                     return;
                 }
                 if (!res.ok) { throw new Error('status ' + res.status); }
+                if (deletedUid !== state.uid || deletedEpoch !== state.epoch) {
+                    // It was deleted, but the customer has since moved to another conversation: leave that one exactly as it is.
+                    flash('Conversation deleted.');
+                    state.historyNext = null;
+                    if (historyPanel && !historyPanel.hidden) { loadHistory(false); }
+                    return;
+                }
                 reselect();
                 state.uid = null;
                 state.startNew = false;
@@ -824,7 +844,7 @@
                 deleteBtn.hidden = true;
             }).catch(function () {
                 thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't delete it just now. Nothing was changed.", payload: { title: 'Not deleted', retryable: false } }));
-            }).then(function () { deleteBtn.disabled = false; deleteBtn.removeAttribute('data-armed'); deleteBtn.textContent = 'Delete conversation'; });
+            }).then(function () { deleteBtn.disabled = false; });
         });
     }
 

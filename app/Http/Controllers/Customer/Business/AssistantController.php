@@ -76,7 +76,7 @@ class AssistantController extends Controller
     /** The history panel: this customer's conversations in this Business, newest activity first, one page at a time. Reads only. */
     public function index(Request $request, string $workspaceUid, string $businessUid): JsonResponse
     {
-        $request->validate(['after' => ['nullable', 'uuid']]);
+        $request->validate(['after' => ['nullable', 'string', 'max:200']]);
         $context = $this->context($workspaceUid, $businessUid);
         $after = $request->query('after');
 

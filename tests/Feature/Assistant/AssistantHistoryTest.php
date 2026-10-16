@@ -125,8 +125,47 @@ class AssistantHistoryTest extends TestCase
         $theirs = $this->conversation($other, $otherBusiness, $otherWorkspace, 2, 'Theirs');
         $this->authenticateAs($customer);
 
-        $this->getJson($this->assistantUrl($workspace, $business, 'conversations') . '?after=' . $theirs->uid)->assertStatus(404);
-        $this->getJson($this->assistantUrl($workspace, $business, 'conversations') . '?after=not-a-uuid')->assertStatus(422);
+        // A conversation uid is not a cursor (cursors are issued by the list itself), and a malformed one is refused.
+        $this->getJson($this->assistantUrl($workspace, $business, 'conversations') . '?after=' . $theirs->uid)->assertStatus(422);
+        $this->getJson($this->assistantUrl($workspace, $business, 'conversations') . '?after=not-a-cursor')->assertStatus(422);
+
+        // A forged cursor positions a read inside the caller's OWN list only: another customer's rows never appear, whatever it says.
+        $forged = rtrim(strtr(base64_encode(json_encode(['2999-01-01 00:00:00', 999999])), '+/', '-_'), '=');
+        $uids = array_column($this->getJson($this->assistantUrl($workspace, $business, 'conversations') . '?after=' . $forged)->assertOk()->json('conversations'), 'uid');
+        $this->assertNotContains($theirs->uid, $uids);
+    }
+
+    public function test_a_conversation_updated_between_pages_causes_no_duplicates_and_no_gaps(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Move Venue', 'Move Account');
+        $this->authenticateAs($customer);
+        config(['assistant.history_page_size' => 3]);
+        $made = [];
+        foreach ([1, 2, 3, 4, 5, 6, 7] as $i) {
+            $made[$i] = $this->conversation($customer, $business, $workspace, 2, "Chat {$i}", now()->subHours($i));
+        }
+
+        $first = $this->getJson($this->assistantUrl($workspace, $business, 'conversations'))->assertOk();
+        $seen = array_column($first->json('conversations'), 'uid');
+        $this->assertSame([$made[1]->uid, $made[2]->uid, $made[3]->uid], $seen);
+
+        // The LAST row of page one receives a new message before page two is asked for: it jumps to the top of the list.
+        $made[3]->forceFill(['last_message_at' => now()->addMinute()])->save();
+
+        $second = $this->getJson($this->assistantUrl($workspace, $business, 'conversations') . '?after=' . $first->json('next'))->assertOk();
+        $uids = array_column($second->json('conversations'), 'uid');
+        $this->assertSame([$made[4]->uid, $made[5]->uid, $made[6]->uid], $uids, 'Page two continues exactly where page one ended: no restart, no repeat, no skip.');
+
+        $third = $this->getJson($this->assistantUrl($workspace, $business, 'conversations') . '?after=' . $second->json('next'))->assertOk();
+        $all = array_merge($seen, $uids, array_column($third->json('conversations'), 'uid'));
+        $this->assertSame($all, array_values(array_unique($all)), 'No conversation is listed twice.');
+        $this->assertCount(7, $all, 'Every conversation is listed once.');
+        $this->assertFalse($third->json('has_more'));
+        $this->assertSame(0, $this->aiCalls());
+
+        // An UNSEEN conversation that moves to the top meanwhile is not shown below it; a refresh puts it first.
+        $fresh = $this->getJson($this->assistantUrl($workspace, $business, 'conversations'))->assertOk();
+        $this->assertSame($made[3]->uid, $fresh->json('conversations.0.uid'));
     }
 
     // ── older messages ───────────────────────────────────────────────────

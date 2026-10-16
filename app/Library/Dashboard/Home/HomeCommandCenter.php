@@ -145,7 +145,9 @@ final class HomeCommandCenter
             }
         }
 
-        if ($bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] ?? null) {
+        $billingException = (bool) ($bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] ?? null);
+
+        if ($billingException) {
             $problem = true;
         }
 
@@ -183,13 +185,14 @@ final class HomeCommandCenter
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
-            'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, ($primary !== null ? 1 : 0) + count($attentionItems)),
+            // A billing exception is something that needs the customer even when no move or attention item carries it.
+            'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, ($primary !== null ? 1 : 0) + count($attentionItems) + ($billingException ? 1 : 0)),
             'setup' => $state === self::STATE_SETUP ? $journey : null,
             'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
-            'caughtUp' => $primary === null && ! $nbmFailed && ! $readinessUnknown && $state !== self::STATE_SETUP,
+            'caughtUp' => $primary === null && ! $nbmFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
             'queueLabel' => is_array($growth) ? (string) $growth['open_count'] : (string) ($nbm['recommendations']['label'] ?? '0'),

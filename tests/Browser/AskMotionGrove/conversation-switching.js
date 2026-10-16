@@ -191,6 +191,11 @@ async function runSavedLoadChecks() {
         var clone = old.cloneNode(true);
         clone.dataset.assistantWired = '0';
         clone.classList.remove('is-conversation-open');
+        // The clone starts clean: no open history panel, no leftover list rows (their listeners did not survive cloning), no old thread.
+        clone.querySelector('[data-role="ask-history-panel"]').hidden = true;
+        clone.querySelector('[data-role="ask-history-list"]').textContent = '';
+        clone.querySelector('[data-role="ask-thread"]').textContent = '';
+        clone.querySelector('[data-role="ask-conversation"]').hidden = true;
         old.parentNode.replaceChild(clone, old);
         section = clone;
         (0, eval)(scriptText);
@@ -238,6 +243,86 @@ async function runSavedLoadChecks() {
         var notice = q('[data-role="ask-notice"]');
         check('5 - the first-use disclosure is shown', !!notice && !notice.hidden && /DISCLOSURE TEXT/.test(notice.textContent), notice && notice.textContent);
         check('5 - and nothing reached the assistant before it', posts().length === 0, posts().length);
+    } catch (e) {
+        check('script ran to the end', false, String((e && e.stack) || e));
+    } finally {
+        window.fetch = realFetch;
+    }
+
+    return results;
+}
+
+/*
+ * Deleting a conversation is a two-step press and an asynchronous request. The script holds the delete response by hand and proves a
+ * slow answer only ever clears the conversation it deleted (never one chosen meanwhile), and that the armed confirmation disarms
+ * itself whenever the selected conversation changes.
+ *
+ *   (the same evaluate pattern as above) + '; runDeleteChecks()'
+ */
+async function runDeleteChecks() {
+    var results = [];
+    var realFetch = window.fetch;
+    var section = document.querySelector('[data-role="home-ask"]');
+    var q = function (sel) { return section.querySelector(sel); };
+    var tick = function (ms) { return new Promise(function (r) { window.setTimeout(r, ms || 30); }); };
+    var calls = [];
+    var pending = [];
+    var allow = { status: 'ok', usable: true, nearing: false, blocked: null };
+    var msg = function (uid, role, body) { return { uid: uid, role: role, kind: role === 'user' ? 'text' : 'answer', body: body, payload: {}, proposal: null, at: new Date().toISOString() }; };
+    var convo = function (uid, bodies) { return { uid: uid, title: 'Chat ' + uid, messages: bodies.map(function (b, i) { return msg(uid + '-m' + i, i % 2 === 0 ? 'user' : 'assistant', b); }), page: { has_more: false, before: null }, allowance: allow }; };
+    var saved = { A: convo('A', ['asked in A', 'answer in A']), B: convo('B', ['asked in B', 'answer in B']) };
+    var list = { conversations: [{ uid: 'A', title: 'Chat A', preview: 'answer in A', last_message_at: new Date().toISOString(), message_count: 2 }, { uid: 'B', title: 'Chat B', preview: 'answer in B', last_message_at: new Date().toISOString(), message_count: 2 }], has_more: false, next: null };
+
+    window.fetch = function (url, opts) {
+        url = String(url);
+        var method = (opts && opts.method) || 'GET';
+        var entry = { url: url, method: method };
+        calls.push(entry);
+        var make = function (status, body) { return { ok: status < 400, status: status, json: function () { return Promise.resolve(body); } }; };
+        var m = /conversation=([^&]+)/.exec(url);
+        var isDelete = method === 'POST' && /\/delete$/.test(url);
+        return new Promise(function (resolve) {
+            entry.release = function () {
+                resolve(isDelete ? make(200, { deleted: true }) : make(200, /assistant\/conversations/.test(url) ? list : (m ? saved[decodeURIComponent(m[1])] : saved.A)));
+            };
+            if (isDelete) { pending.push(entry); } else { entry.release(); }
+        });
+    };
+
+    var check = function (name, ok, detail) { results.push({ name: name, ok: !!ok, detail: ok ? undefined : detail }); };
+    var threadText = function () { return q('[data-role="ask-thread"]').textContent; };
+    var del = function () { return q('[data-role="ask-delete"]'); };
+    var openHistoryItem = function (uid) {
+        q('[data-role="ask-history"]').click();
+        return tick(40).then(function () {
+            [].slice.call(section.querySelectorAll('[data-role="ask-history-item"]')).filter(function (b) { return b.parentNode.getAttribute('data-uid') === uid; })[0].click();
+        });
+    };
+    var deletes = function () { return calls.filter(function (c) { return c.method === 'POST' && /\/delete$/.test(c.url); }); };
+
+    try {
+        q('[data-role="ask-resume"]').hidden = false;
+        q('[data-role="ask-resume"]').click();
+        await tick(400);
+
+        // 1 - a slow delete of A answers after B was opened: B must stay exactly as it is
+        await openHistoryItem('A'); await tick(80);
+        del().click(); del().click(); await tick(40); // arm, then confirm
+        check('1 - the delete request names conversation A', deletes().length === 1 && /\/A\/delete$/.test(deletes()[0].url), JSON.stringify(deletes().map(function (d) { return d.url; })));
+        await openHistoryItem('B'); await tick(80);
+        pending[0].release(); await tick(100);
+        check('1 - the late delete answer does not clear conversation B', /answer in B/.test(threadText()) && !/Conversation deleted\./.test(threadText()), threadText().slice(0, 140));
+        check('1 - and B can still be deleted (the control is still there)', !del().hidden, 'hidden');
+
+        // 2 - the armed confirmation does not survive a change of conversation
+        pending.length = 0; calls.length = 0;
+        await openHistoryItem('A'); await tick(80);
+        del().click(); await tick(20);
+        check('2 - one press arms it', del().getAttribute('data-armed') === '1', del().textContent);
+        await openHistoryItem('B'); await tick(80);
+        check('2 - choosing another conversation disarms it', del().getAttribute('data-armed') !== '1' && del().textContent === 'Delete conversation', del().textContent);
+        del().click(); await tick(40);
+        check('2 - the next press only arms again; nothing is deleted', deletes().length === 0, deletes().length);
     } catch (e) {
         check('script ran to the end', false, String((e && e.stack) || e));
     } finally {

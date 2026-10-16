@@ -96,6 +96,10 @@
     @endif
 
     {{-- E · bottom row: quiet-time next steps (only when quiet and offered) or Automations, beside what MotionGrove handles. --}}
+    {{-- Quiet layout: Automations has no column, but an unreadable Automations is never hidden (and recorded activity is shown). --}}
+    @if($showQuiet && ($dashboard->failed(DashboardSnapshot::BAND_AUTOMATIONS) || $dashboard->has(DashboardSnapshot::BAND_AUTOMATIONS)))
+        <div class="mb-2">@include('customer.dashboard.home._automations', ['home' => $home, 'dashboard' => $dashboard])</div>
+    @endif
     <div class="row g-2 mb-2 align-items-stretch home-bottom-row">
         @if($showQuiet)
             <div class="col-12 col-lg-6">@include('customer.dashboard.home._quiet', ['steps' => $home['quietSteps']])</div>
