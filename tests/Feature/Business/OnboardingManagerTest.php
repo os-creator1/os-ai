@@ -62,15 +62,17 @@ class OnboardingManagerTest extends TestCase
         $manager = app(OnboardingManager::class);
         $onboarding = $manager->start($customer, true);
 
-        $this->assertSame(OnboardingStep::Goals, $onboarding->current_step);
-
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
         $this->assertSame(OnboardingStep::Business, $onboarding->current_step);
-        $this->assertSame(['goals'], $onboarding->completed_steps);
 
         $onboarding = $manager->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
         $this->assertSame(OnboardingStep::Location, $onboarding->current_step);
-        $this->assertSame(['goals', 'business'], $onboarding->completed_steps);
+        $this->assertSame(['business'], $onboarding->completed_steps);
+
+        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Location, OnboardingStep::Services);
+        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Website);
+        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Website, OnboardingStep::Finish);
+        $this->assertSame(OnboardingStep::Finish, $onboarding->current_step);
+        $this->assertSame(['business', 'location', 'services', 'website'], $onboarding->completed_steps);
     }
 
     public function test_completing_a_step_ahead_of_the_current_step_throws(): void
@@ -81,8 +83,8 @@ class OnboardingManagerTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
 
-        // Onboarding is still at 'goals'; 'services' has unmet prerequisites.
-        $manager->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Assets);
+        // Onboarding is still at 'business'; 'services' has unmet prerequisites.
+        $manager->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Website);
     }
 
     public function test_completing_a_step_cannot_claim_to_skip_the_next_one(): void
@@ -93,8 +95,8 @@ class OnboardingManagerTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
 
-        // Completing 'goals' but claiming 'services' is next skips 'business' and 'location'.
-        $manager->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Services);
+        // Completing 'business' but claiming 'services' is next skips 'location'.
+        $manager->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Services);
     }
 
     public function test_repeated_completion_of_the_same_step_is_idempotent(): void
@@ -105,12 +107,12 @@ class OnboardingManagerTest extends TestCase
         $manager = app(OnboardingManager::class);
         $onboarding = $manager->start($customer, true);
 
-        $manager->completeStep($onboarding->fresh(), OnboardingStep::Goals, OnboardingStep::Business);
-        $manager->completeStep($onboarding->fresh(), OnboardingStep::Goals, OnboardingStep::Business);
+        $manager->completeStep($onboarding->fresh(), OnboardingStep::Business, OnboardingStep::Location);
+        $manager->completeStep($onboarding->fresh(), OnboardingStep::Business, OnboardingStep::Location);
 
         $onboarding->refresh();
-        $this->assertSame(['goals'], $onboarding->completed_steps);
-        $this->assertSame(OnboardingStep::Business, $onboarding->current_step);
+        $this->assertSame(['business'], $onboarding->completed_steps);
+        $this->assertSame(OnboardingStep::Location, $onboarding->current_step);
 
         Event::assertDispatched(CustomerOnboardingStepCompleted::class, 1);
     }
@@ -120,12 +122,12 @@ class OnboardingManagerTest extends TestCase
         $customer = $this->createCustomer();
         $manager = app(OnboardingManager::class);
         $onboarding = $manager->start($customer, true);
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
+        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
+        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Location, OnboardingStep::Services);
+
         $onboarding = $manager->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
 
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
-
-        $this->assertSame(OnboardingStep::Location, $onboarding->current_step);
+        $this->assertSame(OnboardingStep::Services, $onboarding->current_step);
     }
 
     public function test_resume_returns_the_bookmark_and_clamps_requests_ahead_of_it(): void
@@ -133,96 +135,13 @@ class OnboardingManagerTest extends TestCase
         $customer = $this->createCustomer();
         $manager = app(OnboardingManager::class);
         $onboarding = $manager->start($customer, true);
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
         $onboarding = $manager->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
 
         $this->assertSame(OnboardingStep::Location, $manager->resolveStep($onboarding));
-        $this->assertSame(OnboardingStep::Goals, $manager->resolveStep($onboarding, OnboardingStep::Goals));
+        $this->assertSame(OnboardingStep::Business, $manager->resolveStep($onboarding, OnboardingStep::Business));
+        $this->assertSame(OnboardingStep::Business, $manager->resolveStep($onboarding, OnboardingStep::Goals));
+        $this->assertSame(OnboardingStep::Location, $manager->resolveStep($onboarding, OnboardingStep::Finish));
         $this->assertSame(OnboardingStep::Location, $manager->resolveStep($onboarding, OnboardingStep::Complete));
-    }
-
-    public function test_assets_step_can_be_skipped(): void
-    {
-        $customer = $this->createCustomer();
-        $manager = app(OnboardingManager::class);
-        $onboarding = $manager->start($customer, true);
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Location, OnboardingStep::Services);
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Assets);
-
-        $onboarding = $manager->skipStep($onboarding, OnboardingStep::Assets);
-
-        $this->assertSame(OnboardingStep::Analysis, $onboarding->current_step);
-        $this->assertContains('assets', $onboarding->completed_steps);
-    }
-
-    public function test_only_the_assets_step_can_be_skipped(): void
-    {
-        $customer = $this->createCustomer();
-        $manager = app(OnboardingManager::class);
-        $onboarding = $manager->start($customer, true);
-
-        $this->expectException(InvalidArgumentException::class);
-
-        $manager->skipStep($onboarding, OnboardingStep::Goals);
-    }
-
-    public function test_save_business_step_rolls_back_and_dispatches_nothing_when_business_manager_fails(): void
-    {
-        Event::fake([CustomerOnboardingStepCompleted::class, BusinessCreated::class]);
-
-        $customer = $this->createCustomer();
-        $manager = app(OnboardingManager::class);
-        $onboarding = $manager->start($customer, true);
-
-        try {
-            $manager->saveBusinessStep($onboarding, $customer, array_merge($this->businessAttributes(), [
-                'website_url' => 'https://user:pass@example.com',
-            ]));
-            $this->fail('Expected an InvalidArgumentException to be thrown.');
-        } catch (InvalidArgumentException) {
-            // expected
-        }
-
-        $onboarding->refresh();
-        $this->assertSame(OnboardingStep::Goals, $onboarding->current_step);
-        $this->assertNull($onboarding->business_id);
-        $this->assertSame(0, Business::where('customer_id', $customer->user_id)->count());
-
-        Event::assertNotDispatched(CustomerOnboardingStepCompleted::class);
-        Event::assertNotDispatched(BusinessCreated::class);
-    }
-
-    public function test_save_business_step_rolls_back_a_successful_business_write_when_the_step_advance_is_invalid(): void
-    {
-        Event::fake([CustomerOnboardingStepCompleted::class, BusinessCreated::class]);
-
-        $customer = $this->createCustomer();
-        $manager = app(OnboardingManager::class);
-        // Still at 'goals' — the business step hasn't been reached, so the
-        // Business -> Location advance inside saveBusinessStep() is invalid.
-        // BusinessManager will successfully create the row before that failure.
-        $onboarding = $manager->start($customer, true);
-
-        try {
-            $manager->saveBusinessStep($onboarding, $customer, $this->businessAttributes());
-            $this->fail('Expected an InvalidArgumentException to be thrown.');
-        } catch (InvalidArgumentException) {
-            // expected
-        }
-
-        $onboarding->refresh();
-        $this->assertSame(OnboardingStep::Goals, $onboarding->current_step);
-        $this->assertNull($onboarding->business_id);
-        $this->assertSame(0, Business::where('customer_id', $customer->user_id)->count());
-        // Proves the Workspace the resolver created before the later failure
-        // is rolled back too, through the real saveBusinessStep() transaction
-        // boundary (RFC-003 §13.1) — not just the Business row.
-        $this->assertSame(0, Workspace::where('owner_user_id', $customer->user_id)->count());
-
-        Event::assertNotDispatched(BusinessCreated::class);
-        Event::assertNotDispatched(CustomerOnboardingStepCompleted::class);
     }
 
     public function test_save_business_step_attaches_the_business_and_advances_the_step(): void
@@ -230,11 +149,6 @@ class OnboardingManagerTest extends TestCase
         $customer = $this->createCustomer();
         $manager = app(OnboardingManager::class);
         $onboarding = $manager->start($customer, true);
-
-        // Prerequisite setup happens before Event::fake() so its own legitimate
-        // Goals -> Business completion event isn't counted against saveBusinessStep(),
-        // which only dispatches the Business -> Location completion.
-        $onboarding = $manager->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
 
         Event::fake([CustomerOnboardingStepCompleted::class, BusinessCreated::class]);
 
@@ -321,68 +235,6 @@ class OnboardingManagerTest extends TestCase
         $this->assertSame(0, CustomerOnboarding::where('customer_id', $user->id)->count());
     }
 
-    public function test_request_analysis_increments_version_marks_pending_and_dispatches_job_and_event_after_commit(): void
-    {
-        Bus::fake();
-        Event::fake([InitialBusinessAnalysisRequested::class]);
-
-        [$onboarding, $customer] = $this->onboardingAtAnalysisStep();
-        $manager = app(OnboardingManager::class);
-
-        $updated = $manager->requestAnalysis($onboarding, $customer);
-
-        $this->assertSame(1, $updated->analysis_version);
-        $this->assertSame(OnboardingStatus::AnalysisPending, $updated->status);
-        $this->assertSame(OnboardingStep::Analysis, $updated->current_step);
-
-        Bus::assertDispatched(BuildInitialBusinessSnapshot::class, fn ($job) => $job->onboardingId === $updated->id && $job->expectedVersion === 1);
-        Event::assertDispatched(InitialBusinessAnalysisRequested::class, fn ($event) => $event->onboardingId === $updated->id && $event->analysisVersion === 1);
-    }
-
-    public function test_request_analysis_throws_when_earlier_steps_are_incomplete(): void
-    {
-        $customer = $this->createCustomer();
-        $manager = app(OnboardingManager::class);
-        $onboarding = $manager->start($customer, true);
-
-        $this->expectException(InvalidArgumentException::class);
-
-        $manager->requestAnalysis($onboarding, $customer);
-    }
-
-    public function test_repeated_analysis_requests_increment_the_version_each_time(): void
-    {
-        Bus::fake();
-        Event::fake([InitialBusinessAnalysisRequested::class]);
-
-        [$onboarding, $customer] = $this->onboardingAtAnalysisStep();
-        $manager = app(OnboardingManager::class);
-
-        // startAnalysis() in the Eloquent repository mutates and returns the
-        // very same CustomerOnboarding instance it is given, rather than a
-        // clone — so $first and $second end up being the same object. Capture
-        // the scalar version right after the first call; reading it off
-        // $first after the second call has run would see the mutated value.
-        $first = $manager->requestAnalysis($onboarding, $customer);
-        $firstVersion = $first->analysis_version;
-
-        $second = $manager->requestAnalysis($first, $customer);
-
-        $this->assertSame(1, $firstVersion);
-        $this->assertSame(2, $second->analysis_version);
-        // Confirms the two writes actually landed in the database in
-        // sequence, independent of the shared in-memory object.
-        $this->assertSame(2, $second->fresh()->analysis_version);
-
-        Bus::assertDispatched(BuildInitialBusinessSnapshot::class, fn ($job) => $job->expectedVersion === 1);
-        Bus::assertDispatched(BuildInitialBusinessSnapshot::class, fn ($job) => $job->expectedVersion === 2);
-        Bus::assertDispatched(BuildInitialBusinessSnapshot::class, 2);
-
-        Event::assertDispatched(InitialBusinessAnalysisRequested::class, fn ($event) => $event->analysisVersion === 1);
-        Event::assertDispatched(InitialBusinessAnalysisRequested::class, fn ($event) => $event->analysisVersion === 2);
-        Event::assertDispatched(InitialBusinessAnalysisRequested::class, 2);
-    }
-
     /**
      * Bus::fake() records dispatch() calls immediately and unconditionally
      * (see BusFake::dispatch()) — it never consults ShouldQueueAfterCommit or
@@ -397,42 +249,6 @@ class OnboardingManagerTest extends TestCase
      * ShouldDispatchAfterCommit and routes through the same transactions
      * manager, so it does honor rollback.
      */
-    public function test_request_analysis_dispatches_neither_job_nor_event_when_an_outer_transaction_fails(): void
-    {
-        Event::fake([InitialBusinessAnalysisRequested::class]);
-        $this->mock(InitialBusinessSnapshotBuilder::class, function ($mock) {
-            $mock->shouldNotReceive('build');
-        });
-
-        [$onboarding, $customer] = $this->onboardingAtAnalysisStep();
-        $manager = app(OnboardingManager::class);
-
-        try {
-            DB::transaction(function () use ($manager, $onboarding, $customer) {
-                $manager->requestAnalysis($onboarding, $customer);
-
-                throw new RuntimeException('Simulated outer transaction failure.');
-            });
-            $this->fail('Expected a RuntimeException to be thrown.');
-        } catch (RuntimeException) {
-            // expected
-        }
-
-        $onboarding->refresh();
-        $this->assertSame(0, $onboarding->analysis_version);
-        $this->assertSame(OnboardingStatus::Started, $onboarding->status);
-        $this->assertNull($onboarding->analysis_started_at);
-        $this->assertNull($onboarding->analysis_payload);
-        $this->assertNull($onboarding->analysis_completed_at);
-
-        Event::assertNotDispatched(InitialBusinessAnalysisRequested::class);
-
-        // Mockery::close() (invoked by the base TestCase's tearDown()) verifies
-        // shouldNotReceive('build') above — if the queued job's handle() had
-        // actually run, this test would fail there, proving the job's real
-        // side effect never executed.
-    }
-
     /**
      * The rollback proof above only holds because this job actually carries
      * the marker interface SyncQueue's real push() checks — pin that
@@ -440,14 +256,6 @@ class OnboardingManagerTest extends TestCase
      * loudly here instead of silently reopening the "left pending forever"
      * class of bug.
      */
-    public function test_the_analysis_job_implements_should_queue_after_commit(): void
-    {
-        $this->assertInstanceOf(
-            \Illuminate\Contracts\Queue\ShouldQueueAfterCommit::class,
-            new BuildInitialBusinessSnapshot(1, 1)
-        );
-    }
-
     public function test_record_first_value_action_persists_the_key_and_advances_to_complete(): void
     {
         [$onboarding, $customer] = $this->onboardingAtAnalysisStep();
@@ -496,27 +304,25 @@ class OnboardingManagerTest extends TestCase
         $manager->complete($onboarding, $customer);
     }
 
-    public function test_complete_no_longer_requires_services_the_analysis_or_a_first_value_action(): void
+    public function test_complete_requires_at_least_one_active_primary_service(): void
     {
-        Event::fake([CustomerOnboardingCompleted::class]);
-
         [$onboarding, $customer, $business] = $this->onboardingAtAnalysisStep();
-        app(BusinessServiceRepository::class)->syncForBusiness($business, []);
-        $business->services()->update(['is_primary' => false]);
-        // Unresolved findings and no recorded first-value action: neither may block finishing.
-        $onboarding->analysis_payload = ['version' => 1, 'findings' => [['fingerprint' => 'business:1:missing_phone']]];
+        $business->services()->update(['status' => BusinessServiceStatus::Inactive->value, 'is_primary' => false]);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        app(OnboardingManager::class)->complete($onboarding, $customer);
+    }
+
+    public function test_complete_requires_the_website_question_to_have_been_answered(): void
+    {
+        [$onboarding, $customer] = $this->onboardingAtAnalysisStep();
+        $onboarding->metadata = null;
         $onboarding->save();
 
-        $this->assertSame(0, $business->services()->where('status', BusinessServiceStatus::Active)->count(), 'Fixture: no active services (syncing an empty list deactivates, not deletes).');
-        $this->assertSame(0, $business->services()->where('is_primary', true)->count(), 'Fixture: no primary service.');
-        $this->assertNull($onboarding->fresh()->first_value_action_completed_at, 'Fixture: no first-value action recorded.');
+        $this->expectException(InvalidArgumentException::class);
 
-        $updated = app(OnboardingManager::class)->complete($onboarding, $customer);
-
-        $this->assertSame(OnboardingStatus::Completed, $updated->status);
-        $this->assertNotNull($updated->completed_at);
-        $this->assertSame(OnboardingStatus::Completed, $onboarding->fresh()->status, 'Completion is persisted.');
-        Event::assertDispatched(CustomerOnboardingCompleted::class, 1);
+        app(OnboardingManager::class)->complete($onboarding, $customer);
     }
 
     public function test_complete_throws_when_there_are_zero_primary_locations(): void
@@ -654,8 +460,9 @@ class OnboardingManagerTest extends TestCase
         $onboardingRepository = app(CustomerOnboardingRepository::class);
         $onboarding = $onboardingRepository->startForCustomer($customer, true);
         $onboarding = $onboardingRepository->attachBusiness($onboarding, $business);
-        $onboarding->current_step = OnboardingStep::Analysis;
-        $onboarding->completed_steps = ['goals', 'business', 'location', 'services', 'assets'];
+        $onboarding = $onboardingRepository->recordWebsiteChoice($onboarding, 'later');
+        $onboarding->current_step = OnboardingStep::Finish;
+        $onboarding->completed_steps = ['business', 'location', 'services', 'website'];
         $onboarding->save();
 
         return [$onboarding, $customer, $business];

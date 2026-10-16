@@ -45,6 +45,7 @@
          */
         protected $commands = [
             CheckSubscription::class,
+            \App\Console\Commands\PurgeAssistantConversations::class,
             CheckKeywords::class,
             CheckPhoneNumbers::class,
             CheckSenderID::class,
@@ -116,6 +117,8 @@
             $schedule->command('calendar:sync-external-connections')->everyFifteenMinutes()->withoutOverlapping();
             //   $schedule->command('imartgroup:dlr')->hourly();
             $schedule->command('keywords:check')->daily();
+            // Ask MotionGrove retention (config('assistant.retention_days')): idempotent, safe to overlap with customer deletes.
+            $schedule->command('assistant:purge-expired')->daily()->withoutOverlapping();
             $schedule->command('numbers:check')->daily();
             $schedule->command('senderid:check')->daily();
             $schedule->command('user:preferences')->daily()->between('10:00', '18:00');

@@ -126,11 +126,22 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
             $business->workspace_id = $workspace->id;
             $business->is_primary = $isFirst;
             $business->status = BusinessStatus::Draft;
+            // Every Business created through this seam follows the SEO-first readiness policy, whoever creates it
+            // (signup, onboarding, Workspace management, Agency provisioning) and in whichever Workspace.
+            $business->readiness_policy = Business::READINESS_POLICY_SEO_FIRST;
             $business->save();
             $this->forgetRequestCache("workspace:businesses:{$workspace->id}");
 
             return $business;
         });
+    }
+
+    public function adoptReadinessPolicy(Business $business): void
+    {
+        // Only ever NULL -> policy: an established Business is moved onto the new policy exclusively by completing the
+        // new onboarding, never by being touched, and a Business already on it is left exactly as it is.
+        $this->query()->whereKey($business->id)->whereNull('readiness_policy')->update(['readiness_policy' => Business::READINESS_POLICY_SEO_FIRST]);
+        $this->forgetRequestCache("business:find:{$business->id}");
     }
 
     public function update(Business $business, array $attributes): Business

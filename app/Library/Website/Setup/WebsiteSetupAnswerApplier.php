@@ -214,8 +214,24 @@ final class WebsiteSetupAnswerApplier
      *
      * @param  array<string, mixed>  $step
      */
+    /**
+     * The wizard's "what should visitors do first?" choices (`primary_cta`) are website CTAs, not the canonical
+     * Business Knowledge Profile goals (BusinessPrimaryConversionGoal). Two of the three offered values are the same
+     * words; "Book now" (reserve a date online) is canonically a calendar booking. The raw answer is never rewritten —
+     * the blueprint and review read `book_now` from the answers — only the value handed to the canonical profile is
+     * translated. A value not listed here passes through unchanged, so a genuinely invalid goal is still rejected.
+     */
+    public const PRIMARY_CTA_TO_GOAL = ['book_now' => 'calendar_booking'];
+
+    /** The profile can state at most this many differentiators (BusinessKnowledgeProfileManager). */
+    private const MAX_DIFFERENTIATORS = 6;
+
     private function profileValue(Business $business, array $step, mixed $value): mixed
     {
+        if (($step['target_field'] ?? null) === 'primary_conversion_goal' && is_string($value)) {
+            return self::PRIMARY_CTA_TO_GOAL[$value] ?? $value;
+        }
+
         if (($step['target_field'] ?? null) !== 'differentiators' || ! is_array($value) || ! is_array($step['options'] ?? null)) {
             return $value;
         }
@@ -231,6 +247,11 @@ final class WebsiteSetupAnswerApplier
             (array) (\App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->value('differentiators') ?? []),
             fn ($fact) => ! in_array(mb_strtolower(trim((string) $fact)), $offered, true),
         ));
+
+        // The questionnaire offers more choices than the profile can hold: the owner's selections win, earlier
+        // facts fill what room is left. (The saved answer itself is never trimmed.)
+        $labels = array_slice(array_values(array_unique($labels)), 0, self::MAX_DIFFERENTIATORS);
+        $kept = array_slice($kept, 0, max(0, self::MAX_DIFFERENTIATORS - count($labels)));
 
         return array_values(array_unique(array_merge($kept, $labels)));
     }

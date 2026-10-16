@@ -64,6 +64,23 @@ final class AiModelRouter
     }
 
     /**
+     * The smallest input ceiling the gateway may END UP applying for a request that asks for `$requested`: the requested
+     * route's own ceiling, or — for `reasoning`, which resolveAffordableRoute() can downgrade to `routine` on a thin
+     * remaining budget — the lower of the two. A caller that must fit its input BEFORE calling the gateway (and so cannot
+     * know the downgrade outcome) fits to this, which makes the request acceptable whichever route is chosen.
+     */
+    public function smallestInputCeiling(AiModelRoute $requested): int
+    {
+        $ceiling = (int) $this->config($requested)['max_input_tokens'];
+
+        if ($requested === AiModelRoute::Reasoning) {
+            $ceiling = min($ceiling, (int) $this->config(AiModelRoute::Routine)['max_input_tokens']);
+        }
+
+        return $ceiling;
+    }
+
+    /**
      * Correction 9 — the deterministic upper bound on a request's input
      * tokens, for the exact shape being sent.
      *

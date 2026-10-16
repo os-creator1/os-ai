@@ -557,6 +557,73 @@ class WebsiteWizardControllerTest extends TestCase
         $this->assertSame('completed', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
     }
 
+    public function test_every_primary_cta_choice_including_book_now_applies_and_generates_a_website(): void
+    {
+        foreach (['quote_request', 'call', 'book_now'] as $cta) {
+            [$customer, $business, $workspace] = $this->entitledTenant();
+            $this->authenticateAsCustomer($customer);
+            $this->bindPlanEchoingAiClient();
+
+            $this->completeAllRequiredSteps($workspace, $business, ['primary_cta' => ['value' => $cta]]);
+
+            $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+                ->assertRedirect(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]));
+
+            $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+            $this->assertSame('completed', $response->status->value, $cta);
+            $this->assertSame($cta, $response->answers['primary_cta'], 'The saved answer is preserved.');
+            $this->assertGreaterThan(0, Website::where('business_id', $business->id)->sole()->pages()->count(), $cta);
+        }
+    }
+
+    public function test_an_unreportable_generation_failure_is_logged_server_side_but_never_shown_to_the_customer(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+
+        $response = $this->completeAllRequiredSteps($workspace, $business);
+
+        // A ModelNotFoundException is on the exception handler's dontReport list, so report($e) alone leaves
+        // no trace of it: the customer saw a generic error with no log line and no attempt row.
+        \App\Models\WebsiteTemplate::query()->update(['is_active' => false]);
+        \Illuminate\Support\Facades\Log::spy();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('message', 'Something went wrong while generating your website. Please try again.');
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('error')->withArgs(
+            fn ($message, $context = []) => $message === 'Website generation failed'
+                && $context['stage'] === 'resolve_template'
+                && $context['exception'] === \Illuminate\Database\Eloquent\ModelNotFoundException::class
+                && $context['questionnaire_response_id'] === $response->id
+                && ! array_key_exists('answers', $context)
+        )->once();
+
+        $this->assertSame('in_progress', $response->fresh()->status->value, 'The saved answers stay retryable.');
+        $this->assertNull($response->fresh()->generation_started_at);
+    }
+
+    public function test_a_failing_diagnostic_logger_does_not_change_the_customer_outcome_or_retryability(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+
+        $response = $this->completeAllRequiredSteps($workspace, $business);
+
+        \App\Models\WebsiteTemplate::query()->update(['is_active' => false]);
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('error')->andThrow(new \RuntimeException('log channel down'));
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('message', 'Something went wrong while generating your website. Please try again.');
+
+        $this->assertSame('in_progress', $response->fresh()->status->value);
+        $this->assertNull($response->fresh()->generation_started_at);
+    }
+
     public function test_a_duplicate_generation_submission_does_not_duplicate_canonical_records_or_pages(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

@@ -114,6 +114,52 @@ final class HomeBookingReader
     }
 
     /**
+     * Whether ANY active booking type anywhere in the Business can take a booking, ignoring which Locations the
+     * viewer may reach. A bare boolean: it feeds Launch readiness, which must classify one Business the same way for
+     * every viewer, and it carries no Location, type, name or reason, so it discloses nothing an actor-scoped
+     * restriction hides. Bounded exactly like summary() (MAX_TYPES read, MAX_EVALUATED evaluated). Callers invoke it
+     * only when the actor-scoped summary does not already cover every active Location.
+     */
+    public function businessWideBookingReady(Business $business): bool
+    {
+        $key = 'wide:' . $business->id;
+
+        if (isset($this->memo[$key])) {
+            return $this->memo[$key]['ready'];
+        }
+
+        $locations = BusinessLocation::query()
+            ->where('business_id', $business->id)
+            ->where('lifecycle_state', \App\Enums\Business\BusinessLocationLifecycleState::Active->value)
+            ->get();
+
+        $ready = false;
+
+        if ($locations->isNotEmpty()) {
+            $types = BookingType::query()
+                ->whereIn('business_location_id', $locations->pluck('id')->all())
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->limit(self::MAX_EVALUATED)
+                ->get();
+
+            foreach ($types as $type) {
+                $type->setRelation('location', $locations->firstWhere('id', $type->business_location_id));
+
+                if ($this->bookingTypes->publicBookingReadiness($type)['ready']) {
+                    $ready = true;
+
+                    break;
+                }
+            }
+        }
+
+        $this->memo[$key] = ['ready' => $ready];
+
+        return $ready;
+    }
+
+    /**
      * Appointments BOOKED (a row was created) in each half-open window, over
      * the given Locations, excluding ones since cancelled. One statement.
      *

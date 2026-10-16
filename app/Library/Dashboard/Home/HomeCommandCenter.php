@@ -8,6 +8,8 @@ use App\Library\Coo\NextBestMove;
 use App\Library\Dashboard\AttentionItem;
 use App\Library\Dashboard\BusinessStatusRow;
 use App\Library\Dashboard\DashboardLinkGate;
+use App\Library\Assistant\AssistantContext;
+use App\Library\Assistant\AssistantSuggestions;
 use App\Library\Dashboard\DashboardSnapshot;
 use App\Library\Dashboard\HomeActivityWindow;
 use App\Library\Navigation\CustomerContext;
@@ -15,6 +17,7 @@ use App\Library\Navigation\MenuEntitlements;
 use App\Models\Business;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Route;
 
 /**
  * Home V2 — the coordinator that turns the bands BusinessHomePresenter already
@@ -56,7 +59,7 @@ final class HomeCommandCenter
         private readonly HomeBriefing $briefing,
         private readonly HomeSetupJourney $journey,
         private readonly HomeActionRouter $router,
-        private readonly HomeAskRegistry $ask,
+        private readonly AssistantSuggestions $assistantSuggestions,
         private readonly DashboardLinkGate $links,
     ) {
     }
@@ -84,7 +87,7 @@ final class HomeCommandCenter
         $actions = $this->router->forActor($context, $user, $entitlements, $scoped, $booking['firstLocationUid'] ?? null);
 
         // ── Setup journey (STATE 1) ────────────────────────────────────────
-        $journey = $this->setup($context, $user, $entitlements, $scoped, $status, $booking);
+        $journey = $this->setup($business, $context, $user, $entitlements, $scoped, $status, $booking);
 
         // ── Primary move (one) and its secondary queue ─────────────────────
         $nbmFailed = in_array(DashboardSnapshot::BAND_NEXT_BEST_MOVE, $failed, true);
@@ -148,10 +151,14 @@ final class HomeCommandCenter
 
         $growing = $primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY || $queue !== [];
 
+        // Readiness is UNKNOWN when the status could not be read: neither "still setting up" nor "ready" may be
+        // claimed, and "growing" is never presented without the readiness it depends on.
+        $readinessUnknown = $status === null || ! $status->known;
+
         $state = match (true) {
             $journey !== null && $journey['essentialIncomplete'] => self::STATE_SETUP,
             $problem => self::STATE_BROKEN,
-            $growing => self::STATE_GROWING,
+            $growing && ! $readinessUnknown => self::STATE_GROWING,
             default => self::STATE_NORMAL,
         };
 
@@ -169,10 +176,11 @@ final class HomeCommandCenter
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
             'setup' => $state === self::STATE_SETUP ? $journey : null,
+            'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
-            'caughtUp' => $primary === null && ! $nbmFailed && $state !== self::STATE_SETUP,
+            'caughtUp' => $primary === null && ! $nbmFailed && ! $readinessUnknown && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
             'queueLabel' => is_array($growth) ? (string) $growth['open_count'] : (string) ($nbm['recommendations']['label'] ?? '0'),
@@ -188,22 +196,22 @@ final class HomeCommandCenter
             'handling' => $this->handling($bands, $growth),
             'actions' => $actions,
             'ask' => [
-                'suggestions' => array_map(function (array $s) use ($actions): array {
-                    return $s + ['available' => $this->suggestionAvailable($s['key'], $actions)];
-                }, $this->ask->suggestions()),
+                // Contextual chips: setup help while launching, performance and optimisation once running. Each is the
+                // literal question it sends, and is offered only when the tool that answers it is open to this actor.
+                'suggestions' => $this->assistantSuggestions->for(
+                    AssistantContext::forOffering((int) $context->frameWorkspace()->id, (string) $context->frameWorkspace()->uid, $business, $user, $context, $entitlements, $actions, $scoped),
+                    $state === self::STATE_SETUP,
+                ),
                 'url' => route('customer.workspaces.businesses.home.ask', $scoped),
+                'assistant' => [
+                    'show' => route('customer.workspaces.businesses.home.assistant.show', $scoped),
+                    'message' => route('customer.workspaces.businesses.home.assistant.message', $scoped),
+                    'approve' => route('customer.workspaces.businesses.home.assistant.approve', array_merge($scoped, ['__UID__'])),
+                    'decline' => route('customer.workspaces.businesses.home.assistant.decline', array_merge($scoped, ['__UID__'])),
+                    'delete' => route('customer.workspaces.businesses.home.assistant.delete', array_merge($scoped, ['__UID__'])),
+                ],
             ],
         ];
-    }
-
-    private function suggestionAvailable(string $key, array $actions): bool
-    {
-        $map = [
-            'follow_up' => 'follow-ups', 'booking_type' => 'booking-type', 'appointment' => 'appointment',
-            'upcoming' => 'upcoming', 'ads' => 'ads', 'website' => 'website', 'contact' => 'contact', 'explain' => 'advisor',
-        ];
-
-        return ($actions[$map[$key] ?? ''] ?? null) !== null;
     }
 
     /** "Good morning" — in the Business's own timezone, never the server's. */
@@ -439,29 +447,114 @@ final class HomeCommandCenter
     }
 
     /**
+     * The Launch journey, from facts this request has ALREADY read:
+     *  - the Business row the presenter loaded (name, niche, website source and address);
+     *  - the BusinessStatusRow: website status, primary Location/Service, usable forms, a matching external-site
+     *    check and the readiness policy, all inside the one status statement the presenter already issues;
+     *  - the Calendar summary, only when Calendar is in play for this actor.
+     * It issues no query of its own, with one bounded exception: a Business-wide booking-readiness boolean is read
+     * only when it is needed to classify the Business (no other reach evidence) and the actor's own Calendar summary
+     * does not already cover every active Location.
+     *
+     * Returns null when the status could not be read: nothing is then known, so nothing is shown as done.
+     *
      * @param  array<string, mixed>|null  $booking
      * @return array<string, mixed>|null
      */
-    private function setup(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status, ?array $booking): ?array
+    private function setup(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status, ?array $booking): ?array
     {
+        if ($status === null || ! $status->known) {
+            return null;
+        }
+
         $calendar = $booking !== null;
         $firstLoc = $booking['firstLocationUid'] ?? null;
+        $owns = ! $context->isViewingAsClient() && (int) $business->customer_id === (int) $user->id;
+        // The wizard edits the customer's ONE onboarding Business. It is offered for a missing foundation step only when it
+        // is bound to THIS Business; a secondary Business is edited through its own scoped settings, never through the
+        // wizard of the Business the customer originally onboarded.
+        $wizard = $owns && $status->onboardingBound && (bool) config('business.onboarding.enabled', false) && Route::has('customer.onboarding.show');
+        $settings = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.settings.show', $scoped, ['access_backend']);
+        $primaryDetails = $owns && $business->is_primary
+            ? $this->links->url($context, $user, $entitlements, 'customer.business.edit', [], ['access_backend'])
+            : null;
 
         $urls = [
             'locations' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.locations.index', $scoped, ['access_backend']),
             'bookingType' => $firstLoc === null ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.booking-types.create', array_merge($scoped, [$firstLoc]), ['access_backend'], 'calendar'),
             'fixBooking' => $firstLoc === null ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.booking-types.index', array_merge($scoped, [$firstLoc]), ['access_backend'], 'calendar'),
             'website' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.website.show', $scoped, ['website'], 'website_generation'),
+            'forms' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.forms.index', $scoped, ['forms'], 'forms'),
+            'business' => $wizard ? route('customer.onboarding.show', ['step' => 'business']) : ($primaryDetails ?? $settings),
+            'businessLabel' => $wizard ? 'Add details' : 'Open settings',
+            // The Business-scoped Services editor works for EVERY Business (the wizard edits only the customer's one onboarding
+            // Business), so a secondary Business is never sent into another Business's wizard. Only an actor who may change the
+            // services is offered it; anyone else sees the step without an action.
+            'service' => $context->canManageWorkspace()
+                ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.services.index', $scoped, ['access_backend'])
+                : null,
+            'serviceLabel' => 'Add service',
         ];
 
+        // The website source: the stored choice, or "hosted" for a Business that already owns a site.
+        $websiteMode = ((string) $business->getRawOriginal('website_mode')) ?: ($status->websiteStatus !== null ? 'hosted' : null);
+
+        if ($status->readinessPolicy !== HomeSetupJourney::POLICY_SEO_FIRST) {
+            // An established Business that predates the SEO-first policy keeps its original Home-stage rules.
+            return $this->journey->build([
+                'policy' => 'legacy',
+                'hasLocation' => $calendar ? ($booking['locationIds'] !== []) : true,
+                'calendar' => $calendar,
+                'activeTypeCount' => (int) ($booking['activeTypeCount'] ?? 0),
+                'readyCount' => (int) ($booking['readyCount'] ?? 0),
+                'problemReason' => $booking['problems'][0]['reason'] ?? null,
+                'websiteStatus' => $status->websiteStatus,
+                'websiteApplicable' => $urls['website'] !== null,
+            ], $urls);
+        }
+
+        // ── SEO-first policy: Business-wide readiness, independent of who is looking ─────────────────────
+        $websiteCapable = $entitlements->allows('website_generation');
+        $formsCapable = $entitlements->allows('forms');
+        $calendarCapable = $entitlements->allows('calendar');
+
+        $websiteUsable = $status->websiteStatus === 'published'
+            || ($websiteMode === 'external' && ($status->hasCompletedExternalAudit || filled($business->website_url)));
+        $formReady = ($formsCapable && $status->hasLiveForm)
+            || ($websiteCapable && $status->websiteStatus === 'published' && $status->hasActiveWebsiteForm);
+
+        $foundation = filled($business->name) && $business->industry !== null && $status->hasPrimaryLocation && $status->hasPrimaryService;
+        $bookingPathReady = false;
+
+        // Needed only while the journey can still be shown: some reach evidence is missing, or the foundation is.
+        if ($calendarCapable && ! $formReady && (! $foundation || ! $websiteUsable)) {
+            // The actor's own summary is Business-wide only when it covers every active Location.
+            $bookingPathReady = $booking !== null && count($booking['locationIds']) === $status->activeLocationCount
+                ? (int) $booking['readyCount'] > 0
+                : app(HomeBookingReader::class)->businessWideBookingReady($business);
+        }
+
         return $this->journey->build([
-            'hasLocation' => $calendar ? ($booking['locationIds'] !== []) : true,
+            'policy' => HomeSetupJourney::POLICY_SEO_FIRST,
+            'hasIdentity' => filled($business->name) && $business->industry !== null,
+            'hasLocation' => $status->hasPrimaryLocation,
+            'hasPrimaryService' => $status->hasPrimaryService,
+            'websiteCapable' => $websiteCapable,
+            'formsCapable' => $formsCapable,
+            'calendarCapable' => $calendarCapable,
+            'bookingPathReady' => $bookingPathReady,
+            'websiteStatus' => $status->websiteStatus,
+            'websiteMode' => $websiteMode,
+            'hasCompletedExternalAudit' => $status->hasCompletedExternalAudit,
+            'hasExternalWebsiteAddress' => filled($business->website_url),
+            'hasLiveForm' => $status->hasLiveForm,
+            'hasActiveWebsiteForm' => $status->hasActiveWebsiteForm,
+            // Actor-scoped display detail only (never an input to readiness).
             'calendar' => $calendar,
+            'typeCount' => (int) ($booking['typeCount'] ?? 0),
             'activeTypeCount' => (int) ($booking['activeTypeCount'] ?? 0),
             'readyCount' => (int) ($booking['readyCount'] ?? 0),
             'problemReason' => $booking['problems'][0]['reason'] ?? null,
-            'websiteStatus' => $status?->websiteStatus,
-            'websiteApplicable' => $urls['website'] !== null && $status !== null,
         ], $urls);
     }
 }

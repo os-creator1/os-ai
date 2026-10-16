@@ -44,14 +44,15 @@ class SettingsHubRedesignTest extends TestCase
         $this->assertSame(['business-setup', 'communication', 'billing-team', 'features'], array_keys($this->settingsHubModules($html)));
 
         // Every module row carries an icon, a title, a description and a chevron, and is a real link.
-        $this->assertSame(8, substr_count($html, 'data-role="settings-module"'));
-        $this->assertSame(9, substr_count($html, 'class="mg-settings-icon"'), '8 modules + Profile & language');
-        $this->assertSame(9, substr_count($html, 'class="mg-settings-desc"'));
-        $this->assertSame(9, substr_count($html, 'mg-settings-chev"'));
-        foreach (['Business details', 'Locations', 'Custom fields', 'Text messaging', 'Email', 'Billing', 'Plan &amp; subscription', 'Team', 'Profile &amp; language'] as $label) {
+        $this->assertSame(9, substr_count($html, 'data-role="settings-module"'));
+        $this->assertSame(10, substr_count($html, 'class="mg-settings-icon"'), '9 modules + Profile & language');
+        $this->assertSame(10, substr_count($html, 'class="mg-settings-desc"'));
+        $this->assertSame(10, substr_count($html, 'mg-settings-chev"'));
+        foreach (['Business details', 'Services', 'Locations', 'Custom fields', 'Text messaging', 'Email', 'Billing', 'Plan &amp; subscription', 'Team', 'Profile &amp; language'] as $label) {
             $this->assertStringContainsString($label, $html, $label);
         }
         $this->assertStringContainsString('The mailbox this business sends and receives email from.', $html);
+        $this->assertStringContainsString('What this business offers, and which service comes first.', $html);
     }
 
     public function test_every_selector_the_existing_tests_and_scripts_rely_on_is_kept(): void

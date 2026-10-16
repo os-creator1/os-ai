@@ -2,36 +2,39 @@
 
 namespace App\Http\Controllers\Customer;
 
-use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
 use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
 use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
 use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
 use App\Exceptions\Entitlement\SuspendedWorkspacePlanException;
 use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
-use App\Http\Requests\Business\CompleteOnboardingActionRequest;
-use App\Http\Requests\Business\SyncBusinessServicesRequest;
-use App\Http\Requests\Business\UpdateBusinessAssetsRequest;
-use App\Http\Requests\Business\UpdateOnboardingGoalsRequest;
-use App\Http\Requests\Business\UpsertBusinessIdentityRequest;
-use App\Http\Requests\Business\UpsertBusinessLocationRequest;
-use App\Library\Business\OnboardingActionExecutor;
+use App\Http\Requests\Business\OnboardingBusinessRequest;
+use App\Http\Requests\Business\OnboardingLocationRequest;
+use App\Http\Requests\Business\OnboardingServicesRequest;
+use App\Http\Requests\Business\OnboardingWebsiteRequest;
 use App\Library\Business\OnboardingManager;
+use App\Library\Navigation\CustomerContextPreference;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
+use App\Repositories\Contracts\WorkspaceRepository;
 use Closure;
 use Illuminate\Contracts\View\View;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use InvalidArgumentException;
 
 /**
- * Thin wizard controller. Every step transition and invariant is enforced by
- * OnboardingManager/BusinessManager (Milestones 2–3) — this class only
- * resolves the tenant, validates input via dedicated Form Requests, and maps
- * outcomes to redirects/views.
+ * Thin wizard controller for the five customer-facing steps
+ * (Business → Location → Services → Website → Finish). Every step
+ * transition and invariant is enforced by OnboardingManager/BusinessManager —
+ * this class only resolves the tenant, validates input via dedicated Form
+ * Requests, and maps outcomes to redirects/views.
+ *
+ * The routes of the removed steps (goals, assets, analysis, results, and the
+ * services "skip") still exist so an old bookmark or a stale form lands
+ * somewhere sensible, but they write nothing: retired() sends the customer to
+ * the step they are really on.
  */
 class BusinessOnboardingController extends CustomerBaseController
 {
@@ -45,7 +48,6 @@ class BusinessOnboardingController extends CustomerBaseController
 
     public function __construct(
         private readonly OnboardingManager $onboarding,
-        private readonly OnboardingActionExecutor $actions,
     ) {
     }
 
@@ -60,9 +62,10 @@ class BusinessOnboardingController extends CustomerBaseController
 
         $resolved = $this->onboarding->resolveStep($onboarding, $requested);
 
-        // A requested step beyond what's allowed gets clamped by resolveStep();
-        // redirecting to the clamped step (rather than silently rendering it)
-        // is what stops route manipulation from skipping required steps.
+        // A requested step beyond what's allowed gets clamped by resolveStep(), and a
+        // removed legacy step is mapped onto its current equivalent; redirecting to the
+        // resolved step (rather than silently rendering it) is what stops route
+        // manipulation from skipping required steps.
         if ($requested !== null && $requested !== $resolved) {
             return redirect()->route('customer.onboarding.show', ['step' => $resolved->value]);
         }
@@ -70,23 +73,23 @@ class BusinessOnboardingController extends CustomerBaseController
         return view('customer.onboarding.show', [
             'onboarding' => $onboarding,
             'step' => $resolved,
+            'steps' => OnboardingStep::current(),
+            // A step is a link only when the customer has already reached it.
+            'reachableSteps' => array_map(
+                fn (OnboardingStep $candidate) => $candidate->value,
+                array_filter(OnboardingStep::current(), fn (OnboardingStep $candidate) => $this->onboarding->resolveStep($onboarding, $candidate) === $candidate)
+            ),
+            'review' => $resolved === OnboardingStep::Finish ? $this->onboarding->review($onboarding) : null,
+            'websiteChoice' => $resolved === OnboardingStep::Website ? $this->onboarding->websiteChoice($onboarding) : null,
+            'managedWebsite' => $resolved === OnboardingStep::Website && $onboarding->business_id !== null
+                && \App\Models\Website::query()->where('business_id', $onboarding->business_id)->exists(),
         ]);
     }
 
-    public function storeGoals(UpdateOnboardingGoalsRequest $request): RedirectResponse
+    public function storeBusiness(OnboardingBusinessRequest $request): RedirectResponse
     {
         return $this->saveStep(
-            fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveGoalsStep(
-                $onboarding,
-                $customer,
-                $this->orderedGoals($request->validated('primary_goals') ?? [], $request->validated('priority_goal'))
-            )
-        );
-    }
-
-    public function storeBusiness(UpsertBusinessIdentityRequest $request): RedirectResponse
-    {
-        return $this->saveStep(
+            OnboardingStep::Business,
             fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveBusinessStep(
                 $onboarding,
                 $customer,
@@ -95,9 +98,10 @@ class BusinessOnboardingController extends CustomerBaseController
         );
     }
 
-    public function storeLocation(UpsertBusinessLocationRequest $request): RedirectResponse
+    public function storeLocation(OnboardingLocationRequest $request): RedirectResponse
     {
         return $this->saveStep(
+            OnboardingStep::Location,
             fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveLocationStep(
                 $onboarding,
                 $customer,
@@ -106,9 +110,10 @@ class BusinessOnboardingController extends CustomerBaseController
         );
     }
 
-    public function storeServices(SyncBusinessServicesRequest $request): RedirectResponse
+    public function storeServices(OnboardingServicesRequest $request): RedirectResponse
     {
         return $this->saveStep(
+            OnboardingStep::Services,
             fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveServicesStep(
                 $onboarding,
                 $customer,
@@ -117,92 +122,28 @@ class BusinessOnboardingController extends CustomerBaseController
         );
     }
 
-    public function storeAssets(UpdateBusinessAssetsRequest $request): RedirectResponse
+    public function storeWebsite(OnboardingWebsiteRequest $request): RedirectResponse
     {
         return $this->saveStep(
-            fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveAssetsStep(
+            OnboardingStep::Website,
+            fn (CustomerOnboarding $onboarding, Customer $customer) => $this->onboarding->saveWebsiteStep(
                 $onboarding,
                 $customer,
-                $request->validated()
+                $request->validated('website_choice'),
+                $request->validated('website_url')
             )
         );
     }
 
     /**
-     * The only step the RFC permits skipping without data (RFC-001 §23).
-     * OnboardingManager::skipStep() itself rejects any other step.
+     * A removed step's old URL or a stale form POST. Writes nothing and never
+     * skips a prerequisite: it only sends the customer to the step they are on.
      */
-    public function skipServices(): RedirectResponse
+    public function retired(): RedirectResponse
     {
-        return $this->saveStep(
-            fn (CustomerOnboarding $onboarding) => $this->onboarding->skipStep($onboarding, OnboardingStep::Services)
-        );
-    }
-
-    public function skipAssets(): RedirectResponse
-    {
-        return $this->saveStep(
-            fn (CustomerOnboarding $onboarding) => $this->onboarding->skipStep($onboarding, OnboardingStep::Assets)
-        );
-    }
-
-    public function requestAnalysis(): RedirectResponse
-    {
-        $onboarding = $this->currentOnboarding();
-        $customer = $this->customer();
-
-        try {
-            $this->onboarding->requestAnalysis($onboarding, $customer);
-        } catch (InvalidArgumentException) {
-            return redirect()
-                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
-                ->withErrors(['onboarding' => 'Complete the earlier steps before requesting analysis.']);
-        }
-
-        return redirect()->route('customer.onboarding.show', ['step' => 'analysis']);
-    }
-
-    /**
-     * Returns only the state the polling UI needs (RFC-001 §28) — never a
-     * stack trace or raw exception message, and never another customer's data
-     * since it's always resolved through the authenticated customer.
-     */
-    public function analysisStatus(): JsonResponse
-    {
-        $onboarding = $this->currentOnboarding();
-        $completed = $onboarding->status === OnboardingStatus::ResultsReady;
-
-        return response()->json([
-            'status' => $onboarding->status->value,
-            'analysis_version' => $onboarding->analysis_version,
-            'current_step' => $onboarding->current_step->value,
-            'completed' => $completed,
-            'redirect_url' => $completed ? route('customer.onboarding.show', ['step' => 'results']) : null,
-            'error' => $onboarding->status === OnboardingStatus::Failed ? $onboarding->analysis_error : null,
+        return redirect()->route('customer.onboarding.show', [
+            'step' => $this->onboarding->resolveStep($this->currentOnboarding())->value,
         ]);
-    }
-
-    public function completeAction(CompleteOnboardingActionRequest $request): RedirectResponse
-    {
-        $onboarding = $this->currentOnboarding();
-        $customer = $this->customer();
-
-        try {
-            $result = $this->actions->execute(
-                $onboarding,
-                $customer,
-                $request->validated('fingerprint'),
-                $request->validated('action_key'),
-                $request->validated('value')
-            );
-        } catch (InvalidArgumentException) {
-            return redirect()
-                ->route('customer.onboarding.show', ['step' => 'results'])
-                ->withInput()
-                ->withErrors(['action' => 'We could not save that. Please check your entry and try again.']);
-        }
-
-        return redirect()->route('customer.onboarding.show', ['step' => $result['step']->value]);
     }
 
     public function complete(): RedirectResponse
@@ -211,67 +152,83 @@ class BusinessOnboardingController extends CustomerBaseController
         $customer = $this->customer();
 
         try {
-            $this->onboarding->complete($onboarding, $customer);
+            $completed = $this->onboarding->complete($onboarding, $customer);
         } catch (InvalidArgumentException) {
-            // Only the business identity and its primary location are required; send the
-            // customer to the step that is actually missing instead of back to Results.
+            // Send the customer to the first step whose saved information is missing.
             return redirect()
-                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
-                ->withErrors(['onboarding' => 'Add your business and its primary location first, then you can finish.']);
+                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding->refresh())->value])
+                ->withErrors(['onboarding' => 'Some required information is missing. Please finish the highlighted step first.']);
         } catch (WorkspacePlanUnassignedException | InactiveWorkspacePlanException | SuspendedWorkspacePlanException) {
             // No usable paid plan: the completion rolled back and the
             // Business stays Draft.
             return redirect()
-                ->route('customer.onboarding.show', ['step' => 'results'])
+                ->route('customer.onboarding.show', ['step' => 'finish'])
                 ->withErrors(['onboarding' => self::CAPACITY_DENIAL_MESSAGE]);
         }
+
+        $this->rememberBusinessContext($completed);
 
         return redirect()->route('user.home');
     }
 
     /**
-     * Run a step-save action and redirect to wherever onboarding ends up.
+     * Run a step-save action and redirect to the step after the one just saved.
      * A step-order or data-normalization failure (InvalidArgumentException)
      * redirects back to the current step with the submitted input preserved,
      * instead of a raw 500 — ownership failures (AuthorizationException)
      * are left to propagate as a 403 via the framework's exception handler.
      */
-    /** The selected goals, the optional priority first (the order is the only prioritisation stored). */
-    private function orderedGoals(array $goals, ?string $priority): array
-    {
-        $goals = array_values(array_unique($goals));
-
-        if ($priority !== null && in_array($priority, $goals, true)) {
-            $goals = array_values(array_unique([$priority, ...$goals]));
-        }
-
-        return $goals;
-    }
-
-    private function saveStep(Closure $action): RedirectResponse
+    private function saveStep(OnboardingStep $saved, Closure $action): RedirectResponse
     {
         $onboarding = $this->currentOnboarding();
         $customer = $this->customer();
 
         try {
             $onboarding = $action($onboarding, $customer);
-        } catch (InvalidArgumentException) {
+        } catch (InvalidArgumentException $e) {
             return redirect()
-                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
+                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding, $saved)->value])
                 ->withInput()
-                ->withErrors(['onboarding' => 'We could not save that step. Please check your entries and try again.']);
+                ->withErrors(['onboarding' => $this->stepFailureMessage($saved)]);
         } catch (WorkspacePlanUnassignedException
                | InactiveWorkspacePlanException
                | SuspendedWorkspacePlanException
                | BusinessSlotAllocationRequiredException
                | BusinessSlotLimitExceededException) {
             return redirect()
-                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
+                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding, $saved)->value])
                 ->withInput()
                 ->withErrors(['onboarding' => self::CAPACITY_DENIAL_MESSAGE]);
         }
 
-        return redirect()->route('customer.onboarding.show', ['step' => $onboarding->current_step->value]);
+        // Going back to edit an earlier step continues to the one after it; the
+        // furthest step reached stays reachable from the progress bar.
+        return redirect()->route('customer.onboarding.show', ['step' => $this->onboarding->nextStep($saved)->value]);
+    }
+
+    private function stepFailureMessage(OnboardingStep $step): string
+    {
+        return match ($step) {
+            OnboardingStep::Services => 'We could not save your services. Add at least one service and choose one primary service.',
+            OnboardingStep::Website => 'We could not save your website choice. Please check it and try again.',
+            default => 'We could not save that step. Please check your entries and try again.',
+        };
+    }
+
+    /**
+     * The activated Business becomes the remembered Business context, so Home
+     * opens on it even for an account with several Businesses.
+     */
+    private function rememberBusinessContext(CustomerOnboarding $onboarding): void
+    {
+        $business = $onboarding->business()->first();
+        $workspace = $business?->workspace_id === null
+            ? null
+            : app(WorkspaceRepository::class)->findById((int) $business->workspace_id);
+
+        if ($business !== null && $workspace !== null) {
+            app(CustomerContextPreference::class)->remember($workspace->uid, $business->uid);
+        }
     }
 
     private function customer(): Customer
