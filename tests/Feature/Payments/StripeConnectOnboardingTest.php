@@ -778,4 +778,44 @@ class StripeConnectOnboardingTest extends TestCase
     {
         return md5(DB::table('business_stripe_connections')->orderBy('id')->get()->toJson());
     }
+
+    public function test_payments_and_contracts_offers_the_setup_action_in_each_connection_state(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->actAsOwner($business);
+        $list = route('customer.workspaces.businesses.documents.index', [$workspace->uid, $business->uid]);
+        $show = $this->url('show', $workspace, $business);
+
+        $html = $this->get($list)->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="payments-setup" data-status="none"', $html);
+        $this->assertStringContainsString('Set up payments', $html);
+        $this->assertStringContainsString($show, $html);
+
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $html = $this->get($list)->assertOk()->getContent();
+        $this->assertStringContainsString('Finish payment setup', $html);
+        $this->assertStringContainsString('data-ready="0"', $html);
+    }
+
+    public function test_the_business_settings_hub_links_to_payment_processing(): void
+    {
+        [, $business, $workspace] = $this->tenantBusiness();
+        $this->actAsOwner($business);
+
+        $html = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+
+        $this->assertStringContainsString($this->url('show', $workspace, $business), $html);
+        $this->assertStringContainsString('Payment processing', $html);
+    }
+
+    public function test_the_status_page_says_a_new_stripe_account_is_created_and_billing_is_separate(): void
+    {
+        [, $business, $workspace] = $this->tenantBusiness();
+        $this->actAsOwner($business);
+
+        $html = $this->get($this->url('show', $workspace, $business))->assertOk()->getContent();
+
+        $this->assertStringContainsString('creates a new Stripe account', $html);
+        $this->assertStringContainsString('separate from your MotionGrove subscription billing', $html);
+    }
 }

@@ -92,6 +92,20 @@
     <p class="text-caption mb-0" data-role="page-subtitle">Draft, send and keep track of what you've quoted and billed.</p>
 </div>
 <x-flash-alert />
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-1 mb-2" data-role="payments-setup" data-status="{{ $stripeStatus }}" data-ready="{{ $stripeChargeReady ? '1' : '0' }}">
+    <span class="text-caption">
+        @if($stripeChargeReady)
+            Online payments: ready to accept payments.
+        @elseif($stripeStatus === 'restricted')
+            Online payments: Stripe needs more information.
+        @elseif($stripeStatus === 'none')
+            Online payments: not set up yet.
+        @else
+            Online payments: setup is not finished.
+        @endif
+    </span>
+    <a class="btn btn-outline-primary btn-sm" href="{{ route('customer.workspaces.businesses.payments.connect.show', [$workspaceUid, $businessUid]) }}" data-role="payments-setup-link">{{ $stripeStatus === 'none' ? 'Set up payments' : ($stripeChargeReady ? 'Manage Stripe' : 'Finish payment setup') }}</a>
+</div>
 @if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
 @php($invoiceOpen = old('kind') === 'invoice')
 
