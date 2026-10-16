@@ -34,9 +34,9 @@ class BusinessLocationHttpTest extends TestCase
 
         $response = $this->get($this->url($workspace, $business))->assertOk();
 
-        $response->assertSee('1 of 3 active locations in use', false);
+        $response->assertSee('1 of 3 in use', false);
         $response->assertSee('3 locations included in your plan', false);
-        $response->assertSee('You can add 2 more locations.', false);
+        $response->assertSee('You can add 2 more', false);
         $response->assertSee('data-role="add-location"', false);
         $response->assertSee('it isn\'t a separate account', false);
         $this->assertNoForbiddenCopy($response->getContent());
@@ -76,7 +76,7 @@ class BusinessLocationHttpTest extends TestCase
         $this->authenticateAs($customer);
 
         $index = $this->get($this->url($workspace, $business))->assertOk();
-        $index->assertSee('3 of 3 active locations in use', false);
+        $index->assertSee('3 of 3 in use', false);
         $index->assertSee("can't be bought online yet", false);
         $index->assertDontSee('data-role="add-location"', false);
         $this->assertNoForbiddenCopy($index->getContent());
