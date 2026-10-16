@@ -32,6 +32,9 @@ final class MetaAdsPerformanceTree
         private readonly MetaAdsAdSetReader $adSets,
         private readonly MetaAdsAdReader $ads,
         private readonly MetaAdsMetricQueries $metrics,
+        /** Safeguards on the child reads; the defaults are the constants above (a test may lower them). */
+        private readonly int $adSetLimit = self::AD_SET_LIMIT,
+        private readonly int $adLimit = self::AD_LIMIT,
     ) {
     }
 
@@ -55,7 +58,7 @@ final class MetaAdsPerformanceTree
             $campaignUidById[$campaign->localId] = $campaign->uid;
         }
 
-        $adSetRead = $this->adSets->forCampaigns($account, $period, array_keys($campaignUidById), self::AD_SET_LIMIT);
+        $adSetRead = $this->adSets->forCampaigns($account, $period, array_keys($campaignUidById), $this->adSetLimit);
         $adSetsByCampaign = [];
         $adSetIds = [];
 
@@ -64,7 +67,7 @@ final class MetaAdsPerformanceTree
             $adSetIds[] = $adSet->localId;
         }
 
-        $adRead = $this->ads->forAdSets($account, $period, $adSetIds, self::AD_LIMIT);
+        $adRead = $this->ads->forAdSets($account, $period, $adSetIds, $this->adLimit);
         $adsByAdSet = [];
 
         foreach ($adRead['items'] as $ad) {

@@ -79,6 +79,24 @@
                 <x-empty-state icon="megaphone" title="No campaigns to show"
                                :description="$statusFilter !== null ? 'No campaigns match this filter.' : 'We have not found any campaigns in your Meta ad account yet. They appear here after the next update.'" data-role="no-campaigns" />
             @else
+                @if($tree['adSetsTruncated'] || $tree['adsTruncated'])
+                    <x-alert variant="warning" icon="alert-triangle" role="status" class="mb-1" data-role="tree-truncated">
+                        <strong>This table is incomplete.</strong>
+                        @if($tree['adSetsTruncated'])
+                            Too many ad sets to list under these campaigns, so some are missing.
+                        @endif
+                        @if($tree['adsTruncated'])
+                            Too many ads to list under these ad sets, so some are missing.
+                        @endif
+                        Campaign figures are not affected. A campaign or ad set may have more children than shown, even when some are listed.
+                        See the full
+                        <a href="{{ route($prefix . 'ad-sets.index', [$workspaceUid, $businessUid, 'period' => $period->key]) }}" data-role="truncated-ad-sets-link">Ad sets</a>
+                        and
+                        <a href="{{ route($prefix . 'ads.index', [$workspaceUid, $businessUid, 'period' => $period->key]) }}" data-role="truncated-ads-link">Ads</a>
+                        pages.
+                    </x-alert>
+                @endif
+
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-1" data-role="tree-toolbar">
                     <strong data-role="tree-summary">{{ $result->total }} {{ $result->total === 1 ? 'campaign' : 'campaigns' }} &middot; {{ array_sum(array_map('count', $adSetsByCampaign)) }} ad sets &middot; {{ array_sum(array_map('count', $adsByAdSet)) }} ads <span class="text-caption text-muted fw-normal">on this page</span></strong>
                     <div class="d-flex gap-1">
