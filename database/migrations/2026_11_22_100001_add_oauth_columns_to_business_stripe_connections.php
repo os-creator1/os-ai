@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -47,6 +48,24 @@ return new class extends Migration {
 
     public function down(): void
     {
+        // Restoring GLOBAL uniqueness is impossible once an account has been
+        // disconnected and re-linked: both historical rows must keep their
+        // stripe_account_id (payments reference them, §5.7), so this refuses
+        // BEFORE changing anything rather than failing half-way or rewriting
+        // history. Roll back only while no account appears on two rows.
+        $duplicated = DB::table('business_stripe_connections')
+            ->select('stripe_account_id')
+            ->groupBy('stripe_account_id')
+            ->havingRaw('COUNT(*) > 1')
+            ->count();
+
+        if ($duplicated > 0) {
+            throw new RuntimeException(
+                "Cannot roll back: {$duplicated} Stripe account(s) appear on more than one business_stripe_connections row "
+                . '(disconnected and re-linked). Restoring the global unique key would require rewriting payment-referenced history.'
+            );
+        }
+
         Schema::table('business_stripe_connections', function (Blueprint $table) {
             $table->dropUnique('bsc_active_account_unique');
             $table->dropIndex('bsc_stripe_account_index');

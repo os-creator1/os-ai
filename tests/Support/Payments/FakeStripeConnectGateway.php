@@ -68,6 +68,9 @@ class FakeStripeConnectGateway implements StripeConnectGateway
 
     public ?StripeConnectException $failDeauthorizeWith = null;
 
+    /** @var null|callable():void invoked DURING deauthorizeAccount(), i.e. mid-revocation */
+    public $duringDeauthorize = null;
+
     public ?StripeConnectException $failAuthorizeWith = null;
 
     /** @var array<string, true> */
@@ -107,6 +110,10 @@ class FakeStripeConnectGateway implements StripeConnectGateway
     public function deauthorizeAccount(string $stripeAccountId): void
     {
         $this->record('deauthorizeAccount', ['account' => $stripeAccountId]);
+
+        if ($this->duringDeauthorize !== null) {
+            ($this->duringDeauthorize)();
+        }
 
         if ($this->failDeauthorizeWith !== null) {
             throw $this->failDeauthorizeWith;

@@ -421,6 +421,11 @@ class BusinessStripeExistingAccountOAuthTest extends TestCase
             'stripe_account_id' => 'acct_existing000001', 'status' => 'active',
             'created_at' => now(), 'updated_at' => now(),
         ]);
+        DB::table('stripe_account_claims')->insert([
+            'stripe_account_id' => 'acct_existing000001', 'lane' => 'agency',
+            'connection_id' => DB::table('agency_stripe_connections')->value('id'),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
 
         $this->expectReason(StripeConnectException::ACCOUNT_IN_USE, fn () => $this->manager()->connectExisting($customer->user_id, $business, 'ac_1', false));
         $this->assertSame(0, BusinessStripeConnection::query()->count());
@@ -539,6 +544,103 @@ class BusinessStripeExistingAccountOAuthTest extends TestCase
         $this->assertSame(StripeConnectionStatus::Active, BusinessStripeConnection::query()->sole()->status);
     }
 
+    public function test_a_missing_or_unrecognised_account_type_fails_closed(): void
+    {
+        [$customer, $business] = $this->tenantBusiness();
+
+        foreach ([null, 'express', 'custom', ''] as $i => $type) {
+            $this->gateway->accountType = $type;
+            $this->expectReason(StripeConnectException::ACCOUNT_NOT_ELIGIBLE, fn () => $this->manager()->connectExisting($customer->user_id, $business, 'ac_t' . $i, false));
+        }
+
+        $this->assertSame(0, BusinessStripeConnection::query()->count());
+        $this->assertSame(0, DB::table('stripe_account_claims')->count());
+    }
+
+    public function test_a_delayed_revocation_event_from_an_older_connection_does_not_disconnect_the_new_one(): void
+    {
+        [$customer, $business] = $this->tenantBusiness();
+        $this->manager()->connectExisting($customer->user_id, $business, 'ac_1', false);
+        $oldEventTime = now()->subMinutes(10)->timestamp;
+        $this->manager()->disconnect($customer->user_id, $business);
+        $this->manager()->connectExisting($customer->user_id, $business, 'ac_2', false); // same account, new authorisation
+
+        $this->deliver('evt_old_1', 'acct_existing000001', 'account.application.deauthorized', $oldEventTime);
+        $this->deliver('evt_old_2', 'acct_existing000001', 'account.application.deauthorized', null, omitCreated: true);
+
+        $live = BusinessStripeConnection::query()->where('status', '!=', 'disconnected')->sole();
+        $this->assertSame(StripeConnectionStatus::Active, $live->status);
+        $this->assertTrue($this->manager()->isChargeReady($business->fresh()));
+        $this->assertSame(1, DB::table('stripe_account_claims')->count());
+
+        // A genuine, later revocation still works.
+        $this->deliver('evt_new', 'acct_existing000001', 'account.application.deauthorized', now()->addMinute()->timestamp);
+        $this->assertSame(0, BusinessStripeConnection::query()->where('status', '!=', 'disconnected')->count());
+        $this->assertSame(0, DB::table('stripe_account_claims')->count());
+    }
+
+    public function test_the_claim_is_held_across_revocation_and_released_only_when_the_connection_is_terminal(): void
+    {
+        [$customer, $business] = $this->tenantBusiness();
+        [$otherOwner, $other] = $this->tenantBusiness('Other Studio');
+        $this->manager()->connectExisting($customer->user_id, $business, 'ac_1', false);
+
+        $seen = [];
+        $this->gateway->duringDeauthorize = function () use (&$seen, $otherOwner, $other) {
+            $seen['claim_held'] = DB::table('stripe_account_claims')->where('stripe_account_id', 'acct_existing000001')->exists();
+            $seen['still_live'] = BusinessStripeConnection::query()->where('status', 'active')->exists();
+            try {
+                $this->manager()->connectExisting($otherOwner->user_id, $other, 'ac_race', false);
+                $seen['competitor'] = 'won';
+            } catch (StripeConnectException $e) {
+                $seen['competitor'] = $e->reason;
+            }
+        };
+
+        $this->manager()->disconnect($customer->user_id, $business);
+
+        $this->assertTrue($seen['claim_held'], 'The claim must still be held while the grant is being revoked.');
+        $this->assertTrue($seen['still_live']);
+        $this->assertSame(StripeConnectException::ACCOUNT_IN_USE, $seen['competitor'], 'A competitor cannot claim mid-revocation.');
+        $this->assertSame(0, DB::table('stripe_account_claims')->count(), 'Released once terminal.');
+    }
+
+    public function test_an_unused_rejected_grant_is_revoked_under_the_revocation_lock_and_skipped_when_claimed(): void
+    {
+        [$customer, $business] = $this->tenantBusiness();
+        [$otherOwner, $other] = $this->tenantBusiness('Other Studio');
+
+        // Unclaimed + rejected -> revoked, lock released afterwards.
+        $this->gateway->oauthScope = 'read_only';
+        $this->expectReason(StripeConnectException::ACCOUNT_NOT_ELIGIBLE, fn () => $this->manager()->connectExisting($customer->user_id, $business, 'ac_1', false));
+        $this->assertCount(1, $this->gateway->callsOf('deauthorizeAccount'));
+        $this->assertSame(0, DB::table('stripe_account_claims')->count());
+
+        // Claimed by a winner -> a loser's rejected grant must NOT revoke it.
+        $this->gateway->oauthScope = 'read_write';
+        $this->manager()->connectExisting($otherOwner->user_id, $other, 'ac_2', false);
+        $this->gateway->oauthScope = 'read_only';
+        $this->expectReason(StripeConnectException::ACCOUNT_NOT_ELIGIBLE, fn () => $this->manager()->connectExisting($customer->user_id, $business, 'ac_3', false));
+        $this->assertCount(1, $this->gateway->callsOf('deauthorizeAccount'), 'No second revocation against a claimed account.');
+    }
+
+    public function test_a_claim_left_by_a_crash_is_evicted_but_a_live_one_never_is(): void
+    {
+        [$customer, $business] = $this->tenantBusiness();
+        [$otherOwner, $other] = $this->tenantBusiness('Other Studio');
+
+        // Stale: claim pointing at a connection that no longer exists.
+        DB::table('stripe_account_claims')->insert([
+            'stripe_account_id' => 'acct_existing000001', 'lane' => 'business', 'connection_id' => 999999,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->manager()->connectExisting($customer->user_id, $business, 'ac_1', false);
+        $this->assertSame(1, DB::table('stripe_account_claims')->count());
+
+        // Live: refused.
+        $this->expectReason(StripeConnectException::ACCOUNT_IN_USE, fn () => $this->manager()->connectExisting($otherOwner->user_id, $other, 'ac_2', false));
+    }
+
     // =================================================================
     // Status page + payment integrity
     // =================================================================
@@ -609,9 +711,13 @@ class BusinessStripeExistingAccountOAuthTest extends TestCase
     }
 
     /** Delivers a signed event through the real intake + job. */
-    private function deliver(string $eventId, string $account, string $type): void
+    private function deliver(string $eventId, string $account, string $type, ?int $created = null, bool $omitCreated = false): void
     {
-        $body = json_encode(['id' => $eventId, 'type' => $type, 'account' => $account, 'data' => ['object' => []]]);
+        $payload = ['id' => $eventId, 'type' => $type, 'account' => $account, 'data' => ['object' => []]];
+        if (! $omitCreated) {
+            $payload['created'] = $created ?? now()->addSecond()->timestamp;
+        }
+        $body = json_encode($payload);
         $this->call('POST', '/stripe/webhook/business-payments', [], [], [], [
             'HTTP_STRIPE_SIGNATURE' => $this->gateway->validSignature, 'CONTENT_TYPE' => 'application/json',
         ], $body)->assertOk();

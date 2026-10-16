@@ -83,7 +83,12 @@ class ProcessBusinessPaymentEvent extends Base implements ShouldQueue
         // no payment to resolve; only THIS lane's live row for that exact
         // account (from the signature-verified `account` field) is touched.
         if ($eventType === 'account.application.deauthorized') {
-            app(\App\Library\Payments\StripeConnectManager::class)->markRevokedByProvider((string) $event->stripe_account_id);
+            app(\App\Library\Payments\StripeConnectManager::class)->markRevokedByProvider(
+                (string) $event->stripe_account_id,
+                is_numeric(json_decode((string) $event->payload_encrypted, true)['created'] ?? null)
+                    ? (int) json_decode((string) $event->payload_encrypted, true)['created']
+                    : null,
+            );
 
             return [BusinessPaymentEventState::Processed, null];
         }
