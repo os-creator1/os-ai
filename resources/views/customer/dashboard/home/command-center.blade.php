@@ -23,6 +23,9 @@
     // STATE 3 lifts attention above the move only when it has something of its own to say; when the
     // problem IS the primary move, the move card already carries it and stays where it is.
     $liftAttention = $state === HomeCommandCenter::STATE_BROKEN && $home['attention']['visible'] !== [];
+    // Nothing to act on: the two cards are short, so they share the row evenly instead of leaving a tall move card
+    // beside a sliver.
+    $quietRow = $state !== HomeCommandCenter::STATE_SETUP && $home['primary'] === null && $home['attention']['visible'] === [];
 @endphp
 
 <div data-role="command-center" data-home-state="{{ $state }}" class="home-command">
@@ -57,13 +60,13 @@
 
     <div class="row g-2 mb-2 align-items-stretch">
         @if($state !== HomeCommandCenter::STATE_SETUP || $home['primary'] !== null)
-            <div class="@if($state === HomeCommandCenter::STATE_SETUP) col-12 @else col-12 col-xl-8 @endif">
+            <div class="@if($state === HomeCommandCenter::STATE_SETUP) col-12 @elseif($quietRow) col-12 col-xl-6 @else col-12 col-xl-8 @endif">
                 @include('customer.dashboard.home._move', ['home' => $home])
             </div>
         @endif
 
         @if(! $liftAttention)
-            <div class="@if($state === HomeCommandCenter::STATE_SETUP) col-12 @else col-12 col-xl-4 @endif">
+            <div class="@if($state === HomeCommandCenter::STATE_SETUP) col-12 @elseif($quietRow) col-12 col-xl-6 @else col-12 col-xl-4 @endif">
                 @include('customer.dashboard.home._attention', ['attention' => $home['attention'], 'prominent' => false])
             </div>
         @endif

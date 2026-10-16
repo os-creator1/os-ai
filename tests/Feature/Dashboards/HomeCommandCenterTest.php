@@ -56,6 +56,7 @@ class HomeCommandCenterTest extends TestCase
         $home = $this->command($customer->user);
 
         $this->assertSame(HomeCommandCenter::STATE_SETUP, $home['state']);
+        $this->assertSame('setup', $home['status']['key']);
         $this->assertTrue($home['setup']['essentialIncomplete']);
         $steps = array_column($home['setup']['steps'], 'done', 'key');
         $this->assertFalse($steps['location'], 'No Location row exists, so the first step is not done.');
@@ -94,6 +95,8 @@ class HomeCommandCenterTest extends TestCase
         $this->assertTrue($home['attention']['allClear']);
         $this->assertFalse($home['attention']['unknown']);
         $this->assertStringContainsString('Welcome to Calm Venue', $home['briefing']['text']);
+        $this->assertSame('clear', $home['status']['key']);
+        $this->assertStringContainsString('data-status="clear"', $this->home()->assertOk()->getContent());
     }
 
     public function test_a_broken_provider_makes_the_business_broken_and_is_never_called_all_clear(): void
@@ -107,6 +110,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertSame(HomeCommandCenter::STATE_BROKEN, $home['state']);
         $this->assertFalse($home['attention']['allClear']);
         $this->assertSame('google_connection_lost', $home['primary']['key']);
+        $this->assertSame('attention', $home['status']['key'], 'A broken provider is never "All caught up".');
         $this->assertSame(1, substr_count($this->home()->assertOk()->getContent(), 'data-role="next-best-move"'));
     }
 

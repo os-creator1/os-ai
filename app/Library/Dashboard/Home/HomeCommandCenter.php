@@ -175,6 +175,7 @@ final class HomeCommandCenter
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
+            'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, $primary !== null || $attentionItems !== []),
             'setup' => $state === self::STATE_SETUP ? $journey : null,
             'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
@@ -212,6 +213,22 @@ final class HomeCommandCenter
                 ],
             ],
         ];
+    }
+
+    /**
+     * The Business's one-line state, said only when the evidence supports it: an unreadable source is "unavailable",
+     * never "all caught up".
+     *
+     * @return array{key: string, label: string}
+     */
+    private function status(string $state, bool $readinessUnknown, bool $moveFailed, bool $sourcesFailed, bool $hasWork): array
+    {
+        return match (true) {
+            $state === self::STATE_SETUP => ['key' => 'setup', 'label' => 'Setup still in progress'],
+            $hasWork => ['key' => 'attention', 'label' => 'Needs your attention'],
+            $readinessUnknown || $moveFailed || $sourcesFailed => ['key' => 'unavailable', 'label' => 'Data temporarily unavailable'],
+            default => ['key' => 'clear', 'label' => 'All caught up'],
+        };
     }
 
     /** "Good morning" — in the Business's own timezone, never the server's. */
