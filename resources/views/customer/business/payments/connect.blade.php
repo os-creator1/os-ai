@@ -33,6 +33,9 @@
 
     $scope = [$workspaceUid, $businessUid];
 
+    $viaOauth = $connection !== null && $connection->connection_method === 'oauth';
+    $requirementsDue = $connection === null ? [] : (json_decode((string) ($connection->getRawOriginal('requirements_due') ?? '[]'), true) ?: []);
+
     $detailsDone = $connection !== null && (bool) $connection->details_submitted;
     $chargesDone = $connection !== null && (bool) $connection->charges_enabled;
     $payoutsDone = $connection !== null && (bool) $connection->payouts_enabled;
@@ -65,7 +68,7 @@
     );
 
     $steps = $connection === null ? [] : [
-        ['key' => 'account', 'label' => 'Stripe account created', 'done' => true, 'capability' => null],
+        ['key' => 'account', 'label' => $viaOauth ? 'Stripe account connected' : 'Stripe account created', 'done' => true, 'capability' => null],
         ['key' => 'details', 'label' => 'Business details submitted', 'done' => $detailsDone, 'capability' => 'details'],
         ['key' => 'charges', 'label' => 'Can accept payments', 'done' => $chargesDone, 'capability' => 'charges'],
         ['key' => 'payouts', 'label' => 'Can receive payouts', 'done' => $payoutsDone, 'capability' => 'payouts'],
@@ -96,7 +99,7 @@
                     @if($state === 'none')
                         <h2 class="pc-main__title" id="pc-main-title">Get paid online</h2>
                         <p class="pc-main__text" data-role="connection-state" data-status="none">
-                            No Stripe account is connected yet, so <span class="pc-wrap">{{ $business->name }}</span> can't be paid online. Connect Stripe to start taking card payments.
+                            No Stripe account is connected yet, so <span class="pc-wrap">{{ $business->name }}</span> can't be paid online. Connect an existing Stripe account or set up a new one to start taking card payments.
                         </p>
                     @else
                         <h2 class="pc-main__title" id="pc-main-title">
@@ -127,6 +130,10 @@
                             @endswitch
                         </p>
 
+                        @if(count($requirementsDue) > 0)
+                            <p class="pc-reason" data-role="requirements-due">Still needed by Stripe: <span class="pc-wrap">{{ implode(', ', array_map(fn ($r) => str_replace('_', ' ', (string) $r), $requirementsDue)) }}</span></p>
+                        @endif
+
                         @if($connection->requirements_disabled_reason)
                             <p class="pc-reason" data-role="disabled-reason">Stripe reason: <span class="pc-wrap">{{ $connection->requirements_disabled_reason }}</span></p>
                         @endif
@@ -134,14 +141,24 @@
 
                     @if($isOwner)
                         @if($state === 'none')
-                            <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.start', $scope) }}" data-role="connect-form">
-                                @csrf
-                                <x-button type="submit" variant="primary" icon="external-link">Connect with Stripe</x-button>
-                            </form>
-                            <p class="pc-main__hint">You'll finish setup on Stripe, then come back here.</p>
+                            <div class="sr-btn-row">
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.existing', $scope) }}" data-role="connect-existing-form">
+                                    @csrf
+                                    <x-button type="submit" variant="primary" icon="external-link">Connect existing Stripe account</x-button>
+                                </form>
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.start', $scope) }}" data-role="connect-form">
+                                    @csrf
+                                    <x-button type="submit" variant="secondary" icon="plus">Set up a new Stripe account</x-button>
+                                </form>
+                            </div>
+                            <p class="pc-main__hint" data-role="connect-hint">You'll sign in or finish setup on Stripe, then come back here. Existing-account connection works for standard Stripe accounts only; an account already controlled by another platform can't be connected.</p>
                         @else
                             <div class="sr-btn-row">
-                                @if($needsStripe)
+                                @if($needsStripe && $viaOauth)
+                                    {{-- An existing account is finished in the owner's own Stripe Dashboard;
+                                         we cannot mint onboarding links for an account we did not create. --}}
+                                    <x-button variant="primary" icon="external-link" href="https://dashboard.stripe.com" rel="noopener" data-role="stripe-dashboard-link">Finish in your Stripe Dashboard</x-button>
+                                @elseif($needsStripe)
                                     <x-button variant="primary" icon="external-link" :href="route('customer.workspaces.businesses.payments.connect.resume', $scope)" data-role="resume-link">Continue on Stripe</x-button>
                                 @endif
                                 <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.refresh', $scope) }}" data-role="refresh-form">
@@ -234,6 +251,7 @@
                     <summary><x-ds-icon name="chevron-right" size="14" aria-hidden="true" /> Technical details</summary>
                     <dl class="pc-tech__list">
                         <div><dt>Connection status</dt><dd>{{ ucfirst($connection->status->value) }}</dd></div>
+                        <div data-role="connection-method"><dt>Connected via</dt><dd>{{ $viaOauth ? 'Existing Stripe account' : 'New Stripe account' }}</dd></div>
                         <div><dt>Details submitted</dt><dd>{{ $detailsDone ? 'Yes' : 'Not yet' }}</dd></div>
                         <div><dt>Accept payments</dt><dd>{{ $chargesDone ? 'Enabled' : 'Not enabled' }}</dd></div>
                         <div><dt>Receive payouts</dt><dd>{{ $payoutsDone ? 'Enabled' : 'Not enabled' }}</dd></div>
@@ -264,7 +282,12 @@
                 <p class="mb-1">Customers will no longer be able to pay <span class="pc-wrap">{{ $business->name }}</span> online through MotionGrove.</p>
                 <p class="text-caption mb-0">
                     This ends MotionGrove's connection only. Your Stripe account itself isn't deleted, and past payments and
-                    connection history stay on record. Connecting again later creates a new Stripe account.
+                    connection history stay on record.
+                    @if($viaOauth)
+                        We'll also revoke MotionGrove's access to it at Stripe. You can connect it, or another account, again later.
+                    @else
+                        Connecting again later lets you connect an existing account or set up a new one.
+                    @endif
                 </p>
                 <x-slot:footer>
                     <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Keep connected</button>

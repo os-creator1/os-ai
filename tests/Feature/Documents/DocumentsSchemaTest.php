@@ -694,16 +694,19 @@ class DocumentsSchemaTest extends TestCase
         $this->assertSame(2, DB::table('business_stripe_connections')->whereNotNull('active_business_id')->count());
     }
 
-    public function test_stripe_account_id_is_unique_across_every_row(): void
+    public function test_stripe_account_id_is_unique_across_every_live_row_but_history_may_repeat(): void
     {
         $one = $this->documentsBusiness();
         $two = $this->documentsBusiness();
+        $three = $this->documentsBusiness();
 
+        // A terminal (historical) row frees the account for re-linking.
         $this->insertStripeConnection($one->id, ['status' => 'disconnected', 'stripe_account_id' => 'acct_shared']);
+        $this->insertStripeConnection($two->id, ['status' => 'active', 'stripe_account_id' => 'acct_shared']);
 
         $this->assertConstraintViolation(
-            fn () => $this->insertStripeConnection($two->id, ['status' => 'active', 'stripe_account_id' => 'acct_shared']),
-            'stripe_account_id must be unique, even against a historical row of another Business.'
+            fn () => $this->insertStripeConnection($three->id, ['status' => 'onboarding', 'stripe_account_id' => 'acct_shared']),
+            'A stripe_account_id may be live on only ONE Business connection at a time.'
         );
     }
 

@@ -50,6 +50,9 @@ final class StripeApiConnectGateway implements StripeConnectGateway
 {
     private ?StripeClient $client = null;
 
+    /** Validated key, kept so the OAuth calls need not re-read config. Never returned or logged. */
+    private ?string $secret = null;
+
     /**
      * Built LAZILY, and fail-closed at the point of use rather than at
      * construction.
@@ -76,6 +79,8 @@ final class StripeApiConnectGateway implements StripeConnectGateway
         if ($secret === '' || ! preg_match('/\Ask_(test|live)_/', $secret)) {
             throw StripeConnectException::notConfigured();
         }
+
+        $this->secret = $secret;
 
         return $this->client = new StripeClient($secret);
     }
@@ -140,6 +145,68 @@ final class StripeApiConnectGateway implements StripeConnectGateway
         }
 
         return (string) $link->url;
+    }
+
+    public function oauthAuthorizeUrl(string $state, string $redirectUri): string
+    {
+        $clientId = trim((string) config('services.stripe.business_connect_client_id'));
+
+        if ($clientId === '' || ! str_starts_with($clientId, 'ca_')) {
+            // Unset STRIPE_BUSINESS_CONNECT_CLIENT_ID: fail closed. The gateway never logs.
+
+            throw StripeConnectException::notConfigured();
+        }
+
+        return \Stripe\OAuth::authorizeUrl([
+            'client_id' => $clientId,
+            'redirect_uri' => $redirectUri,
+            'state' => $state,
+            'scope' => 'read_write',
+        ]);
+    }
+
+    public function exchangeOAuthCode(string $authorizationCode): OAuthGrant
+    {
+        $this->client();
+        \Stripe\Stripe::setApiKey((string) $this->secret);
+
+        try {
+            $response = \Stripe\OAuth::token([
+                'grant_type' => 'authorization_code',
+                'code' => $authorizationCode,
+            ]);
+        } catch (\Throwable) {
+            throw StripeConnectException::providerFailed();
+        }
+
+        // access_token / refresh_token are deliberately never read.
+        return new OAuthGrant(
+            stripeAccountId: isset($response->stripe_user_id) ? (string) $response->stripe_user_id : '',
+            scope: isset($response->scope) ? (string) $response->scope : '',
+            livemode: (bool) ($response->livemode ?? false),
+        );
+    }
+
+    public function deauthorizeAccount(string $stripeAccountId): void
+    {
+        $this->client();
+        \Stripe\Stripe::setApiKey((string) $this->secret);
+
+        try {
+            \Stripe\OAuth::deauthorize([
+                'client_id' => (string) config('services.stripe.business_connect_client_id'),
+                'stripe_user_id' => $stripeAccountId,
+            ]);
+        } catch (\Throwable) {
+            throw StripeConnectException::providerFailed();
+        }
+    }
+
+    public function platformIsLive(): bool
+    {
+        $this->client();
+
+        return str_starts_with((string) $this->secret, 'sk_live_');
     }
 
     public function retrieveAccount(string $stripeAccountId): ConnectedAccountSnapshot
@@ -343,6 +410,14 @@ final class StripeApiConnectGateway implements StripeConnectGateway
             detailsSubmitted: (bool) ($account->details_submitted ?? false),
             requirementsDisabledReason: $disabledReason === null ? null : mb_substr((string) $disabledReason, 0, 120),
             defaultCurrency: isset($account->default_currency) ? mb_strtoupper((string) $account->default_currency) : null,
+            accountType: isset($account->type) ? (string) $account->type : null,
+            requirementsDue: array_values(array_unique(array_map(
+                static fn ($k) => mb_substr((string) $k, 0, 120),
+                array_merge(
+                    (array) ($account->requirements->currently_due ?? []),
+                    (array) ($account->requirements->past_due ?? []),
+                ),
+            ))),
         );
     }
 }

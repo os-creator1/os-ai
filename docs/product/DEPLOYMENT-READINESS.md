@@ -158,6 +158,7 @@ Four lanes, four endpoints, four **different** signing secrets. All secrets stay
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | external-provider-only | Lane B — Business document payments (Connect) → `/stripe/webhook/business-payments`. |
 | `STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET` | external-provider-only | Lane C — Agency SaaS client subscriptions (Connect) → `/stripe/webhook/agency-subscriptions`. |
 | `STRIPE_WEBHOOK_SECRET` | external-provider-only | Lane D — wallet/usage billing → `/stripe/webhook/usage-billing`. |
+| `STRIPE_BUSINESS_CONNECT_CLIENT_ID` | external-provider-only | Only for Business "Connect existing Stripe account" (lane B, Standard OAuth `ca_…`). A public identifier, not a secret; separate from the Agency client id. Register ONE redirect URI per mode: `https://<host>/business/stripe/connect-existing/callback`. |
 | `STRIPE_AGENCY_CONNECT_CLIENT_ID` | external-provider-only | Only for "Connect existing Stripe account" (Agency). A public identifier, not a secret. |
 | `STRIPE_*_WEBHOOK_TOLERANCE` | optional | Default 300 s. |
 | `USAGE_BILLING_WEBHOOK_RETENTION_DAYS` | optional but **recommended** | **Unset ⇒ webhook payloads are never purged** (RFC-005 §10). |
@@ -545,7 +546,7 @@ this against the canonical or any `ultimatesms_testing*` database.**
 
 **12. Stripe webhooks** (Dashboard → Developers → Webhooks; live mode for a live deploy; each secret → its own variable)
    - [ ] `https://<host>/stripe/webhook/platform-subscriptions` — events `checkout.session.completed`, `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed` → `STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET`.
-   - [ ] `https://<host>/stripe/webhook/business-payments` — **Connect** endpoint; `payment_intent.succeeded|processing|payment_failed|requires_action|canceled`, `refund.created|updated|failed`, `charge.refund.updated` → `STRIPE_CONNECT_WEBHOOK_SECRET`.
+   - [ ] `https://<host>/stripe/webhook/business-payments` — **Connect** endpoint; `payment_intent.succeeded|processing|payment_failed|requires_action|canceled`, `refund.created|updated|failed`, `charge.refund.updated`, `account.application.deauthorized` (marks an OAuth-linked Business account disconnected when the owner revokes the platform at Stripe) → `STRIPE_CONNECT_WEBHOOK_SECRET`.
    - [ ] `https://<host>/stripe/webhook/agency-subscriptions` — **Connect** endpoint; same six subscription events as the platform lane → `STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET`.
    - [ ] `https://<host>/stripe/webhook/usage-billing` — events as listed on the Stripe panel in Platform Settings (RFC-005 §9) → `STRIPE_WEBHOOK_SECRET`.
    - [ ] Agency "connect existing account": register `https://<host>/agency/stripe/connect-existing/callback` as the OAuth redirect (test and live separately).

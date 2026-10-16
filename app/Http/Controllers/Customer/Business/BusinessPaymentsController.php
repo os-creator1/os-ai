@@ -11,6 +11,7 @@ use App\Library\Payments\StripeConnectManager;
 use App\Models\Business;
 use App\Models\Workspace;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 
@@ -94,6 +95,105 @@ class BusinessPaymentsController extends CustomerBaseController
         return redirect()->away($url);
     }
 
+    /** Server-side session key prefix for one pending OAuth attempt. */
+    private const OAUTH_SESSION_PREFIX = 'business_stripe_oauth_pending.';
+
+    /** How long a started-but-not-completed OAuth attempt stays valid. */
+    private const OAUTH_STATE_TTL_MINUTES = 10;
+
+    /**
+     * "Connect existing Stripe account" — starts Stripe's Standard-account
+     * OAuth. No account id is accepted from the browser. A random single-use
+     * `state` is bound, server-side in this authenticated session, to the
+     * initiating user, Workspace, Business and test/live mode, and expires.
+     */
+    public function connectExisting(string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $business = $this->business($workspaceUid, $businessUid);
+        $state = bin2hex(random_bytes(20));
+
+        try {
+            $live = $this->connect->platformIsLive();
+
+            session()->put(self::OAUTH_SESSION_PREFIX . $state, [
+                'user_id' => (int) Auth::id(),
+                'workspace_uid' => $workspaceUid,
+                'business_uid' => $businessUid,
+                'business_id' => (int) $business->id,
+                'live' => $live,
+                'expires_at' => now()->addMinutes(self::OAUTH_STATE_TTL_MINUTES)->timestamp,
+            ]);
+
+            $url = $this->connect->oauthAuthorizeUrl(
+                (int) Auth::id(),
+                $business,
+                $state,
+                route('customer.business.stripe.connect-existing.callback'),
+            );
+        } catch (StripeConnectException $e) {
+            session()->forget(self::OAUTH_SESSION_PREFIX . $state);
+
+            return $this->refuse($workspaceUid, $businessUid, $e);
+        }
+
+        return redirect()->away($url);
+    }
+
+    /**
+     * Stripe's redirect back, at ONE fixed tenant-free URL. Workspace, Business,
+     * user and mode come only from the server-side record stored under `state`,
+     * which is consumed FIRST and unconditionally, so a replay finds nothing.
+     * Rejections before the record is verified go to the customer home — an
+     * unverified request never learns which Business it was for.
+     */
+    public function existingCallback(Request $request): RedirectResponse
+    {
+        $state = (string) $request->query('state', '');
+        $key = self::OAUTH_SESSION_PREFIX . $state;
+        $pending = $state !== '' ? session($key) : null;
+        session()->forget($key);
+
+        if (
+            ! is_array($pending)
+            || ! isset($pending['user_id'], $pending['workspace_uid'], $pending['business_uid'], $pending['business_id'], $pending['expires_at'])
+            || (int) $pending['expires_at'] < now()->timestamp
+            || (int) $pending['user_id'] !== (int) Auth::id()
+        ) {
+            return redirect()->route('user.home')->with([
+                'status' => 'error',
+                'message' => StripeConnectException::oauthStateInvalid()->customerMessage(),
+            ]);
+        }
+
+        // Re-run the full gate chain on the RESOLVED Business: eligibility may
+        // have changed since the attempt started.
+        $business = $this->business((string) $pending['workspace_uid'], (string) $pending['business_uid']);
+        abort_unless((int) $business->id === (int) $pending['business_id'], 404);
+
+        $workspaceUid = (string) $pending['workspace_uid'];
+        $businessUid = (string) $pending['business_uid'];
+
+        if ($request->query('error') !== null) {
+            return $this->back($workspaceUid, $businessUid)
+                ->with(['status' => 'error', 'message' => 'Stripe account connection was not completed.']);
+        }
+
+        $code = (string) $request->query('code', '');
+
+        if ($code === '') {
+            return $this->refuse($workspaceUid, $businessUid, StripeConnectException::oauthRejected());
+        }
+
+        try {
+            $this->connect->connectExisting((int) Auth::id(), $business, $code, (bool) ($pending['live'] ?? false));
+        } catch (StripeConnectException $e) {
+            return $this->refuse($workspaceUid, $businessUid, $e);
+        }
+
+        return $this->back($workspaceUid, $businessUid)
+            ->with(['status' => 'success', 'message' => 'Stripe account connected.']);
+    }
+
     /**
      * §12.D — Stripe account links are single-use, so resuming an unfinished
      * onboarding mints a fresh one. This is also where Stripe's own
@@ -146,13 +246,19 @@ class BusinessPaymentsController extends CustomerBaseController
         $business = $this->business($workspaceUid, $businessUid);
 
         try {
-            $this->connect->disconnect((int) Auth::id(), $business);
+            $disconnected = $this->connect->disconnect((int) Auth::id(), $business);
         } catch (StripeConnectException $e) {
             return $this->refuse($workspaceUid, $businessUid, $e);
         }
 
+        $message = 'Stripe account disconnected. Your Stripe account itself was not changed.';
+
+        if ($disconnected->getAttribute('oauth_revocation') === 'failed') {
+            $message .= ' We could not revoke our access at Stripe; you can remove it under Settings > Connected platforms in your Stripe Dashboard.';
+        }
+
         return $this->back($workspaceUid, $businessUid)
-            ->with(['status' => 'success', 'message' => 'Stripe account disconnected.']);
+            ->with(['status' => 'success', 'message' => $message]);
     }
 
     /**

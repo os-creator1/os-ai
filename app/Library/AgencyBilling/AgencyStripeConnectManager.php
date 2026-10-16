@@ -94,8 +94,30 @@ final class AgencyStripeConnectManager
      */
     private const REFRESH_LOCK_WAIT_SECONDS = 3;
 
-    public function __construct(private readonly AgencyStripeGateway $gateway)
+    public function __construct(
+        private readonly AgencyStripeGateway $gateway,
+        private readonly \App\Library\Payments\StripeAccountClaims $claims,
+    ) {
+    }
+
+    /**
+     * Claim the account in the transaction that creates the connection, so a
+     * Business (or another Agency) can never hold it concurrently.
+     *
+     * @throws AgencyBillingException ACCOUNT_IN_USE
+     */
+    private function claimAccount(string $stripeAccountId, int $connectionId): void
     {
+        try {
+            $this->claims->claim($stripeAccountId, \App\Library\Payments\StripeAccountClaims::LANE_AGENCY, $connectionId);
+        } catch (\App\Exceptions\Payments\StripeAccountClaimedException) {
+            throw AgencyBillingException::because(AgencyBillingException::ACCOUNT_IN_USE);
+        }
+    }
+
+    private function releaseAccount(AgencyStripeConnection $connection): void
+    {
+        $this->claims->release((string) $connection->stripe_account_id, \App\Library\Payments\StripeAccountClaims::LANE_AGENCY, (int) $connection->id);
     }
 
     /** Statuses that mean "this is the Agency's current connection". */
@@ -180,6 +202,8 @@ final class AgencyStripeConnectManager
                 'lock_version' => 0,
             ])->save();
 
+            $this->claimAccount((string) $snapshot->stripeAccountId, (int) $connection->id);
+
             return $connection;
         });
 
@@ -257,6 +281,8 @@ final class AgencyStripeConnectManager
                 'last_synced_at' => now(),
                 'lock_version' => 0,
             ])->save();
+
+            $this->claimAccount($connectedAccountId, (int) $connection->id);
 
             return $connection;
         });
@@ -457,6 +483,8 @@ final class AgencyStripeConnectManager
                 'lock_version' => (int) $connection->lock_version + 1,
             ])->save();
 
+            $this->releaseAccount($connection);
+
             return $connection->refresh();
         });
     }
@@ -550,6 +578,8 @@ final class AgencyStripeConnectManager
                 'requirements_disabled_reason' => 'provider_revoked_access',
                 'lock_version' => (int) $connection->lock_version + 1,
             ])->save();
+
+            $this->releaseAccount($connection);
         });
     }
 
