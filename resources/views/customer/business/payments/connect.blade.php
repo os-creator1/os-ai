@@ -36,6 +36,8 @@
         <p class="text-caption mb-1" data-role="posture-note">
             Payments go directly to this business's own Stripe account. This business is the merchant of
             record, receives the funds, and pays Stripe's fees. This platform never holds the money.
+            Connecting creates a new Stripe account for this business; an existing Stripe account cannot be linked here.
+            This is separate from your MotionGrove subscription billing.
         </p>
 
         @if($connection === null)
@@ -53,7 +55,11 @@
             <p data-role="connection-state" data-status="{{ $connection->status->value }}">
                 @switch($connection->status)
                     @case(StripeConnectionStatus::Active)
-                        Connected and ready to accept payments.
+                        @if($chargeReady)
+                            Connected and ready to accept payments.
+                        @else
+                            Connected, but Stripe has not finished enabling payments for this business.
+                        @endif
                         @break
                     @case(StripeConnectionStatus::Restricted)
                         Stripe needs more information before this business can accept payments.

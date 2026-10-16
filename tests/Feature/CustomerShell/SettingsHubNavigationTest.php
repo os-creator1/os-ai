@@ -143,6 +143,7 @@ class SettingsHubNavigationTest extends TestCase
             $this->assertSame([
                 'business-setup' => ['business-details', 'locations', 'services', 'custom-fields'],
                 'communication' => ['text-messaging', 'email'],
+                'payments' => ['payment-processing'],
                 'billing-team' => ['usage-billing', 'plan', 'team'],
                 'features' => [],
             ], $this->settingsHubModules($html), "[{$tier->value}] Business setup, Communication, Billing & team.");
@@ -321,7 +322,7 @@ class SettingsHubNavigationTest extends TestCase
 
         $modules = $this->settingsHubModules($this->hub($workspace, $clientOne)->getContent());
 
-        $this->assertSame(['communication', 'billing-team'], array_values(array_diff(array_keys($modules), ['business-setup'])));
+        $this->assertSame(['communication', 'payments', 'billing-team'], array_values(array_diff(array_keys($modules), ['business-setup'])));
         $this->assertSame(['usage-billing'], $modules['billing-team'], "Only the client's own billing.");
         foreach (['plan', 'team', 'account-details', 'blocked-numbers', 'messaging-provider'] as $agencyOnly) {
             $this->assertNotContains($agencyOnly, array_merge(...array_values($modules)), "[{$agencyOnly}] belongs to the Agency account.");
@@ -363,8 +364,9 @@ class SettingsHubNavigationTest extends TestCase
         $modules = $this->settingsHubModules($this->hub($workspace, $business)->getContent());
 
         // Email is offered to an actor holding an email permission (here every
-        // permission but view_numbers), exactly as Text messaging would be.
-        $this->assertSame(['business-setup' => ['locations', 'services', 'custom-fields'], 'communication' => ['email']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
+        // permission but view_numbers), exactly as Text messaging would be. Payment
+        // processing is the read-only Stripe status page for staff; only an owner gets its controls.
+        $this->assertSame(['business-setup' => ['locations', 'services', 'custom-fields'], 'communication' => ['email'], 'payments' => ['payment-processing']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
         $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();

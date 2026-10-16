@@ -64,7 +64,13 @@ class DocumentsController extends CustomerBaseController
             ->when($stateFilter === 'sent', fn ($q) => $q->whereNotNull('sent_at'))
             ->when($stateFilter === 'draft', fn ($q) => $q->where('status', 'draft'))
             ->with(['businessLocation', 'currentVersion'])->latest()->paginate(25)->withQueryString();
+        $stripe = app(\App\Library\Payments\StripeConnectManager::class);
+        $stripeConnection = $stripe->liveConnection($business);
+
         return view('customer.business.documents.index', [
+            // Payments entry point: connection status only; the Stripe page owns every action.
+            'stripeStatus' => $stripeConnection?->status?->value ?? 'none',
+            'stripeChargeReady' => $stripe->isChargeReady($business),
             'documents' => $documents,
             'kindFilter' => $kindFilter,
             'currentFilter' => $kindFilter !== '' ? $kindFilter : $stateFilter,
