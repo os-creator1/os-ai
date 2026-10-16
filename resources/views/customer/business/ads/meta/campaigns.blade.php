@@ -226,7 +226,7 @@
                         </tbody>
                         <tfoot>
                             <tr data-role="totals-row">
-                                <td data-role="totals-scope">Total <span class="text-caption text-muted fw-normal">({{ ['active' => 'active', 'paused' => 'paused'][$statusFilter ?? ''] ?? 'all' }} campaigns: {{ $totals['campaignCount'] }}, this period)</span></td>
+                                <td data-role="totals-scope">Total <span class="text-caption text-muted fw-normal">({{ ['active' => 'active', 'paused' => 'paused', 'archived' => 'archived', 'deleted' => 'deleted'][strtolower((string) $statusFilter)] ?? 'all' }} campaigns: {{ $totals['campaignCount'] }}, this period)</span></td>
                                 <td class="text-numeric text-end" data-role="total-budget">@if($totals['dailyBudgetMinor'] !== null){{ D::minorMoney($totals['dailyBudgetMinor'], $currency) }}<span class="text-caption text-muted"> / day</span>@else{{ D::DASH }}@endif</td>
                                 <td class="text-numeric text-end" data-role="total-spend">{{ D::money($totals['spendMicros'], $currency) }}</td>
                                 <td class="text-numeric text-end" data-role="total-results">{{ D::count($totals['results']) }}</td>

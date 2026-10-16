@@ -38,7 +38,7 @@ final class MetaAdsAttentionItems
     }
 
     /**
-     * @return array{count: int, items: list<array{provider: string, title: string, evidence_lines: array<int, string>, action_label: string, url: ?string, tone: string, rank_spend_micros: int}>}
+     * @return array{count: int, actionable_count: int, items: list<array{provider: string, title: string, evidence_lines: array<int, string>, action_label: string, url: ?string, tone: string, rank_spend_micros: int}>}
      */
     public function top(MetaAdsAccount $account, string $workspaceUid, string $businessUid, bool $hasModule, int $limit = 5, ?GoogleAdsPeriod $period = null, int $goingWellReserve = 0): array
     {
@@ -73,7 +73,10 @@ final class MetaAdsAttentionItems
             ];
         }
 
-        return ['count' => count($facts), 'items' => $items];
+        // `count` stays the total number of facts; `actionable_count` excludes strong performers ("Going well").
+        $actionable = count(array_filter($facts, static fn ($fact): bool => $fact->type !== MetaAdsRecommendationType::StrongPerformer));
+
+        return ['count' => count($facts), 'actionable_count' => $actionable, 'items' => $items];
     }
 
     /**

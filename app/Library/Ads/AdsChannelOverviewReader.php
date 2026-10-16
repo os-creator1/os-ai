@@ -68,7 +68,7 @@ final class AdsChannelOverviewReader
     {
         $channels = [];
         $googleFacts = [];
-        $metaAttention = ['count' => 0, 'items' => []];
+        $metaAttention = ['count' => 0, 'actionable_count' => 0, 'items' => []];
 
         if ($google['visible']) {
             if ($google['state'] === 'ready' && $google['account'] instanceof GoogleAdsAccount) {
@@ -125,7 +125,7 @@ final class AdsChannelOverviewReader
 
         if ($hasModule) {
             $google = $this->googleAttention($account, $workspaceUid, $businessUid, self::ATTENTION_LIMIT, self::GOING_WELL_RESERVED);
-            $issues = $google['count'];
+            $issues = $google['actionable_count'];
             $attention = $google['items'];
         }
 
@@ -184,7 +184,7 @@ final class AdsChannelOverviewReader
             'pacing_status' => $overview->pacing->status->value,
             'pacing_text' => $this->pacingText($overview->pacing->status),
             'pacing_detail' => $this->pacingDetail($overview->pacing),
-            'issue_count' => $attention['count'],
+            'issue_count' => $attention['actionable_count'],
             'updated_at' => $freshness->lastSuccessfulSyncAt,
             'data_through' => $freshness->dataThroughDate,
             'freshness_warn' => $freshness->shouldWarn(),
@@ -253,7 +253,7 @@ final class AdsChannelOverviewReader
      * the same facts and wording as the Recommendations page. Callers read it
      * only for a viewer with the FULL module, exactly as googleChannel() does.
      *
-     * @return array{items: list<array<string, mixed>>, count: int}
+     * @return array{items: list<array<string, mixed>>, count: int, actionable_count: int}
      */
     public function googleAttention(GoogleAdsAccount $account, string $workspaceUid, string $businessUid, int $limit = self::ATTENTION_LIMIT, int $goingWellReserve = 0): array
     {
@@ -276,7 +276,9 @@ final class AdsChannelOverviewReader
             ];
         }
 
-        return ['items' => $items, 'count' => count($facts)];
+        $actionable = count(array_filter($facts, static fn ($fact): bool => $fact->type !== \App\Library\GoogleAds\Recommendations\GoogleAdsRecommendationType::StrongCampaign));
+
+        return ['items' => $items, 'count' => count($facts), 'actionable_count' => $actionable];
     }
 
     private function googleUrl(array $action, string $workspaceUid, string $businessUid): ?string

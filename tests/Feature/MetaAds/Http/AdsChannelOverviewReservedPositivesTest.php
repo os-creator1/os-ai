@@ -65,4 +65,48 @@ class AdsChannelOverviewReservedPositivesTest extends TestCase
         $this->assertSame([1, 2, 3, 4, 5, 7, 8], array_column($picked, 'n'), 'five actionable then two positives, each in ranked order');
         $this->assertSame([1, 2, 3], array_column(MetaAdsAttentionItems::selectWithReserve($facts, 3, 0, fn ($f) => $f['p']), 'n'));
     }
+
+    /** Meta channel "Needs attention" figure as rendered on the cross-channel Overview. */
+    private function needsAttention(int $actionable, int $positive): string
+    {
+        [$customer, $business, $workspace] = $this->metaHttpTenant();
+        $meta = $this->metaSelected($business, ['target_cost_per_result_micros' => 20_000_000]);
+
+        foreach (range(1, $actionable) as $i) {
+            if ($actionable === 0) {
+                break;
+            }
+            $campaign = $this->seedMetaCampaign($meta, 'Waste ' . $i);
+            $this->seedMetaDays($meta, MetaAdsLevel::Campaign, (int) $campaign->id, '2026-10-01', '2026-10-03', 100_000_000 + $i, 0);
+        }
+        foreach (range(1, $positive) as $i) {
+            if ($positive === 0) {
+                break;
+            }
+            $campaign = $this->seedMetaCampaign($meta, 'Strong ' . $i);
+            $this->seedMetaDays($meta, MetaAdsLevel::Campaign, (int) $campaign->id, '2026-10-01', '2026-10-03', 10_000_000, 1);
+        }
+
+        $this->asMetaUser($customer, [self::G_VIEW, self::G_MANAGE, self::META_VIEW, self::META_MANAGE]);
+        $html = $this->get($this->channelsUrl($workspace, $business))->assertOk()->getContent();
+
+        $this->assertSame(1, preg_match('/data-role="channel-issues">\s*(\d+) items?\s*</', $html, $m), 'the Meta channel renders its attention figure');
+
+        return $m[1];
+    }
+
+    public function test_needs_attention_counts_only_actionable_facts(): void
+    {
+        $this->assertSame('0', $this->needsAttention(actionable: 0, positive: 1), 'only a strong performer: nothing needs attention');
+    }
+
+    public function test_needs_attention_counts_actionable_facts_when_there_are_no_positives(): void
+    {
+        $this->assertSame('2', $this->needsAttention(actionable: 2, positive: 0));
+    }
+
+    public function test_needs_attention_ignores_positives_in_a_mixed_set(): void
+    {
+        $this->assertSame('2', $this->needsAttention(actionable: 2, positive: 2), 'two problems and two strong performers: two items need attention');
+    }
 }
