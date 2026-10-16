@@ -305,27 +305,44 @@ final class AdsChannelOverviewReader
     private function mergeAttention(array $google, array $meta): array
     {
         // The whole list stays capped at ATTENTION_LIMIT; positives ("Going well") keep reserved slots so they are never crowded out entirely.
-        $act = [];
-        $well = [];
-
-        for ($i = 0; $i < max(count($google), count($meta)); $i++) {
-            foreach ([$google[$i] ?? null, $meta[$i] ?? null] as $item) {
-                if ($item === null) {
-                    continue;
-                }
-
-                if (($item['tone'] ?? null) === 'success') {
-                    $well[] = $item;
-                } else {
-                    $act[] = $item;
-                }
-            }
-        }
+        // Each provider's ranked list is split by tone FIRST, then actionable and positive items are round-robined independently,
+        // so neither provider's positives are crowded out by where they happen to sit in a mixed list.
+        $isPositive = static fn (array $item): bool => ($item['tone'] ?? null) === 'success';
+        $act = $this->roundRobin(
+            array_values(array_filter($google, static fn (array $item): bool => ! $isPositive($item))),
+            array_values(array_filter($meta, static fn (array $item): bool => ! $isPositive($item))),
+        );
+        $well = $this->roundRobin(
+            array_values(array_filter($google, $isPositive)),
+            array_values(array_filter($meta, $isPositive)),
+        );
 
         $wellTake = min(count($well), self::GOING_WELL_RESERVED);
         $actTake = min(count($act), self::ATTENTION_LIMIT - $wellTake);
         $wellTake = min(count($well), self::ATTENTION_LIMIT - $actTake);   // spare slots go to positives
         $merged = [...array_slice($act, 0, $actTake), ...array_slice($well, 0, $wellTake)];
+
+        return $merged;
+    }
+
+    /**
+     * Alternates Google, Meta, Google, Meta ... keeping each provider's own ranking.
+     *
+     * @param  list<array<string, mixed>>  $google
+     * @param  list<array<string, mixed>>  $meta
+     * @return list<array<string, mixed>>
+     */
+    private function roundRobin(array $google, array $meta): array
+    {
+        $merged = [];
+
+        for ($i = 0, $n = max(count($google), count($meta)); $i < $n; $i++) {
+            foreach ([$google[$i] ?? null, $meta[$i] ?? null] as $item) {
+                if ($item !== null) {
+                    $merged[] = $item;
+                }
+            }
+        }
 
         return $merged;
     }

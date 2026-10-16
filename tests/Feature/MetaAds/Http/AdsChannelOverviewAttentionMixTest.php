@@ -47,4 +47,33 @@ class AdsChannelOverviewAttentionMixTest extends TestCase
         $this->assertCount(5, $none);
         $this->assertSame([], array_filter($none, fn ($i) => $i['tone'] === 'success'));
     }
+
+    public function test_both_providers_are_represented_when_their_positives_sit_at_different_positions(): void
+    {
+        // Google: two positives FIRST in its ranked list. Meta: its only positive far down, after actionable items.
+        $google = [
+            ['provider' => 'google', 'title' => 'g-pos-1', 'tone' => 'success'],
+            ['provider' => 'google', 'title' => 'g-pos-2', 'tone' => 'success'],
+            ['provider' => 'google', 'title' => 'g-act-1', 'tone' => 'neutral'],
+            ['provider' => 'google', 'title' => 'g-act-2', 'tone' => 'neutral'],
+        ];
+        $meta = [
+            ['provider' => 'meta', 'title' => 'm-act-1', 'tone' => 'warning'],
+            ['provider' => 'meta', 'title' => 'm-act-2', 'tone' => 'warning'],
+            ['provider' => 'meta', 'title' => 'm-act-3', 'tone' => 'warning'],
+            ['provider' => 'meta', 'title' => 'm-pos-1', 'tone' => 'success'],
+        ];
+
+        $merged = $this->merge($google, $meta);
+
+        $this->assertCount(5, $merged);
+        $this->assertSame(
+            ['g-act-1', 'm-act-1', 'g-act-2', 'g-pos-1', 'm-pos-1'],
+            array_column($merged, 'title'),
+            'actionable first (round-robined), then one positive per provider; each provider keeps its own order'
+        );
+        $positives = array_column(array_filter($merged, fn ($i) => $i['tone'] === 'success'), 'provider');
+        $this->assertContains('google', $positives);
+        $this->assertContains('meta', $positives, 'Meta\'s lower-positioned positive is not crowded out');
+    }
 }
