@@ -255,7 +255,10 @@ class AssistantHistoryTest extends TestCase
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Keep Venue', 'Keep Account');
         $ancient = $this->conversation($customer, $business, $workspace, 2, 'Ancient', now()->subDays(900));
 
-        $this->assertSame(90, AssistantRetention::retentionDays(), 'The default is unchanged: 90 days.');
+        $this->assertSame(0, AssistantRetention::retentionDays(), 'The default is keep-until-deleted.');
+        $this->assertTrue(AssistantRetention::keepsUntilDeleted());
+        $this->assertSame(0, (new AssistantRetention())->purgeExpired(), 'Under the default nothing ages out, however old.');
+        $this->assertSame(1, AssistantConversation::query()->where('uid', $ancient->uid)->count());
 
         config(['assistant.retention_days' => 1000]);
         $this->assertSame(1000, AssistantRetention::retentionDays(), 'A longer period is a configuration, not a code change.');

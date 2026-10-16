@@ -103,9 +103,12 @@ fence; a late old executor aborts before touching anything.
   next run. Proposals are taken `FOR UPDATE SKIP LOCKED`: one held by an executor (even past its lease) means "busy", not a
   lock wait. A stale worker finds its conversation gone and writes nothing (404, not 500).
 
-- Conversations (messages, summaries, facts) are deleted `assistant.retention_days` (default **90**, clamped 1–365) after their
-  last message by `assistant:purge-expired` (daily, `withoutOverlapping`, idempotent, optionally `--business=<uid>`). The customer
-  can delete a conversation at any time (*Delete conversation*, two-step).
+- **Retention is configurable; the default keeps conversations until the customer deletes them.** `assistant.retention_days`
+  (`ASSISTANT_RETENTION_DAYS`) defaults to **0** = keep until the customer deletes a conversation or the account is removed. A positive value
+  (bounded 1–3650) deletes a conversation that many days after its last message, by `assistant:purge-expired` (daily, `withoutOverlapping`,
+  idempotent, optionally `--business=<uid>`), which does nothing under 0. The customer can delete a conversation at any time (History, or
+  *Delete conversation*). The customer-facing disclosure (`AssistantRetention::disclosure()`) states whichever policy is in force.
+  **A deployment that sets `ASSISTANT_RETENTION_DAYS` overrides this default — verify the effective value before launch.**
 - Deleting scrubs each prepared action: params, preview, drafted text and result text are removed, an open action is declined,
   and the proposal row survives as a minimal audit fact (tool, status, actor, Workspace/Business, timestamps, codes) with its
   audit events reduced to codes. Removing the whole account removes these too.
@@ -116,6 +119,28 @@ fence; a late old executor aborts before touching anything.
 - **Legal verification required before production:** the notice wording, the data-processing agreement with the AI provider,
   provider-side retention/deletion, cross-border transfer and the retention period itself have NOT been legally reviewed.
 
+## Fullscreen conversation and history (Home redesign)
+
+* **One card, two states.** The Ask card on Home expands into the conversation; the rest of Home recedes (`is-chat-open`). The expansion
+  uses the View Transitions API (about 0.2–0.3 s) with a bounded fallback to a plain switch, and none under `prefers-reduced-motion`.
+  On a phone the open conversation is a full-screen sheet.
+* **Closing.** *Back to Home*, `Esc`, or the browser Back button (the open state is a `#ask` history entry, so Back is never trapped and a
+  reload on `#ask` returns to the conversation). Closing sends nothing, keeps the conversation and any unsent draft (also kept in
+  `sessionStorage` per Business), restores scroll and returns focus. Opening, closing, scrolling and viewing history never call the model.
+* **Composer.** Multiline (Enter sends, Shift+Enter newline), busy indicator, duplicate sends ignored; Copy on answers. The view follows new
+  messages only when the customer is already at the bottom. Errors, limits and retry bubbles are unchanged (idempotent `client_message_id`).
+* **History.** `GET …/home/assistant/conversations[?after=<conversation uid>]` lists *this user's* conversations in *this Business and
+  Workspace* (newest activity first, `assistant.history_page_size` = 20, keyset by `(last_message_at, id)`), each with title, preview of the
+  last question/answer, time and message count. Opening one is `GET …/home/assistant?conversation=<uid>`; continuing it is a normal send. A
+  teammate's private conversations and the customer inbox are never listed. *New chat* starts a new conversation.
+* **Scroll-up pagination.** `GET …/home/assistant?conversation=<uid>&before=<message uid>&limit=<1..60>`; the response has
+  `page.has_more` and `page.before`. The cursor is a message uid resolved inside that conversation (another conversation's uid is 404), so pages never
+  repeat or skip; the client prepends without moving the view and stops at "Beginning of this conversation". Initial page: newest 40.
+* **Deletion.** From History, with an in-place confirmation, via the existing `POST …/conversations/{uid}/delete` (owner only; a running turn
+  or approved action answers 409 "nothing was deleted"). The header *Delete conversation* remains (two-step).
+* **Unchanged guarantees.** Every read is scoped by Workspace + Business + user; prompts still carry only the compacted summary and the last
+  `history_window_messages` turns, never the full history; `conversation_max_messages` (120) still starts a new conversation — the full one stays in
+  History; AI allowance/budget checks and the prepare → preview → explicit approval boundary for any change are untouched.
 ## Integration dependency — account deletion (staging `51020fd5`, re-verified against `a8040484`)
 
 Staging's account deletion (`AccountRecordGraph`) merged after this branch's base and requires every non-SET-NULL foreign key
@@ -151,7 +176,7 @@ gives exactly-once appointments and events across concurrent approval, rollback,
    `lock_connection`) deliberately before enabling the assistant on more than one worker.
 2. **Scheduler.** `assistant:purge-expired` is registered daily (`withoutOverlapping`) in `app/Console/Kernel.php`; the platform's
    normal `php artisan schedule:run` cron must be running. Without it retention is not enforced.
-3. **Environment configuration** (all optional; defaults shown): `ASSISTANT_RETENTION_DAYS=90` (clamped 1–365),
+3. **Environment configuration** (all optional; defaults shown): `ASSISTANT_RETENTION_DAYS=0` (0 = keep until deleted; positive = days, max 3650),
    `ASSISTANT_TURN_BUDGET_SECONDS=75`, `ASSISTANT_DELETE_WAIT_SECONDS=4`, `AI_ROUTE_ASSISTANT_MAX_INPUT_TOKENS=7000`,
    `AI_ROUTE_ASSISTANT_TIMEOUT_SECONDS=25`, and the provider credentials/`services.openai.active` already used by the AI gateway.
    The lock lease is `turn budget + max(15, margin)`; keep the route timeout well below the budget.

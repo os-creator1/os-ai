@@ -57,9 +57,36 @@ validation and idempotency are the module's, never Home's.
 Always real links without JavaScript: every trigger is an `<a href>` to the
 module page; `public/js/home/command-center.js` upgrades it to a drawer.
 
-## Ask MotionGrove
+## Home redesign — dynamic Home and the Ask card (`agent/home-ai-experience-redesign`)
 
-A request box over a **closed registry** (`HomeAskRegistry`). It is not a chatbot
+One dynamic Home, not separate dashboards. `HomeCommandCenter` still decides the state; the templates only place what it built.
+
+* **Greeting and status.** The greeting row carries a status pill from `HomeCommandCenter::status()`: *N things need you*, *All
+  caught up · nothing needs you*, *Setup still in progress* or *Data temporarily unavailable*. "All caught up" is said only when no
+  source failed and nothing needs the customer.
+* **Next Best Move — conditional.** Rendered only when there is a move (or it could not be worked out). A quiet Business gets no
+  empty urgent-action container; the page rebalances around the Ask card. The waiting-customers move shows its own figure (the
+  awaiting-reply count the Conversations band already read, "of N conversations" only when coherent) and, when the actor's plan
+  includes the assistant and `draft_reply` is available, a *Draft replies with MotionGrove* button that sends through the normal
+  assistant send (it prepares a reply; nothing is sent). *Why this?* and "Nothing else needs your attention" sit in the card footer.
+  The attention card appears only when it has its own items or could not check.
+* **Business performance.** The same headlines band and range logic. The range control is a segmented *7 days / This month /
+  30 days / Custom* (the shared `analytics._range` partial with `segmented`; Last 90 days / Last month still work when chosen
+  via URL and show as an extra active segment). Figures sit in one bordered row; the contacts chart title is *New contacts per day*.
+  When the series has no contact in the period the chart is replaced by *No activity to chart yet*, never a flat line.
+* **Bottom row.** *While it's quiet* (create a booking type, add a website form, add a contact — each only if its page exists for the
+  actor; shown only when the status is "all caught up"), *What MotionGrove is handling*, and *Automations* (the existing band's
+  figures, or "No automations ran …" with *Set one up* where the actor may create a workflow). Automations left the "More detail" fold.
+* **Order.** greeting → (setup / lifted attention) → move and attention → Ask → growth queue → performance → bottom row → More detail.
+* **Ask card.** Compact: one input, *Ask*, up to four suggestion chips (only questions the assistant can answer for this actor), and
+  *Continue your conversation* when a saved conversation exists. Opening it expands the same card into the fullscreen conversation — see
+  `ASK-MOTIONGROVE-V1.md` ("Fullscreen conversation and history").
+
+Not included: thumbs-up/down feedback (no backend), comparison badges beyond the existing headline sentences, and date filters beyond
+the presets and custom range above.
+## Ask MotionGrove (closed registry; the no-JavaScript path)
+
+The form still posts to `HomeActionsController@ask` without JavaScript. With JavaScript the card talks to the assistant instead (above). A request box over a **closed registry** (`HomeAskRegistry`). It is not a chatbot
 and calls no AI provider. Typing a request resolves, deterministically and
 server-side (`HomeActionsController@ask`), to one of:
 

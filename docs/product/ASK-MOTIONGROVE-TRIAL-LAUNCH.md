@@ -44,7 +44,7 @@ Leave these at the defaults for the trial unless you deliberately want a lower c
 
 ## 4. Assistant behaviour, retention, locks (optional)
 
-`ASSISTANT_RETENTION_DAYS=90` (clamped 1–365), `ASSISTANT_TURN_BUDGET_SECONDS=75`, `ASSISTANT_DELETE_WAIT_SECONDS=4`,
+`ASSISTANT_RETENTION_DAYS=0` (default: keep until the customer deletes; positive = days, max 3650), `ASSISTANT_TURN_BUDGET_SECONDS=75`, `ASSISTANT_DELETE_WAIT_SECONDS=4`,
 `ASSISTANT_MAX_MODEL_ITERATIONS=3`.
 
 ## 5. Infrastructure that must be true (not code)
