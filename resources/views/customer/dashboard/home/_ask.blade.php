@@ -15,6 +15,7 @@
 --}}
 <section class="mb-2 home-ask" aria-labelledby="home-ask-heading" data-band="ask" data-role="home-ask"
          data-assistant-show="{{ $home['ask']['assistant']['show'] }}"
+         data-assistant-conversations="{{ $home['ask']['assistant']['conversations'] }}"
          data-assistant-message="{{ $home['ask']['assistant']['message'] }}"
          data-assistant-approve="{{ $home['ask']['assistant']['approve'] }}"
          data-assistant-decline="{{ $home['ask']['assistant']['decline'] }}"
@@ -27,6 +28,9 @@
             <span class="home-ask-esc text-caption text-muted">or press <kbd>Esc</kbd></span>
             <h2 class="home-ask-heading" id="home-ask-heading" data-role="ask-title">Ask MotionGrove</h2>
             <div class="home-ask-head-actions">
+                <button type="button" class="btn btn-sm home-ask-iconbtn" data-role="ask-history" aria-haspopup="dialog" aria-expanded="false" aria-label="Chat history" title="Chat history">
+                    <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10a6.5 6.5 0 1 0 2-4.7M3 3.5V6h2.5M10 6.5V10l2.5 1.5"/></svg>
+                </button>
                 <button type="button" class="btn btn-sm home-ask-newchat" data-role="ask-new"><span aria-hidden="true">+</span> New chat</button>
                 <button type="button" class="btn btn-link btn-sm text-muted" data-role="ask-delete" hidden>Delete conversation</button>
             </div>
@@ -37,6 +41,17 @@
             <div class="home-ask-banner" data-role="ask-banner" role="status" hidden></div>
             <div class="home-ask-thread" data-role="ask-thread" role="log" aria-live="polite" aria-relevant="additions"></div>
             <p class="home-ask-working text-muted mb-0" data-role="ask-working" role="status" hidden>MotionGrove is working on your question…</p>
+
+            {{-- Chat history: THIS customer's conversations with MotionGrove in this Business (not the customer inbox). Read-only to open. --}}
+            <div class="home-ask-history" data-role="ask-history-panel" role="dialog" aria-label="Chat history" hidden>
+                <div class="home-ask-history-head">
+                    <strong>Chat history</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-role="ask-history-close">Close</button>
+                </div>
+                <p class="text-caption text-muted mb-0 px-1" data-role="ask-history-status" role="status" hidden></p>
+                <ul class="list-unstyled mb-0 home-ask-history-list" data-role="ask-history-list"></ul>
+                <div class="text-center p-1"><button type="button" class="btn btn-sm btn-outline-secondary" data-role="ask-history-more" hidden>Show older conversations</button></div>
+            </div>
         </div>
 
         <form class="home-ask-form" data-role="ask-form" data-ask-url="{{ $home['ask']['url'] }}" action="{{ $home['ask']['url'] }}" method="POST">

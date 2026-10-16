@@ -15,6 +15,7 @@
 
     var cfg = {
         show: section.getAttribute('data-assistant-show'),
+        conversations: section.getAttribute('data-assistant-conversations'),
         message: section.getAttribute('data-assistant-message'),
         approve: section.getAttribute('data-assistant-approve'),
         decline: section.getAttribute('data-assistant-decline'),
@@ -31,10 +32,16 @@
     var resumeBtn = section.querySelector('[data-role="ask-resume"]');
     var minimizeBtn = section.querySelector('[data-role="ask-minimize"]');
     var newBtn = section.querySelector('[data-role="ask-new"]');
+    var historyBtn = section.querySelector('[data-role="ask-history"]');
+    var historyPanel = section.querySelector('[data-role="ask-history-panel"]');
+    var historyList = section.querySelector('[data-role="ask-history-list"]');
+    var historyMore = section.querySelector('[data-role="ask-history-more"]');
+    var historyStatus = section.querySelector('[data-role="ask-history-status"]');
+    var historyClose = section.querySelector('[data-role="ask-history-close"]');
     if (!cfg.message || !form || !input || !panel || !thread) { return; }
     input.setAttribute('data-placeholder', input.getAttribute('placeholder') || '');
 
-    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null, stick: true };
+    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null, stick: true, seen: {}, topEl: null, hasMore: false, before: null, loadingOlder: false, olderFailed: false, historyNext: null };
     var narrow = window.matchMedia ? window.matchMedia('(max-width: 767.98px)') : { matches: false };
 
     function csrf() {
@@ -336,6 +343,7 @@
         row.setAttribute('data-role', 'ask-message');
         row.setAttribute('data-kind', m.kind);
         row.setAttribute('data-from', m.role);
+        if (m.uid) { row.setAttribute('data-uid', m.uid); }
         var box = el('div', 'home-ask-bubble');
         var p = m.payload || {};
 
@@ -448,20 +456,73 @@
         return bar;
     }
 
-    function render(data) {
+    // ── the thread: full render, merge of the newest page, and older pages ─────────────────────────────────────────────────
+    function resetThread() {
         thread.textContent = '';
-        var asked = '';
+        state.seen = {};
+        state.topEl = el('div', 'home-ask-older text-caption text-muted');
+        state.topEl.setAttribute('data-role', 'ask-older');
+        thread.appendChild(state.topEl);
+    }
+
+    // One stored message → its row, or null when it is not shown (an action outcome lives on its proposal card) or already shown
+    // (a message is never drawn twice, whichever page or answer carried it).
+    function place(m, convUid, ctx) {
+        if (m.kind === 'outcome') { return null; }
+        if (m.uid) {
+            if (state.seen[m.uid]) { return null; }
+            state.seen[m.uid] = 1;
+        }
+        if (m.role === 'user') { ctx.asked = m.body; }
+        if (m.kind === 'error' && m.payload && m.payload.retryable && !m.payload.attempt && ctx.asked) {
+            // A stored failed turn is rebuilt from the server: bind its retry to the question asked just before IT, never to a
+            // newer one. The turn was answered (with an error), so the retry is a new request and takes a fresh client id.
+            m.payload.attempt = { q: ctx.asked, id: null, uid: convUid, startNew: false };
+        }
+        return bubble(m);
+    }
+
+    function updateTop() {
+        var t = state.topEl;
+        if (!t) { return; }
+        t.textContent = '';
+        t.removeAttribute('role');
+        if (!thread.querySelector('[data-role="ask-message"]')) { t.hidden = true; return; }
+        t.hidden = false;
+        t.style.textAlign = 'center';
+        if (state.loadingOlder) {
+            t.setAttribute('role', 'status');
+            t.textContent = 'Loading earlier messages…';
+        } else if (state.olderFailed) {
+            t.appendChild(document.createTextNode("We couldn't load earlier messages. "));
+            var retry = el('button', 'btn btn-link btn-sm p-0 align-baseline', 'Try again');
+            retry.type = 'button';
+            retry.setAttribute('data-role', 'ask-older-retry');
+            retry.addEventListener('click', loadOlder);
+            t.appendChild(retry);
+        } else if (!state.hasMore) {
+            t.textContent = 'Beginning of this conversation';
+        } else {
+            t.hidden = true;
+        }
+    }
+
+    function applyPage(data) {
+        state.hasMore = !!(data.page && data.page.has_more);
+        state.before = data.page && data.page.before ? data.page.before : null;
+        state.olderFailed = false;
+        state.loadingOlder = false;
+    }
+
+    function render(data) {
+        resetThread();
+        var ctx = { asked: '' };
         (data.messages || []).forEach(function (m) {
-            if (m.kind === 'outcome') { return; } // shown on its proposal card
-            if (m.role === 'user') { asked = m.body; }
-            if (m.kind === 'error' && m.payload && m.payload.retryable && !m.payload.attempt && asked) {
-                // A stored failed turn is rebuilt from the server: bind its retry to the question asked just before IT, never to a
-                // newer one. The turn was answered (with an error), so the retry is a new request and takes a fresh client id.
-                m.payload.attempt = { q: asked, id: null, uid: data.uid, startNew: false };
-            }
-            thread.appendChild(bubble(m));
+            var node = place(m, data.uid, ctx);
+            if (node) { thread.appendChild(node); }
         });
         state.uid = data.uid || state.uid;
+        applyPage(data);
         if (deleteBtn) { deleteBtn.hidden = !state.uid; }
         if (!(data.messages || []).length && data.notice) {
             thread.appendChild(bubble({ role: 'assistant', kind: 'notice', body: data.notice.body, payload: { title: data.notice.title } }));
@@ -470,9 +531,84 @@
         }
         renderAllowance(data.allowance);
         if (resumeBtn) { resumeBtn.setAttribute('data-has-conversation', (data.messages || []).length ? '1' : ''); }
+        updateTop();
+        scrollToEnd(true);
+    }
+
+    // The answer to a send carries the newest page. Anything the customer has scrolled back to stays exactly where it is: only the
+    // messages not yet on screen are appended, and the local stand-ins (the question as typed, a local error) are dropped for them.
+    function mergeLatest(data) {
+        if (!data.uid || data.uid !== state.uid || !state.topEl || !state.topEl.parentNode) { render(data); return; }
+        thread.querySelectorAll('[data-role="ask-message"]:not([data-uid]), [data-role="ask-empty"]').forEach(function (n) { n.remove(); });
+        var ctx = { asked: '' };
+        (data.messages || []).forEach(function (m) {
+            var node = place(m, data.uid, ctx);
+            if (node) { thread.appendChild(node); }
+        });
+        renderAllowance(data.allowance);
+        if (deleteBtn) { deleteBtn.hidden = !state.uid; }
+        if (resumeBtn) { resumeBtn.setAttribute('data-has-conversation', '1'); }
+        updateTop();
         scrollToEnd();
     }
 
+    // Older messages, by the cursor the server gave (the oldest message on screen). Prepended without moving what the customer is
+    // reading; never an assistant call. Stops when the server says nothing older remains.
+    function loadOlder() {
+        if (!state.hasMore || state.loadingOlder || !state.uid || !state.before || !cfg.show) { return; }
+        var uid = state.uid;
+        state.loadingOlder = true;
+        state.olderFailed = false;
+        updateTop();
+        var url = cfg.show + (cfg.show.indexOf('?') < 0 ? '?' : '&') + 'conversation=' + encodeURIComponent(uid) + '&before=' + encodeURIComponent(state.before);
+
+        request(url).then(function (res) {
+            if (uid !== state.uid) { return; } // the customer moved to another conversation meanwhile
+            if (res.status === 404) { conversationGone(); return; }
+            if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
+            var beforeHeight = thread.scrollHeight;
+            var beforeTop = thread.scrollTop;
+            var frag = document.createDocumentFragment();
+            var ctx = { asked: '' };
+            (res.body.messages || []).forEach(function (m) {
+                var node = place(m, uid, ctx);
+                if (node) { frag.appendChild(node); }
+            });
+            thread.insertBefore(frag, state.topEl.nextSibling);
+            thread.scrollTop = beforeTop + (thread.scrollHeight - beforeHeight);
+            applyPage(res.body);
+        }).catch(function () {
+            if (uid === state.uid) { state.olderFailed = true; }
+        }).then(function () {
+            if (uid !== state.uid) { return; }
+            state.loadingOlder = false;
+            updateTop();
+            // A short page can leave the top still in view: keep going until it is not, or nothing older remains.
+            if (!state.olderFailed && state.hasMore && thread.scrollTop < 160) { window.setTimeout(loadOlder, 0); }
+        });
+    }
+
+    function flash(text) {
+        if (!banner) { return; }
+        banner.hidden = false;
+        banner.setAttribute('data-kind', 'info');
+        banner.textContent = text;
+        window.setTimeout(function () { if (banner.textContent === text) { banner.hidden = true; banner.textContent = ''; } }, 7000);
+    }
+
+    // The conversation being viewed no longer exists (deleted in another window, aged out, or never theirs): say so and start fresh.
+    function conversationGone() {
+        flash('That conversation is no longer available. You can start a new chat.');
+        state.uid = null;
+        state.startNew = true;
+        state.failed = {};
+        resetThread();
+        thread.appendChild(emptyState());
+        state.hasMore = false;
+        if (deleteBtn) { deleteBtn.hidden = true; }
+        if (resumeBtn) { resumeBtn.removeAttribute('data-has-conversation'); }
+        updateTop();
+    }
     function renderAllowance(a) {
         if (!banner) { return; }
         banner.textContent = '';
@@ -566,7 +702,7 @@
             delete state.failed[question];
             if (state.firstUse) { state.firstUse = false; showNotice(null); }
             if (attempt.startNew && state.startNew) { state.startNew = false; }
-            render(res.body);
+            mergeLatest(res.body);
         }).catch(function () {
             thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't reach MotionGrove. Nothing was changed. Please try again.", payload: { title: "I couldn't complete that", retryable: true, attempt: attempt } }));
         }).then(function () { setBusy(false); scrollToEnd(); });
@@ -592,6 +728,7 @@
     // Escape anywhere goes back to Home; the conversation and any unsent draft are kept. An open <details> menu or a composing IME owns Escape first.
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || !isOpen()) { return; }
+        if (historyPanel && !historyPanel.hidden) { setHistoryOpen(false); return; }
         var menu = section.querySelector('details[open]');
         if (menu) { menu.removeAttribute('open'); return; }
         setOpen(false);
@@ -602,9 +739,12 @@
             state.uid = null;
             state.startNew = true;
             state.failed = {};
-            thread.textContent = '';
+            state.hasMore = false;
+            resetThread();
             thread.appendChild(emptyState());
+            updateTop();
             if (deleteBtn) { deleteBtn.hidden = true; }
+            setHistoryOpen(false);
             input.focus();
         });
     }
@@ -629,8 +769,10 @@
                 state.uid = null;
                 state.startNew = false;
                 state.failed = {};
-                thread.textContent = '';
+                state.hasMore = false;
+                resetThread();
                 thread.appendChild(el('p', 'text-muted mb-0', 'Conversation deleted.'));
+                updateTop();
                 if (resumeBtn) { resumeBtn.removeAttribute('data-has-conversation'); resumeBtn.hidden = true; }
                 deleteBtn.hidden = true;
             }).catch(function () {
@@ -676,6 +818,141 @@
         }).catch(function () { /* the box still works once the read succeeds; until then nothing is sent */ });
     }
 
+    // ── chat history: this customer's conversations in this Business (never the inbox, never a teammate's) ────────────────────
+    function fmtWhen(iso) {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) { return ''; }
+        var now = new Date();
+        var days = Math.floor((now.setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+        if (days <= 0) { return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+        if (days === 1) { return 'Yesterday'; }
+        if (days < 7) { return d.toLocaleDateString([], { weekday: 'long' }); }
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+    }
+
+    function historyNote(text) {
+        if (historyStatus) { historyStatus.textContent = text || ''; historyStatus.hidden = !text; }
+    }
+
+    function historyItem(c) {
+        var li = el('li', 'home-ask-hist-row');
+        li.setAttribute('data-uid', c.uid);
+        var pick = el('button', 'home-ask-hist-item');
+        pick.type = 'button';
+        pick.setAttribute('data-role', 'ask-history-item');
+        if (c.uid === state.uid) { pick.setAttribute('aria-current', 'true'); pick.classList.add('is-current'); }
+        var top = el('span', 'home-ask-hist-top');
+        top.appendChild(el('strong', 'home-ask-hist-title', c.title));
+        top.appendChild(el('span', 'home-ask-hist-when text-caption text-muted', fmtWhen(c.last_message_at)));
+        pick.appendChild(top);
+        if (c.preview) { pick.appendChild(el('span', 'home-ask-hist-preview text-caption text-muted', c.preview)); }
+        pick.addEventListener('click', function () { openConversation(c.uid); });
+        li.appendChild(pick);
+
+        var del = el('button', 'home-ask-hist-del', 'Delete');
+        del.type = 'button';
+        del.setAttribute('data-role', 'ask-history-delete');
+        del.setAttribute('aria-label', 'Delete conversation: ' + c.title);
+        del.addEventListener('click', function () { confirmDelete(li, c); });
+        li.appendChild(del);
+        return li;
+    }
+
+    // Deleting asks first, in place: nothing is removed by a stray click, and the question names what would go.
+    function confirmDelete(li, c) {
+        var box = el('div', 'home-ask-hist-confirm');
+        box.setAttribute('role', 'alertdialog');
+        box.setAttribute('aria-label', 'Delete this conversation?');
+        box.appendChild(el('span', null, 'Delete this conversation? Its messages are removed from MotionGrove.'));
+        var yes = el('button', 'btn btn-sm btn-danger', 'Delete');
+        yes.type = 'button';
+        yes.setAttribute('data-role', 'ask-history-delete-confirm');
+        var no = el('button', 'btn btn-sm btn-outline-secondary', 'Keep it');
+        no.type = 'button';
+        box.appendChild(yes);
+        box.appendChild(no);
+        li.appendChild(box);
+        li.classList.add('is-confirming');
+        no.focus();
+        no.addEventListener('click', function () { box.remove(); li.classList.remove('is-confirming'); });
+        yes.addEventListener('click', function () {
+            yes.disabled = true; no.disabled = true;
+            request(cfg.remove.replace('__UID__', encodeURIComponent(c.uid)), { method: 'POST', body: {} }).then(function (res) {
+                if (res.status === 409) {
+                    box.textContent = (res.body && res.body.message) || 'This conversation is busy right now. Nothing was deleted — try again in a moment.';
+                    return;
+                }
+                if (!res.ok && res.status !== 404) { throw new Error('status ' + res.status); }
+                li.remove();
+                if (c.uid === state.uid) {
+                    // The conversation on screen is gone: what is left is a new chat, never the next-newest one by surprise.
+                    state.uid = null; state.startNew = true; state.failed = {}; state.hasMore = false;
+                    resetThread();
+                    thread.appendChild(emptyState());
+                    updateTop();
+                    if (deleteBtn) { deleteBtn.hidden = true; }
+                }
+                if (!historyList.children.length) { historyNote('No saved conversations yet.'); if (resumeBtn) { resumeBtn.removeAttribute('data-has-conversation'); } }
+            }).catch(function () {
+                box.textContent = "We couldn't delete it just now. Nothing was changed.";
+            });
+        });
+    }
+
+    function loadHistory(append) {
+        if (!cfg.conversations || !historyList) { return; }
+        var url = cfg.conversations + (append && state.historyNext ? '?after=' + encodeURIComponent(state.historyNext) : '');
+        historyNote(append ? '' : 'Loading…');
+        if (historyMore) { historyMore.hidden = true; }
+        request(url).then(function (res) {
+            if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
+            if (!append) { historyList.textContent = ''; }
+            (res.body.conversations || []).forEach(function (c) { historyList.appendChild(historyItem(c)); });
+            state.historyNext = res.body.next || null;
+            historyNote(historyList.children.length ? '' : 'No saved conversations yet. Ask something and it will be kept here.');
+            if (historyMore) { historyMore.hidden = !res.body.has_more; }
+        }).catch(function () {
+            historyNote("We couldn't load your chat history. Please try again.");
+        });
+    }
+
+    function setHistoryOpen(open) {
+        if (!historyPanel) { return; }
+        historyPanel.hidden = !open;
+        if (historyBtn) { historyBtn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+        if (open) {
+            loadHistory(false);
+            window.setTimeout(function () { if (historyClose) { historyClose.focus(); } }, 0);
+        } else if (historyBtn && isOpen()) {
+            historyBtn.focus();
+        }
+    }
+
+    // Opening a past conversation reads it (newest page); it never calls the assistant. Continuing it is a normal, intentional send.
+    function openConversation(uid) {
+        setHistoryOpen(false);
+        if (uid === state.uid) { thread.scrollTop = thread.scrollHeight; input.focus(); return; }
+        var url = cfg.show + (cfg.show.indexOf('?') < 0 ? '?' : '&') + 'conversation=' + encodeURIComponent(uid);
+        flash('Opening…');
+        request(url).then(function (res) {
+            if (res.status === 404) { flash('That conversation is no longer available.'); loadHistory(false); return; }
+            if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
+            state.startNew = false;
+            state.failed = {};
+            state.stick = true;
+            render(res.body);
+            banner.hidden = true;
+            input.focus();
+        }).catch(function () {
+            flash("We couldn't open that conversation. Please try again.");
+        });
+    }
+
+    if (historyBtn && historyPanel) {
+        historyBtn.addEventListener('click', function () { setHistoryOpen(historyPanel.hidden); });
+        if (historyClose) { historyClose.addEventListener('click', function () { setHistoryOpen(false); }); }
+        if (historyMore) { historyMore.addEventListener('click', function () { loadHistory(true); }); }
+    }
     // ── composer: multiline, Enter sends, Shift+Enter breaks the line; the unsent draft survives Back to Home and a reload ───────
     var draftKey = 'homeAskDraft:' + (cfg.message || '');
 
@@ -702,7 +979,10 @@
             if (typeof form.requestSubmit === 'function') { form.requestSubmit(); } else { send(input.value); }
         }
     });
-    thread.addEventListener('scroll', function () { state.stick = nearBottom(); }, { passive: true });
+    thread.addEventListener('scroll', function () {
+        state.stick = nearBottom();
+        if (thread.scrollTop < 160) { loadOlder(); }
+    }, { passive: true });
 
     var initialLoad = loadSaved();
 

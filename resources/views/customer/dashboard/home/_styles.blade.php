@@ -237,4 +237,29 @@
         .home-command .home-ask.is-conversation-open .home-ask-form { flex-wrap: nowrap; }
         .home-command .home-ask.is-conversation-open .home-ask-input { flex: 1 1 auto; }
     }
+    /* ── Chat history panel (inside the open conversation) and the older-messages marker ───────────────────────────────── */
+    .home-command .home-ask-panel { position: relative; }
+    .home-command .home-ask-iconbtn { border: 0; background: transparent; color: var(--color-text-muted, #6F6D67); padding: .375rem .5rem; border-radius: .5rem; display: inline-flex; align-items: center; }
+    .home-command .home-ask-iconbtn:hover, .home-command .home-ask-iconbtn[aria-expanded="true"] { background: var(--color-surface-secondary, #F4F1EC); color: var(--color-text-primary, #1F1D1A); }
+    .home-command .home-ask-history { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; background: var(--color-surface, #fff); overflow-y: auto; overscroll-behavior: contain; animation: home-ask-fade .18s ease both; }
+    .home-command .home-ask-history[hidden] { display: none; }
+    .home-command .home-ask-history-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .875rem max(1rem, calc((100% - 46rem) / 2)) .5rem; position: sticky; top: 0; background: var(--color-surface, #fff); }
+    .home-command .home-ask-history-list { padding: 0 max(.5rem, calc((100% - 46rem) / 2)) .5rem; }
+    .home-command .home-ask-hist-row { position: relative; border-top: 1px solid var(--color-border-subtle, #EEEAE3); }
+    .home-command .home-ask-hist-row:first-child { border-top: 0; }
+    .home-command .home-ask-hist-item { display: flex; flex-direction: column; gap: .125rem; width: 100%; text-align: left; border: 0; background: transparent; padding: .75rem 4.5rem .75rem .5rem; border-radius: .5rem; color: inherit; }
+    .home-command .home-ask-hist-item:hover { background: var(--color-row-hover, #F7F4EF); }
+    .home-command .home-ask-hist-item.is-current { background: var(--color-primary-soft-bg, #F7E9E4); }
+    .home-command .home-ask-hist-top { display: flex; justify-content: space-between; gap: .75rem; align-items: baseline; }
+    .home-command .home-ask-hist-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .home-command .home-ask-hist-when { white-space: nowrap; flex: 0 0 auto; }
+    .home-command .home-ask-hist-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .home-command .home-ask-hist-del { position: absolute; right: .5rem; bottom: .625rem; border: 0; background: transparent; font-size: .75rem; color: var(--color-text-muted, #6F6D67); padding: .125rem .375rem; border-radius: .375rem; }
+    .home-command .home-ask-hist-del:hover, .home-command .home-ask-hist-del:focus-visible { color: var(--color-status-danger, #B3261E); background: var(--color-status-danger-soft-bg, #FBE9E7); }
+    .home-command .home-ask-hist-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .625rem .5rem .75rem; font-size: .875rem; background: var(--color-status-danger-soft-bg, #FBE9E7); border-radius: .5rem; margin: 0 .25rem .5rem; }
+    .home-command .home-ask-hist-row.is-confirming .home-ask-hist-del { display: none; }
+    .home-command .home-ask-older { padding: .25rem 0; }
+    @media (max-width: 767.98px) {
+        .home-command .home-ask-hist-item { padding-right: 4rem; }
+    }
 </style>

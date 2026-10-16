@@ -47,8 +47,17 @@ return [
     'input_headroom_bps' => 500,
 
     // Retention. Conversations (messages, summary, facts) are deleted this many days after their last message; the
-    // customer can delete one at any time. Clamped to 1..365. Action audit facts are kept, scrubbed of text and PII.
+    // customer can delete one at any time. 90 by default. A positive value is bounded to 1..3650; 0 means "keep until the
+    // customer deletes it (or the account is deleted)" — an explicit, opt-in policy that is NOT the default, because keeping
+    // customers' conversations indefinitely is a privacy/data-protection decision for the operator, not a code default.
+    // The disclosure shown to customers (AssistantRetention::disclosure) always states whichever policy is in force.
+    // Action audit facts are kept, scrubbed of text and PII.
     'retention_days' => (int) env('ASSISTANT_RETENTION_DAYS', 90),
+
+    // History. Conversations listed per page in the history panel, and messages loaded per page when scrolling up.
+    'history_page_size' => 20,
+    'message_page_size' => 40,
+    'message_page_max' => 60,
 
     // How long a prepared reply stays openable (pre-filled) in Follow-ups after it was handed off.
     'handoff_ttl_minutes' => 60,

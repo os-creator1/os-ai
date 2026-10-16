@@ -34,15 +34,25 @@ final class AssistantRetention
 {
     private const AUDIT_DETAIL_KEYS = ['tool', 'mode', 'code', 'reason'];
 
+    /** Days a conversation is kept after its last message; 0 = until the customer deletes it (or the account goes). */
     public static function retentionDays(): int
     {
-        return max(1, min(365, (int) config('assistant.retention_days')));
+        $days = (int) config('assistant.retention_days');
+
+        return $days <= 0 ? 0 : min(3650, $days);
+    }
+
+    public static function keepsUntilDeleted(): bool
+    {
+        return self::retentionDays() === 0;
     }
 
     /** The AI-data disclosure, with the retention this installation actually applies. The ONE source of that sentence. */
     public static function disclosure(): string
     {
-        return __('ask_ai.data_notice.body', ['days' => self::retentionDays()]);
+        return self::keepsUntilDeleted()
+            ? __('ask_ai.data_notice.body_until_deleted')
+            : __('ask_ai.data_notice.body', ['days' => self::retentionDays()]);
     }
 
     /** The one lock a turn holds while it works on a conversation, and a deletion must hold to remove it. */
@@ -155,6 +165,11 @@ final class AssistantRetention
      */
     public function purgeExpired(?int $workspaceId = null, ?int $businessId = null, int $chunk = 200): int
     {
+        // "Keep until deleted" is a policy, not an absence of one: nothing ages out.
+        if (self::keepsUntilDeleted()) {
+            return 0;
+        }
+
         $cutoff = Carbon::now()->subDays(self::retentionDays());
         $deleted = 0;
         $skipped = [];

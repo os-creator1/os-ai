@@ -122,7 +122,7 @@ class AssistantRetentionTest extends TestCase
         config(['assistant.retention_days' => 30]);
         $this->assertSame(1, (new AssistantRetention())->purgeExpired(), 'The period is configurable.');
         config(['assistant.retention_days' => 100000]);
-        $this->assertSame(365, AssistantRetention::retentionDays(), 'And bounded.');
+        $this->assertSame(3650, AssistantRetention::retentionDays(), 'And bounded.');
     }
 
     public function test_the_sweep_can_be_scoped_to_one_business_and_skips_a_running_action(): void

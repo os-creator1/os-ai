@@ -45,6 +45,59 @@ final class AssistantService
             ->first();
     }
 
+    /**
+     * The history list: THIS user's conversations in THIS Business, newest activity first, one keyset page at a time. The cursor
+     * is a conversation's own uid, resolved inside the same scope, so another customer's (or Business's) conversation can
+     * never be listed, paged to or probed. A conversation that has no message yet (still being created) is not listed.
+     * Reads only; no model call.
+     *
+     * @return array{conversations: array<int, array<string, mixed>>, has_more: bool, next: ?string}
+     */
+    public function history(AssistantContext $context, ?string $afterUid = null): array
+    {
+        $size = max(1, min(50, (int) config('assistant.history_page_size')));
+        $scope = fn () => AssistantConversation::query()
+            ->where('workspace_id', $context->workspace->id)
+            ->where('business_id', $context->business->id)
+            ->where('user_id', $context->user->id)
+            ->whereNotNull('last_message_at');
+
+        $query = $scope();
+
+        if ($afterUid !== null) {
+            $anchor = $scope()->where('uid', $afterUid)->first() ?? abort(404);
+            $query->where(function ($q) use ($anchor) {
+                $q->where('last_message_at', '<', $anchor->last_message_at)
+                    ->orWhere(fn ($q2) => $q2->where('last_message_at', $anchor->last_message_at)->where('id', '<', $anchor->id));
+            });
+        }
+
+        $rows = $query->orderByDesc('last_message_at')->orderByDesc('id')->limit($size + 1)->get();
+        $hasMore = $rows->count() > $size;
+        $rows = $rows->take($size);
+
+        // The preview is the last thing actually said (a question or an answer), never the AI-data notice or an action outcome.
+        $latest = $rows->isEmpty() ? collect() : AssistantMessage::query()
+            ->whereIn('conversation_id', $rows->pluck('id'))
+            ->whereIn('kind', ['text', 'answer', 'clarify', 'unsupported', 'navigate', 'error', 'limit'])
+            ->selectRaw('conversation_id, max(id) as last_id')
+            ->groupBy('conversation_id')
+            ->pluck('last_id', 'conversation_id');
+        $bodies = $latest->isEmpty() ? collect() : AssistantMessage::query()->whereIn('id', $latest->values())->pluck('body', 'id');
+
+        return [
+            'conversations' => $rows->map(fn (AssistantConversation $c): array => [
+                'uid' => $c->uid,
+                'title' => (string) ($c->title ?: 'Conversation'),
+                'preview' => Str::limit(trim((string) ($bodies[$latest[$c->id] ?? 0] ?? '')), 110),
+                'last_message_at' => $c->last_message_at?->toIso8601String(),
+                'message_count' => (int) $c->message_count,
+            ])->values()->all(),
+            'has_more' => $hasMore,
+            'next' => $hasMore ? (string) $rows->last()->uid : null,
+        ];
+    }
+
     public function find(AssistantContext $context, string $uid): ?AssistantConversation
     {
         return AssistantConversation::query()
