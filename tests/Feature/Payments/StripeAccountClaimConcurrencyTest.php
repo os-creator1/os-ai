@@ -191,7 +191,9 @@ class StripeAccountClaimConcurrencyTest extends TestCase
             ]);
 
             $this->assertGenuinelyRaced($results);
-            $this->assertSame(0, $results[0]['exitCode'], 'The disconnect completes whichever way the webhook interleaves.');
+            // 0: the disconnect did the work. 4: the webhook (Stripe already revoked) ended the
+            // connection first, so there was nothing left to disconnect and NO revoke call was made.
+            $this->assertContains($results[0]['exitCode'], [0, 4], 'The disconnect either completes or finds the provider already ended it.');
             $this->assertSame(0, $results[1]['exitCode'], 'The webhook is idempotent and never errors.');
             $this->assertContains($results[2]['exitCode'], [0, 4]);
 
