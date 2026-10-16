@@ -6,7 +6,8 @@
     Each line states a fact the backend enforces: payments settle in the
     Business's own connected account (StripeConnectManager creates it, no
     platform balance is involved), the Business is the merchant of record, and
-    a connection is always a NEW account — an existing one cannot be linked.
+    a connection is either a NEW account or an existing STANDARD account linked
+    through Stripe's own OAuth page.
     Lane B has no relationship with MotionGrove subscription billing.
 --}}
 @props(['business'])
@@ -25,7 +26,7 @@
             </li>
             <li>
                 <span class="sr-tile sr-tile--neutral" aria-hidden="true"><x-ds-icon name="plus" size="14" /></span>
-                <p>Connecting <strong>creates a new Stripe account</strong>. An existing one can't be linked here.</p>
+                <p>You can <strong>connect an existing standard Stripe account</strong> or <strong>set up a new one</strong>.</p>
             </li>
             <li>
                 <span class="sr-tile sr-tile--neutral" aria-hidden="true"><x-ds-icon name="credit-card" size="14" /></span>

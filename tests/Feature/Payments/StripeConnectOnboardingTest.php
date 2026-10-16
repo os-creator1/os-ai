@@ -412,10 +412,12 @@ class StripeConnectOnboardingTest extends TestCase
         $routes = collect(\Illuminate\Support\Facades\Route::getRoutes()->getRoutes())
             ->filter(fn ($route) => str_contains((string) $route->getActionName(), BusinessPaymentsController::class));
 
-        $this->assertCount(5, $routes);
+        $this->assertCount(7, $routes);
 
         foreach ($routes as $route) {
-            $this->assertSame(['workspaceUid', 'businessUid'], $route->parameterNames(),
+            // The fixed OAuth callback is tenant-free by design: it carries no parameters at all.
+            $expected = $route->getName() === 'customer.business.stripe.connect-existing.callback' ? [] : ['workspaceUid', 'businessUid'];
+            $this->assertSame($expected, $route->parameterNames(),
                 "[{$route->getName()}] must take no provider identifier.");
         }
 
@@ -808,14 +810,14 @@ class StripeConnectOnboardingTest extends TestCase
         $this->assertStringContainsString('Payment processing', $html);
     }
 
-    public function test_the_status_page_says_a_new_stripe_account_is_created_and_billing_is_separate(): void
+    public function test_the_status_page_offers_a_new_account_and_says_billing_is_separate(): void
     {
         [, $business, $workspace] = $this->tenantBusiness();
         $this->actAsOwner($business);
 
         $html = $this->get($this->url('show', $workspace, $business))->assertOk()->getContent();
 
-        $this->assertStringContainsString('creates a new Stripe account', $html);
+        $this->assertStringContainsString('set up a new one', $html);
         $this->assertStringContainsString('separate from your MotionGrove subscription billing', $html);
     }
 
@@ -997,10 +999,11 @@ class StripeConnectOnboardingTest extends TestCase
         $this->assertStringContainsString('requirements.past_due', $restricted);
 
         foreach ([$none, $restricted] as $html) {
-            foreach (['connect-form', 'resume-link', 'refresh-form', 'disconnect-form', 'disconnect-open'] as $role) {
+            foreach (['connect-form', 'connect-existing-form', 'resume-link', 'stripe-dashboard-link', 'refresh-form', 'disconnect-form', 'disconnect-open'] as $role) {
                 $this->assertStringNotContainsString('data-role="' . $role . '"', $html, $role);
             }
             $this->assertStringNotContainsString('payments/connect/start', $html);
+            $this->assertStringNotContainsString('payments/connect/existing', $html);
             $this->assertStringNotContainsString('payments/connect/disconnect', $html);
         }
     }

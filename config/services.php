@@ -110,6 +110,13 @@
             // A mismatch here fails every "Connect existing account"
             // attempt at Stripe, before this application ever sees it.
             'agency_connect_client_id' => env('STRIPE_AGENCY_CONNECT_CLIENT_ID'),
+            // Business payments (lane B) — "Connect existing Stripe account."
+            // The platform's Connect OAuth client_id (ca_...), separate from the
+            // Agency client id above and from subscription billing. The single
+            // redirect_uri to register for it (TEST and LIVE) is
+            // route('customer.business.stripe.connect-existing.callback')
+            // e.g. https://<app-host>/business/stripe/connect-existing/callback.
+            'business_connect_client_id' => env('STRIPE_BUSINESS_CONNECT_CLIENT_ID'),
             // RFC-005 M3 contract §19 — new keys, additive only.
             'mode'         => env('STRIPE_MODE', 'test'),
             'api_version'  => env('STRIPE_API_VERSION'),
