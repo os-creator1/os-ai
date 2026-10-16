@@ -57,6 +57,7 @@ class WebsiteFormsController extends CustomerBaseController
             'isPhotoBooth' => WebsiteStarterDraftService::isPhotoBooth($business),
             'forms' => $website->forms()->with('location:id,uid,name')->withCount('submissions')->orderBy('id')->get(),
             'locations' => $this->activeLocations($business),
+            'pages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get(['id', 'uid', 'title', 'sections']),
         ]);
     }
 
