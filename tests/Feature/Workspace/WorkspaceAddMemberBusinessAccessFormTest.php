@@ -49,7 +49,7 @@ class WorkspaceAddMemberBusinessAccessFormTest extends TestCase
         $this->assertStringNotContainsString('<select class="form-control" id="member-scope"', $form, 'No Business access selector.');
         $this->assertStringNotContainsString('type="checkbox"', $form, 'No Business checkboxes.');
         $this->assertStringNotContainsString('All Businesses', $form);
-        $this->assertStringContainsString("They'll get access to Harbor Lane Studios.", $form);
+        $this->assertStringContainsString("They'll get access to Harbor Lane Studios with the role you choose.", $form);
 
         // Submit exactly what the rendered form carries.
         $this->post(route('customer.workspaces.members.store', $workspace->uid), $this->hiddenFields($form) + [
@@ -75,7 +75,7 @@ class WorkspaceAddMemberBusinessAccessFormTest extends TestCase
         $this->authenticateAs($admin);
 
         $form = $this->membersForm($workspace->uid);
-        $this->assertStringContainsString("They'll get access to Harbor Lane Studios.", $form);
+        $this->assertStringContainsString("They'll get access to Harbor Lane Studios with the role you choose.", $form);
         $this->assertStringNotContainsString('id="member-scope"', $form);
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), $this->hiddenFields($form) + [

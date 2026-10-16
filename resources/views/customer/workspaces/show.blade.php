@@ -25,6 +25,10 @@
 
 @section('title', $section === 'team' ? 'Team' : ucfirst($accountNoun) . ' overview')
 
+@section('page-style')
+    @include('customer.settings._redesign-assets')
+@endsection
+
 @section('vendor-style')
     <link rel="stylesheet" href="{{ asset(mix('vendors/css/forms/select/select2.min.css')) }}">
 @endsection
@@ -306,148 +310,7 @@
             @endif
 
             @if ($section === 'team' && isset($directory))
-                @include('customer.settings._module-header', [
-                    'backUrl' => route('customer.workspaces.settings.show', request()->route('workspaceUid')),
-                    'title' => 'Team',
-                    'description' => 'Manage members and their Business access.',
-                ])
-
-                <div class="col-12">
-                    <x-card title="Members">
-                        <div class="row">
-                            <div class="col-12 col-xl-8">
-                                <form method="POST" data-workspace-action="members" class="mb-2">
-                            @csrf
-
-                            <x-input name="member_email" label="Email address" type="email" value="{{ old('member_email') }}" autocomplete="off" help="They need an existing Business OS account before you can add them." :error="$errors->first('member_email')" required />
-
-                            <div class="mb-1">
-                                <label class="form-label" for="member-role">Role</label>
-                                <select class="form-control" id="member-role" name="role">
-                                    <option value="staff">Staff</option>
-                                    @if ($workspace['role'] === 'Owner')
-                                        <option value="admin">Admin</option>
-                                    @endif
-                                </select>
-                            </div>
-
-                            @php
-                                // Exactly one Business this person can grant: nothing to choose, so
-                                // the new member gets access to that one Business only (selected
-                                // scope — least privilege, never a hidden "all Businesses" grant).
-                                $singleManageableBusiness = count($manageableBusinesses ?? []) === 1 ? $manageableBusinesses[0] : null;
-                            @endphp
-
-                            @if ($singleManageableBusiness !== null)
-                                <input type="hidden" name="business_access_scope" value="selected">
-                                <input type="hidden" name="business_uids[]" value="{{ $singleManageableBusiness['uid'] }}">
-                                <p class="text-caption mb-1" data-role="member-single-business">They'll get access to {{ $singleManageableBusiness['name'] }}.</p>
-                            @else
-                                {{-- Contract 14 — the checkbox list Contract 13's frozen
-                                     1 Workspace : 1 Business topology retired is gone: the
-                                     multi-select branch is reachable only when
-                                     $manageableBusinesses holds MORE THAN ONE Business, and
-                                     manageableBusinesses() is always scoped to this single
-                                     Workspace's own Businesses (at most one, ever, now), so
-                                     that branch could never render. This @else itself is
-                                     still reached — the count-0 case, an actor with nothing
-                                     to grant — where the scope selector alone remains. --}}
-                                <div class="mb-1">
-                                    <label class="form-label" for="member-scope">Business access</label>
-                                    <select class="form-control" id="member-scope" name="business_access_scope">
-                                        <option value="all">All Businesses</option>
-                                        <option value="selected">Selected Businesses</option>
-                                    </select>
-                                </div>
-                            @endif
-
-                            <x-button type="submit" variant="outline">Add member</x-button>
-                                </form>
-                            </div>
-                        </div>
-
-                        @if (empty($directory))
-                            <x-empty-state icon="inbox" title="This {{ $accountNoun }} has no members." />
-                        @else
-                            @php
-                                $manageableBusinessUids = collect($manageableBusinesses ?? [])->pluck('uid')->all();
-                            @endphp
-                            <x-table :headers="['Name', 'Role', 'Business access', 'Assigned Businesses', 'Status', 'Actions']">
-                                @foreach ($directory as $member)
-                                    <tr>
-                                        <td>{{ $member['name'] }}</td>
-                                        <td>{{ $member['role'] }}</td>
-                                        <td>{{ $member['scope'] }}</td>
-                                        <td>{{ $member['assigned_business_count'] }}</td>
-                                        <td>
-                                            @if ($member['is_active'])
-                                                <x-badge variant="success">Active</x-badge>
-                                            @else
-                                                <x-badge variant="neutral">Inactive</x-badge>
-                                            @endif
-                                        </td>
-                                        <td>
-                                            @php
-                                                $viewerIsOwner = $workspace['role'] === 'Owner';
-                                                $viewerCanManageLifecycle = $viewerIsOwner || $member['role'] !== 'Admin';
-                                                $viewerCanSeeMembersCompleteAccess = empty(array_diff($member['assigned_business_uids'], $manageableBusinessUids));
-                                            @endphp
-                                            @if ($member['is_active'])
-                                                @if ($viewerIsOwner)
-                                                    <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="mb-1">
-                                                        @csrf
-                                                        <select name="role" class="form-control form-control-sm d-inline-block w-auto">
-                                                            <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
-                                                            <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
-                                                        </select>
-                                                        <x-button type="submit" variant="outline" size="sm">Change role</x-button>
-                                                    </form>
-                                                @endif
-
-                                                @if ($viewerCanSeeMembersCompleteAccess)
-                                                    <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="mb-1">
-                                                        @csrf
-                                                        <select name="business_access_scope" class="form-control form-control-sm d-inline-block w-auto">
-                                                            <option value="all" @selected($member['scope'] === 'All Businesses')>All Businesses</option>
-                                                            <option value="selected" @selected($member['scope'] === 'Selected Businesses')>Selected Businesses</option>
-                                                        </select>
-
-                                                        @if (! empty($manageableBusinesses))
-                                                            @foreach ($manageableBusinesses as $business)
-                                                                <div class="form-check form-check-inline">
-                                                                    <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
-                                                                    <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                                                </div>
-                                                            @endforeach
-                                                        @endif
-
-                                                        <x-button type="submit" variant="outline" size="sm">Update access</x-button>
-                                                    </form>
-                                                @else
-                                                    <p class="mb-1 text-muted">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
-                                                @endif
-
-                                                @if ($viewerCanManageLifecycle)
-                                                    <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
-                                                        @csrf
-                                                        <button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>
-                                                    </form>
-                                                @endif
-                                            @else
-                                                @if ($viewerCanManageLifecycle)
-                                                    <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}">
-                                                        @csrf
-                                                        <button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>
-                                                    </form>
-                                                @endif
-                                            @endif
-                                        </td>
-                                    </tr>
-                                @endforeach
-                            </x-table>
-                        @endif
-                    </x-card>
-                </div>
+                @include('customer.workspaces.partials.team')
             @endif
 
             @if (in_array($workspace['role'], ['Owner', 'Admin'], true))

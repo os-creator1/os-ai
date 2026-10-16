@@ -2,6 +2,10 @@
 
 @section('title', $user->displayName())
 
+@section('page-style')
+    <link rel="stylesheet" href="{{ asset('css/settings-redesign.css') }}?v={{ is_file(public_path('css/settings-redesign.css')) ? filemtime(public_path('css/settings-redesign.css')) : 1 }}">
+@endsection
+
 @section('vendor-style')
     {{-- Page Css files --}}
 
@@ -17,13 +21,31 @@
 @endsection
 
 @section('content')
+    @php
+        // Which tab opens: ?tab=, the tab a controller redirected with, or the tab that owns a validation error.
+        $activeTab = request()->input('tab') ?: old('tab');
+        if (! $activeTab) {
+            $activeTab = match (true) {
+                $errors->hasAny(['current_password', 'password', 'password_confirmation']) => 'security',
+                $errors->hasAny(['phone', 'company', 'website', 'address', 'city', 'state', 'postcode', 'country', 'financial_address', 'financial_city', 'financial_postcode', 'tax_number']) => 'information',
+                default => 'account',
+            };
+        }
+    @endphp
     <!-- users edit start -->
-    <section class="users-edit">
+    <section class="users-edit sr-page sr-page--narrow">
 
-        <ul class="nav nav-pills mb-2" role="tablist">
+        <div class="sr-head">
+            <div class="sr-head__main">
+                <h1 class="sr-title">Your account</h1>
+                <p class="sr-lede">These settings are yours and apply in every Business you can open.</p>
+            </div>
+        </div>
+
+        <ul class="nav sr-tabs" role="tablist">
 
             <li class="nav-item">
-                <a class="nav-link @if ((old('tab') == 'account' || old('tab') == null) && request()->input('tab') == null) active @endif"
+                <a class="nav-link {{ $activeTab === 'account' ? 'active' : '' }}"
                    id="account-tab" data-bs-toggle="tab" href="#account" aria-controls="account" role="tab"
                    aria-selected="true">
                     <x-ds-icon name="user" /> {{__('locale.labels.account')}}
@@ -31,7 +53,7 @@
             </li>
 
             <li class="nav-item">
-                <a class="nav-link {{ old('tab') == 'security' ? 'active':null }}" id="security-tab"
+                <a class="nav-link {{ $activeTab === 'security' ? 'active' : '' }}" id="security-tab"
                    data-bs-toggle="tab" href="#security" aria-controls="security" role="tab" aria-selected="true">
                     <x-ds-icon name="lock" /> {{__('locale.labels.security')}}
                 </a>
@@ -39,7 +61,7 @@
 
             @if(config('app.two_factor'))
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'two_factor' ? 'active':null }}" id="two-factor-tab"
+                    <a class="nav-link {{ $activeTab === 'two_factor' ? 'active' : '' }}" id="two-factor-tab"
                        data-bs-toggle="tab" href="#two-factor" aria-controls="two-factor" role="tab"
                        aria-selected="false">
                         <x-ds-icon name="log-in" /> {{__('locale.labels.two_factor_authentication')}}
@@ -49,7 +71,7 @@
 
             @if($user->active_portal == 'customer')
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'information' ? 'active':null }}" id="information-tab"
+                    <a class="nav-link {{ $activeTab === 'information' ? 'active' : '' }}" id="information-tab"
                        data-bs-toggle="tab" href="#information" aria-controls="information" role="tab"
                        aria-selected="false">
                         <x-ds-icon name="info" />{{__('locale.labels.information')}}
@@ -69,7 +91,7 @@
                 && $user->customer->activeSubscription()?->plan?->is_dlt)
                 {{--Entity ID--}}
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'dlt_entity_id' ? 'active':null }}"
+                    <a class="nav-link {{ $activeTab === 'dlt_entity_id' ? 'active' : '' }}"
                        id="dlt_entity_id-tab" data-bs-toggle="tab" href="#dlt_entity_id"
                        aria-controls="dlt_entity_id" role="tab" aria-selected="false">
                         <x-ds-icon name="key" class="font-medium-3 me-50" />
@@ -78,7 +100,7 @@
                 </li>
 
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'dlt_telemarketer_id' ? 'active':null }}"
+                    <a class="nav-link {{ $activeTab === 'dlt_telemarketer_id' ? 'active' : '' }}"
                        id="dlt_telemarketer_id-tab" data-bs-toggle="tab" href="#dlt_telemarketer_id"
                        aria-controls="dlt_telemarketer_id" role="tab" aria-selected="false">
                         <x-ds-icon name="headphones" class="font-medium-3 me-50" />
@@ -92,14 +114,14 @@
 
         <div class="tab-content">
 
-            <div class="tab-pane @if ((old('tab') == 'account' || old('tab') == null) && request()->input('tab') == null) active @endif"
+            <div class="tab-pane {{ $activeTab === 'account' ? 'active' : '' }}"
                  id="account" aria-labelledby="account-tab" role="tabpanel">
                 <!-- users edit account form start -->
                 @include('auth.profile._accounts')
                 <!-- users edit account form ends -->
             </div>
 
-            <div class="tab-pane {{ old('tab') == 'security' ? 'active':null }}" id="security"
+            <div class="tab-pane {{ $activeTab === 'security' ? 'active' : '' }}" id="security"
                  aria-labelledby="security-tab" role="tabpanel">
                 <!-- users edit Info form start -->
                 @include('auth.profile._security')
@@ -109,7 +131,7 @@
 
 
             @if($user->active_portal == 'customer')
-                <div class="tab-pane {{ old('tab') == 'information' ? 'active':null }}" id="information"
+                <div class="tab-pane {{ $activeTab === 'information' ? 'active' : '' }}" id="information"
                      aria-labelledby="information-tab" role="tabpanel">
                     <!-- users edit Info form start -->
                     @include('auth.profile._information')
@@ -120,7 +142,7 @@
 
 
             @if(config('app.two_factor'))
-                <div class="tab-pane {{ old('tab') == 'two_factor' ? 'active':null }}" id="two-factor"
+                <div class="tab-pane {{ $activeTab === 'two_factor' ? 'active' : '' }}" id="two-factor"
                      aria-labelledby="two-factor-tab" role="tabpanel">
                     @include('auth.profile._two_factor_authentication')
                 </div>
@@ -131,12 +153,12 @@
             @if(config('app.trai_dlt') == 1
                 && isset($user->customer)
                 && $user->customer->activeSubscription()?->plan?->is_dlt)
-                <div class="tab-pane {{ old('tab') == 'dlt_entity_id' ? 'active':null }}"
+                <div class="tab-pane {{ $activeTab === 'dlt_entity_id' ? 'active' : '' }}"
                      id="dlt_entity_id" aria-labelledby="dlt_entity_id-tab" role="tabpanel">
                     @include('auth.profile._dlt_entity_id')
                 </div>
 
-                <div class="tab-pane {{ old('tab') == 'dlt_telemarketer_id' ? 'active':null }}"
+                <div class="tab-pane {{ $activeTab === 'dlt_telemarketer_id' ? 'active' : '' }}"
                      id="dlt_telemarketer_id" aria-labelledby="dlt_telemarketer_id-tab" role="tabpanel">
                     @include('auth.profile._dlt_telemarketer_id')
                 </div>

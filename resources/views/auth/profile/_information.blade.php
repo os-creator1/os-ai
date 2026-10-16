@@ -1,194 +1,167 @@
-<div class="card">
-    <div class="card-body py-2 my-25">
-        <form class="form form-vertical" action="{{ route('user.account.update_information') }}" method="post">
-            @csrf
-            <div class="row mt-1">
-                <div class="col-12 col-sm-6">
-                    <h5 class="mb-1"><x-ds-icon name="user" />{{__('locale.customer.personal_information')}}</h5>
+{{--
+    Your account → Information tab. Same route (user.account.update_information),
+    same fields and same server validation as before: contact details, address,
+    billing address, tax number and the five email-notification switches that the
+    customer record really stores (login, sender_id, keyword, subscription,
+    promotion). "Same as my address" is a client-side convenience that copies the
+    address / city / postcode values into the billing fields before saving.
+--}}
+@php
+    $customer = $user->customer;
+    $notifications = $customer->getNotifications();
+    $notificationRows = [
+        'login' => [__('locale.auth.login'), __('locale.customer.every_single_login')],
+        'sender_id' => [__('locale.labels.sender_identity'), __('locale.customer.sender_id_verification')],
+        'keyword' => [__('locale.labels.keyword'), __('locale.customer.purchase_keyword')],
+        'subscription' => [__('locale.menu.Subscriptions'), __('locale.customer.successful_subscription')],
+        'promotion' => [__('locale.labels.promotion'), __('locale.customer.promotional_newsletter')],
+    ];
+@endphp
 
-                    <div class="mb-1">
-                        <label for="phone" class="form-label required">{{__('locale.labels.phone')}}</label>
-                        <input type="number" id="phone" class="form-control @error('phone') is-invalid @enderror" value="{{ $user->customer->phone }}" name="phone" required>
-                        @error('phone')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
+<div class="sr-card">
+    <form action="{{ route('user.account.update_information') }}" method="post" id="account-information-form">
+        @csrf
 
-                    <div class="mb-1">
-                        <label for="company" class="form-label">{{__('locale.labels.company')}}</label>
-                        <input type="text" id="company" class="form-control @error('company') is-invalid @enderror" value="{{ $user->customer->company }}" name="company">
-                        @error('company')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="website" class="form-label">{{__('locale.labels.website')}}</label>
-                        <input type="url" id="website" class="form-control @error('website') is-invalid @enderror" value="{{ $user->customer->website }}" name="website">
-                        @error('website')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <h5 class="mb-1 mt-2 mt-sm-0"><x-ds-icon name="map-pin" /> {{__('locale.labels.address')}}</h5>
-
-                    <div class="mb-1">
-                        <label for="address" class="form-label required">{{__('locale.labels.address')}}</label>
-                        <input type="text" id="address" class="form-control @error('address') is-invalid @enderror" value="{{ $user->customer->address }}" name="address" required>
-                        @error('address')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="city" class="form-label required">{{__('locale.labels.city')}}</label>
-                        <input type="text" id="city" class="form-control @error('city') is-invalid @enderror" value="{{ $user->customer->city }}" name="city" required>
-                        @error('city')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="state" class="form-label">{{__('locale.labels.state')}}</label>
-                        <input type="text" id="state" class="form-control @error('state') is-invalid @enderror" value="{{ $user->customer->state }}" name="state">
-                        @error('state')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="postcode" class="form-label">{{__('locale.labels.postcode')}}</label>
-                        <input type="text" id="postcode" class="form-control @error('postcode') is-invalid @enderror" value="{{ $user->customer->postcode }}" name="postcode">
-                        @error('postcode')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="country" class="form-label required">{{__('locale.labels.country')}}</label>
-                        <select class="form-select select2" id="country" name="country">
-                            @foreach(\App\Helpers\Helper::countries() as $country)
-                                <option value="{{$country['name']}}" {{ $user->customer->country == $country['name'] ? 'selected': null }}> {{ $country['name'] }}</option>
-                            @endforeach
-                        </select>
-                        @error('country')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-
+        <div class="sr-section">
+            <div class="sr-section__label">
+                <h3>Contact details</h3>
+                <p>How MotionGrove can reach you.</p>
+            </div>
+            <div class="sr-fields">
+                <div class="sr-field">
+                    <label for="phone">{{ __('locale.labels.phone') }} <span class="text-danger">*</span></label>
+                    <input type="number" id="phone" class="form-control @error('phone') is-invalid @enderror" value="{{ old('phone', $customer->phone) }}" name="phone" required>
+                    @error('phone')<p class="sr-error">{{ $message }}</p>@enderror
                 </div>
-                <div class="col-12 col-sm-6">
-
-                    <h5 class="mb-1 mt-2 mt-sm-0"><x-ds-icon name="map-pin" /> {{ __('locale.labels.billing_address') }}</h5>
-
-
-                    <div class="mb-1">
-                        <label for="financial_address" class="form-label">{{__('locale.labels.address')}}</label>
-                        <input type="text" id="financial_address" class="form-control @error('financial_address') is-invalid @enderror" value="{{ $user->customer->financial_address }}" name="financial_address">
-                        @error('financial_address')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="financial_city" class="form-label">{{__('locale.labels.city')}}</label>
-                        <input type="text" id="financial_city" class="form-control @error('financial_city') is-invalid @enderror" value="{{ $user->customer->financial_city }}" name="financial_city">
-                        @error('financial_city')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="financial_postcode" class="form-label">{{__('locale.labels.postcode')}}</label>
-                        <input type="text" id="financial_postcode" class="form-control @error('financial_postcode') is-invalid @enderror" value="{{ $user->customer->financial_postcode }}" name="financial_postcode">
-                        @error('financial_postcode')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-                    <div class="mb-1">
-                        <label for="tax_number" class="form-label">{{__('locale.labels.tax_number')}}</label>
-                        <input type="text" id="tax_number" class="form-control @error('tax_number') is-invalid @enderror" value="{{ $user->customer->tax_number }}" name="tax_number">
-                        @error('tax_number')
-                        <p><small class="text-danger">{{ $message }}</small></p>
-                        @enderror
-                    </div>
-
-
-                    <h5 class="mb-1 mt-2 mt-sm-0"><x-ds-icon name="alert-circle" /> {{__('locale.labels.email_notifications')}}</h5>
-
-                    <div class="mb-1">
-                        <div class="form-check form-switch form-check-primary">
-                            <label for="login" class="mr-2">{{__('locale.auth.login')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{__('locale.customer.every_single_login')}}' /> </label>
-                            <input type="checkbox" name="notifications[login]" value="yes" class="form-check-input" id="login" {{ $user->customer->getNotifications()['login'] == 'yes' ? 'checked':null }}>
-                            <label class="form-check-label" for="login">
-                                <span class="switch-icon-left"><x-ds-icon name="check" /> </span>
-                                <span class="switch-icon-right"><x-ds-icon name="x" /> </span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="mb-1">
-                        <div class="form-check form-switch form-check-primary">
-                            <label for="sender_id" class="mr-1">{{__('locale.labels.sender_identity')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{__('locale.customer.sender_id_verification')}}' /> </label>
-                            <input type="checkbox" name="notifications[sender_id]" value="yes" class="form-check-input" id="sender_id" {{ $user->customer->getNotifications()['sender_id'] == 'yes' ? 'checked':null }}>
-                            <label class="form-check-label" for="sender_id">
-                                <span class="switch-icon-left"><x-ds-icon name="check" /> </span>
-                                <span class="switch-icon-right"><x-ds-icon name="x" /> </span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="mb-1">
-                        <div class="form-check form-switch form-check-primary">
-                            <label for="keyword" class="mr-1">{{__('locale.labels.keyword')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{__('locale.customer.purchase_keyword')}}' /> </label>
-                            <input type="checkbox" name="notifications[keyword]" value="yes" class="form-check-input" id="keyword" {{ $user->customer->getNotifications()['keyword'] == 'yes' ? 'checked':null }}>
-                            <label class="form-check-label" for="keyword">
-                                <span class="switch-icon-left"><x-ds-icon name="check" /> </span>
-                                <span class="switch-icon-right"><x-ds-icon name="x" /> </span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="mb-1">
-                        <div class="form-check form-switch form-check-primary">
-                            <label for="subscription" class="mr-1">{{__('locale.menu.Subscriptions')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{__('locale.customer.successful_subscription')}}' /> </label>
-                            <input type="checkbox" class="form-check-input" name="notifications[subscription]" value="yes" id="subscription" {{ $user->customer->getNotifications()['subscription'] == 'yes' ? 'checked':null }}>
-                            <label class="form-check-label" for="subscription">
-                                <span class="switch-icon-left"><x-ds-icon name="check" /> </span>
-                                <span class="switch-icon-right"><x-ds-icon name="x" /> </span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="mb-1">
-                        <div class="form-check form-switch form-check-primary">
-                            <label for="promotion" class="mr-1">{{__('locale.labels.promotion')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{__('locale.customer.promotional_newsletter')}}' /> </label>
-                            <input type="checkbox" class="form-check-input" name="notifications[promotion]" value="yes" id="promotion" {{ $user->customer->getNotifications()['promotion'] == 'yes' ? 'checked':null }}>
-                            <label class="form-check-label" for="promotion">
-                                <span class="switch-icon-left"><x-ds-icon name="check" /> </span>
-                                <span class="switch-icon-right"><x-ds-icon name="x" /> </span>
-                            </label>
-                        </div>
-                    </div>
-
-{{--                    <div class="mb-1">--}}
-{{--                        <div class="form-check form-switch form-check-primary">--}}
-{{--                            <label for="profile" class="mr-1">{{__('locale.labels.profile')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{ __('locale.customer.profile_activities') }}' /> </label>--}}
-{{--                            <input type="checkbox" class="form-check-input" id="profile" name="notifications[profile]" value="yes" {{ $user->customer->getNotifications()['profile'] == 'yes' ? 'checked':null }}>--}}
-{{--                            <label class="form-check-label" for="profile">--}}
-{{--                                <span class="switch-icon-left"><x-ds-icon name="check" /> </span>--}}
-{{--                                <span class="switch-icon-right"><x-ds-icon name="x" /> </span>--}}
-{{--                            </label>--}}
-{{--                        </div>--}}
-{{--                    </div>--}}
-
+                <div class="sr-field">
+                    <label for="company">{{ __('locale.labels.company') }}</label>
+                    <input type="text" id="company" class="form-control @error('company') is-invalid @enderror" value="{{ old('company', $customer->company) }}" name="company">
+                    @error('company')<p class="sr-error">{{ $message }}</p>@enderror
                 </div>
-                <div class="col-12 d-flex flex-sm-row flex-column justify-content-end mt-1">
-                    <button type="submit" class="btn btn-primary glow mb-1 mb-sm-0 mr-0 mr-sm-1"><x-ds-icon name="save" /> {{ __('locale.buttons.save_changes') }}</button>
+                <div class="sr-field sr-span-2">
+                    <label for="website">{{ __('locale.labels.website') }}</label>
+                    <input type="url" id="website" placeholder="https://" class="form-control @error('website') is-invalid @enderror" value="{{ old('website', $customer->website) }}" name="website">
+                    @error('website')<p class="sr-error">{{ $message }}</p>@enderror
                 </div>
             </div>
-        </form>
-    </div>
+        </div>
+
+        <div class="sr-section">
+            <div class="sr-section__label">
+                <h3>Address</h3>
+                <p>Where you're based.</p>
+            </div>
+            <div class="sr-fields">
+                <div class="sr-field sr-span-2">
+                    <label for="address">{{ __('locale.labels.address') }} <span class="text-danger">*</span></label>
+                    <input type="text" id="address" class="form-control @error('address') is-invalid @enderror" value="{{ old('address', $customer->address) }}" name="address" required>
+                    @error('address')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+                <div class="sr-field">
+                    <label for="city">{{ __('locale.labels.city') }} <span class="text-danger">*</span></label>
+                    <input type="text" id="city" class="form-control @error('city') is-invalid @enderror" value="{{ old('city', $customer->city) }}" name="city" required>
+                    @error('city')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+                <div class="sr-field">
+                    <label for="state">{{ __('locale.labels.state') }}</label>
+                    <input type="text" id="state" class="form-control @error('state') is-invalid @enderror" value="{{ old('state', $customer->state) }}" name="state">
+                    @error('state')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+                <div class="sr-field">
+                    <label for="postcode">{{ __('locale.labels.postcode') }}</label>
+                    <input type="text" id="postcode" class="form-control @error('postcode') is-invalid @enderror" value="{{ old('postcode', $customer->postcode) }}" name="postcode">
+                    @error('postcode')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+                <div class="sr-field">
+                    <label for="country">{{ __('locale.labels.country') }} <span class="text-danger">*</span></label>
+                    <select class="form-select select2" id="country" name="country">
+                        @foreach(\App\Helpers\Helper::countries() as $country)
+                            <option value="{{ $country['name'] }}" {{ old('country', $customer->country) == $country['name'] ? 'selected' : null }}>{{ $country['name'] }}</option>
+                        @endforeach
+                    </select>
+                    @error('country')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+            </div>
+        </div>
+
+        <div class="sr-section">
+            <div class="sr-section__label">
+                <h3>Billing address</h3>
+                <p>Shown on your invoices.</p>
+            </div>
+            <div class="sr-fields">
+                <div class="sr-span-2">
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="billing-same-as-address">
+                        <label class="form-check-label" for="billing-same-as-address">Same as my address</label>
+                    </div>
+                </div>
+                <div class="sr-field sr-span-2">
+                    <label for="financial_address">{{ __('locale.labels.address') }}</label>
+                    <input type="text" id="financial_address" class="form-control @error('financial_address') is-invalid @enderror" value="{{ old('financial_address', $customer->financial_address) }}" name="financial_address">
+                    @error('financial_address')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+                <div class="sr-field">
+                    <label for="financial_city">{{ __('locale.labels.city') }}</label>
+                    <input type="text" id="financial_city" class="form-control @error('financial_city') is-invalid @enderror" value="{{ old('financial_city', $customer->financial_city) }}" name="financial_city">
+                    @error('financial_city')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+                <div class="sr-field">
+                    <label for="financial_postcode">{{ __('locale.labels.postcode') }}</label>
+                    <input type="text" id="financial_postcode" class="form-control @error('financial_postcode') is-invalid @enderror" value="{{ old('financial_postcode', $customer->financial_postcode) }}" name="financial_postcode">
+                    @error('financial_postcode')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+                <div class="sr-field sr-span-2">
+                    <label for="tax_number">{{ __('locale.labels.tax_number') }}</label>
+                    <input type="text" id="tax_number" class="form-control @error('tax_number') is-invalid @enderror" value="{{ old('tax_number', $customer->tax_number) }}" name="tax_number">
+                    @error('tax_number')<p class="sr-error">{{ $message }}</p>@enderror
+                </div>
+            </div>
+        </div>
+
+        <div class="sr-section">
+            <div class="sr-section__label">
+                <h3>{{ __('locale.labels.email_notifications') }}</h3>
+                <p>Choose which emails you get.</p>
+            </div>
+            <div>
+                @foreach ($notificationRows as $key => [$label, $hint])
+                    <div class="d-flex align-items-center justify-content-between gap-3 py-2 {{ $loop->last ? '' : 'border-bottom' }}" style="border-color:var(--color-border)!important">
+                        <label for="{{ $key }}" class="mb-0" style="font-size:.8125rem;font-weight:500" title="{{ $hint }}">{{ $label }}
+                            <span class="d-block fw-normal text-muted" style="font-size:.75rem">{{ $hint }}</span>
+                        </label>
+                        <label class="sr-switch" for="{{ $key }}">
+                            <input type="checkbox" name="notifications[{{ $key }}]" value="yes" id="{{ $key }}" {{ ($notifications[$key] ?? 'no') == 'yes' ? 'checked' : '' }}>
+                            <span class="sr-switch__text sr-on">On</span>
+                            <span class="sr-switch__text sr-off">Off</span>
+                        </label>
+                    </div>
+                @endforeach
+            </div>
+        </div>
+
+        <div class="sr-card__foot">
+            <span class="sr-req"><span class="text-danger">*</span> Required</span>
+            <button type="submit" class="btn btn-primary">{{ __('locale.buttons.save_changes') }}</button>
+        </div>
+    </form>
 </div>
+
+<script>
+    (function () {
+        var same = document.getElementById('billing-same-as-address');
+        if (!same) { return; }
+        var pairs = [['address', 'financial_address'], ['city', 'financial_city'], ['postcode', 'financial_postcode']];
+        function copy() {
+            pairs.forEach(function (p) {
+                var from = document.getElementById(p[0]), to = document.getElementById(p[1]);
+                if (from && to) { to.value = from.value; to.readOnly = same.checked; }
+            });
+        }
+        same.addEventListener('change', copy);
+        pairs.forEach(function (p) {
+            var from = document.getElementById(p[0]);
+            if (from) { from.addEventListener('input', function () { if (same.checked) { copy(); } }); }
+        });
+    })();
+</script>

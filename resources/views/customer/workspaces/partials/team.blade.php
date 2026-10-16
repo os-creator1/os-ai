@@ -1,0 +1,211 @@
+{{--
+    Settings → Team: add a member, then manage the people who already belong to
+    this account. Presentation only — every form below posts to the same
+    WorkspaceController member endpoints as before (the page script in
+    show.blade.php rewrites each form's action from data-workspace-action /
+    data-member-action), and every control is shown only when the existing rules
+    allow it (Owner-only role changes, Admin members only manageable by the
+    Owner, access edits only when the manager can see the member's complete
+    Business set). There is no invitation workflow: a person must already have a
+    Business OS account, so there are no pending invitations to list.
+--}}
+@php
+    $manageableBusinessUids = collect($manageableBusinesses ?? [])->pluck('uid')->all();
+    $singleManageableBusiness = count($manageableBusinesses ?? []) === 1 ? $manageableBusinesses[0] : null;
+    $teamHeadingContext = $singleManageableBusiness['name'] ?? $workspace['name'];
+    $viewerIsOwner = $workspace['role'] === 'Owner';
+    $initialsOf = function (string $name): string {
+        $letters = '';
+        foreach (preg_split('/\s+/', trim($name)) ?: [] as $part) {
+            if ($part !== '' && strlen($letters) < 2) {
+                $letters .= mb_strtoupper(mb_substr($part, 0, 1));
+            }
+        }
+        return $letters !== '' ? $letters : '?';
+    };
+    $peopleCount = count($directory) + (! empty($teamOwner) ? 1 : 0);
+@endphp
+
+<div class="col-12">
+    <div class="sr-page sr-page--narrow">
+        <a href="{{ route('customer.workspaces.settings.show', request()->route('workspaceUid')) }}" class="sr-back">
+            <x-ds-icon name="arrow-left" size="14" aria-hidden="true" /> Back to Settings
+        </a>
+        <div class="sr-head">
+            <div class="sr-head__main">
+                <h1 class="sr-title">Team</h1>
+                <p class="sr-lede">Manage members and their access to {{ $teamHeadingContext }}.</p>
+            </div>
+        </div>
+
+        <div class="sr-card" data-section="team-add">
+            <div class="sr-card__body">
+                <form method="POST" data-workspace-action="members">
+                    @csrf
+                    <div class="d-flex align-items-start gap-3 mb-3">
+                        <span class="sr-tile"><x-ds-icon name="user-plus" size="18" /></span>
+                        <div>
+                            <h2 class="sr-card__title">Add a member</h2>
+                            @if ($singleManageableBusiness !== null)
+                                <p class="sr-card__sub" data-role="member-single-business">They'll get access to {{ $singleManageableBusiness['name'] }} with the role you choose.</p>
+                            @else
+                                <p class="sr-card__sub">They'll get access with the role you choose.</p>
+                            @endif
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-3 align-items-start flex-wrap">
+                        <div class="sr-field flex-grow-1" style="min-width:220px">
+                            <label for="member_email">Email address</label>
+                            <input type="email" id="member_email" name="member_email" value="{{ old('member_email') }}" autocomplete="off"
+                                   placeholder="name@company.com" required
+                                   class="form-control @error('member_email') is-invalid @enderror">
+                            @if ($errors->first('member_email'))
+                                <p class="sr-error">{{ $errors->first('member_email') }}</p>
+                            @else
+                                <p class="sr-hint">They need an existing MotionGrove account first.</p>
+                            @endif
+                        </div>
+                        <div class="sr-field" style="min-width:160px">
+                            <label for="member-role">Role</label>
+                            <select class="form-select" id="member-role" name="role">
+                                <option value="staff">Staff</option>
+                                @if ($viewerIsOwner)
+                                    <option value="admin">Admin</option>
+                                @endif
+                            </select>
+                        </div>
+                        <div class="sr-field" style="padding-top:22px">
+                            <button type="submit" class="btn btn-primary d-inline-flex align-items-center gap-1">
+                                <x-ds-icon name="plus" size="16" /> Add member
+                            </button>
+                        </div>
+                    </div>
+
+                    @if ($singleManageableBusiness !== null)
+                        {{-- Exactly one Business this person can grant: nothing to choose, so the new
+                             member gets access to that one Business only (selected scope — least
+                             privilege, never a hidden "all Businesses" grant). --}}
+                        <input type="hidden" name="business_access_scope" value="selected">
+                        <input type="hidden" name="business_uids[]" value="{{ $singleManageableBusiness['uid'] }}">
+                    @else
+                        <div class="sr-field mt-3" style="max-width:260px">
+                            <label for="member-scope">Business access</label>
+                            <select class="form-select" id="member-scope" name="business_access_scope">
+                                <option value="all">All Businesses</option>
+                                <option value="selected">Selected Businesses</option>
+                            </select>
+                        </div>
+                    @endif
+                </form>
+            </div>
+        </div>
+
+        <div class="sr-card" data-section="team-members">
+            <div class="sr-card__head">
+                <h2 class="sr-card__title">Members</h2>
+                <span class="sr-card__meta">{{ $peopleCount }} {{ $peopleCount === 1 ? 'person' : 'people' }}</span>
+            </div>
+
+            <ul class="sr-list">
+                @if (! empty($teamOwner))
+                    <li class="sr-list__row" data-role="team-owner">
+                        <span class="sr-avatar">{{ $initialsOf($teamOwner['name']) }}</span>
+                        <div class="sr-list__main">
+                            <div class="sr-list__name">{{ $teamOwner['name'] }}@if ($teamOwner['is_you']) <span class="fw-normal text-muted">(you)</span>@endif</div>
+                            @if ($teamOwner['email'] !== '')
+                                <div class="sr-list__sub">{{ $teamOwner['email'] }}</div>
+                            @endif
+                        </div>
+                        <span class="sr-chip">Owner role</span>
+                    </li>
+                @endif
+
+                @foreach ($directory as $member)
+                    @php
+                        $viewerCanManageLifecycle = $viewerIsOwner || $member['role'] !== 'Admin';
+                        $viewerCanSeeMembersCompleteAccess = empty(array_diff($member['assigned_business_uids'], $manageableBusinessUids));
+                    @endphp
+                    <li class="sr-list__row" style="align-items:flex-start" data-member-uid="{{ $member['uid'] }}">
+                        <span class="sr-avatar">{{ $initialsOf($member['name']) }}</span>
+                        <div class="sr-list__main">
+                            <div class="sr-list__name">
+                                {{ $member['name'] }}
+                                <span class="sr-chip">{{ $member['role'] }}</span>
+                                @if ($member['is_active'])
+                                    <span class="sr-chip sr-chip--success">Active</span>
+                                @else
+                                    <span class="sr-chip">Inactive</span>
+                                @endif
+                            </div>
+                            <div class="sr-list__sub">
+                                {{ $member['scope'] }}@if ($member['scope'] === 'Selected Businesses') ({{ $member['assigned_business_count'] }})@endif
+                            </div>
+
+                            @if ($viewerCanManageLifecycle || $viewerIsOwner)
+                                <details class="mt-2">
+                                    <summary class="sr-linkbtn d-inline-block" style="cursor:pointer">Manage</summary>
+                                    <div class="mt-2 d-grid gap-2">
+                                        @if ($member['is_active'])
+                                            @if ($viewerIsOwner)
+                                                <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="d-flex gap-2 align-items-center flex-wrap">
+                                                    @csrf
+                                                    <label class="sr-label mb-0" for="role-{{ $member['uid'] }}">Role</label>
+                                                    <select name="role" id="role-{{ $member['uid'] }}" class="form-select form-select-sm w-auto">
+                                                        <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
+                                                        <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
+                                                    </select>
+                                                    <x-button type="submit" variant="secondary" size="sm">Change role</x-button>
+                                                </form>
+                                            @endif
+
+                                            @if ($viewerCanSeeMembersCompleteAccess)
+                                                <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="d-flex gap-2 align-items-center flex-wrap">
+                                                    @csrf
+                                                    <label class="sr-label mb-0" for="scope-{{ $member['uid'] }}">Business access</label>
+                                                    <select name="business_access_scope" id="scope-{{ $member['uid'] }}" class="form-select form-select-sm w-auto">
+                                                        <option value="all" @selected($member['scope'] === 'All Businesses')>All Businesses</option>
+                                                        <option value="selected" @selected($member['scope'] === 'Selected Businesses')>Selected Businesses</option>
+                                                    </select>
+                                                    @foreach ($manageableBusinesses ?? [] as $business)
+                                                        <div class="form-check form-check-inline mb-0">
+                                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
+                                                            <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                                        </div>
+                                                    @endforeach
+                                                    <x-button type="submit" variant="secondary" size="sm">Update access</x-button>
+                                                </form>
+                                            @else
+                                                <p class="sr-hint mb-0">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
+                                            @endif
+
+                                            @if ($viewerCanManageLifecycle)
+                                                <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
+                                                    @csrf
+                                                    <button type="submit" class="btn btn-sm btn-sr-danger-outline">Deactivate</button>
+                                                </form>
+                                            @endif
+                                        @elseif ($viewerCanManageLifecycle)
+                                            <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}">
+                                                @csrf
+                                                <button type="submit" class="btn btn-sm btn-outline-secondary">Reactivate</button>
+                                            </form>
+                                        @endif
+                                    </div>
+                                </details>
+                            @endif
+                        </div>
+                    </li>
+                @endforeach
+            </ul>
+
+            @if (empty($directory))
+                <div class="sr-empty" data-role="team-empty">
+                    <span class="sr-tile"><x-ds-icon name="users" size="18" /></span>
+                    <strong>No one else yet</strong>
+                    <p>People you add appear here, with their role and what they can open.</p>
+                </div>
+            @endif
+        </div>
+    </div>
+</div>
