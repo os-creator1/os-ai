@@ -2,9 +2,16 @@
 
 namespace Tests\Feature\Demo;
 
+use App\Enums\Automation\Workflow\ContactCreationSource;
+use App\Enums\Automation\Workflow\WorkflowStatus;
+use App\Enums\Automation\Workflow\WorkflowTriggerType;
+use App\Library\Automation\Workflow\Triggers\ContactCreatedTriggerSource;
+use App\Library\Automation\Workflow\Triggers\ListeningWorkflows;
+use App\Library\Automation\Workflow\WorkflowPublisher;
 use App\Library\Demo\BrightFrame\BrightFrameData;
 use App\Library\Demo\BrightFrame\DemoProvisioningGuard;
 use App\Models\AppConfig;
+use App\Models\AutomationWorkflow;
 use App\Models\Business;
 use App\Models\Contacts;
 use App\Models\User;
@@ -12,6 +19,10 @@ use App\Models\Website;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Hash;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\Support\TestDatabaseSafety;
@@ -282,6 +293,56 @@ class BrightFrameProvisionerTest extends TestCase
         $this->assertSame(0, DB::table('booking_types')->where('notify_email', true)->orWhere('notify_sms', true)->count());
         $this->assertSame(0, DB::table('automation_enrollments')->count(), 'provisioning must not enrol anyone in a live workflow');
         $this->assertSame(0, DB::table('seo_rank_targets')->where('next_check_at', '<=', now()->addYear())->count());
+    }
+
+    public function test_demo_workflows_cannot_cause_outbound_actions_after_provisioning_has_finished(): void
+    {
+        $this->provision();
+        $business = $this->demoBusiness();
+
+        // Draft workflows keep their full configuration for the builder UI...
+        $workflows = AutomationWorkflow::query()->where('business_id', $business->id)->get();
+        $this->assertCount(6, $workflows);
+        foreach ($workflows as $workflow) {
+            $this->assertSame(WorkflowStatus::Draft, $workflow->status, $workflow->name);
+            $this->assertNull($workflow->published_version_id, $workflow->name);
+            $this->assertNotEmpty($workflow->draftVersion()->definition['root']['next'] ?? [], $workflow->name);
+        }
+
+        // ...and the command is over. Fakes are installed NOW, so they prove what normal requests, jobs and workers can do.
+        Mail::fake();
+        Notification::fake();
+        Queue::fake();
+        Http::fake();
+
+        foreach (WorkflowTriggerType::cases() as $type) {
+            $this->assertSame([], app(ListeningWorkflows::class)->for($business->id, $type), $type->value . ' must have no listening workflow');
+        }
+
+        $contact = Contacts::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertSame(0, app(ContactCreatedTriggerSource::class)->handleContactCreated($contact, ContactCreationSource::Manual));
+
+        $this->assertSame(0, DB::table('automation_enrollments')->count());
+        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
+        Notification::assertNothingSent();
+        Queue::assertNothingPushed();
+        Http::assertNothingSent();
+    }
+
+    public function test_a_workflow_left_published_by_an_earlier_run_is_paused_by_the_next_run(): void
+    {
+        $this->provision();
+        $business = $this->demoBusiness();
+        $workflow = AutomationWorkflow::query()->where('business_id', $business->id)->where('name', 'Alert Team to New Text Messages')->firstOrFail();
+        app(WorkflowPublisher::class)->publish($workflow, null);
+        $this->assertSame(WorkflowStatus::Published, $workflow->fresh()->status);
+
+        $this->assertSame(0, $this->provision());
+
+        $this->assertSame(WorkflowStatus::Paused, $workflow->fresh()->status);
+        $this->assertSame([], app(ListeningWorkflows::class)->for($business->id, WorkflowTriggerType::MessageReceived));
+        $this->assertSame(0, DB::table('automation_workflows')->where('business_id', $business->id)->where('status', 'published')->count());
     }
 
     public function test_the_demo_user_can_log_in_and_the_website_is_public(): void

@@ -2,29 +2,31 @@
 
 namespace App\Library\Demo\BrightFrame;
 
+use App\Enums\Automation\Workflow\WorkflowStatus;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Library\Automation\Workflow\WorkflowDraftService;
-use App\Library\Automation\Workflow\WorkflowPublisher;
 use App\Models\AutomationWorkflow;
 use App\Models\CrmPipelineStage;
 use App\Models\Tag;
 use Illuminate\Support\Str;
 
 /**
- * Automations: six workflows built through the real draft service and
- * published through the real compiler/publisher, so the builder opens them
- * exactly like customer-made ones.
+ * Automations: six workflows built through the real draft service, so the
+ * builder opens them with their full configuration exactly like customer-made
+ * ones.
  *
- * SAFE BY CONSTRUCTION: the demo Business has no messaging number, sender,
- * sending server or email account, so every text/email step fails closed
- * ("no sending path") instead of reaching anyone. The audit at the end of the
- * provisioner re-proves that.
+ * NONE IS PUBLISHED. A draft workflow is never a trigger candidate
+ * (ListeningWorkflows requires status=published), so no request, scheduled job
+ * or queue worker can enrol anyone or run a step, whatever the environment
+ * fakes. The demo Business also has no messaging number, sender, sending server
+ * or email account. A workflow left published by an earlier run is paused:
+ * paused workflows accept no enrolments and execute no step. The audit at the
+ * end of the provisioner re-proves both.
  */
 final class AutomationsStage implements DemoStage
 {
     public function __construct(
         private readonly WorkflowDraftService $drafts,
-        private readonly WorkflowPublisher $publisher,
     ) {
     }
 
@@ -47,31 +49,31 @@ final class AutomationsStage implements DemoStage
                 $sms('Hi {first_name}, thanks for asking about a BrightFrame photo booth! A planner will text you a custom quote within one business day.'),
                 $addTag('Hot lead'),
                 $notify('New quote request from {first_name} {last_name}. Reply within the hour to win the booking.'),
-            ], true],
+            ]],
             ['Proposal Follow-up', WorkflowTriggerType::OpportunityStageChanged, ['pipeline_id' => $pipeline->id, 'to_stage_id' => $stage('Proposal sent')], [
                 $wait(2, 'days'),
                 $sms('Hi {first_name}, just checking that you received your BrightFrame proposal. Happy to answer any questions or hold your date a bit longer.'),
-            ], true],
+            ]],
             ['Booking Confirmation and Reminder', WorkflowTriggerType::AppointmentScheduled, [], [
                 $sms('Hi {first_name}, you are booked with BrightFrame Photo Booths. We look forward to talking through your event!'),
                 $wait(1, 'days'),
                 $sms('Reminder: your BrightFrame appointment is tomorrow. Reply here if you need to reschedule.'),
-            ], true],
+            ]],
             ['Post-Event Review Request', WorkflowTriggerType::OpportunityWon, ['pipeline_id' => $pipeline->id], [
                 $wait(3, 'days'),
                 $sms('Thank you for celebrating with BrightFrame, {first_name}! We would love your feedback on how the booth went.'),
                 $addTag('Repeat client'),
-            ], true],
+            ]],
             ['Alert Team to New Text Messages', WorkflowTriggerType::MessageReceived, [], [
                 $notify('{first_name} {last_name} just texted BrightFrame. Open Conversations to reply.'),
-            ], true],
+            ]],
             ['Cold Lead Nurture (draft)', WorkflowTriggerType::OpportunityLost, ['pipeline_id' => $pipeline->id], [
                 $wait(30, 'days'),
                 $sms('Hi {first_name}, BrightFrame here. Still planning your event? We have a few dates open and a spring discount for returning inquiries.'),
-            ], false],
+            ]],
         ];
 
-        foreach ($workflows as [$name, $trigger, $triggerConfig, $steps, $publish]) {
+        foreach ($workflows as [$name, $trigger, $triggerConfig, $steps]) {
             $workflow = AutomationWorkflow::query()->where('business_id', $business->id)->where('name', $name)->first();
 
             if ($workflow === null) {
@@ -81,10 +83,9 @@ final class AutomationsStage implements DemoStage
                 $definition['root']['config'] = array_merge($definition['root']['config'], $triggerConfig);
                 $definition['root']['next'] = $steps;
                 $this->drafts->autosave($draft, $definition, $draft->definition_revision);
-
-                if ($publish) {
-                    $this->publisher->publish($workflow->fresh(), $context->user->id);
-                }
+            } elseif ($workflow->status === WorkflowStatus::Published) {
+                // Published by an earlier run of this command: take it out of service, keep its configuration.
+                $workflow->forceFill(['status' => WorkflowStatus::Paused])->save();
             }
 
             $context->refs['workflows'][$name] = $workflow->fresh();

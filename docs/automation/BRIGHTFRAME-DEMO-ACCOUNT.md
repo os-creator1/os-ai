@@ -40,7 +40,7 @@ Why nothing can reach a person or a provider:
 
 | Area | How it is held shut |
 | --- | --- |
-| SMS / email automations | Workflows are real and published, but the tenant has no sending path, so every send step fails closed. No enrolments exist. |
+| SMS / email automations | All six workflows are saved as drafts (full triggers and steps visible in the builder), never published, so nothing can enrol or send. A workflow published by an earlier run is paused. The tenant also has no sending path. The safety audit fails if any is published. |
 | Booking reminders | Booking types have email/SMS notifications and reminders off; appointments are written as rows (no events). |
 | Documents | Built through `DocumentManager`; "sent" only under the faked mail/queue, then the reminder and balance-request sweeps are switched off per document. |
 | Stripe | A clearly named simulated connection (`acct_SIMULATED_DEMO`), status `restricted`, charges disabled. Paid history is inserted rows (`pi_SIMULATED_DEMO_*`). |
@@ -68,7 +68,7 @@ published site, 11 citations, review link + requests), Google Business Profile,
 Google Ads (3 campaigns, keywords, search terms, 60 days of metrics), Meta Ads
 (2 campaigns, 60 days), one ad goal, Forms (lead form, planning questionnaire,
 post-event survey; **Surveys are Forms** in this product, there is no separate
-module), Automations (5 live workflows + 1 draft), Payments & Contracts
+module), Automations (6 draft workflows, full configuration, none live), Payments & Contracts
 (7 documents: draft, sent, signed, paid).
 
 ## Running it on staging

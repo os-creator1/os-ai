@@ -68,6 +68,11 @@ final class DemoSafetyAudit
             $failed['booking_types'] = 'A booking type would notify customers.';
         }
 
+        $running = DB::table('automation_workflows')->where('business_id', $businessId)->where('status', 'published')->count();
+        if ($running !== 0) {
+            $failed['automation_workflows'] = "{$running} published workflow(s); demo workflows must stay draft or paused.";
+        }
+
         $dueRank = DB::table('seo_rank_targets')->where('business_id', $businessId)->where('tracking_state', 'tracking')
             ->where(fn ($q) => $q->whereNull('next_check_at')->orWhere('next_check_at', '<=', now()->addYear()))->count();
         if ($dueRank !== 0) {
