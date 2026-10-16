@@ -208,6 +208,7 @@ class WebsiteStudioController extends CustomerBaseController
                 'domainRows' => $website->domains()->count(),
             ],
             'packages' => [
+                'catalogSync' => $this->catalogReferences->staleness($website),
                 'catalogItems' => CatalogItem::where('business_id', $business->id)
                     ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
                     ->with('images')
@@ -215,7 +216,7 @@ class WebsiteStudioController extends CustomerBaseController
                     ->get(),
             ],
             'forms' => [
-                'forms' => WebsiteForm::where('business_id', $business->id)->get(),
+                'forms' => WebsiteForm::where('business_id', $business->id)->with('location:id,uid,name')->withCount('submissions')->orderBy('id')->get(),
             ],
             'questionnaires' => [
                 'responses' => ($definition = $this->questionnaireResolver->resolveForBusiness($business)) !== null

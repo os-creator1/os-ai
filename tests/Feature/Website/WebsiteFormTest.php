@@ -155,7 +155,7 @@ class WebsiteFormTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.website.pages.create', [$workspace->uid, $business->uid]))
             ->assertOk()
-            ->assertSee('<option value="form">Form</option>', false)
+            ->assertSee('data-add-type="form"', false)
             ->assertSee($form->name, false);
 
         $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
