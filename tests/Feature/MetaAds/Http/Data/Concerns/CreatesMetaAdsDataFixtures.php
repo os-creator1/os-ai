@@ -85,6 +85,10 @@ trait CreatesMetaAdsDataFixtures
     /** @param  array<int, string>  $permissions */
     protected function asMetaUser(Customer $customer, array $permissions = [self::VIEW, self::MANAGE]): void
     {
+        // The Workspace owner manages by ownership; a "no manage permission" actor is non-owner staff.
+        $owned = in_array(self::MANAGE, $permissions, true) ? null : $this->workspaceOwnedBy($customer);
+        $customer = $owned === null ? $customer : $this->nonOwnerStaff($owned, $permissions);
+
         $customer->user->email_verified_at = now();
         $customer->user->save();
 

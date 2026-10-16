@@ -87,9 +87,9 @@ class MetaAdsMutationController extends CustomerBaseController
      */
     private function mutate(Request $request, string $workspaceUid, string $businessUid, string $fallbackRoute, Closure $call): RedirectResponse
     {
-        [, $business] = $this->resolveMetaAdsModuleTenancy($workspaceUid, $businessUid);
+        [$workspace, $business] = $this->resolveMetaAdsModuleTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_meta_ads');
+        $this->authorizeMetaAdsManage($workspace);
 
         try {
             $outcome = $call($business, (int) Auth::id());

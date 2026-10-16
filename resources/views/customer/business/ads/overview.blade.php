@@ -209,7 +209,7 @@
                         'projectedMicros' => $overview->projectedMonthEndSpendMicros,
                         'projectionLowConfidence' => $overview->projectionLowConfidence,
                         'budgetUrl' => route('customer.workspaces.businesses.ads.settings', [$workspaceUid, $businessUid]) . '#monthly_budget_target',
-                        'canManageBudget' => \Illuminate\Support\Facades\Gate::allows('manage_google_ads'),
+                        'canManageBudget' => (bool) ($adsCanManage ?? false),
                     ])
                 </div>
             </div>

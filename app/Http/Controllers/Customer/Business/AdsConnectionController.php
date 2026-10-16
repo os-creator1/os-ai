@@ -99,7 +99,7 @@ class AdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         $account = $this->resolveAdsAccount($business);
 
@@ -153,7 +153,7 @@ class AdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         $existing = $this->adsConnectionFor($business);
 
@@ -244,7 +244,7 @@ class AdsConnectionController extends CustomerBaseController
             abort(404);
         }
 
-        if (Gate::denies('manage_google_ads')) {
+        if (! app(\App\Library\Workspace\WorkspaceManagementAuthority::class)->mayManage($workspace, 'manage_google_ads')) {
             abort(404);
         }
 
@@ -297,7 +297,7 @@ class AdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         $connection = $this->adsConnectionFor($business);
 
@@ -335,7 +335,7 @@ class AdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         // ONLY the customer id is read from the request: login id, currency
         // and time zone are re-derived server-side from the fresh candidate.
@@ -371,7 +371,7 @@ class AdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveAdsAccessibleTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         $connection = $this->adsConnectionFor($business);
 
@@ -394,7 +394,7 @@ class AdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         $account = $this->resolveAdsAccount($business);
 

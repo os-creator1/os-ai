@@ -109,17 +109,17 @@ class BusinessEmailSettingsHttpTest extends TestCase
 
     public function test_the_page_is_hidden_from_a_user_with_neither_email_permission(): void
     {
-        [$customer, $business, $workspace] = $this->emailTenant();
-        $this->authenticateAs($customer, ['view_contact']);
+        [, $business, $workspace] = $this->emailTenant();
+        $this->authenticateAs($this->assignedStaff($workspace, $business), ['view_contact']);
 
         $this->get($this->showUrl($workspace, $business))->assertStatus(401);
     }
 
     public function test_a_conversation_user_without_the_manage_permission_sees_status_but_no_connect_or_disconnect(): void
     {
-        [$customer, $business, $workspace] = $this->emailTenant();
+        [, $business, $workspace] = $this->emailTenant();
         $this->activeAccount($business);
-        $this->authenticateAs($customer, ['chat_box', 'view_contact']);
+        $this->authenticateAs($this->assignedStaff($workspace, $business), ['chat_box', 'view_contact']);
 
         $html = $this->get($this->showUrl($workspace, $business))->assertOk()->getContent();
 

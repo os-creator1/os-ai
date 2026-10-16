@@ -6,6 +6,7 @@ use App\Library\Ads\AdsFeatureAccess;
 use App\Library\MetaAds\MetaAdsConnectionManager;
 use App\Library\Navigation\CustomerContext;
 use App\Library\MetaAds\Sync\MetaAdsFreshness;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Models\Business;
 use App\Models\BusinessMetaConnection;
 use App\Models\MetaAdsAccount;
@@ -108,6 +109,14 @@ trait ResolvesMetaAdsBusinessTenancy
             ->first();
     }
 
+    /** Owner-or-permitted; the same 401 a missing manage_meta_ads has always been. */
+    protected function authorizeMetaAdsManage(Workspace $workspace): void
+    {
+        if (! app(WorkspaceManagementAuthority::class)->mayManage($workspace, 'manage_meta_ads')) {
+            throw new \Illuminate\Auth\Access\AuthorizationException();
+        }
+    }
+
     /**
      * The view data every Meta page shares. `metaState` is one of
      * not_connected | expired | no_account | ready ("expired" also covers a
@@ -132,7 +141,7 @@ trait ResolvesMetaAdsBusinessTenancy
         // are View-As prohibited anyway, so showing the buttons would only bounce the click.
         $context = request()->attributes->get('customerContext');
         $viewingAsClient = $context instanceof CustomerContext && $context->isViewingAsClient();
-        $canAct = ! $viewingAsClient && Gate::allows('manage_meta_ads');
+        $canAct = ! $viewingAsClient && app(WorkspaceManagementAuthority::class)->mayManage($workspace, 'manage_meta_ads');
 
         $canManage = $canAct
             && $connection !== null

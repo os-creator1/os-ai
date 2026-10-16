@@ -120,22 +120,22 @@
                         <label for="monthly_budget_target" class="form-label text-label">Monthly budget target ({{ $account->currency_code }})</label>
                         <input type="text" inputmode="decimal" autocomplete="off" class="form-control mb-1 @error('monthly_budget_target') is-invalid @enderror"
                                name="monthly_budget_target" id="monthly_budget_target" placeholder="For example 250"
-                               value="{{ old('monthly_budget_target', $monthlyTargetInput) }}" @cannot('manage_google_ads') disabled @endcannot>
+                               value="{{ old('monthly_budget_target', $monthlyTargetInput) }}" @if(! $adsCanManage) disabled @endif>
                         <div class="form-text text-caption mb-2">What you plan to spend on ads each month. Leave blank for no target.</div>
                     </div>
                     <div class="col-md-6">
                         <label for="target_cpl" class="form-label text-label">Target cost per conversion ({{ $account->currency_code }})</label>
                         <input type="text" inputmode="decimal" autocomplete="off" class="form-control mb-1 @error('target_cpl') is-invalid @enderror"
                                name="target_cpl" id="target_cpl" placeholder="For example 25"
-                               value="{{ old('target_cpl', $cplTargetInput) }}" @cannot('manage_google_ads') disabled @endcannot>
+                               value="{{ old('target_cpl', $cplTargetInput) }}" @if(! $adsCanManage) disabled @endif>
                         <div class="form-text text-caption mb-2">What you would like each Google conversion to cost. Leave blank for no target.</div>
                     </div>
                 </div>
-                @can('manage_google_ads')
+                @if($adsCanManage)
                     <x-button type="submit" icon="check" data-role="save-targets">Save targets</x-button>
                 @else
                     <p class="text-caption mb-0">You do not have permission to change these targets.</p>
-                @endcan
+                @endif
             </form>
         </x-card>
 
@@ -162,12 +162,12 @@
                 </dd>
             </dl>
             <p class="text-caption mb-2">Your figures update automatically every day. You can ask for an extra update, at most about once an hour.</p>
-            @can('manage_google_ads')
+            @if($adsCanManage)
                 <form method="POST" action="{{ route('customer.workspaces.businesses.ads.refresh', [$workspaceUid, $businessUid]) }}">
                     @csrf
                     <x-button type="submit" variant="outline" icon="refresh-cw" data-role="refresh-now">Refresh now</x-button>
                 </form>
-            @endcan
+            @endif
         </x-card>
     @endif
 
@@ -178,7 +178,7 @@
                 Disconnecting destroys the stored Google authorization and stops all updates. Your earlier figures are kept.
                 Reconnecting means going through Google's permission screen again. You can also remove this platform's access from your Google Account settings.
             </p>
-            @can('manage_google_ads')
+            @if($adsCanManage)
                 <form method="POST" action="{{ route('customer.workspaces.businesses.ads.disconnect', [$workspaceUid, $businessUid]) }}"
                       onsubmit="return confirm('Disconnect Google Ads? Updates will stop until you connect again.');">
                     @csrf
@@ -186,7 +186,7 @@
                 </form>
             @else
                 <p class="text-caption mb-0">You do not have permission to manage this connection.</p>
-            @endcan
+            @endif
         </x-card>
     @endif
 @endsection

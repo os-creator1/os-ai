@@ -386,4 +386,19 @@ class MetaAdsConnectionFlowTest extends TestCase
         $this->post($this->metaPage($workspace, $business, 'disconnect'))->assertRedirect($this->metaPage($workspace, $business));
         $this->assertDatabaseCount('business_meta_connections', 0);
     }
+
+    public function test_the_sole_owner_without_the_persisted_manage_permission_can_start_the_connection(): void
+    {
+        [$customer, $business, $workspace] = $this->metaHttpTenant();
+        $customer->user->email_verified_at = now();
+        $customer->user->save();
+        $this->withSession(['permissions' => collect(['access_backend', self::META_VIEW])]);
+        $this->actingAs($customer->user);
+
+        $this->get($this->metaPage($workspace, $business, 'settings'))->assertOk()->assertDontSee('Ask the owner of this account');
+
+        $this->post($this->metaPage($workspace, $business, 'connect'))->assertRedirect();
+        $this->assertNotSame('error', session('status'), (string) session('message'));
+        $this->assertTrue(BusinessMetaConnection::query()->where('business_id', $business->id)->exists());
+    }
 }

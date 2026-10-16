@@ -76,7 +76,7 @@ class AdsGoalsController extends CustomerBaseController
             'adsProviders' => $this->adsProviderSwitcher((string) $workspace->uid, (string) $business->uid),
             'provider' => 'overview',
             'rows' => $rows,
-            'canManage' => $this->canManage(),
+            'canManage' => $this->canManage($workspace),
             'currency' => strtoupper((string) $business->currency_code),
             'pipelines' => CrmPipeline::query()->where('business_id', $business->id)->whereNull('archived_at')->orderBy('position')->get(['id', 'name']),
             'forms' => Form::query()->where('business_id', $business->id)->orderBy('name')->get(['id', 'name']),
@@ -174,7 +174,7 @@ class AdsGoalsController extends CustomerBaseController
     {
         $resolved = $this->resolveAdsTenancy($workspaceUid, $businessUid);
 
-        $allowed = $manage ? $this->canManage() : (Gate::allows('view_google_ads') || Gate::allows('view_meta_ads'));
+        $allowed = $manage ? $this->canManage($resolved[0]) : (Gate::allows('view_google_ads') || Gate::allows('view_meta_ads'));
 
         if (! $allowed) {
             $this->authorize($manage ? 'manage_google_ads' : 'view_google_ads');
@@ -183,9 +183,11 @@ class AdsGoalsController extends CustomerBaseController
         return $resolved;
     }
 
-    private function canManage(): bool
+    private function canManage(\App\Models\Workspace $workspace): bool
     {
-        return Gate::allows('manage_google_ads') || Gate::allows('manage_meta_ads');
+        $authority = app(\App\Library\Workspace\WorkspaceManagementAuthority::class);
+
+        return $authority->mayManage($workspace, 'manage_google_ads') || $authority->mayManage($workspace, 'manage_meta_ads');
     }
 
     /**

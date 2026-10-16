@@ -9,6 +9,7 @@ use App\Library\Ads\AdsFeatureAccess;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\GoogleAds\GoogleAdsConnectionManager;
 use App\Library\GoogleAds\Sync\GoogleAdsFreshness;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
 use App\Models\GoogleAdsAccount;
@@ -147,6 +148,14 @@ trait ResolvesAdsBusinessTenancy
             ->first();
     }
 
+    /** Owner-or-permitted; the same 401 a missing manage_google_ads has always been. */
+    protected function authorizeAdsManage(Workspace $workspace): void
+    {
+        if (! app(WorkspaceManagementAuthority::class)->mayManage($workspace, 'manage_google_ads')) {
+            throw new \Illuminate\Auth\Access\AuthorizationException();
+        }
+    }
+
     /**
      * The view data every Ads page shares: identifiers, connection, the
      * resolved account (or null), a coarse `state`
@@ -170,7 +179,7 @@ trait ResolvesAdsBusinessTenancy
             'account' => $account,
             'adsState' => ! $active ? 'not_connected' : ($account === null ? 'no_account' : 'ready'),
             'adsHasModule' => $hasModule,
-            'adsCanManage' => Gate::allows('manage_google_ads'),
+            'adsCanManage' => app(WorkspaceManagementAuthority::class)->mayManage($workspace, 'manage_google_ads'),
             'freshness' => $account === null ? null : app(GoogleAdsFreshness::class)->for($account),
             'adsProviders' => $this->adsProviderSwitcher((string) $workspace->uid, (string) $business->uid),
             'adsNav' => $this->adsNavigation((string) $workspace->uid, (string) $business->uid, $hasModule, $activeKey),

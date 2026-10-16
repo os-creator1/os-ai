@@ -28,6 +28,7 @@ use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 trait CreatesMetaAdsHttpFixtures
 {
     use CreatesCustomerContextFixtures;
+    use \Tests\Feature\Concerns\CreatesNonOwnerStaff;
     use CreatesMetaAdsFixtures;
     use SeedsGoogleAdsReportingData;
     use SeedsMetaAdsReportingData;
@@ -87,6 +88,10 @@ trait CreatesMetaAdsHttpFixtures
     /** @param  array<int, string>  $permissions */
     protected function asMetaUser(Customer $customer, array $permissions = [self::META_VIEW, self::META_MANAGE]): void
     {
+        // The Workspace owner manages by ownership; a "no manage permission" actor is non-owner staff.
+        $owned = in_array(self::META_MANAGE, $permissions, true) ? null : $this->workspaceOwnedBy($customer);
+        $customer = $owned === null ? $customer : $this->nonOwnerStaff($owned, $permissions);
+
         $customer->user->email_verified_at = now();
         $customer->user->save();
 

@@ -30,6 +30,7 @@ use Tests\Feature\GoogleAds\Concerns\CreatesGoogleAdsFixtures;
 trait CreatesMutationFixtures
 {
     use CreatesGoogleAdsFixtures;
+    use \Tests\Feature\Concerns\CreatesNonOwnerStaff;
 
     /**
      * @return array{business: Business, workspace: Workspace, actor: User, customer: Customer, account: GoogleAdsAccount, connection: BusinessGoogleConnection}
@@ -78,7 +79,7 @@ trait CreatesMutationFixtures
         return [
             'business' => $business,
             'workspace' => $workspace->fresh(),
-            'actor' => User::query()->findOrFail($customer->user_id),
+            'actor' => User::query()->findOrFail($canManage ? $customer->user_id : $this->nonOwnerStaff($workspace, ['view_google_ads'])->user_id),
             'customer' => $customer,
             'account' => $account,
             'connection' => $connection,

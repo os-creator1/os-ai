@@ -38,10 +38,10 @@
                             </button>
                         </form>
                     @empty
-                        <p class="text-muted mb-0">Email connection is not available right now. Please contact support.</p>
+                        <p class="text-muted mb-0">Google and Microsoft email connections are not set up on this platform yet, so a mailbox cannot be connected right now. Please contact support.</p>
                     @endforelse
                 @else
-                    <p class="text-muted mb-0">Ask the account owner to connect an email account.</p>
+                    <p class="text-muted mb-0">You do not have permission to connect or change the email account. Ask the account owner to connect it or to grant you access.</p>
                 @endif
             @else
                 <p class="mb-2">

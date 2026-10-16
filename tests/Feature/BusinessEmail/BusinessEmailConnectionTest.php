@@ -135,12 +135,56 @@ class BusinessEmailConnectionTest extends TestCase
 
     public function test_connect_requires_the_manage_permission_and_creates_nothing_without_it(): void
     {
-        [$customer, $business, $workspace] = $this->emailTenant();
-        $this->authenticateAs($customer, ['chat_box', 'view_contact']);
+        [, $business, $workspace] = $this->emailTenant();
+        $this->authenticateAs($this->assignedStaff($workspace, $business), ['chat_box', 'view_contact']);
 
         $this->post($this->connectUrl($workspace, $business))->assertStatus(401);
 
         $this->assertNull($this->account($business));
+    }
+
+    public function test_the_sole_owner_without_the_persisted_permission_can_connect_and_complete_the_callback(): void
+    {
+        [$customer, $business, $workspace] = $this->emailTenant();
+        // Exactly what an existing account has: the permission is absent.
+        $this->authenticateAs($customer, ['chat_box', 'view_contact']);
+
+        $state = $this->beginAndGetState($workspace, $business);
+        $this->assertSame(State::Pending, $this->account($business)->state);
+
+        $this->get($this->callbackUrl('google', ['state' => $state, 'code' => 'c']))->assertRedirect();
+        $this->assertSame(State::Active, $this->account($business)->state);
+
+        $this->post(route('customer.workspaces.businesses.email.disconnect', [$workspace->uid, $business->uid]))->assertRedirect();
+        $this->assertFalse($this->account($business)->isActive());
+    }
+
+    public function test_the_owner_page_offers_connect_and_never_tells_the_owner_to_ask_the_owner(): void
+    {
+        [$customer, $business, $workspace] = $this->emailTenant();
+        $this->authenticateAs($customer, ['chat_box']);
+        $url = route('customer.workspaces.businesses.email.show', [$workspace->uid, $business->uid]);
+
+        $html = $this->get($url)->assertOk()->getContent();
+        $this->assertStringContainsString('Connect Google', $html);
+        $this->assertStringNotContainsString('Ask the account owner', $html);
+
+        config(['business_email.google.client_id' => null, 'business_email.microsoft.client_id' => null]);
+        $html = $this->get($url)->assertOk()->getContent();
+        $this->assertStringNotContainsString('Connect Google', $html);
+        $this->assertStringContainsString('are not set up on this platform yet', $html);
+        $this->assertStringNotContainsString('Ask the account owner', $html);
+    }
+
+    public function test_unauthorized_staff_see_a_permission_message_not_connect_buttons(): void
+    {
+        [, $business, $workspace] = $this->emailTenant();
+        $this->authenticateAs($this->assignedStaff($workspace, $business), ['chat_box', 'view_contact']);
+
+        $html = $this->get(route('customer.workspaces.businesses.email.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Connect Google', $html);
+        $this->assertStringContainsString('do not have permission', $html);
     }
 
     public function test_the_default_permission_set_does_not_include_manage_business_email(): void
@@ -311,10 +355,12 @@ class BusinessEmailConnectionTest extends TestCase
 
     public function test_a_callback_without_the_manage_permission_is_a_404_with_zero_exchange(): void
     {
-        [$customer, $business, $workspace] = $this->owner();
+        [, $business, $workspace] = $this->owner();
+        $staff = $this->assignedStaff($workspace, $business);
+        $this->authenticateAs($staff, ['manage_business_email']);
         $state = $this->beginAndGetState($workspace, $business);
 
-        $this->authenticateAs($customer, ['chat_box', 'view_contact']);
+        $this->authenticateAs($staff, ['chat_box', 'view_contact']);
 
         $this->get($this->callbackUrl('google', ['state' => $state, 'code' => 'c']))->assertNotFound();
         $this->assertSame(0, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
@@ -410,9 +456,9 @@ class BusinessEmailConnectionTest extends TestCase
 
     public function test_disconnect_requires_the_manage_permission(): void
     {
-        [$customer, $business, $workspace] = $this->emailTenant();
+        [, $business, $workspace] = $this->emailTenant();
         $this->activeAccount($business);
-        $this->authenticateAs($customer, ['chat_box', 'view_contact']);
+        $this->authenticateAs($this->assignedStaff($workspace, $business), ['chat_box', 'view_contact']);
 
         $this->post(route('customer.workspaces.businesses.email.disconnect', [$workspace->uid, $business->uid]))->assertStatus(401);
 

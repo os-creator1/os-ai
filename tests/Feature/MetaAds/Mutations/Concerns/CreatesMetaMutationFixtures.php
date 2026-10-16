@@ -27,6 +27,7 @@ use Tests\Feature\MetaAds\Concerns\CreatesMetaAdsFixtures;
 trait CreatesMetaMutationFixtures
 {
     use CreatesMetaAdsFixtures;
+    use \Tests\Feature\Concerns\CreatesNonOwnerStaff;
 
     /**
      * @return array{business: Business, workspace: Workspace, actor: User, customer: Customer, account: MetaAdsAccount, connection: BusinessMetaConnection}
@@ -67,7 +68,7 @@ trait CreatesMetaMutationFixtures
         return [
             'business' => $business,
             'workspace' => $workspace->fresh(),
-            'actor' => User::query()->findOrFail($customer->user_id),
+            'actor' => User::query()->findOrFail($canManage ? $customer->user_id : $this->nonOwnerStaff($workspace, ['view_meta_ads'])->user_id),
             'customer' => $customer,
             'account' => $account,
             'connection' => $connection,

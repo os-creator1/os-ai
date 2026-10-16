@@ -314,13 +314,20 @@ final class MetaAdsMutationService
     {
         $actor = User::query()->find($actorUserId);
 
-        if ($actor === null || ! $this->accounts->hasPermission($actor, self::PERMISSION)) {
+        $workspace ??= $business->workspace_id === null ? null : Workspace::query()->find($business->workspace_id);
+
+        // Owner-or-permitted: the same decision the controllers and UI make.
+        $permitted = $actor !== null && (
+            $workspace === null || (int) $workspace->id !== (int) $business->workspace_id
+                ? $this->accounts->hasPermission($actor, self::PERMISSION)
+                : app(\App\Library\Workspace\WorkspaceManagementAuthority::class)->allows($actor, $workspace, self::PERMISSION)
+        );
+
+        if (! $permitted) {
             throw new MetaAdsMutationForbiddenException();
         }
 
         try {
-            $workspace ??= $business->workspace_id === null ? null : Workspace::query()->find($business->workspace_id);
-
             $entitled = $workspace !== null
                 && (int) $workspace->id === (int) $business->workspace_id
                 && $workspace->is_active
