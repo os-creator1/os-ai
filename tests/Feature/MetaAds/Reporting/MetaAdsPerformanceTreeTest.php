@@ -7,6 +7,7 @@ use App\Library\MetaAds\Reporting\MetaAdsPerformanceTree;
 use App\Library\MetaAds\Reporting\MetaAdsPeriod;
 use App\Models\MetaAdsAccount;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\MetaAds\Reporting\Concerns\SeedsMetaAdsReportingData;
 use Tests\TestCase;
 
@@ -120,5 +121,37 @@ class MetaAdsPerformanceTreeTest extends TestCase
         $pausedOnly = $reader->page($this->account, $period, 'paused', 'spend', 'desc', 1);
         $this->assertSame(27_000_000, $pausedOnly['totals']['spendMicros']);
         $this->assertNull($pausedOnly['totals']['dailyBudgetMinor']);     // a paused budget is not being spent
+    }
+
+    public function test_the_tree_costs_a_constant_number_of_queries_however_many_rows_it_holds(): void
+    {
+        $seed = function (int $campaigns): void {
+            for ($i = 1; $i <= $campaigns; $i++) {
+                $campaign = $this->seedMetaCampaign($this->account, 'Bulk ' . $campaigns . '-' . $i);
+                $set = $this->seedMetaAdSet($campaign, 'Set ' . $i);
+                $ad = $this->seedMetaAd($set, 'Ad ' . $i);
+                $this->seedMetaDays($this->account, MetaAdsLevel::Campaign, $campaign->id, '2026-10-01', '2026-10-03', 1_000_000, 1);
+                $this->seedMetaDays($this->account, MetaAdsLevel::AdSet, $set->id, '2026-10-01', '2026-10-03', 1_000_000, 1);
+                $this->seedMetaDays($this->account, MetaAdsLevel::Ad, $ad->id, '2026-10-01', '2026-10-03', 1_000_000, 1);
+            }
+        };
+        $period = MetaAdsPeriod::resolve('last_30', $this->account);
+        $count = function () use ($period): int {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            app(MetaAdsPerformanceTree::class)->page($this->account, $period, null, 'spend', 'desc', 1);
+            $queries = count(DB::getQueryLog());
+            DB::disableQueryLog();
+
+            return $queries;
+        };
+
+        $seed(2);
+        $small = $count();
+        $seed(15);
+        $large = $count();
+
+        $this->assertSame($small, $large, 'the number of queries must not grow with the number of campaigns, ad sets or ads');
+        $this->assertLessThanOrEqual(16, $large);
     }
 }
