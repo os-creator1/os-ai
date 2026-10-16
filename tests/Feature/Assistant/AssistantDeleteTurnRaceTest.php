@@ -166,6 +166,7 @@ class AssistantDeleteTurnRaceTest extends TestCase
     public function test_the_scheduled_sweep_never_waits_for_a_conversation_whose_turn_is_running_and_gets_it_next_time(): void
     {
         [, , , $conversation] = $this->start();
+        config(['assistant.retention_days' => 90]); // the sweep only acts under a positive retention period (default is keep-until-deleted)
         AssistantConversation::query()->whereKey($conversation->id)->update(['last_message_at' => now()->subDays(120)]);
         $holder = Cache::lock($this->key($conversation), 120);
         $this->assertTrue($holder->get());
