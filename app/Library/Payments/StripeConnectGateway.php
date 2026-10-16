@@ -58,6 +58,36 @@ interface StripeConnectGateway
     public function retrieveAccount(string $stripeAccountId): ConnectedAccountSnapshot;
 
     /**
+     * "Connect existing Stripe account" — Stripe's Standard-account OAuth
+     * authorize URL (https://docs.stripe.com/connect/oauth-standard-accounts),
+     * built from the BUSINESS-lane client id. Pure URL construction.
+     *
+     * @throws StripeConnectException NOT_CONFIGURED when the client id is unset
+     */
+    public function oauthAuthorizeUrl(string $state, string $redirectUri): string;
+
+    /**
+     * Exchanges the one-time OAuth code. Only the account id, granted scope
+     * and mode cross this boundary — the access/refresh tokens are dropped
+     * inside the gateway and never stored: every later call uses the platform
+     * key plus the Stripe-Account header.
+     *
+     * @throws StripeConnectException PROVIDER_FAILED on any provider rejection
+     */
+    public function exchangeOAuthCode(string $authorizationCode): OAuthGrant;
+
+    /**
+     * Revokes THIS platform's OAuth grant for one account
+     * (connect.stripe.com/oauth/deauthorize). Never deletes the account.
+     *
+     * @throws StripeConnectException
+     */
+    public function deauthorizeAccount(string $stripeAccountId): void;
+
+    /** Whether the configured platform secret key is a live-mode key. */
+    public function platformIsLive(): bool;
+
+    /**
      * §7.2 steps 12/14 — create the DIRECT CHARGE PaymentIntent on the
      * Business's own connected account.
      *

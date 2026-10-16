@@ -79,6 +79,20 @@ class ProcessBusinessPaymentEvent extends Base implements ShouldQueue
     {
         $eventType = (string) $event->event_type;
 
+        // The owner revoked this platform at Stripe. Account-level, so there is
+        // no payment to resolve; only THIS lane's live row for that exact
+        // account (from the signature-verified `account` field) is touched.
+        if ($eventType === 'account.application.deauthorized') {
+            app(\App\Library\Payments\StripeConnectManager::class)->markRevokedByProvider(
+                (string) $event->stripe_account_id,
+                is_numeric(json_decode((string) $event->payload_encrypted, true)['created'] ?? null)
+                    ? (int) json_decode((string) $event->payload_encrypted, true)['created']
+                    : null,
+            );
+
+            return [BusinessPaymentEventState::Processed, null];
+        }
+
         // §8.3/§4.5 — refunds are routed by EVENT TYPE, through this same
         // claim/lease, never by inheriting the PaymentIntent's metadata.
         if (ProviderStatusMap::isRefundEventType($eventType)) {

@@ -25,6 +25,10 @@ final readonly class ConnectedAccountSnapshot
         public bool $detailsSubmitted,
         public ?string $requirementsDisabledReason,
         public ?string $defaultCurrency,
+        /** Stripe account type (standard|express|custom) when the provider reports it. */
+        public ?string $accountType = null,
+        /** Outstanding requirement keys (currently_due + past_due), codes only. */
+        public array $requirementsDue = [],
     ) {
     }
 }

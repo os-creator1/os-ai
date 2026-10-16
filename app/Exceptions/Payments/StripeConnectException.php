@@ -39,6 +39,21 @@ final class StripeConnectException extends RuntimeException
     /** §8.2 — the webhook signature did not verify over the raw body. */
     public const INVALID_SIGNATURE = 'invalid_signature';
 
+    /** The existing account is already live on another Business or Agency lane. */
+    public const ACCOUNT_IN_USE = 'account_in_use';
+
+    /** Stripe refused the OAuth authorisation / code (not every account is eligible). */
+    public const OAUTH_REJECTED = 'oauth_rejected';
+
+    /** The granted scope, account identity or account type is not acceptable. */
+    public const ACCOUNT_NOT_ELIGIBLE = 'account_not_eligible';
+
+    /** The account's test/live mode differs from the platform's or the attempt's. */
+    public const MODE_MISMATCH = 'mode_mismatch';
+
+    /** The OAuth state was missing, expired, replayed, tampered or another user's. */
+    public const OAUTH_STATE_INVALID = 'oauth_state_invalid';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -94,6 +109,31 @@ final class StripeConnectException extends RuntimeException
         return new self(self::INVALID_SIGNATURE, 'The webhook signature did not verify.');
     }
 
+    public static function accountInUse(): self
+    {
+        return new self(self::ACCOUNT_IN_USE, 'The Stripe account is already connected elsewhere.');
+    }
+
+    public static function oauthRejected(): self
+    {
+        return new self(self::OAUTH_REJECTED, 'Stripe did not accept the authorisation.');
+    }
+
+    public static function accountNotEligible(): self
+    {
+        return new self(self::ACCOUNT_NOT_ELIGIBLE, 'The Stripe account is not eligible.');
+    }
+
+    public static function modeMismatch(): self
+    {
+        return new self(self::MODE_MISMATCH, 'The Stripe account is in a different mode.');
+    }
+
+    public static function oauthStateInvalid(): self
+    {
+        return new self(self::OAUTH_STATE_INVALID, 'The authorisation attempt could not be verified.');
+    }
+
     public function customerMessage(): string
     {
         return match ($this->reason) {
@@ -101,6 +141,11 @@ final class StripeConnectException extends RuntimeException
             self::NOT_CONNECTED => 'Connect a Stripe account first.',
             self::PROVIDER_FAILED => 'Stripe could not complete that request. Please try again.',
             self::NOT_CONFIGURED => 'Online payments are not available on this platform yet.',
+            self::ACCOUNT_IN_USE => 'That Stripe account is already connected to another business or agency here. Use a different account, or set up a new one.',
+            self::OAUTH_REJECTED => 'Stripe could not connect that account. Not every existing Stripe account is eligible — for example, an account already controlled by another platform cannot be connected. You can try a different account or set up a new Stripe account instead.',
+            self::ACCOUNT_NOT_ELIGIBLE => 'That Stripe account cannot be used for payments here. Only standard Stripe accounts can be connected. You can try a different account or set up a new one instead.',
+            self::MODE_MISMATCH => 'That Stripe account is in a different mode (test or live) than this platform. Connect an account in the matching mode.',
+            self::OAUTH_STATE_INVALID => 'That Stripe authorisation link has expired or is no longer valid. Please start again.',
             default => 'That could not be completed.',
         };
     }

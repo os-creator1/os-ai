@@ -50,6 +50,81 @@ class FakeStripeConnectGateway implements StripeConnectGateway
      */
     public $duringRetrieve = null;
 
+    // ---- "Connect existing Stripe account" (OAuth) ---------------------
+    public string $oauthAccountId = 'acct_existing000001';
+
+    public string $oauthScope = 'read_write';
+
+    public bool $oauthLivemode = false;
+
+    public bool $platformLive = false;
+
+    public ?string $accountType = 'standard';
+
+    /** @var array<int, string> */
+    public array $requirementsDue = [];
+
+    public ?StripeConnectException $failOAuthWith = null;
+
+    public ?StripeConnectException $failDeauthorizeWith = null;
+
+    /** @var null|callable():void invoked DURING deauthorizeAccount(), i.e. mid-revocation */
+    public $duringDeauthorize = null;
+
+    public ?StripeConnectException $failAuthorizeWith = null;
+
+    /** @var array<string, true> */
+    public array $usedCodes = [];
+
+    public function oauthAuthorizeUrl(string $state, string $redirectUri): string
+    {
+        $this->record('oauthAuthorizeUrl', ['state' => $state, 'redirect_uri' => $redirectUri]);
+
+        if ($this->failAuthorizeWith !== null) {
+            throw $this->failAuthorizeWith;
+        }
+
+        return 'https://connect.stripe.test/oauth/authorize?' . http_build_query([
+            'client_id' => 'ca_business_fake', 'state' => $state, 'redirect_uri' => $redirectUri, 'scope' => 'read_write',
+        ]);
+    }
+
+    public function exchangeOAuthCode(string $authorizationCode): \App\Library\Payments\OAuthGrant
+    {
+        $this->record('exchangeOAuthCode', ['code' => $authorizationCode]);
+
+        if ($this->failOAuthWith !== null) {
+            throw $this->failOAuthWith;
+        }
+
+        // Stripe authorisation codes are single-use.
+        if (isset($this->usedCodes[$authorizationCode])) {
+            throw StripeConnectException::providerFailed();
+        }
+
+        $this->usedCodes[$authorizationCode] = true;
+
+        return new \App\Library\Payments\OAuthGrant($this->oauthAccountId, $this->oauthScope, $this->oauthLivemode);
+    }
+
+    public function deauthorizeAccount(string $stripeAccountId): void
+    {
+        $this->record('deauthorizeAccount', ['account' => $stripeAccountId]);
+
+        if ($this->duringDeauthorize !== null) {
+            ($this->duringDeauthorize)();
+        }
+
+        if ($this->failDeauthorizeWith !== null) {
+            throw $this->failDeauthorizeWith;
+        }
+    }
+
+    public function platformIsLive(): bool
+    {
+        return $this->platformLive;
+    }
+
     public function createAccount(string $country, ?string $email, string $businessUid): ConnectedAccountSnapshot
     {
         $this->record('createAccount', ['country' => $country, 'business_uid' => $businessUid]);
@@ -345,6 +420,8 @@ class FakeStripeConnectGateway implements StripeConnectGateway
             detailsSubmitted: $this->detailsSubmitted,
             requirementsDisabledReason: $this->disabledReason,
             defaultCurrency: $this->defaultCurrency,
+            accountType: $this->accountType,
+            requirementsDue: $this->requirementsDue,
         );
     }
 
