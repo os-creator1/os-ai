@@ -81,7 +81,7 @@
 
         <x-card :padded="true" class="mb-2" data-role="tracking-notice">
             <strong>Visitor tracking is off.</strong>
-            <span class="text-caption d-block">The Meta Pixel, the Conversions API and click-ID capture are <strong>not enabled</strong>. They would track visitors, and this platform does not yet have a visitor-consent mechanism to do that safely.</span>
+            <span class="text-caption d-block">The Meta Pixel, the Conversions API and Meta click-ID capture are <strong>not enabled</strong>. They would track visitors, and this platform does not yet have a visitor-consent mechanism to do that safely.</span>
         </x-card>
 
         <x-card :padded="true" class="mb-2" data-role="explainer">
@@ -90,7 +90,7 @@
                 <ol class="mb-0 ps-2 mt-1">
                     <li class="mb-50"><strong>Meta counts actions</strong> for the result type you chose. It decides what counts and when.</li>
                     <li class="mb-50"><strong>This platform counts contacts</strong> from your forms, website forms and bookings. A lead gets a Meta tag only if the visit came from a tagged link.</li>
-                    <li>A tag isn't proof of a paid click, and it never tells us which campaign, ad set or ad produced the lead, so we never guess.</li>
+                    <li>A tag is not proof of a paid click, and it never tells us which Meta campaign, ad set or ad produced a lead, so we never guess one.</li>
                 </ol>
             </details>
         </x-card>

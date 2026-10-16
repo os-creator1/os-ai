@@ -68,7 +68,7 @@
             <div class="d-flex justify-content-between align-items-start flex-wrap gap-1 mb-1">
                 <div>
                     <h2 class="h4 mb-0" data-role="goal-name">{{ $purpose->name }}</h2>
-                    <p class="text-caption text-muted mb-0">Ends in a new {{ $purpose->label('person') }} &middot; {{ $row['googleCampaigns']->count() + $row['metaCampaigns']->count() }} {{ ($row['googleCampaigns']->count() + $row['metaCampaigns']->count()) === 1 ? 'campaign' : 'campaigns' }}</p>
+                    <p class="text-caption text-muted mb-0">Ends in a new {{ $purpose->label('person') }} &middot; <span data-goal-count="{{ $row['googleCampaigns']->count() + $row['metaCampaigns']->count() }}">{{ $row['googleCampaigns']->count() + $row['metaCampaigns']->count() }} {{ ($row['googleCampaigns']->count() + $row['metaCampaigns']->count()) === 1 ? 'campaign' : 'campaigns' }}</span><span data-goal-filter-label></span></p>
                 </div>
                 <x-badge :variant="$purpose->is_active ? 'success' : 'neutral'">{{ $purpose->is_active ? 'Active' : 'Paused' }}</x-badge>
             </div>
@@ -97,7 +97,7 @@
                 @foreach($pathSteps as [$stepLabel, $stepValue, $stepEmpty])
                     <div class="gl-step {{ $stepValue !== null ? 'is-set' : ($stepEmpty !== '' ? 'is-open' : 'is-set') }}">
                         <small>{{ $stepLabel }}</small>
-                        <span>{{ $stepValue ?? $stepEmpty }}</span>
+                        <span @if($stepLabel === 'Ad') data-goal-count-step="{{ $campaignCount }}" @endif>{{ $stepValue ?? $stepEmpty }}</span>
                     </div>
                 @endforeach
             </div>
@@ -248,6 +248,8 @@
                 <p class="text-muted mb-1" data-role="no-assigned">No campaign is assigned to this goal yet.</p>
             @endforelse
 
+            <p class="text-muted mb-1" data-role="filter-empty" hidden>No campaign on this channel is assigned to this goal.</p>
+
             @if($canManage && $purpose->is_active && ($unassigned['google']->isNotEmpty() || $unassigned['meta']->isNotEmpty()))
                 <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.campaigns', [$workspaceUid, $businessUid]) }}" class="d-flex align-items-end gap-1 flex-wrap mt-1" data-role="assign-form">
                     @csrf
@@ -320,10 +322,24 @@
         (function () {
             var buttons = document.querySelectorAll('[data-channel-filter]');
             if (!buttons.length) { return; }
+            function plural(n) { return n + (n === 1 ? ' campaign' : ' campaigns'); }
             function apply(channel) {
                 buttons.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-channel-filter') === channel ? 'true' : 'false'); });
-                document.querySelectorAll('[data-role="assigned-campaign"]').forEach(function (row) {
-                    row.hidden = channel !== 'all' && row.getAttribute('data-provider') !== channel;
+                document.querySelectorAll('[data-role="goal"]').forEach(function (goal) {
+                    var rows = goal.querySelectorAll('[data-role="assigned-campaign"]');
+                    var shown = 0;
+                    rows.forEach(function (row) {
+                        row.hidden = channel !== 'all' && row.getAttribute('data-provider') !== channel;
+                        if (!row.hidden) { shown++; }
+                    });
+                    var count = goal.querySelector('[data-goal-count]');
+                    var step = goal.querySelector('[data-goal-count-step]');
+                    var label = goal.querySelector('[data-goal-filter-label]');
+                    var empty = goal.querySelector('[data-role="filter-empty"]');
+                    if (count) { count.textContent = plural(shown); }
+                    if (step) { step.textContent = shown > 0 ? plural(shown) : 'No campaign yet'; }
+                    if (label) { label.textContent = channel === 'all' ? '' : ' (' + (channel === 'google' ? 'Google' : 'Meta') + ' only)'; }
+                    if (empty) { empty.hidden = !(channel !== 'all' && rows.length > 0 ? shown === 0 : (channel !== 'all' && shown === 0)); }
                 });
             }
             buttons.forEach(function (b) { b.addEventListener('click', function () { apply(b.getAttribute('data-channel-filter')); }); });

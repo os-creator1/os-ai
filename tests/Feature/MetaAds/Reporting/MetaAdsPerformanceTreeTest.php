@@ -73,7 +73,6 @@ class MetaAdsPerformanceTreeTest extends TestCase
         $this->assertFalse($tree['adsTruncated']);
         $this->assertSame(30_000_000, $tree['totals']['spendMicros']);   // campaign level only
         $this->assertSame(2, $tree['totals']['campaignCount']);
-        $this->assertFalse($tree['totals']['partial']);
     }
 
     public function test_status_filter_applies_to_campaigns_and_another_business_never_leaks(): void
@@ -93,5 +92,33 @@ class MetaAdsPerformanceTreeTest extends TestCase
         $this->assertSame([], $tree['adSetsByCampaign']);
         $this->assertSame(1, $tree['totals']['campaignCount']);
         $this->assertNull($tree['totals']['spendMicros']);               // no rows => em dash, not 0
+    }
+
+    public function test_totals_are_exact_for_the_whole_filtered_set_not_just_the_visible_page(): void
+    {
+        // 26 active campaigns (one more than a page) at 3 days x 1 unit spend each, plus one paused campaign.
+        for ($i = 1; $i <= 26; $i++) {
+            $campaign = $this->seedMetaCampaign($this->account, 'Camp ' . $i, ['daily_budget_minor' => 1000]);
+            $this->seedMetaDays($this->account, MetaAdsLevel::Campaign, $campaign->id, '2026-10-01', '2026-10-03', 1_000_000, 1);
+        }
+        $paused = $this->seedMetaCampaign($this->account, 'Paused', ['status' => 'PAUSED', 'daily_budget_minor' => 5000]);
+        $this->seedMetaDays($this->account, MetaAdsLevel::Campaign, $paused->id, '2026-10-01', '2026-10-03', 9_000_000, 1);
+
+        $period = MetaAdsPeriod::resolve('last_30', $this->account);
+        $reader = app(MetaAdsPerformanceTree::class);
+
+        $all = $reader->page($this->account, $period, null, 'spend', 'desc', 1);
+        $this->assertCount(25, $all['result']->items);                    // one page ...
+        $this->assertSame(27, $all['totals']['campaignCount']);           // ... but the totals cover every match
+        $this->assertSame(26 * 3_000_000 + 27_000_000, $all['totals']['spendMicros']);
+        $this->assertSame(26_000, $all['totals']['dailyBudgetMinor']);    // active campaigns' daily budgets only
+
+        $active = $reader->page($this->account, $period, 'active', 'spend', 'desc', 2);
+        $this->assertSame(26, $active['totals']['campaignCount']);
+        $this->assertSame(26 * 3_000_000, $active['totals']['spendMicros']);
+
+        $pausedOnly = $reader->page($this->account, $period, 'paused', 'spend', 'desc', 1);
+        $this->assertSame(27_000_000, $pausedOnly['totals']['spendMicros']);
+        $this->assertNull($pausedOnly['totals']['dailyBudgetMinor']);     // a paused budget is not being spent
     }
 }

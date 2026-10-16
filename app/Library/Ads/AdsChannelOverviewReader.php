@@ -45,7 +45,8 @@ final class AdsChannelOverviewReader
 {
     public const ATTENTION_LIMIT = 5;
 
-    public const GOING_WELL_LIMIT = 3;
+    /** Slots of the ATTENTION_LIMIT held back for positive items, so a busy account still shows what is going well. */
+    public const GOING_WELL_RESERVED = 2;
 
     public function __construct(
         private readonly GoogleAdsOverviewReader $googleOverview,
@@ -299,7 +300,7 @@ final class AdsChannelOverviewReader
      */
     private function mergeAttention(array $google, array $meta): array
     {
-        // Positive items ("Going well") never crowd out the ones that need action, and vice versa.
+        // The whole list stays capped at ATTENTION_LIMIT; positives ("Going well") keep reserved slots so they are never crowded out entirely.
         $act = [];
         $well = [];
 
@@ -317,7 +318,10 @@ final class AdsChannelOverviewReader
             }
         }
 
-        $merged = [...array_slice($act, 0, self::ATTENTION_LIMIT), ...array_slice($well, 0, self::GOING_WELL_LIMIT)];
+        $wellTake = min(count($well), self::GOING_WELL_RESERVED);
+        $actTake = min(count($act), self::ATTENTION_LIMIT - $wellTake);
+        $wellTake = min(count($well), self::ATTENTION_LIMIT - $actTake);   // spare slots go to positives
+        $merged = [...array_slice($act, 0, $actTake), ...array_slice($well, 0, $wellTake)];
 
         return $merged;
     }

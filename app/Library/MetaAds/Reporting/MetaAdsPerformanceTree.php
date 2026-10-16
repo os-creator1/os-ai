@@ -4,7 +4,9 @@ namespace App\Library\MetaAds\Reporting;
 
 use App\Library\GoogleAds\Reporting\GoogleAdsPagedResult;
 use App\Library\GoogleAds\Reporting\GoogleAdsPeriod;
+use App\Enums\MetaAds\MetaAdsLevel;
 use App\Models\MetaAdsAccount;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Meta Ads Module V1 — the Performance table's Campaign -> Ad set -> Ad tree,
@@ -25,13 +27,11 @@ final class MetaAdsPerformanceTree
 
     public const AD_LIMIT = 1000;
 
-    /** Campaigns summed for the totals row; beyond this the row is labelled partial. */
-    public const TOTALS_LIMIT = 200;
-
     public function __construct(
         private readonly MetaAdsCampaignReader $campaigns,
         private readonly MetaAdsAdSetReader $adSets,
         private readonly MetaAdsAdReader $ads,
+        private readonly MetaAdsMetricQueries $metrics,
     ) {
     }
 
@@ -82,28 +82,58 @@ final class MetaAdsPerformanceTree
     }
 
     /**
-     * Totals row over the campaign level of the FILTERED campaigns only (so
-     * ad sets and ads are never added on top). Budget sums the daily budgets
-     * set in Meta Ads; lifetime budgets are not a per-day figure and are left
-     * out. `partial` is true when more campaigns match than are summed.
+     * Exact totals row over the campaign level of the FILTERED campaigns (the
+     * same set the table pages through, not just the visible page), so ad sets
+     * and ads are never added on top. Three bounded aggregate queries
+     * regardless of how many campaigns match; no row is loaded.
      *
-     * @return array{spendMicros: ?int, impressions: ?int, linkClicks: ?int, results: ?string, costPerResultMicros: ?int, dailyBudgetMinor: ?int, partial: bool, campaignCount: int}
+     * Budget is the sum of the daily budgets set in Meta Ads on the matching
+     * ACTIVE campaigns (paused budgets are not being spent; lifetime budgets
+     * are not a per-day figure and are left out).
+     *
+     * @return array{spendMicros: ?int, impressions: ?int, linkClicks: ?int, results: ?string, costPerResultMicros: ?int, dailyBudgetMinor: ?int, campaignCount: int}
      */
     private function totals(MetaAdsAccount $account, GoogleAdsPeriod $period, ?string $status, int $matching): array
     {
-        $rows = $matching === 0 ? [] : $this->campaigns->list($account, $period, $status, self::TOTALS_LIMIT);
+        $empty = ['spendMicros' => null, 'impressions' => null, 'linkClicks' => null, 'results' => null, 'costPerResultMicros' => null, 'dailyBudgetMinor' => null, 'campaignCount' => $matching];
 
-        $spend = $impressions = $linkClicks = $budget = null;
+        if ($matching === 0) {
+            return $empty;
+        }
+
+        $statusValue = $status === null ? null : strtoupper(trim($status));
+        $statusValue = in_array($statusValue, ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'], true) ? $statusValue : null;
+        $campaignIds = function ($query) use ($account, $statusValue) {
+            $query->select('id')->from('meta_ads_campaigns')
+                ->where('business_id', $account->business_id)
+                ->where('meta_ads_account_id', $account->id);
+
+            if ($statusValue !== null) {
+                $query->where('status', $statusValue);
+            }
+        };
+
+        $from = $period->fromDate();
+        $to = $period->toDate();
+        $insight = $this->metrics->daily($account, MetaAdsLevel::Campaign, $from, $to)
+            ->whereIn('entity_id', $campaignIds)
+            ->selectRaw('SUM(spend_micros) AS spend_micros, SUM(impressions) AS impressions, SUM(link_clicks) AS link_clicks, COUNT(*) AS row_count')
+            ->first();
+
+        $spend = $insight === null || (int) $insight->row_count === 0 || $insight->spend_micros === null ? null : (int) $insight->spend_micros;
         $results = null;
+        $type = $this->metrics->results()->chosenType($account);
 
-        foreach ($rows as $row) {
-            $spend = self::add($spend, $row->totals->spendMicros);
-            $impressions = self::add($impressions, $row->totals->impressions);
-            $linkClicks = self::add($linkClicks, $row->totals->linkClicks);
-            $budget = self::add($budget, $row->dailyBudgetMinor);
+        if ($type !== null && $insight !== null && (int) $insight->row_count > 0) {
+            $row = $this->metrics->results()->daily($account, MetaAdsLevel::Campaign, $from, $to, $type)
+                ->whereIn('entity_id', $campaignIds)
+                ->selectRaw('SUM(results) AS results, COUNT(*) AS result_row_count')
+                ->first();
 
-            if ($row->totals->results !== null) {
-                $results = bcadd($results ?? '0', $row->totals->results, 6);
+            if ($row !== null && (int) $row->result_row_count > 0 && $row->results !== null) {
+                $results = bcadd((string) $row->results, '0', 6);
+            } elseif ($this->metrics->resultDataPresent($account, MetaAdsLevel::Campaign, $from, $to)) {
+                $results = '0.000000';   // Meta reported results for other campaigns and none here: a real zero
             }
         }
 
@@ -113,20 +143,26 @@ final class MetaAdsPerformanceTree
             $cost = (int) bcadd(bcdiv((string) $spend, $results, 6), '0.5', 0);
         }
 
+        $budget = DB::table('meta_ads_campaigns')
+            ->where('business_id', $account->business_id)
+            ->where('meta_ads_account_id', $account->id)
+            ->where('status', 'ACTIVE')
+            ->whereNotNull('daily_budget_minor');
+
+        if ($statusValue !== null && $statusValue !== 'ACTIVE') {
+            $budget->whereRaw('1 = 0');
+        }
+
+        $budgetSum = $budget->sum('daily_budget_minor');
+
         return [
             'spendMicros' => $spend,
-            'impressions' => $impressions,
-            'linkClicks' => $linkClicks,
+            'impressions' => $insight === null || (int) $insight->row_count === 0 || $insight->impressions === null ? null : (int) $insight->impressions,
+            'linkClicks' => $insight === null || (int) $insight->row_count === 0 || $insight->link_clicks === null ? null : (int) $insight->link_clicks,
             'results' => MetaAdsMetricTotals::trim($results),
             'costPerResultMicros' => $cost,
-            'dailyBudgetMinor' => $budget,
-            'partial' => $matching > count($rows),
+            'dailyBudgetMinor' => $budgetSum > 0 ? (int) $budgetSum : null,
             'campaignCount' => $matching,
         ];
-    }
-
-    private static function add(?int $sum, ?int $value): ?int
-    {
-        return $value === null ? $sum : ($sum ?? 0) + $value;
     }
 }

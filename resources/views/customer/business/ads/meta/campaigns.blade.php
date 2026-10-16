@@ -45,7 +45,7 @@
             $levelBadge = ['campaign' => 'Campaign', 'ad_set' => 'Ad set', 'ad' => 'Ad'];
             $budgetCell = function ($row) use ($currency) {
                 if ($row->dailyBudgetMinor !== null) {
-                    return D::minorMoney($row->dailyBudgetMinor, $currency) . '<span class="text-caption text-muted">/day</span>';
+                    return D::minorMoney($row->dailyBudgetMinor, $currency) . '<span class="text-caption text-muted"> / day</span>';
                 }
                 if ($row->lifetimeBudgetMinor !== null) {
                     return D::minorMoney($row->lifetimeBudgetMinor, $currency) . '<span class="text-caption text-muted"> lifetime</span>';
@@ -208,8 +208,8 @@
                         </tbody>
                         <tfoot>
                             <tr data-role="totals-row">
-                                <td>Total @if($totals['partial'])<span class="text-caption text-muted fw-normal">(top {{ \App\Library\MetaAds\Reporting\MetaAdsPerformanceTree::TOTALS_LIMIT }} of {{ $totals['campaignCount'] }} campaigns by spend)</span>@else<span class="text-caption text-muted fw-normal">({{ $totals['campaignCount'] }} {{ $totals['campaignCount'] === 1 ? 'campaign' : 'campaigns' }})</span>@endif</td>
-                                <td class="text-numeric text-end" data-role="total-budget">@if($totals['dailyBudgetMinor'] !== null){{ D::minorMoney($totals['dailyBudgetMinor'], $currency) }}<span class="text-caption text-muted">/day</span>@else{{ D::DASH }}@endif</td>
+                                <td data-role="totals-scope">Total <span class="text-caption text-muted fw-normal">({{ ['active' => 'active', 'paused' => 'paused'][$statusFilter ?? ''] ?? 'all' }} campaigns: {{ $totals['campaignCount'] }}, this period)</span></td>
+                                <td class="text-numeric text-end" data-role="total-budget">@if($totals['dailyBudgetMinor'] !== null){{ D::minorMoney($totals['dailyBudgetMinor'], $currency) }}<span class="text-caption text-muted"> / day</span>@else{{ D::DASH }}@endif</td>
                                 <td class="text-numeric text-end" data-role="total-spend">{{ D::money($totals['spendMicros'], $currency) }}</td>
                                 <td class="text-numeric text-end" data-role="total-results">{{ D::count($totals['results']) }}</td>
                                 <td class="text-numeric text-end" data-role="total-cpr">{{ D::money($totals['costPerResultMicros'], $currency) }}</td>
