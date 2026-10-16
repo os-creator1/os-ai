@@ -248,7 +248,10 @@
                 <p class="text-muted mb-1" data-role="no-assigned">No campaign is assigned to this goal yet.</p>
             @endforelse
 
-            <p class="text-muted mb-1" data-role="filter-empty" hidden>No campaign on this channel is assigned to this goal.</p>
+            @if($assigned->isNotEmpty())
+                {{-- Only a goal WITH assigned campaigns can end up showing none for a channel; a goal with none already says so above. --}}
+                <p class="text-muted mb-1" data-role="filter-empty" hidden>No campaign on this channel is assigned to this goal.</p>
+            @endif
 
             @if($canManage && $purpose->is_active && ($unassigned['google']->isNotEmpty() || $unassigned['meta']->isNotEmpty()))
                 <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.campaigns', [$workspaceUid, $businessUid]) }}" class="d-flex align-items-end gap-1 flex-wrap mt-1" data-role="assign-form">
@@ -339,7 +342,7 @@
                     if (count) { count.textContent = plural(shown); }
                     if (step) { step.textContent = shown > 0 ? plural(shown) : 'No campaign yet'; }
                     if (label) { label.textContent = channel === 'all' ? '' : ' (' + (channel === 'google' ? 'Google' : 'Meta') + ' only)'; }
-                    if (empty) { empty.hidden = !(channel !== 'all' && rows.length > 0 ? shown === 0 : (channel !== 'all' && shown === 0)); }
+                    if (empty) { empty.hidden = !(channel !== 'all' && rows.length > 0 && shown === 0); }
                 });
             }
             buttons.forEach(function (b) { b.addEventListener('click', function () { apply(b.getAttribute('data-channel-filter')); }); });

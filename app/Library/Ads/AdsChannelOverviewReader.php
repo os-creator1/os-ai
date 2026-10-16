@@ -124,7 +124,7 @@ final class AdsChannelOverviewReader
         $issues = null;
 
         if ($hasModule) {
-            $google = $this->googleAttention($account, $workspaceUid, $businessUid, self::ATTENTION_LIMIT);
+            $google = $this->googleAttention($account, $workspaceUid, $businessUid, self::ATTENTION_LIMIT, self::GOING_WELL_RESERVED);
             $issues = $google['count'];
             $attention = $google['items'];
         }
@@ -163,7 +163,7 @@ final class AdsChannelOverviewReader
         $overview = $this->metaOverview->read($account, $period);
         $freshness = $this->metaFreshness->for($account);
         $currency = (string) $account->currency_code;
-        $attention = $this->metaAttention->top($account, $workspaceUid, $businessUid, $hasModule, self::ATTENTION_LIMIT);
+        $attention = $this->metaAttention->top($account, $workspaceUid, $businessUid, $hasModule, self::ATTENTION_LIMIT, null, self::GOING_WELL_RESERVED);
 
         $label = $overview->resultTypeLabel;
 
@@ -255,12 +255,16 @@ final class AdsChannelOverviewReader
      *
      * @return array{items: list<array<string, mixed>>, count: int}
      */
-    public function googleAttention(GoogleAdsAccount $account, string $workspaceUid, string $businessUid, int $limit = self::ATTENTION_LIMIT): array
+    public function googleAttention(GoogleAdsAccount $account, string $workspaceUid, string $businessUid, int $limit = self::ATTENTION_LIMIT, int $goingWellReserve = 0): array
     {
         $facts = $this->googleFacts->facts($account);
         $items = [];
 
-        foreach (array_slice($facts, 0, $limit) as $fact) {
+        $selected = $goingWellReserve > 0
+            ? MetaAdsAttentionItems::selectWithReserve($facts, $limit, $goingWellReserve, static fn ($fact): bool => $fact->type === \App\Library\GoogleAds\Recommendations\GoogleAdsRecommendationType::StrongCampaign)
+            : array_slice($facts, 0, $limit);
+
+        foreach ($selected as $fact) {
             $presented = $this->googlePresenter->present($fact);
             $items[] = [
                 'provider' => 'google',

@@ -40,12 +40,18 @@ final class MetaAdsAttentionItems
     /**
      * @return array{count: int, items: list<array{provider: string, title: string, evidence_lines: array<int, string>, action_label: string, url: ?string, tone: string, rank_spend_micros: int}>}
      */
-    public function top(MetaAdsAccount $account, string $workspaceUid, string $businessUid, bool $hasModule, int $limit = 5, ?GoogleAdsPeriod $period = null): array
+    public function top(MetaAdsAccount $account, string $workspaceUid, string $businessUid, bool $hasModule, int $limit = 5, ?GoogleAdsPeriod $period = null, int $goingWellReserve = 0): array
     {
         $facts = $this->facts->facts($account, $period);
         $items = [];
 
-        foreach (array_slice($facts, 0, max(0, $limit)) as $fact) {
+        // With a reserve, positives are chosen from the FULL fact list (not whatever survives a
+        // plain top-N cut): up to $limit actionable facts plus up to $goingWellReserve strong performers.
+        $selected = $goingWellReserve > 0
+            ? self::selectWithReserve($facts, $limit, $goingWellReserve, static fn ($fact): bool => $fact->type === MetaAdsRecommendationType::StrongPerformer)
+            : array_slice($facts, 0, max(0, $limit));
+
+        foreach ($selected as $fact) {
             $presented = $this->presenter->present($fact);
 
             $items[] = [
@@ -68,6 +74,31 @@ final class MetaAdsAttentionItems
         }
 
         return ['count' => count($facts), 'items' => $items];
+    }
+
+    /**
+     * Up to $limit non-positive plus up to $reserve positive facts, each group in its
+     * original (ranked) order; the input is already fully loaded, so this costs no query.
+     *
+     * @template T
+     * @param  array<int, T>  $facts
+     * @param  callable(T): bool  $isPositive
+     * @return array<int, T>
+     */
+    public static function selectWithReserve(array $facts, int $limit, int $reserve, callable $isPositive): array
+    {
+        $actionable = [];
+        $positive = [];
+
+        foreach ($facts as $fact) {
+            if ($isPositive($fact)) {
+                $positive[] = $fact;
+            } else {
+                $actionable[] = $fact;
+            }
+        }
+
+        return [...array_slice($actionable, 0, max(0, $limit)), ...array_slice($positive, 0, max(0, $reserve))];
     }
 
     private function url(string $target, ?string $uid, string $workspaceUid, string $businessUid, bool $hasModule): ?string
