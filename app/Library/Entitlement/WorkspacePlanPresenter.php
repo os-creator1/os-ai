@@ -34,7 +34,8 @@ final class WorkspacePlanPresenter
      *     included: list<array{name: string, description: string}>,
      *     capacity: list<array{label: string, value: string}>,
      *     capacity_note: string|null,
-     *     billing: list<array{label: string, value: string}>
+     *     billing: list<array{label: string, value: string}>,
+     *     meter: array{label: string, used: int, total: int|null}|null
      * }
      */
     public function present(Workspace $workspace): array
@@ -42,7 +43,7 @@ final class WorkspacePlanPresenter
         $summary = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
 
         if (! $summary->isAssigned || $summary->tier === null) {
-            return ['plan' => null, 'included' => [], 'capacity' => [], 'capacity_note' => null, 'billing' => []];
+            return ['plan' => null, 'included' => [], 'capacity' => [], 'capacity_note' => null, 'billing' => [], 'meter' => null];
         }
 
         $catalogs = $this->entitlementManager->listPlanCatalogSummaries();
@@ -62,7 +63,32 @@ final class WorkspacePlanPresenter
             'capacity' => array_merge($this->businessCapacity($summary), $this->locationCapacity($summary, $catalogs)),
             'capacity_note' => $this->capacityNote($summary, $catalogs),
             'billing' => $this->billing($summary, $catalogs),
+            'meter' => $this->meter($summary),
         ];
+    }
+
+    /**
+     * The numbers behind the Business/client-account row, for a usage meter:
+     * used and allowed straight from the same capacity decision the row's
+     * sentence is built from. `total` is null when the plan is unlimited or
+     * states no capacity, in which case no bar is drawn.
+     *
+     * @return array{label: string, used: int, total: int|null}|null
+     */
+    private function meter(WorkspaceEntitlementSummary $summary): ?array
+    {
+        $capacity = $summary->capacity;
+        $label = $summary->tier === WorkspacePlanTier::Agency ? 'Client accounts' : 'Businesses';
+
+        if ($capacity->unlimited) {
+            return ['label' => $label, 'used' => (int) $capacity->currentBusinessCount, 'total' => null];
+        }
+
+        if ($capacity->effectiveCapacity === null) {
+            return null;
+        }
+
+        return ['label' => $label, 'used' => (int) $capacity->currentBusinessCount, 'total' => (int) $capacity->effectiveCapacity];
     }
 
     /**

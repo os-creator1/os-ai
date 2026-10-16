@@ -1,182 +1,160 @@
 {{--
-    Implementation Contract 21 §13 — Plan & subscription, on the CANONICAL V1
-    lane-A subscription.
+    Implementation Contract 21 §13 — the ACTIONS half of Plan & subscription, on
+    the CANONICAL V1 lane-A subscription (the summary half is the hero card in
+    plan.blade.php).
 
-    Never legacy Ultimate SMS plan semantics (§4). The price shown is the
-    customer's own SNAPSHOT (§10.1): repricing the catalog tomorrow must not
+    Never legacy Ultimate SMS plan semantics (§4). The plans offered come from
+    the catalogue through CustomerSubscriptionPresenter — none is named here —
+    and every price is the plan's own configured price. The customer's current
+    price is their SNAPSHOT (§10.1): repricing the catalog tomorrow must not
     change what an existing subscriber is told they pay.
 --}}
 @php($workspaceUid = request()->route('workspaceUid'))
 
-<x-card title="Subscription">
-    @if ($subscription['is_complimentary'])
-        {{-- §11.1 — a complimentary account is never presented as a paid one. --}}
-        <p data-role="subscription-state">{{ __('Complimentary account') }}</p>
-        <p class="text-caption mb-0">{{ __('Your account is provided at no charge, so there is nothing to pay or cancel.') }}</p>
-    @elseif (! $subscription['has_subscription'])
-        <p data-role="subscription-state">{{ __('No subscription yet') }}</p>
-        <p class="text-caption mb-0">{{ __('Choose a plan to start your subscription.') }}</p>
-    @else
-        <dl class="row" data-role="subscription-summary">
-            <dt class="col-sm-5">{{ __('Plan') }}</dt>
-            <dd class="col-sm-7" data-role="subscription-tier">{{ $subscription['tier_name'] }}</dd>
+@if (! $subscription['is_complimentary'] && $subscription['has_subscription'])
 
-            <dt class="col-sm-5">{{ __('Status') }}</dt>
-            <dd class="col-sm-7" data-role="subscription-state">
-                @switch($subscription['state'])
-                    @case('trialing') {{ __('Trial') }} @break
-                    @case('active') {{ __('Active') }} @break
-                    @case('past_due') {{ __('Payment problem') }} @break
-                    @case('locked') {{ __('Locked') }} @break
-                    @case('cancelling') {{ __('Ending at period end') }} @break
-                    @case('ended') {{ __('Ended') }} @break
-                    @case('inactive') {{ __('Inactive') }} @break
-                    @case('suspended') {{ __('Suspended') }} @break
-                    @default {{ __('Unknown') }}
-                @endswitch
-            </dd>
-
-            @if ($subscription['price'] !== null)
-                <dt class="col-sm-5">{{ __('Price') }}</dt>
-                <dd class="col-sm-7" data-role="subscription-price">
-                    {{ $subscription['price'] }} {{ $subscription['currency_code'] }} / {{ \App\Library\PlatformBilling\BillingCycle::perLabel((string) $subscription['billing_cycle']) }}
-                </dd>
-            @endif
-
-            @if ($subscription['private_pricing'] !== null)
-                <dt class="col-sm-5">{{ __('Private pricing') }}</dt>
-                <dd class="col-sm-7" data-role="subscription-private-pricing">
-                    {{ $subscription['private_pricing']['summary'] }}
-                </dd>
-            @endif
-
-            @if ($subscription['trial_ends_at'] !== null)
-                <dt class="col-sm-5">{{ __('Trial ends') }}</dt>
-                <dd class="col-sm-7" data-role="subscription-trial-end">{{ $subscription['trial_ends_at']->toFormattedDateString() }}</dd>
-            @endif
-
-            @if ($subscription['current_period_end'] !== null)
-                <dt class="col-sm-5">
-                    {{ $subscription['cancel_at_period_end'] ? __('Access ends') : __('Next renewal') }}
-                </dt>
-                <dd class="col-sm-7" data-role="subscription-period-end">{{ $subscription['current_period_end']->toFormattedDateString() }}</dd>
-            @endif
-
-            @if ($subscription['pending_tier_name'] !== null)
-                <dt class="col-sm-5">{{ __('Scheduled change') }}</dt>
-                <dd class="col-sm-7" data-role="subscription-pending">
-                    {{ __('Moving to :plan', ['plan' => $subscription['pending_tier_name']]) }}
-                    @if ($subscription['pending_effective_at'] !== null)
-                        — {{ $subscription['pending_effective_at']->toFormattedDateString() }}
-                    @endif
-                </dd>
-            @endif
-        </dl>
-
-        {{-- §9/§13 — the billing problem, its deadline, and the REAL recovery action. --}}
-        @if (in_array($subscription['state'], ['past_due', 'locked'], true))
-            <div role="alert" data-role="subscription-billing-problem">
-                <p>{{ __('We could not take your latest payment.') }}</p>
-                @if ($subscription['grace_ends_at'] !== null)
-                    <p>{{ __('Your account stays fully usable until :date. After that it locks until payment succeeds.', [
-                        'date' => $subscription['grace_ends_at']->toFormattedDateString(),
-                    ]) }}</p>
-                @endif
-                @if ($subscription['can_manage_payment_method'])
-                    <a href="{{ route('customer.workspaces.plan.payment-method', [$workspaceUid]) }}"
-                       data-role="subscription-fix-payment">{{ __('Update your payment method') }}</a>
-                @endif
+    {{--
+        §10.4 — an ENDED subscription gets "start again", never the
+        upgrade/downgrade controls. There is no live provider subscription
+        to change, so those controls could only ever fail; this form opens a
+        NEW hosted Checkout on the SAME account.
+    --}}
+    @if ($subscription['can_resubscribe'] && count($subscription['resubscribe_plans']) > 0)
+        <div class="sr-card">
+            <div class="sr-card__head">
+                <div>
+                    <h2 class="sr-card__title">{{ __('Start subscription again') }}</h2>
+                    <p class="sr-card__sub">{{ __('Your account, your business and everything in it are still here. Choose a plan to pick up where you left off.') }}</p>
+                </div>
             </div>
-        @endif
-
-        @if ($subscription['can_manage_payment_method'])
-            <p>
-                <a href="{{ route('customer.workspaces.plan.payment-method', [$workspaceUid]) }}"
-                   data-role="subscription-payment-method">{{ __('Manage payment method') }}</a>
-                <span class="text-caption">{{ __('Opens Stripe. We never see or store your card.') }}</span>
-            </p>
-        @endif
-
-        {{--
-            §10.4 — an ENDED subscription gets "start again", never the
-            upgrade/downgrade controls. There is no live provider subscription
-            to change, so those controls could only ever fail; this form opens a
-            NEW hosted Checkout on the SAME account.
-        --}}
-        @if ($subscription['can_resubscribe'] && count($subscription['resubscribe_plans']) > 0)
-            <form method="POST" action="{{ route('customer.workspaces.plan.resubscribe', [$workspaceUid]) }}"
-                  data-role="subscription-resubscribe">
+            <form method="POST" action="{{ route('customer.workspaces.plan.resubscribe', [$workspaceUid]) }}" data-role="subscription-resubscribe">
                 @csrf
-                <fieldset>
-                    <legend>{{ __('Start subscription again') }}</legend>
-                    <p class="text-caption">{{ __('Your account, your business and everything in it are still here. Choose a plan to pick up where you left off.') }}</p>
-                    @foreach ($subscription['resubscribe_plans'] as $plan)
-                        <label>
-                            <input type="radio" name="tier" value="{{ $plan['tier_value'] }}" required>
-                            {{ $plan['display_name'] }} — {{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle_per'] }}
+                <div class="sr-card__body">
+                    <div class="sr-plans mb-3">
+                        @foreach ($subscription['resubscribe_plans'] as $plan)
+                            <label class="sr-plan">
+                                <span class="sr-plan__top">
+                                    <span class="d-flex align-items-center gap-2">
+                                        <input type="radio" name="tier" value="{{ $plan['tier_value'] }}" required class="form-check-input mt-0">
+                                        {{ $plan['display_name'] }}
+                                    </span>
+                                </span>
+                                <span class="d-block sr-plan__price">{{ $plan['price'] }} {{ $plan['currency_code'] }} <small>/ {{ $plan['billing_cycle_per'] }}</small></span>
+                            </label>
+                        @endforeach
+                    </div>
+                    <div class="sr-confirm">
+                        <label class="form-check mb-0" style="font-size:.8125rem">
+                            <input type="checkbox" class="form-check-input" name="confirm" value="1" required>
+                            {{ __('I want to start a new subscription on this account.') }}
                         </label>
-                    @endforeach
-                    <label>
-                        <input type="checkbox" name="confirm" value="1" required>
-                        {{ __('I want to start a new subscription on this account.') }}
-                    </label>
-                    <button type="submit">{{ __('Start subscription again') }}</button>
-                </fieldset>
+                        <button type="submit" class="btn btn-primary">{{ __('Start subscription again') }}</button>
+                    </div>
+                </div>
             </form>
-        @endif
+        </div>
+    @endif
 
-        {{-- §10.2 — change plan, with the resulting behaviour stated BEFORE confirming. --}}
-        @if (count($subscription['available_plans']) > 0)
-            <form method="POST" action="{{ route('customer.workspaces.plan.change', [$workspaceUid]) }}"
-                  data-role="subscription-change-plan">
+    {{-- §10.2 — change plan, with the resulting behaviour stated BEFORE confirming. --}}
+    @if (count($subscription['available_plans']) > 0)
+        <div class="sr-card">
+            <div class="sr-card__head">
+                <div>
+                    <h2 class="sr-card__title">{{ __('Change plan') }}</h2>
+                    <p class="sr-card__sub">{{ __('Pick the plan you want to move to. What happens next is stated before you confirm.') }}</p>
+                </div>
+            </div>
+            <form method="POST" action="{{ route('customer.workspaces.plan.change', [$workspaceUid]) }}" data-role="subscription-change-plan">
                 @csrf
-                <fieldset>
-                    <legend>{{ __('Change plan') }}</legend>
-                    @foreach ($subscription['available_plans'] as $plan)
-                        <label>
-                            <input type="radio" name="tier" value="{{ $plan['tier_value'] }}" required>
-                            {{ $plan['display_name'] }} — {{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle_per'] }}
-                            <span data-role="plan-direction-{{ $plan['tier_value'] }}">
-                                @if ($plan['direction'] === 'upgrade')
-                                    {{ __('Upgrade — takes effect immediately, and you are billed the difference now.') }}
-                                @else
-                                    {{ __('Downgrade — takes effect at the end of your current billing period. Nothing is deleted.') }}
-                                @endif
+                <div class="sr-card__body">
+                    <div class="sr-plans mb-3">
+                        {{-- The plan the customer is on now, as a fixed reference, from their own snapshot. --}}
+                        <div class="sr-plan is-current" data-role="subscription-current-plan">
+                            <span class="sr-plan__top">
+                                <span>{{ $subscription['tier_name'] }}</span>
+                                <span class="sr-chip">{{ __('Current plan') }}</span>
                             </span>
-                        </label>
-                    @endforeach
+                            @if ($subscription['price'] !== null)
+                                <span class="d-block sr-plan__price">{{ $subscription['price'] }} {{ $subscription['currency_code'] }} <small>/ {{ \App\Library\PlatformBilling\BillingCycle::perLabel((string) $subscription['billing_cycle']) }}</small></span>
+                            @endif
+                        </div>
+
+                        @foreach ($subscription['available_plans'] as $plan)
+                            <label class="sr-plan">
+                                <span class="sr-plan__top">
+                                    <span class="d-flex align-items-center gap-2">
+                                        <input type="radio" name="tier" value="{{ $plan['tier_value'] }}" required class="form-check-input mt-0">
+                                        {{ $plan['display_name'] }}
+                                    </span>
+                                    <span class="sr-chip {{ $plan['direction'] === 'upgrade' ? 'sr-chip--accent' : '' }}">{{ $plan['direction'] === 'upgrade' ? __('Upgrade') : __('Downgrade') }}</span>
+                                </span>
+                                <span class="d-block sr-plan__price">{{ $plan['price'] }} {{ $plan['currency_code'] }} <small>/ {{ $plan['billing_cycle_per'] }}</small></span>
+                                <span class="d-block sr-plan__note" data-role="plan-direction-{{ $plan['tier_value'] }}">
+                                    @if ($plan['direction'] === 'upgrade')
+                                        {{ __('Upgrade — takes effect immediately, and you are billed the difference now.') }}
+                                    @else
+                                        {{ __('Downgrade — takes effect at the end of your current billing period. Nothing is deleted.') }}
+                                    @endif
+                                </span>
+                            </label>
+                        @endforeach
+                    </div>
+
                     @if ($subscription['private_pricing'] !== null)
-                        <label data-role="subscription-ends-private-pricing">
-                            <input type="checkbox" name="confirm_ends_private_pricing" value="1" required>
+                        <label class="form-check mb-3" style="font-size:.8125rem" data-role="subscription-ends-private-pricing">
+                            <input type="checkbox" class="form-check-input" name="confirm_ends_private_pricing" value="1" required>
                             {{ __('I understand this ends my private pricing: I will move to the standard price of the plan I choose.') }}
                         </label>
                     @endif
-                    <label>
-                        <input type="checkbox" name="confirm" value="1" required>
-                        {{ __('I understand what this change does.') }}
-                    </label>
-                    <button type="submit">{{ __('Change plan') }}</button>
-                </fieldset>
-            </form>
-        @endif
 
-        {{-- §10.3 — cancel, or undo a scheduled cancellation. --}}
-        @if ($subscription['can_resume'])
-            <form method="POST" action="{{ route('customer.workspaces.plan.resume', [$workspaceUid]) }}"
-                  data-role="subscription-resume">
-                @csrf
-                <button type="submit">{{ __('Keep my subscription') }}</button>
+                    <div class="sr-confirm">
+                        <label class="form-check mb-0" style="font-size:.8125rem">
+                            <input type="checkbox" class="form-check-input" name="confirm" value="1" required>
+                            {{ __('I understand what this change does.') }}
+                        </label>
+                        <button type="submit" class="btn btn-primary">{{ __('Change plan') }}</button>
+                    </div>
+                </div>
             </form>
-        @elseif (in_array($subscription['state'], ['trialing', 'active', 'past_due', 'locked'], true))
-            <form method="POST" action="{{ route('customer.workspaces.plan.cancel', [$workspaceUid]) }}"
-                  data-role="subscription-cancel">
-                @csrf
-                <label>
-                    <input type="checkbox" name="confirm" value="1" required>
-                    {{ __('Yes, cancel my subscription. I keep access until the end of the period I have paid for.') }}
-                </label>
-                <button type="submit">{{ __('Cancel subscription') }}</button>
-            </form>
-        @endif
+        </div>
     @endif
-</x-card>
+
+    {{-- §10.3 — cancel, or undo a scheduled cancellation. --}}
+    @if ($subscription['can_resume'])
+        <div class="sr-card">
+            <form method="POST" action="{{ route('customer.workspaces.plan.resume', [$workspaceUid]) }}" data-role="subscription-resume">
+                @csrf
+                <div class="sr-card__body sr-confirm">
+                    <div>
+                        <h2 class="sr-card__title">{{ __('Your subscription is set to end') }}</h2>
+                        @if ($subscription['current_period_end'] !== null)
+                            <p class="sr-card__sub mb-0">{{ __('You keep access until :date.', ['date' => $subscription['current_period_end']->toFormattedDateString()]) }}</p>
+                        @endif
+                    </div>
+                    <button type="submit" class="btn btn-primary">{{ __('Keep my subscription') }}</button>
+                </div>
+            </form>
+        </div>
+    @elseif (in_array($subscription['state'], ['trialing', 'active', 'past_due', 'locked'], true))
+        <div class="sr-card">
+            <form method="POST" action="{{ route('customer.workspaces.plan.cancel', [$workspaceUid]) }}" data-role="subscription-cancel">
+                @csrf
+                <div class="sr-card__body">
+                    <h2 class="sr-card__title">Cancel subscription</h2>
+                    @if ($subscription['current_period_end'] !== null)
+                        <p class="sr-card__sub mb-3">{{ __('You keep access until the end of the period you\'ve paid for (:date).', ['date' => $subscription['current_period_end']->toFormattedDateString()]) }}</p>
+                    @else
+                        <p class="sr-card__sub mb-3">{{ __('You keep access until the end of the period you\'ve paid for.') }}</p>
+                    @endif
+                    <div class="sr-confirm sr-confirm--boxed">
+                        <label class="form-check mb-0" style="font-size:.8125rem">
+                            <input type="checkbox" class="form-check-input" name="confirm" value="1" required>
+                            {{ __('Yes, cancel my subscription. I keep access until the end of the period I have paid for.') }}
+                        </label>
+                        <button type="submit" class="btn btn-sm btn-sr-danger-outline">{{ __('Cancel subscription') }}</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    @endif
+@endif
