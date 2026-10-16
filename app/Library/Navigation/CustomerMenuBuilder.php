@@ -86,6 +86,7 @@ final class CustomerMenuBuilder
         'custom-fields' => 'The extra details you keep about contacts, like event date or venue.',
         'text-messaging' => 'This business’s number and whether texting is ready.',
         'email' => 'The mailbox this business sends and receives email from.',
+        'payment-processing' => 'Connect the Stripe account that collects payments from your own clients.',
         'usage-billing' => 'Balance, top-ups, payment method and spending limits.',
         'plan' => 'What your plan includes and your subscription.',
         'team' => 'Who can work here, their role and what they can open.',
@@ -805,9 +806,19 @@ final class CustomerMenuBuilder
             ]);
         }
 
+        // Payment processing — the Business's own Stripe Connect account for collecting
+        // from its clients. Not Stripe subscription billing (Billing & team below).
+        // Visibility is never authorization: the Payments routes re-run the full chain.
+        $payments = [
+            $this->entitled('payments_contracts', $this->item($user, 'payment-processing', 'Payment processing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.payments.connect.show', $scoped, $current, [
+                'customer.workspaces.businesses.payments.connect.',
+            ])),
+        ];
+
         return $this->sections([
             'business-setup' => ['Business setup', $setup],
             'communication' => ['Communication', $communication],
+            'payments' => ['Payments', $payments],
             // Plain words: "Account" is not a thing a Core or Growth customer manages.
             'billing-team' => [$agencyClient ? 'Billing' : 'Billing & team', $billingAndTeam],
         ]);

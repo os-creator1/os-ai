@@ -122,7 +122,7 @@ class WebsiteGalleryTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.website.pages.create', [$workspace->uid, $business->uid]))
             ->assertOk()
-            ->assertSee('<option value="gallery">Gallery</option>', false);
+            ->assertSee('data-add-type="gallery"', false);
     }
 
     // ---------------------------------------------------------------

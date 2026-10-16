@@ -2,20 +2,12 @@
 
 @section('title', 'Pages')
 
-@section('content')
-    <div class="row mb-2">
-        <div class="col-12 d-flex justify-content-between align-items-center">
-            <h4 class="mb-0">Pages</h4>
-            <span>
-                <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Photos</x-button>
-                <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.forms.index', [$workspaceUid, $businessUid]) }}">Forms</x-button>
-                <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]) }}">Domains</x-button>
-                <x-button variant="primary" href="{{ route('customer.workspaces.businesses.website.pages.create', [$workspaceUid, $businessUid]) }}">Add page</x-button>
-            </span>
-        </div>
-    </div>
+@section('page-style')
+    @include('customer.business.website._manage-styles')
+@endsection
 
-    <x-flash-alert class="mb-3" />
+@section('content')
+    @include('customer.business.website._manage-header', ['active' => 'pages'])
 
     @if ($pages->contains('noindex', true))
         <x-alert variant="accent" class="mb-3" data-testid="hidden-from-search">
