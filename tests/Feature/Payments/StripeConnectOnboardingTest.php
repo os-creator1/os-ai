@@ -831,6 +831,14 @@ class StripeConnectOnboardingTest extends TestCase
         return $this->get($this->url('show', $workspace, $business))->assertOk()->getContent();
     }
 
+    /** The status badge's visible text, whitespace-trimmed. */
+    private function badge(string $html): string
+    {
+        preg_match('/data-role="status-badge">\s*(.*?)\s*<\/span>/s', $html, $m);
+
+        return $m[1] ?? '';
+    }
+
     private function sync(Customer $customer, Business $business, bool $details, bool $charges, bool $payouts, ?string $reason = null): void
     {
         $this->gateway->detailsSubmitted = $details;
@@ -912,7 +920,7 @@ class StripeConnectOnboardingTest extends TestCase
                     // Ready only when the manager's own readiness check agrees.
                     $ready = $this->manager()->isChargeReady($business->fresh());
                     $this->assertSame($ready, str_contains($html, 'data-ready="1"'), $label);
-                    $this->assertSame($ready && $payouts, str_contains($html, '>Ready</span>'), $label);
+                    $this->assertSame($ready && $payouts, $this->badge($html) === 'Ready', $label);
                     $this->assertSame($ready && $payouts, str_contains($html, 'Online payments are ready'), $label);
                     // Last-checked now reflects the real sync.
                     $this->assertStringContainsString('Last checked', $html, $label);
@@ -929,7 +937,7 @@ class StripeConnectOnboardingTest extends TestCase
 
         $html = $this->ownerPage($business, $workspace);
 
-        $this->assertStringContainsString('>Restricted</span>', $html);
+        $this->assertSame('Restricted', $this->badge($html));
         $this->assertStringContainsString('Stripe needs more information', $html);
         $this->assertStringContainsString('data-status="restricted"', $html);
         $this->assertStringContainsString('data-role="disabled-reason"', $html);
@@ -949,7 +957,7 @@ class StripeConnectOnboardingTest extends TestCase
 
         $this->assertStringContainsString('Payouts not enabled', $html);
         $this->assertStringContainsString('data-ready="1"', $html);
-        $this->assertStringNotContainsString('>Ready</span>', $html);
+        $this->assertSame('Payouts not enabled', $this->badge($html));
         $this->assertStringContainsString('data-role="resume-link"', $html);
     }
 
@@ -961,7 +969,7 @@ class StripeConnectOnboardingTest extends TestCase
 
         $html = $this->ownerPage($business, $workspace);
 
-        $this->assertStringContainsString('>Ready</span>', $html);
+        $this->assertSame('Ready', $this->badge($html));
         $this->assertStringContainsString('data-status="active"', $html);
         $this->assertStringContainsString('data-ready="1"', $html);
         $this->assertStringContainsString('data-role="refresh-form"', $html);
@@ -1068,7 +1076,7 @@ class StripeConnectOnboardingTest extends TestCase
         $html = $this->ownerPage($business, $workspace);
 
         $this->assertStringContainsString('Stops online payments for this business.', $html);
-        $this->assertStringContainsString('isn't deleted', $html);
+        $this->assertStringContainsString("isn't deleted", $html);
         $this->assertStringContainsString('connection history', $html);
         $this->assertStringContainsString('<form method="POST" action="' . $this->url('disconnect', $workspace, $business) . '" data-role="disconnect-form">', $html);
     }
