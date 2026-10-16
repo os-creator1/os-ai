@@ -28,7 +28,7 @@
 
 @section('content')
     @include('customer.business.ads._header', [
-        'title' => 'Leads',
+        'title' => 'Meta Ads',
         'subtitle' => 'Meta\'s result count and the leads recorded in this platform are two different measurements.',
         'provider' => 'meta',
     ])
@@ -40,30 +40,59 @@
     @else
         @include('customer.business.ads._period-selector', ['periodRoute' => 'meta.leads.index'])
 
-        <x-card :padded="true" class="mb-2" data-role="explainer">
-            <h2 class="text-section-heading mb-1">Why these numbers can differ</h2>
-            <ul class="mb-0 ps-2">
-                <li class="mb-50"><strong>Meta-reported results</strong> are the actions Meta counts for the result type you chose. Meta decides what counts and when.</li>
-                <li class="mb-50"><strong>Business OS leads</strong> are the contacts recorded here from your forms, website forms and bookings. A lead shows a Meta tag only if the visitor arrived on a link tagged with a Meta source (such as facebook or instagram).</li>
-                <li class="mb-50" data-role="tracking-notice">The Meta Pixel, the Conversions API and Meta click-ID capture are <strong>not enabled</strong>. They would track visitors, and this platform does not yet have a visitor-consent mechanism to do that safely.</li>
-                <li>A tag is not proof of a paid click, and it never tells us which Meta campaign, ad set or ad produced a lead, so we never guess one.</li>
-            </ul>
+        <style>
+            .leads-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+            @media (max-width: 767px) { .leads-pair { grid-template-columns: minmax(0, 1fr); } }
+            .leads-dot { display: inline-block; width: .55rem; height: .55rem; border-radius: 2px; margin-right: .4rem; }
+            .leads-big { font-size: 2.5rem; font-weight: 700; line-height: 1.1; }
+            .leads-line { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem 0; border-top: 1px solid rgba(120,113,108,.18); }
+        </style>
+
+        <h2 class="text-section-heading mb-0">Two ways of counting leads</h2>
+        <p class="text-caption text-muted mb-1">Meta's number and this platform's number measure different things, so they won't match.</p>
+
+        <div class="leads-pair">
+            <x-card :padded="true" data-role="meta-results">
+                <p class="text-label mb-1"><span class="leads-dot" style="background:#8a63b8"></span>What Meta reports</p>
+                @if($overview->resultTypeUnset)
+                    @include('customer.business.ads.meta._result-type-prompt')
+                @elseif(! $overview->hasData)
+                    <p class="text-caption mb-0" data-role="no-meta-results">No ad data for this period yet.</p>
+                @else
+                    <div data-role="meta-results-summary">
+                        <div><span class="leads-big" data-role="meta-results-value">{{ D::count($overview->results) }}</span> <span class="text-caption text-muted">results ({{ $overview->resultTypeLabel }})</span></div>
+                        <div class="leads-line mt-1"><span>Spend</span><strong>{{ D::money($overview->spendMicros, $adsCurrency) }}</strong></div>
+                        <div class="leads-line"><span>Cost per result</span><strong>{{ D::money($overview->costPerResultMicros, $adsCurrency) }}</strong></div>
+                    </div>
+                @endif
+                <p class="text-caption text-muted mt-1 mb-0">Meta decides what counts and when. These are not contacts in this platform. Amounts are in {{ $adsCurrency ?: 'your ad account currency' }}.</p>
+            </x-card>
+
+            <x-card :padded="true" data-role="recorded-leads">
+                <p class="text-label mb-1"><span class="leads-dot" style="background:#b4524a"></span>What this platform recorded</p>
+                <div data-role="lead-summary-big">
+                    <span class="leads-big">{{ number_format($summary['meta_tagged']) }}</span> <span class="text-caption text-muted">{{ $summary['meta_tagged'] === 1 ? 'lead' : 'leads' }} with a Meta tag</span>
+                </div>
+                <div class="leads-line mt-1"><span>All leads in this period</span><strong>{{ number_format($summary['leads']) }}</strong></div>
+                <div class="leads-line"><span>With a Meta tag</span><strong>{{ number_format($summary['meta_tagged']) }}</strong></div>
+                <p class="text-caption text-muted mt-1 mb-0">Contacts from your forms and bookings whose first visit came from a link tagged facebook or instagram.</p>
+            </x-card>
+        </div>
+
+        <x-card :padded="true" class="mb-2" data-role="tracking-notice">
+            <strong>Visitor tracking is off.</strong>
+            <span class="text-caption d-block">The Meta Pixel, the Conversions API and click-ID capture are <strong>not enabled</strong>. They would track visitors, and this platform does not yet have a visitor-consent mechanism to do that safely.</span>
         </x-card>
 
-        <x-card :padded="true" class="mb-2" data-role="meta-results">
-            <h2 class="text-section-heading mb-1">Meta-reported results</h2>
-            <p class="text-caption text-muted mb-1">Meta's own count, in {{ $adsCurrency ?: 'your ad account currency' }}. These are not leads recorded in this platform.</p>
-            @if($overview->resultTypeUnset)
-                @include('customer.business.ads.meta._result-type-prompt')
-            @elseif(! $overview->hasData)
-                <p class="text-caption mb-0" data-role="no-meta-results">No ad data for this period yet.</p>
-            @else
-                <div class="d-flex flex-wrap gap-3" data-role="meta-results-summary">
-                    <div><span class="text-label d-block">Results ({{ $overview->resultTypeLabel }})</span><span class="h3" data-role="meta-results-value">{{ D::count($overview->results) }}</span></div>
-                    <div><span class="text-label d-block">Spend</span><span class="h3">{{ D::money($overview->spendMicros, $adsCurrency) }}</span></div>
-                    <div><span class="text-label d-block">Cost per result</span><span class="h3">{{ D::money($overview->costPerResultMicros, $adsCurrency) }}</span></div>
-                </div>
-            @endif
+        <x-card :padded="true" class="mb-2" data-role="explainer">
+            <details open>
+                <summary class="text-section-heading">Why these numbers differ</summary>
+                <ol class="mb-0 ps-2 mt-1">
+                    <li class="mb-50"><strong>Meta counts actions</strong> for the result type you chose. It decides what counts and when.</li>
+                    <li class="mb-50"><strong>This platform counts contacts</strong> from your forms, website forms and bookings. A lead gets a Meta tag only if the visit came from a tagged link.</li>
+                    <li>A tag isn't proof of a paid click, and it never tells us which campaign, ad set or ad produced the lead, so we never guess.</li>
+                </ol>
+            </details>
         </x-card>
 
         <x-card :padded="true" class="mb-2" data-role="business-outcomes">

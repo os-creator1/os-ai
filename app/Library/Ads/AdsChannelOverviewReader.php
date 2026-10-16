@@ -45,6 +45,8 @@ final class AdsChannelOverviewReader
 {
     public const ATTENTION_LIMIT = 5;
 
+    public const GOING_WELL_LIMIT = 3;
+
     public function __construct(
         private readonly GoogleAdsOverviewReader $googleOverview,
         private readonly GoogleAdsFreshness $googleFreshness,
@@ -142,6 +144,7 @@ final class AdsChannelOverviewReader
             'cost_per_result_display' => GoogleAdsMoney::format($overview->cplMicros, $currency),
             'pacing_status' => $overview->pacing->status->value,
             'pacing_text' => $this->pacingText($overview->pacing->status),
+            'pacing_detail' => $this->pacingDetail($overview->pacing),
             'issue_count' => $issues,
             'updated_at' => $freshness->lastSuccessfulSyncAt,
             'data_through' => $freshness->dataThroughDate,
@@ -179,6 +182,7 @@ final class AdsChannelOverviewReader
             'cost_per_result_display' => MetaAdsMoney::format($overview->costPerResultMicros, $currency),
             'pacing_status' => $overview->pacing->status->value,
             'pacing_text' => $this->pacingText($overview->pacing->status),
+            'pacing_detail' => $this->pacingDetail($overview->pacing),
             'issue_count' => $attention['count'],
             'updated_at' => $freshness->lastSuccessfulSyncAt,
             'data_through' => $freshness->dataThroughDate,
@@ -208,6 +212,24 @@ final class AdsChannelOverviewReader
                 default => 'Connect ' . $label . ' Ads',
             },
             'cta_url' => Route::has($route) ? route($route, [$workspaceUid, $businessUid]) : null,
+        ];
+    }
+
+    /**
+     * The numbers behind the pacing bar, in the channel's own currency. Null
+     * proportions stay null (no target / not enough data): the view then draws
+     * no bar rather than an invented one.
+     *
+     * @return array{monthly_target_micros: ?int, projected_micros: ?int, spend_proportion: ?float, elapsed_proportion: ?float, low_confidence: bool}
+     */
+    private function pacingDetail(\App\Library\GoogleAds\Reporting\GoogleAdsPacing $pacing): array
+    {
+        return [
+            'monthly_target_micros' => $pacing->monthlyTargetMicros,
+            'projected_micros' => $pacing->projectedMicros,
+            'spend_proportion' => $pacing->spendProportion,
+            'elapsed_proportion' => $pacing->elapsedProportion,
+            'low_confidence' => $pacing->projectionLowConfidence,
         ];
     }
 
@@ -245,7 +267,7 @@ final class AdsChannelOverviewReader
                 'evidence_lines' => $presented['evidence_lines'],
                 'action_label' => $presented['action_label'],
                 'url' => $this->googleUrl($fact->suggestedAction, $workspaceUid, $businessUid),
-                'tone' => 'neutral',
+                'tone' => $fact->type === \App\Library\GoogleAds\Recommendations\GoogleAdsRecommendationType::StrongCampaign ? 'success' : 'neutral',
             ];
         }
 
@@ -277,15 +299,25 @@ final class AdsChannelOverviewReader
      */
     private function mergeAttention(array $google, array $meta): array
     {
-        $merged = [];
+        // Positive items ("Going well") never crowd out the ones that need action, and vice versa.
+        $act = [];
+        $well = [];
 
-        for ($i = 0; count($merged) < self::ATTENTION_LIMIT && ($i < count($google) || $i < count($meta)); $i++) {
+        for ($i = 0; $i < max(count($google), count($meta)); $i++) {
             foreach ([$google[$i] ?? null, $meta[$i] ?? null] as $item) {
-                if ($item !== null && count($merged) < self::ATTENTION_LIMIT) {
-                    $merged[] = $item;
+                if ($item === null) {
+                    continue;
+                }
+
+                if (($item['tone'] ?? null) === 'success') {
+                    $well[] = $item;
+                } else {
+                    $act[] = $item;
                 }
             }
         }
+
+        $merged = [...array_slice($act, 0, self::ATTENTION_LIMIT), ...array_slice($well, 0, self::GOING_WELL_LIMIT)];
 
         return $merged;
     }
