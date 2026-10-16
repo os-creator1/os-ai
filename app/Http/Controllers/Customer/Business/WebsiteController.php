@@ -254,20 +254,115 @@ class WebsiteController extends CustomerBaseController
             ? count(array_intersect($this->profiles->completenessCheck($business, $website)->missingFieldKeys, $aboutFaqFieldKeys))
             : null;
 
+        $pages = $website->pages()->orderBy('sort_order')->orderBy('id')->get();
+        $reusable = $isPhotoBooth ? $this->starterDrafts->reusableContent($business) : null;
+        $photoCount = $isPhotoBooth ? $website->assets()->count() : null;
+        $galleryPage = $isPhotoBooth ? $pages->firstWhere('slug', 'gallery') : null;
+        $quoteForm = $isPhotoBooth ? $website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->withCount('submissions')->first() : null;
+
         return view('customer.business.website.pages', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
-            'pages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get(),
+            'pages' => $pages,
             'isPhotoBooth' => $isPhotoBooth,
-            'reusable' => $isPhotoBooth ? $this->starterDrafts->reusableContent($business) : null,
-            'photoCount' => $isPhotoBooth ? $website->assets()->count() : null,
-            'galleryPage' => $isPhotoBooth ? $website->pages()->where('slug', 'gallery')->first() : null,
-            'quoteForm' => $isPhotoBooth ? $website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->first() : null,
+            'reusable' => $reusable,
+            'photoCount' => $photoCount,
+            'galleryPage' => $galleryPage,
+            'quoteForm' => $quoteForm,
             'aboutFaqMissingCount' => $aboutFaqMissingCount,
+            'checklist' => $isPhotoBooth
+                ? $this->pagesChecklist($workspaceUid, $businessUid, $pages, $reusable, $photoCount, $galleryPage, $quoteForm, $aboutFaqMissingCount)
+                : [],
         ]);
     }
 
+    /**
+     * The "Make your site stronger" rows. Every row is derived from saved Business/Website data — nothing is
+     * assumed done: a page merely existing never completes a row whose requirement (own-words detail, a usable
+     * form, a public location) is unmet.
+     *
+     * @return list<array{key: string, done: bool, title: string, sub: string, action: string, url: ?string}>
+     */
+    private function pagesChecklist(string $workspaceUid, string $businessUid, $pages, array $reusable, int $photoCount, ?WebsitePage $galleryPage, ?WebsiteForm $quoteForm, ?int $aboutFaqMissingCount): array
+    {
+        $ids = [$workspaceUid, $businessUid];
+        $editUrl = fn (?WebsitePage $page) => $page ? route('customer.workspaces.businesses.website.pages.edit', [...$ids, $page->uid]) : null;
+        $hasOwnWords = fn (?WebsitePage $page) => $page !== null && collect($page->sections ?? [])->contains(
+            fn ($s) => ($s['type'] ?? null) === 'text' && trim((string) ($s['data']['body'] ?? '')) !== ''
+        );
+        $plural = fn (int $n, string $one, string $many) => $n . ' ' . ($n === 1 ? $one : $many);
+        $rows = [];
+
+        if ($aboutFaqMissingCount !== null) {
+            $done = $aboutFaqMissingCount === 0;
+            $rows[] = [
+                'key' => 'about_faq', 'done' => $done,
+                'title' => $done ? 'About & FAQ answers' : 'Answer ' . $plural($aboutFaqMissingCount, 'question', 'questions') . ' for About & FAQ',
+                'sub' => $done ? 'Every fact your About and FAQ pages can show is confirmed.' : 'Years in business, credentials, guarantees, pricing, financing, what makes you different, who you serve. We never guess these for you.',
+                'action' => $done ? 'Review Knowledge Profile' : 'Complete Knowledge Profile',
+                'url' => route('customer.workspaces.businesses.knowledge-profile.edit', $ids),
+            ];
+        }
+
+        $servicesPage = $pages->firstWhere('slug', 'photo-booth-services');
+        $serviceCount = $reusable['services']->count();
+        $done = $hasOwnWords($servicesPage);
+        $rows[] = [
+            'key' => 'services', 'done' => $done,
+            'title' => $done ? 'Services described' : 'Describe your booths on the Services page',
+            'sub' => $done ? 'Your own booth descriptions are on the Services page.' : ($serviceCount > 0
+                ? 'Describe your booth types, backdrops, props, and extras in your own words. Your ' . $plural($serviceCount, 'service is', 'services are') . ' already listed.'
+                : 'No services saved yet. Describe your booth types, backdrops, props and extras in your own words.'),
+            'action' => 'Edit Services page', 'url' => $editUrl($servicesPage),
+        ];
+
+        $packagesPage = $pages->firstWhere('slug', 'photo-booth-packages');
+        $catalog = $reusable['catalog'];
+        $done = $catalog->isNotEmpty() && $hasOwnWords($packagesPage);
+        $rows[] = [
+            'key' => 'packages', 'done' => $done,
+            'title' => $done ? 'Packages described' : ($catalog->isEmpty() ? 'Add your packages' : "Say what's in each package"),
+            'sub' => $done ? 'What each package includes is on the Packages page.' : ($catalog->isNotEmpty()
+                ? $catalog->pluck('name')->implode(', ') . ' show price and description only.'
+                : 'No packages saved yet.'),
+            'action' => $catalog->isEmpty() ? 'Add a package' : 'Edit Packages page',
+            'url' => $catalog->isEmpty() ? route('customer.workspaces.businesses.catalog.create', $ids) : $editUrl($packagesPage),
+        ];
+
+        $onGallery = count(collect($galleryPage?->sections ?? [])->firstWhere('type', 'gallery')['data']['items'] ?? []);
+        $rows[] = [
+            'key' => 'photos', 'done' => $photoCount > 0,
+            'title' => 'Photos',
+            'sub' => $photoCount > 0 ? $photoCount . ' uploaded, ' . $onGallery . ' on your Gallery page.' : 'No photos uploaded yet. Real event photos build trust.',
+            'action' => $photoCount > 0 ? 'Manage photos' : 'Upload photos',
+            'url' => route('customer.workspaces.businesses.website.photos.index', $ids),
+        ];
+
+        $location = $reusable['location'];
+        $rows[] = [
+            'key' => 'location', 'done' => $location !== null,
+            'title' => 'Location',
+            'sub' => $location !== null
+                ? 'Your public location' . ($location->city ? ' in ' . $location->city : '') . ' is used in your contact details.'
+                : 'Your contact details need one: no active public location is available.',
+            'action' => $location !== null ? 'Review locations' : 'Add a location',
+            'url' => route('customer.workspaces.businesses.locations.index', $ids),
+        ];
+
+        $formReady = $quoteForm !== null && $quoteForm->is_active && $quoteForm->location_id !== null;
+        $rows[] = [
+            'key' => 'quote_form', 'done' => $formReady,
+            'title' => 'Quote request form',
+            'sub' => $quoteForm === null ? 'Not created yet.' : (! $formReady
+                ? 'Switch it on and choose a location before it can take inquiries.'
+                : $plural((int) $quoteForm->submissions_count, 'inquiry', 'inquiries') . ' received so far.'),
+            'action' => $quoteForm === null ? 'Create form' : 'Manage form',
+            'url' => route('customer.workspaces.businesses.website.forms.index', $ids),
+        ];
+
+        return $rows;
+    }
     public function createPage(string $workspaceUid, string $businessUid): View|Factory|Application
     {
         $this->authorize('website');
