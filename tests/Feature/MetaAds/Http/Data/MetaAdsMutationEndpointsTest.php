@@ -464,4 +464,19 @@ class MetaAdsMutationEndpointsTest extends TestCase
         }
         $this->assertStringContainsString('MetaAdsMutationService', $source);
     }
+
+    public function test_the_sole_owner_without_the_persisted_manage_permission_can_pause_a_campaign(): void
+    {
+        $t = $this->mutationTenant(canManage: false);
+        $owner = $t['customer'];
+        $owner->user->email_verified_at = now();
+        $owner->user->save();
+        $this->withSession(['permissions' => collect(['access_backend', self::VIEW])]);
+        $this->actingAs($owner->user);
+        $row = $this->campaignOf($t['account']);
+
+        $this->metaPost($t['workspace'], $t['business'], 'campaigns.pause', [$row->uid], ['from' => 'campaigns'])->assertSessionHas('status', 'success');
+
+        $this->assertSame('PAUSED', $this->statusOf('meta_ads_campaigns', $row->id));
+    }
 }

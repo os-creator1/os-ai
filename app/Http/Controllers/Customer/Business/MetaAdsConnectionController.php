@@ -94,7 +94,7 @@ class MetaAdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveMetaAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_meta_ads');
+        $this->authorizeMetaAdsManage($workspace);
 
         $account = $this->resolveMetaAdsAccount($business);
 
@@ -159,7 +159,7 @@ class MetaAdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveMetaAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_meta_ads');
+        $this->authorizeMetaAdsManage($workspace);
 
         $existing = $this->metaAdsConnectionFor($business);
         $forceReauth = false;
@@ -251,7 +251,7 @@ class MetaAdsConnectionController extends CustomerBaseController
             abort(404);
         }
 
-        if (Gate::denies('manage_meta_ads')) {
+        if (! app(\App\Library\Workspace\WorkspaceManagementAuthority::class)->mayManage($workspace, 'manage_meta_ads')) {
             abort(404);
         }
 
@@ -301,7 +301,7 @@ class MetaAdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveMetaAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_meta_ads');
+        $this->authorizeMetaAdsManage($workspace);
 
         $connection = $this->metaAdsConnectionFor($business);
 
@@ -337,7 +337,7 @@ class MetaAdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveMetaAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_meta_ads');
+        $this->authorizeMetaAdsManage($workspace);
 
         // ONLY the account id is read from the request: currency, time zone and status are
         // re-derived server-side from the fresh candidate.
@@ -379,7 +379,7 @@ class MetaAdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveMetaAdsAccessibleTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_meta_ads');
+        $this->authorizeMetaAdsManage($workspace);
 
         $connection = $this->metaAdsConnectionFor($business);
 
@@ -402,7 +402,7 @@ class MetaAdsConnectionController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveMetaAdsTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_meta_ads');
+        $this->authorizeMetaAdsManage($workspace);
 
         $account = $this->resolveMetaAdsAccount($business);
 

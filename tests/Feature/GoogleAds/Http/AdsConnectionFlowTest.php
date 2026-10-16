@@ -520,4 +520,26 @@ class AdsConnectionFlowTest extends TestCase
         $this->post($this->adsUrl($workspace, $business, 'disconnect'))->assertRedirect($this->adsUrl($workspace, $business));
         $this->assertDatabaseCount('business_google_connections', 0);
     }
+
+    public function test_the_sole_owner_without_the_persisted_manage_permission_can_start_the_connection(): void
+    {
+        [$customer, $business, $workspace] = $this->adsHttpTenant();
+        $this->authenticateAsCustomer($customer, [self::VIEW]);
+
+        $this->get($this->adsUrl($workspace, $business, 'settings'))->assertOk()->assertDontSee('Ask the owner of this account')->assertSee('Connect');
+
+        $response = $this->post($this->adsUrl($workspace, $business, 'connect'));
+        $this->assertStringStartsWith('https://accounts.google.test/o/oauth2/v2/auth', (string) $response->headers->get('Location'));
+    }
+
+    public function test_the_owner_cannot_complete_a_callback_started_by_another_actor(): void
+    {
+        [$customer, $business] = $this->adsHttpTenant();
+        $staff = $this->nonOwnerStaff($this->workspaceOwnedBy($customer), [self::VIEW, self::MANAGE]);
+        $state = $this->pendingState($business, (int) $staff->user_id);
+
+        $this->authenticateAsCustomer($customer, [self::VIEW]);
+        $this->hitCallback($state)->assertNotFound();
+        $this->assertSame(0, $this->fakeAds->callCount('exchangeAuthorizationCode'));
+    }
 }

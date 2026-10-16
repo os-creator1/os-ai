@@ -313,4 +313,15 @@ class AdsMutationEndpointsTest extends TestCase
             $this->assertContains('throttle:20,1', $route->gatherMiddleware(), "[{$name}] is throttled");
         }
     }
+
+    public function test_the_sole_owner_without_the_persisted_manage_permission_can_pause_a_campaign(): void
+    {
+        [$customer, $business, $workspace] = $this->adsHttpTenant();
+        [, $campaigns] = $this->mirroredAdsAccount($business);
+        $rental = $campaigns[PhotoBoothFixture::CAMPAIGN_RENTAL];
+        $this->authenticateAsCustomer($customer, [self::VIEW]);
+
+        $this->adsPost($workspace, $business, 'campaigns.pause', [$rental->uid], ['from' => 'campaigns'])->assertSessionHas('status', 'success');
+        $this->assertSame('PAUSED', $this->statusOf('google_ads_campaigns', $rental->id));
+    }
 }

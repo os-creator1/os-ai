@@ -14,12 +14,12 @@ use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\BusinessEmail\SendBusinessEmailRequest;
 use App\Library\BusinessEmail\BusinessEmailAccountManager;
-use App\Library\BusinessEmail\BusinessEmailAuthority;
 use App\Library\BusinessEmail\BusinessEmailContactResolver;
 use App\Library\BusinessEmail\BusinessEmailLocationScope;
 use App\Library\BusinessEmail\BusinessEmailOAuthConfig;
 use App\Library\BusinessEmail\BusinessEmailOAuthStateSigner;
 use App\Library\BusinessEmail\BusinessEmailSender;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Models\Business;
 use App\Models\BusinessEmailMessage;
 use App\Models\Contacts;
@@ -65,7 +65,7 @@ class BusinessEmailController extends CustomerBaseController
         private readonly BusinessEmailSender $sender,
         private readonly BusinessEmailContactResolver $contacts,
         private readonly BusinessEmailLocationScope $locations,
-        private readonly BusinessEmailAuthority $authority,
+        private readonly WorkspaceManagementAuthority $authority,
     ) {
     }
 
@@ -76,7 +76,7 @@ class BusinessEmailController extends CustomerBaseController
         // The Workspace owner, or either email permission, may view the page.
         // Throwing the same exception authorize() throws keeps a missing
         // permission a 401, like every other permission-gated customer action.
-        $canManage = $this->authority->mayManage($workspace);
+        $canManage = $this->authority->mayManage($workspace, 'manage_business_email');
 
         if (! $canManage && ! Gate::allows('chat_box')) {
             throw new AuthorizationException();
@@ -185,7 +185,7 @@ class BusinessEmailController extends CustomerBaseController
 
         // 404 (not 401): this route has no tenant parameters, so a
         // permission-shaped answer would disclose that the Business exists.
-        if (! $this->authority->mayManage($workspace)) {
+        if (! $this->authority->mayManage($workspace, 'manage_business_email')) {
             abort(404);
         }
 
@@ -305,7 +305,7 @@ class BusinessEmailController extends CustomerBaseController
     /** Same 401 a missing permission has always been on the tenant-addressed routes. */
     private function authorizeManage(Workspace $workspace): void
     {
-        if (! $this->authority->mayManage($workspace)) {
+        if (! $this->authority->mayManage($workspace, 'manage_business_email')) {
             throw new AuthorizationException();
         }
     }

@@ -588,13 +588,18 @@ final class GoogleAdsMutationService
 
     private function guard(Business $business, User $actor): void
     {
-        if (! $this->accounts->hasPermission($actor, self::PERMISSION)) {
+        $workspace = $business->workspace_id === null ? null : Workspace::query()->find($business->workspace_id);
+
+        // Owner-or-permitted: the same decision the controllers and UI make.
+        $permitted = $workspace === null
+            ? $this->accounts->hasPermission($actor, self::PERMISSION)
+            : app(\App\Library\Workspace\WorkspaceManagementAuthority::class)->allows($actor, $workspace, self::PERMISSION);
+
+        if (! $permitted) {
             throw new GoogleAdsMutationForbiddenException();
         }
 
         try {
-            $workspace = $business->workspace_id === null ? null : Workspace::query()->find($business->workspace_id);
-
             $entitled = $workspace !== null
                 && $workspace->is_active
                 && (new \App\Library\Ads\AdsFeatureAccess($this->entitlements))->hasFullModule($workspace, $business, (int) $actor->id);

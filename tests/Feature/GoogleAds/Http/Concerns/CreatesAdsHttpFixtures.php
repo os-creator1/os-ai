@@ -22,6 +22,7 @@ use Tests\Feature\GoogleBusinessProfile\Concerns\CreatesGoogleBusinessProfileFix
 trait CreatesAdsHttpFixtures
 {
     use CreatesGoogleBusinessProfileFixtures;
+    use \Tests\Feature\Concerns\CreatesNonOwnerStaff;
     use SeedsGoogleAdsReportingData;
 
     protected const VIEW = 'view_google_ads';
@@ -62,7 +63,9 @@ trait CreatesAdsHttpFixtures
 
     protected function asAdsUser(Customer $customer, array $permissions = [self::VIEW, self::MANAGE]): void
     {
-        $this->authenticateAsCustomer($customer, $permissions);
+        // The Workspace owner manages by ownership; a "no manage permission" actor is non-owner staff.
+        $owned = in_array(self::MANAGE, $permissions, true) ? null : $this->workspaceOwnedBy($customer);
+        $this->authenticateAsCustomer($owned === null ? $customer : $this->nonOwnerStaff($owned, $permissions), $permissions);
     }
 
     /** @param  array<string, mixed>  $overrides */

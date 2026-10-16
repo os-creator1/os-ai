@@ -96,7 +96,7 @@ class AdsMutationController extends CustomerBaseController
     {
         [$workspace, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         [$term, $campaignUid] = $this->resolveTerm($request, $business);
         $scope = $this->scope($request, $term);
@@ -122,9 +122,9 @@ class AdsMutationController extends CustomerBaseController
     /** Step two: the owner confirmed what step one displayed. */
     public function storeNegative(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        [, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
+        [$workspace, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         [$term, $campaignUid] = $this->resolveTerm($request, $business);
         $scope = $this->scope($request, $term);
@@ -155,9 +155,9 @@ class AdsMutationController extends CustomerBaseController
 
     private function classify(Request $request, string $workspaceUid, string $businessUid, bool $ignore): RedirectResponse
     {
-        [, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
+        [$workspace, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         $account = $this->resolveAdsAccount($business);
         $term = $account === null ? null : $this->review->resolve($account, $this->termId($request), $this->optionalCampaignUid($request));
@@ -183,9 +183,9 @@ class AdsMutationController extends CustomerBaseController
      */
     private function mutate(Request $request, string $workspaceUid, string $businessUid, string $fallbackRoute, Closure $call): RedirectResponse
     {
-        [, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
+        [$workspace, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
 
-        $this->authorize('manage_google_ads');
+        $this->authorizeAdsManage($workspace);
 
         try {
             $outcome = $call($business, $this->actor());
