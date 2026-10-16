@@ -277,6 +277,25 @@ class AssistantHistoryTest extends TestCase
         $this->assertSame(1, (new AssistantRetention())->purgeExpired(), 'And the default policy still removes what is past it.');
     }
 
+    public function test_a_notice_stored_under_the_old_policy_shows_the_current_policy_and_the_row_is_untouched(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Notice Venue', 'Notice Account');
+        $this->authenticateAs($customer);
+        $c = $this->conversation($customer, $business, $workspace, 2, 'Old notice');
+        $old = 'Conversations are saved in MotionGrove for 90 days, and you can delete one any time.';
+        $row = AssistantMessage::create(['conversation_id' => $c->id, 'uid' => (string) Str::uuid(), 'role' => 'assistant', 'kind' => 'notice', 'body' => $old, 'payload' => ['title' => 'How Ask MotionGrove uses AI'], 'created_at' => now()->subYear()]);
+
+        config(['assistant.retention_days' => 0]);
+        $shown = collect($this->getJson($this->assistantUrl($workspace, $business, 'show', ['conversation' => $c->uid]))->assertOk()->json('messages'))->firstWhere('kind', 'notice');
+        $this->assertStringContainsString('until you delete them', $shown['body'], 'The customer is told the policy in force now.');
+        $this->assertStringNotContainsString('90 days', $shown['body']);
+        $this->assertSame($old, $row->fresh()->body, 'The stored record is never rewritten.');
+
+        config(['assistant.retention_days' => 90]);
+        $shown = collect($this->getJson($this->assistantUrl($workspace, $business, 'show', ['conversation' => $c->uid]))->json('messages'))->firstWhere('kind', 'notice');
+        $this->assertStringContainsString('90 days', $shown['body'], 'And it follows a configured period too.');
+        $this->assertSame(0, $this->aiCalls());
+    }
     public function test_the_disclosure_states_the_policy_actually_in_force(): void
     {
         config(['assistant.retention_days' => 90]);

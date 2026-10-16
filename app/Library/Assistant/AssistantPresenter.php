@@ -95,11 +95,15 @@ final class AssistantPresenter
 
         unset($payload['proposal_uid']);
 
+        // The AI-data notice is a standing disclosure, not part of the conversation's content: it always shows the retention policy in force NOW,
+        // whatever the policy was when the row was written. The stored row itself is never changed.
+        $body = $m->kind === 'notice' ? AssistantRetention::disclosure() : $m->body;
+
         return [
             'uid' => $m->uid,
             'role' => $m->role,
             'kind' => $m->kind,
-            'body' => $m->body,
+            'body' => $body,
             'payload' => $payload === [] ? new \stdClass() : $payload,
             'proposal' => $proposal === null ? null : $this->proposal($proposal),
             'at' => $m->created_at?->toIso8601String(),

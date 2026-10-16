@@ -41,7 +41,7 @@
     if (!cfg.message || !form || !input || !panel || !thread) { return; }
     input.setAttribute('data-placeholder', input.getAttribute('placeholder') || '');
 
-    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null, stick: true, seen: {}, topEl: null, hasMore: false, before: null, loadingOlder: false, olderFailed: false, historyNext: null };
+    var state = { uid: null, startNew: false, busy: false, failed: {}, loaded: false, firstUse: false, notice: null, stick: true, epoch: 0, opening: false, histSeq: 0, seen: {}, topEl: null, hasMore: false, before: null, loadingOlder: false, olderFailed: false, historyNext: null };
     var narrow = window.matchMedia ? window.matchMedia('(max-width: 767.98px)') : { matches: false };
 
     function csrf() {
@@ -456,6 +456,19 @@
         return bar;
     }
 
+    // ── which conversation is selected ─────────────────────────────────────────────────────────────────────────────────────
+    // Every change of the selected conversation (New chat, opening another one, it being deleted or gone) takes a new token. A request
+    // remembers the token it was made under and may touch the screen ONLY while that token is still current: a late answer, an
+    // out-of-order history read or an older send can never replace the conversation on screen or put messages in the wrong thread.
+    // What the server did is untouched — the answer stays stored in its own conversation and is found in Chat history — and nothing
+    // typed in the composer is ever cleared by a selection change.
+    function reselect() {
+        state.epoch++;
+        state.opening = false;
+        if (state.busy) { setBusy(false); }
+        return state.epoch;
+    }
+
     // ── the thread: full render, merge of the newest page, and older pages ─────────────────────────────────────────────────
     function resetThread() {
         thread.textContent = '';
@@ -557,13 +570,14 @@
     function loadOlder() {
         if (!state.hasMore || state.loadingOlder || !state.uid || !state.before || !cfg.show) { return; }
         var uid = state.uid;
+        var epoch = state.epoch;
         state.loadingOlder = true;
         state.olderFailed = false;
         updateTop();
         var url = cfg.show + (cfg.show.indexOf('?') < 0 ? '?' : '&') + 'conversation=' + encodeURIComponent(uid) + '&before=' + encodeURIComponent(state.before);
 
         request(url).then(function (res) {
-            if (uid !== state.uid) { return; } // the customer moved to another conversation meanwhile
+            if (uid !== state.uid || epoch !== state.epoch) { return; } // the customer moved to another conversation meanwhile
             if (res.status === 404) { conversationGone(); return; }
             if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
             var beforeHeight = thread.scrollHeight;
@@ -599,6 +613,7 @@
     // The conversation being viewed no longer exists (deleted in another window, aged out, or never theirs): say so and start fresh.
     function conversationGone() {
         flash('That conversation is no longer available. You can start a new chat.');
+        reselect();
         state.uid = null;
         state.startNew = true;
         state.failed = {};
@@ -644,6 +659,12 @@
     function send(question, retryOf) {
         question = (question || '').trim();
         if (question === '' || state.busy) { return; }
+        if (state.opening) {
+            // The selected conversation is still being opened: sending now could land in the wrong one. The words stay in the composer.
+            if (!retryOf) { input.value = question; autosize(); saveDraft(); }
+            flash('Opening your conversation… send again in a moment.');
+            return;
+        }
 
         // The saved conversation (and, on first use, the AI-data notice) is read eagerly. A question sent before that has finished
         // waits for it: if this turns out to be first use the notice is shown first and the customer sends again, so nothing reaches
@@ -678,11 +699,24 @@
         saveDraft();
         setBusy(true);
 
+        var epoch = state.epoch;
         var body = { q: question, client_message_id: attempt.id };
         if (attempt.uid && !attempt.startNew) { body.conversation = attempt.uid; }
         if (attempt.startNew) { body.new = true; }
 
         request(cfg.message, { method: 'POST', body: body }).then(function (res) {
+            var live = epoch === state.epoch;
+            if (!live) {
+                // The customer moved to another conversation while this was in flight. A successful answer is stored where it was asked;
+                // say where to find it, and leave the screen alone. A failed one needs no words here.
+                delete state.failed[question];
+                if (res.ok && res.body) {
+                    flash('Your question was answered in your earlier chat. Open Chat history to read it.');
+                    state.historyNext = null;
+                    if (historyPanel && !historyPanel.hidden) { loadHistory(false); }
+                }
+                return;
+            }
             if (res.status === 409) {
                 thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: 'I am still working on your last message. Try again in a moment.', payload: { title: 'One at a time', retryable: true, attempt: attempt } }));
                 return;
@@ -704,8 +738,13 @@
             if (attempt.startNew && state.startNew) { state.startNew = false; }
             mergeLatest(res.body);
         }).catch(function () {
+            if (epoch !== state.epoch) { return; }
             thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't reach MotionGrove. Nothing was changed. Please try again.", payload: { title: "I couldn't complete that", retryable: true, attempt: attempt } }));
-        }).then(function () { setBusy(false); scrollToEnd(); });
+        }).then(function () {
+            if (epoch !== state.epoch) { return; }
+            setBusy(false);
+            scrollToEnd();
+        });
     }
 
     form.addEventListener('submit', function (e) {
@@ -736,6 +775,7 @@
 
     if (newBtn) {
         newBtn.addEventListener('click', function () {
+            reselect();
             state.uid = null;
             state.startNew = true;
             state.failed = {};
@@ -766,6 +806,7 @@
                     return;
                 }
                 if (!res.ok) { throw new Error('status ' + res.status); }
+                reselect();
                 state.uid = null;
                 state.startNew = false;
                 state.failed = {};
@@ -886,6 +927,7 @@
                 li.remove();
                 if (c.uid === state.uid) {
                     // The conversation on screen is gone: what is left is a new chat, never the next-newest one by surprise.
+                    reselect();
                     state.uid = null; state.startNew = true; state.failed = {}; state.hasMore = false;
                     resetThread();
                     thread.appendChild(emptyState());
@@ -902,9 +944,11 @@
     function loadHistory(append) {
         if (!cfg.conversations || !historyList) { return; }
         var url = cfg.conversations + (append && state.historyNext ? '?after=' + encodeURIComponent(state.historyNext) : '');
+        var seq = ++state.histSeq;
         historyNote(append ? '' : 'Loading…');
         if (historyMore) { historyMore.hidden = true; }
         request(url).then(function (res) {
+            if (seq !== state.histSeq) { return; } // a newer read of the list superseded this one
             if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
             if (!append) { historyList.textContent = ''; }
             (res.body.conversations || []).forEach(function (c) { historyList.appendChild(historyItem(c)); });
@@ -912,6 +956,7 @@
             historyNote(historyList.children.length ? '' : 'No saved conversations yet. Ask something and it will be kept here.');
             if (historyMore) { historyMore.hidden = !res.body.has_more; }
         }).catch(function () {
+            if (seq !== state.histSeq) { return; }
             historyNote("We couldn't load your chat history. Please try again.");
         });
     }
@@ -931,10 +976,15 @@
     // Opening a past conversation reads it (newest page); it never calls the assistant. Continuing it is a normal, intentional send.
     function openConversation(uid) {
         setHistoryOpen(false);
-        if (uid === state.uid) { thread.scrollTop = thread.scrollHeight; input.focus(); return; }
+        if (uid === state.uid && !state.opening) { thread.scrollTop = thread.scrollHeight; input.focus(); return; }
+        if (uid === state.uid) { reselect(); flash('Back to the conversation on screen.'); input.focus(); return; } // cancels the open still in flight
+        var token = reselect();
+        state.opening = true;
         var url = cfg.show + (cfg.show.indexOf('?') < 0 ? '?' : '&') + 'conversation=' + encodeURIComponent(uid);
         flash('Opening…');
         request(url).then(function (res) {
+            if (token !== state.epoch) { return; } // the customer chose something else meanwhile: this read is stale
+            state.opening = false;
             if (res.status === 404) { flash('That conversation is no longer available.'); loadHistory(false); return; }
             if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
             state.startNew = false;
@@ -944,6 +994,8 @@
             banner.hidden = true;
             input.focus();
         }).catch(function () {
+            if (token !== state.epoch) { return; }
+            state.opening = false;
             flash("We couldn't open that conversation. Please try again.");
         });
     }
