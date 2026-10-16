@@ -20,18 +20,33 @@
     // the form is an ordinary GET form, which is also the no-JavaScript fallback
     // when it is set: the same URL, the same page.
     $asyncRegion = $asyncRegion ?? null;
+    // Home's compact segmented control: the same form, the same `range` parameter and the same server-side range logic —
+    // only the way a preset is chosen differs (a submit button per preset instead of a select).
+    $segmented = $segmented ?? false;
+    $segmentPresets = [AnalyticsDateRange::PRESET_LAST_7_DAYS => '7 days', AnalyticsDateRange::PRESET_THIS_MONTH => 'This month', AnalyticsDateRange::PRESET_LAST_30_DAYS => '30 days'];
+    if ($segmented && ! isset($segmentPresets[$range->preset]) && ! $isCustom) {
+        $segmentPresets[$range->preset] = $presetLabels[$range->preset] ?? $range->label();
+    }
     $timezoneNote = 'Days follow ' . ($businessName ? $businessName . "'s" : "this Business's") . ' local time (' . $range->timezone . ').';
 @endphp
 
-<form method="get" action="{{ $formAction }}" class="row g-1 align-items-end" data-role="analytics-range" @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
-    <div class="col-md-3 col-sm-6">
+<form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
+    <div class="{{ $segmented ? 'visually-hidden' : 'col-md-3 col-sm-6' }}">
         <label class="form-label" for="range">Date range</label>
-        <select id="range" name="range" class="form-select" data-role="range-preset">
+        <select id="range" name="range" class="form-select" data-role="range-preset" @if($segmented) tabindex="-1" @endif>
             @foreach(AnalyticsDateRange::SELECTABLE_PRESETS as $value)
                 <option value="{{ $value }}" @selected($range->preset === $value)>{{ $presetLabels[$value] }}</option>
             @endforeach
         </select>
     </div>
+    @if($segmented)
+        <div class="home-segmented" role="group" aria-label="Date range" data-role="range-segments">
+            @foreach($segmentPresets as $value => $label)
+                <button type="submit" name="range" value="{{ $value }}" class="{{ $range->preset === $value ? 'is-active' : '' }}" aria-pressed="{{ $range->preset === $value ? 'true' : 'false' }}">{{ $label }}</button>
+            @endforeach
+            <button type="button" class="{{ $isCustom ? 'is-active' : '' }}" aria-pressed="{{ $isCustom ? 'true' : 'false' }}" data-role="range-custom-toggle">Custom</button>
+        </div>
+    @endif
     <div class="col-md-3 col-sm-6" data-role="custom-dates" @unless($isCustom) hidden @endunless>
         <label class="form-label" for="start">From</label>
         <input type="date" id="start" name="start" class="form-control" value="{{ old('start', $isCustom ? $range->startLocal->format('Y-m-d') : '') }}">
@@ -40,10 +55,14 @@
         <label class="form-label" for="end">To</label>
         <input type="date" id="end" name="end" class="form-control" value="{{ old('end', $isCustom ? $range->endLocal->format('Y-m-d') : '') }}">
     </div>
-    <div class="col-md-3 col-sm-6">
-        <x-button type="submit" variant="primary" size="sm">Apply</x-button>
+    <div class="col-md-3 col-sm-6" @if($segmented) data-role="custom-dates" @unless($isCustom) hidden @endunless @endif>
+        @if($segmented)
+            <x-button type="submit" variant="primary" size="sm" name="range" value="custom">Apply</x-button>
+        @else
+            <x-button type="submit" variant="primary" size="sm">Apply</x-button>
+        @endif
     </div>
-    <div class="col-12">
+    <div class="{{ $segmented ? 'visually-hidden' : 'col-12' }}">
         <p class="text-caption mb-0" data-role="range-caption">
             Showing <strong>{{ $range->label() }}</strong>
             @unless($isCustom)
@@ -82,6 +101,14 @@
             if (event.target && event.target.matches && event.target.matches('[data-role="range-preset"]')) {
                 sync(event.target.form);
             }
+        });
+        document.addEventListener('click', function (event) {
+            var toggle = event.target && event.target.closest ? event.target.closest('[data-role="range-custom-toggle"]') : null;
+            if (!toggle) { return; }
+            var form = toggle.form || toggle.closest('form');
+            var open = form.querySelector('[data-role="custom-dates"]').hidden;
+            form.querySelectorAll('[data-role="custom-dates"]').forEach(function (el) { el.hidden = !open; });
+            toggle.setAttribute('aria-pressed', open ? 'true' : 'false');
         });
         document.addEventListener('async-region:updated', function (event) { syncAll(event.target); });
         syncAll(document);

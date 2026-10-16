@@ -17,21 +17,31 @@
     bookmark shows the same period. Without JavaScript the form is an ordinary
     GET and the whole page loads with that range — the same URL either way.
 --}}
-<section class="mb-2" aria-labelledby="dashboard-headlines-heading" data-band="headlines" data-range="{{ $headlines['range']->cacheKey() }}" data-async-region="business-performance">
-    <x-card>
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-1 mb-50">
-            <h2 class="h4 text-section-heading mb-0" id="dashboard-headlines-heading">Business performance</h2>
-            @if($headlines['resultsUrl'])
-                <x-button variant="outline" size="sm" :href="$headlines['resultsUrl']" data-role="results-link">See details</x-button>
-            @endif
-        </div>
-
-        <div class="mb-1" data-role="performance-range">
+@unless($stylesLoaded ?? false)
+    @include('customer.dashboard.home._styles')
+@endunless
+<section class="mb-2 home-performance" aria-labelledby="dashboard-headlines-heading" data-band="headlines" data-range="{{ $headlines['range']->cacheKey() }}" data-async-region="business-performance">
+    <x-card class="home-panel">
+        <div class="home-perf-head">
+            <div>
+                <h2 class="home-panel-title mb-0" id="dashboard-headlines-heading">Business performance</h2>
+                <p class="text-caption text-muted mb-0" data-role="headline-period">
+                    {{ $headlines['currentLabel'] }}, compared with the {{ $headlines['previousRange']->days() }} days before it ({{ $headlines['previousLabel'] }}).
+                </p>
+            </div>
+            <div class="home-perf-controls">
+                <div data-role="performance-range">
             @include('customer.business.analytics._range', [
                 'range' => $headlines['range'],
                 'formAction' => $headlines['formAction'],
                 'asyncRegion' => 'business-performance',
+                'segmented' => true,
             ])
+                </div>
+                @if($headlines['resultsUrl'])
+                    <x-button variant="outline" size="sm" :href="$headlines['resultsUrl']" data-role="results-link">See details</x-button>
+                @endif
+            </div>
         </div>
 
         @if($headlines['rangeRejected'])
@@ -40,32 +50,35 @@
             </p>
         @endif
 
-        <p class="text-caption text-muted mb-2" data-role="headline-period">
-            {{ $headlines['currentLabel'] }}, compared with the {{ $headlines['previousRange']->days() }} days before it ({{ $headlines['previousLabel'] }}).
-        </p>
 
-        <div class="row g-2">
+        <div class="home-metrics" style="--home-metric-count: {{ count($headlines['items']) }}">
             @foreach($headlines['items'] as $headline)
-                <div class="col-12 col-sm-6 {{ count($headlines['items']) > 3 ? 'col-xl-3' : 'col-xl-4' }}">
-                    <article class="border rounded p-1 h-100" data-role="headline" data-headline="{{ $headline->key }}"
+                <div class="home-metric-cell">
+                    <article class="home-metric h-100" data-role="headline" data-headline="{{ $headline->key }}"
                              data-trend="{{ $headline->comparison->trend->value }}" data-polarity="{{ $headline->polarity->value }}"
                              @if($headline->judgement !== null) data-judgement="{{ $headline->judgement }}" @endif>
-                        <h3 class="h6 text-label mb-50">{{ $headline->label }}</h3>
-                        <p class="h2 mb-0" data-role="headline-figure">{{ $headline->figure }}</p>
-                        <p class="text-caption text-muted mb-50">{{ $headline->figureCaption }}</p>
-                        <p class="mb-50" data-role="headline-comparison">{{ $headline->comparisonSentence }}</p>
+                        <h3 class="home-metric-label mb-50">{{ $headline->label }}</h3>
+                        <p class="home-metric-value mb-0" data-role="headline-figure">{{ $headline->figure }}</p>
+                        <p class="visually-hidden">{{ $headline->figureCaption }}</p>
+                        <p class="home-metric-compare mb-0" data-role="headline-comparison" data-trend="{{ $headline->comparison->trend->value }}">{{ $headline->comparisonSentence }}</p>
                         @if($headline->judgementWord() !== null)
-                            <x-badge :variant="$headline->judgementVariant()" class="mb-50" data-role="headline-judgement">{{ $headline->judgementWord() }}</x-badge>
+                            <x-badge :variant="$headline->judgementVariant()" class="visually-hidden" data-role="headline-judgement">{{ $headline->judgementWord() }}</x-badge>
                         @endif
-                        <p class="text-caption mb-0" data-role="headline-interpretation">{{ $headline->interpretation }}</p>
+                        <p class="visually-hidden" data-role="headline-interpretation">{{ $headline->interpretation }}</p>
                     </article>
                 </div>
             @endforeach
         </div>
 
         @if($headlines['seriesUrl'])
-            <div class="mt-2">
-                <h3 class="h6 text-label mb-50" id="dashboard-contacts-chart-heading">New contacts</h3>
+            <div class="home-chart">
+                <div class="d-flex justify-content-between align-items-baseline gap-1 mb-50">
+                    <h3 class="home-chart-title mb-0" id="dashboard-contacts-chart-heading">New contacts per day</h3>
+                    @php $contactsFigure = collect($headlines['items'])->firstWhere('key', 'new_contacts'); @endphp
+                    @if($contactsFigure !== null)
+                        <span class="text-caption text-muted" data-role="chart-total">{{ $contactsFigure->figure }} in {{ $headlines['range']->days() }} {{ $headlines['range']->days() === 1 ? 'day' : 'days' }}</span>
+                    @endif
+                </div>
                 <div data-role="chart-new-contacts" data-series-url="{{ $headlines['seriesUrl'] }}"
                      aria-labelledby="dashboard-contacts-chart-heading" role="img" style="min-height: 180px;">
                     <p class="text-caption text-muted mb-0" data-role="chart-placeholder">Loading the chart…</p>

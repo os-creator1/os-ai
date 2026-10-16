@@ -78,7 +78,8 @@ class CustomerAsyncRegionMarkupTest extends TestCase
         $this->assertSame('get', strtolower($form->getAttribute('method')), 'An ordinary GET: the no-JavaScript fallback.');
         $this->assertSame(route('user.home'), $form->getAttribute('action'));
         $this->assertSame(1, $xpath->query('.//select[@name="range"]', $form)->length);
-        $this->assertSame(1, $xpath->query('.//button[@type="submit"]', $form)->length);
+        $this->assertSame(1, $xpath->query('.//button[@type="submit"][@value="custom"]', $form)->length, 'One Apply, for a custom range.');
+        $this->assertSame(3, $xpath->query('.//*[@data-role="range-segments"]//button[@type="submit"]', $form)->length, 'A preset is one press: 7 days, This month, 30 days.');
 
         // Everything that follows the range lives inside the region it updates.
         $this->assertSame(1, $xpath->query('.//*[@data-role="range-caption"]', $band)->length);

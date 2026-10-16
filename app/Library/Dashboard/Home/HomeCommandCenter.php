@@ -171,11 +171,19 @@ final class HomeCommandCenter
             $business->name,
         );
 
+        $offering = AssistantContext::forOffering((int) $context->frameWorkspace()->id, (string) $context->frameWorkspace()->uid, $business, $user, $context, $entitlements, $actions, $scoped);
+
+        // The waiting-customers move carries its own real figure and, where the assistant can prepare replies, the AI-assisted button.
+        if ($primary !== null && $primary['key'] === AttentionType::ConversationsAwaitingReply->value) {
+            $primary['metric'] = $this->waitingMetric($bands);
+            $primary['aiAction'] = $this->assistantSuggestions->draftReplies($offering);
+        }
+
         return [
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
-            'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, $primary !== null || $attentionItems !== []),
+            'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, ($primary !== null ? 1 : 0) + count($attentionItems)),
             'setup' => $state === self::STATE_SETUP ? $journey : null,
             'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
@@ -195,14 +203,12 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
+            'quietSteps' => $this->quietSteps($actions),
             'actions' => $actions,
             'ask' => [
                 // Contextual chips: setup help while launching, performance and optimisation once running. Each is the
                 // literal question it sends, and is offered only when the tool that answers it is open to this actor.
-                'suggestions' => $this->assistantSuggestions->for(
-                    AssistantContext::forOffering((int) $context->frameWorkspace()->id, (string) $context->frameWorkspace()->uid, $business, $user, $context, $entitlements, $actions, $scoped),
-                    $state === self::STATE_SETUP,
-                ),
+                'suggestions' => $this->assistantSuggestions->for($offering, $state === self::STATE_SETUP),
                 'url' => route('customer.workspaces.businesses.home.ask', $scoped),
                 'assistant' => [
                     'show' => route('customer.workspaces.businesses.home.assistant.show', $scoped),
@@ -216,18 +222,83 @@ final class HomeCommandCenter
     }
 
     /**
+     * "7 waiting for you · of 9 conversations": the awaiting-reply figure the Conversations band already read, beside the
+     * period's incoming conversations when (and only when) that comparison is coherent. Null when the band is unavailable.
+     *
+     * @param  array<string, mixed>  $bands
+     * @return array{value: int, caption: string, of: ?int, ofLabel: ?string}|null
+     */
+    private function waitingMetric(array $bands): ?array
+    {
+        $band = $bands[DashboardSnapshot::BAND_CONVERSATIONS] ?? null;
+
+        if (! is_array($band)) {
+            return null;
+        }
+
+        $figures = [];
+
+        foreach ($band['items'] ?? [] as $item) {
+            $figures[$item['key']] = (int) preg_replace('/\D/', '', (string) $item['figure']);
+        }
+
+        if (! isset($figures['awaiting_reply']) || $figures['awaiting_reply'] < 1) {
+            return null;
+        }
+
+        $incoming = $figures['incoming'] ?? 0;
+        $coherent = $incoming >= $figures['awaiting_reply'];
+
+        return [
+            'value' => $figures['awaiting_reply'],
+            'caption' => 'waiting for you',
+            'of' => $coherent ? $incoming : null,
+            'ofLabel' => $coherent ? ($incoming === 1 ? 'conversation' : 'conversations') . ' in ' . ($band['rangeLabel'] ?? 'this period') : null,
+        ];
+    }
+
+    /**
+     * "While it's quiet": practical next steps, each only when its page exists for this actor (the router returns null
+     * for a feature the plan lacks or a permission the actor does not hold).
+     *
+     * @param  array<string, array<string, mixed>|null>  $actions
+     * @return array<int, array{key: string, title: string, text: string, url: string, drawerUrl: ?string}>
+     */
+    private function quietSteps(array $actions): array
+    {
+        $copy = [
+            'booking-type' => ['Create a booking type', 'Let customers book you directly.'],
+            'form' => ['Add a form to your website', 'Turn visitors into contacts.'],
+            'contact' => ['Add a contact', "Bring in someone you're already talking to."],
+        ];
+        $steps = [];
+
+        foreach ($copy as $key => [$title, $text]) {
+            $action = $actions[$key] ?? null;
+
+            if ($action !== null && ($action['fullUrl'] ?? null) !== null) {
+                $steps[] = ['key' => $key, 'title' => $title, 'text' => $text, 'url' => $action['fullUrl'], 'drawerUrl' => $action['drawerUrl'] ?? null];
+            }
+        }
+
+        return $steps;
+    }
+
+    /**
      * The Business's one-line state, said only when the evidence supports it: an unreadable source is "unavailable",
      * never "all caught up".
      *
-     * @return array{key: string, label: string}
+     * `pill` is the short form beside the greeting; `count` is how many things need the customer.
+     *
+     * @return array{key: string, label: string, pill: string, count: int}
      */
-    private function status(string $state, bool $readinessUnknown, bool $moveFailed, bool $sourcesFailed, bool $hasWork): array
+    private function status(string $state, bool $readinessUnknown, bool $moveFailed, bool $sourcesFailed, int $needing): array
     {
         return match (true) {
-            $state === self::STATE_SETUP => ['key' => 'setup', 'label' => 'Setup still in progress'],
-            $hasWork => ['key' => 'attention', 'label' => 'Needs your attention'],
-            $readinessUnknown || $moveFailed || $sourcesFailed => ['key' => 'unavailable', 'label' => 'Data temporarily unavailable'],
-            default => ['key' => 'clear', 'label' => 'All caught up'],
+            $state === self::STATE_SETUP => ['key' => 'setup', 'label' => 'Setup still in progress', 'pill' => 'Setup still in progress', 'count' => $needing],
+            $needing > 0 => ['key' => 'attention', 'label' => 'Needs your attention', 'pill' => $needing === 1 ? '1 thing needs you' : $needing . ' things need you', 'count' => $needing],
+            $readinessUnknown || $moveFailed || $sourcesFailed => ['key' => 'unavailable', 'label' => 'Data temporarily unavailable', 'pill' => 'Data temporarily unavailable', 'count' => 0],
+            default => ['key' => 'clear', 'label' => 'All caught up', 'pill' => 'All caught up · nothing needs you', 'count' => 0],
         };
     }
 
@@ -350,6 +421,8 @@ final class HomeCommandCenter
             'action' => $action['url'] === null && $action['drawerUrl'] === null ? null : $action,
             'detailUrl' => $detailUrl,
             'explanation' => $move['explanation'] ?? null,
+            'metric' => null,
+            'aiAction' => null,
         ];
     }
 

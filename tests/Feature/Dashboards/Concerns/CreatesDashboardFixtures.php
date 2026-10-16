@@ -720,7 +720,8 @@ trait CreatesDashboardFixtures
     /** mainText() without the Ask MotionGrove section: its chip labels are controls, not claims. */
     protected function mainTextWithoutAsk(string $html): string
     {
-        return $this->mainText((string) preg_replace('#<section[^>]*data-band="ask".*?</section>#s', '', $html));
+        // The Ask card and the quiet-time next steps are prompts ("Create a booking type"), not figures or claims.
+        return $this->mainText((string) preg_replace('#<section[^>]*data-band="(?:ask|quiet_steps)".*?</section>#s', '', $html));
     }
 
     /** The HTML inside the page's <main>. */

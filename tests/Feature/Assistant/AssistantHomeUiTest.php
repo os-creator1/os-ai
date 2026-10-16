@@ -78,7 +78,8 @@ class AssistantHomeUiTest extends TestCase
 
         $html = $this->get(route('user.home'))->assertOk()->getContent();
 
-        foreach (['data-role="home-greeting"', 'data-band="next_best_move"', 'data-band="needs_attention"', 'data-band="headlines"', 'data-band="handling"', 'data-role="command-center"'] as $marker) {
+        // A quiet Business has no move or attention card (no empty urgent-action container); the rest is always there.
+        foreach (['data-role="home-greeting"', 'data-band="ask"', 'data-band="headlines"', 'data-band="handling"', 'data-role="command-center"'] as $marker) {
             $this->assertStringContainsString($marker, $html, $marker);
         }
     }

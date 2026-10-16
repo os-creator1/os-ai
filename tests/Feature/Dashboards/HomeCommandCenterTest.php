@@ -170,6 +170,42 @@ class HomeCommandCenterTest extends TestCase
         );
     }
 
+    public function test_the_waiting_move_carries_its_own_real_figure_and_never_an_invented_one(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Metric Venue', 'Metric Account');
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(30)]]);
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(45)]]);
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame(2, $home['primary']['metric']['value'], 'The figure is the awaiting-reply count the Conversations band read.');
+        $this->assertSame('waiting for you', $home['primary']['metric']['caption']);
+        $this->assertTrue($home['primary']['metric']['of'] === null || $home['primary']['metric']['of'] >= 2, 'Never "2 of 1".');
+        $this->assertStringContainsString('data-role="next-best-move-metric"', $this->home()->assertOk()->getContent());
+        $this->assertSame('attention', $home['status']['key']);
+        $this->assertSame('1 thing needs you', $home['status']['pill']);
+    }
+
+    public function test_a_quiet_business_offers_only_steps_whose_pages_exist_for_the_actor(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Steps Venue', 'Quiet Steps Account');
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame('clear', $home['status']['key']);
+        $this->assertNull($home['primary']);
+
+        foreach ($home['quietSteps'] as $step) {
+            $this->assertContains($step['key'], ['booking-type', 'form', 'contact']);
+            $this->assertNotSame('', $step['url'], 'A step is a real page, never a dead row.');
+        }
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertSame($home['quietSteps'] !== [], str_contains($html, 'data-band="quiet_steps"'));
+        $this->assertStringNotContainsString('data-band="next_best_move"', $html, 'No empty urgent-action container.');
+    }
     // ── Drawers ──────────────────────────────────────────────────────────
 
     public function test_the_follow_up_drawer_lists_the_real_waiting_conversation_with_the_inbox_reply_endpoint(): void

@@ -475,6 +475,11 @@
         chip.addEventListener('click', function () { send(chip.getAttribute('data-q')); });
     });
 
+    // An AI-assisted button elsewhere on Home (e.g. the waiting-customers move) asks the same assistant, by the same intentional send.
+    document.querySelectorAll('[data-ask-prompt]').forEach(function (btn) {
+        btn.addEventListener('click', function () { send(btn.getAttribute('data-ask-prompt')); });
+    });
+
     if (minimizeBtn) {
         minimizeBtn.addEventListener('click', function () { setOpen(false); input.focus(); });
     }
