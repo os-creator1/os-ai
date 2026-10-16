@@ -93,12 +93,16 @@
          * contact panel. Tokens only; the chat theme keeps drawing bubbles.
          */
         .chat-app-window .active-chat {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
             position: relative;
         }
 
         .conversation-body {
             display: flex;
-            height: calc(100% - 65px);
+            flex: 1 1 auto;
+            min-height: 0;
         }
 
         .conversation-main {
@@ -210,6 +214,7 @@
             background-color: var(--color-surface);
             border-left: 1px solid var(--color-border-subtle);
             flex: 0 0 280px;
+            min-height: 0;
             overflow-y: auto;
             padding: var(--space-5) var(--space-4);
             width: 280px;
@@ -298,8 +303,19 @@
          * pads .app-content on every side; drop both so the three panes run
          * edge to edge under the navbar, separated only by hairlines.
          */
-        .app-content.chat-application {
-            padding: 0 !important;
+        html body .app-content.chat-application {
+            padding: var(--conversations-top, 0px) 0 0 !important;
+        }
+
+        /* The theme's min-height (100% minus the footer) is taller than the
+           measured workspace by a sub-pixel or two and would push the footer
+           past the viewport, i.e. a stray page scrollbar. */
+        html body .app-content.chat-application {
+            min-height: 0 !important;
+            /* The theme animates `all` on .content for the menu collapse; only
+               the margin needs it, and an animating padding would be measured
+               mid-transition by the chrome script below. */
+            transition-property: margin-left, margin-right;
         }
 
         html body .app-content.chat-application .content-area-wrapper {
@@ -322,8 +338,20 @@
         }
 
         .chat-application .sidebar-content {
+            display: flex;
+            flex-direction: column;
             height: 100%;
             border-right: 1px solid var(--color-border-subtle);
+        }
+
+        .chat-application .sidebar-content > * {
+            flex: 0 0 auto;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper {
+            flex: 1 1 0;
+            height: auto;
+            min-height: 0;
         }
 
         @media (min-width: 576px) {
@@ -697,6 +725,48 @@
     @if(config('broadcasting.connections.pusher.app_id'))
         <script src="{{ asset(mix('js/scripts/echo.js')) }}"></script>
     @endif
+
+    <script>
+      // The workspace fills exactly what the shell leaves: below the navbar,
+      // above the footer. Both are measured, not assumed, so the navbar and
+      // footer types (static / sticky / fixed / hidden) and any font scale
+      // size it correctly. The CSS reads --conversations-top (clearance for a
+      // fixed navbar) and --conversations-chrome (everything that is not the
+      // workspace); its own fallbacks apply until this runs.
+      (function () {
+        const root = document.documentElement;
+        const wrapper = document.querySelector('.app-content.chat-application .content-area-wrapper');
+        if (!wrapper) return;
+        const navbar = document.querySelector('.header-navbar');
+        const footer = document.querySelector('footer.footer');
+
+        let last = '';
+        const syncChrome = function (pass) {
+          const fixedNav = navbar && getComputedStyle(navbar).position === 'fixed';
+          root.style.setProperty('--conversations-top', fixedNav ? navbar.offsetHeight + 'px' : '0px');
+          const top = wrapper.getBoundingClientRect().top + window.pageYOffset;
+          const footerHeight = footer && getComputedStyle(footer).display !== 'none' ? footer.getBoundingClientRect().height : 0;
+          const chrome = (top + footerHeight).toFixed(2) + 'px';
+          root.style.setProperty('--conversations-chrome', chrome);
+          // The clearance above shifts the top that was just measured; go again
+          // until it is stable (one extra pass at most in practice).
+          if (chrome !== last && pass < 3) {
+            last = chrome;
+            syncChrome(pass + 1);
+          }
+        };
+        const run = function () { syncChrome(0); };
+
+        run();
+        window.addEventListener('load', run);
+        window.addEventListener('resize', run);
+        window.addEventListener('orientationchange', run);
+        if (window.ResizeObserver) {
+          const observer = new ResizeObserver(run);
+          [navbar, footer].forEach(function (el) { if (el) observer.observe(el); });
+        }
+      })();
+    </script>
 
     <script>
       // Customer Experience Redesign Slice 2B — every endpoint is rendered by
