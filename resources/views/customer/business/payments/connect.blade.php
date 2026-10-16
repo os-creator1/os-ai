@@ -36,7 +36,8 @@
         <p class="text-caption mb-1" data-role="posture-note">
             Payments go directly to this business's own Stripe account. This business is the merchant of
             record, receives the funds, and pays Stripe's fees. This platform never holds the money.
-            Connecting creates a new Stripe account for this business; an existing Stripe account cannot be linked here.
+            You can connect an existing Stripe account or set up a new one. Existing-account connection works for
+            standard Stripe accounts only; an account already controlled by another platform cannot be connected.
             This is separate from your MotionGrove subscription billing.
         </p>
 
@@ -44,10 +45,16 @@
             <p data-role="connection-state" data-status="none">No Stripe account is connected yet.</p>
 
             @if($isOwner)
-                <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.start', [$workspaceUid, $businessUid]) }}" data-role="connect-form">
-                    @csrf
-                    <button type="submit" class="btn btn-primary btn-sm">Connect with Stripe</button>
-                </form>
+                <div class="d-flex gap-1 flex-wrap">
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.existing', [$workspaceUid, $businessUid]) }}" data-role="connect-existing-form">
+                        @csrf
+                        <button type="submit" class="btn btn-primary btn-sm">Connect existing Stripe account</button>
+                    </form>
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.start', [$workspaceUid, $businessUid]) }}" data-role="connect-form">
+                        @csrf
+                        <button type="submit" class="btn btn-outline-secondary btn-sm">Set up a new Stripe account</button>
+                    </form>
+                </div>
             @else
                 <p class="text-caption" data-role="owner-only-note">Only an owner can connect a Stripe account.</p>
             @endif
@@ -74,6 +81,11 @@
                 <li data-capability="payouts" data-enabled="{{ $connection->payouts_enabled ? '1' : '0' }}">Receive payouts: {{ $connection->payouts_enabled ? 'Yes' : 'Not yet' }}</li>
                 <li data-capability="details" data-enabled="{{ $connection->details_submitted ? '1' : '0' }}">Details submitted: {{ $connection->details_submitted ? 'Yes' : 'Not yet' }}</li>
                 <li data-role="stripe-account">Stripe account: {{ $connection->stripe_account_id }}</li>
+                <li data-role="connection-method">Connected via: {{ $connection->connection_method === 'oauth' ? 'Existing Stripe account' : 'New Stripe account' }}</li>
+                @php($due = json_decode((string) ($connection->getRawOriginal('requirements_due') ?? '[]'), true) ?: [])
+                @if(count($due) > 0)
+                    <li data-role="requirements-due">Still needed by Stripe: {{ implode(', ', array_map(fn ($r) => str_replace('_', ' ', (string) $r), $due)) }}</li>
+                @endif
                 @if($connection->requirements_disabled_reason)
                     <li data-role="disabled-reason">Stripe reason: {{ $connection->requirements_disabled_reason }}</li>
                 @endif
@@ -85,7 +97,11 @@
             @if($isOwner)
                 <div class="d-flex gap-1 flex-wrap">
                     @if($connection->status !== StripeConnectionStatus::Active)
-                        <a class="btn btn-primary btn-sm" href="{{ route('customer.workspaces.businesses.payments.connect.resume', [$workspaceUid, $businessUid]) }}" data-role="resume-link">Continue on Stripe</a>
+                        @if($connection->connection_method === 'oauth')
+                            <a class="btn btn-primary btn-sm" href="https://dashboard.stripe.com" rel="noopener" data-role="stripe-dashboard-link">Finish setup in Stripe</a>
+                        @else
+                            <a class="btn btn-primary btn-sm" href="{{ route('customer.workspaces.businesses.payments.connect.resume', [$workspaceUid, $businessUid]) }}" data-role="resume-link">Continue on Stripe</a>
+                        @endif
                     @endif
                     <form method="POST" action="{{ route('customer.workspaces.businesses.payments.connect.refresh', [$workspaceUid, $businessUid]) }}" data-role="refresh-form">
                         @csrf

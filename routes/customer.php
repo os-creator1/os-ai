@@ -44,6 +44,17 @@
         ->name('agency.stripe.connect-existing.callback');
 
     /*
+    | Business payments (lane B) — the ONE fixed, tenant-free Stripe OAuth
+    | callback for "Connect existing Stripe account". Register this exact URL
+    | (customer.business.stripe.connect-existing.callback) as a redirect URI on
+    | the Business Connect OAuth client (STRIPE_BUSINESS_CONNECT_CLIENT_ID).
+    | Workspace/Business/user are bound server-side by the `state` record.
+    */
+    Route::get('business/stripe/connect-existing/callback', 'Business\BusinessPaymentsController@existingCallback')
+        ->middleware('throttle:30,1')
+        ->name('business.stripe.connect-existing.callback');
+
+    /*
     |--------------------------------------------------------------------------
     | Contact Module
     |--------------------------------------------------------------------------
@@ -1613,6 +1624,7 @@
             // Each mutating action reaches Stripe, so all three are throttled
             // at the same rate the other Business write surfaces use.
             Route::post('/', 'Business\BusinessPaymentsController@connect')->middleware('throttle:30,1')->name('start');
+            Route::post('/existing', 'Business\BusinessPaymentsController@connectExisting')->middleware('throttle:30,1')->name('existing');
             Route::get('/resume', 'Business\BusinessPaymentsController@resume')->middleware('throttle:30,1')->name('resume');
             Route::post('/refresh', 'Business\BusinessPaymentsController@refresh')->middleware('throttle:30,1')->name('refresh');
             Route::post('/disconnect', 'Business\BusinessPaymentsController@disconnect')->middleware('throttle:30,1')->name('disconnect');
