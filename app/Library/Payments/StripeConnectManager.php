@@ -206,7 +206,11 @@ final class StripeConnectManager
             // A delayed event from an OLDER connection to this same account
             // (including the echo of our own revocation) predates the current
             // authorisation and must not disconnect it.
-            if ($connection->connected_at === null || $eventCreatedAt < $connection->connected_at->getTimestamp()) {
+            // Strictly AFTER: Stripe timestamps have one-second resolution, so
+            // an old event sharing the new connection's second cannot be proven
+            // newer and is ignored (a genuine same-second revocation is caught
+            // by the next status check instead).
+            if ($connection->connected_at === null || $eventCreatedAt <= $connection->connected_at->getTimestamp()) {
                 return;
             }
 
@@ -219,7 +223,8 @@ final class StripeConnectManager
                 'lock_version' => (int) $connection->lock_version + 1,
             ])->save();
 
-            $this->claims->release((string) $connection->stripe_account_id, StripeAccountClaims::LANE_BUSINESS, (int) $connection->id);
+            // Not while a disconnect is mid-revocation: it releases the claim itself.
+            $this->claims->releaseUnlessRevoking((string) $connection->stripe_account_id, StripeAccountClaims::LANE_BUSINESS, (int) $connection->id);
         });
     }
 
@@ -425,12 +430,25 @@ final class StripeConnectManager
         $revocation = null;
 
         if ($live->connection_method === 'oauth') {
-            try {
-                $this->gateway->deauthorizeAccount((string) $live->stripe_account_id);
+            // Pin the claim for the whole revocation: a deauthorisation webhook
+            // that terminates this row meanwhile must not free the account for
+            // a competitor before the provider call below has finished.
+            //
+            // If the pin does not take, the claim is no longer ours: a provider
+            // revocation webhook already ended this connection and freed the
+            // account, so Stripe has revoked the grant itself and a competitor
+            // may now hold it. Making our own revoke call then could cut off
+            // that competitor, so it is skipped.
+            if ($this->claims->beginRevocation((string) $live->stripe_account_id, StripeAccountClaims::LANE_BUSINESS, (int) $live->id)) {
+                try {
+                    $this->gateway->deauthorizeAccount((string) $live->stripe_account_id);
+                    $revocation = 'revoked';
+                } catch (StripeConnectException) {
+                    \Illuminate\Support\Facades\Log::warning('Business Stripe OAuth: could not revoke a grant.');
+                    $revocation = 'failed';
+                }
+            } else {
                 $revocation = 'revoked';
-            } catch (StripeConnectException) {
-                \Illuminate\Support\Facades\Log::warning('Business Stripe OAuth: could not revoke a grant.');
-                $revocation = 'failed';
             }
         }
 
@@ -438,21 +456,26 @@ final class StripeConnectManager
             $connection = BusinessStripeConnection::query()
                 ->whereKey($live->id)
                 ->where('business_id', $business->id)
-                ->whereIn('status', self::liveStatuses())
                 ->lockForUpdate()
                 ->first();
 
-            if ($connection === null) {
+            $stillLive = $connection !== null && in_array($connection->status->value, self::liveStatuses(), true);
+
+            // A webhook may already have terminated the row while we revoked;
+            // that is fine for an OAuth disconnect (we still own the release).
+            if ($connection === null || (! $stillLive && $live->connection_method !== 'oauth')) {
                 throw StripeConnectException::notConnected();
             }
 
-            $connection->forceFill([
-                'status' => StripeConnectionStatus::Disconnected->value,
-                'disconnected_at' => now(),
-                'charges_enabled' => false,
-                'payouts_enabled' => false,
-                'lock_version' => (int) $connection->lock_version + 1,
-            ])->save();
+            if ($stillLive) {
+                $connection->forceFill([
+                    'status' => StripeConnectionStatus::Disconnected->value,
+                    'disconnected_at' => now(),
+                    'charges_enabled' => false,
+                    'payouts_enabled' => false,
+                    'lock_version' => (int) $connection->lock_version + 1,
+                ])->save();
+            }
 
             // Only now does the account become claimable again.
             $this->claims->release((string) $connection->stripe_account_id, StripeAccountClaims::LANE_BUSINESS, (int) $connection->id);

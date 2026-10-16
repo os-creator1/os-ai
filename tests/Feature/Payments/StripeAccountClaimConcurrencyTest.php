@@ -174,6 +174,117 @@ class StripeAccountClaimConcurrencyTest extends TestCase
         }
     }
 
+    public function test_disconnect_a_concurrent_deauthorization_webhook_and_a_competitor_never_hand_the_account_over_early(): void
+    {
+        foreach (range(1, 3) as $round) {
+            [$a, $bizA] = $this->oauthBusiness('Owner');
+            [$b, $bizB] = $this->oauthBusiness('Competitor');
+            $account = $this->account();
+
+            $this->assertSame([0], array_column($this->race([['business', (string) $bizA->id, (string) $a->user_id, $account]]), 'exitCode'));
+            $this->truncateCalls();
+
+            $results = $this->race([
+                ['disconnect', (string) $bizA->id, (string) $a->user_id],
+                ['webhook', $account],
+                ['business', (string) $bizB->id, (string) $b->user_id, $account],
+            ]);
+
+            $this->assertGenuinelyRaced($results);
+            $this->assertSame(0, $results[0]['exitCode'], 'The disconnect completes whichever way the webhook interleaves.');
+            $this->assertSame(0, $results[1]['exitCode'], 'The webhook is idempotent and never errors.');
+            $this->assertContains($results[2]['exitCode'], [0, 4]);
+
+            $deauth = $this->stamps('deauth');
+            $claimed = $this->stamps('claimed');
+            // Either our revoke call ran (once) or the webhook beat the pin, in
+            // which case Stripe had already revoked and we must NOT call again.
+            $this->assertLessThanOrEqual(1, count($deauth), 'The grant is revoked at most once.');
+
+            if ($results[2]['exitCode'] === 0 && count($deauth) === 1) {
+                $this->assertCount(1, $claimed);
+                // `deauth` is stamped when the call returns (after its 200ms),
+                // so the call began at $deauth - 200ms: the competitor must not
+                // have claimed anywhere inside that window.
+                $this->assertLessThan($claimed[0], $deauth[0], 'The competitor could claim only AFTER our revocation finished, never during it.');
+            }
+
+            $this->assertSame('disconnected', BusinessStripeConnection::query()->where('business_id', $bizA->id)->sole()->status->value);
+            $expectedClaims = $results[2]['exitCode'] === 0 ? 1 : 0;
+            $this->assertSame($expectedClaims, DB::table('stripe_account_claims')->where('stripe_account_id', $account)->count());
+        }
+    }
+
+    // =================================================================
+    // Migrations
+    // =================================================================
+
+    public function test_the_claims_migration_aborts_before_any_change_when_an_account_is_live_twice(): void
+    {
+        $migration = require base_path('database/migrations/2026_11_22_100002_create_stripe_account_claims_table.php');
+        [, $biz] = $this->oauthBusiness('Preflight');
+        $pair = $this->createAgencyManagedClient(clientBusinessName: 'Pre ' . Str::random(4), agencyBusinessName: 'Pre P ' . Str::random(4), agencyWorkspaceName: 'Pre Agency ' . Str::random(4));
+        $account = $this->account();
+
+        \Illuminate\Support\Facades\Schema::dropIfExists('stripe_account_claims');
+        $businessRow = DB::table('business_stripe_connections')->insertGetId([
+            'uid' => (string) Str::uuid(), 'business_id' => $biz->id, 'stripe_account_id' => $account,
+            'status' => 'active', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $agencyRow = DB::table('agency_stripe_connections')->insertGetId([
+            'uid' => (string) Str::uuid(), 'agency_workspace_id' => $pair['agencyWorkspace']->id, 'stripe_account_id' => $account,
+            'status' => 'active', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        try {
+            $migration->up();
+            $this->fail('A live cross-lane duplicate must abort the migration.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString($account, $e->getMessage());
+            $this->assertStringContainsString("business#{$businessRow}", $e->getMessage());
+            $this->assertStringContainsString("agency#{$agencyRow}", $e->getMessage());
+            $this->assertStringContainsString('Nothing has been changed', $e->getMessage());
+        }
+
+        $this->assertFalse(\Illuminate\Support\Facades\Schema::hasTable('stripe_account_claims'), 'No schema change before the preflight passes.');
+        $this->assertSame('active', DB::table('business_stripe_connections')->where('id', $businessRow)->value('status'));
+        $this->assertSame('active', DB::table('agency_stripe_connections')->where('id', $agencyRow)->value('status'));
+
+        // The operator resolves it (disconnects the Agency's row); history stays.
+        DB::table('agency_stripe_connections')->where('id', $agencyRow)->update(['status' => 'disconnected']);
+        $migration->up();
+
+        $this->assertSame(
+            ['business', $businessRow],
+            [DB::table('stripe_account_claims')->where('stripe_account_id', $account)->value('lane'), (int) DB::table('stripe_account_claims')->where('stripe_account_id', $account)->value('connection_id')]
+        );
+        $this->assertSame(1, DB::table('agency_stripe_connections')->where('id', $agencyRow)->count(), 'History row untouched.');
+    }
+
+    public function test_rolling_back_the_oauth_columns_refuses_when_an_account_was_relinked(): void
+    {
+        $migration = require base_path('database/migrations/2026_11_22_100001_add_oauth_columns_to_business_stripe_connections.php');
+        [, $biz] = $this->oauthBusiness('Relinked');
+        $account = $this->account();
+
+        foreach (['disconnected', 'active'] as $status) {
+            DB::table('business_stripe_connections')->insert([
+                'uid' => (string) Str::uuid(), 'business_id' => $biz->id, 'stripe_account_id' => $account,
+                'status' => $status, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        try {
+            $migration->down();
+            $this->fail('Rolling back would require rewriting history.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Cannot roll back', $e->getMessage());
+        }
+
+        $this->assertTrue(\Illuminate\Support\Facades\Schema::hasColumn('business_stripe_connections', 'connection_method'), 'Refused before changing anything.');
+        $this->assertSame(2, DB::table('business_stripe_connections')->where('stripe_account_id', $account)->count());
+    }
+
     // =================================================================
     // Harness
     // =================================================================

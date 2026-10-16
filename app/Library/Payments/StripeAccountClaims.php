@@ -68,6 +68,39 @@ final class StripeAccountClaims
     }
 
     /**
+     * Mark the claim as "revoking": from now until the window ends (or the
+     * claim is released) the account stays owned even if its connection row
+     * turns terminal — e.g. a deauthorisation webhook arrives mid-revocation —
+     * so no competitor can claim it before the provider call finishes.
+     * A single UPDATE; call it BEFORE the provider call, outside a transaction.
+     */
+    public function beginRevocation(string $stripeAccountId, string $lane, int $connectionId): bool
+    {
+        return DB::table('stripe_account_claims')
+            ->where('stripe_account_id', $stripeAccountId)
+            ->where('lane', $lane)
+            ->where('connection_id', $connectionId)
+            ->update(['revoking_until' => now()->addSeconds(self::REVOKE_LOCK_SECONDS), 'updated_at' => now()]) > 0;
+    }
+
+    /**
+     * Release for a PROVIDER-initiated termination (webhook): refuses to
+     * release while a disconnect is revoking, because the disconnect still has
+     * a provider call to make and will release the claim itself when done.
+     */
+    public function releaseUnlessRevoking(string $stripeAccountId, string $lane, int $connectionId): void
+    {
+        DB::table('stripe_account_claims')
+            ->where('stripe_account_id', $stripeAccountId)
+            ->where('lane', $lane)
+            ->where('connection_id', $connectionId)
+            ->where(function ($q) {
+                $q->whereNull('revoking_until')->orWhere('revoking_until', '<=', now());
+            })
+            ->delete();
+    }
+
+    /**
      * Take the short-lived lock that makes revoking a never-claimed grant safe.
      * False means someone owns or is revoking the account: do not revoke.
      */
@@ -149,6 +182,11 @@ final class StripeAccountClaims
      */
     private function isLive(object $claim): bool
     {
+        // A disconnect is mid-revocation: owned regardless of the row's status.
+        if ($claim->revoking_until !== null && now()->lt($claim->revoking_until)) {
+            return true;
+        }
+
         if ($claim->lane === self::LANE_REVOKE || $claim->connection_id === null) {
             return $claim->expires_at === null || now()->lt($claim->expires_at);
         }

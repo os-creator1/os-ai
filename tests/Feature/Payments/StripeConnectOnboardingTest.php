@@ -820,4 +820,267 @@ class StripeConnectOnboardingTest extends TestCase
         $this->assertStringContainsString('set up a new one', $html);
         $this->assertStringContainsString('separate from your MotionGrove subscription billing', $html);
     }
+
+    // =================================================================
+    // Online payments page — every state is rendered from the connection row
+    // =================================================================
+
+    /** Connect through the real manager (fake gateway), then load the page as the owner on the REAL Growth entitlement. */
+    private function ownerPage(Business $business, Workspace $workspace): string
+    {
+        $this->actAsOwner($business);
+
+        return $this->get($this->url('show', $workspace, $business))->assertOk()->getContent();
+    }
+
+    /** The status badge's visible text, whitespace-trimmed. */
+    private function badge(string $html): string
+    {
+        preg_match('/data-role="status-badge">\s*(.*?)\s*<\/span>/s', $html, $m);
+
+        return $m[1] ?? '';
+    }
+
+    private function sync(Customer $customer, Business $business, bool $details, bool $charges, bool $payouts, ?string $reason = null): void
+    {
+        $this->gateway->detailsSubmitted = $details;
+        $this->gateway->chargesEnabled = $charges;
+        $this->gateway->payoutsEnabled = $payouts;
+        $this->gateway->disabledReason = $reason;
+        $this->manager()->syncFromProvider($customer->user_id, $business);
+    }
+
+    public function test_growth_customers_reach_the_page_and_see_the_disconnected_state(): void
+    {
+        [, $business, $workspace] = $this->tenantBusiness();
+
+        $html = $this->ownerPage($business, $workspace);
+
+        $this->assertStringContainsString('data-section="stripe-connection"', $html);
+        $this->assertStringContainsString('data-role="connect-form"', $html);
+        $this->assertStringContainsString($this->url('start', $workspace, $business), $html);
+        $this->assertStringContainsString('Not connected', $html);
+        $this->assertStringContainsString('Get paid online', $html);
+        $this->assertStringContainsString('Once Stripe setup is finished', $html);
+        $this->assertStringContainsString('data-status="none"', $html);
+        $this->assertStringContainsString('data-ready="0"', $html);
+        foreach (['resume-link', 'refresh-form', 'disconnect-form', 'technical-details'] as $role) {
+            $this->assertStringNotContainsString('data-role="' . $role . '"', $html, $role);
+        }
+        // The explanatory panel is one shared partial, rendered once.
+        $this->assertSame(1, substr_count($html, 'How online payments work'));
+        $this->assertSame([], $this->gateway->calls);
+    }
+
+    public function test_onboarding_shows_setup_not_finished_with_real_progress_and_owner_controls(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $accountId = BusinessStripeConnection::query()->sole()->stripe_account_id;
+
+        $html = $this->ownerPage($business, $workspace);
+
+        $this->assertStringContainsString('Setup not finished', $html);
+        $this->assertStringContainsString('Stripe needs a few more details', $html);
+        $this->assertStringContainsString('data-status="onboarding"', $html);
+        $this->assertStringContainsString('data-role="resume-link"', $html);
+        $this->assertStringContainsString($this->url('resume', $workspace, $business), $html);
+        $this->assertStringContainsString('data-role="refresh-form"', $html);
+        $this->assertStringContainsString($this->url('refresh', $workspace, $business), $html);
+        $this->assertStringContainsString('data-role="disconnect-form"', $html);
+        $this->assertStringContainsString($this->url('disconnect', $workspace, $business), $html);
+        $this->assertStringContainsString('data-role="technical-details"', $html);
+        $this->assertStringContainsString($accountId, $html);
+        $this->assertStringContainsString('Not checked with Stripe yet', $html);
+        $this->assertStringNotContainsString('data-role="connect-form"', $html);
+        foreach (['details', 'charges', 'payouts'] as $capability) {
+            $this->assertStringContainsString('data-capability="' . $capability . '" data-enabled="0"', $html);
+        }
+        $this->assertSame(1, substr_count($html, 'How online payments work'));
+    }
+
+    public function test_every_capability_combination_is_rendered_from_provider_truth_only(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+
+        foreach ([false, true] as $details) {
+            foreach ([false, true] as $charges) {
+                foreach ([false, true] as $payouts) {
+                    $this->sync($customer, $business, $details, $charges, $payouts);
+                    $html = $this->ownerPage($business, $workspace);
+                    $label = sprintf('details=%d charges=%d payouts=%d', $details, $charges, $payouts);
+
+                    foreach (['details' => $details, 'charges' => $charges, 'payouts' => $payouts] as $capability => $enabled) {
+                        $this->assertStringContainsString(
+                            'data-capability="' . $capability . '" data-enabled="' . ($enabled ? '1' : '0') . '"',
+                            $html,
+                            $label . ' ' . $capability,
+                        );
+                    }
+
+                    // Ready only when the manager's own readiness check agrees.
+                    $ready = $this->manager()->isChargeReady($business->fresh());
+                    $this->assertSame($ready, str_contains($html, 'data-ready="1"'), $label);
+                    $this->assertSame($ready && $payouts, $this->badge($html) === 'Ready', $label);
+                    $this->assertSame($ready && $payouts, str_contains($html, 'Online payments are ready'), $label);
+                    // Last-checked now reflects the real sync.
+                    $this->assertStringContainsString('Last checked', $html, $label);
+                }
+            }
+        }
+    }
+
+    public function test_a_restricted_account_shows_the_reason_and_stays_not_ready(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $this->sync($customer, $business, true, false, false, 'requirements.past_due');
+
+        $html = $this->ownerPage($business, $workspace);
+
+        $this->assertSame('Restricted', $this->badge($html));
+        $this->assertStringContainsString('Stripe needs more information', $html);
+        $this->assertStringContainsString('data-status="restricted"', $html);
+        $this->assertStringContainsString('data-role="disabled-reason"', $html);
+        $this->assertStringContainsString('requirements.past_due', $html);
+        $this->assertStringContainsString('data-ready="0"', $html);
+        $this->assertStringContainsString('data-role="resume-link"', $html);
+        $this->assertStringNotContainsString('Online payments are ready', $html);
+    }
+
+    public function test_charges_on_but_payouts_off_is_not_presented_as_fully_ready(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $this->sync($customer, $business, true, true, false);
+
+        $html = $this->ownerPage($business, $workspace);
+
+        $this->assertStringContainsString('Payouts not enabled', $html);
+        $this->assertStringContainsString('data-ready="1"', $html);
+        $this->assertSame('Payouts not enabled', $this->badge($html));
+        $this->assertStringContainsString('data-role="resume-link"', $html);
+    }
+
+    public function test_a_fully_ready_connection_shows_ready_and_keeps_management_available(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $this->sync($customer, $business, true, true, true);
+
+        $html = $this->ownerPage($business, $workspace);
+
+        $this->assertSame('Ready', $this->badge($html));
+        $this->assertStringContainsString('data-status="active"', $html);
+        $this->assertStringContainsString('data-ready="1"', $html);
+        $this->assertStringContainsString('data-role="refresh-form"', $html);
+        $this->assertStringContainsString('data-role="disconnect-form"', $html);
+        $this->assertStringContainsString('data-role="technical-details"', $html);
+        $this->assertStringNotContainsString('data-role="resume-link"', $html);
+        $this->assertStringNotContainsString('data-capability="charges" data-enabled="0"', $html);
+    }
+
+    public function test_staff_get_a_read_only_page_with_no_controls_in_any_state(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $staff = $this->createCustomer();
+        $this->addWorkspaceAdmin($workspace, $staff);
+        $this->authenticateAs($staff);
+
+        $none = $this->get($this->url('show', $workspace, $business))->assertOk()->getContent();
+        $this->assertStringContainsString('Only an owner can connect a Stripe account.', $none);
+
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $this->sync($customer, $business, true, false, false, 'requirements.past_due');
+        $this->authenticateAs($staff);
+        $restricted = $this->get($this->url('show', $workspace, $business))->assertOk()->getContent();
+        $this->assertStringContainsString('Only an owner can change this Stripe connection.', $restricted);
+        $this->assertStringContainsString('requirements.past_due', $restricted);
+
+        foreach ([$none, $restricted] as $html) {
+            foreach (['connect-form', 'connect-existing-form', 'resume-link', 'stripe-dashboard-link', 'refresh-form', 'disconnect-form', 'disconnect-open'] as $role) {
+                $this->assertStringNotContainsString('data-role="' . $role . '"', $html, $role);
+            }
+            $this->assertStringNotContainsString('payments/connect/start', $html);
+            $this->assertStringNotContainsString('payments/connect/existing', $html);
+            $this->assertStringNotContainsString('payments/connect/disconnect', $html);
+        }
+    }
+
+    public function test_a_provider_error_on_refresh_is_calm_and_leaves_the_stored_state_untouched(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $this->sync($customer, $business, true, true, true);
+        $this->actAsOwner($business);
+        $before = $this->dbSnapshot();
+
+        $this->gateway->failWith = StripeConnectException::providerFailed();
+        $this->post($this->url('refresh', $workspace, $business))
+            ->assertRedirect($this->url('show', $workspace, $business));
+
+        $html = $this->get($this->url('show', $workspace, $business))->assertOk()->getContent();
+        $this->assertStringContainsString('Stripe could not complete that request. Please try again.', $html);
+        $this->assertStringContainsString('data-ready="1"', $html);
+        $this->assertSame($before, $this->dbSnapshot());
+    }
+
+    public function test_the_page_never_renders_secrets_urls_or_another_businesss_account(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness('Harbor Lane Studios');
+        [$otherCustomer, $other] = $this->tenantBusiness('Birchwood Dental');
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $this->manager()->connect($otherCustomer->user_id, $other, 'https://app.test/r', 'https://app.test/t');
+        $this->sync($customer, $business, true, false, false, 'requirements.past_due');
+        $mine = BusinessStripeConnection::query()->where('business_id', $business->id)->sole()->stripe_account_id;
+        $theirs = BusinessStripeConnection::query()->where('business_id', $other->id)->sole()->stripe_account_id;
+
+        $html = $this->ownerPage($business, $workspace);
+
+        $this->assertStringContainsString($mine, $html);
+        $this->assertStringNotContainsString($theirs, $html);
+        $this->assertStringNotContainsString('Birchwood Dental', $html);
+        foreach (['sk_live', 'sk_test', 'rk_live', 'whsec_', 'client_secret', 'connect.stripe.com', 'access_token', 'https://app.test/t'] as $needle) {
+            $this->assertStringNotContainsString($needle, $html, $needle);
+        }
+        // No form field ever carries an account id.
+        $this->assertDoesNotMatchRegularExpression('/<input[^>]+acct_/', $html);
+    }
+
+    public function test_previous_connections_stay_visible_after_a_disconnect(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $first = BusinessStripeConnection::query()->sole()->stripe_account_id;
+        $this->manager()->disconnect($customer->user_id, $business);
+
+        // Disconnected and nothing live: back to the Not connected design, history intact.
+        $html = $this->ownerPage($business, $workspace);
+        $this->assertStringContainsString('data-role="connect-form"', $html);
+        $this->assertStringContainsString('data-section="connection-history"', $html);
+        $this->assertStringContainsString($first, $html);
+        $this->assertStringContainsString('disconnected', $html);
+
+        // Reconnecting: the live account is the headline, the old one stays listed.
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+        $second = BusinessStripeConnection::query()->where('status', '!=', 'disconnected')->sole()->stripe_account_id;
+        $html = $this->ownerPage($business, $workspace);
+        $this->assertSame(1, substr_count($html, 'data-role="history-row"'));
+        $this->assertStringContainsString($first, $html);
+        $this->assertStringContainsString($second, $html);
+    }
+
+    public function test_the_disconnect_confirmation_explains_the_real_consequences(): void
+    {
+        [$customer, $business, $workspace] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+
+        $html = $this->ownerPage($business, $workspace);
+
+        $this->assertStringContainsString('Stops online payments for this business.', $html);
+        $this->assertStringContainsString("isn't deleted", $html);
+        $this->assertStringContainsString('connection history', $html);
+        $this->assertStringContainsString('<form method="POST" action="' . $this->url('disconnect', $workspace, $business) . '" data-role="disconnect-form">', $html);
+    }
 }

@@ -17,6 +17,7 @@
  *   business   <businessId> <userId> <account>      Business connectExisting
  *   agency     <workspaceId> <userId> <account>     Agency   connectExisting
  *   disconnect <businessId> <userId>                Business disconnect (OAuth revocation)
+ *   webhook    <account>                            account.application.deauthorized applied now
  */
 
 require __DIR__ . '/../../../../vendor/autoload.php';
@@ -107,6 +108,12 @@ try {
         'disconnect' => static function () use ($app, $argv): void {
             $b = App\Models\Business::query()->findOrFail((int) $argv[4]);
             $app->make(App\Library\Payments\StripeConnectManager::class)->disconnect((int) $argv[5], $b);
+        },
+        // A signature-verified `account.application.deauthorized` for the account,
+        // as the queued job would apply it (event time = now, i.e. after the
+        // connection was made).
+        'webhook' => static function () use ($app, $argv): void {
+            $app->make(App\Library\Payments\StripeConnectManager::class)->markRevokedByProvider((string) $argv[4], time());
         },
         default => throw new InvalidArgumentException("Unknown operation [{$operation}]"),
     };

@@ -579,6 +579,59 @@ class BusinessStripeExistingAccountOAuthTest extends TestCase
         $this->assertSame(0, DB::table('stripe_account_claims')->count());
     }
 
+    public function test_a_webhook_during_revocation_cannot_free_the_account_for_a_competitor(): void
+    {
+        [$customer, $business] = $this->tenantBusiness();
+        [$otherOwner, $other] = $this->tenantBusiness('Other Studio');
+        $this->manager()->connectExisting($customer->user_id, $business, 'ac_1', false);
+
+        $seen = [];
+        $this->gateway->duringDeauthorize = function () use (&$seen, $otherOwner, $other) {
+            // Stripe's deauthorisation event lands NOW, mid-revocation.
+            $this->manager()->markRevokedByProvider('acct_existing000001', now()->addSecond()->timestamp);
+            $seen['row'] = BusinessStripeConnection::query()->sole()->status->value;
+            $seen['claim_kept'] = DB::table('stripe_account_claims')->where('stripe_account_id', 'acct_existing000001')->exists();
+            try {
+                $this->manager()->connectExisting($otherOwner->user_id, $other, 'ac_race', false);
+                $seen['competitor'] = 'won';
+            } catch (StripeConnectException $e) {
+                $seen['competitor'] = $e->reason;
+            }
+        };
+
+        $result = $this->manager()->disconnect($customer->user_id, $business);
+
+        $this->assertSame('disconnected', $seen['row'], 'The webhook did terminate the row.');
+        $this->assertTrue($seen['claim_kept'], 'But the claim stayed pinned until the revocation finished.');
+        $this->assertSame(StripeConnectException::ACCOUNT_IN_USE, $seen['competitor']);
+        $this->assertSame('disconnected', $result->status->value);
+        $this->assertSame(0, DB::table('stripe_account_claims')->count(), 'Released by the disconnect once revocation completed.');
+
+        // Now that revocation is over, the account is genuinely free.
+        $this->gateway->duringDeauthorize = null;
+        $this->manager()->connectExisting($otherOwner->user_id, $other, 'ac_after', false);
+        $this->assertSame(1, DB::table('stripe_account_claims')->count());
+    }
+
+    public function test_events_sharing_the_reconnect_second_cannot_terminate_the_new_connection(): void
+    {
+        [$customer, $business] = $this->tenantBusiness();
+        $this->manager()->connectExisting($customer->user_id, $business, 'ac_1', false);
+        $this->manager()->disconnect($customer->user_id, $business);
+        $this->manager()->connectExisting($customer->user_id, $business, 'ac_2', false);
+        $connectedAt = BusinessStripeConnection::query()->where('status', 'active')->sole()->connected_at->getTimestamp();
+
+        foreach ([$connectedAt - 5, $connectedAt - 1, $connectedAt] as $i => $created) {
+            $this->deliver('evt_collide_' . $i, 'acct_existing000001', 'account.application.deauthorized', $created);
+        }
+
+        $this->assertSame(StripeConnectionStatus::Active, BusinessStripeConnection::query()->where('status', '!=', 'disconnected')->sole()->status, 'Older and same-second events are ignored.');
+        $this->assertSame(1, DB::table('stripe_account_claims')->count());
+
+        $this->deliver('evt_collide_next', 'acct_existing000001', 'account.application.deauthorized', $connectedAt + 1);
+        $this->assertSame(0, BusinessStripeConnection::query()->where('status', '!=', 'disconnected')->count());
+    }
+
     public function test_the_claim_is_held_across_revocation_and_released_only_when_the_connection_is_terminal(): void
     {
         [$customer, $business] = $this->tenantBusiness();
