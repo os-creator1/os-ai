@@ -2,8 +2,13 @@
 
 @section('title', 'Text messaging')
 
+@section('page-style')
+    @include('customer.settings._redesign-assets')
+@endsection
+
 @section('content')
-    @include('customer.settings._module-header', [
+<div class="sr-page sr-page--wide">
+    @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
         'description' => 'How this Business sends and receives text messages.',
@@ -78,4 +83,5 @@
             @include('customer.settings.text-messaging._port-out-card')
         </div>
     </div>
+</div>
 @endsection

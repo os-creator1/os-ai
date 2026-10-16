@@ -7,8 +7,13 @@
     $useCase = old('use_case', $registration->use_case ?? null);
 @endphp
 
+@section('page-style')
+    @include('customer.settings._redesign-assets')
+@endsection
+
 @section('content')
-    @include('customer.settings._module-header', [
+<div class="sr-page sr-page--wide">
+    @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
         'description' => 'One more step before this number is ready to send and receive texts.',
@@ -285,4 +290,5 @@
             syncEinField();
         });
     </script>
+</div>
 @endsection

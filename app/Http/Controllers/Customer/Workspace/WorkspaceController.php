@@ -455,6 +455,7 @@ class WorkspaceController extends CustomerBaseController
 
         if ($section === 'team') {
             $viewData['directory'] = $this->membershipDirectory($workspace);
+            $viewData['teamOwner'] = $this->teamOwnerRow($workspace, $userId);
             $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
 
             return $viewData;
@@ -1515,6 +1516,30 @@ class WorkspaceController extends CustomerBaseController
         // unchanged: callers here have already rejected an inactive membership,
         // which the shared predicate also refuses.
         return AccountFrameAccess::membershipAllows($membership);
+    }
+
+    /**
+     * The account's Owner for the Team page. The member directory leaves the
+     * Owner out (they hold no membership row), so the page shows them as a
+     * first row from the Workspace's owner relation. Only reachable by the
+     * Owner or an active Admin (team()).
+     *
+     * @return array{name: string, email: string, is_you: bool}|null
+     */
+    private function teamOwnerRow(Workspace $workspace, int $viewerId): ?array
+    {
+        $owner = $workspace->owner;
+
+        if ($owner === null) {
+            return null;
+        }
+
+        return [
+            'name' => trim($owner->first_name . ' ' . $owner->last_name),
+            // Member e-mail addresses are never listed; the viewer's own is theirs to see.
+            'email' => (int) $owner->id === $viewerId ? (string) $owner->email : '',
+            'is_you' => (int) $owner->id === $viewerId,
+        ];
     }
 
     /**
