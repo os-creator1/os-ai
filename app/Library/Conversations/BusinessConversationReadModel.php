@@ -224,12 +224,10 @@ final class BusinessConversationReadModel
     }
 
     /**
-     * The ids of the conversations awaitingReplyCount() counts (same predicate, same Location rule), so the inbox can list exactly
-     * them. Bounded.
-     *
-     * @return array<int, int>
+     * The conversations awaitingReplyCount() counts (same predicate, same Location rule), as a sub-select of their ids, so the inbox
+     * can constrain its own paginated query with it: every matching conversation is reachable, none is cut off by a cap.
      */
-    public function awaitingReplyBoxIds(Business $business, int $actorUserId, int $limit = 200, ?CarbonInterface $now = null): array
+    public function awaitingReplyBoxQuery(Business $business, int $actorUserId, ?CarbonInterface $now = null): \Illuminate\Database\Query\Builder
     {
         $now = CarbonImmutable::parse($now ?? CarbonImmutable::now());
         $graceCutoff = $now->subMinutes($this->graceMinutes());
@@ -244,10 +242,7 @@ final class BusinessConversationReadModel
             ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
             ->where('last.direction', self::DIRECTION_INCOMING)
             ->where('last.created_at', '<', $graceCutoff)
-            ->limit(max(1, $limit))
-            ->pluck('last.box_id')
-            ->map(fn ($id): int => (int) $id)
-            ->all();
+            ->select('last.box_id');
     }
 
     /**

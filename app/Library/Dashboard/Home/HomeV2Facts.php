@@ -8,6 +8,7 @@ use App\Models\Business;
 use App\Models\BusinessEmailAccount;
 use App\Models\BusinessStripeConnection;
 use App\Library\Analytics\BusinessAnalyticsQueries;
+use App\Enums\Catalog\CatalogItemLifecycleState;
 use App\Models\CatalogItem;
 use Carbon\CarbonImmutable;
 use Throwable;
@@ -42,7 +43,7 @@ final class HomeV2Facts
         return [
             'createdAt' => $business->created_at === null ? null : CarbonImmutable::parse($business->created_at),
             'emailConnected' => $this->safely(fn () => BusinessEmailAccount::query()->where('business_id', $id)->where('state', 'active')->whereNotNull('refresh_token_encrypted')->exists()),
-            'hasPricedCatalog' => $this->safely(fn () => CatalogItem::query()->where('business_id', $id)->whereNotNull('price_minor')->exists()),
+            'hasPricedCatalog' => $this->safely(fn () => CatalogItem::query()->where('business_id', $id)->whereNotNull('price_minor')->where('lifecycle_state', CatalogItemLifecycleState::Active->value)->exists()),
             'hasActiveAutomation' => $this->safely(fn () => Automation::query()->where('business_id', $id)->where('status', Automation::STATUS_ACTIVE)->exists()),
             'stripeActive' => $this->safely(fn () => BusinessStripeConnection::query()->where('business_id', $id)->where('status', StripeConnectionStatus::Active->value)->exists()),
             // Contacts are B5's: the answer comes from B5's own query class.

@@ -183,6 +183,17 @@
 
             app(\App\Library\Crm\CrmLocationScope::class)->restrict($pinnedQuery, $business, (int) Auth::id(), 'chat_boxes.location_id');
 
+            // Narrowed from Home (waiting / a created range), pinned threads obey the same filters as the main list.
+            $scope = request();
+
+            if ($scope->query('filter') === 'waiting') {
+                $pinnedQuery->whereIn('chat_boxes.id', app(\App\Library\Conversations\BusinessConversationReadModel::class)->awaitingReplyBoxQuery($business, (int) Auth::id()));
+            }
+
+            if (($created = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($scope, $business)) !== null) {
+                $pinnedQuery->where('chat_boxes.created_at', '>=', $created->startUtc)->where('chat_boxes.created_at', '<', $created->endUtc);
+            }
+
             $pinnedChats = $pinnedQuery
                 ->with('latestMessage')
                 ->orderBy('updated_at', 'desc')
@@ -1555,8 +1566,7 @@
                     break;
                 case 'waiting':
                     // Exactly the conversations Home counts as waiting for a reply (customer wrote last, past the grace period).
-                    $waiting = app(\App\Library\Conversations\BusinessConversationReadModel::class)->awaitingReplyBoxIds($business, (int) Auth::id());
-                    $query->whereIn('id', $waiting === [] ? [0] : $waiting);
+                    $query->whereIn('chat_boxes.id', app(\App\Library\Conversations\BusinessConversationReadModel::class)->awaitingReplyBoxQuery($business, (int) Auth::id()));
                     break;
                 case 'read':
                     // A conversation that was never marked unread holds NULL,

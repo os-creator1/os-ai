@@ -165,7 +165,7 @@ bookings series exists.
 
 **Filtered destinations.** `created_from` / `created_to` (Business-local dates) are read by `HomeDestinationRange`, which builds the
 same `AnalyticsDateRange` the card used; anything invalid (malformed, reversed, too long) is ignored and the list is unfiltered.
-`ChatBox` also gained `filter=waiting` (`BusinessConversationReadModel::awaitingReplyBoxIds`).
+`ChatBox` also gained `filter=waiting` (`BusinessConversationReadModel::awaitingReplyBoxQuery`, a sub-select applied to the paginated query, so no cap hides a match; pinned threads obey the same filters).
 
 **Done for you** shows only real completed events with dates (`RecentWorkReader`) and *See activity*; **Suggested next** shows at
 most three real setup suggestions (website, follow-ups, payments, email, booking) and never a completed one.

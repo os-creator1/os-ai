@@ -56,10 +56,10 @@ class BusinessConversationReadModelTest extends TestCase
         // conversation table: Dashboard code, Blade and B5 never query it.
         // Home V2 added awaitingReplyConversations(): the rows behind awaitingReplyCount(), with the
         // same predicate and the inbox's Location rule, for the follow-up drawer.
-        // The final Home added awaitingReplyBoxIds(): the ids behind the same predicate, for the inbox's "waiting" filter, so the list a
-        // card opens is exactly the set it counted.
+        // The final Home added awaitingReplyBoxQuery(): the ids behind the same predicate as a sub-select, for the inbox's "waiting"
+        // filter, so the list a card opens is exactly the set it counted.
         $this->assertSame([
-            'awaitingReplyBoxIds',
+            'awaitingReplyBoxQuery',
             'awaitingReplyConversations',
             'awaitingReplyCount',
             'incomingCount',

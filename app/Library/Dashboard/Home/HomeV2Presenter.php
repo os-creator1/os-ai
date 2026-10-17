@@ -211,21 +211,26 @@ final class HomeV2Presenter
 
         // 1 · Bookings
         if (isset($items['appointments_booked'])) {
-            $set = $booking !== null && (int) $booking['activeTypeCount'] > 0;
-            $previousObserved = $set && $earliestBookingType !== null && $earliestBookingType <= $previous->startUtc;
+            // Bookings that exist stay visible after every booking type is switched off: history needs a type to have EXISTED, not to be
+            // active. A period that ended before the first type was created was not observed at all.
+            $set = $booking !== null && (int) $booking['typeCount'] > 0 && $earliestBookingType !== null && $earliestBookingType < $range->endUtc;
+            $previousObserved = $set && $earliestBookingType <= $previous->startUtc;
             $cards[] = $this->card('bookings', 'Bookings', $items['appointments_booked'], $set, $previousObserved, false, $range, 'No bookings yet', $this->calendarUrl($actions['upcoming']['fullUrl'] ?? null, $range));
         }
 
         // 2 · New contacts (the metric counts contacts added, so that is its truthful name — not "leads")
         if (isset($items['new_contacts'])) {
             $observed = $createdAt !== null && $createdAt <= $previous->startUtc;
-            $cards[] = $this->card('contacts', 'New contacts', $items['new_contacts'], true, $observed, $updating, $range, '', $this->rangeUrl($actions['contacts-list']['fullUrl'] ?? null, $from, $to));
+            // A period that ended before the Business existed was not observed: a dash, not a fabricated zero.
+            $currentObserved = $createdAt === null || $createdAt < $range->endUtc;
+            $cards[] = $this->card('contacts', 'New contacts', $items['new_contacts'], $currentObserved, $observed, $updating, $range, '', $this->rangeUrl($actions['contacts-list']['fullUrl'] ?? null, $from, $to));
         }
 
         // 3 · New conversations
         if (isset($items['new_conversations'])) {
             $observed = $createdAt !== null && $createdAt <= $previous->startUtc;
-            $cards[] = $this->card('conversations', 'New conversations', $items['new_conversations'], true, $observed, false, $range, '', $this->rangeUrl($actions['follow-ups']['fullUrl'] ?? null, $from, $to));
+            $currentObserved = $createdAt === null || $createdAt < $range->endUtc;
+            $cards[] = $this->card('conversations', 'New conversations', $items['new_conversations'], $currentObserved, $observed, false, $range, '', $this->rangeUrl($actions['follow-ups']['fullUrl'] ?? null, $from, $to));
         }
 
         return $cards;

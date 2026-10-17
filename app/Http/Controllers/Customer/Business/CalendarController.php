@@ -95,9 +95,12 @@ class CalendarController extends Controller
      * somewhere. That actor — already past the Business tenancy check above —
      * sees an empty picker that says a Location is needed first.
      */
-    public function index(string $workspaceUid, string $businessUid): View|RedirectResponse
+    public function index(Request $request, string $workspaceUid, string $businessUid): View|RedirectResponse
     {
         [$workspace, $business] = $this->tenancy($workspaceUid, $businessUid);
+
+        // The window a link asked for (Home's Bookings card) survives the redirect and the Location picker; show() validates each value.
+        $window = array_filter($request->only(['view', 'days', 'date']), fn ($value): bool => is_string($value) && $value !== '');
 
         $locations = $this->schedule->accessibleLocations($business, (int) Auth::id());
 
@@ -116,13 +119,14 @@ class CalendarController extends Controller
         if ($locations->count() === 1) {
             return redirect()->route('customer.workspaces.businesses.calendar.schedule', [
                 $workspaceUid, $businessUid, $locations->first()->uid,
-            ]);
+            ] + $window);
         }
 
         return view('customer.business.calendar.picker', [
             'workspace' => $workspace,
             'business' => $business,
             'locations' => $locations,
+            'window' => $window,
         ]);
     }
 
