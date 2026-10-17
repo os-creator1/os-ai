@@ -249,7 +249,7 @@ final class PaymentManager
      * An unreachable provider, or a refused cross-check, leaves the persisted
      * state exactly as it was and reports `uncertain`.
      *
-     * @return array{state: string, uncertain: bool, amount_minor: ?int, currency_code: ?string, failure_code: ?string, document_paid: bool, remaining_minor: int, can_retry: bool}
+     * @return array{state: string, uncertain: bool, amount_minor: ?int, currency_code: ?string, failure_code: ?string, document_paid: bool, remaining_minor: int, payable_now: bool, can_retry: bool}
      */
     public function statusFor(PublicDocumentAccess $access): array
     {
@@ -301,6 +301,13 @@ final class PaymentManager
 
         $state = $payment === null ? 'none' : $payment->status->value;
 
+        // Whether the NEXT scheduled amount is genuinely payable now (document
+        // payable, earlier items settled, account charge-ready) and no attempt
+        // is in flight. Read-only; the same rule the page's own Pay state uses.
+        $next = $this->paymentState($access);
+        $payableNow = $next['payable_item'] !== null && $next['can_pay']
+            && ! in_array($state, ['processing'], true) && ! $uncertain;
+
         return [
             'state' => $state,
             'uncertain' => $uncertain,
@@ -309,6 +316,7 @@ final class PaymentManager
             'failure_code' => $state === 'failed' ? $payment->failure_code : null,
             'document_paid' => $document->status === DocumentStatus::Paid,
             'remaining_minor' => $remaining,
+            'payable_now' => $payableNow,
             // A failed / abandoned / dead attempt can be tried again through the
             // normal Pay action, which re-drives the SAME intent (or, once the
             // provider says it is dead, starts exactly one new one).

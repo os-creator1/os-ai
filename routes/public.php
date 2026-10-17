@@ -65,7 +65,7 @@
     Route::get('documents/{uid}/{token}', 'Public\PublicDocumentController@show')
         ->middleware('throttle:30,1')->name('public.documents.show');
     Route::post('documents/{uid}/{token}/sign', 'Public\PublicDocumentController@sign')
-        ->middleware('throttle:10,1')->name('public.documents.sign');
+        ->middleware('throttle:public-document-sign')->name('public.documents.sign');
 
     /*
     | Sub-slice E §6.3.2 — the ONE payment-start endpoint. Same {uid}/{token}
@@ -77,7 +77,7 @@
     | and re-driving an existing attempt is idempotent anyway.
     */
     Route::post('documents/{uid}/{token}/pay', 'Public\PublicDocumentController@payStart')
-        ->middleware('throttle:10,1')->name('public.documents.pay');
+        ->middleware('throttle:public-document-pay')->name('public.documents.pay');
 
     /*
     | Payment STATUS for the return from Stripe and for bounded polling. Same
@@ -86,7 +86,7 @@
     | at 30/minute, comfortably above the page's own capped polling.
     */
     Route::get('documents/{uid}/{token}/pay/status', 'Public\PublicDocumentController@payStatus')
-        ->middleware('throttle:30,1')->name('public.documents.pay.status');
+        ->middleware('throttle:public-document-pay-status')->name('public.documents.pay.status');
 
     /*
     | Sub-slice E §5.8/§8.2 — money lane B's OWN Connect webhook, at its own

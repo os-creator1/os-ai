@@ -430,4 +430,93 @@ class PaymentReturnStatusTest extends TestCase
         Notification::assertSentOnDemandTimes(PaymentReceiptNotification::class, 1);
         $this->assertSame(1, BusinessDocumentPayment::query()->count());
     }
+
+    // -----------------------------------------------------------------
+    // Sidebar / summary agrees with the main payment section
+    // -----------------------------------------------------------------
+
+    private function page(array $started): \Illuminate\Testing\TestResponse
+    {
+        return $this->get($this->publicUrl($started['fixture']['document'], $started['fixture']['token']))->assertOk();
+    }
+
+    public function test_a_signed_unpaid_page_offers_pay_now_in_the_sidebar_and_wires_the_sync(): void
+    {
+        $started = $this->started();
+
+        $this->page($started)
+            ->assertSee('Signed — payment due', false)
+            ->assertSee('<a class="pd-cta" data-role="summary-action"', false)
+            // One mechanism: the existing status endpoint drives the sidebar too.
+            ->assertSee('syncSummary', false)
+            ->assertSee("'pageshow'", false);
+    }
+
+    public function test_full_payment_makes_the_sidebar_and_main_section_agree_on_reopening(): void
+    {
+        $started = $this->started();
+        $this->providerSays($started['payment'], Status::Succeeded);
+        $this->fetchStatus($started)->assertOk()->assertJson(['document_paid' => true, 'payable_now' => false]);
+
+        $this->page($started)
+            ->assertSee('data-role="summary-status">Paid<', false)
+            ->assertDontSee('Signed — payment due', false)
+            ->assertDontSee('<a class="pd-cta" data-role="summary-action"', false)
+            ->assertSee('Payment received', false);
+    }
+
+    public function test_a_deposit_shows_received_and_balance_due_and_never_paid(): void
+    {
+        $started = $this->started($this->depositAndBalance());
+        $this->providerSays($started['payment'], Status::Succeeded);
+
+        $this->fetchStatus($started)->assertOk()->assertJson([
+            'document_paid' => false, 'remaining_minor' => 30000, 'payable_now' => true,
+        ]);
+
+        $this->page($started)
+            ->assertSee('Deposit received — balance due', false)
+            ->assertDontSee('data-role="summary-status">Paid<', false)
+            ->assertSee('<a class="pd-cta" data-role="summary-action"', false)
+            ->assertSee('data-role="payment-received-summary"', false);
+    }
+
+    public function test_processing_is_pending_everywhere_with_no_pay_action(): void
+    {
+        $started = $this->started();
+        $this->providerSays($started['payment'], Status::Processing);
+        $this->fetchStatus($started)->assertOk()->assertJson(['state' => 'processing', 'payable_now' => false]);
+
+        $this->page($started)
+            ->assertSee('data-role="payment-processing"', false)
+            ->assertSee('data-role="summary-status">Payment processing<', false)
+            ->assertDontSee('Signed — payment due', false)
+            ->assertDontSee('<a class="pd-cta" data-role="summary-action"', false)
+            ->assertDontSee('data-role="pay-button"', false);
+    }
+
+    public function test_an_uncertain_answer_never_offers_a_payable_action(): void
+    {
+        $started = $this->started();
+        $this->gateway->duringRetrieveIntent = function () {
+            throw StripeConnectException::providerFailed();
+        };
+
+        $this->fetchStatus($started)->assertOk()->assertJson(['uncertain' => true, 'payable_now' => false, 'document_paid' => false]);
+    }
+
+    public function test_repeated_status_polling_creates_no_charge_and_no_duplicate_receipt(): void
+    {
+        $started = $this->started();
+        $this->providerSays($started['payment'], Status::Succeeded);
+
+        for ($i = 0; $i < 5; $i++) {
+            $this->fetchStatus($started)->assertOk()->assertJson(['document_paid' => true]);
+            $this->page($started);
+        }
+
+        $this->assertSame(1, BusinessDocumentPayment::query()->count());
+        $this->assertCount(1, $this->gateway->callsOf('createPaymentIntent'));
+        Notification::assertSentOnDemandTimes(PaymentReceiptNotification::class, 1);
+    }
 }

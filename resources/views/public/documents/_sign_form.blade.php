@@ -7,7 +7,7 @@
                 @endforeach
             @endforeach
 
-            <form method="POST" action="{{ route('public.documents.sign', ['uid' => $document->uid, 'token' => request()->route('token')]) }}">
+            <form method="POST" data-role="sign-form-element" action="{{ route('public.documents.sign', ['uid' => $document->uid, 'token' => request()->route('token')]) }}">
                 @csrf
                 {{-- Which version this page was rendered from; the server refuses
                      the signature if the current version is a different one. --}}
@@ -35,8 +35,39 @@
                 </label>
 
                 <div class="pd-actions">
-                    <button type="submit">Sign document &rarr;</button>
+                    <button type="submit" data-role="sign-button">Sign document &rarr;</button>
                     @if($schedule->isNotEmpty())<span class="muted">Next: you'll see how to pay.</span>@endif
                 </div>
             </form>
         </fieldset>
+
+<script>
+    (function () {
+        var form = document.querySelector('[data-role="sign-form-element"]');
+        if (!form) { return; }
+        var button = form.querySelector('[data-role="sign-button"]');
+        var label = button.innerHTML;
+        var submitting = false;
+
+        // The submit event fires only after the browser's own validation has
+        // passed, so an invalid form is never locked. A second click (or Enter)
+        // while the first request is in flight is swallowed: one POST, one
+        // signature. Server-side validation and idempotency are unchanged.
+        form.addEventListener('submit', function (event) {
+            if (submitting) { event.preventDefault(); return; }
+            submitting = true;
+            button.disabled = true;
+            button.textContent = 'Signing\u2026';
+            button.setAttribute('aria-busy', 'true');
+        });
+
+        // Coming back to this page (Back/Forward, or a failed request that left
+        // the page active) must never leave a permanently disabled button.
+        window.addEventListener('pageshow', function () {
+            submitting = false;
+            button.disabled = false;
+            button.innerHTML = label;
+            button.removeAttribute('aria-busy');
+        });
+    })();
+</script>
