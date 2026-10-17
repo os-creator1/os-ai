@@ -124,6 +124,53 @@
             window.location.reload();
         }
 
+        // ---- sidebar summary: always agrees with the verified status ---------
+        var sbStatus = document.querySelector('[data-role="summary-status"]');
+        var sbAction = document.querySelector('[data-role="summary-action"]');
+        var sbCard = sbAction ? sbAction.parentNode : (sbStatus ? sbStatus.closest('.pd-summary-card') : null);
+
+        function setSummary(label, ok) {
+            if (!sbStatus) { return; }
+            sbStatus.textContent = label;
+            sbStatus.className = 'pd-status' + (ok ? ' is-ok' : '');
+        }
+
+        function setSummaryAction(visible) {
+            if (!sbCard) { return; }
+            if (!sbAction) {
+                if (!visible) { return; }
+                sbAction = document.createElement('a');
+                sbAction.className = 'pd-cta';
+                sbAction.setAttribute('data-role', 'summary-action');
+                sbAction.addEventListener('click', function (e) { e.preventDefault(); reloadClean(); });
+                sbCard.appendChild(sbAction);
+            }
+            sbAction.hidden = !visible;
+            if (visible) {
+                sbAction.textContent = 'Pay now';
+                sbAction.setAttribute('href', '#pay');
+            }
+        }
+
+        // Same wording as the server render in show.blade.php.
+        function syncSummary(data) {
+            if (data.document_paid) {
+                setSummary('Paid', true);
+                setSummaryAction(false);
+            } else if (data.state === 'processing' || data.uncertain) {
+                setSummary('Payment processing', false);
+                setSummaryAction(false);
+            } else if (data.state === 'succeeded') {
+                setSummary(data.payable_now ? 'Deposit received \u2014 balance due' : 'Deposit received', !data.payable_now);
+                setSummaryAction(!!data.payable_now);
+            }
+            // failed / canceled / incomplete: the main section owns recovery
+            // ("Try again"); the sidebar offers no second route to a payment.
+            else {
+                setSummaryAction(false);
+            }
+        }
+
         // ---- status check / bounded polling --------------------------------
         var MAX_POLLS = 15;        // ~45 s at the intervals below
         var pollTimer = null;
@@ -131,6 +178,7 @@
         var checking = false;
 
         function confirming() {
+            setSummaryAction(false);
             show('confirming', ['Confirming your payment…', 'Please keep this page open. Do not pay again.'], []);
         }
 
@@ -175,6 +223,8 @@
         }
 
         function stillPending() {
+            setSummary('Payment processing', false);
+            setSummaryAction(false);
             show('pending', [
                 'Your payment is still being confirmed.',
                 'This can take a little longer than usual. Your payment has not been lost, and you do not need to pay again. This page will show the result once it is confirmed.',
@@ -184,6 +234,8 @@
         function unreachable(manual) {
             // Keep the customer's context; never invite another charge while the
             // earlier outcome is unknown.
+            setSummary('Payment processing', false);
+            setSummaryAction(false);
             show('unreachable', [
                 'We could not check your payment just now.',
                 'Your connection or our payment provider may be briefly unavailable. If you have already paid you do not need to pay again — check the status again in a moment.',
@@ -192,6 +244,7 @@
 
         function render(data, manual) {
             window.clearTimeout(pollTimer);
+            syncSummary(data);
             var amount = money(data.amount_minor, data.currency_code);
 
             if (data.state === 'succeeded') {
@@ -203,7 +256,9 @@
                 } else {
                     lines.push('Thank you — your payment of ' + amount + ' has been received.');
                     lines.push('Remaining balance: ' + money(data.remaining_minor, data.currency_code) + '.');
-                    actions.push(button('Pay the remaining balance', reloadClean, 'payment-continue'));
+                    if (data.payable_now) {
+                        actions.push(button('Pay the remaining balance', reloadClean, 'payment-continue'));
+                    }
                 }
                 show('succeeded', lines, actions, true);
                 return;
@@ -265,6 +320,20 @@
             }
             startPolling();
         }
+
+        // Browser Back/Forward can restore this page from the back/forward
+        // cache with whatever it showed when it was left (a Pay button, a stale
+        // status). Re-ask the server; only a settled or in-flight answer
+        // changes anything, so a plain revisit stays quiet.
+        window.addEventListener('pageshow', function (event) {
+            if (!event.persisted) { return; }
+            fetchStatus().then(function (data) {
+                if (data.state === 'succeeded' || data.state === 'processing' || data.document_paid) {
+                    hideForm();
+                    render(data, false);
+                }
+            }).catch(function () {});
+        });
 
         // ---- Payment Element --------------------------------------------------
         if (!payButton) { return; }

@@ -34,7 +34,7 @@
                     </p>
 
                     @if (session('flash_success'))
-                        <x-alert variant="success" data-role="flash-success">{{ session('flash_success') }}</x-alert>
+                        <x-alert :dismissible="true" variant="success" data-role="flash-success">{{ session('flash_success') }}</x-alert>
                     @endif
 
                     @if ($errors->any())
