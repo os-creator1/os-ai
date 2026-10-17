@@ -215,6 +215,8 @@ class CustomerNotificationsTest extends TestCase
             'x-input field error' => ['<input class="form-control transition-fast is-invalid" name="name">', true],
             'sign-in field error' => ['<input id="email" aria-invalid="true">', true],
             'validation summary' => ['<div class="alert" data-role="validation-summary"><ul><li>x</li></ul></div>', true],
+            'catalog error card' => ['<div class="ds-notice" data-role="catalog-errors"><div>x</div></div>', true],
+            'forms error card' => ['<div class="ds-notice" data-role="forms-errors"><div>x</div></div>', true],
             'no inline error' => ['<input class="form-control" name="name"><p>is-invalid is only a word here</p>', false],
         ];
     }

@@ -54,7 +54,7 @@ final class PageToasts
 
     private const FLASH_SHOWN_INLINE = ['data-role="flash-message"', 'data-role="auth-flash"'];
 
-    private const FIELD_ERRORS_SHOWN_INLINE = '/\bclass="[^"]*\bis-invalid\b|\baria-invalid="true"|data-role="validation-summary"/';
+    private const FIELD_ERRORS_SHOWN_INLINE = '/\bclass="[^"]*\bis-invalid\b|\baria-invalid="true"|data-role="(?:validation-summary|catalog-errors|forms-errors)"/';
 
     /** Sections that hold scripts and styles, not what the customer reads. */
     private const NON_CONTENT_SECTIONS = ['title', 'page-script', 'vendor-script', 'page-style', 'vendor-style'];
