@@ -64,9 +64,9 @@ class CustomerNotificationsTest extends TestCase
         $html = (string) $page->getContent();
 
         $this->assertMatchesRegularExpression(
-            '/<div class="alert alert-danger ds-alert[^"]*"[^>]*data-role="flash-message"[^>]*role="alert">\s*<svg[^>]*>.*?<\/svg>\s*<div class="flex-grow-1">\s*<strong class="d-block">Google connection unavailable<\/strong>\s*' . preg_quote(e(self::GOOGLE_UNAVAILABLE_COPY), '/') . '\s*<\/div>/s',
+            '/<div class="ds-notice ds-notice--danger ds-alert"[^>]*data-role="flash-message"[^>]*role="alert">\s*<span class="ds-notice__icon"[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*<\/span>\s*<div class="ds-notice__body"[^>]*>\s*<strong class="ds-notice__title">Google connection unavailable<\/strong>\s*<div class="ds-notice__text">\s*' . preg_quote(e(self::GOOGLE_UNAVAILABLE_COPY), '/') . '\s*<\/div>/s',
             $html,
-            'The page explains the failure inline, with a calm heading.',
+            'The page explains the failure inline, with a calm heading, in the shared notification card.',
         );
         $this->assertSame(1, substr_count($html, e(self::GOOGLE_UNAVAILABLE_COPY)), 'The message is shown exactly once.');
         $this->assertSame([], $this->pageToasts($page), 'No toast repeats the inline explanation.');
@@ -82,7 +82,7 @@ class CustomerNotificationsTest extends TestCase
             ->get(route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $business->uid]))
             ->assertOk();
 
-        $this->assertMatchesRegularExpression('/<div class="alert alert-success ds-alert[^"]*"[^>]*data-role="flash-message"[^>]*role="status">/', (string) $page->getContent());
+        $this->assertMatchesRegularExpression('/<div class="ds-notice ds-notice--success ds-alert"[^>]*data-role="flash-message"[^>]*role="status">/', (string) $page->getContent());
         $this->assertSame(1, substr_count((string) $page->getContent(), 'Google location linked.'));
         $this->assertSame([], $this->pageToasts($page));
     }

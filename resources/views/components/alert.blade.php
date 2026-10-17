@@ -1,26 +1,40 @@
 @props([
     'variant' => 'neutral', // neutral | accent | success | warning | danger
-    'icon' => null,
-    'dismissible' => false,
+    'icon' => null,         // accepted for older call sites; the status glyph now follows the variant
+    'title' => null,
+    'dismissible' => true,
 ])
 
 @php
-    $variantClass = match ($variant) {
-        'accent' => 'alert-primary',
-        'success' => 'alert-success',
-        'warning' => 'alert-warning',
-        'danger' => 'alert-danger',
-        default => 'alert-secondary',
+    $status = match ($variant) {
+        'accent' => 'info',
+        'success' => 'success',
+        'warning' => 'warning',
+        'danger' => 'danger',
+        default => 'neutral',
     };
+    // Errors and warnings need attention; everything else is calm status feedback.
+    $defaultRole = in_array($status, ['danger', 'warning'], true) ? 'alert' : 'status';
+    $title = is_string($title) ? trim($title) : '';
 @endphp
 
-{{-- role="alert" unless the caller passes its own (role="status" for a success or info message). --}}
-<div {{ $attributes->except('role')->merge(['class' => "alert {$variantClass} ds-alert d-flex align-items-start gap-2" . ($dismissible ? ' alert-dismissible fade show' : '')]) }} role="{{ $attributes->get('role', 'alert') }}">
-    @if ($icon)
-        <x-ds-icon :name="$icon" size="18" class="flex-shrink-0 mt-1" />
-    @endif
-    <div class="flex-grow-1">{{ $slot }}</div>
+{{--
+    The shared Business OS notification card (see <x-notice-styles>): used for
+    session flashes, validation summaries and any other inline feedback.
+    Title and message are always escaped. Layout never varies by status.
+--}}
+<x-notice-styles />
+<div {{ $attributes->except('role')->merge(['class' => "ds-notice ds-notice--{$status} ds-alert"]) }} role="{{ $attributes->get('role', $defaultRole) }}">
+    <span class="ds-notice__icon" data-role="notice-icon"><x-notice-glyph :variant="$status === 'neutral' ? 'info' : $status" /></span>
+    <div class="ds-notice__body" data-role="notice-body">
+        @if ($title !== '')
+            <strong class="ds-notice__title">{{ $title }}</strong>
+        @endif
+        @if (! $slot->isEmpty())
+            <div class="ds-notice__text">{{ $slot }}</div>
+        @endif
+    </div>
     @if ($dismissible)
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        <button type="button" class="ds-notice__close" data-ds-notice-dismiss aria-label="Dismiss notification"><x-notice-glyph variant="close" /></button>
     @endif
 </div>
