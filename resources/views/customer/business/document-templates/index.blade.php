@@ -38,7 +38,7 @@
     </div>
 
     <x-flash-alert />
-    @if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+    @if(isset($errors) && $errors->any())<x-alert variant="danger" :dismissible="true" data-role="validation-summary">{{ $errors->first() }}</x-alert>@endif
 
     <section class="dt-section" data-role="my-templates" aria-labelledby="dt-mine">
         <div class="dt-section__head">

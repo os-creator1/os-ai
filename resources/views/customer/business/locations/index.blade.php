@@ -52,7 +52,7 @@
 
         @foreach (['flash_success' => 'success', 'flash_info' => 'neutral', 'flash_error' => 'danger'] as $key => $variant)
             @if (session($key))
-                <x-alert :variant="$variant" class="mb-2" role="status">{{ session($key) }}</x-alert>
+                <x-alert :dismissible="true" :variant="$variant" class="mb-2" role="status">{{ session($key) }}</x-alert>
             @endif
         @endforeach
 

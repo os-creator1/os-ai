@@ -85,7 +85,7 @@ class BusinessOnboardingExistingBehaviorPreservedTest extends TestCase
             ->assertSessionHasErrors('name');
 
         $response = $this->get(route('customer.onboarding.show'))->assertOk();
-        $response->assertSee('alert-danger', false);
+        $response->assertSee('ds-notice--danger', false);
         $response->assertSee('ds-alert', false);
     }
 

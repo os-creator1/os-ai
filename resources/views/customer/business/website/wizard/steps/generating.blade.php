@@ -28,13 +28,9 @@
                 <p class="text-caption mb-3">This is what we'll build your website from. Look it over, then generate your first draft.</p>
 
                 @if ($lastAttemptFailed)
-                    <div class="alert alert-warning mb-3" role="alert" data-testid="generation-failed-notice">
-                        Your website wasn't generated this time. Your answers are saved &mdash; nothing was lost.
-                    </div>
+                    <x-alert variant="warning" class="mb-3" role="alert" data-testid="generation-failed-notice">Your website wasn't generated this time. Your answers are saved &mdash; nothing was lost.</x-alert>
                 @elseif (! $generationAvailable)
-                    <div class="alert alert-info mb-3" role="alert" data-testid="generation-unavailable-notice">
-                        Website generation isn't available in this environment right now. You can still review and save your answers, and generate once it is.
-                    </div>
+                    <x-alert variant="accent" class="mb-3" role="alert" data-testid="generation-unavailable-notice">Website generation isn't available in this environment right now. You can still review and save your answers, and generate once it is.</x-alert>
                 @endif
 
                 @if (! empty($guidedReview))

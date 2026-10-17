@@ -9,13 +9,13 @@
             <div class="col-md-4 col-12">
 
                 @if ($errors->any())
-                    <div class="alert alert-danger pt-1">
-                        <ul>
+                    <x-alert variant="danger" :dismissible="true">
+                        <ul class="mb-0 ps-1">
                             @foreach ($errors->all() as $error)
                                 <li>{{ $error }}</li>
                             @endforeach
                         </ul>
-                    </div>
+                    </x-alert>
                 @endif
 
                 <div class="card">

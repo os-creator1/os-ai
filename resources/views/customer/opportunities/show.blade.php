@@ -13,7 +13,7 @@
 
             <div class="col-12">
                 @if (session('status') === 'success')
-                    <x-alert variant="success" role="status" data-role="flash-message">{{ session('message') }}</x-alert>
+                    <x-alert :dismissible="true" variant="success" role="status" data-role="flash-message">{{ session('message') }}</x-alert>
                 @endif
 
                 @if ($errors->any())

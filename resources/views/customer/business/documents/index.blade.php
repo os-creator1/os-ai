@@ -106,7 +106,7 @@
     </span>
     <a class="btn btn-outline-primary btn-sm" href="{{ route('customer.workspaces.businesses.payments.connect.show', [$workspaceUid, $businessUid]) }}" data-role="payments-setup-link">{{ $stripeStatus === 'none' ? 'Set up payments' : ($stripeChargeReady ? 'Manage Stripe' : 'Finish payment setup') }}</a>
 </div>
-@if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+@if(isset($errors) && $errors->any())<x-alert variant="danger" :dismissible="true" data-role="validation-summary">{{ $errors->first() }}</x-alert>@endif
 @php($invoiceOpen = old('kind') === 'invoice')
 
 {{-- Contract 17B §7 — the focused New proposal flow: choose a Contact, then start

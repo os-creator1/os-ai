@@ -243,10 +243,7 @@
                     $permissions = collect(json_decode($user->customer->permissions, true));
                     session(['permissions' => $permissions]);
 
-                    return redirect()->route('user.home')->with([
-                        'status'  => 'success',
-                        'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
-                    ]);
+                    return redirect()->route('user.home');
 
                 case 'admin':
                     if ($user->is_admin == 0) {
