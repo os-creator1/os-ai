@@ -1755,6 +1755,7 @@
 
             // Ask MotionGrove — the conversation and the approval of the actions it prepares.
             Route::get('/assistant', 'Business\AssistantController@show')->middleware('throttle:60,1')->name('assistant.show');
+            Route::get('/assistant/conversations', 'Business\AssistantController@index')->middleware('throttle:60,1')->name('assistant.conversations');
             Route::post('/assistant/messages', 'Business\AssistantController@message')->middleware('throttle:20,1')->name('assistant.message');
             Route::post('/assistant/conversations/{conversationUid}/delete', 'Business\\AssistantController@destroy')->middleware('throttle:20,1')->name('assistant.delete');
             Route::post('/assistant/proposals/{proposalUid}/approve', 'Business\AssistantController@approve')->middleware('throttle:20,1')->name('assistant.approve');

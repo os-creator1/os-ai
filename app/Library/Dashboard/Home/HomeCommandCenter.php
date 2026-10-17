@@ -125,9 +125,8 @@ final class HomeCommandCenter
 
         // ── Needs your attention ───────────────────────────────────────────
         $attentionItems = $this->attentionItems($context, $user, $entitlements, $scoped, $attention, $primaryAttentionType, $growth, $primaryUid, $booking, $actions);
-        $sourcesFailed = $status === null
-            || in_array(DashboardSnapshot::BAND_NEXT_BEST_MOVE, $failed, true)
-            || in_array(DashboardSnapshot::BAND_GROWTH, $failed, true);
+        // A band Home could not read leaves "nothing needs you" unproven (see readFailed()).
+        $sourcesFailed = $status === null || self::readFailed($failed);
         $visible = max(1, (int) config('home.attention_visible', 3));
 
         // ── State ──────────────────────────────────────────────────────────
@@ -145,7 +144,9 @@ final class HomeCommandCenter
             }
         }
 
-        if ($bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] ?? null) {
+        $billingException = (bool) ($bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] ?? null);
+
+        if ($billingException) {
             $problem = true;
         }
 
@@ -171,16 +172,26 @@ final class HomeCommandCenter
             $business->name,
         );
 
+        $offering = AssistantContext::forOffering((int) $context->frameWorkspace()->id, (string) $context->frameWorkspace()->uid, $business, $user, $context, $entitlements, $actions, $scoped);
+
+        // The waiting-customers move carries its own real figure and, where the assistant can prepare replies, the AI-assisted button.
+        if ($primary !== null && $primary['key'] === AttentionType::ConversationsAwaitingReply->value) {
+            $primary['metric'] = $this->waitingMetric($bands);
+            $primary['aiAction'] = $this->assistantSuggestions->draftReplies($offering);
+        }
+
         return [
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
+            // A billing exception is something that needs the customer even when no move or attention item carries it.
+            'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, ($primary !== null ? 1 : 0) + count($attentionItems) + ($billingException ? 1 : 0)),
             'setup' => $state === self::STATE_SETUP ? $journey : null,
             'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
-            'caughtUp' => $primary === null && ! $nbmFailed && ! $readinessUnknown && $state !== self::STATE_SETUP,
+            'caughtUp' => $primary === null && ! $nbmFailed && ! $sourcesFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
             'queueLabel' => is_array($growth) ? (string) $growth['open_count'] : (string) ($nbm['recommendations']['label'] ?? '0'),
@@ -194,17 +205,17 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
+            'quietSteps' => $this->quietSteps($actions),
             'actions' => $actions,
             'ask' => [
                 // Contextual chips: setup help while launching, performance and optimisation once running. Each is the
                 // literal question it sends, and is offered only when the tool that answers it is open to this actor.
-                'suggestions' => $this->assistantSuggestions->for(
-                    AssistantContext::forOffering((int) $context->frameWorkspace()->id, (string) $context->frameWorkspace()->uid, $business, $user, $context, $entitlements, $actions, $scoped),
-                    $state === self::STATE_SETUP,
-                ),
+                'suggestions' => $this->assistantSuggestions->for($offering, $state === self::STATE_SETUP),
+                'disclosure' => \App\Library\Assistant\AssistantRetention::disclosure(),
                 'url' => route('customer.workspaces.businesses.home.ask', $scoped),
                 'assistant' => [
                     'show' => route('customer.workspaces.businesses.home.assistant.show', $scoped),
+                    'conversations' => route('customer.workspaces.businesses.home.assistant.conversations', $scoped),
                     'message' => route('customer.workspaces.businesses.home.assistant.message', $scoped),
                     'approve' => route('customer.workspaces.businesses.home.assistant.approve', array_merge($scoped, ['__UID__'])),
                     'decline' => route('customer.workspaces.businesses.home.assistant.decline', array_merge($scoped, ['__UID__'])),
@@ -212,6 +223,97 @@ final class HomeCommandCenter
                 ],
             ],
         ];
+    }
+
+    /**
+     * "7 waiting for you": the CURRENT awaiting-reply count the Conversations band already read (across all time, not the
+     * selected period). It is shown on its own: the band's other figures (incoming/replied) are limited to the selected analytics
+     * period, so they are a different population and no "of N" is ever derived from them. Null when the figure is unavailable.
+     *
+     * @param  array<string, mixed>  $bands
+     * @return array{value: int, caption: string}|null
+     */
+    private function waitingMetric(array $bands): ?array
+    {
+        $band = $bands[DashboardSnapshot::BAND_CONVERSATIONS] ?? null;
+
+        if (! is_array($band)) {
+            return null;
+        }
+
+        $figures = [];
+
+        foreach ($band['items'] ?? [] as $item) {
+            $figures[$item['key']] = (int) preg_replace('/\D/', '', (string) $item['figure']);
+        }
+
+        if (! isset($figures['awaiting_reply']) || $figures['awaiting_reply'] < 1) {
+            return null;
+        }
+
+        return ['value' => $figures['awaiting_reply'], 'caption' => 'waiting for you'];
+    }
+
+    /**
+     * "While it's quiet": practical next steps, each only when its page exists for this actor (the router returns null
+     * for a feature the plan lacks or a permission the actor does not hold).
+     *
+     * @param  array<string, array<string, mixed>|null>  $actions
+     * @return array<int, array{key: string, title: string, text: string, url: string, drawerUrl: ?string}>
+     */
+    private function quietSteps(array $actions): array
+    {
+        $copy = [
+            'booking-type' => ['Create a booking type', 'Let customers book you directly.'],
+            'form' => ['Add a form to your website', 'Turn visitors into contacts.'],
+            'contact' => ['Add a contact', "Bring in someone you're already talking to."],
+        ];
+        $steps = [];
+
+        foreach ($copy as $key => [$title, $text]) {
+            $action = $actions[$key] ?? null;
+
+            if ($action !== null && ($action['fullUrl'] ?? null) !== null) {
+                $steps[] = ['key' => $key, 'title' => $title, 'text' => $text, 'url' => $action['fullUrl'], 'drawerUrl' => $action['drawerUrl'] ?? null];
+            }
+        }
+
+        return $steps;
+    }
+
+    /**
+     * Whether any read that proves "nothing needs you" failed: the move and growth reads, and the activity, headlines, recent-work and
+     * automations bands. One failed read is enough: the status says it could not check instead of claiming all is well.
+     *
+     * @param  array<int, string>  $failed  the presenter's failed band keys
+     */
+    public static function readFailed(array $failed): bool
+    {
+        return array_intersect($failed, [
+            DashboardSnapshot::BAND_NEXT_BEST_MOVE,
+            DashboardSnapshot::BAND_GROWTH,
+            DashboardSnapshot::BAND_ACTIVITY,
+            DashboardSnapshot::BAND_HEADLINES,
+            DashboardSnapshot::BAND_RECENT_WORK,
+            DashboardSnapshot::BAND_AUTOMATIONS,
+        ]) !== [];
+    }
+    /**
+     * The Business's one-line state, said only when the evidence supports it: an unreadable source is "unavailable",
+     * never "all caught up".
+     *
+     * `pill` is the short form beside the greeting; `count` is how many things need the customer.
+     *
+     * @return array{key: string, label: string, pill: string, count: int}
+     */
+    private function status(string $state, bool $readinessUnknown, bool $moveFailed, bool $sourcesFailed, int $needing): array
+    {
+        return match (true) {
+            $state === self::STATE_SETUP => ['key' => 'setup', 'label' => 'Setup still in progress', 'pill' => 'Setup still in progress', 'count' => $needing],
+            $needing > 0 => ['key' => 'attention', 'label' => 'Needs your attention', 'pill' => $needing === 1 ? '1 thing needs you' : $needing . ' things need you', 'count' => $needing],
+            $readinessUnknown || $moveFailed || $sourcesFailed => ['key' => 'unavailable', 'label' => 'Data temporarily unavailable', 'pill' => 'Data temporarily unavailable', 'count' => 0],
+            default => ['key' => 'clear', 'label' => 'All caught up', 'pill' => 'All caught up · nothing needs you', 'count' => 0],
+        };
     }
 
     /** "Good morning" — in the Business's own timezone, never the server's. */
@@ -333,6 +435,8 @@ final class HomeCommandCenter
             'action' => $action['url'] === null && $action['drawerUrl'] === null ? null : $action,
             'detailUrl' => $detailUrl,
             'explanation' => $move['explanation'] ?? null,
+            'metric' => null,
+            'aiAction' => null,
         ];
     }
 

@@ -64,13 +64,13 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
 
         // H-4 §2.6 added the three operating-health bands after Business
-        // performance. Automations is absent here because nothing ran, and
+        // performance. Automations is the empty "set one up" card here (nothing ran), and
         // the Google tile is absent because Core is not entitled to it — the
         // Visibility band still renders for the website alone.
         $this->assertSame(
-            ['billing_exception', 'ask', 'needs_attention', 'next_best_move', 'headlines', 'handling', 'visibility', 'conversations', 'actions'],
+            ['billing_exception', 'needs_attention', 'next_best_move', 'ask', 'headlines', 'handling', 'automations', 'visibility', 'conversations', 'actions'],
             $this->bandOrder($html),
-            'Billing speaks first only when it is a real exception, then what changed, then what to do about it.'
+            'Billing speaks first only when it is a real exception, then what needs the customer, then Ask, then the figures.'
         );
         $this->assertNotContains('spend', $this->bandOrder($html), 'Spend is a Settings destination, never a Home band.');
         $this->assertStringContainsString('data-kind="business"', $html);
@@ -296,7 +296,8 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
-        $this->assertStringContainsString('data-role="attention-clear"', $html, 'None of B\'s conditions raises an item for A.');
+        $this->assertStringContainsString('data-status="clear"', $html, 'None of B\'s conditions raises an item for A: the greeting says all caught up.');
+        $this->assertStringNotContainsString('data-band="needs_attention"', $html, 'A quiet Home has no empty attention container.');
         $this->assertStringNotContainsString('data-role="attention-items"', $html);
         $this->assertNotContains('recommendations', $this->bandOrder($html));
         $this->assertStringNotContainsString('Stranger', $main);
@@ -542,7 +543,8 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertStringContainsString("You're all caught up.", html_entity_decode($this->bandHtml($html, 'next_best_move')));
+        $this->assertStringContainsString('All caught up', html_entity_decode($html));
+        $this->assertStringNotContainsString('data-band="next_best_move"', $html, 'No empty urgent-action container when there is no move.');
         $this->assertStringNotContainsString('Stale Only', $html);
         $this->assertStringNotContainsString('Recommended next steps', $html);
         $this->assertStringNotContainsString('See all recommendations', $html);
@@ -551,7 +553,8 @@ class BusinessHomeTest extends TestCase
         $this->recommendation($business, ['title' => 'Hidden When Disabled']);
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringNotContainsString('Hidden When Disabled', $html);
-        $this->assertStringContainsString("You're all caught up.", html_entity_decode($this->bandHtml($html, 'next_best_move')));
+        $this->assertStringContainsString('All caught up', html_entity_decode($html));
+        $this->assertStringNotContainsString('data-band="next_best_move"', $html, 'No empty urgent-action container when there is no move.');
     }
 
     // =================================================================
@@ -686,7 +689,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['billing_exception', 'ask', 'next_best_move', 'needs_attention', 'headlines', 'handling', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
+        $this->assertSame(['billing_exception', 'next_best_move', 'needs_attention', 'ask', 'headlines', 'handling', 'automations', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
         $this->assertStringContainsString('data-band="next_best_move" data-band-state="failed"', $html);
         $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'next_best_move'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));

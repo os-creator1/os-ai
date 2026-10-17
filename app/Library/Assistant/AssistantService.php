@@ -45,6 +45,80 @@ final class AssistantService
             ->first();
     }
 
+    /**
+     * The history list: THIS user's conversations in THIS Business, newest activity first, one keyset page at a time. The cursor is a
+     * snapshot of where the previous page's LAST row sat — (last_message_at, id) at the moment it was listed — never a live lookup of
+     * that conversation: one that receives a message between two pages therefore cannot make the next page restart, repeat rows or
+     * skip them. The cursor carries no authority; every page is scoped to the caller's Workspace, Business and user, so it can only ever
+     * position a read inside the caller's own list. A conversation that has no message yet is not listed. Reads only; no model call.
+     * A conversation that moves to the top while the customer is paging is not shown again below; it is at the top on the next refresh.
+     *
+     * @return array{conversations: array<int, array<string, mixed>>, has_more: bool, next: ?string}
+     */
+    public function history(AssistantContext $context, ?string $after = null): array
+    {
+        $size = max(1, min(50, (int) config('assistant.history_page_size')));
+        $scope = fn () => AssistantConversation::query()
+            ->where('workspace_id', $context->workspace->id)
+            ->where('business_id', $context->business->id)
+            ->where('user_id', $context->user->id)
+            ->whereNotNull('last_message_at');
+
+        $query = $scope();
+
+        if ($after !== null) {
+            [$at, $id] = self::decodeHistoryCursor($after) ?? abort(422);
+            $query->where(function ($q) use ($at, $id) {
+                $q->where('last_message_at', '<', $at)
+                    ->orWhere(fn ($q2) => $q2->where('last_message_at', $at)->where('id', '<', $id));
+            });
+        }
+
+        $rows = $query->orderByDesc('last_message_at')->orderByDesc('id')->limit($size + 1)->get();
+        $hasMore = $rows->count() > $size;
+        $rows = $rows->take($size);
+
+        // The preview is the last thing actually said (a question or an answer), never the AI-data notice or an action outcome.
+        $latest = $rows->isEmpty() ? collect() : AssistantMessage::query()
+            ->whereIn('conversation_id', $rows->pluck('id'))
+            ->whereIn('kind', ['text', 'answer', 'clarify', 'unsupported', 'navigate', 'error', 'limit'])
+            ->selectRaw('conversation_id, max(id) as last_id')
+            ->groupBy('conversation_id')
+            ->pluck('last_id', 'conversation_id');
+        $bodies = $latest->isEmpty() ? collect() : AssistantMessage::query()->whereIn('id', $latest->values())->pluck('body', 'id');
+
+        return [
+            'conversations' => $rows->map(fn (AssistantConversation $c): array => [
+                'uid' => $c->uid,
+                'title' => (string) ($c->title ?: 'Conversation'),
+                'preview' => Str::limit(trim((string) ($bodies[$latest[$c->id] ?? 0] ?? '')), 110),
+                'last_message_at' => $c->last_message_at?->toIso8601String(),
+                'message_count' => (int) $c->message_count,
+            ])->values()->all(),
+            'has_more' => $hasMore,
+            'next' => $hasMore ? self::encodeHistoryCursor($rows->last()) : null,
+        ];
+    }
+
+    private static function encodeHistoryCursor(AssistantConversation $c): string
+    {
+        return rtrim(strtr(base64_encode((string) json_encode([$c->last_message_at->format('Y-m-d H:i:s'), (int) $c->id])), '+/', '-_'), '=');
+    }
+
+    /** @return array{0: string, 1: int}|null null when the token is not one this list issued */
+    private static function decodeHistoryCursor(string $token): ?array
+    {
+        $raw = base64_decode(strtr($token, '-_', '+/'), true);
+        $parts = $raw === false ? null : json_decode($raw, true);
+
+        if (! is_array($parts) || count($parts) !== 2 || ! is_string($parts[0]) || ! is_int($parts[1]) || $parts[1] < 1
+            || ! preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $parts[0])) {
+            return null;
+        }
+
+        return [$parts[0], $parts[1]];
+    }
+
     public function find(AssistantContext $context, string $uid): ?AssistantConversation
     {
         return AssistantConversation::query()
@@ -176,7 +250,9 @@ final class AssistantService
             'body' => $text,
             'created_at' => now(),
         ]);
-        $conversation->increment('message_count');
+        // The conversation is ordered by its last message, and History and "latest" only know conversations that have one: a saved customer
+        // message must make it discoverable at once, so a turn that fails or is interrupted before the reply never hides it.
+        $conversation->increment('message_count', 1, ['last_message_at' => now()]);
 
         return $message;
     }
@@ -184,7 +260,7 @@ final class AssistantService
     /** The AI-data notice, as the first message of a customer's first conversation in a Business. */
     public function noticeText(): string
     {
-        return __('ask_ai.data_notice.body', ['days' => AssistantRetention::retentionDays()]);
+        return AssistantRetention::disclosure();
     }
 
     private function recordNotice(AssistantConversation $conversation): void

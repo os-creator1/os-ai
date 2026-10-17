@@ -89,7 +89,13 @@ final class HomeActionRouter
             'contact' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.people.add', $scoped, DashboardLinkGate::CONTACT_PERMISSIONS)) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Add a contact',
             ],
-            'advisor' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.growth.advisor', $scoped, ['business_advisor'], 'ai_coo_basic')) === null ? null : [
+            'form' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.forms.create', $scoped, ['forms'], 'forms')) === null ? null : [
+                'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Add a form to your website',
+            ],
+            'automation' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.workflows.create', $scoped, ['automations'], 'automations')) === null ? null : [
+                'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Set one up',
+            ],
+            'advisor' => ($u =$this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.growth.advisor', $scoped, ['business_advisor'], 'ai_coo_basic')) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Ask the Advisor',
             ],
         ];

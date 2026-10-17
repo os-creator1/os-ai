@@ -45,8 +45,20 @@ class AssistantController extends Controller
     public function show(Request $request, string $workspaceUid, string $businessUid): JsonResponse
     {
         $context = $this->context($workspaceUid, $businessUid);
+        $request->validate([
+            'conversation' => ['nullable', 'string', 'max:64'],
+            // The cursor of an older page is a message uid; a page is bounded however it is asked for.
+            'before' => ['nullable', 'uuid'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:' . (int) config('assistant.message_page_max')],
+        ]);
         $uid = $request->query('conversation');
+        $before = $request->query('before');
+        $limit = (int) ($request->query('limit') ?: config('assistant.message_page_size'));
         $conversation = is_string($uid) && $uid !== '' ? ($this->assistant->find($context, $uid) ?? abort(404)) : $this->assistant->latest($context);
+
+        if (is_string($before) && $before !== '' && $conversation === null) {
+            abort(404);
+        }
 
         if ($conversation === null) {
             return response()->json([
@@ -58,7 +70,17 @@ class AssistantController extends Controller
             ]);
         }
 
-        return response()->json($this->presenter->conversation($context, $conversation));
+        return response()->json($this->presenter->conversation($context, $conversation, $limit, is_string($before) && $before !== '' ? $before : null));
+    }
+
+    /** The history panel: this customer's conversations in this Business, newest activity first, one page at a time. Reads only. */
+    public function index(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $request->validate(['after' => ['nullable', 'string', 'max:200']]);
+        $context = $this->context($workspaceUid, $businessUid);
+        $after = $request->query('after');
+
+        return response()->json($this->assistant->history($context, is_string($after) && $after !== '' ? $after : null));
     }
 
     public function message(Request $request, string $workspaceUid, string $businessUid): JsonResponse

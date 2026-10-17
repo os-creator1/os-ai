@@ -32,6 +32,21 @@ final class AssistantSuggestions
     {
     }
 
+    /**
+     * The "Draft replies with MotionGrove" button on the waiting-customers move: offered only where the assistant can really
+     * prepare a reply for this actor (the draft_reply action, which never sends) and the plan includes the model.
+     *
+     * @return array{label: string, prompt: string}|null
+     */
+    public function draftReplies(AssistantContext $context): ?array
+    {
+        if (! $context->entitled('ai_coo_basic') || ! isset($this->tools->availableActions($context)['draft_reply'])) {
+            return null;
+        }
+
+        return ['label' => 'Draft replies with MotionGrove', 'prompt' => 'Draft replies for the customers who are waiting for a reply.'];
+    }
+
     /** @return array<int, array{key: string, label: string, available: bool, prompt: string}> */
     public function for(AssistantContext $context, bool $launching): array
     {

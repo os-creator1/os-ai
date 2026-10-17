@@ -31,6 +31,12 @@ class PurgeAssistantConversations extends Command
             $workspaceId = (int) $business->workspace_id;
         }
 
+        if (AssistantRetention::keepsUntilDeleted()) {
+            $this->info('Retention is set to keep conversations until the customer deletes them (ASSISTANT_RETENTION_DAYS=0): nothing to purge.');
+
+            return self::SUCCESS;
+        }
+
         $count = $retention->purgeExpired($workspaceId, $businessId, (int) $this->option('chunk'));
         $this->info("Deleted {$count} expired conversation(s).");
 

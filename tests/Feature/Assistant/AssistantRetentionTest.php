@@ -25,6 +25,8 @@ class AssistantRetentionTest extends TestCase
     {
         parent::setUp();
         $this->bootAssistant();
+        // The sweep tests below exercise a positive period; the keep-until-deleted default is asserted in AssistantHistoryTest.
+        config(['assistant.retention_days' => 90]);
     }
 
     /** @return array{0: AssistantConversation, 1: AssistantActionProposal} a conversation with text, a summary and a prepared action */
@@ -105,7 +107,6 @@ class AssistantRetentionTest extends TestCase
     public function test_retention_deletes_only_expired_conversations_and_is_idempotent(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Ret Venue', 'Ret Account');
-        $this->assertSame(90, AssistantRetention::retentionDays(), 'Default retention is 90 days.');
         [$old] = $this->conversationWithAction($customer, $business, $workspace, 'completed', now()->subDays(91));
         [$fresh] = $this->conversationWithAction($customer, $business, $workspace, 'completed', now()->subDays(89));
 
@@ -122,7 +123,7 @@ class AssistantRetentionTest extends TestCase
         config(['assistant.retention_days' => 30]);
         $this->assertSame(1, (new AssistantRetention())->purgeExpired(), 'The period is configurable.');
         config(['assistant.retention_days' => 100000]);
-        $this->assertSame(365, AssistantRetention::retentionDays(), 'And bounded.');
+        $this->assertSame(3650, AssistantRetention::retentionDays(), 'And bounded.');
     }
 
     public function test_the_sweep_can_be_scoped_to_one_business_and_skips_a_running_action(): void
@@ -160,13 +161,14 @@ class AssistantRetentionTest extends TestCase
         $this->assertSame('How Ask MotionGrove uses AI', $before->json('notice.title'));
         $this->assertSame(0, $this->aiCalls());
 
+        config(['assistant.retention_days' => 0]);
         $this->modelSays(['action' => 'answer', 'message' => 'Hello.']);
         $first = $this->say($workspace, $business, 'Hi')->assertOk();
         $messages = $first->json('messages');
         $this->assertSame('notice', $messages[0]['kind'], 'The notice is the first thing in the first conversation.');
         $body = $messages[0]['body'];
         $this->assertStringContainsString('third-party provider', $body);
-        $this->assertStringContainsString('saved in MotionGrove for 90 days', $body);
+        $this->assertStringContainsString('saved in MotionGrove until you delete them', $body, 'The default policy is keep-until-deleted, and the notice says so.');
         $this->assertStringContainsString('Delete conversation', $body);
         $this->assertStringContainsString('removes its messages and summary from MotionGrove', $body);
         $this->assertStringContainsString('minimal record of any action you approved', $body, 'Says plainly that action/audit records may be kept.');

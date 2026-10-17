@@ -56,6 +56,7 @@ class HomeCommandCenterTest extends TestCase
         $home = $this->command($customer->user);
 
         $this->assertSame(HomeCommandCenter::STATE_SETUP, $home['state']);
+        $this->assertSame('setup', $home['status']['key']);
         $this->assertTrue($home['setup']['essentialIncomplete']);
         $steps = array_column($home['setup']['steps'], 'done', 'key');
         $this->assertFalse($steps['location'], 'No Location row exists, so the first step is not done.');
@@ -94,6 +95,8 @@ class HomeCommandCenterTest extends TestCase
         $this->assertTrue($home['attention']['allClear']);
         $this->assertFalse($home['attention']['unknown']);
         $this->assertStringContainsString('Welcome to Calm Venue', $home['briefing']['text']);
+        $this->assertSame('clear', $home['status']['key']);
+        $this->assertStringContainsString('data-status="clear"', $this->home()->assertOk()->getContent());
     }
 
     public function test_a_broken_provider_makes_the_business_broken_and_is_never_called_all_clear(): void
@@ -107,6 +110,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertSame(HomeCommandCenter::STATE_BROKEN, $home['state']);
         $this->assertFalse($home['attention']['allClear']);
         $this->assertSame('google_connection_lost', $home['primary']['key']);
+        $this->assertSame('attention', $home['status']['key'], 'A broken provider is never "All caught up".');
         $this->assertSame(1, substr_count($this->home()->assertOk()->getContent(), 'data-role="next-best-move"'));
     }
 
@@ -166,6 +170,118 @@ class HomeCommandCenterTest extends TestCase
         );
     }
 
+    public function test_the_waiting_move_carries_its_own_real_figure_and_never_an_invented_one(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Metric Venue', 'Metric Account');
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(30)]]);
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(45)]]);
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame(2, $home['primary']['metric']['value'], 'The figure is the awaiting-reply count the Conversations band read.');
+        $this->assertSame('waiting for you', $home['primary']['metric']['caption']);
+        $this->assertSame(['value', 'caption'], array_keys($home['primary']['metric']), 'Only the current waiting count; no derived denominator.');
+        $this->assertStringContainsString('data-role="next-best-move-metric"', $this->home()->assertOk()->getContent());
+        $this->assertSame('attention', $home['status']['key']);
+        $this->assertSame('1 thing needs you', $home['status']['pill']);
+    }
+
+    public function test_a_billing_exception_is_never_all_caught_up(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Billing Venue', 'Billing Account');
+        $this->wallet($business, ['available_balance_micro' => 3000000, 'billing_status' => 'suspended']);
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame(HomeCommandCenter::STATE_BROKEN, $home['state']);
+        $this->assertSame('attention', $home['status']['key'], 'Billing needs the customer, so the status cannot say all caught up.');
+        $this->assertGreaterThanOrEqual(1, $home['status']['count']);
+        $this->assertFalse($home['caughtUp']);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-band="billing_exception"', $html);
+        $this->assertStringNotContainsString('data-role="home-status" data-status="clear"', $html);
+        $this->assertStringNotContainsString('data-band="quiet_steps"', $html, 'No quiet-time suggestions over a billing problem.');
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function unreadableBands(): array
+    {
+        return [
+            'move' => [DashboardSnapshot::BAND_NEXT_BEST_MOVE],
+            'growth' => [DashboardSnapshot::BAND_GROWTH],
+            'activity' => [DashboardSnapshot::BAND_ACTIVITY],
+            'headlines' => [DashboardSnapshot::BAND_HEADLINES],
+            'recent work' => [DashboardSnapshot::BAND_RECENT_WORK],
+            'automations' => [DashboardSnapshot::BAND_AUTOMATIONS],
+        ];
+    }
+
+    /** @dataProvider unreadableBands */
+    public function test_any_unreadable_proof_of_all_clear_is_a_failed_read(string $band): void
+    {
+        $this->assertTrue(HomeCommandCenter::readFailed([$band]), "A failed {$band} read must stop Home saying all caught up.");
+        $this->assertFalse(HomeCommandCenter::readFailed([]));
+        $this->assertFalse(HomeCommandCenter::readFailed([DashboardSnapshot::BAND_VISIBILITY]), 'A band that proves nothing about all clear does not count.');
+    }
+
+    public function test_an_automations_read_failure_stays_visible_in_the_quiet_layout(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Fail Venue', 'Quiet Fail Account');
+        $this->authenticateAs($customer);
+
+        // Every analytics read fails (an unexpected call on a strict mock throws), so the B5 comparison — and with it Automations — is unreadable.
+        $this->app->instance(\App\Library\Analytics\BusinessAnalyticsQueries::class, \Mockery::mock(\App\Library\Analytics\BusinessAnalyticsQueries::class));
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-role="automations-unavailable"', $html, 'An unreadable Automations says so.');
+        $this->assertStringNotContainsString('data-role="home-status" data-status="clear"', $html, 'And Home does not claim all caught up over it.');
+    }
+
+    public function test_the_waiting_figure_is_never_compared_with_a_different_population(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Population Venue', 'Population Account');
+        // One customer has waited since BEFORE the selected period (this month): still waiting NOW.
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(60 * 24 * 15)]]);
+        // Three conversations started today and ALREADY answered: they inflate the period's incoming count but are not waiting.
+        foreach ([40, 50, 60] as $ago) {
+            $this->conversationWith($business, [['incoming', $this->minutesAgo($ago)], ['outgoing', $this->minutesAgo($ago - 5)]]);
+        }
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame(1, $home['primary']['metric']['value'], 'The actual current waiting count, whatever the period.');
+        $this->assertArrayNotHasKey('of', $home['primary']['metric'], 'No "of 3 conversations in this period": that would compare two populations.');
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="next-best-move-metric"', $html);
+        $this->assertSame(1, preg_match('#<aside[^>]*next-best-move-metric.*?</aside>#s', $html, $aside));
+        $this->assertDoesNotMatchRegularExpression('/\bof\s+\d+\b/i', strip_tags($aside[0]), 'The card shows the waiting count alone.');
+    }
+
+    public function test_a_quiet_business_offers_only_steps_whose_pages_exist_for_the_actor(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Steps Venue', 'Quiet Steps Account');
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame('clear', $home['status']['key']);
+        $this->assertNull($home['primary']);
+
+        foreach ($home['quietSteps'] as $step) {
+            $this->assertContains($step['key'], ['booking-type', 'form', 'contact']);
+            $this->assertNotSame('', $step['url'], 'A step is a real page, never a dead row.');
+        }
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertSame($home['quietSteps'] !== [], str_contains($html, 'data-band="quiet_steps"'));
+        $this->assertStringNotContainsString('data-band="next_best_move"', $html, 'No empty urgent-action container.');
+    }
     // ── Drawers ──────────────────────────────────────────────────────────
 
     public function test_the_follow_up_drawer_lists_the_real_waiting_conversation_with_the_inbox_reply_endpoint(): void

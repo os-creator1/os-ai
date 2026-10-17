@@ -98,6 +98,14 @@
                             // request was out; never draw into a detached mount.
                             if (!document.body.contains(mount)) { return; }
 
+                            // No contact in the whole period: say so instead of drawing a flat line that looks like a result.
+                            var hasActivity = chart.series.new_contacts.some(function (n) { return Number(n) > 0; });
+                            if (!hasActivity) {
+                                mount.style.minHeight = '0';
+                                mount.innerHTML = '<div class="home-chart-empty" data-role="chart-empty"><strong>No activity to chart yet</strong><span>The trend chart appears once something happens in this period.</span></div>';
+                                return;
+                            }
+
                             var fitting = Math.max(2, Math.floor(mount.clientWidth / LABEL_SPACING_PX));
                             mount.innerHTML = '';
 

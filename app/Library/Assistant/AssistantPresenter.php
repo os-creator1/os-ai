@@ -21,15 +21,34 @@ final class AssistantPresenter
     }
 
     /** @return array<string, mixed> */
-    public function conversation(AssistantContext $context, AssistantConversation $conversation, int $limit = 40): array
+    /**
+     * One page of a conversation: the newest `$limit` messages, or — with `$beforeUid` — the `$limit` messages immediately
+     * older than that message. The cursor is a message's own uid (never a row number), resolved inside THIS conversation, so
+     * a pager can neither skip, repeat nor wander into another conversation. `page.has_more` says whether anything older
+     * remains; `page.before` is the cursor for the next (older) page. Reads only: no model is ever involved.
+     *
+     * @return array<string, mixed>
+     */
+    public function conversation(AssistantContext $context, AssistantConversation $conversation, int $limit = 40, ?string $beforeUid = null): array
     {
-        $rows = AssistantMessage::query()
+        $beforeId = null;
+
+        if ($beforeUid !== null) {
+            $beforeId = AssistantMessage::query()->where('conversation_id', $conversation->id)->where('uid', $beforeUid)->value('id');
+
+            if ($beforeId === null) {
+                abort(404);
+            }
+        }
+
+        $fetched = AssistantMessage::query()
             ->where('conversation_id', $conversation->id)
+            ->when($beforeId !== null, fn ($q) => $q->where('id', '<', $beforeId))
             ->orderByDesc('id')
-            ->limit($limit)
-            ->get()
-            ->reverse()
-            ->values();
+            ->limit($limit + 1)
+            ->get();
+        $hasMore = $fetched->count() > $limit;
+        $rows = $fetched->take($limit)->reverse()->values();
 
         $state = $this->allowance->forWorkspace($context->workspace, $context->business);
 
@@ -43,7 +62,9 @@ final class AssistantPresenter
 
         return [
             'uid' => $conversation->uid,
+            'title' => $conversation->title,
             'messages' => $rows->map(fn (AssistantMessage $m): array => $this->message($m, $proposals->get($m->payload['proposal_uid'] ?? ''), $state))->all(),
+            'page' => ['has_more' => $hasMore, 'before' => $rows->first()?->uid],
             'allowance' => $this->allowanceView($context, $state),
         ];
     }
@@ -74,11 +95,15 @@ final class AssistantPresenter
 
         unset($payload['proposal_uid']);
 
+        // The AI-data notice is a standing disclosure, not part of the conversation's content: it always shows the retention policy in force NOW,
+        // whatever the policy was when the row was written. The stored row itself is never changed.
+        $body = $m->kind === 'notice' ? AssistantRetention::disclosure() : $m->body;
+
         return [
             'uid' => $m->uid,
             'role' => $m->role,
             'kind' => $m->kind,
-            'body' => $m->body,
+            'body' => $body,
             'payload' => $payload === [] ? new \stdClass() : $payload,
             'proposal' => $proposal === null ? null : $this->proposal($proposal),
             'at' => $m->created_at?->toIso8601String(),

@@ -186,8 +186,8 @@ class BusinessHomeNextBestMoveTest extends TestCase
 
         $this->assertNull($band['move']);
         $this->assertNull($band['recommendations']);
-        $this->assertStringContainsString("You're all caught up.", html_entity_decode($html));
-        $this->assertStringContainsString('data-band="next_best_move"', $this->home()->getContent(), 'The band is always shown.');
+        $this->assertSame('', $html, 'A quiet Business gets no empty urgent-action container.');
+        $this->assertStringContainsString('All caught up', html_entity_decode($this->home()->getContent()));
     }
 
     public function test_billing_is_never_the_move_even_when_it_is_the_only_problem(): void

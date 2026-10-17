@@ -16,3 +16,10 @@ module facts; honest handling of missing data; clarifying question; action previ
 double-click that does not duplicate); refresh resumes the conversation; the exhausted-trial message with the real
 *Upgrade plan* link while non-AI pages keep working; the first-use AI-data notice; the two-step *Delete conversation* (nothing left to resume, and the server returns no messages afterwards); the existing Home cards still present; no horizontal overflow on
 mobile; no console errors and no 5xx. Screenshots land in `shots/`. `qa.json` and `shots/` are git-ignored artefacts.
+
+## Conversation-switching regressions
+
+`conversation-switching.js` runs inside the real Home page with a stubbed `fetch` whose answers are released by hand (no server round
+trip, no AI provider). It proves a late answer, an out-of-order read, or a send made while another conversation is opening never
+replaces the conversation on screen, loses a draft, or sends twice. Run it with
+`page.evaluate(<file contents> + '; runConversationSwitchingChecks()')` on a signed-in Home; every result must have `ok: true`.

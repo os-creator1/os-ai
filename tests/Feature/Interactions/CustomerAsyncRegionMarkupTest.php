@@ -78,7 +78,17 @@ class CustomerAsyncRegionMarkupTest extends TestCase
         $this->assertSame('get', strtolower($form->getAttribute('method')), 'An ordinary GET: the no-JavaScript fallback.');
         $this->assertSame(route('user.home'), $form->getAttribute('action'));
         $this->assertSame(1, $xpath->query('.//select[@name="range"]', $form)->length);
-        $this->assertSame(1, $xpath->query('.//button[@type="submit"]', $form)->length);
+        $this->assertSame(1, $xpath->query('.//button[@type="submit"][@value="custom"]', $form)->length, 'One Apply, for a custom range.');
+        $this->assertSame(3, $xpath->query('.//*[@data-role="range-segments"]//button[@type="submit"]', $form)->length, 'A preset is one press: 7 days, This month, 30 days.');
+
+        // Custom stays usable without JavaScript: the hidden date fields and Apply are shown by a <noscript> rule, and Apply is a plain
+        // GET submit carrying range=custom.
+        $noscript = $xpath->query('.//noscript', $form);
+        $this->assertSame(1, $noscript->length, 'The no-JavaScript rule is part of the form.');
+        $this->assertStringContainsString('display: block !important', $noscript->item(0)->textContent);
+        $this->assertSame(1, $xpath->query('.//button[@type="submit"][@name="range"][@value="custom"]', $form)->length);
+        $this->assertSame(1, $xpath->query('.//input[@type="date"][@name="start"]', $form)->length);
+        $this->assertSame(1, $xpath->query('.//input[@type="date"][@name="end"]', $form)->length);
 
         // Everything that follows the range lives inside the region it updates.
         $this->assertSame(1, $xpath->query('.//*[@data-role="range-caption"]', $band)->length);
