@@ -80,6 +80,15 @@
         ->middleware('throttle:10,1')->name('public.documents.pay');
 
     /*
+    | Payment STATUS for the return from Stripe and for bounded polling. Same
+    | {uid}/{token} possession; read-only for the customer, creates nothing, and
+    | only reconciles the EXISTING attempt through the shared finalizer. Bounded
+    | at 30/minute, comfortably above the page's own capped polling.
+    */
+    Route::get('documents/{uid}/{token}/pay/status', 'Public\PublicDocumentController@payStatus')
+        ->middleware('throttle:30,1')->name('public.documents.pay.status');
+
+    /*
     | Sub-slice E §5.8/§8.2 — money lane B's OWN Connect webhook, at its own
     | path with its own secret, deliberately separate from lane D's
     | `stripe/webhook/usage-billing`. CSRF-exempt (VerifyCsrfToken::$except)
