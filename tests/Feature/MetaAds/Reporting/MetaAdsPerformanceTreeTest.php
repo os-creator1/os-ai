@@ -154,4 +154,20 @@ class MetaAdsPerformanceTreeTest extends TestCase
         $this->assertSame($small, $large, 'the number of queries must not grow with the number of campaigns, ad sets or ads');
         $this->assertLessThanOrEqual(16, $large);
     }
+
+    public function test_the_aggregate_cost_per_result_rounds_half_up_and_is_null_without_results(): void
+    {
+        $period = MetaAdsPeriod::resolve('last_30', $this->account);
+
+        $withResults = $this->seedMetaCampaign($this->account, 'Fractional');
+        $this->seedMetaDays($this->account, MetaAdsLevel::Campaign, $withResults->id, '2026-10-01', '2026-10-01', 20_000_000, 3);   // 20M over 3 results
+
+        $tree = app(MetaAdsPerformanceTree::class)->page($this->account, $period, null, 'spend', 'desc', 1);
+        $this->assertSame(6_666_667, $tree['totals']['costPerResultMicros'], '6666666.67 rounds half up');
+
+        $noResults = $this->seedMetaCampaign($this->account, 'Silent', ['status' => 'PAUSED']);
+        $this->seedMetaDays($this->account, MetaAdsLevel::Campaign, $noResults->id, '2026-10-01', '2026-10-01', 5_000_000, 0);
+        $paused = app(MetaAdsPerformanceTree::class)->page($this->account, $period, 'paused', 'spend', 'desc', 1);
+        $this->assertNull($paused['totals']['costPerResultMicros'], 'spend with zero results has no cost per result');
+    }
 }

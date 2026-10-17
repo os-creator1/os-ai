@@ -140,11 +140,7 @@ final class MetaAdsPerformanceTree
             }
         }
 
-        $cost = null;
-
-        if ($spend !== null && $results !== null && bccomp($results, '0', 6) > 0) {
-            $cost = (int) bcadd(bcdiv((string) $spend, $results, 6), '0.5', 0);
-        }
+        $cost = MetaAdsMetricTotals::costPerResult($spend, $results);
 
         $budget = DB::table('meta_ads_campaigns')
             ->where('business_id', $account->business_id)

@@ -94,11 +94,21 @@ final class MetaAdsMetricTotals
     /** Cost per result in micros (half up); null when results are null or <= 0 or spend is null. */
     public function costPerResultMicros(): ?int
     {
-        if ($this->spendMicros === null || $this->results === null || bccomp($this->results, '0', 6) <= 0) {
+        return self::costPerResult($this->spendMicros, $this->results);
+    }
+
+    /**
+     * spend / results in micros, rounded half up, computed with BCMath. Null when either input is
+     * missing, results are <= 0, or the rounded quotient does not fit a PHP int (never a clamped maximum).
+     * The one implementation behind every cost-per-result figure, per row and aggregate.
+     */
+    public static function costPerResult(?int $spendMicros, ?string $results): ?int
+    {
+        if ($spendMicros === null || $results === null || bccomp($results, '0', 6) <= 0) {
             return null;
         }
 
-        $quotient = bcadd(bcdiv((string) $this->spendMicros, $this->results, 6), '0.5', 0);
+        $quotient = bcadd(bcdiv((string) $spendMicros, $results, 6), '0.5', 0);
 
         return bccomp($quotient, (string) PHP_INT_MAX, 0) > 0 ? null : (int) $quotient;
     }
