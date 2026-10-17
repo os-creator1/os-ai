@@ -181,7 +181,7 @@ class HomeCommandCenterTest extends TestCase
 
         $this->assertSame(2, $home['primary']['metric']['value'], 'The figure is the awaiting-reply count the Conversations band read.');
         $this->assertSame('waiting for you', $home['primary']['metric']['caption']);
-        $this->assertTrue($home['primary']['metric']['of'] === null || $home['primary']['metric']['of'] >= 2, 'Never "2 of 1".');
+        $this->assertSame(['value', 'caption'], array_keys($home['primary']['metric']), 'Only the current waiting count; no derived denominator.');
         $this->assertStringContainsString('data-role="next-best-move-metric"', $this->home()->assertOk()->getContent());
         $this->assertSame('attention', $home['status']['key']);
         $this->assertSame('1 thing needs you', $home['status']['pill']);
@@ -218,6 +218,28 @@ class HomeCommandCenterTest extends TestCase
 
         $this->assertStringContainsString('data-band="quiet_steps"', $html, 'The layout under test is the quiet one.');
         $this->assertStringContainsString('data-role="automations-unavailable"', $html, 'An unreadable Automations says so even when there is no column for it.');
+    }
+
+    public function test_the_waiting_figure_is_never_compared_with_a_different_population(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Population Venue', 'Population Account');
+        // One customer has waited since BEFORE the selected period (this month): still waiting NOW.
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(60 * 24 * 15)]]);
+        // Three conversations started today and ALREADY answered: they inflate the period's incoming count but are not waiting.
+        foreach ([40, 50, 60] as $ago) {
+            $this->conversationWith($business, [['incoming', $this->minutesAgo($ago)], ['outgoing', $this->minutesAgo($ago - 5)]]);
+        }
+        $this->authenticateAs($customer);
+
+        $home = $this->command($customer->user);
+
+        $this->assertSame(1, $home['primary']['metric']['value'], 'The actual current waiting count, whatever the period.');
+        $this->assertArrayNotHasKey('of', $home['primary']['metric'], 'No "of 3 conversations in this period": that would compare two populations.');
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="next-best-move-metric"', $html);
+        $this->assertSame(1, preg_match('#<aside[^>]*next-best-move-metric.*?</aside>#s', $html, $aside));
+        $this->assertDoesNotMatchRegularExpression('/\bof\s+\d+\b/i', strip_tags($aside[0]), 'The card shows the waiting count alone.');
     }
 
     public function test_a_quiet_business_offers_only_steps_whose_pages_exist_for_the_actor(): void

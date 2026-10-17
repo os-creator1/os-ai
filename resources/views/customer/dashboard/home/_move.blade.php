@@ -18,8 +18,6 @@
     $move = $home['primary'];
     $attn = $home['attention'];
     $metric = $move['metric'] ?? null;
-    $segments = $metric !== null && $metric['of'] !== null ? min(12, max(1, (int) $metric['of'])) : 0;
-    $filled = $segments > 0 ? min($segments, max(1, (int) round($metric['value'] / $metric['of'] * $segments))) : 0;
 @endphp
 
 <section class="h-100" aria-labelledby="home-move-heading" data-band="next_best_move"{!! $home['primaryFailed'] ? ' data-band-state="failed"' : '' !!} data-role="home-move-section">
@@ -99,12 +97,6 @@
             @if($metric !== null)
                 <aside class="home-move-metric" data-role="next-best-move-metric" aria-label="{{ $metric['value'] }} {{ $metric['caption'] }}">
                     <p class="mb-0"><span class="home-metric-figure">{{ number_format($metric['value']) }}</span> <span class="home-metric-caption">{{ $metric['caption'] }}</span></p>
-                    @if($segments > 0)
-                        <div class="home-metric-bar" aria-hidden="true">
-                            @for($i = 1; $i <= $segments; $i++)<span @if($i <= $filled) class="on" @endif></span>@endfor
-                        </div>
-                        <p class="text-caption text-muted mb-0">of {{ number_format($metric['of']) }} {{ $metric['ofLabel'] }}</p>
-                    @endif
                 </aside>
             @endif
         </div>

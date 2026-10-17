@@ -227,11 +227,12 @@ final class HomeCommandCenter
     }
 
     /**
-     * "7 waiting for you · of 9 conversations": the awaiting-reply figure the Conversations band already read, beside the
-     * period's incoming conversations when (and only when) that comparison is coherent. Null when the band is unavailable.
+     * "7 waiting for you": the CURRENT awaiting-reply count the Conversations band already read (across all time, not the
+     * selected period). It is shown on its own: the band's other figures (incoming/replied) are limited to the selected analytics
+     * period, so they are a different population and no "of N" is ever derived from them. Null when the figure is unavailable.
      *
      * @param  array<string, mixed>  $bands
-     * @return array{value: int, caption: string, of: ?int, ofLabel: ?string}|null
+     * @return array{value: int, caption: string}|null
      */
     private function waitingMetric(array $bands): ?array
     {
@@ -251,15 +252,7 @@ final class HomeCommandCenter
             return null;
         }
 
-        $incoming = $figures['incoming'] ?? 0;
-        $coherent = $incoming >= $figures['awaiting_reply'];
-
-        return [
-            'value' => $figures['awaiting_reply'],
-            'caption' => 'waiting for you',
-            'of' => $coherent ? $incoming : null,
-            'ofLabel' => $coherent ? ($incoming === 1 ? 'conversation' : 'conversations') . ' in ' . ($band['rangeLabel'] ?? 'this period') : null,
-        ];
+        return ['value' => $figures['awaiting_reply'], 'caption' => 'waiting for you'];
     }
 
     /**
