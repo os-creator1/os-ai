@@ -465,6 +465,8 @@
     function reselect() {
         state.epoch++;
         state.opening = false;
+        state.loadingOlder = false;
+        state.olderFailed = false;
         disarmDelete();
         if (state.busy) { setBusy(false); }
         return state.epoch;
@@ -572,13 +574,16 @@
         if (!state.hasMore || state.loadingOlder || !state.uid || !state.before || !cfg.show) { return; }
         var uid = state.uid;
         var epoch = state.epoch;
+        // This request still belongs on screen only while the same conversation is selected under the same selection token (A → B → A is a
+        // different selection). Success, failure and cleanup all ask; a stale one touches nothing, least of all a newer request's loading state.
+        var live = function () { return uid === state.uid && epoch === state.epoch; };
         state.loadingOlder = true;
         state.olderFailed = false;
         updateTop();
         var url = cfg.show + (cfg.show.indexOf('?') < 0 ? '?' : '&') + 'conversation=' + encodeURIComponent(uid) + '&before=' + encodeURIComponent(state.before);
 
         request(url).then(function (res) {
-            if (uid !== state.uid || epoch !== state.epoch) { return; } // the customer moved to another conversation meanwhile
+            if (!live()) { return; } // the customer moved to another conversation meanwhile
             if (res.status === 404) { conversationGone(); return; }
             if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
             var beforeHeight = thread.scrollHeight;
@@ -593,9 +598,9 @@
             thread.scrollTop = beforeTop + (thread.scrollHeight - beforeHeight);
             applyPage(res.body);
         }).catch(function () {
-            if (uid === state.uid) { state.olderFailed = true; }
+            if (live()) { state.olderFailed = true; }
         }).then(function () {
-            if (uid !== state.uid) { return; }
+            if (!live()) { return; }
             state.loadingOlder = false;
             updateTop();
             // A short page can leave the top still in view: keep going until it is not, or nothing older remains.
@@ -939,23 +944,34 @@
         var box = el('div', 'home-ask-hist-confirm');
         box.setAttribute('role', 'alertdialog');
         box.setAttribute('aria-label', 'Delete this conversation?');
-        box.appendChild(el('span', null, 'Delete this conversation? Its messages are removed from MotionGrove.'));
-        var yes = el('button', 'btn btn-sm btn-danger', 'Delete');
-        yes.type = 'button';
-        yes.setAttribute('data-role', 'ask-history-delete-confirm');
-        var no = el('button', 'btn btn-sm btn-outline-secondary', 'Keep it');
-        no.type = 'button';
-        box.appendChild(yes);
-        box.appendChild(no);
         li.appendChild(box);
         li.classList.add('is-confirming');
-        no.focus();
-        no.addEventListener('click', function () { box.remove(); li.classList.remove('is-confirming'); });
-        yes.addEventListener('click', function () {
+
+        function cancel() { box.remove(); li.classList.remove('is-confirming'); }
+
+        // The box always ends in controls that work: the question with Delete / Keep it, or the reason it did not go through with
+        // Try again / Keep it. Nothing is left disabled, hidden or message-only.
+        function show(message, retry) {
+            box.textContent = '';
+            box.appendChild(el('span', null, message));
+            var yes = el('button', 'btn btn-sm btn-danger', retry ? 'Try again' : 'Delete');
+            yes.type = 'button';
+            yes.setAttribute('data-role', retry ? 'ask-history-delete-retry' : 'ask-history-delete-confirm');
+            var no = el('button', 'btn btn-sm btn-outline-secondary', 'Keep it');
+            no.type = 'button';
+            no.setAttribute('data-role', 'ask-history-delete-cancel');
+            box.appendChild(yes);
+            box.appendChild(no);
+            no.addEventListener('click', cancel);
+            yes.addEventListener('click', function () { attempt(yes, no); });
+            return no;
+        }
+
+        function attempt(yes, no) {
             yes.disabled = true; no.disabled = true;
             request(cfg.remove.replace('__UID__', encodeURIComponent(c.uid)), { method: 'POST', body: {} }).then(function (res) {
                 if (res.status === 409) {
-                    box.textContent = (res.body && res.body.message) || 'This conversation is busy right now. Nothing was deleted — try again in a moment.';
+                    show((res.body && res.body.message) || 'This conversation is busy right now. Nothing was deleted — try again in a moment.', true).focus();
                     return;
                 }
                 if (!res.ok && res.status !== 404) { throw new Error('status ' + res.status); }
@@ -971,9 +987,11 @@
                 }
                 if (!historyList.children.length) { historyNote('No saved conversations yet.'); if (resumeBtn) { resumeBtn.removeAttribute('data-has-conversation'); } }
             }).catch(function () {
-                box.textContent = "We couldn't delete it just now. Nothing was changed.";
+                show("We couldn't delete it just now. Nothing was changed.", true).focus();
             });
-        });
+        }
+
+        show('Delete this conversation? Its messages are removed from MotionGrove.', false).focus();
     }
 
     function loadHistory(append) {

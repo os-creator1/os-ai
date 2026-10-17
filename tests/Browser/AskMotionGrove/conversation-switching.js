@@ -331,3 +331,162 @@ async function runDeleteChecks() {
 
     return results;
 }
+
+/*
+ * Older-page requests and history deletion under hostile timing.
+ *
+ *   runOlderPageRaceChecks()   A -> B -> A while an older-page request for the first A is still pending: its late success or failure must
+ *                              not touch the second A, clear a newer request's loading state, or start overlapping page loads.
+ *   runHistoryDeleteChecks()   A 409 (or any failed) delete leaves a usable Try again / Keep it, never a stranded row; then retry,
+ *                              cancel and success all behave.
+ *
+ *   (the same evaluate pattern as above) + '; runOlderPageRaceChecks()'
+ */
+function askRaceStub() {
+    var calls = [];
+    var pending = [];
+    var allow = { status: 'ok', usable: true, nearing: false, blocked: null };
+    var msg = function (uid, role, body) { return { uid: uid, role: role, kind: role === 'user' ? 'text' : 'answer', body: body, payload: {}, proposal: null, at: new Date().toISOString() }; };
+    var page = function (uid, bodies, hasMore) { return { uid: uid, title: 'Chat ' + uid, messages: bodies.map(function (b, i) { return msg(uid + '-' + b.replace(/\W/g, ''), i % 2 === 0 ? 'user' : 'assistant', b); }), page: { has_more: !!hasMore, before: hasMore ? uid + '-cursor' : null }, allowance: allow }; };
+    var data = { A: page('A', ['asked in A', 'answer in A'], true), B: page('B', ['asked in B', 'answer in B'], false) };
+    var list = { conversations: [{ uid: 'A', title: 'Chat A', preview: 'answer in A', last_message_at: new Date().toISOString(), message_count: 2 }, { uid: 'B', title: 'Chat B', preview: 'answer in B', last_message_at: new Date().toISOString(), message_count: 2 }], has_more: false, next: null };
+    var real = window.fetch;
+    window.fetch = function (url, opts) {
+        url = String(url);
+        var method = (opts && opts.method) || 'GET';
+        var entry = { url: url, method: method };
+        calls.push(entry);
+        var make = function (status, body) { return { ok: status < 400, status: status, json: function () { return Promise.resolve(body); } }; };
+        var m = /conversation=([^&]+)/.exec(url);
+        var older = /[?&]before=/.test(url);
+        var isDelete = method === 'POST' && /\/delete$/.test(url);
+        var held = older || isDelete;
+        return new Promise(function (resolve, reject) {
+            entry.release = function (status, body) {
+                if (older) { resolve(make(status || 200, body || page('A', ['older question', 'older answer'], false))); return; }
+                if (isDelete) { resolve(make(status || 200, body || { deleted: true })); return; }
+                resolve(make(200, /assistant\/conversations/.test(url) ? list : (m ? data[decodeURIComponent(m[1])] : data.A)));
+            };
+            entry.networkError = function () { reject(new TypeError('network down')); };
+            if (held) { pending.push(entry); } else { entry.release(); }
+        });
+    };
+    return { calls: calls, pending: pending, restore: function () { window.fetch = real; } };
+}
+
+async function runOlderPageRaceChecks() {
+    var results = [];
+    var net = askRaceStub();
+    var section = document.querySelector('[data-role="home-ask"]');
+    var q = function (s) { return section.querySelector(s); };
+    var tick = function (ms) { return new Promise(function (r) { window.setTimeout(r, ms || 30); }); };
+    var check = function (name, ok, detail) { results.push({ name: name, ok: !!ok, detail: ok ? undefined : detail }); };
+    var thread = function () { return q('[data-role="ask-thread"]'); };
+    var olderCalls = function () { return net.calls.filter(function (c) { return /[?&]before=/.test(c.url); }); };
+    var top = function () { return q('[data-role="ask-older"]').textContent; };
+    var openItem = function (uid) {
+        q('[data-role="ask-history"]').click();
+        return tick(40).then(function () {
+            [].slice.call(section.querySelectorAll('[data-role="ask-history-item"]')).filter(function (b) { return b.parentNode.getAttribute('data-uid') === uid; })[0].click();
+        });
+    };
+    var scrollTop = function () { thread().scrollTop = 0; thread().dispatchEvent(new Event('scroll')); return tick(40); };
+
+    try {
+        q('[data-role="ask-resume"]').hidden = false;
+        q('[data-role="ask-resume"]').click();
+        await tick(400);
+
+        // A (first visit): scrolling up starts an older-page request that stays pending
+        await openItem('A'); await tick(80);
+        await scrollTop();
+        check('1 - the first A asked for older messages once', olderCalls().length === 1, olderCalls().length);
+        // ...the customer goes to B, then back to A
+        await openItem('B'); await tick(80);
+        await openItem('A'); await tick(80);
+        await scrollTop();
+        check('1 - the second A asked for its own older page (one more request, not overlapping extras)', olderCalls().length === 2, olderCalls().length);
+        check('1 - and shows it loading', /Loading earlier messages/.test(top()), top());
+
+        // the FIRST request now fails, late
+        net.pending[0].networkError(); await tick(80);
+        check('1 - a stale failure shows no error on the new A', !/couldn.t load earlier messages/i.test(top()) && !q('[data-role="ask-older-retry"]'), top());
+        check('1 - a stale completion leaves the newer request\'s loading state alone', /Loading earlier messages/.test(top()), top());
+        check('1 - and starts no overlapping page load', olderCalls().length === 2, olderCalls().length);
+
+        // the second request succeeds and prepends normally
+        net.pending[1].release(); await tick(100);
+        check('1 - the live request still completes and prepends its page', /older answer/.test(thread().textContent) && /Beginning of this conversation/.test(top()), thread().textContent.slice(0, 120));
+
+        // a stale SUCCESS is ignored too
+        await openItem('B'); await tick(80);
+        await openItem('A'); await tick(80);
+        await scrollTop();
+        var before = olderCalls().length;
+        await openItem('B'); await tick(80);
+        net.pending[net.pending.length - 1].release(); await tick(100);
+        check('2 - a late page for A does not appear in B', !/older question/.test(thread().textContent) && /answer in B/.test(thread().textContent), thread().textContent.slice(0, 160));
+        check('2 - no extra requests after the stale success', olderCalls().length === before, olderCalls().length + ' vs ' + before);
+    } catch (e) {
+        check('script ran to the end', false, String((e && e.stack) || e));
+    } finally {
+        net.restore();
+    }
+
+    return results;
+}
+
+async function runHistoryDeleteChecks() {
+    var results = [];
+    var net = askRaceStub();
+    var section = document.querySelector('[data-role="home-ask"]');
+    var q = function (s) { return section.querySelector(s); };
+    var tick = function (ms) { return new Promise(function (r) { window.setTimeout(r, ms || 30); }); };
+    var check = function (name, ok, detail) { results.push({ name: name, ok: !!ok, detail: ok ? undefined : detail }); };
+    var rows = function () { return [].slice.call(section.querySelectorAll('.home-ask-hist-row')); };
+    var rowFor = function (uid) { return rows().filter(function (r) { return r.getAttribute('data-uid') === uid; })[0]; };
+    var deletes = function () { return net.calls.filter(function (c) { return c.method === 'POST' && /\/delete$/.test(c.url); }); };
+    var btn = function (row, role) { return row.querySelector('[data-role="' + role + '"]'); };
+    var usable = function (b) { return !!b && !b.disabled && !b.hidden; };
+
+    try {
+        q('[data-role="ask-resume"]').hidden = false;
+        q('[data-role="ask-resume"]').click();
+        await tick(400);
+        q('[data-role="ask-history"]').click(); await tick(60);
+
+        var row = rowFor('B');
+        btn(row, 'ask-history-delete').click(); await tick(30);
+        btn(row, 'ask-history-delete-confirm').click(); await tick(30);
+        net.pending[0].release(409, { deleted: false, message: 'This conversation is busy right now.' }); await tick(80);
+        check('1 - a 409 explains why and keeps the row in a usable state', /busy right now/.test(row.textContent) && usable(btn(row, 'ask-history-delete-retry')) && usable(btn(row, 'ask-history-delete-cancel')), row.textContent.slice(0, 120));
+        check('1 - the row is still there; nothing was removed', !!rowFor('B'), 'row gone');
+
+        // Cancel after a 409 restores the ordinary row
+        btn(row, 'ask-history-delete-cancel').click(); await tick(30);
+        check('1 - Keep it after a 409 restores the normal row', !row.querySelector('.home-ask-hist-confirm') && !row.classList.contains('is-confirming') && usable(btn(row, 'ask-history-delete')), row.className);
+
+        // Retry after a 409, then success
+        btn(row, 'ask-history-delete').click(); await tick(30);
+        btn(row, 'ask-history-delete-confirm').click(); await tick(30);
+        net.pending[1].release(409, { deleted: false, message: 'Still busy.' }); await tick(80);
+        btn(row, 'ask-history-delete-retry').click(); await tick(30);
+        check('2 - Try again sends a second delete for the same conversation', deletes().length === 3 && /\/B\/delete$/.test(deletes()[2].url), deletes().map(function (d) { return d.url; }).join(' '));
+        net.pending[2].release(200); await tick(80);
+        check('2 - a successful retry removes the row', !rowFor('B') && !!rowFor('A'), rows().length);
+
+        // A network failure also leaves controls that work
+        var rowA = rowFor('A');
+        btn(rowA, 'ask-history-delete').click(); await tick(30);
+        btn(rowA, 'ask-history-delete-confirm').click(); await tick(30);
+        net.pending[3].networkError(); await tick(80);
+        check('3 - a failed request says nothing was changed and offers Try again / Keep it', /Nothing was changed/.test(rowA.textContent) && usable(btn(rowA, 'ask-history-delete-retry')) && usable(btn(rowA, 'ask-history-delete-cancel')), rowA.textContent.slice(0, 120));
+        check('3 - the row remains', !!rowFor('A'), 'row gone');
+    } catch (e) {
+        check('script ran to the end', false, String((e && e.stack) || e));
+    } finally {
+        net.restore();
+    }
+
+    return results;
+}
