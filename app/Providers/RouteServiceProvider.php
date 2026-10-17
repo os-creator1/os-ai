@@ -46,6 +46,22 @@
                 ];
             });
 
+            // Public proposal signing / payment. The framework's string form
+            // (`throttle:10,1`) keys every such route on domain|IP ALONE, so
+            // the document view, signing, pay-start, pay-status polling and the
+            // booking/forms mutations all drew down ONE shared per-IP counter:
+            // a few page views plus a status poll could spend the 10 a signer
+            // needed. These named limiters give each action its own bucket.
+            //
+            // Keys carry a one-way hash of the document uid (a public
+            // identifier, never the bearer token) and the IP. Three bounds:
+            // per document+visitor (a person fixing typos), per visitor across
+            // ALL documents (rotating uids cannot dodge it), and per document
+            // across visitors (a distributed hammer on one link).
+            RateLimiter::for('public-document-sign', fn (Request $request) => $this->documentLimits($request, 'sign', 10, 60, 60));
+            RateLimiter::for('public-document-pay', fn (Request $request) => $this->documentLimits($request, 'pay', 10, 60, 60));
+            RateLimiter::for('public-document-pay-status', fn (Request $request) => $this->documentLimits($request, 'status', 40, 240, 240));
+
             parent::boot();
             $this->map();
         }
@@ -121,6 +137,21 @@
                 ->namespace($this->namespace . '\API')
                 ->group(base_path('routes/api.php'));
 
+        }
+
+        /**
+         * @return array<int, \Illuminate\Cache\RateLimiting\Limit>
+         */
+        protected function documentLimits(Request $request, string $action, int $perDocumentVisitor, int $perVisitor, int $perDocument): array
+        {
+            $doc = sha1((string) $request->route('uid'));
+            $ip = (string) $request->ip();
+
+            return [
+                Limit::perMinute($perDocumentVisitor)->by($action . '|doc-visitor|' . $doc . '|' . $ip),
+                Limit::perMinute($perVisitor)->by($action . '|visitor|' . $ip),
+                Limit::perMinute($perDocument)->by($action . '|doc|' . $doc),
+            ];
         }
 
         /**

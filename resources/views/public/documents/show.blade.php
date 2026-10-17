@@ -30,7 +30,10 @@
     $kindLabel = ucfirst($kind !== '' ? $kind : 'document');
     $isPaid = $document->status === \App\Enums\Documents\DocumentStatus::Paid;
     $isSigned = $document->status === \App\Enums\Documents\DocumentStatus::Signed;
-    $payableNow = $payment['payable_item'] !== null && $payment['can_pay'];
+    // An attempt the provider has said is `processing` is neither "payment due"
+    // nor payable again: the sidebar must agree with the main payment section.
+    $payableNow = $payment['payable_item'] !== null && $payment['can_pay'] && ! $paymentProcessing;
+    $receivedMinor = (int) $schedule->filter(fn ($row) => $row->status === \App\Enums\Documents\PaymentScheduleItemStatus::Paid)->sum('amount_minor');
     $totalText = $version->currency_code . ' ' . number_format($version->total_minor / 100, 2);
 
     // One plain sentence about how it is paid, from the persisted schedule only.
@@ -188,6 +191,10 @@
                 <dd>
                     @if($isPaid)
                         <span class="pd-status is-ok" data-role="summary-status">Paid</span>
+                    @elseif($isSigned && $paymentProcessing)
+                        <span class="pd-status" data-role="summary-status">Payment processing</span>
+                    @elseif($isSigned && $receivedMinor > 0)
+                        <span class="pd-status {{ $payableNow ? '' : 'is-ok' }}" data-role="summary-status">{{ $payableNow ? 'Deposit received — balance due' : 'Deposit received' }}</span>
                     @elseif($isSigned)
                         <span class="pd-status {{ $payableNow ? '' : 'is-ok' }}" data-role="summary-status">{{ $payableNow ? 'Signed — payment due' : 'Signed' }}</span>
                     @else
@@ -200,6 +207,8 @@
             @elseif($payableNow)
                 <a class="pd-cta" data-role="summary-action" href="#pay">Pay now</a>
             @endif
+            {{-- Kept in the DOM (hidden) so the payment-status script can show or
+                 hide the one sidebar action as the verified status changes. --}}
         </div>
     </aside>
 
