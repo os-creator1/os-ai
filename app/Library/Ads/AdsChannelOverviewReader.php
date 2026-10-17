@@ -45,6 +45,9 @@ final class AdsChannelOverviewReader
 {
     public const ATTENTION_LIMIT = 5;
 
+    /** Slots of the ATTENTION_LIMIT held back for positive items, so a busy account still shows what is going well. */
+    public const GOING_WELL_RESERVED = 2;
+
     public function __construct(
         private readonly GoogleAdsOverviewReader $googleOverview,
         private readonly GoogleAdsFreshness $googleFreshness,
@@ -65,7 +68,7 @@ final class AdsChannelOverviewReader
     {
         $channels = [];
         $googleFacts = [];
-        $metaAttention = ['count' => 0, 'items' => []];
+        $metaAttention = ['count' => 0, 'actionable_count' => 0, 'items' => []];
 
         if ($google['visible']) {
             if ($google['state'] === 'ready' && $google['account'] instanceof GoogleAdsAccount) {
@@ -121,8 +124,8 @@ final class AdsChannelOverviewReader
         $issues = null;
 
         if ($hasModule) {
-            $google = $this->googleAttention($account, $workspaceUid, $businessUid, self::ATTENTION_LIMIT);
-            $issues = $google['count'];
+            $google = $this->googleAttention($account, $workspaceUid, $businessUid, self::ATTENTION_LIMIT, self::GOING_WELL_RESERVED);
+            $issues = $google['actionable_count'];
             $attention = $google['items'];
         }
 
@@ -142,6 +145,7 @@ final class AdsChannelOverviewReader
             'cost_per_result_display' => GoogleAdsMoney::format($overview->cplMicros, $currency),
             'pacing_status' => $overview->pacing->status->value,
             'pacing_text' => $this->pacingText($overview->pacing->status),
+            'pacing_detail' => $this->pacingDetail($overview->pacing),
             'issue_count' => $issues,
             'updated_at' => $freshness->lastSuccessfulSyncAt,
             'data_through' => $freshness->dataThroughDate,
@@ -159,7 +163,7 @@ final class AdsChannelOverviewReader
         $overview = $this->metaOverview->read($account, $period);
         $freshness = $this->metaFreshness->for($account);
         $currency = (string) $account->currency_code;
-        $attention = $this->metaAttention->top($account, $workspaceUid, $businessUid, $hasModule, self::ATTENTION_LIMIT);
+        $attention = $this->metaAttention->top($account, $workspaceUid, $businessUid, $hasModule, self::ATTENTION_LIMIT, null, self::GOING_WELL_RESERVED);
 
         $label = $overview->resultTypeLabel;
 
@@ -179,7 +183,8 @@ final class AdsChannelOverviewReader
             'cost_per_result_display' => MetaAdsMoney::format($overview->costPerResultMicros, $currency),
             'pacing_status' => $overview->pacing->status->value,
             'pacing_text' => $this->pacingText($overview->pacing->status),
-            'issue_count' => $attention['count'],
+            'pacing_detail' => $this->pacingDetail($overview->pacing),
+            'issue_count' => $attention['actionable_count'],
             'updated_at' => $freshness->lastSuccessfulSyncAt,
             'data_through' => $freshness->dataThroughDate,
             'freshness_warn' => $freshness->shouldWarn(),
@@ -211,6 +216,24 @@ final class AdsChannelOverviewReader
         ];
     }
 
+    /**
+     * The numbers behind the pacing bar, in the channel's own currency. Null
+     * proportions stay null (no target / not enough data): the view then draws
+     * no bar rather than an invented one.
+     *
+     * @return array{monthly_target_micros: ?int, projected_micros: ?int, spend_proportion: ?float, elapsed_proportion: ?float, low_confidence: bool}
+     */
+    private function pacingDetail(\App\Library\GoogleAds\Reporting\GoogleAdsPacing $pacing): array
+    {
+        return [
+            'monthly_target_micros' => $pacing->monthlyTargetMicros,
+            'projected_micros' => $pacing->projectedMicros,
+            'spend_proportion' => $pacing->spendProportion,
+            'elapsed_proportion' => $pacing->elapsedProportion,
+            'low_confidence' => $pacing->projectionLowConfidence,
+        ];
+    }
+
     private function pacingText(GoogleAdsPacingStatus $status): string
     {
         return match ($status) {
@@ -230,14 +253,18 @@ final class AdsChannelOverviewReader
      * the same facts and wording as the Recommendations page. Callers read it
      * only for a viewer with the FULL module, exactly as googleChannel() does.
      *
-     * @return array{items: list<array<string, mixed>>, count: int}
+     * @return array{items: list<array<string, mixed>>, count: int, actionable_count: int}
      */
-    public function googleAttention(GoogleAdsAccount $account, string $workspaceUid, string $businessUid, int $limit = self::ATTENTION_LIMIT): array
+    public function googleAttention(GoogleAdsAccount $account, string $workspaceUid, string $businessUid, int $limit = self::ATTENTION_LIMIT, int $goingWellReserve = 0): array
     {
         $facts = $this->googleFacts->facts($account);
         $items = [];
 
-        foreach (array_slice($facts, 0, $limit) as $fact) {
+        $selected = $goingWellReserve > 0
+            ? MetaAdsAttentionItems::selectWithReserve($facts, $limit, $goingWellReserve, static fn ($fact): bool => $fact->type === \App\Library\GoogleAds\Recommendations\GoogleAdsRecommendationType::StrongCampaign)
+            : array_slice($facts, 0, $limit);
+
+        foreach ($selected as $fact) {
             $presented = $this->googlePresenter->present($fact);
             $items[] = [
                 'provider' => 'google',
@@ -245,11 +272,13 @@ final class AdsChannelOverviewReader
                 'evidence_lines' => $presented['evidence_lines'],
                 'action_label' => $presented['action_label'],
                 'url' => $this->googleUrl($fact->suggestedAction, $workspaceUid, $businessUid),
-                'tone' => 'neutral',
+                'tone' => $fact->type === \App\Library\GoogleAds\Recommendations\GoogleAdsRecommendationType::StrongCampaign ? 'success' : 'neutral',
             ];
         }
 
-        return ['items' => $items, 'count' => count($facts)];
+        $actionable = count(array_filter($facts, static fn ($fact): bool => $fact->type !== \App\Library\GoogleAds\Recommendations\GoogleAdsRecommendationType::StrongCampaign));
+
+        return ['items' => $items, 'count' => count($facts), 'actionable_count' => $actionable];
     }
 
     private function googleUrl(array $action, string $workspaceUid, string $businessUid): ?string
@@ -277,11 +306,41 @@ final class AdsChannelOverviewReader
      */
     private function mergeAttention(array $google, array $meta): array
     {
+        // The whole list stays capped at ATTENTION_LIMIT; positives ("Going well") keep reserved slots so they are never crowded out entirely.
+        // Each provider's ranked list is split by tone FIRST, then actionable and positive items are round-robined independently,
+        // so neither provider's positives are crowded out by where they happen to sit in a mixed list.
+        $isPositive = static fn (array $item): bool => ($item['tone'] ?? null) === 'success';
+        $act = $this->roundRobin(
+            array_values(array_filter($google, static fn (array $item): bool => ! $isPositive($item))),
+            array_values(array_filter($meta, static fn (array $item): bool => ! $isPositive($item))),
+        );
+        $well = $this->roundRobin(
+            array_values(array_filter($google, $isPositive)),
+            array_values(array_filter($meta, $isPositive)),
+        );
+
+        $wellTake = min(count($well), self::GOING_WELL_RESERVED);
+        $actTake = min(count($act), self::ATTENTION_LIMIT - $wellTake);
+        $wellTake = min(count($well), self::ATTENTION_LIMIT - $actTake);   // spare slots go to positives
+        $merged = [...array_slice($act, 0, $actTake), ...array_slice($well, 0, $wellTake)];
+
+        return $merged;
+    }
+
+    /**
+     * Alternates Google, Meta, Google, Meta ... keeping each provider's own ranking.
+     *
+     * @param  list<array<string, mixed>>  $google
+     * @param  list<array<string, mixed>>  $meta
+     * @return list<array<string, mixed>>
+     */
+    private function roundRobin(array $google, array $meta): array
+    {
         $merged = [];
 
-        for ($i = 0; count($merged) < self::ATTENTION_LIMIT && ($i < count($google) || $i < count($meta)); $i++) {
+        for ($i = 0, $n = max(count($google), count($meta)); $i < $n; $i++) {
             foreach ([$google[$i] ?? null, $meta[$i] ?? null] as $item) {
-                if ($item !== null && count($merged) < self::ATTENTION_LIMIT) {
+                if ($item !== null) {
                     $merged[] = $item;
                 }
             }

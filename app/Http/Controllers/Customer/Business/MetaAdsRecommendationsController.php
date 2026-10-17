@@ -55,6 +55,15 @@ class MetaAdsRecommendationsController extends CustomerBaseController
             $cards[] = $presented + [
                 'type' => $fact->type->value,
                 'tone' => $this->tone($fact->type),
+                // Month-to-date pacing figures for the pacing cards' summary blocks (null for every other type).
+                'pacing' => in_array($fact->type, [MetaAdsRecommendationType::PacingOver, MetaAdsRecommendationType::PacingUnder], true) ? [
+                    'spent_micros' => $fact->evidence['spend_micros'] ?? null,
+                    'target_micros' => $fact->evidence['monthly_target_micros'] ?? null,
+                    'projected_micros' => $fact->evidence['projected_micros'] ?? null,
+                    'spend_proportion' => $fact->evidence['spend_proportion'] ?? null,
+                    'elapsed_proportion' => $fact->evidence['elapsed_proportion'] ?? null,
+                    'low_confidence' => (bool) ($fact->evidence['projection_low_confidence'] ?? false),
+                ] : null,
                 // A strong performer is a positive observation: nothing to act on, so no link.
                 'action_url' => $positive ? null : $this->actionUrl($presented['link_target'], $presented['target_uid'], (string) $data['workspaceUid'], (string) $data['businessUid'], $period->key),
             ];
@@ -64,6 +73,7 @@ class MetaAdsRecommendationsController extends CustomerBaseController
             'period' => $period,
             'cards' => $cards,
             'resultLabel' => MetaAdsDisplay::resultLabel($account->result_action_type),
+            'currency' => (string) $account->currency_code,
         ]);
     }
 

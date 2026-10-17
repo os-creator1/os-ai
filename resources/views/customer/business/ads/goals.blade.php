@@ -23,6 +23,31 @@
         'showFreshness' => false,
     ])
 
+    <style>
+        .gl-tools { display: flex; justify-content: flex-end; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+        .gl-seg button { border: 0; background: transparent; padding: .3rem .8rem; border-radius: .4rem; font-size: .85rem; }
+        .gl-seg button[aria-pressed="true"] { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
+        .gl-seg { display: inline-flex; background: rgba(120,113,108,.12); padding: .2rem; border-radius: .6rem; }
+        .gl-path { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; margin-bottom: 1rem; }
+        @media (max-width: 767px) { .gl-path { grid-template-columns: minmax(0, 1fr); } }
+        .gl-step { border: 1px solid rgba(120,113,108,.25); border-radius: .5rem; padding: .55rem .7rem; min-width: 0; overflow-wrap: anywhere; }
+        .gl-step small { display: block; font-size: .65rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; opacity: .65; }
+        .gl-step.is-set { background: rgba(46,125,50,.06); }
+        .gl-step.is-open { background: rgba(201,143,44,.1); border-color: rgba(201,143,44,.4); }
+        .gl-sec { font-size: .8rem; font-weight: 700; margin: 1.25rem 0 .5rem; }
+    </style>
+
+    <div class="gl-tools" data-role="goals-tools">
+        <div class="gl-seg" role="group" aria-label="Channel" data-role="channel-filter">
+            <button type="button" data-channel-filter="all" aria-pressed="true">All channels</button>
+            <button type="button" data-channel-filter="google" aria-pressed="false">Google</button>
+            <button type="button" data-channel-filter="meta" aria-pressed="false">Meta</button>
+        </div>
+        @if($canManage)
+            <a href="#add-goal" class="btn btn-primary btn-sm" data-role="add-goal-link">+ Add goal</a>
+        @endif
+    </div>
+
     <x-flash-alert class="mb-2" />
 
     @if(count($rows) === 0)
@@ -43,13 +68,40 @@
             <div class="d-flex justify-content-between align-items-start flex-wrap gap-1 mb-1">
                 <div>
                     <h2 class="h4 mb-0" data-role="goal-name">{{ $purpose->name }}</h2>
-                    <p class="text-caption text-muted mb-0">The outcome this goal ends in: {{ $purpose->outcome_type }}</p>
+                    <p class="text-caption text-muted mb-0">Ends in a new {{ $purpose->label('person') }} &middot; <span data-goal-count="{{ $row['googleCampaigns']->count() + $row['metaCampaigns']->count() }}">{{ $row['googleCampaigns']->count() + $row['metaCampaigns']->count() }} {{ ($row['googleCampaigns']->count() + $row['metaCampaigns']->count()) === 1 ? 'campaign' : 'campaigns' }}</span><span data-goal-filter-label></span></p>
                 </div>
                 <x-badge :variant="$purpose->is_active ? 'success' : 'neutral'">{{ $purpose->is_active ? 'Active' : 'Paused' }}</x-badge>
             </div>
 
             {{-- 1. How it connects --}}
-            <p class="text-section-heading mt-2 mb-1">How it connects</p>
+            @php
+                $campaignCount = $row['googleCampaigns']->count() + $row['metaCampaigns']->count();
+                $landsOn = match ($purpose->destination_type) {
+                    'hosted_page' => optional($pages->firstWhere('id', $purpose->destination_page_id))->title,
+                    'external_url' => $purpose->destination_url,
+                    default => null,
+                };
+                $formName = optional($forms->firstWhere('id', $purpose->form_id))->name;
+                $pipelineName = optional($pipelines->firstWhere('id', $purpose->crm_pipeline_id))->name;
+                $pathSteps = [
+                    ['Ad', $campaignCount > 0 ? $campaignCount . ($campaignCount === 1 ? ' campaign' : ' campaigns') : null, 'No campaign yet'],
+                    ['Lands on', $landsOn, 'Choose page'],
+                    ['Fills in', $formName, 'No form'],
+                    ['Arrives in', $pipelineName, 'Choose pipeline'],
+                    ['Becomes', ucfirst((string) $purpose->label('person')), ''],
+                ];
+                $missingSteps = collect($pathSteps)->take(4)->filter(fn ($step) => $step[1] === null)->count();
+            @endphp
+            <p class="gl-sec">1. The path from ad to customer @if($missingSteps > 0)<x-badge variant="warning" data-role="path-incomplete">{{ $missingSteps }} {{ $missingSteps === 1 ? 'step' : 'steps' }} not set</x-badge>@endif</p>
+            <div class="gl-path" data-role="goal-path">
+                @foreach($pathSteps as [$stepLabel, $stepValue, $stepEmpty])
+                    <div class="gl-step {{ $stepValue !== null ? 'is-set' : ($stepEmpty !== '' ? 'is-open' : 'is-set') }}">
+                        <small>{{ $stepLabel }}</small>
+                        <span @if($stepLabel === 'Ad') data-goal-count-step="{{ $campaignCount }}" @endif>{{ $stepValue ?? $stepEmpty }}</span>
+                    </div>
+                @endforeach
+            </div>
+            <p class="text-caption text-muted mb-1">How it connects: choose where the ad sends people, the form that collects them and the pipeline they arrive in.</p>
             <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.links', [$workspaceUid, $businessUid, $purpose->uid]) }}" data-role="links-form">
                 @csrf
                 <div class="row g-1">
@@ -94,12 +146,12 @@
                     </div>
                 </div>
                 @if($canManage)
-                    <button type="submit" class="btn btn-sm btn-outline-primary mt-1">Save connections</button>
+                    <button type="submit" class="btn btn-sm btn-outline-primary mt-1" data-role="save-path">Save path</button>
                 @endif
             </form>
 
             {{-- 2. Economics --}}
-            <p class="text-section-heading mt-3 mb-1">What a good result costs you</p>
+            <p class="gl-sec">2. What a good result costs you</p>
             <p class="text-caption text-muted">Amounts are in {{ $currency ?: 'your business currency' }}. If you do not know a number yet, tick "I don't know yet": MotionGrove will never invent it, and will tell you what it therefore cannot claim.</p>
 
             <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.economics', [$workspaceUid, $businessUid, $purpose->uid]) }}" data-role="economics-form">
@@ -176,13 +228,13 @@
             </div>
 
             {{-- 4. Campaigns --}}
-            <p class="text-section-heading mt-3 mb-1">Campaigns that serve this goal</p>
+            <p class="gl-sec">3. Campaigns that serve this goal</p>
             @php
                 $assigned = collect($row['googleCampaigns'])->map(fn ($c) => ['provider' => 'google', 'label' => 'Google', 'uid' => $c->uid, 'name' => $c->name])
                     ->merge(collect($row['metaCampaigns'])->map(fn ($c) => ['provider' => 'meta', 'label' => 'Meta', 'uid' => $c->uid, 'name' => $c->name]));
             @endphp
             @forelse($assigned as $campaign)
-                <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.campaigns', [$workspaceUid, $businessUid]) }}" class="d-flex align-items-center gap-1 mb-50" data-role="assigned-campaign">
+                <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.campaigns', [$workspaceUid, $businessUid]) }}" class="d-flex align-items-center gap-1 mb-50" data-role="assigned-campaign" data-provider="{{ $campaign['provider'] }}">
                     @csrf
                     <input type="hidden" name="provider" value="{{ $campaign['provider'] }}">
                     <input type="hidden" name="campaign_uid" value="{{ $campaign['uid'] }}">
@@ -195,6 +247,11 @@
             @empty
                 <p class="text-muted mb-1" data-role="no-assigned">No campaign is assigned to this goal yet.</p>
             @endforelse
+
+            @if($assigned->isNotEmpty())
+                {{-- Only a goal WITH assigned campaigns can end up showing none for a channel; a goal with none already says so above. --}}
+                <p class="text-muted mb-1" data-role="filter-empty" hidden>No campaign on this channel is assigned to this goal.</p>
+            @endif
 
             @if($canManage && $purpose->is_active && ($unassigned['google']->isNotEmpty() || $unassigned['meta']->isNotEmpty()))
                 <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.campaigns', [$workspaceUid, $businessUid]) }}" class="d-flex align-items-end gap-1 flex-wrap mt-1" data-role="assign-form">
@@ -214,7 +271,7 @@
                     </div>
                     <input type="hidden" name="provider" value="">
                     <input type="hidden" name="campaign_uid" value="">
-                    <button type="submit" class="btn btn-sm btn-outline-primary">Assign</button>
+                    <button type="submit" class="btn btn-sm btn-outline-primary" data-role="assign-campaign">Assign campaign</button>
                 </form>
             @endif
 
@@ -240,7 +297,7 @@
     @endforeach
 
     @if($canManage)
-        <x-card :padded="true" class="mb-2" data-role="add-goal">
+        <x-card :padded="true" class="mb-2" data-role="add-goal" id="add-goal">
             <p class="text-section-heading mb-1">Add a goal</p>
             <form method="POST" action="{{ route('customer.workspaces.businesses.ads.goals.store', [$workspaceUid, $businessUid]) }}" class="row g-1 align-items-end">
                 @csrf
@@ -261,4 +318,34 @@
             </form>
         </x-card>
     @endif
+@endsection
+
+@section('page-script')
+    <script>
+        (function () {
+            var buttons = document.querySelectorAll('[data-channel-filter]');
+            if (!buttons.length) { return; }
+            function plural(n) { return n + (n === 1 ? ' campaign' : ' campaigns'); }
+            function apply(channel) {
+                buttons.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-channel-filter') === channel ? 'true' : 'false'); });
+                document.querySelectorAll('[data-role="goal"]').forEach(function (goal) {
+                    var rows = goal.querySelectorAll('[data-role="assigned-campaign"]');
+                    var shown = 0;
+                    rows.forEach(function (row) {
+                        row.hidden = channel !== 'all' && row.getAttribute('data-provider') !== channel;
+                        if (!row.hidden) { shown++; }
+                    });
+                    var count = goal.querySelector('[data-goal-count]');
+                    var step = goal.querySelector('[data-goal-count-step]');
+                    var label = goal.querySelector('[data-goal-filter-label]');
+                    var empty = goal.querySelector('[data-role="filter-empty"]');
+                    if (count) { count.textContent = plural(shown); }
+                    if (step) { step.textContent = shown > 0 ? plural(shown) : 'No campaign yet'; }
+                    if (label) { label.textContent = channel === 'all' ? '' : ' (' + (channel === 'google' ? 'Google' : 'Meta') + ' only)'; }
+                    if (empty) { empty.hidden = !(channel !== 'all' && rows.length > 0 && shown === 0); }
+                });
+            }
+            buttons.forEach(function (b) { b.addEventListener('click', function () { apply(b.getAttribute('data-channel-filter')); }); });
+        })();
+    </script>
 @endsection

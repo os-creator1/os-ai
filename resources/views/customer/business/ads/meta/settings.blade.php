@@ -39,62 +39,92 @@
 
 @section('content')
     @include('customer.business.ads._header', [
-        'title' => 'Meta Ads settings',
+        'title' => 'Meta Ads',
         'subtitle' => 'Your Meta connection, targets and data updates.',
         'provider' => 'meta',
     ])
 
     <x-flash-alert class="mb-2" />
 
+    <style>
+        .set-conn { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 22rem); gap: 1.5rem; }
+        @media (max-width: 767px) { .set-conn { grid-template-columns: minmax(0, 1fr); } }
+        .set-note { display: flex; gap: .6rem; align-items: flex-start; border-radius: .5rem; padding: .6rem .8rem; margin-top: .5rem; font-size: .85rem; border: 1px solid rgba(120,113,108,.22); }
+        .set-note.is-warn { background: rgba(201,143,44,.1); border-color: rgba(201,143,44,.35); }
+        .set-note.is-view { background: rgba(120,113,108,.07); }
+    </style>
+
+    @php
+        $isActive = $connection !== null && $connection->isActive();
+        $expiryUnknown = $isActive && $tokenStatus?->expiresAt === null;
+        // Mirrors MetaAdsConnectionController::connect(): an ACTIVE connection may only be re-authorised when the token
+        // is due (inside the warning window or with no known expiry: needsReauthSoon) or ads_management was not granted;
+        // otherwise the backend refuses, so no button is offered. Expired / revoked connections can always reconnect.
+        $reauthAllowed = $isActive && $tokenStatus !== null && ($tokenStatus->needsReauthSoon || ! $tokenStatus->canManage);
+        $showReconnect = $metaCanConnect && ($reauthAllowed || in_array($state, ['expired', 'revoked'], true));
+    @endphp
     <x-card :padded="true" class="mb-2" data-section="connection">
-        <p class="text-section-heading mb-1">Connection</p>
-        <dl class="row mb-0">
-            <dt class="col-sm-4">Status</dt>
-            <dd class="col-sm-8" data-role="connection-state"><x-badge :variant="$connectionVariant">{{ $connectionLabel }}</x-badge></dd>
-
-            @if($connection !== null && $connection->isActive())
-                <dt class="col-sm-4">Meta account</dt>
-                <dd class="col-sm-8" data-role="connection-user">{{ $connection->meta_user_name ?: 'Connected' }}</dd>
-
-                <dt class="col-sm-4">Connected</dt>
-                <dd class="col-sm-8">{{ $connection->connected_at?->toDayDateTimeString() ?? '—' }}</dd>
-
-                <dt class="col-sm-4">Access expires</dt>
-                <dd class="col-sm-8" data-role="token-expires">
-                    {{ $tokenStatus?->expiresAt?->format('M j, Y') ?? 'Unknown' }}
-                    @if($tokenStatus?->daysLeft !== null)
-                        <span class="text-muted">({{ $tokenStatus->daysLeft }} {{ $tokenStatus->daysLeft === 1 ? 'day' : 'days' }} left)</span>
-                    @endif
-                </dd>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-1">
+            <p class="text-section-heading mb-0">Connection</p>
+            @if($showReconnect)
+                <form method="POST" action="{{ $connectRoute }}">
+                    @csrf
+                    <x-button type="submit" icon="link" data-role="reconnect-meta-ads">Reconnect Meta</x-button>
+                </form>
             @endif
-        </dl>
+        </div>
+        <div class="set-conn">
+            <dl class="row mb-0 align-content-start">
+                <dt class="col-sm-4">Status</dt>
+                <dd class="col-sm-8" data-role="connection-state"><x-badge :variant="$connectionVariant">{{ $connectionLabel }}{{ $isActive && $readOnly ? ' · view only' : '' }}</x-badge></dd>
 
-        @if($connection !== null && $connection->isActive())
-            @if($reauthDue)
-                <x-alert variant="warning" icon="alert-triangle" role="status" class="mt-2 mb-0" data-role="reconnect-warning">
-                    Reconnect Meta before {{ $tokenStatus->expiresAt?->format('M j, Y') ?? 'your access expires' }}. Meta does not renew access automatically, so updates stop when it expires.
-                </x-alert>
-            @endif
-            @if($readOnly)
-                <x-alert variant="neutral" icon="info" role="status" class="mt-2 mb-0" data-role="read-only-note">
-                    This connection can read your figures but was not allowed to manage ads. Reconnect Meta to allow pause and resume.
-                </x-alert>
-            @endif
-            @if($metaCanConnect && ($reauthDue || $readOnly))
-                <div class="mt-2">
-                    <form method="POST" action="{{ $connectRoute }}">
-                        @csrf
-                        <x-button type="submit" icon="link" data-role="reconnect-meta-ads">Reconnect Meta</x-button>
-                    </form>
-                </div>
-            @endif
-        @else
+                @if($isActive)
+                    <dt class="col-sm-4">Meta account</dt>
+                    <dd class="col-sm-8" data-role="connection-user">{{ $connection->meta_user_name ?: 'Connected' }}</dd>
+
+                    <dt class="col-sm-4">Connected</dt>
+                    <dd class="col-sm-8">{{ $connection->connected_at?->toDayDateTimeString() ?? '—' }}</dd>
+
+                    <dt class="col-sm-4">Access expires</dt>
+                    <dd class="col-sm-8" data-role="token-expires">
+                        {{ $tokenStatus?->expiresAt?->format('M j, Y') ?? 'Unknown' }}
+                        @if($tokenStatus?->daysLeft !== null)
+                            <span class="text-muted">({{ $tokenStatus->daysLeft }} {{ $tokenStatus->daysLeft === 1 ? 'day' : 'days' }} left)</span>
+                        @endif
+                    </dd>
+                @endif
+            </dl>
+
+            <div>
+                @if($isActive && ($reauthDue || $readOnly || $expiryUnknown))
+                    <p class="text-label text-uppercase text-muted mb-0">Reconnecting fixes {{ ($reauthDue || $expiryUnknown) && $readOnly ? 'both' : 'this' }}</p>
+                @endif
+                @if($isActive && $reauthDue)
+                    <div class="set-note is-warn" role="status" data-role="reconnect-warning">
+                        <span>Reconnect Meta before {{ $tokenStatus->expiresAt?->format('M j, Y') ?? 'your access expires' }}. Meta does not renew access automatically, so updates stop when it expires.</span>
+                    </div>
+                @elseif($expiryUnknown)
+                    <div class="set-note is-warn" role="status" data-role="expiry-unknown">
+                        <span><strong>Expiry date unknown.</strong> Meta doesn't renew access on its own, so updates stop when it runs out.</span>
+                    </div>
+                @endif
+                @if($isActive && $readOnly)
+                    <div class="set-note is-view" role="status" data-role="read-only-note">
+                        <span><strong>View only.</strong> This connection can read your figures but was not allowed to manage ads. Reconnect Meta to allow pause and resume.</span>
+                    </div>
+                @endif
+            </div>
+        </div>
+
+        @if(! $isActive)
             <div class="mt-2">
                 @if($metaCanConnect)
-                    <form method="POST" action="{{ $connectRoute }}">
-                        @csrf
-                        <x-button type="submit" icon="link" data-role="{{ in_array($state, ['expired', 'revoked'], true) ? 'reconnect-meta-ads' : 'connect-meta-ads' }}">{{ in_array($state, ['expired', 'revoked'], true) ? 'Reconnect Meta' : 'Connect Meta' }}</x-button>
-                    </form>
+                    @if(! in_array($state, ['expired', 'revoked'], true))
+                        <form method="POST" action="{{ $connectRoute }}">
+                            @csrf
+                            <x-button type="submit" icon="link" data-role="connect-meta-ads">Connect Meta</x-button>
+                        </form>
+                    @endif
                 @else
                     <p class="text-caption mb-0">Ask the owner of this account to connect Meta.</p>
                 @endif
@@ -123,7 +153,7 @@
         </x-card>
 
         <x-card :padded="true" class="mb-2" data-section="targets">
-            <p class="text-section-heading mb-1">Targets and results</p>
+            <p class="text-section-heading mb-1">Your targets</p>
             <p class="text-caption mb-2">
                 These are your own planning figures, in {{ $account->currency_code }}. They are used to show whether you are on pace and on target.
                 They do not change anything in Meta Ads Manager, where each campaign has its own budget.
@@ -168,7 +198,7 @@
                     </div>
                 </div>
                 @if($metaCanAct)
-                    <x-button type="submit" icon="check" data-role="save-settings">Save settings</x-button>
+                    <x-button type="submit" icon="check" data-role="save-settings">Save targets</x-button>
                 @else
                     <p class="text-caption mb-0">{{ $metaViewingAsClient ? 'Settings cannot be changed while viewing a client account.' : 'You do not have permission to change these settings.' }}</p>
                 @endif
