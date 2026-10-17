@@ -166,6 +166,37 @@ class BusinessAnalyticsQueries
         return new CampaignKpis($createdInRange, $snapshot);
     }
 
+    /**
+     * New contacts in each half-open window, over the contacts in the given reachable Locations (the contact list's own Location rule), in ONE
+     * statement. Home's card uses it so its figure equals the list it opens; the Results page keeps its Business-wide figure.
+     *
+     * @param  array<string, array{0: CarbonImmutable, 1: CarbonImmutable}>  $windows  label => [start, end)
+     * @return array<string, int>
+     */
+    public function newContactsForActor(Business $business, array $reachableLocationIds, array $windows): array
+    {
+        $selects = [];
+        $bindings = [];
+
+        foreach (array_values($windows) as $i => [$start, $end]) {
+            $selects[] = "SUM(CASE WHEN created_at >= ? AND created_at < ? THEN 1 ELSE 0 END) AS w{$i}";
+            $bindings[] = $this->ts($start);
+            $bindings[] = $this->ts($end);
+        }
+
+        $query = DB::table('contacts')->where('business_id', $business->id)->selectRaw(implode(', ', $selects), $bindings);
+        app(\App\Library\Crm\CrmLocationScope::class)->restrictToIds($query, $reachableLocationIds, 'contacts.location_id');
+        $row = $query->first();
+
+        $result = [];
+
+        foreach (array_keys($windows) as $i => $label) {
+            $result[$label] = (int) ($row->{"w{$i}"} ?? 0);
+        }
+
+        return $result;
+    }
+
     /** Whether this Business has EVER had a contact (any status, any date): one indexed existence check, for telling established from new. */
     public function hasAnyContact(Business $business): bool
     {

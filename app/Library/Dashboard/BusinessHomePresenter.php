@@ -808,7 +808,13 @@ final class BusinessHomePresenter
         $before = self::previousNoun($previousRange);
         $items = [];
 
-        $contacts = new HeadlineComparison($comparison['current']['contacts']->newInRange, $comparison['previous']['contacts']->newInRange);
+        // The card opens the contact list, which only shows the contacts this actor may reach: count exactly those.
+        $reach = app(\App\Library\Crm\CrmLocationScope::class)->reachableIds($business, (int) $user->id);
+        $reachable = $this->analyticsQueries->newContactsForActor($business, $reach, [
+            'current' => [$currentRange->startUtc, $currentRange->endUtc],
+            'previous' => [$previousRange->startUtc, $previousRange->endUtc],
+        ]);
+        $contacts = new HeadlineComparison($reachable['current'], $reachable['previous']);
         $items[] = new Headline(
             key: 'new_contacts',
             label: 'New contacts',
@@ -833,8 +839,8 @@ final class BusinessHomePresenter
         // table, and Home never queries it directly.
         if ($entitlements->allows('conversations') && Gate::forUser($user)->allows('chat_box')) {
             $started = new HeadlineComparison(
-                $this->conversations->startedCount($business, $currentRange->startUtc, $currentRange->endUtc),
-                $this->conversations->startedCount($business, $previousRange->startUtc, $previousRange->endUtc),
+                $this->conversations->startedCount($business, $currentRange->startUtc, $currentRange->endUtc, $reach),
+                $this->conversations->startedCount($business, $previousRange->startUtc, $previousRange->endUtc, $reach),
             );
 
             $items[] = $this->volumeHeadline(

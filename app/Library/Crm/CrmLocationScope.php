@@ -60,8 +60,18 @@ final class CrmLocationScope
      */
     public function restrict(EloquentBuilder|QueryBuilder $query, Business $business, int $actorUserId, string $column = 'location_id'): void
     {
-        $reachable = $this->guard->accessibleLocationIdsForBusiness($actorUserId, $business);
+        $this->restrictToIds($query, $this->reachableIds($business, $actorUserId), $column);
+    }
 
+    /** The Location ids this actor may reach in this Business (one read), for a caller that restricts several queries with it. */
+    public function reachableIds(Business $business, int $actorUserId): array
+    {
+        return $this->guard->accessibleLocationIdsForBusiness($actorUserId, $business);
+    }
+
+    /** restrict() with the reach already in hand. */
+    public function restrictToIds(EloquentBuilder|QueryBuilder $query, array $reachable, string $column = 'location_id'): void
+    {
         $query->where(function ($where) use ($column, $reachable): void {
             $where->whereNull($column);
 

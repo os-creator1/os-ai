@@ -44,13 +44,20 @@ final class BusinessConversationReadModel
      * the contract's `$startUtc`/`$endUtc` names hold only where that
      * timezone is UTC. Recorded for Dashboard Slice 4.
      */
-    public function startedCount(Business $business, CarbonImmutable $startUtc, CarbonImmutable $endUtc): int
+    public function startedCount(Business $business, CarbonImmutable $startUtc, CarbonImmutable $endUtc, ?array $reachableLocationIds = null): int
     {
-        return ChatBox::query()
+        $query = ChatBox::query()
             ->where('business_id', $business->id)
             ->where('created_at', '>=', $startUtc)
-            ->where('created_at', '<', $endUtc)
-            ->count();
+            ->where('created_at', '<', $endUtc);
+
+        // When the actor's reach is given, the inbox's own Location rule applies, so the figure equals what the list a card opens will
+        // show. Without it the count is Business-wide, as before.
+        if ($reachableLocationIds !== null) {
+            app(\App\Library\Crm\CrmLocationScope::class)->restrictToIds($query, $reachableLocationIds, 'chat_boxes.location_id');
+        }
+
+        return $query->count();
     }
 
     /**
