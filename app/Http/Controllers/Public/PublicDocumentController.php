@@ -175,7 +175,19 @@ class PublicDocumentController extends Controller
         try {
             $access = $this->guard->resolve($uid, $token);
             $result = $this->payments->start($access);
-        } catch (DocumentLinkException|PaymentStartException|StripeConnectException) {
+        } catch (PaymentStartException $e) {
+            // The one refusal that is not an oracle: the caller already holds
+            // a valid link, and "nothing left to pay" means an earlier attempt
+            // settled (a double click, a second tab, a return from Stripe).
+            // Saying so lets the page show the real outcome instead of a
+            // generic "not available". Every other reason stays uniform.
+            if (in_array($e->reason, [PaymentStartException::NOTHING_PAYABLE, PaymentStartException::DOCUMENT_NOT_PAYABLE], true)
+                && $this->payments->statusFor($access)['state'] !== 'none') {
+                return response()->json(['error' => 'already_settled'], 409);
+            }
+
+            return $this->refusal();
+        } catch (DocumentLinkException|StripeConnectException) {
             // A provider failure is refused exactly like every other reason:
             // it must never surface as a 500 that leaks a stack trace, and the
             // customer must not learn whether the fault was theirs, the
@@ -186,6 +198,25 @@ class PublicDocumentController extends Controller
         // §7.2.1 — the minimum transient browser material, and nothing more.
         // The platform SECRET key is never here.
         return response()->json($result->toResponse());
+    }
+
+    /**
+     * Where the customer stands after Stripe sends the browser back (or while
+     * a payment settles). The attempt is resolved from the verified document
+     * token and our own payment rows; nothing in the request names a payment,
+     * an intent or an account, and the response carries no secret and no
+     * provider identifier. Never creates an attempt.
+     */
+    public function payStatus(string $uid, string $token): Response|JsonResponse
+    {
+        try {
+            $access = $this->guard->resolve($uid, $token);
+        } catch (DocumentLinkException) {
+            return $this->refusal();
+        }
+
+        return response()->json($this->payments->statusFor($access))
+            ->header('Cache-Control', 'no-store, private');
     }
 
     /**
