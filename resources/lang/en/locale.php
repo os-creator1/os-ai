@@ -752,6 +752,27 @@
         ],
 
         //Localization for application http status codes
+        'error_pages' => [
+            '404' => [
+                'title'       => 'We can\'t find that page',
+                'description' => 'The link may be mistyped, or the page may have moved or been removed.',
+            ],
+            '429' => [
+                'title'       => 'Too many attempts',
+                'description' => 'Please wait a moment before trying again.',
+            ],
+            'document' => [
+                'card_title' => 'Opening a document someone sent you?',
+                'card_text'  => 'Signing links can expire. Ask the business that sent it for a new link.',
+            ],
+            'module' => [
+                'card_title' => 'Looking for a feature?',
+                'card_text'  => 'It may not be available here. Head home and use the navigation to find it.',
+            ],
+            'go_back'     => 'Go back',
+            'rights'      => 'All rights reserved.',
+            'error_label' => 'Error :code',
+        ],
         'http'       => [
             '401' => [
                 'title'       => 'Unauthorized',

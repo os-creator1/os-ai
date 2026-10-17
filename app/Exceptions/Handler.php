@@ -86,7 +86,13 @@
             }
 
             if (config('app.env') != 'local') {
-                if ($exception instanceof ViewException || $exception instanceof ModelNotFoundException) {
+                // A missing record is a missing page: it was answered as a 500,
+                // which sent crawlers and monitors a server-fault signal for what
+                // is a plain not-found.
+                if ($exception instanceof ModelNotFoundException) {
+                    return response()->view('errors.404', compact('exception'), 404);
+                }
+                if ($exception instanceof ViewException) {
                     return response()->view('errors.500', compact('exception'), 500);
                 }
                 if ($exception instanceof AuthenticationException || $exception instanceof AuthorizationException) {
@@ -102,6 +108,12 @@
                     // tells crawlers the customer's pages are gone for good.
                     if ($exception->getStatusCode() === 503) {
                         return response()->view('errors.404', compact('exception'), 503, $exception->getHeaders());
+                    }
+
+                    // A rate-limit rejection stays a 429, with its Retry-After and
+                    // X-RateLimit-* headers, rather than being painted as a 404.
+                    if ($exception->getStatusCode() === 429) {
+                        return response()->view('errors.429', compact('exception'), 429, $exception->getHeaders());
                     }
 
                     return response()->view('errors.404', compact('exception'), 404);
