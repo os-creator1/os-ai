@@ -51,13 +51,15 @@ Leave these at the defaults for the trial unless you deliberately want a lower c
 
 - **Shared lock-capable cache:** `CACHE_DRIVER=redis` (or `database`/`memcached`) on every web and queue worker. The repository default
   is `file`, which does not coordinate across servers; per-conversation turn locks and delete/turn coordination depend on it.
-- **Scheduler:** the normal `php artisan schedule:run` every minute. It runs `assistant:purge-expired` daily (retention) and also
+- **Scheduler:** the normal `php artisan schedule:run` every minute. It runs `assistant:purge-expired` daily (it deletes nothing under the default `ASSISTANT_RETENTION_DAYS=0`; it enforces a configured positive period) and also
   `queue:work --queue=automation,default,batch` every minute.
 - **Queue:** `QUEUE_CONNECTION` (`.env.example` ships `sync`; `config/queue.php` defaults to `database`). The assistant's booking
   emits `AppointmentScheduled`, whose Automations enrolment listener is queued (idempotent); pick a real queue connection in production.
 - **Database:** MySQL 8 with all migrations applied (`assistant_*` tables, `ai_usage_ledger`, `ai_usage_periods`).
 - **Not done in code (see ASK-MOTIONGROVE-V1.md, "Production prerequisites" 4):** legal review of the first-use AI-data notice, the
-  provider data-processing agreement/subprocessor disclosure, and the 90-day retention period.
+  provider data-processing agreement/subprocessor disclosure, and the retention policy. The default `ASSISTANT_RETENTION_DAYS=0` keeps
+  conversations until the customer deletes them and needs explicit privacy/legal sign-off; an explicitly configured positive period (for
+  example 90 days) has its own review requirements. Check the effective value in the deployment environment before launch.
 
 ## 6. Controlled real-provider smoke test (staging only; NOT run, needs explicit authorization before any paid call)
 

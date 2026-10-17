@@ -129,10 +129,14 @@ fence; a late old executor aborts before touching anything.
   `sessionStorage` per Business), restores scroll and returns focus. Opening, closing, scrolling and viewing history never call the model.
 * **Composer.** Multiline (Enter sends, Shift+Enter newline), busy indicator, duplicate sends ignored; Copy on answers. The view follows new
   messages only when the customer is already at the bottom. Errors, limits and retry bubbles are unchanged (idempotent `client_message_id`).
-* **History.** `GET …/home/assistant/conversations[?after=<conversation uid>]` lists *this user's* conversations in *this Business and
-  Workspace* (newest activity first, `assistant.history_page_size` = 20, keyset by `(last_message_at, id)`), each with title, preview of the
-  last question/answer, time and message count. Opening one is `GET …/home/assistant?conversation=<uid>`; continuing it is a normal send. A
-  teammate's private conversations and the customer inbox are never listed. *New chat* starts a new conversation.
+* **History.** `GET …/home/assistant/conversations[?after=<cursor>]` lists *this user's* conversations in *this Business and Workspace*
+  (newest activity first, `assistant.history_page_size` = 20), each with title, preview of the last question/answer, time and message count.
+  The response carries `has_more` and `next`. `after` must be the **opaque cursor returned in the previous response's `next`** — never a
+  conversation uid (a uid, or any malformed value, is refused with 422). The cursor is a snapshot of where the previous page's last row sat
+  (`last_message_at`, id), so a conversation that receives a message between two pages cannot make the next page repeat or skip rows; it
+  carries no authority, and every page is scoped to the caller's Workspace, Business and user. A conversation that moves to the top while
+  paging is not shown again below; it is first on the next refresh. Opening one is `GET …/home/assistant?conversation=<uid>`; continuing it
+  is a normal send. A teammate's private conversations and the customer inbox are never listed. *New chat* starts a new conversation.
 * **Scroll-up pagination.** `GET …/home/assistant?conversation=<uid>&before=<message uid>&limit=<1..60>`; the response has
   `page.has_more` and `page.before`. The cursor is a message uid resolved inside that conversation (another conversation's uid is 404), so pages never
   repeat or skip; the client prepends without moving the view and stops at "Beginning of this conversation". Initial page: newest 40.
