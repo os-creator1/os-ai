@@ -74,6 +74,35 @@ final class MetaAdsAdSetReader
     }
 
     /**
+     * Every ad set of the given campaigns (local campaign ids already scoped to
+     * this account by the caller), spend-descending, in ONE query plus a count
+     * - the hierarchical Performance table's children. Bounded by $limit; the
+     * returned total says whether anything was cut.
+     *
+     * @param  array<int, int>  $campaignIds
+     * @return array{items: array<int, MetaAdsAdSetRow>, total: int}
+     */
+    public function forCampaigns(MetaAdsAccount $account, GoogleAdsPeriod $period, array $campaignIds, int $limit = 500): array
+    {
+        if ($campaignIds === []) {
+            return ['items' => [], 'total' => 0];
+        }
+
+        $base = $this->base($account, null, null)->whereIn('c.id', array_map('intval', $campaignIds));
+        $total = (clone $base)->count();
+        $chosen = $this->select($base, $account, $period);
+        $this->applySort($base, 'spend', 'desc', $chosen, [], 's.id');
+
+        $rows = $base->limit(max(1, min(1000, $limit)))->get();
+        $present = $chosen && $rows->isNotEmpty() && $this->resultPresent($account, $period, MetaAdsLevel::AdSet);
+
+        return [
+            'items' => $rows->map(fn (object $row) => $this->hydrate($row, $account, $chosen, $present))->all(),
+            'total' => $total,
+        ];
+    }
+
+    /**
      * uid => name of the account's ad sets (no metrics): filter dropdown and
      * whitelist for an `ad_set` query parameter.
      *

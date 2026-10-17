@@ -82,7 +82,8 @@ class MetaAdsPendingConfirmationTest extends TestCase
 
         $this->assertSame(1, $this->badgeCount($this->get($this->metaUrl($workspace, $business, 'ad-sets.index'))->getContent()));
         $this->assertSame(0, $this->badgeCount($this->get($this->metaUrl($workspace, $business, 'ads.index'))->getContent()));
-        $this->assertSame(0, $this->badgeCount($this->get($this->metaUrl($workspace, $business, 'campaigns.index'))->getContent()));
+        // The Performance table now lists ad sets under their campaign, so the badge shows on that ad set's row (and only there).
+        $this->assertSame(1, $this->badgeCount($this->get($this->metaUrl($workspace, $business, 'campaigns.index'))->getContent()));
     }
 
     public function test_an_ambiguous_ad_change_badges_the_ad_table_only(): void
@@ -138,7 +139,7 @@ class MetaAdsPendingConfirmationTest extends TestCase
 
     private function rowOf(string $html, string $needle): string
     {
-        preg_match_all('/<tr data-role="[a-z-]+-row">.*?<\/tr>/s', $html, $matches);
+        preg_match_all('/<tr data-role="[a-z-]+-row"[^>]*>.*?<\/tr>/s', $html, $matches);
 
         foreach ($matches[0] as $row) {
             if (str_contains($row, $needle)) {

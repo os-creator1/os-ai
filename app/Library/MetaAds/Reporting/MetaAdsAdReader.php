@@ -89,6 +89,34 @@ final class MetaAdsAdReader
         return $this->hydrate($row, $account, $chosen, $chosen && $this->resultPresent($account, $period, MetaAdsLevel::Ad));
     }
 
+    /**
+     * Every ad of the given ad sets (local ad set ids already scoped to this
+     * account by the caller), spend-descending, in ONE query plus a count: the
+     * hierarchical Performance table's leaf rows. Bounded by $limit.
+     *
+     * @param  array<int, int>  $adSetIds
+     * @return array{items: array<int, MetaAdsAdRow>, total: int}
+     */
+    public function forAdSets(MetaAdsAccount $account, GoogleAdsPeriod $period, array $adSetIds, int $limit = 1000): array
+    {
+        if ($adSetIds === []) {
+            return ['items' => [], 'total' => 0];
+        }
+
+        $base = $this->base($account, null, null, null)->whereIn('s.id', array_map('intval', $adSetIds));
+        $total = (clone $base)->count();
+        $chosen = $this->select($base, $account, $period);
+        $this->applySort($base, 'spend', 'desc', $chosen, [], 'a.id');
+
+        $rows = $base->limit(max(1, min(2000, $limit)))->get();
+        $present = $chosen && $rows->isNotEmpty() && $this->resultPresent($account, $period, MetaAdsLevel::Ad);
+
+        return [
+            'items' => $rows->map(fn (object $row) => $this->hydrate($row, $account, $chosen, $present))->all(),
+            'total' => $total,
+        ];
+    }
+
     private function base(MetaAdsAccount $account, ?string $status, ?string $campaignUid, ?string $adSetUid): Builder
     {
         $query = DB::table('meta_ads_ads as a')
