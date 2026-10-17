@@ -287,6 +287,77 @@ class AssistantHistoryTest extends TestCase
         $this->assertSame(0, AssistantMessage::query()->where('conversation_id', $mine->id)->count());
     }
 
+    // ── a saved first message is discoverable even when no reply was ever written ─────────────────────────────────────────
+
+    public function test_a_first_message_is_discoverable_even_if_the_turn_never_produces_a_reply(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Interrupted Venue', 'Interrupted Account');
+        $this->authenticateAs($customer);
+        $older = $this->conversation($customer, $business, $workspace, 2, 'Older chat', now()->subDays(3));
+
+        // The provider call blows up outright: nothing catches it, so no assistant reply is ever stored.
+        $this->app->instance(\App\Library\Ai\Contracts\AiCompletionClient::class, new class implements \App\Library\Ai\Contracts\AiCompletionClient {
+            public function complete(\App\Library\Ai\AiCompletionRequest $request): \App\Library\Ai\AiCompletionResult
+            {
+                throw new \Error('interrupted before any reply');
+            }
+        });
+
+        try {
+            $this->say($workspace, $business, 'A brand new question', ['new' => true]);
+        } catch (\Throwable) {
+            // Whether the request errors out or is rendered as a failure does not matter: what matters is what was saved.
+        }
+
+        $created = AssistantConversation::query()->where('id', '!=', $older->id)->where('user_id', $customer->user_id)->first();
+        $this->assertNotNull($created, 'The first message started a conversation.');
+        $this->assertSame(1, AssistantMessage::query()->where('conversation_id', $created->id)->where('role', 'user')->count(), 'The customer\'s message is saved.');
+        $this->assertSame(0, AssistantMessage::query()->where('conversation_id', $created->id)->where('role', 'assistant')->whereIn('kind', ['answer', 'unsupported', 'clarify', 'navigate'])->count(), 'And no answer was ever written.');
+        $this->assertNotNull($created->fresh()->last_message_at, 'A saved customer message dates the conversation.');
+
+        $uids = array_column($this->getJson($this->assistantUrl($workspace, $business, 'conversations'))->assertOk()->json('conversations'), 'uid');
+        $this->assertSame([$created->uid, $older->uid], $uids, 'It is in History, newest first, ahead of the older conversation.');
+
+        $latest = $this->getJson($this->assistantUrl($workspace, $business, 'show'))->assertOk();
+        $this->assertSame($created->uid, $latest->json('uid'), 'latest() is this conversation, not the older one.');
+        $this->assertSame('A brand new question', collect($latest->json('messages'))->firstWhere('role', 'user')['body']);
+    }
+
+    public function test_a_saved_customer_message_dates_the_conversation_and_counts_once_in_a_normal_exchange(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Normal Venue', 'Normal Account');
+        $this->authenticateAs($customer);
+        $this->modelSays(['action' => 'answer', 'message' => 'Hello there.']);
+
+        $first = $this->say($workspace, $business, 'Hi')->assertOk();
+        $conversation = AssistantConversation::query()->where('uid', $first->json('uid'))->firstOrFail();
+
+        $messages = AssistantMessage::query()->where('conversation_id', $conversation->id)->count();
+        $this->assertSame($messages, (int) $conversation->message_count, 'The count still equals the stored messages (no double counting).');
+        $this->assertNotNull($conversation->last_message_at);
+        $this->assertSame([$conversation->uid], array_column($this->getJson($this->assistantUrl($workspace, $business, 'conversations'))->json('conversations'), 'uid'));
+    }
+
+    public function test_an_unreplied_conversation_stays_inside_the_callers_own_list(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Own Venue', 'Own Account');
+        [$other, $otherBusiness, $otherWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Other Own Venue', 'Other Own Account');
+        $this->authenticateAs($other);
+        $this->app->instance(\App\Library\Ai\Contracts\AiCompletionClient::class, new class implements \App\Library\Ai\Contracts\AiCompletionClient {
+            public function complete(\App\Library\Ai\AiCompletionRequest $request): \App\Library\Ai\AiCompletionResult
+            {
+                throw new \Error('interrupted');
+            }
+        });
+        try {
+            $this->say($otherWorkspace, $otherBusiness, 'Their unreplied question');
+        } catch (\Throwable) {
+        }
+
+        $this->authenticateAs($customer);
+
+        $this->assertSame([], $this->getJson($this->assistantUrl($workspace, $business, 'conversations'))->assertOk()->json('conversations'), 'Another customer\'s unreplied conversation never appears.');
+    }
     // ── retention policy ─────────────────────────────────────────────────
 
     public function test_retention_is_configurable_and_a_zero_keeps_conversations_until_the_customer_deletes_them(): void

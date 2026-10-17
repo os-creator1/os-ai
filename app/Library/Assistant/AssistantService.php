@@ -250,7 +250,9 @@ final class AssistantService
             'body' => $text,
             'created_at' => now(),
         ]);
-        $conversation->increment('message_count');
+        // The conversation is ordered by its last message, and History and "latest" only know conversations that have one: a saved customer
+        // message must make it discoverable at once, so a turn that fails or is interrupted before the reply never hides it.
+        $conversation->increment('message_count', 1, ['last_message_at' => now()]);
 
         return $message;
     }
