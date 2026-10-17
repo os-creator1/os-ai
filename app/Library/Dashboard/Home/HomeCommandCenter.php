@@ -208,7 +208,8 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
-            'websitePublished' => $status !== null && $status->websiteStatus === 'published',
+            // null = the status read failed: UNKNOWN, never "not published".
+            'websitePublished' => $status === null || ! $status->known ? null : $status->websiteStatus === 'published',
             'actions' => $actions,
             'ask' => [
                 // Contextual chips: setup help while launching, performance and optimisation once running. Each is the

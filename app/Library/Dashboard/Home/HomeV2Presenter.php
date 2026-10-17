@@ -370,14 +370,15 @@ final class HomeV2Presenter
     {
         $actions = $home['actions'];
         $out = [];
-        $websitePublished = ($home['websitePublished'] ?? false) === true;
+        // Only a status that was actually read can say a website is needed: an unknown status suggests nothing.
+        $websiteMissing = array_key_exists('websitePublished', $home) && $home['websitePublished'] === false;
         $add = function (string $key, string $title, string $label, ?string $url) use (&$out): void {
             if ($url !== null && count($out) < self::MAX_SUGGESTIONS) {
                 $out[] = ['key' => $key, 'title' => $title, 'label' => $label, 'url' => $url];
             }
         };
 
-        if (! $websitePublished) {
+        if ($websiteMissing) {
             $add('website', 'Build your website', 'Start', $actions['website']['fullUrl'] ?? null);
         }
 

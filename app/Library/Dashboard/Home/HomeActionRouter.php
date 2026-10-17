@@ -5,7 +5,9 @@ namespace App\Library\Dashboard\Home;
 use App\Library\Dashboard\DashboardLinkGate;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\MenuEntitlements;
+use App\Library\Navigation\WorkspaceCandidate;
 use App\Models\User;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Home V2 — which in-Home actions this actor may open, and where each one's
@@ -30,6 +32,54 @@ final class HomeActionRouter
 
     public function __construct(private readonly DashboardLinkGate $links)
     {
+    }
+
+    /** The frame Workspace for these scoped uids, from the context already resolved for this request (no extra read). */
+    private function workspaceFor(CustomerContext $context, array $scoped): ?WorkspaceCandidate
+    {
+        foreach ($context->workspaces as $workspace) {
+            if ($workspace->uid === ($scoped[0] ?? null)) {
+                return $workspace;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * BusinessEmailController's rule for connecting a mailbox: the active Workspace owner or an actor holding manage_business_email, never
+     * while viewing as a client. Merely being able to VIEW the email page (chat_box) does not allow connecting.
+     */
+    private function mayConnectEmail(CustomerContext $context, User $user, array $scoped): bool
+    {
+        if ($context->isViewingAsClient()) {
+            return false;
+        }
+
+        $workspace = $this->workspaceFor($context, $scoped);
+
+        if ($workspace !== null && $workspace->isActive && $workspace->ownerUserId === (int) $user->id) {
+            return true;
+        }
+
+        return Gate::forUser($user)->allows('manage_business_email');
+    }
+
+    /**
+     * StripeConnectManager's owner-only rule (§6.2): the Business's own customer or the owner of the Workspace holding it. An ordinary
+     * member with access_backend cannot connect payments.
+     */
+    private function ownsBusiness(CustomerContext $context, User $user, array $scoped): bool
+    {
+        $business = $context->selectedBusiness;
+
+        if ($business !== null && $business->uid === ($scoped[1] ?? null) && $business->customerId === (int) $user->id) {
+            return true;
+        }
+
+        $workspace = $this->workspaceFor($context, $scoped);
+
+        return $workspace !== null && $workspace->ownerUserId === (int) $user->id;
     }
 
     /**
@@ -95,16 +145,16 @@ final class HomeActionRouter
             'automation' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.workflows.create', $scoped, ['automations'], 'automations')) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Set one up',
             ],
-            'contacts-list' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.people.index', $scoped, DashboardLinkGate::CONTACT_PERMISSIONS)) === null ? null : [
+            'contacts-list' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.people.index', $scoped, ['view_contact'])) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Contacts',
             ],
-            'email' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.email.show', $scoped, ['manage_business_email', 'chat_box'])) === null ? null : [
+            'email' => ! $this->mayConnectEmail($context, $user, $scoped) || ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.email.show', $scoped, [])) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Connect your email',
             ],
             'catalog' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.catalog.create', $scoped, ['packages_products'], 'packages_products')) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Add packages and prices',
             ],
-            'payments' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.payments.connect.show', $scoped, ['access_backend'], 'payments_contracts')) === null ? null : [
+            'payments' => ! $this->ownsBusiness($context, $user, $scoped) || ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.payments.connect.show', $scoped, ['payments_contracts'], 'payments_contracts')) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Connect payments',
             ],
             'advisor' => ($u =$this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.growth.advisor', $scoped, ['business_advisor'], 'ai_coo_basic')) === null ? null : [
