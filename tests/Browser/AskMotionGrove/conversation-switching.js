@@ -490,3 +490,63 @@ async function runHistoryDeleteChecks() {
 
     return results;
 }
+
+/*
+ * The header Delete button, pressed on A, answers late (409 or a network failure) after the customer moved to B: B's thread must stay
+ * exactly as it is, and Delete must still work for B.
+ *
+ *   (the same evaluate pattern as above) + '; runHeaderDeleteStaleChecks()'
+ */
+async function runHeaderDeleteStaleChecks() {
+    var results = [];
+    var net = askRaceStub();
+    var section = document.querySelector('[data-role="home-ask"]');
+    var q = function (s) { return section.querySelector(s); };
+    var tick = function (ms) { return new Promise(function (r) { window.setTimeout(r, ms || 30); }); };
+    var check = function (name, ok, detail) { results.push({ name: name, ok: !!ok, detail: ok ? undefined : detail }); };
+    var thread = function () { return q('[data-role="ask-thread"]'); };
+    var del = function () { return q('[data-role="ask-delete"]'); };
+    var deletes = function () { return net.calls.filter(function (c) { return c.method === 'POST' && /\/delete$/.test(c.url); }); };
+    var openItem = function (uid) {
+        q('[data-role="ask-history"]').click();
+        return tick(40).then(function () {
+            [].slice.call(section.querySelectorAll('[data-role="ask-history-item"]')).filter(function (b) { return b.parentNode.getAttribute('data-uid') === uid; })[0].click();
+        });
+    };
+    var pressDeleteOnA = async function () { await openItem('A'); await tick(80); del().click(); del().click(); await tick(40); };
+
+    try {
+        q('[data-role="ask-resume"]').hidden = false;
+        q('[data-role="ask-resume"]').click();
+        await tick(400);
+
+        // 1 - a stale 409
+        await pressDeleteOnA();
+        check('1 - the delete request names conversation A', deletes().length === 1 && /\/A\/delete$/.test(deletes()[0].url), deletes().map(function (d) { return d.url; }).join(' '));
+        await openItem('B'); await tick(80);
+        var bBefore = thread().textContent;
+        net.pending[0].release(409, { deleted: false, message: 'Busy right now.' }); await tick(100);
+        check('1 - a stale 409 adds nothing to the thread of B', thread().textContent === bBefore && /answer in B/.test(thread().textContent) && !/Not deleted yet|Busy right now/.test(thread().textContent), thread().textContent.slice(0, 160));
+        check('1 - and Delete is usable again for B', !del().disabled && !del().hidden, 'disabled=' + del().disabled);
+
+        // 2 - a stale network failure
+        net.pending.length = 0;
+        await pressDeleteOnA();
+        await openItem('B'); await tick(80);
+        bBefore = thread().textContent;
+        net.pending[0].networkError(); await tick(100);
+        check('2 - a stale network failure adds nothing to the thread of B', thread().textContent === bBefore && !/Not deleted|couldn.t delete/i.test(thread().textContent), thread().textContent.slice(0, 160));
+
+        // 3 - control: the same 409 on the conversation still on screen IS shown there
+        net.pending.length = 0;
+        await pressDeleteOnA();
+        net.pending[0].release(409, { deleted: false, message: 'Busy right now.' }); await tick(100);
+        check('3 - an answer for the conversation still on screen is shown there', /Busy right now/.test(thread().textContent), thread().textContent.slice(0, 160));
+    } catch (e) {
+        check('script ran to the end', false, String((e && e.stack) || e));
+    } finally {
+        net.restore();
+    }
+
+    return results;
+}

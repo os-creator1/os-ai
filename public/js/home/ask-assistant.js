@@ -467,6 +467,7 @@
         state.opening = false;
         state.loadingOlder = false;
         state.olderFailed = false;
+        if (deleteBtn) { deleteBtn.disabled = false; }
         disarmDelete();
         if (state.busy) { setBusy(false); }
         return state.epoch;
@@ -824,13 +825,16 @@
             var deletedEpoch = state.epoch;
             disarmDelete();
             deleteBtn.disabled = true;
+            // Every outcome asks first whether this press still belongs on screen: same conversation, same selection.
+            var live = function () { return deletedUid === state.uid && deletedEpoch === state.epoch; };
             request(cfg.remove.replace('__UID__', encodeURIComponent(deletedUid)), { method: 'POST', body: {} }).then(function (res) {
                 if (res.status === 409) {
+                    if (!live()) { flash('A conversation you tried to delete is busy, so nothing was deleted. It is still in Chat history.'); return; }
                     thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: (res.body && res.body.message) || 'An action is still running. Try again in a moment.', payload: { title: 'Not deleted yet', retryable: false } }));
                     return;
                 }
                 if (!res.ok) { throw new Error('status ' + res.status); }
-                if (deletedUid !== state.uid || deletedEpoch !== state.epoch) {
+                if (!live()) {
                     // It was deleted, but the customer has since moved to another conversation: leave that one exactly as it is.
                     flash('Conversation deleted.');
                     state.historyNext = null;
@@ -848,6 +852,7 @@
                 if (resumeBtn) { resumeBtn.removeAttribute('data-has-conversation'); resumeBtn.hidden = true; }
                 deleteBtn.hidden = true;
             }).catch(function () {
+                if (!live()) { flash("We couldn't delete a conversation just now. Nothing was changed."); return; }
                 thread.appendChild(bubble({ role: 'assistant', kind: 'error', body: "We couldn't delete it just now. Nothing was changed.", payload: { title: 'Not deleted', retryable: false } }));
             }).then(function () { deleteBtn.disabled = false; });
         });

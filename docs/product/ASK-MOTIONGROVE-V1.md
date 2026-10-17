@@ -117,7 +117,7 @@ fence; a late old executor aborts before touching anything.
   conversation's messages and summary from MotionGrove while a minimal record of approved actions may be kept for accountability,
   and that MotionGrove cannot delete what the provider already received. **It makes no promise about provider-side retention or deletion.**
 - **Legal verification required before production:** the notice wording, the data-processing agreement with the AI provider,
-  provider-side retention/deletion, cross-border transfer and the retention period itself have NOT been legally reviewed.
+  provider-side retention/deletion, cross-border transfer and the retention policy itself (the default keeps conversations until the customer deletes them) have NOT been legally reviewed.
 
 ## Fullscreen conversation and history (Home redesign)
 
@@ -175,13 +175,15 @@ gives exactly-once appointments and events across concurrent approval, rollback,
    default is `CACHE_DRIVER=file` and tests use `array`; neither coordinates across servers. Set `CACHE_DRIVER` (and the store's
    `lock_connection`) deliberately before enabling the assistant on more than one worker.
 2. **Scheduler.** `assistant:purge-expired` is registered daily (`withoutOverlapping`) in `app/Console/Kernel.php`; the platform's
-   normal `php artisan schedule:run` cron must be running. Without it retention is not enforced.
+   normal `php artisan schedule:run` cron must be running. Without it a configured positive retention period is not enforced (under the
+   default `ASSISTANT_RETENTION_DAYS=0` the job deletes nothing).
 3. **Environment configuration** (all optional; defaults shown): `ASSISTANT_RETENTION_DAYS=0` (0 = keep until deleted; positive = days, max 3650),
    `ASSISTANT_TURN_BUDGET_SECONDS=75`, `ASSISTANT_DELETE_WAIT_SECONDS=4`, `AI_ROUTE_ASSISTANT_MAX_INPUT_TOKENS=7000`,
    `AI_ROUTE_ASSISTANT_TIMEOUT_SECONDS=25`, and the provider credentials/`services.openai.active` already used by the AI gateway.
    The lock lease is `turn budget + max(15, margin)`; keep the route timeout well below the budget.
 4. **Privacy and legal approval (not done).** The first-use AI-data notice wording, the data-processing agreement and
-   subprocessor disclosure for the AI provider, provider-side retention/deletion, cross-border transfer and the 90-day retention
-   period have NOT been legally reviewed. The notice makes no promise about provider-side deletion.
+   subprocessor disclosure for the AI provider, provider-side retention/deletion, cross-border transfer and the retention policy have NOT been legally reviewed. The default
+   (`ASSISTANT_RETENTION_DAYS=0`) keeps conversations until the customer deletes them, which needs explicit privacy/legal sign-off before
+   launch; a positive period (for example 90 days) needs the same review. The notice makes no promise about provider-side deletion.
 5. **Account deletion.** `AccountRecordGraph::USER_OWNED` classifies `assistant_conversations.user_id` and
    `assistant_action_proposals.user_id` (applied in this integration); keep `PlatformAccountDeletionTest` green when the graph changes.
