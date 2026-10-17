@@ -89,12 +89,6 @@ final class PageToasts
             }
         }
 
-        // Carried over from the former Toastr renderer, same condition.
-        if ($session->get('check_subscription') && $user !== null && CustomerShellComposer::isCustomerPortal($user)
-            && $user->customer !== null && $user->customer->activeSubscription() === null) {
-            $toasts[] = self::toast('warning', __('locale.customer.no_active_subscription'));
-        }
-
         if ($errors !== null && $errors->any() && preg_match(self::FIELD_ERRORS_SHOWN_INLINE, $content) !== 1) {
             $toasts[] = self::toast('error', (string) $errors->first());
         }

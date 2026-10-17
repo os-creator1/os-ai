@@ -2,7 +2,7 @@
     'variant' => 'neutral', // neutral | accent | success | warning | danger
     'icon' => null,         // accepted for older call sites; the status glyph now follows the variant
     'title' => null,
-    'dismissible' => true,
+    'dismissible' => false, // opt in for transient feedback; persistent notices (security, billing state) stay put
 ])
 
 @php

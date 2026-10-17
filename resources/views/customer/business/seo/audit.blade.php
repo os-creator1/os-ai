@@ -37,9 +37,7 @@
     </div>
 
     @if (session('message'))
-        <div class="alert alert-{{ session('status') === 'error' ? 'danger' : 'success' }}" role="alert">
-            <div class="alert-body">{{ session('message') }}</div>
-        </div>
+        <x-alert :variant="session('status') === 'error' ? 'danger' : 'success'" :dismissible="true" data-role="flash-message">{{ session('message') }}</x-alert>
     @endif
 
     {{-- Indexability: a status about how the site is set up, never a finding. --}}

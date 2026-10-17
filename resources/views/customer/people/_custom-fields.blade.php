@@ -16,7 +16,7 @@
     <h2 class="mg-cp-card-title">{{ $customFieldsHeading ?? 'Custom details' }}</h2>
     <p class="mg-cp-card-sub">Custom fields for this contact.@if ($cfCanEdit) <a href="{{ $cfSettings }}">Manage fields</a>@endif</p>
     @if (session('flash_success'))
-        <x-alert variant="success" class="mb-1" role="status" data-role="custom-fields-saved">{{ session('flash_success') }}</x-alert>
+        <x-alert :dismissible="true" variant="success" class="mb-1" role="status" data-role="custom-fields-saved">{{ session('flash_success') }}</x-alert>
     @endif
     @error('custom_fields')
         <x-alert variant="danger" class="mb-1" role="alert" data-role="custom-fields-error">{{ $message }}</x-alert>

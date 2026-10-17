@@ -22,8 +22,8 @@
 @endphp
 @if ($flashMessage !== '')
     @if ($flashTitle !== '')
-        <x-alert :variant="$flashVariant" :title="$flashTitle" role="{{ $flashRole }}" data-role="flash-message" {{ $attributes }}>{{ $flashMessage }}</x-alert>
+        <x-alert :variant="$flashVariant" :dismissible="true" :title="$flashTitle" role="{{ $flashRole }}" data-role="flash-message" {{ $attributes }}>{{ $flashMessage }}</x-alert>
     @else
-        <x-alert :variant="$flashVariant" :title="$flashMessage" role="{{ $flashRole }}" data-role="flash-message" {{ $attributes }} />
+        <x-alert :variant="$flashVariant" :dismissible="true" :title="$flashMessage" role="{{ $flashRole }}" data-role="flash-message" {{ $attributes }} />
     @endif
 @endif

@@ -54,7 +54,7 @@
                      full, persistent alerts. --}}
                 @if (session('flash_success'))
                     <div data-role="flash-success-fallback" hidden>
-                        <x-alert variant="success">{{ session('flash_success') }}</x-alert>
+                        <x-alert :dismissible="true" variant="success">{{ session('flash_success') }}</x-alert>
                     </div>
                     <script>
                         document.addEventListener('DOMContentLoaded', function () {
@@ -76,7 +76,7 @@
                 @endif
 
                 @if (session('flash_error'))
-                    <x-alert variant="danger">{{ session('flash_error') }}</x-alert>
+                    <x-alert :dismissible="true" variant="danger">{{ session('flash_error') }}</x-alert>
                 @endif
 
                 @if ($errors->any())

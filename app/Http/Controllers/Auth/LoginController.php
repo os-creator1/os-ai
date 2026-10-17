@@ -159,15 +159,18 @@
                     }
                 }
 
-
-                // Only flash this once after successful login
-                session()->flash('check_subscription');
-
                 $request->session()->put('password_changed_at', Auth::user()->password_changed_at?->timestamp);
 
                 // A clicked (already signature-checked) email-verification link is completed first;
                 // otherwise someone who opened a client invitation or a private-offer link goes back to it.
-                return redirect(\App\Library\PlatformBilling\PendingVerification::uri() ?? \App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route())->with([
+                $destination = redirect(\App\Library\PlatformBilling\PendingVerification::uri() ?? \App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route());
+
+                // Customers get no unsolicited welcome-back popup; only the admin portal keeps its greeting.
+                if (\App\Library\Navigation\CustomerShellComposer::isCustomerPortal($user)) {
+                    return $destination;
+                }
+
+                return $destination->with([
                     'status'  => 'success',
                     'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
                 ]);
@@ -362,10 +365,7 @@
                 request()->session()->regenerate();   // no session fixation across the OAuth round trip
 
                 if ($user->active_portal == 'customer') {
-                    return redirect()->route('user.home')->with([
-                        'status'  => 'success',
-                        'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
-                    ]);
+                    return redirect()->route('user.home');
                 }
 
                 return redirect()->to(\App\Helpers\Helper::adminHomeUrl())->with([

@@ -28,11 +28,11 @@
             <div class="col-12">
                 <x-card :title="$accountTitle">
                     @if (session('flash_success'))
-                        <x-alert variant="success">{{ session('flash_success') }}</x-alert>
+                        <x-alert :dismissible="true" variant="success">{{ session('flash_success') }}</x-alert>
                     @endif
 
                     @if (session('flash_error'))
-                        <x-alert variant="danger">{{ session('flash_error') }}</x-alert>
+                        <x-alert :dismissible="true" variant="danger">{{ session('flash_error') }}</x-alert>
                     @endif
 
                     @if ($errors->any())

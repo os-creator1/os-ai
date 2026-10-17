@@ -28,7 +28,7 @@ class SharedNotificationComponentTest extends TestCase
     #[DataProvider('variants')]
     public function test_each_type_uses_the_shared_component_with_the_same_structure(string $variant, string $class, string $role, string $glyph): void
     {
-        $html = Blade::render('<x-alert variant="' . $variant . '" title="Heading">Detail text</x-alert>');
+        $html = Blade::render('<x-alert variant="' . $variant . '" :dismissible="true" title="Heading">Detail text</x-alert>');
 
         $this->assertStringContainsString('class="ds-notice ' . $class . ' ds-alert"', $html);
         $this->assertStringContainsString('role="' . $role . '"', $html);
@@ -44,14 +44,40 @@ class SharedNotificationComponentTest extends TestCase
         $this->assertStringNotContainsString('role="alert"', $html);
     }
 
-    public function test_the_dismiss_control_is_present_by_default_and_can_be_turned_off(): void
+    public function test_dismiss_is_opt_in_so_persistent_notices_cannot_be_dismissed(): void
     {
-        $on = Blade::render('<x-alert variant="success">Saved</x-alert>');
-        $off = Blade::render('<x-alert variant="success" :dismissible="false">Saved</x-alert>');
+        $persistent = Blade::render('<x-alert variant="warning">Reconnect your account</x-alert>');
+        $transient = Blade::render('<x-alert variant="success" :dismissible="true">Saved</x-alert>');
 
-        $this->assertStringContainsString('data-ds-notice-dismiss aria-label="Dismiss notification"', $on);
-        $this->assertStringContainsString("closest('[data-ds-notice-dismiss]')", $on, 'A delegated handler removes the notice.');
-        $this->assertStringNotContainsString('data-ds-notice-dismiss aria-label', $off);
+        $this->assertStringNotContainsString('data-ds-notice-dismiss aria-label', $persistent);
+        $this->assertStringContainsString('data-ds-notice-dismiss aria-label="Dismiss notification"', $transient);
+        $this->assertStringContainsString("closest('[data-ds-notice-dismiss]')", $transient, 'A delegated handler removes the notice.');
+    }
+
+    public function test_flash_alerts_are_dismissible(): void
+    {
+        session(['status' => 'success', 'message' => 'Saved.']);
+
+        $this->assertStringContainsString('data-ds-notice-dismiss', Blade::render('<x-flash-alert />'));
+    }
+
+    public function test_the_view_as_client_banner_is_not_built_on_the_dismissible_component(): void
+    {
+        $banner = (string) file_get_contents(resource_path('views/components/view-as-banner.blade.php'));
+
+        $this->assertStringNotContainsString('data-ds-notice-dismiss', $banner);
+        $this->assertStringNotContainsString('<x-alert', $banner);
+        $this->assertStringNotContainsString('data-bs-dismiss', $banner);
+    }
+
+    public function test_no_customer_view_hardcodes_a_bootstrap_feedback_alert_for_server_messages(): void
+    {
+        foreach (['seo/audit', 'catalog/_messages', 'forms/_messages', 'email/show', 'website/wizard/steps/generating'] as $name) {
+            $source = (string) file_get_contents(resource_path("views/customer/business/{$name}.blade.php"));
+
+            $this->assertDoesNotMatchRegularExpression('/class="alert alert-(success|danger|warning|info)/', $source, $name);
+            $this->assertStringContainsString('<x-alert', $source, $name);
+        }
     }
 
     public function test_styles_and_dismiss_script_are_emitted_once_per_page(): void
