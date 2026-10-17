@@ -170,4 +170,34 @@ class MetaAdsPerformanceTreeTest extends TestCase
         $paused = app(MetaAdsPerformanceTree::class)->page($this->account, $period, 'paused', 'spend', 'desc', 1);
         $this->assertNull($paused['totals']['costPerResultMicros'], 'spend with zero results has no cost per result');
     }
+
+    public function test_the_daily_budget_total_keeps_a_stored_zero_and_is_null_only_when_no_budget_exists(): void
+    {
+        $period = MetaAdsPeriod::resolve('last_30', $this->account);
+        $reader = app(MetaAdsPerformanceTree::class);
+        $budgetOf = fn (?string $status = null) => $reader->page($this->account, $period, $status, 'spend', 'desc', 1)['totals']['dailyBudgetMinor'];
+
+        // Absent: an active campaign with no daily budget (e.g. a lifetime budget) contributes nothing -> unknown.
+        $noBudget = $this->seedMetaCampaign($this->account, 'Lifetime only', ['daily_budget_minor' => null, 'lifetime_budget_minor' => 90_000]);
+        $this->assertNull($budgetOf(), 'no daily budget anywhere: null, not zero');
+
+        // Zero: an explicitly stored zero daily budget is a real zero.
+        $zero = $this->seedMetaCampaign($this->account, 'Zero budget', ['daily_budget_minor' => 0]);
+        $this->assertSame(0, $budgetOf(), 'a stored zero stays zero');
+
+        // Positive: sums active campaigns that have a daily budget.
+        $this->seedMetaCampaign($this->account, 'Funded', ['daily_budget_minor' => 2_500]);
+        $this->assertSame(2_500, $budgetOf());
+
+        // Filtering: a paused budget is not counted, and the paused filter has no active budget to report.
+        $this->seedMetaCampaign($this->account, 'Paused funded', ['status' => 'PAUSED', 'daily_budget_minor' => 9_000]);
+        $this->assertSame(2_500, $budgetOf());
+        $this->assertNull($budgetOf('paused'));
+
+        // Another Business's / account's budgets never leak in.
+        [, $otherBusiness] = $this->metaReportingTenant('Budget Other Co');
+        $otherAccount = $this->metaReportingAccountFor($otherBusiness);
+        $this->seedMetaCampaign($otherAccount, 'Foreign', ['daily_budget_minor' => 77_000]);
+        $this->assertSame(2_500, $budgetOf());
+    }
 }

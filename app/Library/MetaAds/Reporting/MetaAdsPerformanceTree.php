@@ -152,7 +152,9 @@ final class MetaAdsPerformanceTree
             $budget->whereRaw('1 = 0');
         }
 
-        $budgetSum = $budget->sum('daily_budget_minor');
+        // SUM and COUNT together: a stored zero budget (sum 0 over >= 1 rows) is a real zero, no rows at all is unknown (null).
+        $budgetRow = $budget->selectRaw('SUM(daily_budget_minor) AS budget_sum, COUNT(*) AS budget_rows')->first();
+        $dailyBudget = $budgetRow === null || (int) $budgetRow->budget_rows === 0 ? null : (int) $budgetRow->budget_sum;
 
         return [
             'spendMicros' => $spend,
@@ -160,7 +162,7 @@ final class MetaAdsPerformanceTree
             'linkClicks' => $insight === null || (int) $insight->row_count === 0 || $insight->link_clicks === null ? null : (int) $insight->link_clicks,
             'results' => MetaAdsMetricTotals::trim($results),
             'costPerResultMicros' => $cost,
-            'dailyBudgetMinor' => $budgetSum > 0 ? (int) $budgetSum : null,
+            'dailyBudgetMinor' => $dailyBudget,
             'campaignCount' => $matching,
         ];
     }

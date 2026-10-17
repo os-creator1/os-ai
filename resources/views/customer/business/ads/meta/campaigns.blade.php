@@ -98,7 +98,8 @@
                 @endif
 
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-1" data-role="tree-toolbar">
-                    <strong data-role="tree-summary">{{ $result->total }} {{ $result->total === 1 ? 'campaign' : 'campaigns' }} &middot; {{ array_sum(array_map('count', $adSetsByCampaign)) }} ad sets &middot; {{ array_sum(array_map('count', $adsByAdSet)) }} ads <span class="text-caption text-muted fw-normal">on this page</span></strong>
+                    @php $pageCampaigns = count($result->items); @endphp
+                    <strong data-role="tree-summary">{{ $pageCampaigns }} {{ $pageCampaigns === 1 ? 'campaign' : 'campaigns' }} &middot; {{ array_sum(array_map('count', $adSetsByCampaign)) }} ad sets &middot; {{ array_sum(array_map('count', $adsByAdSet)) }} ads <span class="text-caption text-muted fw-normal">on this page @if($result->total > $pageCampaigns) <span data-role="tree-total">(of {{ $result->total }} campaigns, page {{ $result->page }} of {{ $result->lastPage }})</span>@endif</span></strong>
                     <div class="d-flex gap-1">
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-role="expand-all">Expand all</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-role="collapse-all">Collapse all</button>
