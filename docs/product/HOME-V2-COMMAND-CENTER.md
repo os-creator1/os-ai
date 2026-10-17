@@ -126,3 +126,57 @@ Suggestions the actor cannot use are absent (house rule: absent, never disabled)
   Reminder / confirmation sends have no per-Business outcome ledger to read.
 * **Booking attribution:** "booked" counts the booking event; there is no
   lead→booking attribution, so Home makes none.
+
+## Final Home (`agent/home-v2-final-experience`) — supersedes the layout above
+
+The approved final design. `HomeCommandCenter` still decides state, primary move, attention and status; the new
+`HomeV2Presenter` (pure, no queries) turns that model plus the Headlines band into one `v2` block, and
+`customer/dashboard/home/command-center.blade.php` + `home/v2/*` only place it. Nothing is computed in a view, no figure is invented
+and every number is one an existing seam already produced (B5 `BusinessAnalyticsQueries`, the conversation read model, the booking
+reader).
+
+**Desktop, two columns.** Left: greeting, *Needs you*, one compact *Ask MotionGrove* bar (1–2 chips), *Is my business growing?*
+(three cards and one short chart). Right: *Done for you*, *Suggested next*. Tablet and mobile stack the right column under the left.
+Everything the earlier Home showed that is not on this page (Visibility, Conversations, Automations, Quick actions) stays one fold
+down in *More detail*; the cached "What we notice" summary and "Explain this change" sit collapsed under the chart.
+
+**Needs you.** Highest-priority item from the existing attention / Next Best Move engine, with one action that goes straight to the
+records: waiting customers → the inbox's own `filter=waiting` list (the same predicate and Location rule as the count);
+*Draft replies to review* hands the question to the existing assistant (it prepares, nothing is sent). Billing keeps its strip
+above and is not repeated. A failed move read says so. *You're all caught up* is shown only when every read that could contradict
+it succeeded and nothing needs the customer.
+
+**Growth cards** (7 days / This month / 30 days / Custom, the shared range control; one async region):
+
+| Card | Source | Opens |
+|------|--------|-------|
+| Bookings | `HomeBookingReader` (appointments booked, never revenue) | Calendar, week view, for the period (7- and 14-day windows only) |
+| New contacts | B5 new-contacts headline (labelled "contacts", never "leads") | People list filtered by `created_from` / `created_to` |
+| New conversations | conversation read model | Inbox filtered by the same two dates |
+
+Data rules (one place: `HomeV2Presenter::card()`): **—** and a short reason when nothing was ever collected; **First month /
+First period** when there is no earlier period to compare; **Same** for an observed zero in both periods; green **▲ n** / amber
+**▼ n** (the difference, information not an error); **Updating…** while a contact import runs (comparison held back); a source
+that failed is *unavailable*, never zero. Revenue is never a metric: a quiet "Track revenue by connecting payments → Connect" line.
+
+**Chart.** "New contacts per day" from the existing series endpoint for the same range. Hidden behind "Your trend will appear
+after your first week." with under seven observed days, and when every day is zero. There is no Leads/Bookings switch because no
+bookings series exists.
+
+**Filtered destinations.** `created_from` / `created_to` (Business-local dates) are read by `HomeDestinationRange`, which builds the
+same `AnalyticsDateRange` the card used; anything invalid (malformed, reversed, too long) is ignored and the list is unfiltered.
+`ChatBox` also gained `filter=waiting` (`BusinessConversationReadModel::awaitingReplyBoxIds`).
+
+**Done for you** shows only real completed events with dates (`RecentWorkReader`) and *See activity*; **Suggested next** shows at
+most three real setup suggestions (website, follow-ups, payments, email, booking) and never a completed one.
+
+**New business.** When the Business is still in the setup state, has no activity and no failed read, Home shows *Welcome / Get set
+up* instead: a progress count and guided steps derived from saved state through `HomeSetupJourney` plus email, packages and
+follow-ups (`HomeV2Facts`: four single-statement existence checks), one highlighted step, the Ask card and a quiet "Your results will
+show here" note. Nothing is done because a button was pressed; a step the actor cannot act on is listed without a button.
+
+**Cost.** `DashboardQueryBudgetTest` pins the Home at 30 Dashboard-owned reads and 8 analytics reads (was 25 / 7): five single
+existence checks plus B5's import-running check, all flat in rows.
+
+**Tests.** `HomeV2ExperienceTest` (layout, setup Home, dash/Same/First month/▲/▼, destination links, permission, failed source, chart
+gating, filtered lists) plus the updated Dashboards, Assistant and Interactions suites.

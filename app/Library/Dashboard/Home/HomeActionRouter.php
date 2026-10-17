@@ -95,6 +95,18 @@ final class HomeActionRouter
             'automation' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.workflows.create', $scoped, ['automations'], 'automations')) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Set one up',
             ],
+            'contacts-list' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.people.index', $scoped, DashboardLinkGate::CONTACT_PERMISSIONS)) === null ? null : [
+                'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Contacts',
+            ],
+            'email' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.email.show', $scoped, ['manage_business_email', 'chat_box'])) === null ? null : [
+                'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Connect your email',
+            ],
+            'catalog' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.catalog.create', $scoped, ['packages_products'], 'packages_products')) === null ? null : [
+                'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Add packages and prices',
+            ],
+            'payments' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.payments.connect.show', $scoped, ['access_backend'], 'payments_contracts')) === null ? null : [
+                'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Connect payments',
+            ],
             'advisor' => ($u =$this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.growth.advisor', $scoped, ['business_advisor'], 'ai_coo_basic')) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Ask the Advisor',
             ],

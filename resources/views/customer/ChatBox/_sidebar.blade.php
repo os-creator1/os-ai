@@ -37,6 +37,21 @@
         </div>
     </div>
 
+    @php
+        $scopeWaiting = request()->query('filter') === 'waiting';
+        $scopeFrom = request()->query('created_from');
+        $scopeTo = request()->query('created_to');
+        $scopeDays = is_string($scopeFrom) && is_string($scopeTo) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $scopeFrom) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $scopeTo)
+            && checkdate((int) substr($scopeFrom, 5, 2), (int) substr($scopeFrom, 8, 2), (int) substr($scopeFrom, 0, 4))
+            && checkdate((int) substr($scopeTo, 5, 2), (int) substr($scopeTo, 8, 2), (int) substr($scopeTo, 0, 4));
+    @endphp
+    @if($scopeWaiting || $scopeDays)
+        <p class="px-1 py-50 mb-0 text-caption" data-role="home-scope">
+            Showing {{ $scopeWaiting ? 'customers waiting for a reply' : 'conversations started ' . \Carbon\Carbon::parse($scopeFrom)->format('M j') . ' – ' . \Carbon\Carbon::parse($scopeTo)->format('M j') }}
+            · <a href="{{ url()->current() }}">Show all</a>
+        </p>
+    @endif
+
     <!-- Sidebar Users start -->
     <div id="users-list" class="chat-user-list-wrapper list-group">
 

@@ -1553,6 +1553,11 @@
                 case 'unread':
                     $query->where('notification', '!=', 0);
                     break;
+                case 'waiting':
+                    // Exactly the conversations Home counts as waiting for a reply (customer wrote last, past the grace period).
+                    $waiting = app(\App\Library\Conversations\BusinessConversationReadModel::class)->awaitingReplyBoxIds($business, (int) Auth::id());
+                    $query->whereIn('id', $waiting === [] ? [0] : $waiting);
+                    break;
                 case 'read':
                     // A conversation that was never marked unread holds NULL,
                     // not 0 (the column has no default) — it is read too.
@@ -1561,6 +1566,11 @@
                         $q->where('notification', 0)->orWhereNull('notification');
                     });
                     break;
+            }
+
+            // The period a Home card links to: conversations STARTED in that Business-local range (the card's own bounds).
+            if (($created = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($request, $business)) !== null) {
+                $query->where('created_at', '>=', $created->startUtc)->where('created_at', '<', $created->endUtc);
             }
 
             // Every tab is newest-activity-first, not only "Recents": without
@@ -1597,7 +1607,7 @@
                 'chat_box'        => $chat_box,
                 'displayNames'    => ChatBox::displayNamesFor($business, $chat_box->getCollection()),
                 'showEmptyState'  => (int) $page <= 1,
-                'emptyReason'     => $search !== '' ? 'search' : ($filter === 'unread' || $filter === 'read' ? 'filtered' : null),
+                'emptyReason'     => $search !== '' ? 'search' : ($filter === 'unread' || $filter === 'read' || $filter === 'waiting' || $created !== null ? 'filtered' : null),
             ])->render();
         }
 

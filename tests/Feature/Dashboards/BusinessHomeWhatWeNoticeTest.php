@@ -299,10 +299,18 @@ class BusinessHomeWhatWeNoticeTest extends TestCase
         return $this->get(route('user.home', $query));
     }
 
+    /** This suite is about Home: its Business has finished the essential setup, so Home shows results (not the new-business journey). */
+    protected function tenantsFinishSetup(): bool
+    {
+        return true;
+    }
+
     private function whatWeNotice(string $html): string
     {
-        $start = strpos($html, 'data-role="what-we-notice"');
+        // The collapsed "What we notice" section: its summary line, then the labelled block.
+        $start = strpos($html, 'data-role="growth-more"');
         $this->assertNotFalse($start, 'The "What we notice" block renders.');
+        $this->assertNotFalse(strpos($html, 'data-role="what-we-notice"', $start));
 
         return substr($html, $start, 3000);
     }

@@ -13,6 +13,7 @@
     Suggestions this actor cannot use are absent, never disabled. Everything dynamic is rendered by
     public/js/home/ask-assistant.js with textContent.
 --}}
+@php $v2Chips = $v2Chips ?? null; @endphp
 <section class="mb-2 home-ask" aria-labelledby="home-ask-heading" data-band="ask" data-role="home-ask"
          data-assistant-show="{{ $home['ask']['assistant']['show'] }}"
          data-assistant-conversations="{{ $home['ask']['assistant']['conversations'] }}"
@@ -60,19 +61,29 @@
             <label for="home-ask-input" class="visually-hidden">What would you like to ask or have MotionGrove do?</label>
             <textarea id="home-ask-input" name="q" rows="1" class="home-ask-input" maxlength="{{ (int) config('assistant.question_max_chars') }}" autocomplete="off"
                       placeholder="Ask MotionGrove anything about your business..." data-role="ask-input" data-placeholder-open="Ask a follow-up..." required></textarea>
+            @if($v2Chips !== null)
+                {{-- The final Home keeps one or two suggestions inside the bar itself. --}}
+                <ul class="hv2-ask-chips list-unstyled mb-0" data-role="ask-suggestions" aria-label="Suggested questions">
+                    @foreach($v2Chips as $suggestion)
+                        <li><button type="button" class="home-chip" data-role="ask-suggestion" data-suggestion="{{ $suggestion['key'] }}" data-q="{{ $suggestion['prompt'] }}">{{ $suggestion['label'] }}</button></li>
+                    @endforeach
+                </ul>
+            @endif
             <button type="button" class="btn btn-link btn-sm p-0 home-ask-resume" data-role="ask-resume" hidden>Continue your conversation</button>
             <button type="submit" class="btn btn-primary home-ask-submit" data-role="ask-submit" aria-label="Ask"><span class="home-ask-submit-label">Ask</span><span class="home-ask-submit-icon" aria-hidden="true"></span></button>
         </form>
 
-        @php $chips = array_slice(array_values(array_filter($home['ask']['suggestions'], fn ($s) => $s['available'])), 0, 4); @endphp
-        <ul class="list-unstyled d-flex flex-wrap gap-50 mt-1 mb-0" data-role="ask-suggestions" aria-label="Suggested questions">
-            @foreach($chips as $suggestion)
-                <li>
-                    <button type="button" class="home-chip" data-role="ask-suggestion" data-suggestion="{{ $suggestion['key'] }}"
-                            data-q="{{ $suggestion['prompt'] }}">{{ $suggestion['label'] }}</button>
-                </li>
-            @endforeach
-        </ul>
+        @if($v2Chips === null)
+            @php $chips = array_slice(array_values(array_filter($home['ask']['suggestions'], fn ($s) => $s['available'])), 0, $maxChips ?? 4); @endphp
+            <ul class="list-unstyled d-flex flex-wrap gap-50 mt-1 mb-0" data-role="ask-suggestions" aria-label="Suggested questions">
+                @foreach($chips as $suggestion)
+                    <li>
+                        <button type="button" class="home-chip" data-role="ask-suggestion" data-suggestion="{{ $suggestion['key'] }}"
+                                data-q="{{ $suggestion['prompt'] }}">{{ $suggestion['label'] }}</button>
+                    </li>
+                @endforeach
+            </ul>
+        @endif
 
         <div class="home-ask-foot text-caption text-muted" data-role="ask-foot">
             <details data-role="ask-uses-ai">

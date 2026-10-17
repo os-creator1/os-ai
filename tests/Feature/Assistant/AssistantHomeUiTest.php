@@ -55,7 +55,9 @@ class AssistantHomeUiTest extends TestCase
 
         $this->assertStringNotContainsString('data-home-state="setup"', $grow);
         $this->assertStringContainsString('How is my business doing this month?', $grow);
-        $this->assertStringContainsString('Which keywords improved recently?', $grow);
+        // The compact Ask bar shows the first two available suggestions for this stage, not the whole list.
+        $this->assertStringContainsString('What should I focus on next?', $grow);
+        $this->assertSame(2, substr_count($grow, 'data-role="ask-suggestion"'));
         $this->assertStringNotContainsString('What should I set up first?', $grow);
     }
 

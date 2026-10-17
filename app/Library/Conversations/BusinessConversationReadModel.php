@@ -224,6 +224,33 @@ final class BusinessConversationReadModel
     }
 
     /**
+     * The ids of the conversations awaitingReplyCount() counts (same predicate, same Location rule), so the inbox can list exactly
+     * them. Bounded.
+     *
+     * @return array<int, int>
+     */
+    public function awaitingReplyBoxIds(Business $business, int $actorUserId, int $limit = 200, ?CarbonInterface $now = null): array
+    {
+        $now = CarbonImmutable::parse($now ?? CarbonImmutable::now());
+        $graceCutoff = $now->subMinutes($this->graceMinutes());
+        $scanFloor = $now->subDays($this->scanDays());
+
+        $latest = DB::table('chat_box_messages as m')
+            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
+            ->groupBy('m.box_id')
+            ->selectRaw('MAX(m.id) as last_message_id');
+
+        return DB::table('chat_box_messages as last')
+            ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
+            ->where('last.direction', self::DIRECTION_INCOMING)
+            ->where('last.created_at', '<', $graceCutoff)
+            ->limit(max(1, $limit))
+            ->pluck('last.box_id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+    }
+
+    /**
      * Home V2 — the conversations behind awaitingReplyCount(): same predicate (customer wrote
      * last, past the grace period, touched within the scan window), same Location rule, newest
      * customer message first, bounded. One statement plus the one that names them.

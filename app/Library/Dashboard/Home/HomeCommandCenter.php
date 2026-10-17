@@ -61,6 +61,9 @@ final class HomeCommandCenter
         private readonly HomeActionRouter $router,
         private readonly AssistantSuggestions $assistantSuggestions,
         private readonly DashboardLinkGate $links,
+        private readonly HomeV2Presenter $v2,
+        private readonly HomeV2Facts $v2Facts,
+        private readonly HomeBookingReader $bookingReader,
     ) {
     }
 
@@ -180,7 +183,7 @@ final class HomeCommandCenter
             $primary['aiAction'] = $this->assistantSuggestions->draftReplies($offering);
         }
 
-        return [
+        $model = [
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
@@ -205,7 +208,7 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
-            'quietSteps' => $this->quietSteps($actions),
+            'websitePublished' => $status !== null && $status->websiteStatus === 'published',
             'actions' => $actions,
             'ask' => [
                 // Contextual chips: setup help while launching, performance and optimisation once running. Each is the
@@ -223,6 +226,29 @@ final class HomeCommandCenter
                 ],
             ],
         ];
+
+        // The final Home: how the real figures above are SHOWN (see HomeV2Presenter). It reads one bounded fact per setup step and
+        // one aggregate for when bookings could first have been recorded; everything else is already in hand.
+        $headlines = is_array($bands[DashboardSnapshot::BAND_HEADLINES] ?? null) && ! in_array(DashboardSnapshot::BAND_HEADLINES, $failed, true) ? $bands[DashboardSnapshot::BAND_HEADLINES] : null;
+        $billing = $bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] ?? null;
+        $model['v2'] = $this->v2->compose(
+            $model,
+            $headlines,
+            $failed,
+            $this->v2Facts->gather($business),
+            $booking,
+            $booking !== null ? $this->bookingReader->earliestBookingTypeAt($booking['locationIds']) : null,
+            $billing === null ? null : ['text' => (string) $billing->text, 'url' => $billing->url, 'label' => (string) $billing->actionLabel],
+        );
+
+        // A new business is shown setup questions, not performance ones (the same availability rules apply).
+        if ($model['v2']['layout'] === HomeV2Presenter::LAYOUT_SETUP) {
+            $setupChips = array_values(array_filter($this->assistantSuggestions->for($offering, true), fn (array $s): bool => $s['available']));
+            $model['ask']['suggestions'] = $setupChips;
+            $model['v2']['chips'] = array_map(fn (array $s): array => ['key' => $s['key'], 'label' => $s['label'], 'prompt' => $s['prompt']], array_slice($setupChips, 0, 2));
+        }
+
+        return $model;
     }
 
     /**
@@ -255,32 +281,13 @@ final class HomeCommandCenter
     }
 
     /**
-     * "While it's quiet": practical next steps, each only when its page exists for this actor (the router returns null
-     * for a feature the plan lacks or a permission the actor does not hold).
+     * The Business's one-line state, said only when the evidence supports it: an unreadable source is "unavailable",
+     * never "all caught up".
      *
-     * @param  array<string, array<string, mixed>|null>  $actions
-     * @return array<int, array{key: string, title: string, text: string, url: string, drawerUrl: ?string}>
+     * `pill` is the short form beside the greeting; `count` is how many things need the customer.
+     *
+     * @return array{key: string, label: string, pill: string, count: int}
      */
-    private function quietSteps(array $actions): array
-    {
-        $copy = [
-            'booking-type' => ['Create a booking type', 'Let customers book you directly.'],
-            'form' => ['Add a form to your website', 'Turn visitors into contacts.'],
-            'contact' => ['Add a contact', "Bring in someone you're already talking to."],
-        ];
-        $steps = [];
-
-        foreach ($copy as $key => [$title, $text]) {
-            $action = $actions[$key] ?? null;
-
-            if ($action !== null && ($action['fullUrl'] ?? null) !== null) {
-                $steps[] = ['key' => $key, 'title' => $title, 'text' => $text, 'url' => $action['fullUrl'], 'drawerUrl' => $action['drawerUrl'] ?? null];
-            }
-        }
-
-        return $steps;
-    }
-
     /**
      * Whether any read that proves "nothing needs you" failed: the move and growth reads, and the activity, headlines, recent-work and
      * automations bands. One failed read is enough: the status says it could not check instead of claiming all is well.
@@ -298,14 +305,7 @@ final class HomeCommandCenter
             DashboardSnapshot::BAND_AUTOMATIONS,
         ]) !== [];
     }
-    /**
-     * The Business's one-line state, said only when the evidence supports it: an unreadable source is "unavailable",
-     * never "all caught up".
-     *
-     * `pill` is the short form beside the greeting; `count` is how many things need the customer.
-     *
-     * @return array{key: string, label: string, pill: string, count: int}
-     */
+
     private function status(string $state, bool $readinessUnknown, bool $moveFailed, bool $sourcesFailed, int $needing): array
     {
         return match (true) {

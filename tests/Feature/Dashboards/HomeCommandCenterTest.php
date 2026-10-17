@@ -182,7 +182,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertSame(2, $home['primary']['metric']['value'], 'The figure is the awaiting-reply count the Conversations band read.');
         $this->assertSame('waiting for you', $home['primary']['metric']['caption']);
         $this->assertSame(['value', 'caption'], array_keys($home['primary']['metric']), 'Only the current waiting count; no derived denominator.');
-        $this->assertStringContainsString('data-role="next-best-move-metric"', $this->home()->assertOk()->getContent());
+        $this->assertMatchesRegularExpression('/data-role="needs-count">\s*2\s*</', $this->home()->assertOk()->getContent(), 'The card leads with the real waiting count.');
         $this->assertSame('attention', $home['status']['key']);
         $this->assertSame('1 thing needs you', $home['status']['pill']);
     }
@@ -237,7 +237,7 @@ class HomeCommandCenterTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertStringContainsString('data-role="automations-unavailable"', $html, 'An unreadable Automations says so.');
+        $this->assertStringContainsString('data-band="automations" data-band-state="failed"', $html, 'An unreadable Automations says so.');
         $this->assertStringNotContainsString('data-role="home-status" data-status="clear"', $html, 'And Home does not claim all caught up over it.');
     }
 
@@ -258,29 +258,30 @@ class HomeCommandCenterTest extends TestCase
         $this->assertArrayNotHasKey('of', $home['primary']['metric'], 'No "of 3 conversations in this period": that would compare two populations.');
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('data-role="next-best-move-metric"', $html);
-        $this->assertSame(1, preg_match('#<aside[^>]*next-best-move-metric.*?</aside>#s', $html, $aside));
-        $this->assertDoesNotMatchRegularExpression('/\bof\s+\d+\b/i', strip_tags($aside[0]), 'The card shows the waiting count alone.');
+        $this->assertMatchesRegularExpression('/data-role="needs-count">\s*1\s*</', $html);
+        $this->assertSame(1, preg_match('#<section[^>]*data-band="next_best_move".*?</section>#s', $html, $needs));
+        $this->assertDoesNotMatchRegularExpression('/\bof\s+\d+\b/i', strip_tags($needs[0]), 'The card shows the waiting count alone.');
     }
 
-    public function test_a_quiet_business_offers_only_steps_whose_pages_exist_for_the_actor(): void
+    public function test_suggested_next_lists_at_most_three_real_setup_actions_and_never_a_completed_one(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Steps Venue', 'Quiet Steps Account');
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Suggest Venue', 'Suggest Account');
+        $this->website($business, 'published');
         $this->authenticateAs($customer);
 
         $home = $this->command($customer->user);
+        $suggested = $home['v2']['suggested'];
 
-        $this->assertSame('clear', $home['status']['key']);
-        $this->assertNull($home['primary']);
-
-        foreach ($home['quietSteps'] as $step) {
-            $this->assertContains($step['key'], ['booking-type', 'form', 'contact']);
-            $this->assertNotSame('', $step['url'], 'A step is a real page, never a dead row.');
+        $this->assertLessThanOrEqual(3, count($suggested));
+        foreach ($suggested as $item) {
+            $this->assertContains($item['key'], ['website', 'follow_ups', 'payments', 'email', 'booking']);
+            $this->assertNotSame('', $item['url'], 'Each suggestion is a real setup page, never a dead row.');
         }
+        $this->assertNotContains('website', array_column($suggested, 'key'), 'A published website is never suggested again.');
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertSame($home['quietSteps'] !== [], str_contains($html, 'data-band="quiet_steps"'));
-        $this->assertStringNotContainsString('data-band="next_best_move"', $html, 'No empty urgent-action container.');
+        $this->assertSame($suggested !== [], str_contains($html, 'data-band="suggested"'));
+        $this->assertStringNotContainsString('data-band="quiet_steps"', $html);
     }
     // ── Drawers ──────────────────────────────────────────────────────────
 

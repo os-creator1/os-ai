@@ -92,7 +92,7 @@ class CustomerAsyncRegionMarkupTest extends TestCase
 
         // Everything that follows the range lives inside the region it updates.
         $this->assertSame(1, $xpath->query('.//*[@data-role="range-caption"]', $band)->length);
-        $this->assertSame(1, $xpath->query('.//*[@data-role="chart-new-contacts"][@data-series-url]', $band)->length);
+        $this->assertSame(1, $xpath->query('.//*[@data-role="home-chart"][@data-series-url]', $band)->length);
 
         // A POST beside it (Explain this change) is never handled in place.
         foreach ($xpath->query('//form[@data-async-form]') as $marked) {
@@ -117,7 +117,7 @@ class CustomerAsyncRegionMarkupTest extends TestCase
         $selected = $this->onlyElement($xpath, './/select[@name="range"]/option[@selected]', $band);
         $this->assertSame(AnalyticsDateRange::PRESET_LAST_MONTH, $selected->getAttribute('value'));
 
-        $series = $this->onlyElement($xpath, './/*[@data-role="chart-new-contacts"]', $band)->getAttribute('data-series-url');
+        $series = $this->onlyElement($xpath, './/*[@data-role="home-chart"]', $band)->getAttribute('data-series-url');
         $this->assertStringContainsString('range=' . AnalyticsDateRange::PRESET_LAST_MONTH, $series, 'The chart the update re-mounts follows the new range.');
     }
 

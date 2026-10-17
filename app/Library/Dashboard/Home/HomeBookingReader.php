@@ -114,6 +114,23 @@ final class HomeBookingReader
     }
 
     /**
+     * When this actor's Locations first had a booking type: the earliest moment bookings COULD have been recorded. A period that
+     * ended before it was not observed, so it is not a comparison base. One aggregate statement; null when there is none.
+     *
+     * @param  array<int, int>  $locationIds
+     */
+    public function earliestBookingTypeAt(array $locationIds): ?CarbonImmutable
+    {
+        if ($locationIds === []) {
+            return null;
+        }
+
+        $at = BookingType::query()->whereIn('business_location_id', $locationIds)->min('created_at');
+
+        return $at === null ? null : CarbonImmutable::parse((string) $at, (string) config('app.timezone', 'UTC'));
+    }
+
+    /**
      * Whether ANY active booking type anywhere in the Business can take a booking, ignoring which Locations the
      * viewer may reach. A bare boolean: it feeds Launch readiness, which must classify one Business the same way for
      * every viewer, and it carries no Location, type, name or reason, so it discloses nothing an actor-scoped
