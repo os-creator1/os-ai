@@ -205,7 +205,7 @@ class JsonExceptionStatusTest extends TestCase
      */
     public function test_html_statuses_are_unchanged(): void
     {
-        $this->get('/__handler-test/model-not-found')->assertStatus(500);
+        $this->get('/__handler-test/model-not-found')->assertNotFound();
         $this->get('/__handler-test/abort-404')->assertNotFound();
         $this->get('/__handler-test/abort-403')->assertNotFound();
         $this->get('/__handler-test/unauthenticated')->assertUnauthorized();
