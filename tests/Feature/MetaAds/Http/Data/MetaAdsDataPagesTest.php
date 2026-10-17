@@ -142,7 +142,7 @@ class MetaAdsDataPagesTest extends TestCase
 
     private function rowHtml(string $html, string $needle): string
     {
-        preg_match_all('/<tr data-role="[a-z-]+-row">.*?<\/tr>/s', $html, $matches);
+        preg_match_all('/<tr data-role="[a-z-]+-row"[^>]*>.*?<\/tr>/s', $html, $matches);
 
         foreach ($matches[0] as $row) {
             if (str_contains($row, $needle)) {

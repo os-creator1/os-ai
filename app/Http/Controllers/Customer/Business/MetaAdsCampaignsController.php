@@ -9,6 +9,7 @@ use App\Library\MetaAds\MetaAdsDisplay;
 use App\Library\MetaAds\Reporting\MetaAdsCampaignReader;
 use App\Library\MetaAds\Reporting\MetaAdsListInput;
 use App\Library\MetaAds\Reporting\MetaAdsPendingConfirmations;
+use App\Library\MetaAds\Reporting\MetaAdsPerformanceTree;
 use App\Library\MetaAds\Reporting\MetaAdsPeriod;
 use App\Library\Workspace\WorkspaceManager;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -34,6 +35,7 @@ class MetaAdsCampaignsController extends CustomerBaseController
         private readonly WorkspaceManager $workspaceManager,
         private readonly MetaAdsCampaignReader $campaigns,
         private readonly MetaAdsPendingConfirmations $pending,
+        private readonly MetaAdsPerformanceTree $tree,
     ) {
     }
 
@@ -50,16 +52,24 @@ class MetaAdsCampaignsController extends CustomerBaseController
         $sort = MetaAdsListInput::sort($request->query('sort'), MetaAdsCampaignReader::SORTS);
         $direction = MetaAdsListInput::direction($request->query('dir'), $sort);
         $status = MetaAdsListInput::status($request->query('status'));
-        $result = $this->campaigns->page($account, $period, $status, $sort, $direction, MetaAdsListInput::page($request->query('page')));
+        $tree = $this->tree->page($account, $period, $status, $sort, $direction, MetaAdsListInput::page($request->query('page')));
+        $result = $tree['result'];
+
+        // Pause / resume confirmations are keyed by uid across all three levels of the visible tree.
+        $adSets = array_merge(...array_values($tree['adSetsByCampaign'] ?: [[]]));
+        $ads = array_merge(...array_values($tree['adsByAdSet'] ?: [[]]));
 
         return view('customer.business.ads.meta.campaigns', $data + [
             'period' => $period,
             'result' => $result,
+            'tree' => $tree,
             'sort' => $sort,
             'direction' => $direction,
             'statusFilter' => $status,
             'resultLabel' => MetaAdsDisplay::resultLabel($account->result_action_type),
-            'pending' => $this->pending->forCampaigns($account, array_map(fn ($row) => $row->uid, $result->items)),
+            'pending' => $this->pending->forCampaigns($account, array_map(fn ($row) => $row->uid, $result->items))
+                + $this->pending->forAdSets($account, array_map(fn ($row) => $row->uid, $adSets))
+                + $this->pending->forAds($account, array_map(fn ($row) => $row->uid, $ads)),
             'returnQuery' => MetaAdsListInput::returnQuery($request->query()),
         ]);
     }

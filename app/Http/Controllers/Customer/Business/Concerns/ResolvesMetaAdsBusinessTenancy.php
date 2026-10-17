@@ -183,7 +183,7 @@ trait ResolvesMetaAdsBusinessTenancy
 
         $definition = [
             'overview' => ['Overview', $prefix . 'index', false],
-            'campaigns' => ['Campaigns', $prefix . 'campaigns.index', true],
+            'campaigns' => ['Performance', $prefix . 'campaigns.index', true],
             'ad-sets' => ['Ad sets', $prefix . 'ad-sets.index', true],
             'ads' => ['Ads', $prefix . 'ads.index', true],
             'recommendations' => ['Recommendations', $prefix . 'recommendations.index', true],

@@ -122,6 +122,26 @@ class AdsGoalsPageTest extends TestCase
         $this->assertNull(MetaAdsCampaign::query()->find($campaign->id)->acquisition_purpose_id);
     }
 
+    public function test_the_channel_filter_message_exists_only_for_a_goal_that_has_assigned_campaigns(): void
+    {
+        [$business, $workspace, $purpose, $account] = $this->setUpGoal();
+
+        // No campaign assigned: the goal already says so once, and there is no second, filter-specific message.
+        $empty = $this->get($this->url($workspace, $business))->assertOk()->getContent();
+        $this->assertSame(1, substr_count($empty, 'data-role="no-assigned"'));
+        $this->assertSame(0, substr_count($empty, '<p class="text-muted mb-1" data-role="filter-empty"'), 'the filter message element is not rendered');
+
+        // With an assigned campaign, picking the other channel can leave nothing to show: that message exists (hidden until then).
+        $campaign = $this->seedMetaCampaign($account, 'VBE parents - autumn');
+        $this->post(route('customer.workspaces.businesses.ads.goals.campaigns', [$workspace->uid, $business->uid]), [
+            'provider' => 'meta', 'campaign_uid' => $campaign->uid, 'purpose_uid' => $purpose->uid,
+        ])->assertRedirect();
+
+        $assigned = $this->get($this->url($workspace, $business))->assertOk()->getContent();
+        $this->assertSame(0, substr_count($assigned, 'data-role="no-assigned"'));
+        $this->assertSame(1, substr_count($assigned, '<p class="text-muted mb-1" data-role="filter-empty" hidden>'));
+    }
+
     public function test_a_campaign_name_never_assigns_a_goal(): void
     {
         [$business, , $purpose, $account] = $this->setUpGoal();
