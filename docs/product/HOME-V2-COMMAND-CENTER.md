@@ -150,7 +150,7 @@ it succeeded and nothing needs the customer.
 
 | Card | Source | Opens |
 |------|--------|-------|
-| Bookings | `HomeBookingReader` (appointments booked, never revenue) | Calendar, week view, for the period (7- and 14-day windows only) |
+| Bookings | `HomeBookingReader` (appointments booked, never revenue) | `calendar/bookings`: the appointments CREATED in the period across the actor's reachable Locations (cancelled excluded), any visit date |
 | New contacts | B5 new-contacts headline (labelled "contacts", never "leads") | People list filtered by `created_from` / `created_to` |
 | New conversations | conversation read model | Inbox filtered by the same two dates |
 
@@ -167,7 +167,9 @@ bookings series exists.
 same `AnalyticsDateRange` the card used; anything invalid (malformed, reversed, too long) is ignored and the list is unfiltered.
 `ChatBox` also gained `filter=waiting` (`BusinessConversationReadModel::awaitingReplyBoxQuery`, a sub-select applied to the paginated query, so no cap hides a match; pinned threads obey the same filters).
 
-**Done for you** shows only real completed events with dates (`RecentWorkReader`) and *See activity*; **Suggested next** shows at
+**New business vs established.** The setup Home needs a PROVEN absence of history (`HomeV2Facts::history`: no contact, conversation or appointment ever, three existence checks); recent months alone never send an established Business back to setup, and unreadable history is unknown, not new.
+
+**Done for you** (selected from `completedWork`, before the handling cap) shows only real completed events with dates (`RecentWorkReader`) and *See activity*; **Suggested next** shows at
 most three real setup suggestions (website, follow-ups, payments, email, booking) and never a completed one.
 
 **New business.** When the Business is still in the setup state, has no activity and no failed read, Home shows *Welcome / Get set

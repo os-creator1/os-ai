@@ -145,6 +145,9 @@ final class HomeActionRouter
             'automation' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.workflows.create', $scoped, ['automations'], 'automations')) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Set one up',
             ],
+            'bookings-list' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.calendar.bookings', $scoped, ['access_backend'], 'calendar')) === null ? null : [
+                'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Bookings',
+            ],
             'contacts-list' => ($u = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.people.index', $scoped, ['view_contact'])) === null ? null : [
                 'drawer' => null, 'drawerUrl' => null, 'fullUrl' => $u, 'label' => 'Contacts',
             ],

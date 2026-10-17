@@ -176,6 +176,14 @@ final class HomeBookingReader
         return $ready;
     }
 
+    /** Whether any Location of this Business has EVER had an appointment (any status or date): one existence check, for telling established from new. */
+    public function hasAnyAppointment(Business $business): bool
+    {
+        return Appointment::query()
+            ->whereIn('business_location_id', \Illuminate\Support\Facades\DB::table('business_locations')->where('business_id', $business->id)->select('id'))
+            ->exists();
+    }
+
     /**
      * Appointments BOOKED (a row was created) in each half-open window, over
      * the given Locations, excluding ones since cancelled. One statement.

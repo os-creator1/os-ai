@@ -166,6 +166,12 @@ class BusinessAnalyticsQueries
         return new CampaignKpis($createdInRange, $snapshot);
     }
 
+    /** Whether this Business has EVER had a contact (any status, any date): one indexed existence check, for telling established from new. */
+    public function hasAnyContact(Business $business): bool
+    {
+        return DB::table('contacts')->where('business_id', $business->id)->exists();
+    }
+
     /**
      * Whether a contact import for this Business is queued or running right now (and fresh: one stuck for hours is stale, not
      * "updating"). Home holds a contacts comparison back while it is, instead of comparing a half-imported figure.

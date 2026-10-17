@@ -208,6 +208,7 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
+            'completedWork' => $this->completedWork($bands),
             // null = the status read failed: UNKNOWN, never "not published".
             'websitePublished' => $status === null || ! $status->known ? null : $status->websiteStatus === 'published',
             'actions' => $actions,
@@ -236,7 +237,7 @@ final class HomeCommandCenter
             $model,
             $headlines,
             $failed,
-            $this->v2Facts->gather($business),
+            $this->v2Facts->gather($business, $state === self::STATE_SETUP),
             $booking,
             $booking !== null ? $this->bookingReader->earliestBookingTypeAt($booking['locationIds']) : null,
             $billing === null ? null : ['text' => (string) $billing->text, 'url' => $billing->url, 'label' => (string) $billing->actionLabel],
@@ -522,6 +523,30 @@ final class HomeCommandCenter
      * @param  array<string, mixed>|null  $growth
      * @return array<int, array<string, mixed>>
      */
+    /**
+     * Genuinely completed work, in the order RecentWorkReader already gives it, selected BEFORE any cap: "What MotionGrove is handling" is a
+     * capped mix of approvals, progress and completions, so a few pending items must never push real completed work out of Done for you.
+     * Failures are not completions.
+     *
+     * @param  array<string, mixed>  $bands
+     * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
+     */
+    private function completedWork(array $bands): array
+    {
+        $recent = $bands[DashboardSnapshot::BAND_RECENT_WORK] ?? null;
+        $rows = [];
+
+        foreach (is_array($recent) ? $recent['items'] : [] as $item) {
+            if ($item['key'] === 'automation_failed') {
+                continue;
+            }
+
+            $rows[] = ['key' => $item['key'], 'text' => $item['text'], 'status' => 'completed', 'at' => $item['at'], 'url' => $item['url']];
+        }
+
+        return $rows;
+    }
+
     private function handling(array $bands, ?array $growth): array
     {
         $rows = [];

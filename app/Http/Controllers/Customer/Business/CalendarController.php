@@ -131,6 +131,42 @@ class CalendarController extends Controller
     }
 
     /**
+     * The appointments BOOKED (created) in a period, across every Location the actor may reach: the records behind Home's Bookings card,
+     * which counts by creation, not by the day of the visit (so a booking made today for next month is here, and the schedule's 14-day window
+     * cannot hold a longer period). Cancelled bookings are not counted by the card and are not listed. An invalid or missing range is ignored:
+     * the list is simply every booking, never an error and never wider than the actor's Locations.
+     */
+    public function bookings(Request $request, string $workspaceUid, string $businessUid): View
+    {
+        [$workspace, $business] = $this->tenancy($workspaceUid, $businessUid);
+
+        $locations = $this->schedule->accessibleLocations($business, (int) Auth::id());
+        abort_if($locations->isEmpty(), 404);
+
+        $query = Appointment::query()
+            ->whereIn('business_location_id', $locations->pluck('id')->all())
+            ->where('status', '!=', \App\Enums\Calendar\AppointmentStatus::Cancelled->value)
+            ->with(['bookingType:id,name', 'location:id,uid,name']);
+
+        $created = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($request, $business);
+
+        if ($created !== null) {
+            $query->where('created_at', '>=', $created->startUtc)->where('created_at', '<', $created->endUtc);
+        }
+
+        $appointments = $query->orderByDesc('created_at')->orderByDesc('id')->paginate(25)->withQueryString();
+
+        return view('customer.business.calendar.bookings', [
+            'workspace' => $workspace,
+            'business' => $business,
+            'appointments' => $appointments,
+            'contacts' => $this->schedule->contactSummaries($business, $appointments->getCollection()),
+            'timezone' => $this->timezoneFor($business),
+            'created' => $created,
+        ]);
+    }
+
+    /**
      * Day or week view of ONE authorized Location.
      *
      * Navigation (previous / next / today / day↔week) is plain links carrying

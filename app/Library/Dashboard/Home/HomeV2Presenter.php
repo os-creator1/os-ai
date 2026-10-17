@@ -58,7 +58,11 @@ final class HomeV2Presenter
         // A genuinely new business gets the setup Home: the existing HomeSetupJourney says its essentials are still unfinished, nothing
         // has happened yet and nothing needs it. A Business with real activity is never held there by optional setup; one whose essentials
         // are done just sees what is suggested next; one with something that needs it sees that first.
-        $setupLayout = $home['state'] === HomeCommandCenter::STATE_SETUP && ! $active && ! $headlinesFailed && $welcome['remaining'] > 0 && $needsYou['kind'] === 'caught_up';
+        // History decides it, not the two reporting periods: a Business that ever had a contact, a conversation or an appointment is
+        // established and keeps the operational Home however quiet the recent months were. Only a PROVEN absence of history (false, not
+        // unknown) is genuinely new.
+        $setupLayout = $home['state'] === HomeCommandCenter::STATE_SETUP && ! $active && ($facts['hasHistory'] ?? null) === false
+            && ! $headlinesFailed && $welcome['remaining'] > 0 && $needsYou['kind'] === 'caught_up';
 
         return [
             'layout' => $setupLayout ? self::LAYOUT_SETUP : self::LAYOUT_HOME,
@@ -215,7 +219,7 @@ final class HomeV2Presenter
             // active. A period that ended before the first type was created was not observed at all.
             $set = $booking !== null && (int) $booking['typeCount'] > 0 && $earliestBookingType !== null && $earliestBookingType < $range->endUtc;
             $previousObserved = $set && $earliestBookingType <= $previous->startUtc;
-            $cards[] = $this->card('bookings', 'Bookings', $items['appointments_booked'], $set, $previousObserved, false, $range, 'No bookings yet', $this->calendarUrl($actions['upcoming']['fullUrl'] ?? null, $range));
+            $cards[] = $this->card('bookings', 'Bookings', $items['appointments_booked'], $set, $previousObserved, false, $range, 'No bookings yet', $this->rangeUrl($actions['bookings-list']['fullUrl'] ?? null, $from, $to));
         }
 
         // 2 · New contacts (the metric counts contacts added, so that is its truthful name — not "leads")
@@ -273,18 +277,6 @@ final class HomeV2Presenter
         return $base === null ? null : $base . (str_contains($base, '?') ? '&' : '?') . http_build_query(['created_from' => $from, 'created_to' => $to]);
     }
 
-    /** The calendar shows a day/week window (7, 10 or 14 days) anchored at a date: anchored at the period's first day. */
-    private function calendarUrl(?string $base, AnalyticsDateRange $range): ?string
-    {
-        if ($base === null) {
-            return null;
-        }
-
-        $days = $range->days() <= 7 ? 7 : 14;
-
-        return $base . (str_contains($base, '?') ? '&' : '?') . http_build_query(['view' => 'week', 'days' => $days, 'date' => $range->startLocal->format('Y-m-d')]);
-    }
-
     /** @return array{url: string, label: string}|null */
     private function revenuePrompt(array $actions, array $facts): ?array
     {
@@ -338,7 +330,8 @@ final class HomeV2Presenter
         $rows = [];
         $seen = [];
 
-        foreach ($home['handling'] as $row) {
+        // The completed list is selected before the handling cap (HomeCommandCenter::completedWork), never from the capped mix.
+        foreach ($home['completedWork'] ?? [] as $row) {
             // Only outcomes that are PROVEN complete; each appears once.
             if ($row['status'] !== 'completed') {
                 continue;

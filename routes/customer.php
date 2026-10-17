@@ -1989,6 +1989,8 @@
         // (no Location in the path): it lists ONLY the Locations the actor may
         // reach and, when that is exactly one, redirects straight to it.
         Route::get('{workspaceUid}/businesses/{businessUid}/calendar', 'Business\CalendarController@index')->name('businesses.calendar.index');
+        // Home's Bookings card: the appointments BOOKED (created) in a period, across the Locations the actor may reach.
+        Route::get('{workspaceUid}/businesses/{businessUid}/calendar/bookings', 'Business\CalendarController@bookings')->name('businesses.calendar.bookings');
 
         /*
         |----------------------------------------------------------------

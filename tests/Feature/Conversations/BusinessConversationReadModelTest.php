@@ -62,6 +62,7 @@ class BusinessConversationReadModelTest extends TestCase
             'awaitingReplyBoxQuery',
             'awaitingReplyConversations',
             'awaitingReplyCount',
+            'hasAnyConversation',
             'incomingCount',
             'periodCounts',
             'repliedCount',

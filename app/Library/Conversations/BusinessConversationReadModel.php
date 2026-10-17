@@ -223,6 +223,12 @@ final class BusinessConversationReadModel
             ->count();
     }
 
+    /** Whether this Business has EVER had a conversation (any age): one existence check, for telling established from new. */
+    public function hasAnyConversation(Business $business): bool
+    {
+        return DB::table('chat_boxes')->where('business_id', $business->id)->exists();
+    }
+
     /**
      * The conversations awaitingReplyCount() counts (same predicate, same Location rule), as a sub-select of their ids, so the inbox
      * can constrain its own paginated query with it: every matching conversation is reachable, none is cut off by a cap.
