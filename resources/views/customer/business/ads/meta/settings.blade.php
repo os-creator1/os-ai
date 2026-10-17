@@ -57,7 +57,11 @@
     @php
         $isActive = $connection !== null && $connection->isActive();
         $expiryUnknown = $isActive && $tokenStatus?->expiresAt === null;
-        $showReconnect = $metaCanConnect && ($isActive || in_array($state, ['expired', 'revoked'], true));
+        // Mirrors MetaAdsConnectionController::connect(): an ACTIVE connection may only be re-authorised when the token
+        // is due (inside the warning window or with no known expiry: needsReauthSoon) or ads_management was not granted;
+        // otherwise the backend refuses, so no button is offered. Expired / revoked connections can always reconnect.
+        $reauthAllowed = $isActive && $tokenStatus !== null && ($tokenStatus->needsReauthSoon || ! $tokenStatus->canManage);
+        $showReconnect = $metaCanConnect && ($reauthAllowed || in_array($state, ['expired', 'revoked'], true));
     @endphp
     <x-card :padded="true" class="mb-2" data-section="connection">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-1">

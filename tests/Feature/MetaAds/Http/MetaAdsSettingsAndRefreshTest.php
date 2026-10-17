@@ -91,6 +91,45 @@ class MetaAdsSettingsAndRefreshTest extends TestCase
         $this->assertStringContainsString('data-role="reconnect-meta-ads"', $html);
     }
 
+    public function test_reconnect_is_offered_exactly_when_the_backend_would_allow_it(): void
+    {
+        $cases = [
+            // label => [connection overrides, button expected]
+            'healthy active' => [['token_expires_at' => now()->addDays(50)], false],
+            'token due soon' => [['token_expires_at' => now()->addDays(3)], true],
+            'ads_management not granted' => [['granted_scopes' => 'ads_read'], true],
+            'unknown expiry' => [['token_expires_at' => null], true],
+            'expired' => [['state' => \App\Enums\MetaAds\MetaConnectionState::Expired, 'access_token_encrypted' => null, 'token_expires_at' => now()->subDay()], true],
+            'revoked' => [['state' => \App\Enums\MetaAds\MetaConnectionState::Revoked, 'access_token_encrypted' => null], true],
+        ];
+
+        foreach ($cases as $label => [$overrides, $expectButton]) {
+            [$customer, $business, $workspace] = $this->metaHttpTenant(name: 'Reconnect ' . $label);
+            $this->metaSelected($business);
+            \App\Models\BusinessMetaConnection::query()->where('business_id', $business->id)->update($this->connectionColumns($overrides));
+            $this->asMetaUser($customer);
+
+            $html = $this->get($this->metaPage($workspace, $business, 'settings'))->assertOk()->getContent();
+            $offered = str_contains($html, 'data-role="reconnect-meta-ads"');
+            $this->assertSame($expectButton, $offered, "[{$label}] button offered");
+
+            // The backend agrees: an offered button starts a re-authorisation, a hidden one would only produce an error.
+            $response = $this->post($this->metaPage($workspace, $business, 'connect'));
+            if ($expectButton) {
+                $this->assertStringStartsWith('https://www.facebook.test/', (string) $response->headers->get('Location'), "[{$label}] backend allows it");
+            } else {
+                $response->assertRedirect($this->metaPage($workspace, $business));
+                $this->assertSame('error', session('status'), "[{$label}] backend refuses it");
+            }
+        }
+    }
+
+    /** @param  array<string, mixed>  $overrides */
+    private function connectionColumns(array $overrides): array
+    {
+        return array_map(fn ($value) => $value instanceof \BackedEnum ? $value->value : $value, $overrides);
+    }
+
     public function test_an_expired_connection_shows_reconnect_and_hides_the_target_form(): void
     {
         [$customer, $business, $workspace] = $this->metaHttpTenant();
