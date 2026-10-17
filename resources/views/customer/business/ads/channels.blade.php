@@ -117,9 +117,9 @@
                             <div class="d-flex justify-content-between text-caption"><span class="text-label">Monthly budget</span>
                                 <span data-role="channel-pacing" data-status="{{ $channel['pacing_status'] }}">{{ $channel['pacing_text'] }}</span></div>
                             @if($pd && $pd['spend_proportion'] !== null && $pd['elapsed_proportion'] !== null)
-                                @php $used = max(0, min(100, $pd['spend_proportion'] * 100)); $gone = max(0, min(100, $pd['elapsed_proportion'] * 100)); @endphp
-                                <div class="ov-meter my-50" role="img" aria-label="{{ round($used) }}% of the monthly budget used, {{ round($gone) }}% of the month gone"><span style="width: {{ $used }}%"></span><i style="left: {{ $gone }}%"></i></div>
-                                <div class="d-flex justify-content-between text-caption text-muted"><span>{{ round($used) }}% of {{ \App\Library\MetaAds\MetaAdsMoney::format($pd['monthly_target_micros'], $channel['currency']) }} used</span><span>Today: {{ round($gone) }}% of month</span></div>
+                                @php $usedPct = max(0, $pd['spend_proportion'] * 100); $used = min(100, $usedPct); $gone = max(0, min(100, $pd['elapsed_proportion'] * 100)); @endphp
+                                <div class="ov-meter my-50" role="img" aria-label="{{ round($usedPct) }}% of the monthly budget used, {{ round($gone) }}% of the month gone"><span style="width: {{ $used }}%"></span><i style="left: {{ $gone }}%"></i></div>
+                                <div class="d-flex justify-content-between text-caption text-muted"><span>{{ round($usedPct) }}% of {{ \App\Library\MetaAds\MetaAdsMoney::format($pd['monthly_target_micros'], $channel['currency']) }} used</span><span>Today: {{ round($gone) }}% of month</span></div>
                                 @if($pd['projected_micros'] !== null)
                                     <div class="text-caption text-muted">{{ $pd['low_confidence'] ? 'Early estimate: at' : 'At' }} this rate it ends near {{ \App\Library\MetaAds\MetaAdsMoney::format($pd['projected_micros'], $channel['currency']) }}</div>
                                 @endif

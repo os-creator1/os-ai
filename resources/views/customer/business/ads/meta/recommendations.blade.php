@@ -80,13 +80,14 @@
                                 </ul>
                                 @if($pacing && $pacing['spend_proportion'] !== null && $pacing['elapsed_proportion'] !== null)
                                     @php
-                                        $used = max(0, min(100, (float) $pacing['spend_proportion'] * 100));
+                                        $usedPct = max(0, (float) $pacing['spend_proportion'] * 100);   // real utilisation, may exceed 100
+                                        $used = min(100, $usedPct);                                      // bar width only
                                         $elapsed = max(0, min(100, (float) $pacing['elapsed_proportion'] * 100));
                                     @endphp
-                                    <div class="rec-meter mb-1" role="img" aria-label="{{ round($used) }}% of the monthly budget used, {{ round($elapsed) }}% of the month gone" data-role="pacing-meter">
+                                    <div class="rec-meter mb-1" role="img" aria-label="{{ round($usedPct) }}% of the monthly budget used, {{ round($elapsed) }}% of the month gone" data-role="pacing-meter">
                                         <span style="width: {{ $used }}%"></span><i style="left: {{ $elapsed }}%"></i>
                                     </div>
-                                    <div class="d-flex justify-content-between text-caption text-muted mb-1"><span>{{ round($used) }}% of budget used</span><span>Today: {{ round($elapsed) }}% of month</span></div>
+                                    <div class="d-flex justify-content-between text-caption text-muted mb-1"><span>{{ round($usedPct) }}% of budget used</span><span>Today: {{ round($elapsed) }}% of month</span></div>
                                 @endif
                                 <p class="text-caption text-muted mb-1" data-role="recommendation-basis">{{ $card['basis_line'] }}</p>
                                 @if($card['action_url'])
