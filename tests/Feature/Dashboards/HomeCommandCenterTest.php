@@ -206,6 +206,27 @@ class HomeCommandCenterTest extends TestCase
         $this->assertStringNotContainsString('data-band="quiet_steps"', $html, 'No quiet-time suggestions over a billing problem.');
     }
 
+    /** @return array<string, array{0: string}> */
+    public static function unreadableBands(): array
+    {
+        return [
+            'move' => [DashboardSnapshot::BAND_NEXT_BEST_MOVE],
+            'growth' => [DashboardSnapshot::BAND_GROWTH],
+            'activity' => [DashboardSnapshot::BAND_ACTIVITY],
+            'headlines' => [DashboardSnapshot::BAND_HEADLINES],
+            'recent work' => [DashboardSnapshot::BAND_RECENT_WORK],
+            'automations' => [DashboardSnapshot::BAND_AUTOMATIONS],
+        ];
+    }
+
+    /** @dataProvider unreadableBands */
+    public function test_any_unreadable_proof_of_all_clear_is_a_failed_read(string $band): void
+    {
+        $this->assertTrue(HomeCommandCenter::readFailed([$band]), "A failed {$band} read must stop Home saying all caught up.");
+        $this->assertFalse(HomeCommandCenter::readFailed([]));
+        $this->assertFalse(HomeCommandCenter::readFailed([DashboardSnapshot::BAND_VISIBILITY]), 'A band that proves nothing about all clear does not count.');
+    }
+
     public function test_an_automations_read_failure_stays_visible_in_the_quiet_layout(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Fail Venue', 'Quiet Fail Account');
@@ -216,8 +237,8 @@ class HomeCommandCenterTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertStringContainsString('data-band="quiet_steps"', $html, 'The layout under test is the quiet one.');
-        $this->assertStringContainsString('data-role="automations-unavailable"', $html, 'An unreadable Automations says so even when there is no column for it.');
+        $this->assertStringContainsString('data-role="automations-unavailable"', $html, 'An unreadable Automations says so.');
+        $this->assertStringNotContainsString('data-role="home-status" data-status="clear"', $html, 'And Home does not claim all caught up over it.');
     }
 
     public function test_the_waiting_figure_is_never_compared_with_a_different_population(): void

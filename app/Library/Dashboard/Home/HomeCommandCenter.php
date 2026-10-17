@@ -125,9 +125,8 @@ final class HomeCommandCenter
 
         // ── Needs your attention ───────────────────────────────────────────
         $attentionItems = $this->attentionItems($context, $user, $entitlements, $scoped, $attention, $primaryAttentionType, $growth, $primaryUid, $booking, $actions);
-        $sourcesFailed = $status === null
-            || in_array(DashboardSnapshot::BAND_NEXT_BEST_MOVE, $failed, true)
-            || in_array(DashboardSnapshot::BAND_GROWTH, $failed, true);
+        // A band Home could not read leaves "nothing needs you" unproven (see readFailed()).
+        $sourcesFailed = $status === null || self::readFailed($failed);
         $visible = max(1, (int) config('home.attention_visible', 3));
 
         // ── State ──────────────────────────────────────────────────────────
@@ -192,7 +191,7 @@ final class HomeCommandCenter
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
-            'caughtUp' => $primary === null && ! $nbmFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
+            'caughtUp' => $primary === null && ! $nbmFailed && ! $sourcesFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
             'queueLabel' => is_array($growth) ? (string) $growth['open_count'] : (string) ($nbm['recommendations']['label'] ?? '0'),
@@ -282,6 +281,23 @@ final class HomeCommandCenter
         return $steps;
     }
 
+    /**
+     * Whether any read that proves "nothing needs you" failed: the move and growth reads, and the activity, headlines, recent-work and
+     * automations bands. One failed read is enough: the status says it could not check instead of claiming all is well.
+     *
+     * @param  array<int, string>  $failed  the presenter's failed band keys
+     */
+    public static function readFailed(array $failed): bool
+    {
+        return array_intersect($failed, [
+            DashboardSnapshot::BAND_NEXT_BEST_MOVE,
+            DashboardSnapshot::BAND_GROWTH,
+            DashboardSnapshot::BAND_ACTIVITY,
+            DashboardSnapshot::BAND_HEADLINES,
+            DashboardSnapshot::BAND_RECENT_WORK,
+            DashboardSnapshot::BAND_AUTOMATIONS,
+        ]) !== [];
+    }
     /**
      * The Business's one-line state, said only when the evidence supports it: an unreadable source is "unavailable",
      * never "all caught up".

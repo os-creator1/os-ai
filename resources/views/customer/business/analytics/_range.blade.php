@@ -40,6 +40,8 @@
         </select>
     </div>
     @if($segmented)
+        {{-- Without JavaScript the Custom toggle cannot reveal anything, so the date fields and Apply are simply shown: an ordinary GET form. --}}
+        <noscript><style>[data-role="custom-dates"][hidden] { display: block !important; } [data-role="range-custom-toggle"] { display: none !important; }</style></noscript>
         <div class="home-segmented" role="group" aria-label="Date range" data-role="range-segments">
             @foreach($segmentPresets as $value => $label)
                 <button type="submit" name="range" value="{{ $value }}" class="{{ $range->preset === $value ? 'is-active' : '' }}" aria-pressed="{{ $range->preset === $value ? 'true' : 'false' }}">{{ $label }}</button>
