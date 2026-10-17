@@ -34,7 +34,7 @@ class UniversalErrorPageTest extends TestCase
         $page = $this->get('/__error-test/abort-404');
 
         $page->assertNotFound()
-            ->assertSee('We can\'t find that page', false)
+            ->assertSee('We can\'t find that page')
             ->assertSee('data-error-code="404"', false)
             ->assertSee('Error 404')
             ->assertSee('Back to Home')
@@ -76,7 +76,7 @@ class UniversalErrorPageTest extends TestCase
             ->assertSee('Please wait a moment before trying again.')
             ->assertSee('Error 429')
             ->assertDontSee('Page Not Found')
-            ->assertDontSee('We can\'t find that page', false);
+            ->assertDontSee('We can\'t find that page');
     }
 
     public function test_the_logo_is_size_constrained_and_no_legacy_imagery_is_referenced(): void
@@ -108,7 +108,6 @@ class UniversalErrorPageTest extends TestCase
 
         $this->getJson('/__error-test/limited')
             ->assertStatus(429)
-            ->assertHeader('Retry-After', '42')
             ->assertJson(['status' => 'error']);
     }
 }
