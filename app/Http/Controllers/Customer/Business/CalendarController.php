@@ -95,9 +95,12 @@ class CalendarController extends Controller
      * somewhere. That actor — already past the Business tenancy check above —
      * sees an empty picker that says a Location is needed first.
      */
-    public function index(string $workspaceUid, string $businessUid): View|RedirectResponse
+    public function index(Request $request, string $workspaceUid, string $businessUid): View|RedirectResponse
     {
         [$workspace, $business] = $this->tenancy($workspaceUid, $businessUid);
+
+        // The window a link asked for (Home's Bookings card) survives the redirect and the Location picker; show() validates each value.
+        $window = array_filter($request->only(['view', 'days', 'date']), fn ($value): bool => is_string($value) && $value !== '');
 
         $locations = $this->schedule->accessibleLocations($business, (int) Auth::id());
 
@@ -116,13 +119,50 @@ class CalendarController extends Controller
         if ($locations->count() === 1) {
             return redirect()->route('customer.workspaces.businesses.calendar.schedule', [
                 $workspaceUid, $businessUid, $locations->first()->uid,
-            ]);
+            ] + $window);
         }
 
         return view('customer.business.calendar.picker', [
             'workspace' => $workspace,
             'business' => $business,
             'locations' => $locations,
+            'window' => $window,
+        ]);
+    }
+
+    /**
+     * The appointments BOOKED (created) in a period, across every Location the actor may reach: the records behind Home's Bookings card,
+     * which counts by creation, not by the day of the visit (so a booking made today for next month is here, and the schedule's 14-day window
+     * cannot hold a longer period). Cancelled bookings are not counted by the card and are not listed. An invalid or missing range is ignored:
+     * the list is simply every booking, never an error and never wider than the actor's Locations.
+     */
+    public function bookings(Request $request, string $workspaceUid, string $businessUid): View
+    {
+        [$workspace, $business] = $this->tenancy($workspaceUid, $businessUid);
+
+        $locations = $this->schedule->accessibleLocations($business, (int) Auth::id());
+        abort_if($locations->isEmpty(), 404);
+
+        $query = Appointment::query()
+            ->whereIn('business_location_id', $locations->pluck('id')->all())
+            ->where('status', '!=', \App\Enums\Calendar\AppointmentStatus::Cancelled->value)
+            ->with(['bookingType:id,name', 'location:id,uid,name']);
+
+        $created = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($request, $business);
+
+        if ($created !== null) {
+            $query->where('created_at', '>=', $created->startUtc)->where('created_at', '<', $created->endUtc);
+        }
+
+        $appointments = $query->orderByDesc('created_at')->orderByDesc('id')->paginate(25)->withQueryString();
+
+        return view('customer.business.calendar.bookings', [
+            'workspace' => $workspace,
+            'business' => $business,
+            'appointments' => $appointments,
+            'contacts' => $this->schedule->contactSummaries($business, $appointments->getCollection()),
+            'timezone' => $this->timezoneFor($business),
+            'created' => $created,
         ]);
     }
 

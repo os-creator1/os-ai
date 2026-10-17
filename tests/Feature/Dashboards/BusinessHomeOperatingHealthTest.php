@@ -648,8 +648,8 @@ class BusinessHomeOperatingHealthTest extends TestCase
         $order = $this->bandOrder($this->home()->assertOk()->getContent());
 
         $this->assertSame(
-            ['headlines', 'automations', 'visibility', 'conversations', 'actions'],
-            array_values(array_filter($order, fn (string $band) => in_array($band, ['headlines', 'automations', 'visibility', 'conversations', 'actions'], true))),
+            ['headlines', 'visibility', 'conversations', 'automations', 'actions'],
+            array_values(array_filter($order, fn (string $band) => in_array($band, ['headlines', 'visibility', 'conversations', 'automations', 'actions'], true))),
         );
     }
 
@@ -675,7 +675,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
         $this->assertSame([['key' => 'new_contacts', 'text' => '2 new contacts'], ['key' => 'new_conversations', 'text' => '1 new conversation']], $activity['items']);
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('data-role="chart-new-contacts"', $html, 'The chart is still deferred, not loaded here.');
+        $this->assertStringContainsString('data-role="home-chart"', $html, 'The chart is still deferred, not loaded here.');
         $this->assertStringContainsString('data-role="chart-placeholder"', $html);
     }
 

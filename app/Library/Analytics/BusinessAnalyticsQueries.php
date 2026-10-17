@@ -166,6 +166,27 @@ class BusinessAnalyticsQueries
         return new CampaignKpis($createdInRange, $snapshot);
     }
 
+    /** Whether this Business has EVER had a contact (any status, any date): one indexed existence check, for telling established from new. */
+    public function hasAnyContact(Business $business): bool
+    {
+        return DB::table('contacts')->where('business_id', $business->id)->exists();
+    }
+
+    /**
+     * Whether a contact import for this Business is queued or running right now (and fresh: one stuck for hours is stale, not
+     * "updating"). Home holds a contacts comparison back while it is, instead of comparing a half-imported figure.
+     */
+    public function contactImportRunning(Business $business, int $freshHours = 6): bool
+    {
+        return DB::table('job_monitors')
+            ->where('subject_name', \App\Models\ContactGroups::class)
+            ->whereIn('subject_id', DB::table('contact_groups')->where('business_id', $business->id)->select('id'))
+            ->where('job_type', \App\Jobs\ImportContacts::class)
+            ->whereIn('status', ['queued', 'running'])
+            ->where('created_at', '>=', CarbonImmutable::now()->subHours($freshHours))
+            ->exists();
+    }
+
     /**
      * K1 + K2 + K4 + K5 plus the contact half of the coverage notice, one
      * aggregate query that always yields exactly one row.

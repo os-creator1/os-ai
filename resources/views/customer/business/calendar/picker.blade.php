@@ -33,7 +33,7 @@
                 @foreach ($locations as $loc)
                     <a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between"
                        data-role="calendar-location"
-                       href="{{ route('customer.workspaces.businesses.calendar.schedule', $scopeFor($loc)) }}">
+                       href="{{ route('customer.workspaces.businesses.calendar.schedule', $scopeFor($loc) + ($window ?? [])) }}">
                         <span>
                             <span class="text-label">{{ $loc->name ?: 'Unnamed location' }}</span>
                             @if ($loc->is_primary)

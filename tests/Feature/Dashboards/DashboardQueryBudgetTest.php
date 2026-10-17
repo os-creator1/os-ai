@@ -88,15 +88,26 @@ class DashboardQueryBudgetTest extends TestCase
     //   8. the cached MoveExplanation read that Home now always makes, because the move is selected
     //      even when Growth rendered (it used to be skipped), exactly as 19.C budgets it.
     // A Business with no Calendar entitlement pays only the eighth.
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 25;
+    //
+    // 25 -> 30 with the final Home (HomeV2Facts and its presenter): five more bounded reads that decide whether a setup
+    // step is genuinely done or what a card may say (never a metric, never a scan) — a connected email account, a priced
+    // catalog item, an active automation, an active Stripe connection and the earliest booking type — each a single
+    // Business-scoped statement that does not grow with rows, contacts, conversations or messages. (The import-running
+    // check is B5's and is counted in BUSINESS_HOME_ANALYTICS.)
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 30;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
      * H-5's one bounded read of the automation ledger — issued by the seam
      * that owns it, which is why it counts here rather than as a
      * Dashboard-owned read.
+     *
+     * 7 -> 8 with the final Home: B5's one `exists()` check for a contact
+     * import still running (BusinessAnalyticsQueries::contactImportRunning),
+     * asked through B5's own class because contacts are B5's. It decides only
+     * whether a comparison shows "Updating…" instead of a half-imported figure.
      */
-    private const BUSINESS_HOME_ANALYTICS = 7;
+    private const BUSINESS_HOME_ANALYTICS = 8;
 
     /**
      * Observed: the two Business performance periods (H-3), then H-4's two —
@@ -165,10 +176,10 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(self::BUSINESS_HOME_ANALYTICS, $cost['analytics']);
         $this->assertSame(self::BUSINESS_HOME_CONVERSATIONS, $cost['conversations']);
 
-        $this->assertLessThanOrEqual(26, $cost['dashboard'], 'Contract §16 ceiling (18) plus the eight bounded Home V2 reads documented above.');
-        $this->assertLessThanOrEqual(7, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read.');
+        $this->assertLessThanOrEqual(31, $cost['dashboard'], 'Contract §16 ceiling (18) plus the thirteen bounded Home V2 reads documented above.');
+        $this->assertLessThanOrEqual(8, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read, plus one import-running check.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
-        $this->assertLessThanOrEqual(39, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling (31) plus the eight Home V2 reads.');
+        $this->assertLessThanOrEqual(44, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling (31) plus the thirteen Home V2 reads.');
 
         // Within the TTL the CACHED Business performance figures cost nothing.
         // What remains is the one read deliberately never cached: Recent work
@@ -176,7 +187,9 @@ class DashboardQueryBudgetTest extends TestCase
         // happened must not be served from a five-minute-old answer. Contract
         // §16 budgets exactly this (warm ≤ 1).
         $warm = $this->businessHomeCost($customer->user, flush: false);
-        $this->assertSame(1, $warm['analytics'], 'Only the uncached Recent work read survives a warm cache.');
+        // Recent work must be fresh, and so must "is an import still running" (a stale answer would hold a comparison back as
+        // "Updating…" after it finished): each is one bounded read.
+        $this->assertSame(2, $warm['analytics'], 'Only the uncached Recent work and import-running reads survive a warm cache.');
     }
 
     /**

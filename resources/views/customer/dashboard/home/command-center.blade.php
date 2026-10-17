@@ -1,49 +1,37 @@
 {{--
-    Home V2 — the Business Command Center.
+    Home V2 — the final Home.
 
-    ONE layout over the model HomeCommandCenter built from the bands the
-    presenter already read. This template decides placement only: it computes
-    nothing, queries nothing, and never invents a fact. The bands keep their
-    own partials (billing strip, performance), so the figures here are the very
-    ones Results and the legacy Home show.
+    ONE template over HomeCommandCenter's model and its `v2` block (HomeV2Presenter). It decides placement only: it computes
+    nothing, queries nothing and never invents a fact. A customer should read this page in about five seconds:
 
-    Order is the mobile order (greeting → move → attention → ask → performance
-    → handled work); on desktop the move and attention share a row.
+      main column   greeting → Needs you → Ask MotionGrove → Is my business growing? (3 cards, one chart)
+      side column   Done for you → Suggested next
+      new business  a short "Get set up" checklist beside Ask — no results yet, so none are shown
 
-    State changes emphasis only — never a second page: `setup` puts the guided
-    journey where the move normally sits; `broken` lifts attention above it.
+    Billing, failed sources and the all-clear are decided in the presenter; nothing here says "all caught up" on its own.
 --}}
 @php
     use App\Library\Dashboard\DashboardSnapshot;
-    use App\Library\Dashboard\Home\HomeCommandCenter;
+    use App\Library\Dashboard\Home\HomeV2Presenter;
 
     /** @var array<string, mixed> $home */
     $home = $dashboard->band(DashboardSnapshot::BAND_COMMAND);
-    $state = $home['state'];
-    // STATE 3 lifts attention above the move only when it has something of its own to say; when the
-    // problem IS the primary move, the move card already carries it and stays where it is.
-    $liftAttention = $state === HomeCommandCenter::STATE_BROKEN && $home['attention']['visible'] !== [];
-    // The move card exists only when there IS a move (or it could not be worked out); the attention card only when it has
-    // something of its own to say (an item, or "we could not check"). Otherwise the page rebalances around Ask.
-    $showMove = $home['primary'] !== null || $home['primaryFailed'];
-    $showAttention = ! $liftAttention && ($home['attention']['visible'] !== [] || $home['attention']['unknown']);
-    $showQuiet = $home['status']['key'] === 'clear' && $home['quietSteps'] !== [];
-    $showAutomations = $dashboard->has(DashboardSnapshot::BAND_AUTOMATIONS) || $dashboard->failed(DashboardSnapshot::BAND_AUTOMATIONS) || ($home['actions']['automation'] ?? null) !== null;
+    $v2 = $home['v2'];
+    $setupLayout = $v2['layout'] === HomeV2Presenter::LAYOUT_SETUP;
+    $greetingName = $home['greeting']['name'];
+    // The supporting line stays short: the visit summary when there is one worth saying, otherwise the plain line.
+    $briefing = $home['briefing'];
+    $subline = ($briefing['unavailable'] || $briefing['firstVisit'] ?? false)
+        ? "Here's what's happening with your business."
+        : ($briefing['quiet'] ? \Illuminate\Support\Str::before($briefing['text'], ' New contacts and completed work') : $briefing['text']);
 @endphp
 
-<div data-role="command-center" data-home-state="{{ $state }}" class="home-command">
+<div data-role="command-center" data-home-state="{{ $home['state'] }}" data-home-layout="{{ $v2['layout'] }}" data-home-status="{{ $home['status']['key'] }}" class="home-command hv2">
     @include('customer.dashboard.home._styles')
+    @include('customer.dashboard.home.v2._styles')
 
     @if($dashboard->has(DashboardSnapshot::BAND_BILLING_EXCEPTION))
         @include('customer.dashboard.bands.billing-exception', ['exception' => $dashboard->band(DashboardSnapshot::BAND_BILLING_EXCEPTION)])
-    @endif
-
-    {{-- A · greeting and briefing --}}
-    @include('customer.dashboard.home._briefing', ['home' => $home])
-
-    @if($state === HomeCommandCenter::STATE_SETUP)
-        {{-- STATE 1 — a guided journey, driven by real readiness checks. --}}
-        @include('customer.dashboard.home._setup', ['setup' => $home['setup']])
     @endif
 
     @if($home['readinessUnknown'] ?? false)
@@ -51,86 +39,53 @@
         @include('customer.dashboard.band-failed', ['band' => 'setup', 'title' => 'Setup progress'])
     @endif
 
-    @if($liftAttention)
-        {{-- STATE 3 — an operational problem is the first thing on the page. --}}
-        <div class="mb-2">
-            @include('customer.dashboard.home._attention', ['attention' => $home['attention'], 'prominent' => true])
+    @if($setupLayout)
+        @include('customer.dashboard.home.v2._setup', ['home' => $home, 'v2' => $v2, 'greetingName' => $greetingName])
+    @else
+        <div class="hv2-layout">
+            <div class="hv2-main">
+                <section class="hv2-greeting" aria-labelledby="home-greeting-title" data-role="home-greeting">
+                    <h2 class="hv2-greeting__title" id="home-greeting-title" data-role="home-salutation">{{ $home['greeting']['salutation'] }}@if($greetingName), {{ $greetingName }}@endif</h2>
+                    <p class="hv2-greeting__sub" data-role="home-subline">{{ $subline }}</p>
+                </section>
+
+                @include('customer.dashboard.home.v2._needs', ['home' => $home, 'needs' => $v2['needs']])
+
+                @include('customer.dashboard.home._ask', ['home' => $home, 'v2Chips' => $v2['chips']])
+
+                @include('customer.dashboard.home.v2._growth', ['dashboard' => $dashboard, 'growth' => $v2['growth']])
+
+                {{-- Everything the earlier Home showed that is not on this page stays one fold down, never removed. --}}
+                @php $moreBands = [
+                    [DashboardSnapshot::BAND_VISIBILITY, 'visibility', 'Visibility', 'bands.visibility', 'visibility'],
+                    [DashboardSnapshot::BAND_CONVERSATIONS, 'conversations', 'Conversations', 'bands.conversations', 'conversations'],
+                    [DashboardSnapshot::BAND_AUTOMATIONS, 'automations', 'Automations', 'bands.automations', 'automations'],
+                ]; @endphp
+                <details class="hv2-more" data-role="home-more">
+                    <summary>More detail</summary>
+                    <div class="hv2-more__body">
+                        @foreach($moreBands as [$bandKey, $bandName, $bandTitle, $partial, $var])
+                            @if($dashboard->failed($bandKey))
+                                @include('customer.dashboard.band-failed', ['band' => $bandName, 'title' => $bandTitle])
+                            @elseif($dashboard->has($bandKey))
+                                @include('customer.dashboard.' . $partial, [$var => $dashboard->band($bandKey)])
+                            @endif
+                        @endforeach
+
+                        @if($dashboard->has(DashboardSnapshot::BAND_ACTIONS) && $dashboard->band(DashboardSnapshot::BAND_ACTIONS)['items'] !== [])
+                            @include('customer.dashboard.bands.actions', ['actions' => $dashboard->band(DashboardSnapshot::BAND_ACTIONS)])
+                        @endif
+                    </div>
+                </details>
+            </div>
+
+            <aside class="hv2-side" aria-label="Done for you and suggestions">
+                @include('customer.dashboard.home.v2._done', ['done' => $v2['done'], 'failed' => $dashboard->failed(DashboardSnapshot::BAND_RECENT_WORK)])
+                @include('customer.dashboard.home.v2._suggested', ['suggested' => $v2['suggested']])
+            </aside>
         </div>
     @endif
 
-    {{-- B/C · the move and what else needs the customer. Absent when there is nothing to act on: a quiet Business gets no
-         empty urgent-action container, and the page rebalances around the Ask card (screenshot: quiet Home). --}}
-    @if($showMove || $showAttention)
-        <div class="row g-2 mb-2 align-items-stretch">
-            @if($showMove)
-                <div class="@if($showAttention && $state !== HomeCommandCenter::STATE_SETUP) col-12 col-xl-8 @else col-12 @endif">
-                    @include('customer.dashboard.home._move', ['home' => $home])
-                </div>
-            @endif
-
-            @if($showAttention)
-                <div class="@if($showMove && $state !== HomeCommandCenter::STATE_SETUP) col-12 col-xl-4 @else col-12 @endif">
-                    @include('customer.dashboard.home._attention', ['attention' => $home['attention'], 'prominent' => false])
-                </div>
-            @endif
-        </div>
-    @endif
-
-    {{-- F · Ask MotionGrove --}}
-    @include('customer.dashboard.home._ask', ['home' => $home])
-
-    {{-- STATE 4 — with nothing urgent, what could grow the business is the emphasis. --}}
-    @if($home['queue'] !== [])
-        @include('customer.dashboard.home._queue', ['home' => $home, 'emphasis' => $state === HomeCommandCenter::STATE_GROWING])
-    @endif
-
-    @if($dashboard->has(DashboardSnapshot::BAND_GROWTH))
-        @include('customer.dashboard.home._growth-insights', ['growth' => $dashboard->band(DashboardSnapshot::BAND_GROWTH)])
-    @endif
-
-    {{-- D · Business performance (the existing band) --}}
-    @if($dashboard->failed(DashboardSnapshot::BAND_HEADLINES))
-        @include('customer.dashboard.band-failed', ['band' => 'headlines', 'title' => 'Business performance'])
-    @elseif($dashboard->has(DashboardSnapshot::BAND_HEADLINES))
-        @include('customer.dashboard.bands.headlines', ['headlines' => $dashboard->band(DashboardSnapshot::BAND_HEADLINES), 'stylesLoaded' => true])
-    @endif
-
-    {{-- E · bottom row: quiet-time next steps (only when quiet and offered) or Automations, beside what MotionGrove handles. --}}
-    {{-- Quiet layout: Automations has no column, but an unreadable Automations is never hidden (and recorded activity is shown). --}}
-    @if($showQuiet && ($dashboard->failed(DashboardSnapshot::BAND_AUTOMATIONS) || $dashboard->has(DashboardSnapshot::BAND_AUTOMATIONS)))
-        <div class="mb-2">@include('customer.dashboard.home._automations', ['home' => $home, 'dashboard' => $dashboard])</div>
-    @endif
-    <div class="row g-2 mb-2 align-items-stretch home-bottom-row">
-        @if($showQuiet)
-            <div class="col-12 col-lg-6">@include('customer.dashboard.home._quiet', ['steps' => $home['quietSteps']])</div>
-            <div class="col-12 col-lg-6">@include('customer.dashboard.home._handling', ['home' => $home, 'dashboard' => $dashboard])</div>
-        @else
-            <div class="col-12 @if($showAutomations) col-lg-6 @endif">@include('customer.dashboard.home._handling', ['home' => $home, 'dashboard' => $dashboard])</div>
-            @if($showAutomations)
-                <div class="col-12 col-lg-6">@include('customer.dashboard.home._automations', ['home' => $home, 'dashboard' => $dashboard])</div>
-            @endif
-        @endif
-    </div>
-
-    {{-- Everything the legacy Home showed stays reachable, one fold down. --}}
-    <details class="mb-2 home-more" data-role="home-more">
-        <summary class="text-label py-50">More detail</summary>
-        <div class="pt-1">
-            @foreach([
-                [DashboardSnapshot::BAND_VISIBILITY, 'visibility', 'Visibility', 'bands.visibility', 'visibility'],
-                [DashboardSnapshot::BAND_CONVERSATIONS, 'conversations', 'Conversations', 'bands.conversations', 'conversations'],
-            ] as [$bandKey, $bandName, $bandTitle, $partial, $var])
-                @if($dashboard->failed($bandKey))
-                    @include('customer.dashboard.band-failed', ['band' => $bandName, 'title' => $bandTitle])
-                @elseif($dashboard->has($bandKey))
-                    @include('customer.dashboard.' . $partial, [$var => $dashboard->band($bandKey)])
-                @endif
-            @endforeach
-
-            @if($dashboard->has(DashboardSnapshot::BAND_ACTIONS) && $dashboard->band(DashboardSnapshot::BAND_ACTIONS)['items'] !== [])
-                @include('customer.dashboard.bands.actions', ['actions' => $dashboard->band(DashboardSnapshot::BAND_ACTIONS)])
-            @endif
-        </div>
-    </details>
     @include('customer.dashboard.home._drawer')
+    <script src="{{ asset('js/home/home-v2.js') }}?v={{ @filemtime(public_path('js/home/home-v2.js')) }}" defer></script>
 </div>

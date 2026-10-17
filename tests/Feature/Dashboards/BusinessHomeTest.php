@@ -68,9 +68,9 @@ class BusinessHomeTest extends TestCase
         // the Google tile is absent because Core is not entitled to it — the
         // Visibility band still renders for the website alone.
         $this->assertSame(
-            ['billing_exception', 'needs_attention', 'next_best_move', 'ask', 'headlines', 'handling', 'automations', 'visibility', 'conversations', 'actions'],
+            ['billing_exception', 'next_best_move', 'needs_attention', 'ask', 'headlines', 'visibility', 'conversations', 'actions', 'handling', 'suggested'],
             $this->bandOrder($html),
-            'Billing speaks first only when it is a real exception, then what needs the customer, then Ask, then the figures.'
+            'Billing speaks first only when it is a real exception, then what needs the customer, then Ask, then the figures, then the detail fold, then the side column. Automations appears in the fold only once something ran or failed; "set one up" is a Suggested next item.'
         );
         $this->assertNotContains('spend', $this->bandOrder($html), 'Spend is a Settings destination, never a Home band.');
         $this->assertStringContainsString('data-kind="business"', $html);
@@ -296,7 +296,8 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
-        $this->assertStringContainsString('data-status="clear"', $html, 'None of B\'s conditions raises an item for A: the greeting says all caught up.');
+        $this->assertStringContainsString('data-home-status="clear"', $html, 'None of B\'s conditions raises an item for A: Home says all caught up.');
+        $this->assertStringContainsString('data-role="caught-up"', $html);
         $this->assertStringNotContainsString('data-band="needs_attention"', $html, 'A quiet Home has no empty attention container.');
         $this->assertStringNotContainsString('data-role="attention-items"', $html);
         $this->assertNotContains('recommendations', $this->bandOrder($html));
@@ -304,7 +305,8 @@ class BusinessHomeTest extends TestCase
         $this->assertStringNotContainsString('777', $main);
         $this->assertStringNotContainsString('USD 5.00', $main, 'No wallet figure renders on Home at all (H-1 §5).');
 
-        foreach (['new_contacts', 'new_conversations', 'messages_received'] as $headline) {
+        // Business B's activity never reaches A's three cards: each shows A's own figure (the Business exists, so a zero is a real zero).
+        foreach (['new_contacts', 'new_conversations'] as $headline) {
             $this->assertSame('0', $this->headlineFigure($html, $headline), "{$headline} must count only the selected Business.");
         }
     }
@@ -543,8 +545,8 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertStringContainsString('All caught up', html_entity_decode($html));
-        $this->assertStringNotContainsString('data-band="next_best_move"', $html, 'No empty urgent-action container when there is no move.');
+        $this->assertStringContainsString('all caught up', html_entity_decode($html));
+        $this->assertStringNotContainsString('data-role="next-best-move"', $html, 'No empty urgent-action card when there is no move.');
         $this->assertStringNotContainsString('Stale Only', $html);
         $this->assertStringNotContainsString('Recommended next steps', $html);
         $this->assertStringNotContainsString('See all recommendations', $html);
@@ -553,8 +555,8 @@ class BusinessHomeTest extends TestCase
         $this->recommendation($business, ['title' => 'Hidden When Disabled']);
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringNotContainsString('Hidden When Disabled', $html);
-        $this->assertStringContainsString('All caught up', html_entity_decode($html));
-        $this->assertStringNotContainsString('data-band="next_best_move"', $html, 'No empty urgent-action container when there is no move.');
+        $this->assertStringContainsString('all caught up', html_entity_decode($html));
+        $this->assertStringNotContainsString('data-role="next-best-move"', $html, 'No empty urgent-action card when there is no move.');
     }
 
     // =================================================================
@@ -689,7 +691,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['billing_exception', 'next_best_move', 'needs_attention', 'ask', 'headlines', 'handling', 'automations', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
+        $this->assertSame(['billing_exception', 'next_best_move', 'ask', 'headlines', 'visibility', 'conversations', 'actions', 'handling', 'suggested'], $this->bandOrder($html));
         $this->assertStringContainsString('data-band="next_best_move" data-band-state="failed"', $html);
         $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'next_best_move'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));

@@ -186,8 +186,9 @@ class BusinessHomeNextBestMoveTest extends TestCase
 
         $this->assertNull($band['move']);
         $this->assertNull($band['recommendations']);
-        $this->assertSame('', $html, 'A quiet Business gets no empty urgent-action container.');
-        $this->assertStringContainsString('All caught up', html_entity_decode($this->home()->getContent()));
+        $this->assertStringNotContainsString('data-role="next-best-move"', $html, 'A quiet Business gets no empty urgent-action card, only the small calm one.');
+        $this->assertStringContainsString('data-role="caught-up"', $html);
+        $this->assertStringContainsString('all caught up', html_entity_decode($html));
     }
 
     public function test_billing_is_never_the_move_even_when_it_is_the_only_problem(): void

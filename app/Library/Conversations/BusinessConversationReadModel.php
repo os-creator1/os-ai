@@ -223,6 +223,34 @@ final class BusinessConversationReadModel
             ->count();
     }
 
+    /** Whether this Business has EVER had a conversation (any age): one existence check, for telling established from new. */
+    public function hasAnyConversation(Business $business): bool
+    {
+        return DB::table('chat_boxes')->where('business_id', $business->id)->exists();
+    }
+
+    /**
+     * The conversations awaitingReplyCount() counts (same predicate, same Location rule), as a sub-select of their ids, so the inbox
+     * can constrain its own paginated query with it: every matching conversation is reachable, none is cut off by a cap.
+     */
+    public function awaitingReplyBoxQuery(Business $business, int $actorUserId, ?CarbonInterface $now = null): \Illuminate\Database\Query\Builder
+    {
+        $now = CarbonImmutable::parse($now ?? CarbonImmutable::now());
+        $graceCutoff = $now->subMinutes($this->graceMinutes());
+        $scanFloor = $now->subDays($this->scanDays());
+
+        $latest = DB::table('chat_box_messages as m')
+            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
+            ->groupBy('m.box_id')
+            ->selectRaw('MAX(m.id) as last_message_id');
+
+        return DB::table('chat_box_messages as last')
+            ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
+            ->where('last.direction', self::DIRECTION_INCOMING)
+            ->where('last.created_at', '<', $graceCutoff)
+            ->select('last.box_id');
+    }
+
     /**
      * Home V2 — the conversations behind awaitingReplyCount(): same predicate (customer wrote
      * last, past the grace period, touched within the scan window), same Location rule, newest

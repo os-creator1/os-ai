@@ -1438,7 +1438,13 @@
 
       $(document).ready(function() {
         let page = 1;
-        let filter = "recents";  // Default filter
+        // A Home card can open this list already narrowed: the inbox's own "waiting for a reply" filter and/or the Business-local
+        // days a figure covers. Only those exact shapes are read; anything else leaves the ordinary list.
+        const homeScope = new URLSearchParams(window.location.search);
+        const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+        const createdFrom = isDay(homeScope.get("created_from")) && isDay(homeScope.get("created_to")) ? homeScope.get("created_from") : "";
+        const createdTo = createdFrom ? homeScope.get("created_to") : "";
+        let filter = homeScope.get("filter") === "waiting" ? "waiting" : "recents";  // Default filter
         let search = "";     // Default search value
 
         // Function to load chat users
@@ -1452,7 +1458,9 @@
               _token: "{{ csrf_token() }}",
               page: page,
               filter: filter,
-              search: search
+              search: search,
+              created_from: createdFrom,
+              created_to: createdTo
             },
             beforeSend: function() {
               $("#loader").show();  // Show the loader before the request

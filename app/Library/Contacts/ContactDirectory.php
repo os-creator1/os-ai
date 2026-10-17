@@ -47,9 +47,14 @@ final class ContactDirectory
     /**
      * @return LengthAwarePaginator rows: array{uid, name, phone, email, company, group, subscribed, added, last_activity}
      */
-    public function page(Business $business, string $search, ?int $actorUserId = null, ?int $groupId = null): LengthAwarePaginator
+    public function page(Business $business, string $search, ?int $actorUserId = null, ?int $groupId = null, ?\App\Library\Analytics\AnalyticsDateRange $added = null): LengthAwarePaginator
     {
         $query = $this->query($business, $search, $actorUserId);
+
+        // Optional period filter (a Home card's own range, in the same Business-local days and storage bounds its figure uses).
+        if ($added !== null) {
+            $query->where('created_at', '>=', $added->startUtc)->where('created_at', '<', $added->endUtc);
+        }
 
         // Optional group filter. The caller resolves the id from this
         // Business's own groups, so it only ever narrows the scoped query.
