@@ -97,6 +97,7 @@ final class CustomerMenuBuilder
         'sender-ids' => 'Sender names used on outgoing messages.',
         'numbers' => 'Phone numbers on this account.',
         'keywords' => 'Words people can text in to reach you.',
+        'phone-messaging' => 'How your agency sends texts: connect your own Telnyx account, or get a number through us.',
         'agency-stripe' => 'The Stripe account that receives your clients\' subscription payments.',
         'agency-saas-plans' => 'The plans you resell to your clients, and their prices.',
         'agency-saas-revenue' => 'What your resold plans have earned.',
@@ -496,34 +497,70 @@ final class CustomerMenuBuilder
         $inBusinessFrame = $context->isBusinessFrame();
         $items = [];
 
+        // Agency Home stays the single main entry point. (In the Business frame it is a frame move and the
+        // Business's own home is offered first inside "Your agency".)
+        $items[] = $inBusinessFrame
+            ? $this->frameMove($user, 'agency-home', 'Agency Home', 'home', 'customer.context.account.switch', ['workspace' => $agency->uid])
+            : $this->item($user, 'home', 'Agency Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
+
+        // YOUR AGENCY — what the agency itself runs on: its own leads, calendar, automations, outreach, website, SEO
+        // and Ads. Everything here is scoped to the agency's own Business (or, for Outreach, its own Workspace) and
+        // never to a managed client.
+        $items[] = MenuItem::header('own-business', 'Your agency');
+
+        // No own operating workspace yet (an Agency skips Business onboarding by design): the OWNER can turn it on
+        // in one step. A POST the server re-authorizes (AgencyOperationsManager); never offered to anyone else.
+        if ($own === null && $agency->isOwner && Route::has('customer.workspaces.agency.operations.enable') && Gate::forUser($user)->any(['access_backend'])) {
+            $items[] = new MenuItem('agency-operations-setup', 'Set up agency workspace', null, 'power', false, [], false, [
+                'url' => route('customer.workspaces.agency.operations.enable', [$agency->uid]),
+                'fields' => [],
+            ]);
+        }
+
+        // Outreach sits after Automations among the Business modules; it needs no own Business.
+        // Phone & Messaging lives under Agency settings, so that page lights Settings, not Outreach.
+        $outreach = $this->item($user, 'prospecting', 'Outreach', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, $current === 'customer.workspaces.prospecting.phone-messaging' ? [] : [
+            'customer.prospecting.', 'customer.workspaces.prospecting.',
+        ]);
+
+        $modules = [];
+
         if ($own !== null) {
             $scoped = [$agency->uid, $own->uid];
 
-            $items[] = MenuItem::header('own-business', 'Business');
             // Results (and the Growth advisor) open from Business Home, which stays lit while the owner is on them —
             // exactly as in the plain Business frame; without these prefixes nothing in the sidebar was current there.
             $items[] = $inBusinessFrame
                 ? $this->item($user, 'home', 'Business Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.growth.', 'customer.workspaces.businesses.analytics.', 'customer.analytics.'])
                 : $this->frameMove($user, 'business-home', 'Business Home', 'home', 'customer.context.business.switch', ['workspace' => $agency->uid, 'business' => $own->uid]);
 
-            $items = array_merge($items, $this->businessModuleItems($user, $scoped, $current));
-            $items[] = $this->businessSettingsItem($context, $user, $scoped, $current, 'Business settings', 'business-settings');
+            // In this shell "Contacts" holds the AGENCY's own leads and customer contacts, never a client's.
+            foreach ($this->businessModuleItems($user, $scoped, $current) as $module) {
+                if ($module === null) {
+                    continue;
+                }
 
-            $items[] = MenuItem::header('agency', 'Agency');
+                $modules[] = $module->key === 'contacts' ? $this->relabel($module, 'Contacts & CRM') : $module;
+
+                if ($module->key === 'automations') {
+                    $modules[] = $outreach;
+                    $outreach = null;
+                }
+            }
         }
 
-        $homeLabel = $own !== null ? 'Agency Home' : 'Home';
-        $items[] = $inBusinessFrame
-            ? $this->frameMove($user, 'agency-home', $homeLabel, 'home', 'customer.context.account.switch', ['workspace' => $agency->uid])
-            : $this->item($user, 'home', $homeLabel, 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
+        // Without an own Business (or if Automations is not offered) Outreach is still the agency's own tool.
+        $items = array_merge($items, $modules, $outreach !== null ? [$outreach] : []);
+
+        if ($own !== null) {
+            $items[] = $this->businessSettingsItem($context, $user, $scoped, $current, 'Business settings', 'business-settings');
+        }
+
+        // AGENCY MANAGEMENT — the managed customer accounts and the agency's own commercial and team surfaces.
+        $items[] = MenuItem::header('agency', 'Agency management');
 
         $items[] = $this->item($user, 'accounts', 'Clients', 'briefcase', ['access_backend'], 'customer.workspaces.clients.index', [$agency->uid], $current, [
             'customer.workspaces.clients.', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
-        ]);
-        // Labelled "Outreach", the same word the page, its tabs and the Account
-        // frame menu use (the key and route stay `prospecting` — URLs are stable).
-        $items[] = $this->item($user, 'prospecting', 'Outreach', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
-            'customer.prospecting.', 'customer.workspaces.prospecting.',
         ]);
 
         // Same reading authority as the Settings hub's own SaaS entries
@@ -544,19 +581,24 @@ final class CustomerMenuBuilder
             $items[] = $this->teamItem($user, $agency->uid, $current);
         }
 
-        // Agency settings keeps Stripe, plan & subscription, account details,
+        // Agency settings keeps Stripe, plan & subscription, account details, Phone & Messaging,
         // blocked numbers and the Advanced group. Plans, revenue, white label
         // and team are primary entries above, so they no longer light it up.
         if ($this->accountSettingsSections($context, $agency, $user, $current) !== []) {
             $settingsRoutes = array_merge(
                 array_diff(self::ACCOUNT_SETTINGS_ROUTES, ['customer.workspaces.agency.saas.', 'customer.workspaces.agency.white-label.', 'customer.workspaces.team.']),
-                ['customer.workspaces.agency.saas.stripe', 'customer.workspaces.agency.saas.stripe.'],
+                ['customer.workspaces.agency.saas.stripe', 'customer.workspaces.agency.saas.stripe.', 'customer.workspaces.prospecting.phone-messaging'],
             );
 
             $items[] = $this->item($user, 'settings', 'Agency settings', 'settings', ['access_backend'], 'customer.workspaces.settings.show', [$agency->uid], $current, $settingsRoutes);
         }
 
         return array_values(array_filter($items));
+    }
+
+    private function relabel(MenuItem $item, string $label): MenuItem
+    {
+        return new MenuItem($item->key, $label, $item->url, $item->icon, $item->active, $item->children, $item->header, $item->post);
     }
 
     /**
@@ -924,6 +966,10 @@ final class CustomerMenuBuilder
         $outreach = [];
 
         if ($account->isAgency()) {
+            // The ONE messaging setup page: connect your own Telnyx account, or get a number through us.
+            $outreach[] = $this->item($user, 'phone-messaging', 'Phone & Messaging', 'phone', ['access_backend'], 'customer.workspaces.prospecting.phone-messaging', [$account->uid], $current, [
+                'customer.workspaces.prospecting.phone-messaging',
+            ]);
             $outreach[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
         }
 

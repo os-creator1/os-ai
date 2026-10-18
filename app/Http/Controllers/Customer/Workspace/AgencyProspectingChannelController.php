@@ -5,7 +5,10 @@ namespace App\Http\Controllers\Customer\Workspace;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Controllers\Customer\Workspace\Concerns\ResolvesAgencyProspectingWorkspace;
 use App\Library\AgencyProspecting\AgencyProspectingWebhookToken;
+use App\Library\AgencyOutreach\AgencyOutreachBusinessResolver;
+use App\Library\AgencyOutreach\MessagingReadinessReader;
 use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
+use App\Library\AgencyProspecting\TelnyxCredentialVerifier;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\AgencyProspectingChannel;
 use App\Models\Customer;
@@ -60,6 +63,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
         private readonly WorkspaceMembershipRepository $membershipRepository,
         private readonly EntitlementManager $entitlementManager,
         private readonly SendingServerRepository $sendingServers,
+        private readonly TelnyxCredentialVerifier $telnyxVerifier,
     ) {
     }
 
@@ -73,6 +77,27 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 ->with('sendingServer')
                 ->orderByDesc('id')
                 ->get(),
+        ]);
+    }
+
+    /**
+     * Agency Settings -> Phone & Messaging: the one place the two setup paths
+     * sit side by side. Option A lists this Workspace's own BYO channels;
+     * Option B is read from the Agency's own Business via the SAME
+     * MessagingReadinessReader Settings -> Text messaging and Outreach
+     * readiness use, so the three can never disagree. Read-only: no provider
+     * call, no purchase, no write.
+     */
+    public function phoneMessaging(string $workspaceUid, MessagingReadinessReader $readiness): View|Factory|Application
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
+
+        return view('customer.workspaces.prospecting.phone-messaging', [
+            'workspaceUid' => $workspaceUid,
+            'channels' => AgencyProspectingChannel::where('workspace_id', $workspace->id)->orderByDesc('id')->get(),
+            'business' => $business,
+            'managed' => $business !== null ? $readiness->situation($business) : null,
         ]);
     }
 
@@ -134,6 +159,15 @@ class AgencyProspectingChannelController extends CustomerBaseController
         if (! empty($errors)) {
             return redirect()->route('customer.workspaces.prospecting.channels.connect', [$workspaceUid, $provider])
                 ->withErrors($errors);
+        }
+
+        if ($provider === SendingServer::TYPE_TELNYX) {
+            $check = $this->telnyxVerifier->verify($credentials['api_key'], $credentials['c1'], $senderNumber);
+
+            if (! $check['ok']) {
+                return redirect()->route('customer.workspaces.prospecting.channels.connect', [$workspaceUid, $provider])
+                    ->withErrors(['api_key' => $check['message']]);
+            }
         }
 
         $ownerCustomerExists = Customer::where('user_id', $workspace->owner_user_id)->exists();
@@ -214,6 +248,19 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 ->withErrors($errors);
         }
 
+        if (! empty($credentials) && $provider === SendingServer::TYPE_TELNYX && $channel->sendingServer !== null) {
+            $check = $this->telnyxVerifier->verify(
+                $credentials['api_key'] ?? (string) $channel->sendingServer->api_key,
+                $credentials['c1'] ?? (string) $channel->sendingServer->c1,
+                (string) $channel->sender_number,
+            );
+
+            if (! $check['ok']) {
+                return redirect()->route('customer.workspaces.prospecting.channels.show', [$workspaceUid, $channel->uid])
+                    ->withErrors(['api_key' => $check['message']]);
+            }
+        }
+
         if (! empty($credentials) && $channel->sendingServer !== null) {
             $this->sendingServers->update($channel->sendingServer, $credentials);
         }
@@ -230,6 +277,18 @@ class AgencyProspectingChannelController extends CustomerBaseController
 
         if (! $channel->sendingServer || ! $channel->sendingServer->status) {
             return $this->channelsError($workspaceUid, 'This provider is not currently available.');
+        }
+
+        if ($channel->provider === SendingServer::TYPE_TELNYX) {
+            $check = $this->telnyxVerifier->verify(
+                (string) $channel->sendingServer->api_key,
+                (string) $channel->sendingServer->c1,
+                (string) $channel->sender_number,
+            );
+
+            if (! $check['ok']) {
+                return $this->channelsError($workspaceUid, 'Channel was not enabled: ' . $check['message']);
+            }
         }
 
         $channel->update(['status' => AgencyProspectingChannel::STATUS_ACTIVE]);
