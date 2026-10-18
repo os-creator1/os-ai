@@ -13,4 +13,6 @@
               :href="route('customer.workspaces.prospecting.campaigns.index', $workspaceUid)">Campaigns</x-button>
     <x-button :variant="$prospectingActive === 'script' ? 'primary' : 'outline'" size="sm"
               :href="route('customer.workspaces.prospecting.script.show', $workspaceUid)">Script &amp; Settings</x-button>
+    <x-button :variant="$prospectingActive === 'phone-messaging' ? 'primary' : 'outline'" size="sm"
+              :href="route('customer.workspaces.prospecting.phone-messaging', $workspaceUid)">Phone &amp; Messaging</x-button>
 </div>

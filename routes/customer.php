@@ -2394,6 +2394,8 @@
             | Workspace\AgencyProspectingChannelController.
             |----------------------------------------------------------------
             */
+            Route::get('/phone-messaging', 'Workspace\AgencyProspectingChannelController@phoneMessaging')->name('phone-messaging');
+
             Route::prefix('channels')->name('channels.')->group(function () {
                 Route::get('/', 'Workspace\AgencyProspectingChannelController@channels')->name('index');
                 Route::get('/connect/{provider}', 'Workspace\AgencyProspectingChannelController@connect')->name('connect');
