@@ -17,7 +17,7 @@
          so its <h2> never precedes the page's own <h1>. The View-as-client
          banner is rendered by the layout master (every page, every branch),
          so it is not repeated here. --}}
-    <div class="customer-dashboard" data-role="dashboard" data-kind="{{ $dashboard->kind }}">
+    <div class="customer-dashboard @if($dashboard->kind === \App\Library\Dashboard\DashboardSnapshot::KIND_BUSINESS && $dashboard->has(\App\Library\Dashboard\DashboardSnapshot::BAND_COMMAND)) customer-dashboard--hv2 @endif" data-role="dashboard" data-kind="{{ $dashboard->kind }}">
         <div class="mb-2" data-role="dashboard-header">
             <h1 class="text-page-title mb-0" id="dashboard-title">
                 <span class="d-block text-caption text-uppercase text-muted" data-role="dashboard-frame">{{ $dashboard->frameLabel }}</span>

@@ -8,6 +8,7 @@
         <ul class="hv2-card hv2-side-card hv2-suggest" data-role="suggested-items">
             @foreach($suggested as $item)
                 <li data-role="suggested-item" data-suggestion="{{ $item['key'] }}">
+                    <span class="hv2-suggest__icon" aria-hidden="true">{{ ['website' => '🌐', 'follow_ups' => '✦', 'payments' => '＄', 'email' => '✉', 'booking' => '📅'][$item['key']] ?? '•' }}</span>
                     <span>{{ $item['title'] }}</span>
                     <a href="{{ $item['url'] }}" data-role="suggested-action">{{ $item['label'] }}</a>
                 </li>

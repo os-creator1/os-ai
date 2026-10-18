@@ -38,14 +38,17 @@
 
                 var total = values.reduce(function (sum, n) { return sum + (Number(n) || 0); }, 0);
                 if (total === 0) {
-                    // An empty chart adds nothing the cards do not already say.
-                    say(plot, 'No new contacts in this period yet.');
+                    // An empty chart adds nothing the cards do not already say; a business under a week old is told when a trend will appear.
+                    say(plot, box.getAttribute('data-too-early') === '1' ? 'Your trend will appear after your first week.' : 'No new contacts in this period yet.');
                     return;
                 }
 
                 var max = Math.max.apply(null, values.map(Number));
                 plot.textContent = '';
                 plot.className = 'hv2-chart__plot';
+                var scale = el('span', 'hv2-chart__scale', String(max));
+                scale.setAttribute('aria-hidden', 'true');
+                plot.appendChild(scale);
                 values.forEach(function (n, i) {
                     var bar = el('span', 'hv2-chart__bar' + (Number(n) === 0 ? ' is-zero' : ''));
                     bar.style.height = Math.max(6, Math.round(Number(n) / max * 100)) + '%';

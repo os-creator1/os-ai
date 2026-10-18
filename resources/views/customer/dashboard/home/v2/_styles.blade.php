@@ -19,11 +19,15 @@
     .hv2 .hv2-spark { color: var(--hv2-brand); }
 
     /* Needs you */
-    .hv2 .hv2-needs { display: flex; align-items: center; gap: 1rem; border-left: 3px solid var(--hv2-brand); padding: .875rem 1rem; }
-    .hv2 .hv2-tile { flex: 0 0 3.25rem; height: 3.25rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .75rem; background: var(--hv2-soft); color: var(--hv2-brand); font-size: 1.5rem; font-weight: 700; }
+    .hv2 .hv2-needs { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "tile text" ". actions"; align-items: start; gap: .5rem 1rem; border: 1.5px solid var(--hv2-brand); border-left-width: 4px; border-radius: .875rem; padding: 1rem 1.125rem; box-shadow: 0 1px 6px rgba(0, 0, 0, .05); }
+    .hv2 .hv2-needs > .hv2-tile { grid-area: tile; }
+    .hv2 .hv2-needs > .hv2-needs__text { grid-area: text; }
+    .hv2 .hv2-needs > .hv2-needs__actions { grid-area: actions; }
+    .hv2 .hv2-tile { width: 3.25rem; height: 3.25rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .75rem; background: var(--hv2-soft); color: var(--hv2-brand); font-size: 1.5rem; font-weight: 700; }
     .hv2 .hv2-needs__text { flex: 1 1 auto; min-width: 0; }
     .hv2 .hv2-needs__title { margin: 0 0 .125rem; font-size: 1.125rem; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
-    .hv2 .hv2-needs__actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+    .hv2 .hv2-needs__actions { display: flex; flex-wrap: wrap; gap: .625rem; justify-content: flex-start; }
+    .hv2 .hv2-needs__actions .btn { padding: .5rem 1.125rem; font-weight: 600; }
     .hv2 .hv2-quiet { display: flex; align-items: center; gap: .625rem; padding: .625rem .875rem; }
     .hv2 .hv2-check { display: inline-flex; width: 1.5rem; height: 1.5rem; align-items: center; justify-content: center; border-radius: 50%; background: var(--color-status-success-soft-bg, #E6F3EA); color: var(--color-status-success, #1E7B3C); font-size: .8125rem; font-weight: 700; flex: 0 0 auto; }
     .hv2 .hv2-check--warn { background: var(--color-status-warning-soft-bg, #FDF1D8); color: var(--color-status-warning, #8A5A00); }
@@ -52,22 +56,26 @@
     .hv2 .hv2-growth__head .hv2-label { margin: 0; }
     .hv2 .hv2-range .home-segmented { background: var(--color-surface-secondary, #F4F1EC); }
     .hv2 .hv2-kpis { display: grid; grid-template-columns: repeat(var(--hv2-kpis, 3), minmax(0, 1fr)); gap: .75rem; }
-    .hv2 .hv2-kpi { position: relative; display: grid; grid-template-columns: 1fr auto; grid-template-areas: "label label" "value badge" "note note"; align-items: end; gap: .125rem .5rem; padding: .75rem .875rem; background: var(--hv2-card); border: 1px solid var(--hv2-border); border-radius: .75rem; color: var(--hv2-text); text-decoration: none; transition: border-color .15s, box-shadow .15s; }
+    .hv2 .hv2-kpi { position: relative; display: grid; grid-template-columns: 1fr auto; grid-template-areas: "label label" "value badge" "note note"; align-items: end; gap: .25rem .5rem; padding: .875rem 1rem; background: var(--hv2-card); border: 1px solid var(--hv2-border); border-radius: .75rem; color: var(--hv2-text); text-decoration: none; transition: border-color .15s, box-shadow .15s; }
     .hv2 a.hv2-kpi:hover, .hv2 a.hv2-kpi:focus-visible { border-color: var(--hv2-brand); box-shadow: 0 1px 6px rgba(0, 0, 0, .06); outline: none; }
     .hv2 a.hv2-kpi:focus-visible { box-shadow: 0 0 0 2px var(--hv2-soft), 0 0 0 4px var(--hv2-brand); }
     .hv2 .hv2-kpi__label { grid-area: label; display: flex; justify-content: space-between; font-size: .8125rem; color: var(--hv2-muted); }
     .hv2 .hv2-kpi__arrow { opacity: .55; }
     .hv2 a.hv2-kpi:hover .hv2-kpi__arrow { opacity: 1; color: var(--hv2-brand); }
-    .hv2 .hv2-kpi__value { grid-area: value; font-size: 1.875rem; font-weight: 700; line-height: 1.1; }
+    .hv2 .hv2-kpi__value { grid-area: value; font-size: 2.125rem; font-weight: 700; line-height: 1.05; letter-spacing: -.01em; }
     .hv2 .hv2-kpi__note { grid-area: note; font-size: .75rem; color: var(--hv2-muted); }
     .hv2 .hv2-badge { grid-area: badge; justify-self: end; padding: .125rem .5rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--color-surface-secondary, #EEEAE3); color: var(--hv2-muted); white-space: nowrap; }
     .hv2 .hv2-badge--up { background: var(--color-status-success-soft-bg, #E6F3EA); color: var(--color-status-success, #1E7B3C); }
+    .hv2 .hv2-badge--updating { background: var(--color-surface-secondary, #EEEAE3); color: var(--hv2-muted); font-style: italic; }
     .hv2 .hv2-badge--down { background: var(--color-status-warning-soft-bg, #FDF1D8); color: var(--color-status-warning, #8A5A00); }
     .hv2 .hv2-revenue { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: .75rem; padding: .5rem .875rem; border: 1px dashed var(--color-border, #D9D3C8); border-radius: .75rem; background: var(--color-surface-secondary, #FAF8F5); font-size: .875rem; }
     .hv2 .hv2-revenue a, .hv2 .hv2-side-card a, .hv2 .hv2-chart__foot a { color: var(--hv2-brand); font-weight: 600; text-decoration: none; }
     .hv2 .hv2-chart { margin-top: .75rem; padding: .75rem .875rem; background: var(--hv2-card); border: 1px solid var(--hv2-border); border-radius: .75rem; }
-    .hv2 .hv2-chart__plot { display: flex; align-items: flex-end; gap: 3px; height: 4.5rem; margin: .5rem 0 .25rem; border-bottom: 1px solid var(--hv2-border); }
-    .hv2 .hv2-chart__bar { flex: 1 1 0; min-width: 2px; border-radius: 3px 3px 0 0; background: var(--hv2-brand); }
+    .hv2 .hv2-chart { padding: 1rem 1.125rem; }
+    .hv2 .hv2-chart__title { font-size: .9375rem; }
+    .hv2 .hv2-chart__plot { position: relative; display: flex; align-items: flex-end; gap: 4px; height: 9rem; margin: .75rem 0 .375rem; padding-left: 1.5rem; border-bottom: 1px solid var(--hv2-border); background: repeating-linear-gradient(to top, transparent 0, transparent calc(33.33% - 1px), var(--hv2-border) calc(33.33% - 1px), var(--hv2-border) 33.33%); }
+    .hv2 .hv2-chart__scale { position: absolute; left: 0; top: 0; font-size: .6875rem; color: var(--hv2-muted); line-height: 1; }
+    .hv2 .hv2-chart__bar { flex: 1 1 0; min-width: 3px; border-radius: 4px 4px 0 0; background: var(--hv2-brand); }
     .hv2 .hv2-chart__bar.is-zero { background: var(--color-border, #E5E1DA); height: 2px !important; }
     .hv2 .hv2-chart__axis { display: flex; justify-content: space-between; font-size: .6875rem; color: var(--hv2-muted); }
     .hv2 .hv2-chart__empty { padding: .5rem 0; font-size: .875rem; color: var(--hv2-muted); }
@@ -81,7 +89,10 @@
     .hv2 .hv2-done__mark { color: var(--color-status-success, #1E7B3C); }
     .hv2 .hv2-done time { display: block; }
     .hv2 .hv2-suggest { list-style: none; margin: 0; background: var(--color-surface-secondary, #FAF8F5); }
-    .hv2 .hv2-suggest li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .5rem 0; font-size: .875rem; }
+    .hv2 .hv2-suggest li { display: flex; align-items: center; gap: .625rem; padding: .625rem 0; font-size: .875rem; }
+    .hv2 .hv2-suggest__icon { flex: 0 0 1.75rem; height: 1.75rem; display: inline-flex; align-items: center; justify-content: center; border-radius: .5rem; background: var(--hv2-soft); color: var(--hv2-brand); font-size: .875rem; }
+    .hv2 .hv2-suggest li > span:not(.hv2-suggest__icon) { flex: 1 1 auto; min-width: 0; }
+    .hv2 .hv2-suggest li a { flex: 0 0 auto; padding: .1875rem .625rem; border: 1px solid var(--color-border, #D9D3C8); border-radius: 999px; font-size: .75rem; background: var(--hv2-card); }
     .hv2 .hv2-suggest li + li { border-top: 1px solid var(--hv2-border); }
     .hv2 .hv2-more { margin: 1rem 0; }
     .hv2 .hv2-more summary { cursor: pointer; color: var(--hv2-muted); font-size: .875rem; }
@@ -106,12 +117,30 @@
 
     .hv2 .hv2-sev { display: inline-block; margin: .125rem 0 .25rem; padding: .0625rem .5rem; border-radius: 999px; font-size: .6875rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; background: var(--color-status-warning-soft-bg, #FDF1D8); color: var(--color-status-warning, #8A5A00); }
 
+    /*
+     * The open conversation. The legacy rule (`.home-command.is-chat-open > *:not(.home-ask)`) hides every DIRECT child of the command
+     * center except the Ask card, but in Home V2 the Ask card is nested (.hv2-layout > .hv2-main | .hv2-side > .home-ask), so that rule
+     * hid the layout that CONTAINS it and left a blank screen. Here the ancestors of the Ask card stay visible and only their other
+     * children recede, so the conversation is always on screen.
+     */
+    .home-command.hv2.is-chat-open > .hv2-layout { display: block !important; }
+    .home-command.hv2.is-chat-open .hv2-greeting { display: none !important; }
+    .home-command.hv2.is-chat-open .hv2-layout > *:not(:has(.home-ask)) { display: none !important; }
+    .home-command.hv2.is-chat-open .hv2-layout > * { display: block !important; width: 100%; }
+    .home-command.hv2.is-chat-open .hv2-layout > *:not(:has(.home-ask)) { display: none !important; }
+    .home-command.hv2.is-chat-open .hv2-main > *:not(.home-ask), .home-command.hv2.is-chat-open .hv2-side > *:not(.home-ask) { display: none !important; }
+    .home-command.hv2.is-chat-open .home-ask { display: block !important; }
+
+    /* The page heading above the greeting ("Business home" + the business name) is redundant on this screen: the greeting leads. It stays
+       in the document for screen readers and the page outline. */
+    .customer-dashboard--hv2 > [data-role="dashboard-header"] { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
     @media (max-width: 1199.98px) {
         .hv2 .hv2-layout, .hv2 .hv2-layout--setup { grid-template-columns: minmax(0, 1fr); }
     }
     @media (max-width: 767.98px) {
         .hv2 .hv2-greeting__title { font-size: 1.375rem; }
-        .hv2 .hv2-needs { flex-wrap: wrap; }
+        .hv2 .hv2-needs { grid-template-areas: "tile text" "actions actions"; }
         .hv2 .hv2-needs__actions { width: 100%; justify-content: stretch; }
         .hv2 .hv2-needs__actions .btn { flex: 1 1 100%; min-height: 2.75rem; }
         .hv2 .hv2-kpis { grid-template-columns: minmax(0, 1fr); }

@@ -243,7 +243,7 @@ class HomeV2ExperienceTest extends TestCase
 
     // ── The one chart ───────────────────────────────────────────────────
 
-    public function test_the_chart_waits_for_a_week_of_data_and_otherwise_asks_the_existing_series_endpoint(): void
+    public function test_the_chart_shows_real_data_for_a_young_business_and_only_explains_an_empty_series(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Chart Venue', 'Chart Account');
         $this->contactsAdded($business, 3, '2026-09-02');
@@ -257,9 +257,11 @@ class HomeV2ExperienceTest extends TestCase
 
         $this->youngBusiness($business, '2026-09-08 09:00:00');
         $young = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('data-too-early="1"', $young);
-        $this->assertStringContainsString('Your trend will appear after your first week.', $young);
-        $this->assertStringNotContainsString('data-role="chart-plot"', $young, 'No chart is drawn from a few days of data.');
+        // The business is under a week old but already has contacts: the chart is requested and drawn, never hidden for presentation.
+        $this->assertStringContainsString('data-too-early="1"', $young, 'Only a hint for the empty-series wording.');
+        $this->assertStringContainsString('data-role="chart-plot"', $young);
+        $this->assertStringContainsString('data-series-url=', $young);
+        $this->assertStringNotContainsString('data-role="chart-too-early"', $young, 'Real data is never replaced by the first-week line.');
     }
 
     // ── Needs you ───────────────────────────────────────────────────────

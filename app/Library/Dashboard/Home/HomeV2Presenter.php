@@ -362,7 +362,9 @@ final class HomeV2Presenter
                 continue;
             }
 
-            $signature = $row['key'] . '|' . $row['text'];
+            // Many publications of the same site: Home shows only the latest (the list is newest first); the full history is one click
+            // away in See activity.
+            $signature = $row['key'] === 'website_version_published' ? 'website_version_published' : $row['key'] . '|' . $row['text'];
 
             if (isset($seen[$signature])) {
                 continue;

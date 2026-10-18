@@ -20,11 +20,8 @@
         <p class="hv2-chart__title mb-0"><strong>New contacts per day</strong> <span class="hv2-muted" data-role="chart-total"></span></p>
     </div>
 
-    @if($chart['tooEarly'])
-        <p class="hv2-chart__empty mb-0" data-role="chart-too-early">Your trend will appear after your first week.</p>
-    @else
-        <div class="hv2-chart__plot" data-role="chart-plot" role="img" aria-label="New contacts per day for the selected period"><p class="hv2-muted mb-0" data-role="chart-placeholder">Loading…</p></div>
-    @endif
+    {{-- Always requested: a young business that already has contacts must see them. Only an EMPTY series is explained (too early, or none). --}}
+    <div class="hv2-chart__plot" data-role="chart-plot" role="img" aria-label="New contacts per day for the selected period"><p class="hv2-muted mb-0" data-role="chart-placeholder">Loading…</p></div>
 
     @if($chart['resultsUrl'])
         <p class="hv2-chart__foot mb-0"><a href="{{ $chart['resultsUrl'] }}" data-role="results-link">See all analytics</a></p>
