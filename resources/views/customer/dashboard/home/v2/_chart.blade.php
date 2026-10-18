@@ -4,7 +4,12 @@
     (it would add nothing the cards do not already say) — just one line. A failed read says so; it is never drawn as zeros.
     The series covers contacts only, so there is no Leads/Bookings switch: a bookings series does not exist yet.
 --}}
-@if($chart['restricted'] ?? false)
+@if($chart['future'] ?? false)
+    {{-- A period that has not started has nothing to chart. --}}
+    <div class="hv2-chart" data-role="home-chart-future">
+        <p class="hv2-chart__empty mb-0">This period has not started, so there is nothing to chart yet.</p>
+    </div>
+@elseif($chart['restricted'] ?? false)
     {{-- The daily series covers the whole business; this actor sees only some Locations, so no chart (their cards above are scoped). --}}
     <div class="hv2-chart" data-role="home-chart-restricted">
         <p class="hv2-chart__empty mb-0">The daily chart covers your whole business, so it is not shown for your locations.@if($chart['resultsUrl']) <a href="{{ $chart['resultsUrl'] }}" data-role="results-link">See all analytics</a>@endif</p>

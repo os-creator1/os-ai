@@ -33,7 +33,13 @@
             <div><strong>These figures are unavailable right now</strong><p class="hv2-muted mb-0">We couldn't read them, so nothing is shown rather than a wrong number. Refresh in a moment.</p></div>
         </div>
     @else
-        <p class="hv2-muted mb-50" data-role="headline-period">{{ $band['currentLabel'] }}, compared with the {{ $band['previousRange']->days() }} days before it ({{ $band['previousLabel'] }}).</p>
+        @if(($band['periodState'] ?? 'complete') === 'future')
+            <p class="hv2-muted mb-50" data-role="headline-period">{{ $band['currentLabel'] }}: this period has not started yet, so there is nothing to show or compare.</p>
+        @elseif(($band['periodState'] ?? 'complete') === 'partial')
+            <p class="hv2-muted mb-50" data-role="headline-period">{{ $band['currentLabel'] }}: still running, so it is not compared with an earlier period.</p>
+        @else
+            <p class="hv2-muted mb-50" data-role="headline-period">{{ $band['currentLabel'] }}, compared with the {{ $band['previousRange']->days() }} days before it ({{ $band['previousLabel'] }}).</p>
+        @endif
 
         @if($band['rangeRejected'])
             <p class="hv2-muted" data-role="range-rejected">That date range can't be used, so this shows {{ strtolower($band['range']->label()) }} instead.</p>

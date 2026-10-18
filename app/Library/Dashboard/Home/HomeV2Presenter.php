@@ -209,6 +209,7 @@ final class HomeV2Presenter
 
         $createdAt = $facts['createdAt'];
         $updating = ($facts['contactImportRunning'] ?? false) === true;
+        $periodState = (string) ($headlines['periodState'] ?? 'complete');
         $from = $range->startLocal->format('Y-m-d');
         $to = $range->endLocal->format('Y-m-d');
         $cards = [];
@@ -219,7 +220,7 @@ final class HomeV2Presenter
             // active. A period that ended before the first type was created was not observed at all.
             $set = $booking !== null && (int) $booking['typeCount'] > 0 && $earliestBookingType !== null && $earliestBookingType < $range->endUtc;
             $previousObserved = $set && $earliestBookingType <= $previous->startUtc;
-            $cards[] = $this->card('bookings', 'Bookings', $items['appointments_booked'], $set, $previousObserved, false, $range, 'No bookings yet', $this->rangeUrl($actions['bookings-list']['fullUrl'] ?? null, $from, $to));
+            $cards[] = $this->card('bookings', 'Bookings', $items['appointments_booked'], $set, $previousObserved, false, $range, 'No bookings yet', $periodState, $this->rangeUrl($actions['bookings-list']['fullUrl'] ?? null, $from, $to));
         }
 
         // 2 · New contacts (the metric counts contacts added, so that is its truthful name — not "leads")
@@ -227,25 +228,30 @@ final class HomeV2Presenter
             $observed = $createdAt !== null && $createdAt <= $previous->startUtc;
             // A period that ended before the Business existed was not observed: a dash, not a fabricated zero.
             $currentObserved = $createdAt === null || $createdAt < $range->endUtc;
-            $cards[] = $this->card('contacts', 'New contacts', $items['new_contacts'], $currentObserved, $observed, $updating, $range, '', $this->rangeUrl($actions['contacts-list']['fullUrl'] ?? null, $from, $to));
+            $cards[] = $this->card('contacts', 'New contacts', $items['new_contacts'], $currentObserved, $observed, $updating, $range, '', $periodState, $this->rangeUrl($actions['contacts-list']['fullUrl'] ?? null, $from, $to));
         }
 
         // 3 · New conversations
         if (isset($items['new_conversations'])) {
             $observed = $createdAt !== null && $createdAt <= $previous->startUtc;
             $currentObserved = $createdAt === null || $createdAt < $range->endUtc;
-            $cards[] = $this->card('conversations', 'New conversations', $items['new_conversations'], $currentObserved, $observed, false, $range, '', $this->rangeUrl($actions['follow-ups']['fullUrl'] ?? null, $from, $to));
+            $cards[] = $this->card('conversations', 'New conversations', $items['new_conversations'], $currentObserved, $observed, false, $range, '', $periodState, $this->rangeUrl($actions['follow-ups']['fullUrl'] ?? null, $from, $to));
         }
 
         return $cards;
     }
 
     /** @return array<string, mixed> */
-    private function card(string $key, string $label, object $headline, bool $currentObserved, bool $previousObserved, bool $updating, AnalyticsDateRange $range, string $emptyNote, ?string $url): array
+    private function card(string $key, string $label, object $headline, bool $currentObserved, bool $previousObserved, bool $updating, AnalyticsDateRange $range, string $emptyNote, string $periodState, ?string $url): array
     {
         $current = (int) $headline->comparison->current;
         $before = (int) $headline->comparison->previous;
         $monthly = $range->preset === AnalyticsDateRange::PRESET_THIS_MONTH || $range->preset === AnalyticsDateRange::PRESET_LAST_MONTH;
+
+        // A period that has not begun has no data yet: a dash and the reason, never a zero or a comparison.
+        if ($periodState === 'future') {
+            return ['key' => $key, 'label' => $label, 'value' => '—', 'note' => 'This period has not started', 'badge' => null, 'url' => $url];
+        }
 
         // Nothing was ever collected for this metric: a dash and a short reason, no badge.
         if (! $currentObserved) {
@@ -254,6 +260,11 @@ final class HomeV2Presenter
 
         if ($updating) {
             return ['key' => $key, 'label' => $label, 'value' => (string) $headline->figure, 'note' => null, 'badge' => ['tone' => 'updating', 'text' => 'Updating…', 'sr' => 'Still updating; comparison held back'], 'url' => $url];
+        }
+
+        // A custom period that is still running (it ends in the future) is not comparable with a finished one.
+        if ($periodState === 'partial') {
+            return ['key' => $key, 'label' => $label, 'value' => (string) $headline->figure, 'note' => null, 'badge' => ['tone' => 'neutral', 'text' => 'In progress', 'sr' => 'The period has not finished, so no comparison is shown'], 'url' => $url];
         }
 
         if (! $previousObserved) {
@@ -297,11 +308,18 @@ final class HomeV2Presenter
         /** @var AnalyticsDateRange $range */
         $range = $headlines['range'];
         $createdAt = $facts['createdAt'];
+        $periodState = (string) ($headlines['periodState'] ?? 'complete');
         $first = $createdAt !== null && $createdAt > $range->startUtc ? $createdAt->setTimezone($range->startLocal->getTimezone()) : $range->startLocal;
-        $observedDays = max(0, (int) $first->startOfDay()->diffInDays($range->endLocal->startOfDay()) + 1);
+        // Only days that have happened count as observed (a running custom period ends today; a future one has none).
+        $lastObserved = $periodState === 'complete' ? $range->endLocal : ($periodState === 'future' ? $first->startOfDay()->subDay() : CarbonImmutable::now()->setTimezone($range->startLocal->getTimezone())->startOfDay());
+        $observedDays = max(0, (int) $first->startOfDay()->diffInDays($lastObserved->startOfDay(), false) + 1);
 
         // A Location-restricted actor (or one whose reach could not be determined) gets no chart: the series is Business-wide, and a
         // chart of a different population than the cards beside it would be wrong or unauthorized data.
+        if ($periodState === 'future') {
+            return ['restricted' => false, 'future' => true, 'seriesUrl' => null, 'resultsUrl' => $headlines['resultsUrl'] ?? null, 'days' => $range->days(), 'observedDays' => 0, 'tooEarly' => false];
+        }
+
         if (($headlines['locationRestricted'] ?? true) !== false) {
             return ['restricted' => true, 'seriesUrl' => null, 'resultsUrl' => $headlines['resultsUrl'] ?? null, 'days' => $range->days(), 'observedDays' => $observedDays, 'tooEarly' => false];
         }

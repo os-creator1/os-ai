@@ -898,6 +898,13 @@ final class BusinessHomePresenter
         );
 
         $rangeParameters = $currentRange->queryParameters();
+
+        // Where the period sits relative to today, in the Business's own calendar. A custom range can start or end in the future; days that
+        // have not happened carry no data, so they must never read as zeros: "future" = not begun, "partial" = still running (custom only;
+        // the presets always end today or earlier).
+        $todayLocal = \Carbon\CarbonImmutable::now()->setTimezone($currentRange->startLocal->getTimezone())->startOfDay();
+        $periodState = $currentRange->startLocal->greaterThan($todayLocal) ? 'future' : ($currentRange->endLocal->greaterThan($todayLocal) ? 'partial' : 'complete');
+        $seriesParameters = $periodState === 'partial' ? array_merge($rangeParameters, ['end' => $todayLocal->format('Y-m-d')]) : $rangeParameters;
         $insight = $this->insight($business, $context, $user, $entitlements, $currentRange);
 
         return [
@@ -916,7 +923,8 @@ final class BusinessHomePresenter
             // The series is Business-wide (Results' own). For an actor who cannot reach every Location it would include records they may not
             // see, so Home withholds the chart from them rather than show a population different from its cards.
             'locationRestricted' => app(\App\Library\Crm\CrmLocationScope::class)->hasUnreachableLocation($business, $reach),
-            'seriesUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.series', array_merge($scoped, $rangeParameters), ['view_reports']),
+            'periodState' => $periodState,
+            'seriesUrl' => $periodState === 'future' ? null : $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.series', array_merge($scoped, $seriesParameters), ['view_reports']),
             'resultsUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.overview', array_merge($scoped, $rangeParameters), ['view_reports']),
         ];
     }
