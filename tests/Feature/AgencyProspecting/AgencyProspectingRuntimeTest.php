@@ -2609,14 +2609,14 @@ class AgencyProspectingRuntimeTest extends TestCase
         [$owner, $workspaceA] = $this->agencyWorkspace();
         [, $workspaceB] = $this->agencyWorkspace();
         $this->authenticateAsCustomer($owner);
-        $this->createChannel($workspaceA, SendingServer::TYPE_TELNYX, ['api_key' => 'secret-key-a', 'c1' => 'p']);
-        $this->createChannel($workspaceB, SendingServer::TYPE_TELNYX, ['api_key' => 'secret-key-b', 'c1' => 'p']);
+        $channelA = $this->createChannel($workspaceA, SendingServer::TYPE_TELNYX, ['api_key' => 'secret-key-a', 'c1' => 'p']);
+        $channelB = $this->createChannel($workspaceB, SendingServer::TYPE_TELNYX, ['api_key' => 'secret-key-b', 'c1' => 'p']);
 
         $response = $this->get(route('customer.workspaces.prospecting.phone-messaging', $workspaceA->uid))->assertOk();
 
         $response->assertSee('Option A')->assertSee('Option B');
         $response->assertDontSee('secret-key-a')->assertDontSee('secret-key-b');
-        $this->assertSame(1, substr_count($response->getContent(), 'Your Telnyx account'));
+        $response->assertSee($channelA->sender_number)->assertDontSee($channelB->sender_number);
     }
 
     public function test_phone_messaging_hub_is_denied_for_foreign_workspace(): void

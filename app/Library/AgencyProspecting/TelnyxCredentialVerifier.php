@@ -50,6 +50,13 @@ final class TelnyxCredentialVerifier
             if (empty($numbers->json('data'))) {
                 return $this->fail('number_not_owned', 'That sender number is not a number in this Telnyx account.');
             }
+
+            // Same `status` field TelnyxProvisioningAdapter reads on a retrieved number.
+            $status = $numbers->json('data.0.status');
+
+            if (is_string($status) && strtolower($status) !== 'active') {
+                return $this->fail('number_not_active', 'That number is not active in your Telnyx account yet.');
+            }
         } catch (Throwable) {
             return $this->fail('provider_unavailable', 'Telnyx could not be reached right now. Try again in a few minutes.');
         }

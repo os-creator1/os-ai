@@ -48,7 +48,11 @@
                                     @if($channel->status === 'active')
                                         <x-badge variant="success">Active</x-badge>
                                     @else
-                                        <x-badge variant="neutral">Disabled</x-badge>
+                                        @if($channel->status === 'disconnected')
+                                            <x-badge variant="neutral">Disconnected</x-badge>
+                                        @else
+                                            <x-badge variant="neutral">Disabled</x-badge>
+                                        @endif
                                     @endif
                                 </td>
                                 <td>

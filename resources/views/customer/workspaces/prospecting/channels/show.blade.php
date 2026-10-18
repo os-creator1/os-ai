@@ -28,12 +28,25 @@
                         @if($channel->status === 'active')
                             <x-badge variant="success">Active</x-badge>
                         @else
-                            <x-badge variant="neutral">Disabled</x-badge>
+                            @if($channel->status === 'disconnected')
+                                <x-badge variant="neutral">Disconnected</x-badge>
+                            @else
+                                <x-badge variant="neutral">Disabled</x-badge>
+                            @endif
                         @endif
                     </dd>
 
                     <dt class="col-sm-4">Webhook URL</dt>
-                    <dd class="col-sm-8"><code>{{ $webhookUrl }}</code></dd>
+                    <dd class="col-sm-8"><code>{{ $webhookUrl }}</code>
+                        @if($channel->provider === \App\Models\SendingServer::TYPE_TELNYX)
+                            <div class="text-caption">Set this as the webhook URL of your Telnyx messaging profile. Events are accepted only if they are signed with your webhook public key.</div>
+                        @endif
+                    </dd>
+
+                    @if($channel->provider === \App\Models\SendingServer::TYPE_TELNYX)
+                        <dt class="col-sm-4">Webhook key</dt>
+                        <dd class="col-sm-8">{{ trim((string) $channel->webhook_public_key) !== '' ? 'Saved' : 'Not saved yet' }}</dd>
+                    @endif
                 </dl>
 
                 <div class="d-flex gap-2 mt-3">

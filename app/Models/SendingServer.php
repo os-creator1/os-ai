@@ -386,6 +386,8 @@
             'quota_base'      => 'integer',
             'sms_per_request' => 'integer',
             'port'            => 'integer',
+            'api_key'         => \App\Casts\SealedSecretCast::class,
+            'auth_token'      => \App\Casts\SealedSecretCast::class,
         ];
 
         /**

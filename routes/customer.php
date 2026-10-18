@@ -2400,6 +2400,7 @@
             |----------------------------------------------------------------
             */
             Route::get('/phone-messaging', 'Workspace\AgencyProspectingChannelController@phoneMessaging')->name('phone-messaging');
+            Route::post('/phone-messaging/sender', 'Workspace\AgencyProspectingChannelController@setSender')->name('phone-messaging.sender');
 
             Route::prefix('channels')->name('channels.')->group(function () {
                 Route::get('/', 'Workspace\AgencyProspectingChannelController@channels')->name('index');
@@ -2409,6 +2410,7 @@
                 Route::match(['put', 'patch'], '/{channel}', 'Workspace\AgencyProspectingChannelController@update')->name('update');
                 Route::post('/{channel}/enable', 'Workspace\AgencyProspectingChannelController@enable')->name('enable');
                 Route::post('/{channel}/disable', 'Workspace\AgencyProspectingChannelController@disable')->name('disable');
+                Route::post('/{channel}/disconnect', 'Workspace\AgencyProspectingChannelController@disconnect')->name('disconnect');
             });
         });
     });

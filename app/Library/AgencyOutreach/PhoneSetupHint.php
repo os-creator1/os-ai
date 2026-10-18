@@ -6,11 +6,11 @@ use App\Models\Workspace;
 
 /**
  * Whether Outreach should offer the "Set up phone" shortcut: Outreach (and
- * Conversations/Automations) send through the agency's own Business number, so
- * it is needed until MessagingReadinessReader reports that number ready. A
- * connected BYO Telnyx channel does not satisfy it today — the Phone & Messaging
- * page states those channels currently power AI Prospecting only. Reads the same
- * reader as that page, so the two can never disagree. Read-only: no provider call.
+ * Conversations/Automations) send from the agency's chosen sender, so it is needed
+ * until that sender can actually send — the agency's own Telnyx account when it has
+ * chosen one (AgencyByoSender), otherwise its MotionGrove number (the same
+ * MessagingReadinessReader the Phone & Messaging page reads), so the two can never
+ * disagree. Read-only: no provider call.
  */
 final class PhoneSetupHint
 {
@@ -22,6 +22,16 @@ final class PhoneSetupHint
     {
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
 
-        return $business === null || ($this->readiness->situation($business)['state'] ?? null) !== 'ready';
+        if ($business === null) {
+            return true;
+        }
+
+        $byo = AgencyByoSender::selectedChannel($business);
+
+        if ($byo !== null) {
+            return ! AgencyByoSender::sendReadiness($byo)['ok'];
+        }
+
+        return ($this->readiness->situation($business)['state'] ?? null) !== 'ready';
     }
 }
