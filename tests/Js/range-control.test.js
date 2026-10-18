@@ -176,3 +176,38 @@ test('a stale highlight is cleared: a form rendered with the wrong class converg
 
   assert.deepEqual(form.active(), ['last_7_days']);
 });
+
+test('bind marks the page as JavaScript-enabled so the no-JavaScript fallback CSS can never match', () => {
+  const { bind } = require('../../public/js/analytics/range-control.js');
+  const html = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+  const doc = { documentElement: html, addEventListener() {}, querySelectorAll: () => [] };
+
+  bind(doc, { addEventListener() {} });
+
+  assert.equal(html.attrs['data-js'], '1', 'the markup guards its <noscript> rules with html:not([data-js])');
+});
+
+test('an async swap drops the <noscript> that DOMParser turned into live DOM, then re-syncs the new form', () => {
+  const { bind } = require('../../public/js/analytics/range-control.js');
+  const handlers = {};
+  const doc = { documentElement: { setAttribute() {} }, addEventListener: (type, fn) => { handlers[type] = fn; }, querySelectorAll: () => [] };
+  bind(doc, { addEventListener() {} });
+
+  let removed = 0;
+  let formsSynced = 0;
+  const form = { getAttribute: () => null, querySelectorAll: () => { formsSynced += 1; return []; }, querySelector: () => null };
+  const region = {
+    querySelectorAll: (selector) => {
+      if (selector === 'noscript') { return [{ remove() { removed += 1; } }]; }
+      if (selector === '[data-role="analytics-range"]') { return [form]; }
+
+      return [];
+    },
+  };
+
+  // Parsing with scripting disabled left a real <noscript><style> in the swapped-in region: it must be removed on update.
+  handlers['async-region:updated']({ target: region });
+
+  assert.equal(removed, 1, 'the swapped-in <noscript> is removed');
+  assert.ok(formsSynced > 0, 'the new form is re-synced to its rendered state');
+});
