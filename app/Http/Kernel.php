@@ -16,6 +16,7 @@
     use App\Http\Middleware\RedirectIfAuthenticated;
     use App\Http\Middleware\ResolveCustomDomainWebsite;
     use App\Http\Middleware\ResolveCustomerContext;
+    use App\Http\Middleware\ServeMarketingPricingToGuests;
     use App\Http\Middleware\SubAccountRestriction;
     use App\Http\Middleware\TrimStrings;
     use App\Http\Middleware\TrustHosts;
@@ -150,6 +151,7 @@
         protected $middlewarePriority = [
             StartSession::class,
             ShareErrorsFromSession::class,
+            ServeMarketingPricingToGuests::class,
             Authenticate::class,
             AuthenticateSession::class,
             SubstituteBindings::class,

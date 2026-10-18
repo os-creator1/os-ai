@@ -1,0 +1,207 @@
+/*
+ * MotionGrove marketing website — shared styles.
+ * Tokens and class names follow the approved design (HANDOFF.md). Page-specific
+ * deviations in the source boards are scoped under body.mg-<page>.
+ */
+body.mg{margin:0;background:#F7F5F2;color:#181413;font-family:'Figtree',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
+:where(.mg) *{box-sizing:border-box}
+:where(.mg) a{color:inherit;text-decoration:none}
+:where(.mg) a:hover{color:#8F3B35}
+:where(.mg) button{font-family:inherit;cursor:pointer}
+:where(.mg) :focus-visible{outline:3px solid #B4514A;outline-offset:2px;border-radius:6px}
+.mg [hidden]{display:none !important}
+.mg .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.mg .skip{position:absolute;left:-9999px;top:8px;z-index:50;background:#181413;color:#fff;padding:10px 14px;border-radius:8px}
+.mg .skip:focus{left:8px;color:#fff}
+
+.wrap{width:100%;max-width:1200px;margin:0 auto;padding:0 32px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:0 20px;border-radius:12px;border:1px solid transparent;font-size:15px;font-weight:600;white-space:nowrap;transition:background .15s,border-color .15s}
+.btn-p{background:#B4514A;color:#FFFFFF}.btn-p:hover{background:#9E443E;color:#FFFFFF}
+.btn-d{background:#181413;color:#FFFFFF}.btn-d:hover{background:#2E2826;color:#FFFFFF}
+.btn-s{background:#FFFFFF;color:#181413;border-color:#DCD5CE}.btn-s:hover{border-color:#A99E96;color:#181413}
+.btn-g{background:transparent;color:#FFFFFF;border-color:rgba(255,255,255,.35)}.btn-g:hover{border-color:#FFFFFF;color:#FFFFFF}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8F3B35}
+.h2{margin:0;font-size:clamp(34px,4.2vw,54px);line-height:1.05;font-weight:800;letter-spacing:-.035em}
+.lead{margin:0;font-size:clamp(17px,1.4vw,19px);line-height:1.6;color:#4A4340}
+.card{background:#FFFFFF;border:1px solid #E7E1DB;border-radius:20px}
+.navl a{font-size:15px;font-weight:500;color:#2E2826;padding:10px 12px;border-radius:8px}
+.navl a:hover{background:#EFEAE5;color:#181413}
+.ic{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.tick{width:22px;height:22px;flex:none;border-radius:50%;background:#E4F0EA;color:#1F5E4A;display:flex;align-items:center;justify-content:center}
+.sec{padding:128px 0}
+.ui{font-size:12px;color:#2E2826}
+.ui b{font-weight:600}
+:where(.mg) details summary{list-style:none;cursor:pointer}
+:where(.mg) details summary::-webkit-details-marker{display:none}
+:where(.mg) details[open] .plus{transform:rotate(45deg)}
+.plus{transition:transform .2s}
+.vid{position:relative;aspect-ratio:16/9;border-radius:16px;overflow:hidden;background:#2A2321}
+.vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.vid .thumb{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.play{position:absolute;inset:0;margin:auto;width:72px;height:72px;border-radius:50%;border:0;background:#FFFFFF;color:#181413;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(0,0,0,.25);transition:transform .15s}
+.play:hover{transform:scale(1.06)}
+.play[disabled]{cursor:not-allowed;opacity:.55}.play[disabled]:hover{transform:none}
+.vid-fallback{position:absolute;right:10px;bottom:10px;z-index:2;font-size:11.5px;font-weight:600;color:#E9E2DC;background:rgba(0,0,0,.45);padding:3px 8px;border-radius:5px}
+.vid-fallback:hover{color:#FFFFFF;text-decoration:underline}
+
+/* Header / menu */
+.mg-header{position:sticky;top:0;z-index:20;background:rgba(247,245,242,.92);border-bottom:1px solid #E7E1DB}
+.mg-home .mg-header{backdrop-filter:blur(12px)}
+.mg-menu summary::-webkit-details-marker{display:none}
+
+/* Homepage connected-system steps: state is carried by aria-pressed, as in the source. */
+.flow-btn{flex:1;text-align:left;display:flex;flex-direction:column;gap:12px;padding:18px;min-height:132px;border-radius:16px;border:1px solid #3A322F;background:#221C1A;color:#FFFFFF;font-family:inherit}
+.flow-btn .fn{font-size:12px;font-weight:700;color:#A99E96}
+.flow-btn .fd{width:8px;height:8px;border-radius:50%;background:#4A3E3A}
+.flow-btn[aria-pressed="true"]{background:#B4514A;border-color:#B4514A}
+.flow-btn[aria-pressed="true"] .fn{color:#FFFFFF}
+.flow-btn[aria-pressed="true"] .fd{background:#FFFFFF}
+
+/* Filter / industry pills */
+.pill{border-radius:999px;font-weight:600;border:1px solid #DCD5CE;background:#FFFFFF;color:#2E2826}
+.pill[aria-pressed="true"]{background:#181413;border-color:#181413;color:#FFFFFF}
+
+/* Mobile-only / desktop-only blocks (Home-phone.dc.html is the mobile reference) */
+.scroller{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;margin:0 -20px;padding:0 20px 6px}
+.scroller > *{scroll-snap-align:start;flex:none}
+.mg-phone .m-btn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;padding:0 20px;border-radius:14px;border:1px solid transparent;font-size:16px;font-weight:600}
+.mg-phone .m-sec{padding:72px 20px;display:flex;flex-direction:column;gap:24px}
+.mg-phone .m-h2{margin:0;font-size:32px;line-height:1.08;font-weight:800;letter-spacing:-.03em}
+.mg-phone .m-p{margin:0;font-size:16.5px;line-height:1.6;color:#4A4340}
+.mg-phone .m-eyebrow{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8F3B35}
+.mg-phone .m-card{background:#FFFFFF;border:1px solid #E7E1DB;border-radius:18px}
+
+/* Inner pages (Product, Solutions, How it works, Customers, Pricing) */
+body.mg-inner .h2{font-size:clamp(30px,3.4vw,44px);line-height:1.08;letter-spacing:-.03em}
+body.mg-product .ui{font-size:12.5px}
+.mg-product .li{display:flex;gap:12px;align-items:flex-start;font-size:15.5px;line-height:1.5}
+.mg-product .li::before{content:"";width:8px;height:8px;margin-top:8px;border-radius:50%;background:#B4514A;flex:none}
+.mg-product .mod{display:flex;flex-wrap:wrap;gap:56px;align-items:center;padding:72px 0;border-top:1px solid #E7E1DB}
+.mg-how .col{flex:1 1 220px;display:flex;flex-direction:column;gap:6px;padding:18px 20px;border-radius:14px;background:#F7F5F2}
+.mg-how .col b{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#6B625E}
+.mg-how .col span{font-size:15px;line-height:1.55;color:#2E2826}
+.mg-how .step{display:flex;gap:28px}
+.mg-how .rail{display:flex;flex-direction:column;align-items:center}
+.mg-how .num{width:56px;height:56px;border-radius:16px;background:#181413;color:#FFFFFF;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
+.mg-how .line{flex:1;width:2px;background:#DCD5CE;margin:10px 0}
+body.mg-customers .chip{height:24px;font-size:12px}
+body.mg-customers .vid{background:#3A302D}
+body.mg-customers .play{width:64px;height:64px}
+body.mg-pricing .card{border-radius:22px}
+body.mg-pricing .btn{min-height:48px}
+body.mg-pricing .tick{display:inline-flex}
+body.mg-pricing .tick .ic{width:12px;height:12px;stroke-width:2.6}
+.mg-pricing table th,.mg-pricing table td{padding:16px 20px;text-align:left;border-top:1px solid #EFEAE5;font-size:15px}
+.mg-pricing table td{text-align:center}
+.mg-pricing .no{color:#A99E96}
+.mg-pricing .tip{position:relative;display:inline-flex}
+.mg-pricing .tip button{width:22px;height:22px;border-radius:50%;border:1px solid #DCD5CE;background:#FFFFFF;color:#6B625E;font-size:12px;font-weight:700;font-family:inherit;cursor:help;margin-left:6px}
+.mg-pricing .tip span{position:absolute;left:34px;top:-8px;width:240px;padding:10px 12px;border-radius:10px;background:#181413;color:#FFFFFF;font-size:13px;font-weight:400;line-height:1.45;opacity:0;pointer-events:none;transition:opacity .15s;z-index:3;text-align:left}
+.mg-pricing .tip:hover span,.mg-pricing .tip:focus-within span{opacity:1}
+
+@media (max-width:960px){
+  .navl,.hide-m{display:none !important}
+  .sec{padding:88px 0}
+  .wrap{padding:0 20px}
+  .mg-how .step{gap:16px}
+  .mg-how .num{width:44px;height:44px;font-size:18px}
+  body.mg-inner .sec{padding:88px 0}
+}
+@media (min-width:961px){.show-m{display:none !important}}
+@media (prefers-reduced-motion:reduce){:where(.mg) *{transition:none !important}}
+
+/* Tab panels: only hidden once JavaScript has taken over (progressive enhancement). */
+.js [data-panel]:not(.is-on){display:none !important}
+
+/* Header "Get started": compact on phones, as in Home-phone.dc.html */
+@media (max-width:960px){.mg-gs{min-height:40px;padding:0 14px;font-size:14px;border-radius:10px}}
+.mg-bar{height:72px}
+@media (max-width:960px){.mg-bar{height:64px;gap:12px !important}.mg-logo{height:24px !important;width:auto}}
+
+/* Homepage hero: centered on desktop, left-aligned on phones (Home-phone.dc.html) */
+.hero{padding:88px 0 0}
+.hero-top{display:flex;flex-direction:column;align-items:center;text-align:center;gap:26px}
+.hero-chip{height:34px;padding:0 14px;font-size:13.5px}
+.hero-h1{margin:0;font-size:clamp(48px,7.4vw,96px);line-height:.98;font-weight:800;letter-spacing:-.045em;max-width:980px}
+.hero-lead{max-width:720px;font-size:clamp(18px,1.6vw,21px)}
+.hero-cta{display:flex;flex-wrap:wrap;justify-content:center;gap:12px}
+.hero-btn{min-height:54px;padding:0 28px;font-size:16px}
+.hero-ticks{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 22px;font-size:14px;color:#5E5652}
+.hero-ticks li{display:inline-flex;align-items:center;gap:8px}
+.hero-ticks .ic{color:#1F5E4A;width:16px;height:16px}
+@media (max-width:960px){
+  .hero{padding:44px 0 0}
+  .hero-top{align-items:flex-start;text-align:left;gap:20px}
+  .hero-chip{height:26px;padding:0 10px;font-size:12.5px}
+  .hero-h1{font-size:50px}
+  .hero-lead{font-size:17.5px}
+  .hero-cta{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:10px;width:100%}
+  .hero-btn{min-height:52px;padding:0 20px;border-radius:14px}
+  .hero-ticks{justify-content:flex-start;font-size:13.5px}
+  .hero-ticks .ic{width:15px;height:15px}
+}
+
+/* Trust strip */
+.trust{padding:40px 0 24px}
+.trust-wrap{display:flex;flex-direction:column;align-items:center;gap:26px;text-align:center}
+.trust-h{margin:0;font-size:15px;font-weight:600;color:#5E5652}
+.trust-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.trust-logos{width:100%;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+@media (max-width:960px){.trust{padding:48px 0 0}.trust-wrap{align-items:stretch;text-align:left;gap:14px}.trust-h{font-size:14px}}
+
+/* Problem section */
+.prob-close{font-size:clamp(22px,2.4vw,30px)}
+@media (max-width:960px){.prob-wrap{gap:24px !important}.prob-close{font-size:20px;text-align:left !important;letter-spacing:-.01em !important}}
+/* Homepage section titles on phones (Home-phone.dc.html: 32px / 1.08) */
+@media (max-width:960px){body.mg-home .h2{font-size:32px;line-height:1.08;letter-spacing:-.03em}}
+
+/* Final CTA + homepage phone tweaks */
+@media (max-width:960px){
+  .final-cta{padding:0 0 56px !important}
+  .final-box{border-radius:24px !important;padding:40px 24px !important;align-items:flex-start !important;text-align:left !important;gap:16px !important}
+  .final-box h2{font-size:32px !important;line-height:1.06 !important;letter-spacing:-.03em !important}
+  .final-lead{font-size:16px !important}
+  .final-cta-btns{flex-direction:column;flex-wrap:nowrap;align-items:stretch;width:100%;padding-top:0 !important}
+  .final-cta-btns .btn{min-height:52px !important;border-radius:14px;font-size:16px !important}
+  .price-head{align-items:flex-start !important;text-align:left !important}
+  .faq-sec .wrap{gap:24px !important}
+}
+.faq-all > summary{font-weight:600;color:#8F3B35}
+
+/* Drawn illustrations carry a real-DOM sample-data label (HANDOFF.md content rules) */
+.ex-note{grid-column:1/-1;font-size:11px;font-weight:600;color:#6B625E;padding:6px 4px 0;text-align:left}
+.ui[style*="#181413"] > .ex-note{color:#A99E96}
+.card.ui > .ex-note{padding:2px 18px 12px}
+@media (max-width:960px){.cta-panel{padding:40px 24px !important}}
+.hero-btn.btn-s{padding:0 26px}
+@media (max-width:960px){.hero-btn.btn-s{padding:0 20px}}
+
+/* Homepage on phones: spacing from Home-phone.dc.html (72px sections, 24px rhythm, 32px page margins collapse to 20px) */
+.scroller{scroll-padding-inline:20px}
+@media (max-width:960px){
+  body.mg-home .sec{padding:72px 0}
+  body.mg-home .sec > .wrap{gap:24px !important}
+  body.mg-home .sec > .wrap > div:first-child{gap:24px !important}
+  body.mg-home .faq-sec{padding-top:24px}
+  .hero .wrap.show-m{margin-top:32px}
+  .mg-home .cap-wrap .scroller{margin-top:0 !important}
+}
+
+/* Between the phone and full-width breakpoints the header must not overflow (nav + three actions) */
+@media (min-width:961px) and (max-width:1180px){
+  .navl{margin-left:0 !important}
+  .navl a{padding:10px 7px;font-size:14px}
+  .mg-bar{gap:12px !important}
+  .mg-bar .btn{padding:0 14px}
+}
+@media (max-width:360px){.mg-logo{height:20px !important}.mg-gs{padding:0 10px;font-size:13px}.mg-bar{gap:6px !important}.mg-bar > div:last-child{gap:6px !important}}
+
+/* Homepage commitment on phones: compact panel (the icon tile is dropped) */
+@media (max-width:960px){
+  .com-box{padding:24px 20px !important;gap:20px !important;border-radius:18px !important}
+  .com-box > div:first-child{gap:16px !important}
+  .com-box > div:first-child > span[aria-hidden]{display:none !important}
+  .com-box > div:last-child{gap:10px !important}
+  .com-box > div:last-child > div{padding:16px 18px !important;border-radius:14px !important;gap:6px !important}
+}
