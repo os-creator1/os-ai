@@ -38,6 +38,8 @@ final readonly class AppointmentNotificationDetails
         public Carbon $endUtc,
         public int $sequence,
         public ?MailBrand $brand = null,
+        /** Signed guest cancel/reschedule link; only the designated /book-demo Booking Type ever has one. */
+        public ?string $manageUrl = null,
     ) {
     }
 
@@ -80,6 +82,7 @@ final readonly class AppointmentNotificationDetails
             endUtc: $end,
             sequence: (int) $appointment->reschedule_count,
             brand: app(MailBrandResolver::class)->forBusiness($business),
+            manageUrl: \App\Library\Calendar\DemoBooking\DemoBookingManageLinks::urlFor($appointment),
         );
     }
 

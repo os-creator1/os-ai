@@ -107,6 +107,39 @@ class AppointmentBookingConcurrencyTest extends TestCase
         $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->count());
     }
 
+    public function test_two_concurrent_first_demo_bookings_by_one_email_share_one_phoneless_contact(): void
+    {
+        [$typeId, , $locationId] = $this->scenario();
+        $this->insertContact($locationId);
+
+        $results = $this->race([
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ada@example.test', '', $this->slot('10:00:00')],
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ADA@example.test', '', $this->slot('12:00:00')],
+        ]);
+        $this->assertGenuinelyRaced($results);
+        $this->assertSame([0, 0], array_column($results, 'exitCode'));
+        $this->assertSame(1, DB::table('contacts')->where('location_id', $locationId)->where('phone', '')->count());
+        $this->assertSame(2, DB::table('appointments')->where('booking_type_id', $typeId)->count());
+        $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->distinct()->count('contact_id'));
+    }
+
+    public function test_two_concurrent_demo_bookings_for_one_slot_leave_one_appointment_and_one_contact(): void
+    {
+        [$typeId, , $locationId] = $this->scenario();
+        $this->insertContact($locationId);
+
+        $results = $this->race([
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ada@example.test', '', $this->slot('10:00:00')],
+            ['demo-contact', (string) $typeId, (string) $locationId, 'grace@example.test', '', $this->slot('10:00:00')],
+        ]);
+        $this->assertGenuinelyRaced($results);
+        $this->assertExactlyOneCommitted($results);
+        $this->assertLoserWasRefusedByTheDomainRule($results, 'NoEligibleStaffAvailableException');
+        $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->count());
+        // The loser's Contact rolled back with its refused booking: no orphan lead.
+        $this->assertSame(1, DB::table('contacts')->where('location_id', $locationId)->where('phone', '')->count());
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

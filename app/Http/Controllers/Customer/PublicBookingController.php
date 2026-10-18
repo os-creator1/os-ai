@@ -45,15 +45,15 @@ use Illuminate\View\View;
 class PublicBookingController extends Controller
 {
     public function __construct(
-        private readonly CalendarLocationResolver $locations,
-        private readonly CustomerAccountAccessGuard $accounts,
-        private readonly EntitlementManager $entitlements,
-        private readonly PublicSlotFinder $slots,
-        private readonly AppointmentBookingService $booking,
-        private readonly EloquentContactsRepository $contacts,
-        private readonly LeadAttributionRecorder $attribution,
-        private readonly AppointmentNotificationScheduler $notifications,
-        private readonly BookingNotificationReadiness $notificationReadiness,
+        protected readonly CalendarLocationResolver $locations,
+        protected readonly CustomerAccountAccessGuard $accounts,
+        protected readonly EntitlementManager $entitlements,
+        protected readonly PublicSlotFinder $slots,
+        protected readonly AppointmentBookingService $booking,
+        protected readonly EloquentContactsRepository $contacts,
+        protected readonly LeadAttributionRecorder $attribution,
+        protected readonly AppointmentNotificationScheduler $notifications,
+        protected readonly BookingNotificationReadiness $notificationReadiness,
     ) {
     }
 
@@ -266,7 +266,7 @@ class PublicBookingController extends Controller
      * silently dropped. The group row is locked first (we are inside the
      * booking transaction) so two simultaneous bookings cannot both add it.
      */
-    private function ensureEmailField(ContactGroups $group): void
+    protected function ensureEmailField(ContactGroups $group): void
     {
         $locked = ContactGroups::query()->whereKey($group->id)->lockForUpdate()->firstOrFail();
         if ($locked->getFieldByTag('EMAIL') === null) {
@@ -282,7 +282,7 @@ class PublicBookingController extends Controller
     }
 
     /** Six public checks in Contract 15 §6 order; all refusals have one response. */
-    private function resolve(string $uuid): array
+    protected function resolve(string $uuid): array
     {
         $type = BookingType::query()->where('public_booking_uuid', $uuid)->first() ?? abort(404);
         $location = BusinessLocation::query()->find($type->business_location_id) ?? abort(404);
@@ -305,7 +305,7 @@ class PublicBookingController extends Controller
     }
 
     /** A Business whose stored timezone is not a real zone cannot be scheduled: refuse like every other authority failure. */
-    private function timezoneFor(Business $business): string
+    protected function timezoneFor(Business $business): string
     {
         $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
         try {
@@ -322,7 +322,7 @@ class PublicBookingController extends Controller
      * It only decides which day a slot is shown on and how it is labelled; the
      * booked instant is always the Business-local date + time the slot carries.
      */
-    private function visitorTimezone(Request $request, string $fallback, string $key = 'tz'): string
+    protected function visitorTimezone(Request $request, string $fallback, string $key = 'tz'): string
     {
         $candidate = $request->input($key);
 
@@ -332,7 +332,7 @@ class PublicBookingController extends Controller
     }
 
     /** @return array<string, list<string>> region => identifiers, for the timezone picker */
-    private function timezoneOptions(): array
+    protected function timezoneOptions(): array
     {
         $groups = [];
         foreach (\DateTimeZone::listIdentifiers() as $identifier) {
@@ -349,7 +349,7 @@ class PublicBookingController extends Controller
      *
      * @param  list<int>  $staffIds
      */
-    private function brand(BookingType $type, Business $business, BusinessLocation $location, array $staffIds): array
+    protected function brand(BookingType $type, Business $business, BusinessLocation $location, array $staffIds): array
     {
         $color = is_string($type->color) && preg_match('/^#[0-9a-fA-F]{6}$/', $type->color) ? $type->color : null;
         $staff = count($staffIds) === 1 ? User::query()->find($staffIds[0]) : null;
@@ -364,12 +364,12 @@ class PublicBookingController extends Controller
         ];
     }
 
-    private function whereLine(BusinessLocation $location): ?string
+    protected function whereLine(BusinessLocation $location): ?string
     {
         return BookingLocationLabel::for($location);
     }
 
-    private function summary(BookingType $type, Business $business, BusinessLocation $location, Carbon $start, string $timezone): array
+    protected function summary(BookingType $type, Business $business, BusinessLocation $location, Carbon $start, string $timezone): array
     {
         $local = $start->copy()->setTimezone($timezone);
         $end = $start->copy()->addMinutes((int) $type->duration_minutes);
@@ -389,7 +389,7 @@ class PublicBookingController extends Controller
     }
 
     /** What the guest is told to expect, from what was actually arranged — nothing promised for a channel that is off. */
-    private function noticeLine(BookingType $type, string $email, bool $smsConsent): ?string
+    protected function noticeLine(BookingType $type, string $email, bool $smsConsent): ?string
     {
         $parts = [];
         if ($type->notifiesByEmail()) {
@@ -402,19 +402,19 @@ class PublicBookingController extends Controller
         return $parts === [] ? null : 'We are sending ' . implode(' and ', $parts) . ', with reminders before your appointment.';
     }
 
-    private function refused(bool $wantsJson, string $message, int $status = 422): RedirectResponse|JsonResponse
+    protected function refused(bool $wantsJson, string $message, int $status = 422): RedirectResponse|JsonResponse
     {
         return $wantsJson
             ? $this->json(['message' => $message, 'errors' => ['time' => [$message]]], $status)
             : back()->withInput()->withErrors(['time' => $message]);
     }
 
-    private function json(array $payload, int $status = 200): JsonResponse
+    protected function json(array $payload, int $status = 200): JsonResponse
     {
         return response()->json($payload, $status)->header('Cache-Control', 'no-store');
     }
 
-    private function eligibleStaffIds(BookingType $type, BusinessLocation $location): array
+    protected function eligibleStaffIds(BookingType $type, BusinessLocation $location): array
     {
         return $type->staff()->orderBy('users.id')->pluck('users.id')
             ->map(fn ($id): int => (int) $id)
