@@ -55,23 +55,40 @@ class AgencyOutreachReadiness
         } else {
             $items[] = $this->item('business', 'Your own business account', true, null);
 
-            $situation = $this->messaging->situation($business);
-            $info['number'] = $situation['phoneNumber'];
-            $textingUrl = $this->linkFor($workspace, $business, 'customer.workspaces.businesses.text-messaging.show');
+            $byo = AgencyByoSender::selectedChannel($business);
 
-            $items[] = $situation['phoneNumber'] !== null
-                ? $this->item('number', 'Sending number', true, null, $textingUrl)
-                : $this->item('number', 'Sending number', false, 'You do not have a sending number yet. Get one in Text messaging.', $textingUrl);
+            if ($byo !== null) {
+                // The agency chose its own Telnyx account: readiness is that connection's, and the
+                // MotionGrove wallet plays no part in paying for transport, so it is not a blocker.
+                $phoneUrl = route('customer.workspaces.prospecting.phone-messaging', $workspace->uid);
+                $state = AgencyByoSender::sendReadiness($byo);
+                $info['number'] = $byo->sender_number;
+                $info['transport'] = 'byo';
 
-            $items[] = $situation['state'] === 'ready'
-                ? $this->item('verification', 'Messaging verification', true, null, $textingUrl)
-                : $this->item('verification', 'Messaging verification', false, match ($situation['state']) {
-                    'no_number' => 'Messaging verification cannot start until you have a sending number.',
-                    'number_required' => 'Verification is approved. Get a sending number to finish setup.',
-                    default => 'Messaging verification is not complete yet. Finish it in Text messaging before sending.',
-                }, $textingUrl);
+                $items[] = $this->item('number', 'Sending number', $state['ok'], $state['message'], $phoneUrl);
+                $items[] = $state['ok']
+                    ? $this->item('verification', 'Messaging verification', true, null, $phoneUrl)
+                    : $this->item('verification', 'Messaging verification', false, 'Your own Telnyx account must be connected and verified before sending.', $phoneUrl);
+                $items[] = $this->item('wallet', 'Funds for sending', true, null);
+            } else {
+                $situation = $this->messaging->situation($business);
+                $info['number'] = $situation['phoneNumber'];
+                $textingUrl = $this->linkFor($workspace, $business, 'customer.workspaces.businesses.text-messaging.show');
 
-            $items[] = $this->walletItem($workspace, $business, $info);
+                $items[] = $situation['phoneNumber'] !== null
+                    ? $this->item('number', 'Sending number', true, null, $textingUrl)
+                    : $this->item('number', 'Sending number', false, 'You do not have a sending number yet. Get one in Text messaging.', $textingUrl);
+
+                $items[] = $situation['state'] === 'ready'
+                    ? $this->item('verification', 'Messaging verification', true, null, $textingUrl)
+                    : $this->item('verification', 'Messaging verification', false, match ($situation['state']) {
+                        'no_number' => 'Messaging verification cannot start until you have a sending number.',
+                        'number_required' => 'Verification is approved. Get a sending number to finish setup.',
+                        default => 'Messaging verification is not complete yet. Finish it in Text messaging before sending.',
+                    }, $textingUrl);
+
+                $items[] = $this->walletItem($workspace, $business, $info);
+            }
         }
 
         $enrolled = AgencyProspectCampaignMember::where('workspace_id', $workspace->id)->exists();

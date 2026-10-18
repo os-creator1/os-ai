@@ -12,6 +12,8 @@ class AgencyProspectingChannel extends Model
 
     public const STATUS_ACTIVE = 'active';
     public const STATUS_DISABLED = 'disabled';
+    /** Credentials wiped; the row is kept only so history can still name the sender. */
+    public const STATUS_DISCONNECTED = 'disconnected';
 
     protected $fillable = [
         'workspace_id',
@@ -20,7 +22,23 @@ class AgencyProspectingChannel extends Model
         'sender_number',
         'status',
         'created_by_user_id',
+        'is_default_sender',
+        'webhook_public_key',
+        'credentials_verified_at',
+        'webhook_verified_at',
+        'disconnected_at',
+        'last_error_code',
     ];
+
+    protected $casts = [
+        'is_default_sender' => 'boolean',
+        'webhook_public_key' => \App\Casts\SealedSecretCast::class,
+        'credentials_verified_at' => 'datetime',
+        'webhook_verified_at' => 'datetime',
+        'disconnected_at' => 'datetime',
+    ];
+
+    protected $hidden = ['webhook_public_key'];
 
     public function workspace(): BelongsTo
     {

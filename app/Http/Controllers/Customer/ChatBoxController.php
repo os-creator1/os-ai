@@ -257,11 +257,14 @@
 
             if ($managedTransport) {
                 $identity = app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class)->resolveForBusiness($business);
+                $byoChannel = \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business);
 
                 try {
-                    $managedFromNumber = $identity !== null
+                    $managedFromNumber = $byoChannel !== null
+                        ? (string) $byoChannel->sender_number
+                        : ($identity !== null
                         ? app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class)->resolvePrimaryNumber($identity)->phone_number
-                        : null;
+                        : null);
                 } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
                     $managedFromNumber = null;
                 }

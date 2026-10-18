@@ -349,6 +349,13 @@
     Route::post('webhooks/prospecting/{channelUid}/{token}/twilio', 'Prospecting\AgencyProspectingWebhookController@twilio')->name('prospecting.webhooks.twilio');
     Route::post('webhooks/prospecting/{channelUid}/{token}/telnyx', 'Prospecting\AgencyProspectingWebhookController@telnyx')->name('prospecting.webhooks.telnyx');
 
+    // An agency's OWN Telnyx account feeding its Conversations/Outreach/Automations
+    // (not the AI Prospecting engine above). Throttled like the managed route: public
+    // until the agency's Ed25519 signature is verified.
+    Route::post('webhooks/agency-telnyx/{channelUid}/{token}', 'Prospecting\AgencyByoTelnyxWebhookController@handle')
+        ->middleware('throttle:600,1')
+        ->name('prospecting.webhooks.agency_telnyx');
+
     /*
      * Implementation Contract 15 §11/§12.F — inbound Google/Outlook calendar
      * push notification ingestion. Same URL-embedded-HMAC-token precedent as
