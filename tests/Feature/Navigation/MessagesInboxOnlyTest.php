@@ -43,8 +43,13 @@ class MessagesInboxOnlyTest extends TestCase
             $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]), $this->navHref($html, 'conversations'));
             $this->assertStringNotContainsString('/outreach', $this->shellHtml($html), "{$tier->value}: no menu link reaches Send or Campaigns.");
 
-            foreach (['Send', 'Campaigns'] as $label) {
-                $this->assertDoesNotMatchRegularExpression('/\b' . $label . '\b/', $this->shellText($html), "{$tier->value}: no [{$label}] entry.");
+            $this->assertDoesNotMatchRegularExpression('/\bSend\b/', $this->shellText($html), "{$tier->value}: no [Send] entry.");
+
+            // The legacy messaging "Campaigns" entry is gone. A [Campaigns] child of the
+            // Ads module (data-nav-key="ads-campaigns") is a different, legitimate item,
+            // so the check is on the legacy keys, not on the word.
+            foreach (['campaigns', 'outreach'] as $legacyKey) {
+                $this->assertStringNotContainsString('data-nav-key="' . $legacyKey . '"', $this->sidebarHtml($html), "{$tier->value}: no legacy [{$legacyKey}] entry.");
             }
         }
     }
@@ -63,7 +68,7 @@ class MessagesInboxOnlyTest extends TestCase
 
     public function test_an_agency_keeps_prospecting_in_its_account_frame_and_no_messages_there(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        [$agency, $own, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
         $this->switchToAccount($workspace);
 
@@ -72,7 +77,9 @@ class MessagesInboxOnlyTest extends TestCase
 
         $this->assertContains('prospecting', $keys);
         $this->assertSame(route('customer.prospecting.index'), $this->navHref($html, 'prospecting'));
-        $this->assertNotContains('conversations', $keys, 'Conversations belongs to a selected Business, never the Agency account frame.');
+        // Blueprint §28: the Agency owner is a Business owner too, so the
+        // account frame also carries the Agency's OWN Business Conversations.
+        $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $own->uid]), $this->navHref($html, 'conversations'));
 
         // Reachable in its own context: the entry resolves the Agency account.
         $this->get(route('customer.prospecting.index'))
@@ -90,7 +97,8 @@ class MessagesInboxOnlyTest extends TestCase
 
         $this->assertConversationsIsOneEntry($html, 'agency client');
         $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $client->uid]), $this->navHref($html, 'conversations'), 'Conversations is the selected client Business\'s own.');
-        $this->assertNotContains('prospecting', $this->menuKeys($html), 'Prospecting stays in the Agency account frame.');
+        // The Agency owner's own Business frame also carries the Agency group.
+        $this->assertContains('prospecting', $this->menuKeys($html));
         $this->assertStringNotContainsString('/outreach', $this->shellHtml($html));
 
         $this->get($this->navHref($html, 'conversations'))->assertOk();

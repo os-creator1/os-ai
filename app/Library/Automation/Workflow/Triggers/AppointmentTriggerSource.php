@@ -71,7 +71,16 @@ class AppointmentTriggerSource extends FoundationTriggerSource
             return $this->skip($result, self::SKIPPED_NO_FACT);
         }
 
-        return $this->enrollListening($result, $context->businessId, $context->contactId, $context->occurrenceKey);
+        // The appointment's own Location, from its row (fixed for its life).
+        return $this->enrollListening(
+            $result,
+            $context->businessId,
+            $context->contactId,
+            $context->occurrenceKey,
+            null,
+            null,
+            $context->locationId,
+        );
     }
 
     /**

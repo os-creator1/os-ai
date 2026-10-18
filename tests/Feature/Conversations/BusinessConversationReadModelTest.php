@@ -54,8 +54,15 @@ class BusinessConversationReadModelTest extends TestCase
         // H-4 (§2.6) added the three Business Home figures. They live here,
         // and only here, because this class is the one door to the
         // conversation table: Dashboard code, Blade and B5 never query it.
+        // Home V2 added awaitingReplyConversations(): the rows behind awaitingReplyCount(), with the
+        // same predicate and the inbox's Location rule, for the follow-up drawer.
+        // The final Home added awaitingReplyBoxQuery(): the ids behind the same predicate as a sub-select, for the inbox's "waiting"
+        // filter, so the list a card opens is exactly the set it counted.
         $this->assertSame([
+            'awaitingReplyBoxQuery',
+            'awaitingReplyConversations',
             'awaitingReplyCount',
+            'hasAnyConversation',
             'incomingCount',
             'periodCounts',
             'repliedCount',

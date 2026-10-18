@@ -21,12 +21,11 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
 
 /**
- * Contract 18 Sub-slice 18A — the Business-scoped SEO Overview.
+ * Contract 18 Sub-slice 18A — the Business-scoped SEO entry.
  *
  * READ-ONLY. There is no write action anywhere in this controller: it does
  * not write Website, Business, Location or Google data, calls no provider,
- * and calls no AI. The Overview it serves is computed from platform-owned
- * tables only (SeoOverviewReader).
+ * and calls no AI. Both of its routes only redirect to Search keywords.
  *
  * Every Business-scoped action runs the mandatory chain (Contract 18 §10.1,
  * mirroring GBP §15.1): Workspace by uid → Business inside it →
@@ -36,11 +35,10 @@ use Illuminate\Support\Facades\Auth;
  * a foreign or unentitled resource is indistinguishable from a missing one.
  * `Auth::id()` is the capability subject and audit actor only, never tenancy.
  *
- * FAIL-CLOSED WHILE `Planned`. SeoBasicVisibility is registered Planned
- * until Sub-slice H flips it (RFC-004: a Planned feature is never
- * customer-executable). EntitlementManager therefore denies it for every
- * tier, so every route here answers 404 today — the controller is
- * unreachable by design, not by omission.
+ * ENTITLEMENT. SeoBasicVisibility is Available (Sub-slice H flipped it) for
+ * Core, Growth and Agency; any other caller, foreign Business or unentitled
+ * Business gets the same 404. The availability floor below still fails closed
+ * if the registry ever marks the feature unavailable again.
  *
  * NAMING. Everything SEO is under `customer.workspaces.businesses.seo.*` and
  * `customer.seo.*`; nothing begins with `customer.keywords.` (the legacy
@@ -56,7 +54,6 @@ class SeoController extends CustomerBaseController
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
-        private readonly SeoOverviewReader $overviewReader,
     ) {
     }
 
@@ -68,14 +65,14 @@ class SeoController extends CustomerBaseController
      *
      * ORDER IS LOAD-BEARING. The implementation-availability floor comes
      * FIRST, before the capability check and before any Business is touched:
-     * while SeoBasicVisibility is Planned the whole surface is 404 for every
-     * caller, so neither a 200 empty state nor a different (401) response for
-     * a caller who lacks `view_seo` can reveal that the SEO surface exists
-     * (Contract 18 §14.1). The bare route has no Business yet, so
-     * EntitlementManager cannot decide anything per Business here; the
+     * should SeoBasicVisibility ever be unavailable the whole surface is 404
+     * for every caller, so neither a 200 empty state nor a different (401)
+     * response for a caller who lacks `view_seo` can reveal that the SEO
+     * surface exists (Contract 18 §14.1). The bare route has no Business yet,
+     * so EntitlementManager cannot decide anything per Business here; the
      * registry is the one implementation-availability authority and is asked
-     * directly. Only once the feature is Available do the capability check
-     * and the 0 / 1 / many selector run.
+     * directly. Only once the feature is Available (it is today) do the
+     * capability check and the 0 / 1 / many selector run.
      */
     public function entry(): View|RedirectResponse
     {
@@ -88,32 +85,34 @@ class SeoController extends CustomerBaseController
         if (count($accessible) === 1) {
             [$workspace, $business] = $accessible[0];
 
-            return redirect()->route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]);
+            return redirect()->route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]);
         }
 
         return view('customer.business.seo.entry', ['accessible' => $accessible]);
     }
 
-    public function overview(string $workspaceUid, string $businessUid): View
+    /**
+     * `/workspaces/{ws}/businesses/{biz}/seo` — the former Overview. There is no
+     * Overview page any more: Search keywords is the SEO results surface and
+     * cross-product recommendations live on Business Home. The route name stays
+     * (`businesses.seo.index`) so old links and bookmarks keep working, and the
+     * full tenancy / entitlement / `view_seo` chain still runs first, so a
+     * foreign or unentitled Business is still an indistinguishable 404.
+     */
+    public function overview(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        [$workspace, $business] = $this->resolveSeoTenancy($workspaceUid, $businessUid);
+        $this->resolveSeoTenancy($workspaceUid, $businessUid);
 
         $this->authorize('view_seo');
 
-        return view('customer.business.seo.overview', [
-            'workspaceUid' => $workspaceUid,
-            'businessUid' => $businessUid,
-            'business' => $business,
-            'overview' => $this->overviewReader->read($workspace, $business, Auth::user()),
-        ]);
+        return redirect()->route('customer.workspaces.businesses.seo.keywords.index', [$workspaceUid, $businessUid]);
     }
 
     /**
      * The implementation-availability floor for the bare entry: is
      * SeoBasicVisibility Available in PlatformFeatureRegistry? Its own
      * method, exactly like the entitlement step below, so tests can reach the
-     * post-floor selector logic without flipping the registry (Sub-slice H
-     * owns the flip). Production never overrides it.
+     * post-floor selector logic in isolation. Production never overrides it.
      */
     protected function seoIsImplementedAndAvailable(): bool
     {

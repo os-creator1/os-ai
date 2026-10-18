@@ -291,8 +291,9 @@ class PublicDocumentLinkTest extends TestCase
         $routes = collect(Route::getRoutes()->getRoutes())
             ->filter(fn ($route) => str_starts_with((string) $route->getName(), 'public.documents.'));
 
-        // View, sign (Sub-slice C) and pay (Sub-slice E) — the complete set.
-        $this->assertCount(3, $routes);
+        // View, sign (Sub-slice C), pay (Sub-slice E) and the read-only pay
+        // status used on return from Stripe — the complete set.
+        $this->assertCount(4, $routes);
 
         foreach ($routes as $route) {
             $throttles = array_values(array_filter($route->gatherMiddleware(), fn ($m) => is_string($m) && str_starts_with($m, 'throttle:')));

@@ -42,8 +42,8 @@ class BlacklistsController extends AdminBaseController
         $this->authorize('view blacklist');
 
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Dashboard')],
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Security')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Security')],
             ['name' => __('locale.menu.Blacklist')],
         ];
 
@@ -146,7 +146,7 @@ class BlacklistsController extends AdminBaseController
         $this->authorize('create blacklist');
 
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path').'/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => url(config('app.admin_path').'/blacklists'), 'name' => __('locale.menu.Blacklist')],
             ['name' => __('locale.blacklist.add_new_blacklist')],
         ];

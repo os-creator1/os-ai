@@ -52,7 +52,9 @@ class ViewAsClientTest extends TestCase
         $home->assertSee($agency->user->displayName(), false);
         $home->assertSee('Exit client view', false);
         $this->assertStringContainsString('Client Bakery', $this->shellText($home->getContent()));
-        $this->assertContains('analytics', $this->menuKeys($home->getContent()), 'The viewed client renders in the Business frame.');
+        // Results is no longer a sidebar entry (it opens from Business Home), so the Business frame is
+        // proven by a module entry the viewed client's menu does carry.
+        $this->assertContains('contacts', $this->menuKeys($home->getContent()), 'The viewed client renders in the Business frame.');
         $home->assertDontSee('customer-context-switcher-toggle', false);
 
         $this->post(route('customer.view-as.exit'))->assertRedirect(route('user.home'));

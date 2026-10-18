@@ -1,0 +1,76 @@
+<?php
+
+namespace App\Library\Assistant;
+
+/**
+ * The chips under the Ask box. They are CONTEXTUAL — setup help while the Business is still launching, performance
+ * and optimisation questions once it is running — and each is only offered when the tool that answers it is available
+ * to this actor. Each chip is the literal question it sends, so choosing one is the same as typing it.
+ */
+final class AssistantSuggestions
+{
+    /** @var array<string, array<int, array{key: string, label: string, needs: string}>> */
+    private const SETS = [
+        'setup' => [
+            ['key' => 'setup_first', 'label' => 'What should I set up first?', 'needs' => 'growth_recommendations|schedule|website_and_listings'],
+            ['key' => 'website_status', 'label' => 'Is my website ready to go live?', 'needs' => 'website_and_listings'],
+            ['key' => 'booking_type', 'label' => 'Help me create a booking type', 'needs' => 'create_booking_type'],
+            ['key' => 'open_website', 'label' => 'Open my website', 'needs' => 'open_page'],
+            ['key' => 'add_contact', 'label' => 'Add a contact', 'needs' => 'open_page'],
+        ],
+        'growth' => [
+            ['key' => 'how_doing', 'label' => 'How is my business doing this month?', 'needs' => 'business_snapshot'],
+            ['key' => 'focus_next', 'label' => 'What should I focus on next?', 'needs' => 'growth_recommendations'],
+            ['key' => 'seo_improved', 'label' => 'Which keywords improved recently?', 'needs' => 'seo_status'],
+            ['key' => 'unreplied', 'label' => "Show customers who haven't received a reply", 'needs' => 'unanswered_conversations'],
+            ['key' => 'ads_help', 'label' => "Why aren't my ads performing well?", 'needs' => 'ads_status'],
+            ['key' => 'upcoming', 'label' => 'Show upcoming appointments', 'needs' => 'schedule'],
+        ],
+    ];
+
+    public function __construct(private readonly AssistantToolRegistry $tools, private readonly AssistantFastPath $fast)
+    {
+    }
+
+    /**
+     * The "Draft replies with MotionGrove" button on the waiting-customers move: offered only where the assistant can really
+     * prepare a reply for this actor (the draft_reply action, which never sends) and the plan includes the model.
+     *
+     * @return array{label: string, prompt: string}|null
+     */
+    public function draftReplies(AssistantContext $context): ?array
+    {
+        if (! $context->entitled('ai_coo_basic') || ! isset($this->tools->availableActions($context)['draft_reply'])) {
+            return null;
+        }
+
+        return ['label' => 'Draft replies with MotionGrove', 'prompt' => 'Draft replies for the customers who are waiting for a reply.'];
+    }
+
+    /** @return array<int, array{key: string, label: string, available: bool, prompt: string}> */
+    public function for(AssistantContext $context, bool $launching): array
+    {
+        $reads = $this->tools->availableReads($context);
+        $actions = $this->tools->availableActions($context);
+        // A chip that needs the model is offered only where the plan includes the assistant (`ai_coo_basic`); the
+        // exact-phrase lookups and navigation chips are answered without one and are always offered.
+        $modelEntitled = $context->entitled('ai_coo_basic');
+        $out = [];
+
+        foreach (self::SETS[$launching ? 'setup' : 'growth'] as $chip) {
+            $available = false;
+
+            foreach (explode('|', $chip['needs']) as $need) {
+                if (isset($reads[$need]) || isset($actions[$need])) {
+                    $available = true;
+                }
+            }
+
+            $available = $available && ($modelEntitled || $this->fast->handles($chip['label']));
+
+            $out[] = ['key' => $chip['key'], 'label' => $chip['label'], 'available' => $available, 'prompt' => $chip['label']];
+        }
+
+        return $out;
+    }
+}

@@ -28,6 +28,21 @@
 
                                     <div class="col-12">
 
+                                        @if (($locations ?? collect())->count() > 1)
+                                            <div class="mb-1">
+                                                <label for="location" class="form-label required">{{ __('locale.contacts.location') }}</label>
+                                                <select id="location" name="location" class="form-select @error('location') is-invalid @enderror" required>
+                                                    <option value="">{{ __('locale.contacts.choose_a_location') }}</option>
+                                                    @foreach ($locations as $option)
+                                                        <option value="{{ $option->uid }}" @selected(old('location') === $option->uid)>{{ $option->name }}</option>
+                                                    @endforeach
+                                                </select>
+                                            </div>
+                                        @endif
+                                        @error('location')
+                                            <div class="text-danger mb-1">{{ $message }}</div>
+                                        @enderror
+
                                         @foreach($contact->getFields as $field)
 
                                             @if($field->visible)

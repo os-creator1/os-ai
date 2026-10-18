@@ -30,7 +30,7 @@ class SeoCitationsSchemaTest extends TestCase
     {
         $this->assertSame([
             'id', 'uid', 'business_id', 'business_location_id', 'seo_citation_directory_id', 'status',
-            'listing_url', 'listed_name', 'listed_phone', 'listed_address', 'last_verified_at',
+            'listing_url', 'listed_name', 'listed_phone', 'listed_address', 'listed_website', 'last_verified_at',
             'verification_source', 'notes', 'updated_by_user_id', 'created_at', 'updated_at',
         ], Schema::getColumnListing('seo_citations'));
     }
@@ -67,11 +67,13 @@ class SeoCitationsSchemaTest extends TestCase
     public function test_directory_table_has_exactly_the_contracted_columns(): void
     {
         $this->assertSame([
-            'id', 'uid', 'key', 'name', 'claim_url', 'country_scope', 'is_active', 'sort_order', 'created_at', 'updated_at',
+            'id', 'uid', 'key', 'name', 'claim_url', 'website_url', 'category', 'icon', 'importance', 'tracking_mode',
+            'setup_guidance', 'is_platform_core', 'business_id', 'business_location_id', 'country_scope', 'is_active',
+            'sort_order', 'created_at', 'updated_at',
         ], Schema::getColumnListing('seo_citation_directories'));
 
-        // Global reference data: it belongs to no Business.
-        $this->assertFalse(Schema::hasColumn('seo_citation_directories', 'business_id'));
+        // Platform rows belong to no Business; only a Business's own custom row carries business_id.
+        $this->assertSame(0, DB::table('seo_citation_directories')->whereNotNull('business_id')->count());
     }
 
     // -----------------------------------------------------------------
@@ -161,7 +163,10 @@ class SeoCitationsSchemaTest extends TestCase
 
     public function test_at_most_ten_directories_and_google_business_profile_is_not_one(): void
     {
-        $this->assertLessThanOrEqual(10, count(SeoCitationDirectorySeeder::DIRECTORIES));
+        // At most eleven CORE directories (Google is the Essential twelfth source, the synthetic row); niche-only
+        // sources are separate and shown only where a niche recommends them.
+        $core = array_filter(SeoCitationDirectorySeeder::DIRECTORIES, fn (array $d) => $d['is_platform_core']);
+        $this->assertLessThanOrEqual(11, count($core));
 
         foreach (SeoCitationDirectorySeeder::DIRECTORIES as $directory) {
             $this->assertStringNotContainsStringIgnoringCase('google', $directory['key'] . $directory['name']);
@@ -171,6 +176,13 @@ class SeoCitationsSchemaTest extends TestCase
     public function test_every_seeded_claim_url_is_a_safe_https_url_with_no_tracking_or_affiliate_parameters(): void
     {
         foreach (DB::table('seo_citation_directories')->get() as $directory) {
+            if ($directory->claim_url === null) {
+                // No verified claim page: shipped without a URL and tracked manually, never with a guess.
+                $this->assertSame('manual', $directory->tracking_mode, "[{$directory->key}] has no claim URL, so it must be manual.");
+
+                continue;
+            }
+
             $this->assertNotNull(SeoLinkSafety::safeHttpsUrl($directory->claim_url), "[{$directory->key}] claim_url must be a safe https URL.");
             $this->assertNull(parse_url($directory->claim_url, PHP_URL_QUERY), "[{$directory->key}] claim_url must carry no query string.");
             $this->assertNull(parse_url($directory->claim_url, PHP_URL_FRAGMENT));

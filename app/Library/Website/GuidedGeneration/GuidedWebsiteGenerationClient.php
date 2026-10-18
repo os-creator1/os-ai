@@ -89,6 +89,17 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
+     * Was the last call refused because AI is switched off for this
+     * environment (a different fact from a bad response or an exhausted
+     * allowance — and one the owner can do nothing about by editing their
+     * answers, so the screen says so plainly instead of "invalid batch").
+     */
+    public function lastCallWasUnavailable(): bool
+    {
+        return $this->client->lastRefusalReason() === \App\Library\Ai\Enums\AiRefusalReason::AiDisabled;
+    }
+
+    /**
      * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output
      * @return array<int, array{role: string, content: string}>
      */
@@ -120,13 +131,43 @@ class GuidedWebsiteGenerationClient
             'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
         ];
 
+        // A short, plain About page reads better and converts better than a long story.
+        if (collect($plan)->contains(fn ($page) => ($page['page_type'] ?? null) === 'about')) {
+            array_splice($instructions, -1, 0, ['Keep the About page concise: at most two short paragraphs (about 120 words in total) in the owner\'s own voice, never padded.']);
+        }
+
+        // Only when the plan actually contains service-area pages (kept out
+        // of every other request so the prompt envelope is unchanged).
+        if (collect($plan)->contains(fn ($page) => is_array($page['entity'] ?? null) && isset($page['entity']['area']))) {
+            array_splice($instructions, -1, 0, [
+                'A plan entry whose entity has an "area" is a service-area page. Write it only for people in THAT area: name the area in the heading and body, and make every area page read genuinely differently from the others (different structure and wording, never the same copy with the area name swapped).',
+                'On a service-area page use only the given facts (the "area", its "nearby_areas", the "services", "business_home_city"). Never invent landmarks, neighborhoods, distances, travel times, local statistics, customers or reviews.',
+            ]);
+        }
+
+        // Niche Blueprint defaults (Website seam): present only for a Business that has them, so the
+        // prompt is unchanged for everyone else. They are suggestions and never facts.
+        $nicheDefaults = app(\App\Library\Website\WebsiteBlueprintDefaults::class)->generationHints($business, $plan);
+
+        if ($nicheDefaults !== null) {
+            array_splice($instructions, -1, 0, [
+                'A "niche_defaults" object may be provided: suggestions about emphasis and which sections suit this kind of business. They never override confirmed_facts and never add facts; use suggested_sections only where that page\'s allowed_section_types permit it.',
+            ]);
+        }
+
+        $userPayload = [
+            'business_name' => $business->name,
+            'plan' => $planForPrompt,
+            'confirmed_facts' => $this->canonicalFacts($business),
+        ];
+
+        if ($nicheDefaults !== null) {
+            $userPayload['niche_defaults'] = $nicheDefaults;
+        }
+
         return [
             ['role' => 'system', 'content' => implode("\n", $instructions)],
-            ['role' => 'user', 'content' => json_encode([
-                'business_name' => $business->name,
-                'plan' => $planForPrompt,
-                'confirmed_facts' => $this->canonicalFacts($business),
-            ])],
+            ['role' => 'user', 'content' => json_encode($userPayload)],
         ];
     }
 
@@ -153,7 +194,10 @@ class GuidedWebsiteGenerationClient
 
         $primaryLocation = $business->primaryLocation()->first();
         if ($primaryLocation !== null) {
-            if ((bool) $primaryLocation->public_address && trim((string) $primaryLocation->address_line_1) !== '') {
+            // The same privacy decision the published site makes (active location, a storefront or hybrid
+            // service model, the public-address permission): an address the site would withhold must not
+            // reach the AI either, or it can be pasted into body copy the privacy gate never redacts.
+            if (app(\App\Library\Website\Seo\WebsiteAddressPrivacyGate::class)->currentlyPermitsAddress($business) && trim((string) $primaryLocation->address_line_1) !== '') {
                 $facts['address'] = array_filter([
                     'address_line_1' => $primaryLocation->address_line_1,
                     'city' => $primaryLocation->city,

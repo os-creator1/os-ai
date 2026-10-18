@@ -18,7 +18,14 @@ use App\Library\Website\Setup\Exceptions\InvalidAnswerException;
 use App\Library\Website\Setup\QuestionnaireAnswerValidator;
 use App\Library\Website\Setup\QuestionnaireResolver;
 use App\Library\Website\Setup\QuestionnaireStepResolver;
+use App\Library\Website\Setup\WebsiteCreationStage;
+use App\Library\Website\Setup\WebsiteCreationStateResolver;
+use App\Library\Business\BusinessImageStore;
+use App\Library\Website\Gallery\ImageAltText;
+use App\Library\Website\Setup\ServiceAreaList;
+use App\Library\Website\Setup\WebsiteReviewSourceStatus;
 use App\Library\Website\Setup\WebsiteSetupAnswerApplier;
+use App\Library\Website\Setup\WebsiteSetupPackageManager;
 use App\Library\Website\Setup\WebsiteSetupSessionManager;
 use App\Library\Website\Setup\WizardPresentationAnswers;
 use App\Library\Website\WebsiteAiGenerationClient;
@@ -32,6 +39,7 @@ use App\Models\WebsiteAsset;
 use App\Models\WebsiteGuidedGenerationAttempt;
 use App\Models\WebsiteTemplate;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -71,6 +79,11 @@ class WebsiteWizardController extends CustomerBaseController
     /** Matches the custom_section section's own persisted-body bound — enforced at output time, never merely requested of the model. */
     private const CUSTOM_SECTION_BODY_MAX = 800;
 
+    /** A service description is a short blurb; bounded at output time, never merely requested of the model. */
+    private const SERVICE_DESCRIPTION_MAX = 500;
+
+    private const SERVICE_DESCRIPTION_TOKENS = 220;
+
     public function __construct(
         private readonly WebsiteStarterDraftService $starterDrafts,
         private readonly WebsiteSetupSessionManager $sessionManager,
@@ -83,6 +96,15 @@ class WebsiteWizardController extends CustomerBaseController
         private readonly WebsiteAssetAltTextGenerator $altTextGenerator,
         private readonly WebsiteAiGenerationClient $aiClient,
         private readonly WebsiteGenerationCoordinator $generationCoordinator,
+        private readonly WebsiteCreationStateResolver $creationState,
+        private readonly WebsiteSetupPackageManager $packageManager,
+        private readonly WebsiteReviewSourceStatus $reviewSources,
+        private readonly BusinessImageStore $businessImages,
+        private readonly \App\Library\Website\Setup\WebsitePlanSummary $planSummary,
+        private readonly \App\Library\Website\Design\WebsiteTemplatePreviewRenderer $templatePreviews,
+        private readonly \App\Library\Website\Setup\ServiceAreaSuggestions $areaSuggestions,
+        private readonly \App\Library\Website\Setup\WizardSharedFactWriter $sharedFacts,
+        private readonly \App\Library\Website\Setup\WizardContentDefaults $contentDefaults,
     ) {
     }
 
@@ -91,27 +113,63 @@ class WebsiteWizardController extends CustomerBaseController
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
+        // A Business that keeps its own website has no hosted site to build: the entry is refused BEFORE it can
+        // create a shell Website or a setup session, however the address was reached (a bookmark, a stale link).
+        if (app(\App\Library\Website\WebsiteModeManager::class)->resolve($business) === \App\Enums\Website\WebsiteMode::External) {
+            return redirect()->route('customer.workspaces.businesses.website.external.overview', [$workspaceUid, $businessUid]);
+        }
+
         $definition = $this->questionnaireResolver->resolveForBusiness($business);
         if ($definition === null) {
             return $this->unavailableView($workspaceUid, $businessUid);
         }
 
-        // An in-progress session always wins (this covers a reopened
-        // edit_mode session too — see class docblock) — resume exactly
-        // where it left off, even if the Website shell row already
-        // exists (it is deliberately created early, at the template
-        // step, so an existing shell alone must never bounce an active
-        // session back to Studio).
-        $response = $this->inProgressResponse($business, $definition);
-        if ($response !== null) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
+        // Website creation flow fix — the destination is decided by the
+        // ONE authoritative creation state, never by "a Website row
+        // exists" (the wizard creates that shell row at the template
+        // step, long before anything is generated).
+        $state = $this->creationState->resolve($business);
+
+        return match ($state->stage) {
+            WebsiteCreationStage::InProgress => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $state->response->current_step_key]),
+            WebsiteCreationStage::ReadyToGenerate => redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]),
+            WebsiteCreationStage::Generated => redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]),
+            // No up-front style question: setup begins on the first real
+            // question with the niche's default template (Template 1), and the
+            // owner picks or changes the look on the Review screen — with
+            // real previews of their own business — before generating.
+            WebsiteCreationStage::NotStarted => $this->beginWithDefaultTemplate($business, $definition, $state->website, $workspaceUid, $businessUid),
+        };
+    }
+
+    /**
+     * Starts a setup on the niche's default template (idempotent, like
+     * chooseTemplate(): a leftover zero-page shell is adopted, never
+     * duplicated) and lands on the first question.
+     */
+    private function beginWithDefaultTemplate(Business $business, QuestionnaireDefinition $definition, ?Website $shell, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $offered = $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business));
+
+        // The Niche Blueprint's preferred template starts a brand-new (or still style-less) Website, when the
+        // Website really offers it; otherwise the niche's default. A shell that already has a style keeps it
+        // (see below) — a Blueprint only ever suggests the starting point, never replaces a choice.
+        $preferredKey = ($shell === null || $shell->template_key === null) ? $this->blueprintTemplateKey($business) : null;
+        $template = ($preferredKey !== null ? $offered->firstWhere('key', $preferredKey) : null)
+            ?? $offered
+                ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
+                ->first();
+
+        if ($template === null) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);
         }
 
-        if (Website::where('business_id', $business->id)->exists()) {
-            return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
-        }
+        $website = $shell === null
+            ? $this->starterDrafts->createShellFromTemplate($business, $template)
+            : ($shell->template_key === null ? $this->starterDrafts->updateShellTemplate($shell, $template) : $shell);
+        $response = $this->sessionManager->start($business, $definition->key, $website->id);
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
     }
 
     public function show(string $workspaceUid, string $businessUid, string $stepKey): View|RedirectResponse
@@ -145,20 +203,29 @@ class WebsiteWizardController extends CustomerBaseController
                     'workspaceUid' => $workspaceUid,
                     'businessUid' => $businessUid,
                     'templates' => $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)),
-                    'selectedTemplateKey' => $response->website?->template_key,
+                    'selectedTemplateKey' => $response->website?->template_key ?? $this->blueprintTemplateKey($business),
                     'progress' => ['current' => 1, 'total' => 2, 'label' => 'Choose a style'],
                 ]);
             }
 
-            if (Website::where('business_id', $business->id)->exists()) {
+            $state = $this->creationState->resolve($business);
+
+            if ($state->stage === WebsiteCreationStage::Generated) {
                 return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
             }
 
+            if ($state->stage === WebsiteCreationStage::ReadyToGenerate) {
+                return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+            }
+
+            // NotStarted — including a leftover zero-page Website shell,
+            // which is NOT a created website: offer the picker again,
+            // pre-selecting whatever style the shell already has.
             return view('customer.business.website.wizard.steps.template', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
                 'templates' => $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)),
-                'selectedTemplateKey' => null,
+                'selectedTemplateKey' => $state->website?->template_key ?? $this->blueprintTemplateKey($business),
                 'progress' => ['current' => 1, 'total' => 2, 'label' => 'Choose a style'],
             ]);
         }
@@ -170,26 +237,224 @@ class WebsiteWizardController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.setup.start', [$workspaceUid, $businessUid]);
         }
 
-        $step = $this->stepResolver->stepAt($response->version->steps(), $response->answers ?? [], $stepKey);
+        $steps = $response->version->steps();
+        $answers = $response->answers ?? [];
+        $screen = $this->stepResolver->screenFor($steps, $answers, $stepKey);
 
-        if ($step === null) {
+        if ($screen === []) {
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
         }
 
-        $visibleSteps = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);
-        $position = array_search($stepKey, array_column($visibleSteps, 'key'), true);
-        $previousStepKey = $this->stepResolver->previousStepKey($response->version->steps(), $response->answers ?? [], $stepKey);
+        // A screen is addressed by its FIRST step; any other step key of it
+        // resolves to that address so there is one URL per screen.
+        if ($screen[0]['key'] !== $stepKey) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screen[0]['key']]);
+        }
+
+        $screens = $this->stepResolver->screens($steps, $answers);
+        $position = array_search($stepKey, array_map(fn (array $s) => $s[0]['key'], $screens), true);
+        $previousStepKey = $this->stepResolver->previousStepKey($steps, $answers, $stepKey);
+
+        // "Never ask twice": a question whose answer already lives in the Business OS is shown filled in.
+        // Precedence: the owner's saved answer, then the canonical record, then (service areas only) a grounded suggestion.
+        $shown = $answers + \App\Library\Website\Setup\WizardPrefill::forSteps($business, $screen, $answers);
+        $areaState = $this->serviceAreaState($business, $workspaceUid, $businessUid, $screen, $answers, $shown);
+        $defaultsState = $this->withContentDefaults($business, $workspaceUid, $businessUid, $screen, $answers, $areaState['answers']);
+        $areaState['answers'] = $defaultsState['answers'];
 
         return view('customer.business.website.wizard.steps.question', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'response' => $response,
             'website' => $response->website,
-            'step' => $step,
+            'business' => $business,
+            'steps' => $screen,
+            'screenKey' => $stepKey,
+            'step' => $screen[0],
             'previousStepKey' => $previousStepKey ?? self::TEMPLATE_STEP,
-            'answer' => $response->answer($stepKey),
-            'progress' => ['current' => $position !== false ? $position + 2 : 2, 'total' => count($visibleSteps) + 2, 'label' => $step['prompt']],
+            'areaState' => $areaState['state'],
+            'defaultsState' => $defaultsState['state'],
+            'answers' => $areaState['answers'],
+            'answer' => $areaState['answers'][$stepKey] ?? null,
+            'packageRows' => $this->packageRowsFor($business, $screen, $answers),
+            'serviceChoices' => $this->serviceChoices($answers + $areaState['answers']),
+            'reviewSource' => $this->reviewSources->forBusiness($business, $screen),
+            // Screens, then the Review screen (the look is chosen there — no separate style step).
+            'progress' => ['current' => $position !== false ? $position + 1 : 1, 'total' => count($screens) + 1, 'label' => $screen[0]['prompt']],
         ]);
+    }
+
+    /**
+     * Service-area screen state: where the rows came from (saved by the owner,
+     * the canonical location, or fresh suggestions), and whether the base
+     * location moved since the list was saved. Suggestions only ever fill an
+     * EMPTY list; a saved or canonical list is never replaced.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @param  array<string, mixed>  $answers  the owner's saved answers
+     * @param  array<string, mixed>  $shown  saved answers + canonical prefill
+     * @return array{answers: array<string, mixed>, state: array<string, array<string, mixed>>}
+     */
+    private function serviceAreaState(Business $business, string $workspaceUid, string $businessUid, array $screen, array $answers, array $shown): array
+    {
+        $state = [];
+
+        foreach ($screen as $screenStep) {
+            if (! ($screenStep['suggest'] ?? false)) {
+                continue;
+            }
+
+            $key = $screenStep['key'];
+            $base = $this->areaSuggestions->baseFor($business, $answers);
+            $source = ! empty($answers[$key]) ? 'saved' : (! empty($shown[$key]) ? 'canonical' : 'none');
+            $signature = \App\Library\Website\Setup\ServiceAreaSuggestions::signature($base);
+            $savedSignature = $answers['_service_area_base'] ?? null;
+
+            if ($source === 'none' && $base !== null) {
+                $labels = $this->areaSuggestions->labelsFor($base);
+
+                if ($labels !== []) {
+                    $shown[$key] = $labels;
+                    $source = 'suggested';
+                }
+            }
+
+            $state[$key] = [
+                'source' => $source,
+                'base' => $base,
+                'base_label' => $base === null ? null : trim($base['city'] . ($base['region'] ? ', ' . $base['region'] : '')),
+                'base_changed' => $source === 'saved' && $savedSignature !== null && $signature !== null && $savedSignature !== $signature,
+                'url' => route('customer.workspaces.businesses.website.setup.area-suggestions', [$workspaceUid, $businessUid]),
+            ];
+        }
+
+        return ['answers' => $shown, 'state' => $state];
+    }
+
+    /**
+     * About / FAQ screens: when the owner has no saved answer, the screen starts from complete default copy
+     * written from their confirmed facts (never blank boxes, never invented claims). Display only until they
+     * continue; a saved answer always wins.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @param  array<string, mixed>  $answers  the owner's saved answers
+     * @param  array<string, mixed>  $shown
+     * @return array{answers: array<string, mixed>, state: array<string, array<string, mixed>>}
+     */
+    private function withContentDefaults(Business $business, string $workspaceUid, string $businessUid, array $screen, array $answers, array $shown): array
+    {
+        $state = [];
+
+        foreach ($screen as $screenStep) {
+            $kind = $screenStep['defaults'] ?? null;
+
+            if ($kind === null) {
+                continue;
+            }
+
+            $key = $screenStep['key'];
+            $saved = $answers[$key] ?? null;
+            $hasSaved = is_string($saved) ? trim($saved) !== '' : (is_array($saved) && $saved !== []);
+
+            if (! $hasSaved) {
+                $shown[$key] = $kind === 'about'
+                    ? $this->contentDefaults->about($business, $answers)
+                    : $this->contentDefaults->faq($business, $answers);
+            }
+
+            $state[$key] = [
+                'kind' => $kind,
+                'source' => $hasSaved ? 'saved' : 'default',
+                'url' => route('customer.workspaces.businesses.website.setup.content-default', [$workspaceUid, $businessUid]),
+            ];
+        }
+
+        return ['answers' => $shown, 'state' => $state];
+    }
+
+    /**
+     * "Try another suggestion" / "Restore default" for About, "Restore defaults" for the FAQ. Read-only: nothing
+     * is saved until the owner continues.
+     */
+    public function contentDefault(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+
+        $data = $request->validate([
+            'kind' => 'required|in:about,faq',
+            'variant' => 'nullable|integer|min:0|max:1000',
+        ]);
+
+        $answers = $response->answers ?? [];
+
+        return response()->json($data['kind'] === 'about'
+            ? ['text' => $this->contentDefaults->about($business, $answers, (int) ($data['variant'] ?? 0)), 'variants' => \App\Library\Website\Setup\WizardContentDefaults::ABOUT_VARIANTS]
+            : ['items' => $this->contentDefaults->faq($business, $answers)]);
+    }
+
+    /**
+     * The brand-style answer names the look the site starts with: when it CHANGES, a website that has no pages
+     * yet (just the setup shell) takes the matching template. A site that is already built is never re-skinned
+     * by an answer (a deliberate rebuild is the only thing that changes its layout), and the template picked on
+     * the Review screen afterwards always wins.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @param  array<string, mixed>  $previous  answers before this save
+     * @param  array<string, mixed>  $values  step key => value just saved
+     */
+    private function applyTemplateHint(QuestionnaireResponse $response, array $screen, array $previous, array $values): void
+    {
+        $website = $response->website;
+
+        if ($website === null || $response->edit_mode || $website->pages()->exists()) {
+            return;
+        }
+
+        foreach ($screen as $step) {
+            $hint = $step['template_hint'] ?? null;
+            $chosen = $values[$step['key']] ?? null;
+
+            if (! is_array($hint) || ! is_string($chosen) || ! isset($hint[$chosen]) || ($previous[$step['key']] ?? null) === $chosen) {
+                continue;
+            }
+
+            $template = WebsiteTemplate::where('key', $hint[$chosen])->where('is_active', true)->first();
+
+            if ($template !== null && $website->template_key !== $template->key) {
+                $this->starterDrafts->updateShellTemplate($website, $template);
+            }
+        }
+    }
+
+    /**
+     * Grounded nearby-area suggestions for a base location (see
+     * App\Library\Geo): used by "Suggest more nearby areas" and the deliberate
+     * "Refresh suggestions" after the base moved. Read-only; nothing is saved
+     * until the owner keeps the rows and continues.
+     */
+    public function areaSuggestions(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+
+        $data = $request->validate([
+            'city' => 'required|string|max:120',
+            'region' => 'nullable|string|max:120',
+            'country' => ['required', 'string', 'size:2', 'regex:/^[A-Za-z]{2}$/'],
+            'count' => 'nullable|integer|min:1|max:20',
+            'exclude' => 'nullable|array|max:60',
+            'exclude.*' => 'nullable|string|max:120',
+        ]);
+
+        $result = $this->areaSuggestions->forBase(
+            ['city' => $data['city'], 'region' => $data['region'] ?? null, 'country_code' => strtoupper($data['country'])],
+            (int) ($data['count'] ?? \App\Library\Website\Setup\ServiceAreaSuggestions::DEFAULT_COUNT),
+            array_values(array_filter((array) ($data['exclude'] ?? []), 'is_string')),
+        );
+
+        return response()->json($result);
     }
 
     public function chooseTemplate(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
@@ -239,21 +504,33 @@ class WebsiteWizardController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $existingResponse->current_step_key]);
         }
 
-        if (Website::where('business_id', $business->id)->exists()) {
+        $state = $this->creationState->resolve($business);
+
+        if ($state->stage === WebsiteCreationStage::Generated) {
             return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
         }
 
-        $website = $this->starterDrafts->createShellFromTemplate($business, $template);
+        if ($state->stage === WebsiteCreationStage::ReadyToGenerate) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+        }
+
+        // NotStarted. A leftover zero-page Website shell (never a created
+        // website) is adopted — restyled in place, never duplicated —
+        // rather than bouncing the owner into an empty Studio.
+        $website = $state->website !== null
+            ? $this->starterDrafts->updateShellTemplate($state->website, $template)
+            : $this->starterDrafts->createShellFromTemplate($business, $template);
         $response = $this->sessionManager->start($business, $definition->key, $website->id);
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
     }
 
-    public function autosaveAnswer(Request $request, string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse
+    public function autosaveAnswer(Request $request, string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
+        $wantsJson = $request->expectsJson();
 
         // Independent-review correction round: an unknown or currently
         // hidden step key (a foreign niche's step, a step a prior answer
@@ -265,26 +542,66 @@ class WebsiteWizardController extends CustomerBaseController
             abort(404);
         }
 
-        try {
-            $value = $this->valueFromRequest($request, $step, $response->website);
-            $this->answerValidator->validate($step, $value);
-        } catch (InvalidAnswerException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
-                'status' => 'error',
-                'message' => $e->getMessage(),
-            ]);
-        }
-
+        // A wizard SCREEN groups consecutive atomic steps. Every step of the
+        // screen is parsed and validated on its own; a single-step screen
+        // (every v1 step) keeps the original un-namespaced field names.
+        $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $stepKey);
+        $screenKey = $screen[0]['key'];
         $expectedRevision = (int) $request->input('answers_revision', $response->answers_revision);
 
-        try {
-            $response = $this->sessionManager->saveAnswer($response, $stepKey, $value, $expectedRevision);
-        } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
-                'status' => 'error',
-                'message' => $e->getMessage(),
-            ]);
+        // Canonical package writes (CatalogItemManager) happen at save
+        // time; refuse a stale form BEFORE they run so a double-submitted
+        // screen can never create a package twice.
+        if ((int) $response->answers_revision !== $expectedRevision) {
+            $conflict = new AnswerRevisionConflictException((int) $response->answers_revision);
+
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => 'conflict', 'message' => $conflict->getMessage(), 'revision' => (int) $response->answers_revision], 409)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with(['status' => 'error', 'message' => $conflict->getMessage()]);
         }
+
+        try {
+            $values = $this->screenValues($request, $business, $response, $screen, draft: false);
+        } catch (InvalidAnswerException $e) {
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => 'invalid', 'message' => $e->getMessage()], 422)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        // Shared business facts (name, phone, email, base location, service areas) are written through the
+        // canonical managers NOW, so the correction is the same everywhere in MotionGrove, not only after generation.
+        $sharedUpdated = [];
+        try {
+            $sharedUpdated = $this->sharedFacts->write($business, Auth::user()?->customer, $screen, $values);
+        } catch (Throwable $e) {
+            report($e);
+            $message = 'We couldn\'t update your business profile just now, so nothing was changed. Please try again.';
+
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => 'server', 'message' => $message], 500)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screenKey])->with(['status' => 'error', 'message' => $message]);
+        }
+
+        // The base location the service-area list was chosen against, so a later change of base can be offered as a refresh.
+        foreach ($screen as $screenStep) {
+            if ($screenStep['suggest'] ?? false) {
+                $values['_service_area_base'] = \App\Library\Website\Setup\ServiceAreaSuggestions::signature($this->areaSuggestions->baseFor($business, $response->answers ?? []));
+            }
+        }
+
+        $previousAnswers = $response->answers ?? [];
+
+        try {
+            $response = $this->sessionManager->saveAnswers($response, $screenKey, $values, $expectedRevision);
+        } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
+            $conflictRevision = $e instanceof AnswerRevisionConflictException ? $e->currentRevision : null;
+
+            return $wantsJson
+                ? response()->json(['ok' => false, 'kind' => $e instanceof AnswerRevisionConflictException ? 'conflict' : 'locked', 'message' => $e->getMessage(), 'revision' => $conflictRevision], 409)
+                : redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        $this->applyTemplateHint($response, $screen, $previousAnswers, $values);
 
         // Independent-review correction round 3 (item 11) — FAQ and
         // custom-section answers are the two presentation-only surfaces
@@ -293,24 +610,171 @@ class WebsiteWizardController extends CustomerBaseController
         // edit-mode session saving either after the website already has
         // generated pages must flag that a deliberate rebuild is still
         // needed — never silently imply the live pages already changed.
-        if (in_array($step['target_module'], ['custom_section', 'faq'], true) && $response->website !== null) {
+        if ($response->website !== null && collect($screen)->contains(fn (array $s) => in_array($s['target_module'], ['custom_section', 'faq', 'business_service', 'backdrop'], true))) {
             $this->markPresentationChangePending($response->website);
         }
 
         if ($this->stepResolver->isComplete($response->version->steps(), $response->answers ?? [])
-            && $this->stepResolver->nextStepKey($response->version->steps(), $response->answers ?? [], $stepKey) === null) {
+            && $this->stepResolver->nextStepKey($response->version->steps(), $response->answers ?? [], $screenKey) === null) {
             // Independent-review correction round: this used to redirect
             // to setup.generate, a POST-only route — a browser following
             // a redirect always issues GET, which returned a 405. The
             // review screen is the correct GET landing spot; its own form
             // POSTs to setup.generate.
-            return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+            $nextUrl = route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+            $finished = true;
+        } else {
+            $nextUrl = route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
+            $finished = false;
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
+        if ($wantsJson) {
+            return response()->json([
+                'ok' => true,
+                'revision' => (int) $response->answers_revision,
+                'next_url' => $nextUrl,
+                'shared_updated' => $sharedUpdated,
+                // The review screen is a different page (generation controls), reached by a normal navigation.
+                'full_page' => $finished,
+            ]);
+        }
+
+        return redirect($nextUrl);
     }
 
-    public function goBack(string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse
+    /**
+     * Autosave: persists whatever the owner has on the current screen right
+     * now, WITHOUT validating completeness and WITHOUT moving the resume
+     * position. Same revision compare-and-swap as Continue, so a slower,
+     * earlier request can never overwrite a newer answer: it is refused
+     * (409) and the client — which sends one save at a time — surfaces it.
+     */
+    public function draftAnswer(Request $request, string $workspaceUid, string $businessUid, string $stepKey): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+
+        $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $stepKey);
+        if ($screen === []) {
+            abort(404);
+        }
+
+        $expectedRevision = (int) $request->input('answers_revision', -1);
+        if ((int) $response->answers_revision !== $expectedRevision) {
+            return response()->json([
+                'ok' => false,
+                'kind' => 'conflict',
+                'message' => (new AnswerRevisionConflictException((int) $response->answers_revision))->getMessage(),
+                'revision' => (int) $response->answers_revision,
+            ], 409);
+        }
+
+        try {
+            // Canonical package edits only ever run on an explicit flush (Back / Save & exit / leaving),
+            // never on a debounce tick — see screenValues().
+            $values = $this->screenValues($request, $business, $response, $screen, draft: true, includeCatalog: $request->boolean('flush'));
+            $saved = $this->sessionManager->saveDraft($response, $values, $expectedRevision);
+        } catch (InvalidAnswerException $e) {
+            return response()->json(['ok' => false, 'kind' => 'invalid', 'message' => $e->getMessage()], 422);
+        } catch (AnswerRevisionConflictException $e) {
+            return response()->json(['ok' => false, 'kind' => 'conflict', 'message' => $e->getMessage(), 'revision' => $e->currentRevision], 409);
+        } catch (GenerationInProgressException $e) {
+            return response()->json(['ok' => false, 'kind' => 'locked', 'message' => $e->getMessage()], 409);
+        } catch (\DomainException $e) {
+            return response()->json(['ok' => false, 'kind' => 'invalid', 'message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['ok' => true, 'revision' => (int) $saved->answers_revision, 'saved_at' => now()->toIso8601String()]);
+    }
+
+    /**
+     * Records that the owner is now looking at this screen (browser Back /
+     * Forward lands on a screen without any save), so closing the tab right
+     * after resumes where they actually were.
+     */
+    public function visitStep(Request $request, string $workspaceUid, string $businessUid, string $stepKey): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+
+        $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $stepKey);
+        if ($screen === []) {
+            abort(404);
+        }
+
+        try {
+            if ($response->current_step_key !== $screen[0]['key']) {
+                $this->sessionManager->goToStep($response, $screen[0]['key']);
+            }
+        } catch (GenerationInProgressException $e) {
+            return response()->json(['ok' => false, 'kind' => 'locked', 'message' => $e->getMessage()], 409);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Parses and validates every step of one screen into `step key => value`.
+     * Catalog selections are processed LAST so a validation failure on any
+     * other field of the screen never leaves canonical package edits
+     * half-applied behind an error. In draft mode a catalog selection is only
+     * processed when explicitly asked for (`includeCatalog`), because it
+     * writes canonical Packages & Products rows and must never run on every
+     * keystroke-driven autosave.
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @return array<string, mixed>
+     *
+     * @throws InvalidAnswerException
+     */
+    private function screenValues(Request $request, Business $business, QuestionnaireResponse $response, array $screen, bool $draft, bool $includeCatalog = true): array
+    {
+        $isMultiStepScreen = count($screen) > 1;
+        $values = [];
+        $ordered = collect($screen)->sortBy(fn (array $s) => $s['input_type'] === 'catalog_selection' ? 1 : 0)->values()->all();
+
+        foreach ($ordered as $screenStep) {
+            if ($draft && ! $includeCatalog && $screenStep['input_type'] === 'catalog_selection') {
+                continue;
+            }
+
+            // An uploaded brand image is its own durable record; the screen has no answer to save for it.
+            if ($screenStep['input_type'] === 'image') {
+                continue;
+            }
+
+            $stepRequest = $isMultiStepScreen
+                ? $request->duplicate(null, (array) $request->input('s.' . $screenStep['key'], []))
+                : $request;
+
+            if ($draft && ! $this->requestCarriesStep($request, $screenStep)) {
+                // The field was not part of this submission at all (e.g. a
+                // screen reloaded mid-edit): never treat absence as "cleared".
+                continue;
+            }
+
+            $value = $this->stepValue($stepRequest, $screenStep, $response->website, $business);
+            $this->answerValidator->validate($screenStep, $value, $draft);
+            $values[$screenStep['key']] = $value;
+        }
+
+        return $values;
+    }
+
+    /**
+     * Whether a submission actually contains this step's inputs. A cleared
+     * text box submits an empty string and a cleared list submits no row at
+     * all — so the screen always sends a marker per step (`__present[]`),
+     * which is what distinguishes "emptied on purpose" from "not sent".
+     */
+    private function requestCarriesStep(Request $request, array $step): bool
+    {
+        return in_array($step['key'], array_map('strval', (array) $request->input('__present', [])), true);
+    }
+
+    public function goBack(Request $request, string $workspaceUid, string $businessUid, string $stepKey): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -323,27 +787,36 @@ class WebsiteWizardController extends CustomerBaseController
             // session has nowhere safe "before" its first question:
             // template replacement is never exposed to it (see show()),
             // so Back exits to Studio instead of a dead-end reload of
-            // the same step. A fresh, first-time session genuinely does
-            // have something before its first question — the template
-            // picker — and now actually reaches it (see show()'s own
-            // template-step handling for a non-edit in-progress session).
-            if ($response->edit_mode) {
-                return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
-            }
+            // the same step. Nothing precedes the first question any more
+            // (the look is chosen on the Review screen): a fresh session's
+            // Back returns to the Website landing.
+            $exitRoute = $response->edit_mode
+                ? route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])
+                : route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
 
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);
+            return $request->expectsJson()
+                ? response()->json(['ok' => true, 'url' => $exitRoute, 'full_page' => true])
+                : redirect($exitRoute);
         }
 
         try {
             $this->sessionManager->goToStep($response, $previousStepKey);
         } catch (GenerationInProgressException $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['ok' => false, 'kind' => 'locked', 'message' => $e->getMessage()], 409);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $previousStepKey]);
+        $previousUrl = route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $previousStepKey]);
+
+        return $request->expectsJson()
+            ? response()->json(['ok' => true, 'url' => $previousUrl, 'full_page' => false])
+            : redirect($previousUrl);
     }
 
     public function reviewGenerate(string $workspaceUid, string $businessUid): View|RedirectResponse
@@ -354,16 +827,228 @@ class WebsiteWizardController extends CustomerBaseController
         $definition = $this->questionnaireResolver->resolveForBusiness($business);
         $response = $definition !== null ? $this->inProgressResponse($business, $definition) : null;
 
+        // A `completed` response whose website never got pages is
+        // reopened into the generate/try-again step (see
+        // WebsiteCreationStateResolver) rather than stranding the owner.
+        if ($response === null && $definition !== null) {
+            $state = $this->creationState->resolve($business);
+
+            if ($state->stage === WebsiteCreationStage::ReadyToGenerate && $state->response?->status === QuestionnaireResponseStatus::Completed) {
+                try {
+                    $response = $this->sessionManager->reopenForGeneration($state->response);
+                } catch (GenerationInProgressException $e) {
+                    return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])->with([
+                        'status' => 'error',
+                        'message' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
         if ($response === null || ! $this->stepResolver->isComplete($response->version->steps(), $response->answers ?? [])) {
             return redirect()->route('customer.workspaces.businesses.website.setup.start', [$workspaceUid, $businessUid]);
         }
+
+        $lastAttempt = $response->website?->guidedGenerationAttempts()->latest('id')->first();
+        $guidedReview = app(\App\Library\Website\Setup\GuidedReviewSnapshot::class)->forResponse($business, $response);
 
         return view('customer.business.website.wizard.steps.generating', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'editMode' => $response->edit_mode,
             'answersRevision' => $response->answers_revision,
-        ]);
+            'previousStepKey' => (function () use ($response) {
+                // "Back and edit" returns to the LAST screen (addressed by its first step).
+                $screens = $this->stepResolver->screens($response->version->steps(), $response->answers ?? []);
+
+                return $screens !== [] ? (string) end($screens)[0]['key'] : (string) $response->current_step_key;
+            })(),
+            'lastAttemptFailed' => $lastAttempt !== null && $lastAttempt->status === WebsiteGuidedGenerationAttempt::STATUS_FAILED,
+            // The guided builder writes from template defaults and needs no AI at all.
+            'generationAvailable' => $guidedReview !== null || (bool) config('services.openai.active'),
+            'guidedReview' => $guidedReview,
+            'answerSummary' => $this->answerSummary($response),
+        ] + $this->lookAndPlanData($business, $response));
+    }
+
+    /**
+     * The Review screen's template cards, brand/logo/hero state and the
+     * "Website plan" (which pages Generate will build, and why not the
+     * others). An edit-mode session never shows them (its pages exist).
+     *
+     * @return array<string, mixed>
+     */
+    private function lookAndPlanData(Business $business, QuestionnaireResponse $response): array
+    {
+        $website = $response->website;
+
+        if ($response->edit_mode || $website === null) {
+            return ['templateCards' => [], 'plan' => null];
+        }
+
+        $templates = $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business))
+            ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
+            ->values();
+
+        $current = $templates->firstWhere('key', $website->template_key) ?? $templates->first();
+        $theme = $website->theme ?? [];
+        $assets = $website->assets()->whereIn('uid', array_filter([$theme['logo_asset_uid'] ?? null, $theme['hero_asset_uid'] ?? null]))->get()->keyBy('uid');
+
+        return [
+            'templateCards' => $templates->map(fn (WebsiteTemplate $template) => [
+                'key' => $template->key,
+                'design' => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($template->key),
+                'selected' => $current !== null && $template->key === $current->key,
+                // The real renderer, embedded (srcdoc): no extra request per card.
+                'html' => $this->templatePreviews->render($business, $website, $template),
+            ])->all(),
+            'brandColor' => $theme['brand_color'] ?? null,
+            'privacyNoticeUrl' => $theme['privacy_notice_url'] ?? null,
+            'termsUrl' => $theme['terms_url'] ?? null,
+            'logo' => isset($theme['logo_asset_uid'], $assets[$theme['logo_asset_uid']]) ? ['url' => $assets[$theme['logo_asset_uid']]->url(), 'alt' => $assets[$theme['logo_asset_uid']]->alt_text] : null,
+            'hero' => isset($theme['hero_asset_uid'], $assets[$theme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($assets[$theme['hero_asset_uid']]), 'alt' => $assets[$theme['hero_asset_uid']]->alt_text] : null,
+            'plan' => $current !== null ? $this->planSummary->forResponse($business, $website, $current, $response) : null,
+        ];
+    }
+
+    /**
+     * A human review of what the owner answered, shown on the review
+     * screen so "Generate my website" is a confident final click, never a
+     * blind one. Grouped under four plain headings; repeatable answers
+     * (service areas, services, packages, backdrops, photos) are listed
+     * entry by entry — never comma-dumped — and every block carries the
+     * address of the screen that edits it. Packages are read live from the
+     * canonical catalog (the answer only stores their uids), so the review
+     * always shows today's name and price.
+     *
+     * @return array<string, array<int, array{prompt: string, edit_key: string, kind: string, value: ?string, entries: array<int, array{label: string, meta: ?string, thumb: ?string}>}>> heading => blocks (empty groups omitted)
+     */
+    private function answerSummary(QuestionnaireResponse $response): array
+    {
+        $groupOf = [
+            'business' => 'About your business',
+            'business_location' => 'About your business',
+            'knowledge_profile' => 'About your business',
+            'business_service' => 'Services & packages',
+            'catalog_item' => 'Services & packages',
+            'backdrop' => 'Services & packages',
+            'gallery' => 'Website content',
+            'custom_section' => 'Website content',
+            'faq' => 'Website content',
+            'website_form' => 'Contact & other',
+            'answers' => 'Contact & other',
+        ];
+
+        $groups = ['About your business' => [], 'Services & packages' => [], 'Website content' => [], 'Contact & other' => []];
+        $steps = $response->version->steps();
+        $answers = $response->answers ?? [];
+        $website = $response->website;
+
+        foreach ($this->stepResolver->screens($steps, $answers) as $screen) {
+            $screenKey = $screen[0]['key'];
+
+            foreach ($screen as $step) {
+                $block = $this->summaryBlock($step, $answers[$step['key']] ?? null, $website, $screenKey);
+
+                if ($block !== null) {
+                    $groups[$groupOf[$step['target_module'] ?? ''] ?? 'Contact & other'][] = $block;
+                }
+            }
+        }
+
+        return array_filter($groups);
+    }
+
+    /**
+     * @return ?array{prompt: string, edit_key: string, kind: string, value: ?string, entries: array<int, array{label: string, meta: ?string, thumb: ?string}>}
+     */
+    private function summaryBlock(array $step, mixed $value, ?Website $website, string $screenKey): ?array
+    {
+        $options = is_array($step['options'] ?? null) ? $step['options'] : [];
+        $label = fn ($item) => (string) ($options[(string) $item] ?? $item);
+        $entry = fn (string $text, ?string $meta = null, ?string $thumb = null) => ['label' => $text, 'meta' => $meta, 'thumb' => $thumb];
+        $block = fn (string $kind, ?string $text, array $entries = []) => [
+            'prompt' => (string) $step['prompt'],
+            'edit_key' => $screenKey,
+            'kind' => $kind,
+            'value' => $text !== null ? Str::limit($text, 240) : null,
+            'entries' => $entries,
+        ];
+
+        // A photo step's photos are real Website assets, not an answer.
+        if ($step['input_type'] === 'photo_upload') {
+            $assets = $website?->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->get() ?? collect();
+
+            return $assets->isEmpty() ? null : $block('photos', null, $assets->take(12)->map(
+                fn (WebsiteAsset $a) => $entry((string) ($a->title ?: $a->alt_text ?: 'Photo'), null, asset($a->path))
+            )->all());
+        }
+
+        if ($value === null || $value === '' || $value === []) {
+            return null;
+        }
+
+        if ($step['input_type'] === 'catalog_selection') {
+            $uids = array_values(array_filter(array_map(fn ($e) => is_array($e) ? ($e['uid'] ?? null) : null, (array) $value)));
+            // Only packages that are STILL live in Packages & Products count;
+            // generation skips the others, so the review says so plainly.
+            $items = \App\Models\CatalogItem::whereIn('uid', $uids)
+                ->where('business_id', $website?->business_id)
+                ->where('lifecycle_state', \App\Enums\Catalog\CatalogItemLifecycleState::Active->value)
+                ->get()->keyBy('uid');
+            $entries = [];
+
+            foreach ($uids as $uid) {
+                if (isset($items[$uid])) {
+                    $item = $items[$uid];
+                    $entries[] = $entry($item->name, $item->price_minor !== null ? \App\Library\Catalog\CatalogMoney::format($item->price_minor, $item->currency_code) : 'Contact for pricing');
+                }
+            }
+
+            $missing = count($uids) - count($entries);
+            $packagesBlock = $block('packages', null, $entries);
+            $packagesBlock['notice'] = $missing > 0
+                ? ($missing === 1 ? 'A package you selected is' : $missing . ' packages you selected are') . ' no longer in Packages & Products and will be left out of your website. Edit this step to choose others.'
+                : null;
+
+            return ($entries === [] && $missing === 0) ? null : $packagesBlock;
+        }
+
+        if ($step['input_type'] === 'string_list') {
+            return $block('list', null, array_map(fn ($v) => $entry((string) $v), array_values((array) $value)));
+        }
+
+        if ($step['input_type'] === 'repeatable_group') {
+            $categories = is_array($step['categories'] ?? null) ? $step['categories'] : [];
+            $entries = [];
+
+            foreach ((array) $value as $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+
+                $name = (string) ($item['name'] ?? $item['question'] ?? $item['author_name'] ?? '');
+                if ($name === '') {
+                    continue;
+                }
+
+                $meta = isset($item['category']) ? ($categories[$item['category']] ?? null) : (isset($item['quote']) ? Str::limit((string) $item['quote'], 80) : null);
+                $thumb = ! empty($item['image_path']) ? asset($item['image_path']) : null;
+                $entries[] = $entry($name, $meta, $thumb);
+            }
+
+            return $entries === [] ? null : $block(collect($entries)->contains(fn ($e) => $e['thumb'] !== null) ? 'backdrops' : 'list', null, $entries);
+        }
+
+        if (is_array($value)) {
+            return $block('list', null, array_map(fn ($v) => $entry($label($v)), array_values($value)));
+        }
+
+        if (is_bool($value)) {
+            return $block('text', $value ? 'Yes' : 'No');
+        }
+
+        return $block('text', $label($value));
     }
 
     /**
@@ -466,6 +1151,9 @@ class WebsiteWizardController extends CustomerBaseController
                 ]);
             }
 
+            // Which step was running if something unexpected throws (see GenerationFailureLogger).
+            $stage = 'apply_answers';
+
             try {
                 $this->answerApplier->apply($business, $website, $response, $actorUserId);
 
@@ -478,19 +1166,23 @@ class WebsiteWizardController extends CustomerBaseController
                     ]);
                 }
 
+                $stage = 'resolve_template';
                 $template = WebsiteTemplate::where('key', $website->template_key)->where('is_active', true)->firstOrFail();
+                $stage = 'presentation_answers';
                 $customSection = WizardPresentationAnswers::customSection($response);
                 $customerFaq = WizardPresentationAnswers::customerFaq($response);
                 $idempotencyKey = $this->stableIdempotencyKey($response, $website);
 
-                $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $leaseToken, $customSection, $customerFaq);
+                $stage = 'generate_full';
+                $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($response), WizardPresentationAnswers::serviceAreas($response), WizardPresentationAnswers::blueprintContext($response));
 
                 if ($attempt->status !== WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
                     $this->sessionManager->recordGenerationFailure($response);
 
                     return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
                         'status' => 'error',
-                        'message' => $attempt->failure_reason ?? 'Generation did not complete. Try again.',
+                        // A failure_reason is for support (it may carry internals); the customer gets a calm, safe sentence.
+                        'message' => \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt->failure_reason),
                     ]);
                 }
 
@@ -513,6 +1205,8 @@ class WebsiteWizardController extends CustomerBaseController
                 // genuinely retryable in_progress state, and the
                 // customer sees a plain redirect rather than a raw 500.
                 report($e);
+                // report() skips whole exception classes (ModelNotFound, Validation, …); log this one explicitly.
+                \App\Library\Website\GuidedGeneration\GenerationFailureLogger::log($e, $stage, $website->id, $response->id);
                 $this->sessionManager->recordGenerationFailure($response);
 
                 return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
@@ -534,7 +1228,7 @@ class WebsiteWizardController extends CustomerBaseController
      * generate() above, which detects `edit_mode` and reconciles facts
      * without ever regenerating pages.
      */
-    public function editSetupAnswers(string $workspaceUid, string $businessUid): RedirectResponse
+    public function editSetupAnswers(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -560,6 +1254,15 @@ class WebsiteWizardController extends CustomerBaseController
 
         $response = $this->sessionManager->beginEdit($business, $completed);
 
+        // "Add the missing photos" deep-links to the question that takes them.
+        $requested = (string) $request->query('step', '');
+        if ($requested !== '' && $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $requested) !== []) {
+            $screen = $this->stepResolver->screenFor($response->version->steps(), $response->answers ?? [], $requested);
+            $this->sessionManager->goToStep($response, $screen[0]['key']);
+
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $screen[0]['key']]);
+        }
+
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
     }
 
@@ -571,7 +1274,7 @@ class WebsiteWizardController extends CustomerBaseController
      * the same WebsiteGalleryManager the earlier round built and tested
      * but never wired into any real HTTP surface.
      */
-    public function uploadGalleryPhotos(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    public function uploadGalleryPhotos(Request $request, string $workspaceUid, string $businessUid): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -594,6 +1297,7 @@ class WebsiteWizardController extends CustomerBaseController
         // file(s) this request itself just wrote, never leaving an orphan
         // on disk pointing at a row that no longer exists.
         $createdAssetPaths = [];
+        $uploadedAssets = [];
 
         try {
             // Independent-review correction round 4 (items 1, 6) — the
@@ -602,15 +1306,20 @@ class WebsiteWizardController extends CustomerBaseController
             // before anything is written, including a file to disk —
             // never merely checked once, earlier, against a read that
             // could already be stale by the time the mutation runs.
-            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($website, $request, &$createdAssetPaths) {
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($website, $request, &$createdAssetPaths, &$uploadedAssets) {
                 $this->stepKeyForModule($locked, 'gallery');
                 $assets = $this->gallery->uploadMany($website, $request->file('photos', []), WebsiteAssetPurpose::Gallery, $request->input('category_tag'));
                 foreach ($assets as $asset) {
                     $createdAssetPaths[] = $asset->path;
+                    $uploadedAssets[] = $asset;
                 }
             });
         } catch (InvalidWebsiteAssetException|GenerationInProgressException $e) {
             $this->deleteOrphanedAssetFiles($createdAssetPaths);
+
+            if ($request->expectsJson()) {
+                return $this->jsonError($e->getMessage(), $e instanceof GenerationInProgressException ? 409 : 422);
+            }
 
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
@@ -623,6 +1332,10 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         $this->markPresentationChangePending($website);
+
+        if ($request->expectsJson()) {
+            return response()->json(['status' => 'success', 'assets' => array_map(fn (WebsiteAsset $a) => $this->assetPayload($a), $uploadedAssets)]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
@@ -639,7 +1352,7 @@ class WebsiteWizardController extends CustomerBaseController
      * metadata field", silently wiping title/category and regenerating
      * (or, worse, blanking) the alt text.
      */
-    public function updateGalleryPhoto(Request $request, string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse
+    public function updateGalleryPhoto(Request $request, string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -658,6 +1371,14 @@ class WebsiteWizardController extends CustomerBaseController
 
         $request->validate(['title' => 'nullable|string|max:160', 'category_tag' => 'nullable|string|max:80', 'alt_text' => 'nullable|string|max:160']);
 
+        // A niche that defines a category vocabulary for its gallery step
+        // accepts only those keys — never free text.
+        $galleryStep = $this->stepResolver->stepAt($response->version->steps(), $response->answers ?? [], $stepKey);
+        $vocabulary = $galleryStep['categories'] ?? null;
+        if (is_array($vocabulary) && $request->filled('category_tag') && ! array_key_exists((string) $request->input('category_tag'), $vocabulary)) {
+            throw ValidationException::withMessages(['category_tag' => ['Choose one of the listed categories.']]);
+        }
+
         try {
             $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($request, $website, $asset) {
                 $this->stepKeyForModule($locked, 'gallery');
@@ -671,6 +1392,10 @@ class WebsiteWizardController extends CustomerBaseController
                 }
             });
         } catch (GenerationInProgressException $e) {
+            if ($request->expectsJson()) {
+                return $this->jsonError($e->getMessage(), 409);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -678,6 +1403,10 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         $this->markPresentationChangePending($website);
+
+        if ($request->expectsJson()) {
+            return response()->json(['status' => 'success', 'asset' => $this->assetPayload($asset->fresh())]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
@@ -691,7 +1420,7 @@ class WebsiteWizardController extends CustomerBaseController
      * alone — a custom-section or package-mirror asset is never part of
      * this ordering.
      */
-    public function moveGalleryPhoto(Request $request, string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse
+    public function moveGalleryPhoto(Request $request, string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -719,6 +1448,10 @@ class WebsiteWizardController extends CustomerBaseController
                 }
             });
         } catch (GenerationInProgressException $e) {
+            if ($request->expectsJson()) {
+                return $this->jsonError($e->getMessage(), 409);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -726,6 +1459,10 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         $this->markPresentationChangePending($website);
+
+        if ($request->expectsJson()) {
+            return response()->json(['status' => 'success']);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
@@ -736,7 +1473,7 @@ class WebsiteWizardController extends CustomerBaseController
      * package-mirror image, whatever uid is given (a wrong-purpose or
      * foreign uid explicitly 404s below, never a silent no-op).
      */
-    public function removeGalleryPhoto(string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse
+    public function removeGalleryPhoto(Request $request, string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -752,6 +1489,10 @@ class WebsiteWizardController extends CustomerBaseController
                 app(WebsiteAssetUploadService::class)->delete($website, $asset);
             });
         } catch (ValidationException|GenerationInProgressException $e) {
+            if ($request->expectsJson()) {
+                return $this->jsonError($e->getMessage(), $e instanceof GenerationInProgressException ? 409 : 422);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -759,6 +1500,10 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         $this->markPresentationChangePending($website);
+
+        if ($request->expectsJson()) {
+            return response()->json(['status' => 'success']);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
@@ -773,7 +1518,7 @@ class WebsiteWizardController extends CustomerBaseController
      * customSectionFromAnswers()/MediaBindingService::bindCustomSection()
      * already expect.
      */
-    public function uploadCustomSectionImage(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    public function uploadCustomSectionImage(Request $request, string $workspaceUid, string $businessUid): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -794,12 +1539,14 @@ class WebsiteWizardController extends CustomerBaseController
         // itself just wrote, never leaving an orphan on disk pointing at
         // a row that no longer exists.
         $createdAssetPaths = [];
+        $newAsset = null;
 
         try {
-            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $website, $request, &$createdAssetPaths) {
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $website, $request, &$createdAssetPaths, &$newAsset) {
                 $this->stepKeyForModule($locked, 'custom_section');
 
                 $assets = $this->gallery->uploadMany($website, [$request->file('photo')], WebsiteAssetPurpose::CustomSection);
+                $newAsset = $assets[0] ?? null;
                 foreach ($assets as $asset) {
                     $createdAssetPaths[] = $asset->path;
                 }
@@ -813,6 +1560,10 @@ class WebsiteWizardController extends CustomerBaseController
         } catch (InvalidWebsiteAssetException|GenerationInProgressException $e) {
             $this->deleteOrphanedAssetFiles($createdAssetPaths);
 
+            if ($request->expectsJson()) {
+                return $this->jsonError($e->getMessage(), $e instanceof GenerationInProgressException ? 409 : 422);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -825,7 +1576,188 @@ class WebsiteWizardController extends CustomerBaseController
 
         $this->markPresentationChangePending($website);
 
+        if ($request->expectsJson()) {
+            return response()->json($this->assetPayload($newAsset) + [
+                'status' => 'success',
+                'answers_revision' => (int) $response->fresh()->answers_revision,
+            ]);
+        }
+
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
+    }
+
+    /**
+     * A backdrop picture is stored the moment the owner picks it (immediate
+     * upload) in the Business-owned image store. Only the resulting path
+     * travels back into the screen's answer; the canonical backdrop row and
+     * its image row are written when setup is applied.
+     */
+    public function uploadBackdropImage(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+        $stepKey = $this->photoStepKey($response);
+
+        $request->validate([
+            'photo' => 'required|image|mimes:jpeg,jpg,png,webp|max:8192',
+            'name' => 'nullable|string|max:160',
+            'category' => 'nullable|string|max:40',
+        ]);
+
+        try {
+            $stored = $this->businessImages->store($business, $request->file('photo'));
+        } catch (InvalidWebsiteAssetException $e) {
+            return $this->jsonError($e->getMessage(), 422);
+        }
+
+        $step = $this->stepResolver->stepAt($response->version->steps(), $response->answers ?? [], $stepKey);
+        $categoryLabel = ($step['categories'][$request->input('category')] ?? null);
+
+        return response()->json([
+            'status' => 'success',
+            'path' => $stored['path'],
+            'url' => asset($stored['path']),
+            'alt_suggestion' => ImageAltText::suggest($request->input('name'), $categoryLabel, $business->name),
+        ]);
+    }
+
+    /**
+     * Frees a picture the owner replaced or removed before it was ever
+     * saved. Only a file inside this Business's own directory that no
+     * canonical backdrop/package row still references is ever deleted.
+     */
+    public function removeBackdropImage(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+        $this->photoStepKey($response);
+
+        $path = (string) $request->validate(['path' => 'required|string|max:255'])['path'];
+        $this->businessImages->deleteIfUnreferenced($business, $path);
+
+        return response()->json(['status' => 'success']);
+    }
+
+    /**
+     * "Generate description with AI" for one service: the service name plus
+     * the Business and niche context in, a short factual description out.
+     * It never saves anything — the owner reviews and edits the text, and
+     * the screen asks before replacing text the owner wrote. Fails closed
+     * (a plain message, never an exception) when AI is switched off, out
+     * of budget, or returns anything unusable.
+     */
+    /**
+     * Business logo, uploaded immediately from the basics screen. The logo is
+     * the Website look's own token (WebsiteLookService — the same code the
+     * Review screen and Studio already use), so there is exactly one place it
+     * lives.
+     */
+    public function uploadLogo(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+        $website = $response->website ?? abort(404);
+
+        $request->validate([
+            'logo' => ['required', 'file', new \App\Rules\ValidWebsiteImageRule()],
+            'logo_alt' => 'nullable|string|max:160',
+        ]);
+
+        try {
+            $asset = $this->sessionManager->runIfNotGenerating($response, fn () => app(\App\Library\Website\Design\WebsiteLookService::class)->setLogo($website->fresh(), $request->file('logo'), $request->input('logo_alt')));
+        } catch (GenerationInProgressException $e) {
+            return $this->jsonError($e->getMessage(), 409);
+        }
+
+        return response()->json(['uid' => $asset->uid, 'url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($asset), 'alt_text' => $asset->alt_text]);
+    }
+
+    public function removeLogo(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+        $website = $response->website ?? abort(404);
+
+        try {
+            $this->sessionManager->runIfNotGenerating($response, fn () => app(\App\Library\Website\Design\WebsiteLookService::class)->removeLogo($website->fresh()));
+        } catch (GenerationInProgressException $e) {
+            return $this->jsonError($e->getMessage(), 409);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    public function suggestServiceDescription(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $response = $this->currentResponseOrFail($business);
+        $this->stepKeyForModule($response, 'business_service');
+
+        $name = trim((string) $request->validate(['name' => 'required|string|max:160'])['name']);
+
+        $messages = [
+            ['role' => 'system', 'content' => implode("\n", [
+                'You write the short description of ONE service offered by a local business, for its website.',
+                'Respond with a single JSON object: {"description": string}.',
+                'Plain text, at most ' . self::SERVICE_DESCRIPTION_MAX . ' characters, one to three sentences, in a warm and factual tone.',
+                'Use only the facts provided. Never invent prices, awards, statistics, locations, reviews or guarantees.',
+            ])],
+            ['role' => 'user', 'content' => json_encode([
+                'business_name' => $business->name,
+                'business_type' => $business->industry instanceof \BackedEnum ? $business->industry->value : (string) $business->industry,
+                'business_description' => Str::limit(trim((string) $business->description), 600, ''),
+                'service_name' => $name,
+            ])],
+        ];
+
+        $raw = $this->aiClient->complete($messages, $business, (int) Auth::id(), self::SERVICE_DESCRIPTION_TOKENS);
+
+        if ($raw === null) {
+            if ($this->aiClient->lastCallWasBudgetExhausted()) {
+                return $this->jsonError('The included AI generation budget is used up for this period.', 422);
+            }
+
+            if ($this->aiClient->lastRefusalReason() === \App\Library\Ai\Enums\AiRefusalReason::AiDisabled) {
+                return $this->jsonError("AI descriptions aren't available in this environment right now. You can write the description yourself.", 503);
+            }
+
+            return $this->jsonError("We couldn't write a description right now. You can write it yourself or try again.", 503);
+        }
+
+        $decoded = json_decode($raw, true);
+        $description = is_array($decoded) && is_string($decoded['description'] ?? null) ? trim($decoded['description']) : '';
+
+        // The bound is enforced on the OUTPUT — the prompt alone is never trusted.
+        if ($description === '' || mb_strlen($description) > self::SERVICE_DESCRIPTION_MAX) {
+            return $this->jsonError("We couldn't write a usable description. You can write it yourself or try again.", 503);
+        }
+
+        return response()->json(['status' => 'success', 'description' => $description]);
+    }
+
+    private function jsonError(string $message, int $status): JsonResponse
+    {
+        return response()->json(['status' => 'error', 'message' => $message], $status);
+    }
+
+    /**
+     * @return array{uid: string, url: string, alt_text: ?string, title: ?string, category_tag: ?string, is_cover: bool}
+     */
+    private function assetPayload(WebsiteAsset $asset): array
+    {
+        return [
+            'uid' => (string) $asset->uid,
+            'url' => asset($asset->path),
+            'alt_text' => $asset->alt_text,
+            'title' => $asset->title,
+            'category_tag' => $asset->category_tag,
+            'is_cover' => (bool) $asset->is_cover,
+        ];
     }
 
     /**
@@ -839,10 +1771,12 @@ class WebsiteWizardController extends CustomerBaseController
             if (is_file($fullPath)) {
                 @unlink($fullPath);
             }
+
+            app(\App\Library\Website\Media\ImageVariants::class)->delete($path);
         }
     }
 
-    public function removeCustomSectionImage(string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse
+    public function removeCustomSectionImage(Request $request, string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse|JsonResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -874,6 +1808,10 @@ class WebsiteWizardController extends CustomerBaseController
                 }
             });
         } catch (GenerationInProgressException $e) {
+            if ($request->expectsJson()) {
+                return $this->jsonError($e->getMessage(), 409);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -881,6 +1819,10 @@ class WebsiteWizardController extends CustomerBaseController
         }
 
         $this->markPresentationChangePending($website);
+
+        if ($request->expectsJson()) {
+            return response()->json(['status' => 'success', 'answers_revision' => (int) $response->fresh()->answers_revision]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
@@ -1104,6 +2046,17 @@ class WebsiteWizardController extends CustomerBaseController
     /**
      * @return Collection<int, WebsiteTemplate>
      */
+    /**
+     * The Niche Blueprint's preferred template, offered only when this Business has not chosen
+     * a style yet and the Website really offers it. A suggestion for the picker, never a choice
+     * made for the owner, and never applied to an existing Website.
+     */
+    private function blueprintTemplateKey(Business $business): ?string
+    {
+        return app(\App\Library\Website\WebsiteBlueprintDefaults::class)
+            ->preferredTemplateKey($business, $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)));
+    }
+
     private function templatesForNiche(?string $nicheKey): Collection
     {
         return WebsiteTemplate::where('is_active', true)
@@ -1198,11 +2151,44 @@ class WebsiteWizardController extends CustomerBaseController
                 $items = array_slice($items, 0, 1);
             }
 
+            // Every card has its OWN stable key (it is what a saved record is matched by): a repeated key — a
+            // submission that cloned one — would make two cards overwrite one record, so a duplicate gets a new key.
+            $seenKeys = [];
+            $items = array_map(function (array $item) use (&$seenKeys) {
+                $key = (string) ($item['key'] ?? '');
+                if ($key === '' || isset($seenKeys[$key])) {
+                    $item['key'] = Str::random(12);
+                }
+                $seenKeys[(string) $item['key']] = true;
+
+                return $item;
+            }, $items);
+
             return array_values(array_map(fn (array $item) => $this->normalizeRepeatableItem($item, $step, $website), $items));
+        }
+
+        if ($step['input_type'] === 'string_list') {
+            // One entry per row — never split apart by a delimiter. Order
+            // is the owner's priority and is preserved.
+            $raw = $request->input('value', []);
+
+            return ServiceAreaList::normalize(is_array($raw) ? $raw : [$raw]);
         }
 
         if ($step['input_type'] === 'multi_select') {
             return array_values((array) $request->input('value', []));
+        }
+
+        if ($step['input_type'] === 'location') {
+            $raw = (array) $request->input('value', []);
+            $clean = fn (string $key) => trim((string) preg_replace('/\s+/u', ' ', (string) ($raw[$key] ?? '')));
+            $place = [
+                'city' => $clean('city') ?: null,
+                'region' => $clean('region') ?: null,
+                'country_code' => strtoupper($clean('country_code')) ?: null,
+            ];
+
+            return array_filter($place) === [] ? null : $place;
         }
 
         if ($step['input_type'] === 'boolean') {
@@ -1218,6 +2204,61 @@ class WebsiteWizardController extends CustomerBaseController
      * entry needs a question, everything else needs a name. Matches
      * normalizeRepeatableItem()'s own per-shape branching below.
      */
+    /**
+     * One step's answer value. A catalog selection is the one answer that
+     * writes through to a canonical module while it is being saved (the
+     * package edits/creations land in Packages & Products immediately and
+     * the answer keeps only the resulting uids).
+     */
+    private function stepValue(Request $request, array $step, ?Website $website, Business $business): mixed
+    {
+        if ($step['input_type'] === 'catalog_selection') {
+            return $this->packageManager->sync($business, array_values((array) $request->input('items', [])), (int) Auth::id());
+        }
+
+        return $this->valueFromRequest($request, $step, $website);
+    }
+
+    /**
+     * Live canonical package rows for any catalog_selection step on the
+     * screen (never read back from stored answers).
+     *
+     * @param  array<int, array<string, mixed>>  $screen
+     * @param  array<string, mixed>  $answers
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function packageRowsFor(Business $business, array $screen, array $answers): array
+    {
+        $rows = [];
+
+        foreach ($screen as $screenStep) {
+            if ($screenStep['input_type'] === 'catalog_selection') {
+                $rows[$screenStep['key']] = $this->packageManager->rowsFor($business, $answers[$screenStep['key']] ?? null);
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * The booths the owner has entered (or already has), as `card key => name`, for pairing a package with a booth photo.
+     *
+     * @param  array<string, mixed>  $answers  saved answers with canonical prefill
+     * @return array<string, string>
+     */
+    private function serviceChoices(array $answers): array
+    {
+        $choices = [];
+
+        foreach ((array) ($answers['booth_services'] ?? []) as $row) {
+            if (is_array($row) && trim((string) ($row['name'] ?? '')) !== '' && is_string($row['key'] ?? null) && ($row['visible'] ?? true)) {
+                $choices[$row['key']] = trim((string) $row['name']);
+            }
+        }
+
+        return $choices;
+    }
+
     private function repeatableItemNonEmptyCheck(array $step): \Closure
     {
         if ($step['target_module'] === 'faq') {
@@ -1278,13 +2319,99 @@ class WebsiteWizardController extends CustomerBaseController
             $normalized['price_minor'] = $price !== '' ? (int) round(((float) $price) * 100) : null;
             $normalized['currency_code'] = $normalized['price_minor'] !== null ? strtoupper(trim((string) ($item['currency_code'] ?? 'USD'))) : null;
             $normalized['featured'] = ! empty($item['featured']);
-            $normalized['features'] = array_values(array_filter(array_map('trim', explode("\n", (string) ($item['features_text'] ?? '')))));
+            // One feature per row (`features[]`); the legacy one-per-line
+            // textarea (`features_text`) is still read for v1 sessions.
+            $normalized['features'] = is_array($item['features'] ?? null)
+                ? array_values(array_filter(array_map(fn ($f) => trim((string) $f), $item['features']), fn ($f) => $f !== ''))
+                : array_values(array_filter(array_map('trim', explode("\n", (string) ($item['features_text'] ?? '')))));
             $normalized['image'] = null; // per-item package image upload is an explicitly deferred follow-up — not wired into this generic form
+        }
+
+        if ($targetModule === 'business_service' && isset($step['row_fields'])) {
+            $fields = $step['row_fields'];
+            $business = $website?->business;
+
+            $normalized['kind'] = $step['item_kind'] ?? 'service';
+            $normalized['preset'] = trim((string) ($item['preset'] ?? '')) ?: null;
+            // A card that does not offer the switch is simply shown.
+            $normalized['visible'] = in_array('visible', $fields, true) ? ! empty($item['visible']) : true;
+
+            $normalized['features'] = in_array('features', $fields, true)
+                ? array_values(array_filter(array_map(fn ($f) => trim((string) $f), (array) ($item['features'] ?? [])), fn ($f) => $f !== ''))
+                : [];
+
+            $priceText = in_array('price', $fields, true) ? trim((string) ($item['price'] ?? '')) : '';
+            $priceText = str_replace([',', ' '], '', $priceText);
+            if ($priceText !== '' && ! is_numeric($priceText)) {
+                throw new InvalidAnswerException('Enter a price as a number, like 299 or 299.50 — or leave it blank.');
+            }
+            $normalized['starting_price'] = $priceText !== '' ? round((float) $priceText, 2) : null;
+            $normalized['currency_code'] = $normalized['starting_price'] !== null
+                ? strtoupper(trim((string) ($item['currency_code'] ?? '')) ?: (string) ($business?->currency_code ?: 'USD'))
+                : null;
+
+            // Photos were stored the moment they were chosen; only their paths travel here and every fact
+            // about a file is re-derived from the file itself. The cover comes first, then up to a few extras.
+            $paths = [];
+            if (in_array('cover', $fields, true) && trim((string) ($item['image_path'] ?? '')) !== '') {
+                $paths[] = trim((string) $item['image_path']);
+            }
+            if (in_array('extra_images', $fields, true)) {
+                foreach ((array) ($item['extra_image_paths'] ?? []) as $extra) {
+                    if (is_string($extra) && trim($extra) !== '') {
+                        $paths[] = trim($extra);
+                    }
+                }
+            }
+            $paths = array_values(array_unique($paths));
+
+            $normalized['image_path'] = in_array('cover', $fields, true) ? ($paths[0] ?? null) : null;
+            $normalized['extra_image_paths'] = in_array('extra_images', $fields, true) ? array_slice($paths, in_array('cover', $fields, true) && $normalized['image_path'] !== null ? 1 : 0) : [];
+
+            $normalized['images'] = [];
+            foreach ($paths as $path) {
+                $described = $business !== null ? $this->businessImages->describe($business, $path) : null;
+
+                if ($described === null) {
+                    throw new InvalidAnswerException('A service photo is no longer available — add it again.');
+                }
+
+                $normalized['images'][] = $described + ['alt_text' => ImageAltText::suggest($normalized['name'], null, $business?->name)];
+            }
         }
 
         if ($targetModule === 'backdrop') {
             $normalized['availability'] = ! empty($item['availability']);
-            $normalized['images'] = []; // per-item backdrop image upload is an explicitly deferred follow-up — not wired into this generic form
+            $normalized['images'] = [];
+
+            // A category-aware (v2) backdrop picks its category from the
+            // niche vocabulary and carries ONE picture: the image was
+            // already stored (immediately, on selection) by the Business
+            // image store; only its path travels here and every fact about
+            // the file is re-derived from the file itself.
+            if (isset($step['categories'])) {
+                $normalized['category'] = trim((string) ($item['category'] ?? '')) ?: null;
+
+                $altText = trim((string) ($item['alt_text'] ?? '')) ?: null;
+                $normalized['alt_text'] = $altText;
+
+                $imagePath = trim((string) ($item['image_path'] ?? ''));
+                $normalized['image_path'] = $imagePath !== '' ? $imagePath : null;
+
+                if ($imagePath !== '') {
+                    $business = $website?->business;
+                    $described = $business !== null ? $this->businessImages->describe($business, $imagePath) : null;
+
+                    if ($described === null) {
+                        throw new InvalidAnswerException('A backdrop image is no longer available — add it again.');
+                    }
+
+                    $categoryLabel = $normalized['category'] !== null ? ($step['categories'][$normalized['category']] ?? null) : null;
+                    $normalized['images'] = [$described + [
+                        'alt_text' => $altText ?? ImageAltText::suggest($normalized['name'], $categoryLabel, $business?->name),
+                    ]];
+                }
+            }
         }
 
         if ($targetModule === 'custom_section') {
@@ -1341,6 +2468,21 @@ class WebsiteWizardController extends CustomerBaseController
      * source of the real answer-storage/redirect key every caller below
      * uses instead of a hardcoded literal.
      */
+    /**
+     * The visible step a card photo upload belongs to: a backdrop list, or a booth-service list whose cards take
+     * photos. A questionnaire with neither (or one the owner's answers currently hide) has nothing to upload to.
+     */
+    private function photoStepKey(QuestionnaireResponse $response): string
+    {
+        $visible = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);
+        $step = collect($visible)->first(fn (array $s) => ($s['target_module'] ?? null) === 'backdrop'
+            || (($s['target_module'] ?? null) === 'business_service' && array_intersect(['cover', 'extra_images'], (array) ($s['row_fields'] ?? [])) !== []));
+
+        abort_unless($step !== null, 404);
+
+        return $step['key'];
+    }
+
     private function stepKeyForModule(QuestionnaireResponse $response, string $targetModule): string
     {
         $visible = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);

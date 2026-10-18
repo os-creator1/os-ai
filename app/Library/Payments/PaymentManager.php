@@ -80,6 +80,8 @@ final class PaymentManager
      */
     public function start(PublicDocumentAccess $access, bool $retryAfterCancel = true): PaymentStartResult
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('payment');
+
         // ---- steps 1-13: local intent, committed, no network ------------
         [$payment, $connectionAccountId] = DB::transaction(function () use ($access) {
             // (2) document first — §7.0 tier 1.
@@ -227,6 +229,101 @@ final class PaymentManager
             amountMinor: (int) $payment->amount_minor,
             currencyCode: (string) $payment->currency_code,
         );
+    }
+
+    /**
+     * The customer-facing payment STATUS for a document, used when the browser
+     * comes back from Stripe (or polls while a payment settles).
+     *
+     * IT NEVER CREATES ANYTHING. No payment row, no PaymentIntent, no client
+     * secret. The attempt is resolved from the verified document token and the
+     * persisted payment rows alone — the browser supplies no PaymentIntent id,
+     * payment uid or account, and a redirect proves nothing by itself.
+     *
+     * When the latest attempt is still LIVE and already knows its intent id,
+     * that exact intent is retrieved on the row's own historical connected
+     * account and handed to the shared finalizer, which applies the usual
+     * account / operation id / intent / amount / currency cross-checks and is
+     * idempotent against the webhook delivering the same outcome (so a late or
+     * replayed webhook cannot produce a second success transition or receipt).
+     * An unreachable provider, or a refused cross-check, leaves the persisted
+     * state exactly as it was and reports `uncertain`.
+     *
+     * @return array{state: string, uncertain: bool, amount_minor: ?int, currency_code: ?string, failure_code: ?string, document_paid: bool, remaining_minor: int, payable_now: bool, can_retry: bool}
+     */
+    public function statusFor(PublicDocumentAccess $access): array
+    {
+        $payment = BusinessDocumentPayment::query()
+            ->where('business_document_id', $access->document->id)
+            ->where('business_id', $access->business->id)
+            ->orderByDesc('id')
+            ->first();
+
+        $uncertain = false;
+
+        if ($payment !== null
+            && $payment->provider_payment_intent_id !== null
+            && in_array($payment->status->value, self::liveStatuses(), true)) {
+            try {
+                $snapshot = $this->gateway->retrievePaymentIntent(
+                    $this->accountFor($payment),
+                    (string) $payment->provider_payment_intent_id,
+                );
+
+                $disposition = $this->finalizer->apply($payment, $snapshot);
+
+                $uncertain = in_array($disposition, [
+                    PaymentFinalizer::ACCOUNT_MISMATCH,
+                    PaymentFinalizer::OPERATION_ID_MISMATCH,
+                    PaymentFinalizer::INTENT_MISMATCH,
+                    PaymentFinalizer::AMOUNT_MISMATCH,
+                    PaymentFinalizer::CURRENCY_MISMATCH,
+                ], true);
+            } catch (Throwable $e) {
+                // Reason CODE only: no provider message, account or amount.
+                Log::warning('PaymentManager::statusFor could not reach the provider', [
+                    'business_document_payment_id' => $payment->id,
+                    'exception' => class_basename($e),
+                ]);
+                $uncertain = true;
+            }
+
+            $payment->refresh();
+        }
+
+        $document = $access->document->refresh();
+        $currentVersionId = $document->current_version_id;
+
+        $remaining = $currentVersionId === null ? 0 : (int) BusinessDocumentPaymentScheduleItem::query()
+            ->where('business_document_version_id', $currentVersionId)
+            ->where('status', PaymentScheduleItemStatus::Pending->value)
+            ->sum('amount_minor');
+
+        $state = $payment === null ? 'none' : $payment->status->value;
+
+        // Whether the NEXT scheduled amount is genuinely payable now (document
+        // payable, earlier items settled, account charge-ready) and no attempt
+        // is in flight. Read-only; the same rule the page's own Pay state uses.
+        $next = $this->paymentState($access);
+        $payableNow = $next['payable_item'] !== null && $next['can_pay']
+            && ! in_array($state, ['processing'], true) && ! $uncertain;
+
+        return [
+            'state' => $state,
+            'uncertain' => $uncertain,
+            'amount_minor' => $payment === null ? null : (int) $payment->amount_minor,
+            'currency_code' => $payment === null ? null : (string) $payment->currency_code,
+            'failure_code' => $state === 'failed' ? $payment->failure_code : null,
+            'document_paid' => $document->status === DocumentStatus::Paid,
+            'remaining_minor' => $remaining,
+            'payable_now' => $payableNow,
+            // A failed / abandoned / dead attempt can be tried again through the
+            // normal Pay action, which re-drives the SAME intent (or, once the
+            // provider says it is dead, starts exactly one new one).
+            'can_retry' => in_array($state, ['failed', 'requires_action', 'created', 'canceled'], true)
+                && $document->status !== DocumentStatus::Paid
+                && $remaining > 0,
+        ];
     }
 
     /**

@@ -12,6 +12,11 @@
     keyboard and screen-reader users (a "tab" that actually navigates away
     is a known accessibility anti-pattern).
 
+    Polish pass: the three links still work as ordinary links (new tab,
+    middle-click, no JavaScript). `data-calendar-nav` only lets
+    _scripts.blade.php fetch the destination's section and swap it into
+    #calendar-content on a plain click, so the shell does not reload.
+
     Props:
       workspace, business (required)
       location (optional — absent only on the picker, which has none yet)
@@ -41,24 +46,36 @@
                 <p class="text-caption mb-0">Choose a location to see its schedule.</p>
             @endif
         </div>
+        @if ($calendarScope)
+            {{-- Shown only while Booking types is the active tab; the tab router re-checks it after a swap. --}}
+            <div class="calendar-module-head-actions" data-calendar-head-action="booking-types" @if ($active !== 'booking-types') hidden @endif>
+                <x-button variant="primary" size="sm" icon="plus" data-role="add-booking-type"
+                          :href="route('customer.workspaces.businesses.calendar.booking-types.create', $calendarScope)">
+                    Add booking type
+                </x-button>
+            </div>
+        @endif
     </div>
 
     @if ($calendarScope)
         <nav class="calendar-subnav mt-2" aria-label="Calendar">
             <a href="{{ route('customer.workspaces.businesses.calendar.schedule', $calendarScope) }}"
                class="calendar-subnav-link {{ $active === 'schedule' ? 'is-active' : '' }}"
+               data-calendar-nav data-calendar-key="schedule"
                @if ($active === 'schedule') aria-current="page" @endif>
                 <x-ds-icon name="calendar-days" size="15" aria-hidden="true" />
                 Calendar view
             </a>
             <a href="{{ route('customer.workspaces.businesses.calendar.booking-types.index', $calendarScope) }}"
                class="calendar-subnav-link {{ $active === 'booking-types' ? 'is-active' : '' }}"
+               data-calendar-nav data-calendar-key="booking-types"
                @if ($active === 'booking-types') aria-current="page" @endif>
                 <x-ds-icon name="tag" size="15" aria-hidden="true" />
                 Booking types
             </a>
             <a href="{{ route('customer.workspaces.businesses.calendar.availability.index', $calendarScope) }}"
                class="calendar-subnav-link {{ $active === 'availability' ? 'is-active' : '' }}"
+               data-calendar-nav data-calendar-key="availability"
                @if ($active === 'availability') aria-current="page" @endif>
                 <x-ds-icon name="clock" size="15" aria-hidden="true" />
                 Staff availability

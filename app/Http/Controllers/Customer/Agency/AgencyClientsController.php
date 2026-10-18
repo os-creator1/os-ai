@@ -12,6 +12,8 @@ use App\Library\Usage\UsageBillingPresenter;
 use App\Library\ViewAs\ViewAsManager;
 use App\Library\Workspace\AgencyClientListReader;
 use App\Library\Workspace\AgencyClientRelationshipManager;
+use App\Library\Workspace\AgencyClientSummaryReader;
+use App\Repositories\Contracts\ClientWorkspaceInvitationRepository;
 use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\Business;
 use App\Models\User;
@@ -63,6 +65,8 @@ class AgencyClientsController extends Controller
         private readonly UsageBillingPresenter $usageBillingPresenter,
         private readonly PaymentProviderCustomerRepository $providerCustomerRepository,
         private readonly AgencyClientListReader $clientListReader,
+        private readonly AgencyClientSummaryReader $summaryReader,
+        private readonly ClientWorkspaceInvitationRepository $invitationRepository,
     ) {
     }
 
@@ -84,6 +88,9 @@ class AgencyClientsController extends Controller
 
         return view('customer.agency.clients.index', [
             'agencyWorkspace' => $agencyWorkspace,
+            // Invitations still waiting on the client (the Agency never sees the token).
+            'pendingInvitations' => $this->invitationRepository->pendingForAgencyWorkspace((int) $agencyWorkspace->id),
+            'isAgencyOwner' => (int) $agencyWorkspace->owner_user_id === (int) Auth::id(),
             'clients' => $clients,
             'search' => $search,
             'state' => $state,
@@ -108,6 +115,10 @@ class AgencyClientsController extends Controller
             'locationCount' => $business !== null ? $business->locations()->count() : 0,
             'primaryLocation' => $business?->primaryLocation,
             'accessDecision' => $this->accountAccessResolver->resolve($clientWorkspace),
+            // Plan + account state through the list's own reader (same words as the Clients
+            // table), and the one-client summary: setup, what needs attention, recent leads.
+            'planAndAccount' => $this->clientListReader->planAndAccountFor((int) $clientWorkspace->id),
+            'clientSummary' => $business !== null ? $this->summaryReader->for($business) : null,
             // Lane C §C8 — this client's Agency SaaS subscription, and what the
             // Agency may offer them. Read-only here: OFFERING is a POST to the
             // Agency's own SaaS surface, and CHARGING belongs to the client.

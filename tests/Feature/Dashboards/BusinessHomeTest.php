@@ -64,13 +64,13 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
 
         // H-4 §2.6 added the three operating-health bands after Business
-        // performance. Automations is absent here because nothing ran, and
+        // performance. Automations is the empty "set one up" card here (nothing ran), and
         // the Google tile is absent because Core is not entitled to it — the
         // Visibility band still renders for the website alone.
         $this->assertSame(
-            ['billing_exception', 'activity', 'next_best_move', 'headlines', 'visibility', 'conversations', 'actions'],
+            ['billing_exception', 'next_best_move', 'needs_attention', 'ask', 'headlines', 'visibility', 'conversations', 'actions', 'handling', 'suggested'],
             $this->bandOrder($html),
-            'Billing speaks first only when it is a real exception, then what changed, then what to do about it.'
+            'Billing speaks first only when it is a real exception, then what needs the customer, then Ask, then the figures, then the detail fold, then the side column. Automations appears in the fold only once something ran or failed; "set one up" is a Suggested next item.'
         );
         $this->assertNotContains('spend', $this->bandOrder($html), 'Spend is a Settings destination, never a Home band.');
         $this->assertStringContainsString('data-kind="business"', $html);
@@ -144,7 +144,10 @@ class BusinessHomeTest extends TestCase
         $this->switchTo($workspace, $clientA)->assertRedirect(route('user.home'));
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Client account home.*Client Alpha.*</h1>#s', $html);
+        // V1 topology: the Business inside the Agency's own Workspace is the Agency's OWN
+        // Business, so its Home is the plain Business home (a managed client is only ever
+        // reached cross-Workspace, through View As).
+        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Business home.*Client Alpha.*</h1>#s', $html);
         $this->assertSame('7', $this->headlineFigure($html, 'new_contacts'));
         $this->assertStringNotContainsString('Client Bravo', $this->mainText($html), "A managed Client's own account never bleeds in.");
     }
@@ -293,13 +296,17 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
-        $this->assertNotContains('attention', $this->bandOrder($html), 'None of B\'s conditions raises an item for A.');
+        $this->assertStringContainsString('data-home-status="clear"', $html, 'None of B\'s conditions raises an item for A: Home says all caught up.');
+        $this->assertStringContainsString('data-role="caught-up"', $html);
+        $this->assertStringNotContainsString('data-band="needs_attention"', $html, 'A quiet Home has no empty attention container.');
+        $this->assertStringNotContainsString('data-role="attention-items"', $html);
         $this->assertNotContains('recommendations', $this->bandOrder($html));
         $this->assertStringNotContainsString('Stranger', $main);
         $this->assertStringNotContainsString('777', $main);
         $this->assertStringNotContainsString('USD 5.00', $main, 'No wallet figure renders on Home at all (H-1 §5).');
 
-        foreach (['new_contacts', 'new_conversations', 'messages_received'] as $headline) {
+        // Business B's activity never reaches A's three cards: each shows A's own figure (the Business exists, so a zero is a real zero).
+        foreach (['new_contacts', 'awaiting_reply'] as $headline) {
             $this->assertSame('0', $this->headlineFigure($html, $headline), "{$headline} must count only the selected Business.");
         }
     }
@@ -318,7 +325,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertContains('inbox', $this->quickActionKeys($html));
-        $this->assertContains('new_conversations', $this->headlineKeys($html));
+        $this->assertContains('awaiting_reply', $this->headlineKeys($html));
         $this->assertNotContains('automation_runs', $this->headlineKeys($html), 'Automation runs are not a Business performance figure (H-3 §2.5).');
         // C-2: ONE move renders, so the two entitled items are proven in turn —
         // the lost connection leads, and failing automations lead once Google
@@ -341,7 +348,8 @@ class BusinessHomeTest extends TestCase
         $this->assertNotContains('automation_runs', $this->headlineKeys($html));
         $this->assertNotContains(AttentionType::AutomationFailing->value, $this->attentionTypes($html));
         $this->assertNotContains(AttentionType::GoogleConnectionLost->value, $this->attentionTypes($html));
-        $this->assertStringNotContainsString('disabled', $this->mainHtml($html), 'Absent, never disabled.');
+        // Markup only: the range control's script legitimately mentions the word while it syncs its own date fields.
+        $this->assertStringNotContainsString('disabled', (string) preg_replace('#<script\b.*?</script>#si', '', $this->mainHtml($html)), 'Absent, never disabled.');
         $this->assertStringNotContainsString('data-state="locked"', $html, 'The dashboard is not an upsell wall.');
     }
 
@@ -538,7 +546,8 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertStringContainsString("You're all caught up.", html_entity_decode($this->bandHtml($html, 'next_best_move')));
+        $this->assertStringContainsString('all caught up', html_entity_decode($html));
+        $this->assertStringNotContainsString('data-role="next-best-move"', $html, 'No empty urgent-action card when there is no move.');
         $this->assertStringNotContainsString('Stale Only', $html);
         $this->assertStringNotContainsString('Recommended next steps', $html);
         $this->assertStringNotContainsString('See all recommendations', $html);
@@ -547,7 +556,8 @@ class BusinessHomeTest extends TestCase
         $this->recommendation($business, ['title' => 'Hidden When Disabled']);
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringNotContainsString('Hidden When Disabled', $html);
-        $this->assertStringContainsString("You're all caught up.", html_entity_decode($this->bandHtml($html, 'next_best_move')));
+        $this->assertStringContainsString('all caught up', html_entity_decode($html));
+        $this->assertStringNotContainsString('data-role="next-best-move"', $html, 'No empty urgent-action card when there is no move.');
     }
 
     // =================================================================
@@ -608,7 +618,7 @@ class BusinessHomeTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/\bmessages sent\b/i', $main);
         $this->assertDoesNotMatchRegularExpression('/\bconfirmed failed\b/i', $main);
         $this->assertDoesNotMatchRegularExpression('/\bdelivered\b/i', $main);
-        $this->assertDoesNotMatchRegularExpression('/\b(revenue|roi|reply rate|handset delivery|pipeline value|bookings?|conversions?)\b/i', $main);
+        $this->assertDoesNotMatchRegularExpression('/\b(revenue|roi|reply rate|handset delivery|pipeline value|bookings?|conversions?)\b/i', $this->mainTextWithoutAsk($html));
         $this->assertStringNotContainsString('locale.', $main);
         $this->assertStringNotContainsString('locale.', $this->titleOf($html));
 
@@ -682,7 +692,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['billing_exception', 'next_best_move', 'headlines', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
+        $this->assertSame(['billing_exception', 'next_best_move', 'ask', 'headlines', 'visibility', 'conversations', 'actions', 'handling', 'suggested'], $this->bandOrder($html));
         $this->assertStringContainsString('data-band="next_best_move" data-band-state="failed"', $html);
         $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'next_best_move'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));
@@ -750,6 +760,7 @@ class BusinessHomeTest extends TestCase
 
     public function test_a_team_member_keeps_login_as_parent_as_a_quick_action_and_never_while_viewing(): void
     {
+        config(['account.allow_parent_switch' => true]);   // F3: the legacy switch is opt-in (config/account.php)
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Parent Venue', 'Parent Account');
         $member = $this->createCustomer();
         DB::table('users')->where('id', $member->user_id)->update(['parent_id' => $owner->user_id]);
@@ -964,7 +975,8 @@ class BusinessHomeTest extends TestCase
     /** @return array<int, string> */
     private function formFieldNames(string $html): array
     {
-        preg_match_all('/<(?:input|select)[^>]*name="([^"]+)"/', $this->mainHtml($html), $matches);
+        // Buttons count: the pressed preset button (name=range) is what carries the period.
+        preg_match_all('/<(?:input|select|button)[^>]*name="([^"]+)"/', $this->mainHtml($html), $matches);
 
         return $matches[1];
     }

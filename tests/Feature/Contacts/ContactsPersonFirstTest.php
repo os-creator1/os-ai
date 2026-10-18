@@ -3,7 +3,11 @@
 namespace Tests\Feature\Contacts;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\LocationAccessScope;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Campaigns;
 use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
@@ -14,6 +18,7 @@ use App\Models\Customer;
 use App\Models\Plan;
 use App\Models\Subscription;
 use App\Models\Workspace;
+use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -117,6 +122,87 @@ class ContactsPersonFirstTest extends TestCase
         $this->get($this->peopleUrl($workspace, $business) . '?q=nobody')->assertOk()->assertSee('No contacts match');
     }
 
+    public function test_the_group_filter_narrows_the_list_combines_with_search_and_ignores_foreign_groups(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $customers = $this->group($business, 'Customers');
+        $leads = $this->group($business, 'Leads');
+        $this->person($customers, ['FIRST_NAME' => 'Ana', 'COMPANY' => 'Harbor Bakery']);
+        $this->person($customers, ['FIRST_NAME' => 'Cleo', 'COMPANY' => 'Dock Works']);
+        $this->person($leads, ['FIRST_NAME' => 'Ben', 'COMPANY' => 'Harbor Hardware']);
+        $foreign = $this->group($this->otherBusinessOf($owner)['business'], 'Elsewhere');
+        $this->authenticateAs($owner);
+        $url = $this->peopleUrl($workspace, $business);
+
+        $page = $this->get($url . '?group=' . $leads->uid)->assertOk();
+        $page->assertSee('Harbor Hardware')->assertDontSee('Harbor Bakery')->assertDontSee('Dock Works');
+        $page->assertSee('value="' . $leads->uid . '" selected', false);
+        $page->assertDontSee('Elsewhere');
+
+        $this->get($url . '?group=' . $customers->uid . '&q=harbor')->assertOk()
+            ->assertSee('Harbor Bakery')->assertDontSee('Dock Works')->assertDontSee('Harbor Hardware');
+
+        // Another Business's group never narrows (or widens) this list.
+        $this->get($url . '?group=' . $foreign->uid)->assertOk()
+            ->assertSee('Harbor Bakery')->assertSee('Harbor Hardware');
+    }
+
+    public function test_the_group_filter_is_not_offered_without_the_group_viewing_permission(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $customers = $this->group($business, 'Customers');
+        $leads = $this->group($business, 'Leads');
+        $this->person($customers, ['FIRST_NAME' => 'Ana', 'COMPANY' => 'Harbor Bakery']);
+        $this->person($leads, ['FIRST_NAME' => 'Ben', 'COMPANY' => 'Dock Works']);
+        $this->authenticateAs($owner, array_values(array_diff($this->allCustomerPermissions(), ['view_contact_group'])));
+        $url = $this->peopleUrl($workspace, $business);
+
+        $page = $this->get($url)->assertOk();
+        $page->assertDontSee('data-role="contacts-group-filter"', false);
+        $page->assertDontSee('Group: Customers')->assertDontSee('Group: Leads');
+        $page->assertDontSee($customers->uid)->assertDontSee($leads->uid);
+
+        // A hand-written group uid neither narrows the list nor confirms the group exists.
+        $this->get($url . '?group=' . $leads->uid)->assertOk()
+            ->assertSee('Harbor Bakery')->assertSee('Dock Works')
+            ->assertDontSee('data-role="contacts-group-filter"', false);
+    }
+
+    public function test_the_group_filter_lists_only_groups_holding_contacts_the_actor_may_see(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $downtown = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Downtown', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $uptown = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Uptown', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $shared = $this->group($business, 'Shared list');
+        $uptownOnly = $this->group($business, 'Uptown VIPs');
+        $empty = $this->group($business, 'Empty list');
+        $this->person($shared, ['FIRST_NAME' => 'Ana', 'COMPANY' => 'Harbor Bakery'])->forceFill(['location_id' => $downtown->id])->save();
+        $this->person($uptownOnly, ['FIRST_NAME' => 'Cleo', 'COMPANY' => 'Hilltop Florist'])->forceFill(['location_id' => $uptown->id])->save();
+
+        // The owner reaches both Locations: groups with contacts are offered, the empty one is not.
+        $this->authenticateAs($owner);
+        $ownerPage = $this->get($this->peopleUrl($workspace, $business))->assertOk();
+        $ownerPage->assertSee('Group: Shared list')->assertSee('Group: Uptown VIPs');
+        $ownerPage->assertDontSee('Group: Empty list')->assertDontSee($empty->uid);
+
+        // A member limited to Downtown never learns the Uptown-only group exists.
+        $staff = $this->createCustomer();
+        $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $downtown);
+        $this->authenticateAs($staff, ['view_contact', 'view_contact_group']);
+
+        $url = $this->peopleUrl($workspace, $business);
+        $page = $this->get($url)->assertOk();
+        $page->assertSee('Group: Shared list')->assertSee('Harbor Bakery');
+        $page->assertDontSee('Uptown VIPs')->assertDontSee($uptownOnly->uid)->assertDontSee('Hilltop Florist');
+        $page->assertDontSee('Group: Empty list');
+
+        // Naming the hidden group by uid is ignored: no narrowing, no disclosure.
+        $this->get($url . '?group=' . $uptownOnly->uid)->assertOk()
+            ->assertSee('Harbor Bakery')->assertDontSee('Hilltop Florist')->assertDontSee('Uptown VIPs');
+    }
+
     public function test_add_contact_goes_straight_to_the_only_group_and_offers_a_choice_between_several(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
@@ -145,6 +231,8 @@ class ContactsPersonFirstTest extends TestCase
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->authenticateAs($owner);
 
         $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
@@ -174,6 +262,8 @@ class ContactsPersonFirstTest extends TestCase
         $otherAccount = $this->otherBusinessOf($owner);
         $other = $otherAccount['business'];
         $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->authenticateAs($owner);
 
         $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
@@ -233,17 +323,42 @@ class ContactsPersonFirstTest extends TestCase
 
         $page = $this->profile($workspace, $business, $ana);
 
-        $this->assertSame('Ana Petrauskaite', trim(strip_tags($this->between($page->getContent(), 'data-role="contact-name">', '</h3>'))));
+        $this->assertSame('Ana Petrauskaite', trim(strip_tags($this->between($page->getContent(), 'data-role="contact-name">', '</span>'))));
         $page->assertSee('ana@example.test');
         $page->assertSee('Harbor Bakery');
         $page->assertSee('Gedimino pr. 1, Vilnius');
         $page->assertSee('href="' . route('customer.workspaces.businesses.contacts.show', [$workspace->uid, $business->uid, $group->uid]) . '"', false);
-        $page->assertSee('No messages with this contact yet.');
+        $page->assertSee('No activity yet');
 
         $body = $this->between($page->getContent(), '<section id="contact-profile">', '</section>');
         foreach (['Source', 'Submitted via', 'Form', 'Notes', 'Tags', 'Lead score'] as $notStored) {
             $this->assertStringNotContainsString($notStored, $body, "{$notStored} is not stored for contacts, so it is not shown.");
         }
+    }
+
+    public function test_the_redesigned_profile_header_identity_copy_actions_and_empty_activity(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $group = $this->group($business, 'Customers');
+        $ana = $this->person($group, ['FIRST_NAME' => 'Ana', 'LAST_NAME' => 'Petrauskaite', 'EMAIL' => 'ana@example.test']);
+        $bare = $this->person($group, []);
+        $this->authenticateAs($owner);
+
+        $page = $this->profile($workspace, $business, $ana);
+        $page->assertSee('>AP<', false);
+        $page->assertSee('Subscribed');
+        $page->assertSee('data-role="contact-copy-phone"', false);
+        $page->assertSee('data-copy="ana@example.test"', false);
+        $page->assertSee('data-role="contact-edit"', false);
+        $page->assertSee('No activity yet');
+        $page->assertSee('Messages and campaigns with Ana will appear here.');
+        $page->assertDontSee('Event date');
+        $page->assertDontSee('content-header-title', false); // the page owns its heading, so the shell prints none
+
+        // Missing optional data: no email row, no copy-email action, still a usable header.
+        $plain = $this->profile($workspace, $business, $bare);
+        $plain->assertDontSee('data-role="contact-copy-email"', false);
+        $plain->assertSee('data-role="contact-copy-phone"', false);
     }
 
     /**
@@ -397,6 +512,8 @@ class ContactsPersonFirstTest extends TestCase
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$owner, $business, $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Account ' . $tier->value);
             $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
             // The contact that used to exhaust the phantom quota.
             $this->person($group, ['FIRST_NAME' => 'Ana']);
             $this->authenticateAs($owner);
@@ -459,6 +576,8 @@ class ContactsPersonFirstTest extends TestCase
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->person($group, ['FIRST_NAME' => 'Ana']);
         $this->person($group, ['FIRST_NAME' => 'Bruno']);
         $this->giveActiveSmsSubscriptionWithExhaustedContactQuota($owner);

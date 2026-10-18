@@ -112,6 +112,7 @@ final class ViewAsRouteClassification
         'customer.website.index' => 'customer.workspaces.businesses.website.show',
         'customer.gbp.index' => 'customer.workspaces.businesses.gbp.index',
         'customer.seo.index' => 'customer.workspaces.businesses.seo.index',
+        'customer.ads.index' => 'customer.workspaces.businesses.ads.overview',
         'customer.automations.index' => 'customer.workspaces.businesses.automations.index',
         'customer.outreach.index' => 'customer.workspaces.businesses.outreach.index',
         'customer.outreach.campaigns.entry' => 'customer.workspaces.businesses.outreach.campaigns',
@@ -150,6 +151,8 @@ final class ViewAsRouteClassification
         'customer.payment.',
         'customer.callback.',
         'customer.gbp.oauth.',
+        'customer.ads.oauth.',
+        'customer.ads.meta.oauth.',
         'user.callback.',
         'user.registers.',
         // Implementation Contract 07 §12 — Agency-side client-workspace
@@ -157,6 +160,17 @@ final class ViewAsRouteClassification
         // viewed Business, and never itself business-scoped; denied while
         // viewing exactly like the other Workspace-frame routes above.
         'client-invitations.',
+        // Agency V1 final — routes merged after the inventory above was last swept. Each is
+        // the ACTOR's own account-level surface, never part of the viewed Business, so each
+        // is closed (404) while viewing rather than left to the Unclassified default:
+        //  - the Agency's own Stripe revenue-account callback (an Agency-account action);
+        //  - the actor's personal external-calendar connection (a provider connection);
+        //  - the actor's own Platform notices and banners (their own account's, not the
+        //    client's — the shell does not even ask for them while viewing).
+        'customer.agency.',
+        'customer.calendar-connection.',
+        'customer.platform-notices.',
+        'customer.platform-announcements.',
     ];
 
     /** Controller actions of denied routes registered without a name. */

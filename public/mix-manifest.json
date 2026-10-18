@@ -1184,5 +1184,8 @@
     "/images/portrait/small/avatar-s-11.jpg": "/images/portrait/small/avatar-s-11.jpg",
     "/images/profile/profile.jpg": "/images/profile/profile.jpg",
     "/js/automations/workflow-builder.js": "/js/automations/workflow-builder.js",
-    "/css/base/pages/automations-workflow-builder.css": "/css/base/pages/automations-workflow-builder.css"
+    "/css/base/pages/automations-workflow-builder.css": "/css/base/pages/automations-workflow-builder.css",
+    "/js/documents/editor.js": "/js/documents/editor.js",
+    "/js/documents/new-document.js": "/js/documents/new-document.js",
+    "/css/base/pages/documents-editor.css": "/css/base/pages/documents-editor.css"
 }

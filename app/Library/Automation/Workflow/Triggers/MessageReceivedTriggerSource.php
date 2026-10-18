@@ -9,10 +9,12 @@ use App\Jobs\Automation\Workflow\AdvanceWorkflowEnrollment;
 use App\Library\Automation\Workflow\Contracts\EnrollmentService;
 use App\Library\Automation\Workflow\Contracts\TriggerSource;
 use App\Library\Automation\Workflow\WorkflowLimits;
+use App\Library\Contacts\ContactPhone;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationStepRun;
 use App\Models\AutomationWorkflow;
 use App\Models\Business;
+use App\Models\ChatBox;
 use App\Models\Contacts;
 use App\Models\Reports;
 use Illuminate\Support\Carbon;
@@ -87,11 +89,13 @@ class MessageReceivedTriggerSource implements TriggerSource
     /**
      * The one phone normalization inbound attribution already uses, so a number
      * written by an inbound path, an outbound send and a contact row compare as
-     * the same string. Deliberately not a second, "smarter" scheme.
+     * the same string. Deliberately not a second, "smarter" scheme: the
+     * stripping itself is ContactPhone::legacyDigits(), and Contact MATCHING
+     * goes through ContactPhone::candidates() (see theOneSubscribedContact()).
      */
     public static function normalizePhone(string $raw): string
     {
-        return str_replace(['(', ')', '+', '-', ' '], '', trim($raw));
+        return ContactPhone::legacyDigits($raw);
     }
 
     /**
@@ -111,7 +115,7 @@ class MessageReceivedTriggerSource implements TriggerSource
             return $this->skip($result, self::SKIPPED_NO_BUSINESS);
         }
 
-        $contact = $this->theOneSubscribedContact((int) $business->id, self::normalizePhone($event->senderPhone));
+        $contact = $this->theOneSubscribedContact($business, $event->senderPhone);
 
         if ($contact === null) {
             return $this->skip($result, self::SKIPPED_AMBIGUOUS_CONTACT);
@@ -124,6 +128,12 @@ class MessageReceivedTriggerSource implements TriggerSource
         if ($workflows === []) {
             return $result;
         }
+
+        // The Location is the CONVERSATION's own (`chat_boxes.location_id`, the one
+        // record the messaging domain treats as authoritative for a thread's
+        // Location), not the Contact's: a message belongs to its thread. Ambiguous
+        // or missing means null, which only Business-wide workflows accept.
+        $locationId = $this->conversationLocationId((int) $business->id, self::normalizePhone((string) $contact->phone));
 
         // One read for the whole fan-out: what was this contact answering?
         [$producerWorkflowId, $producerDepth] = $this->precedingAutomationProducer(
@@ -147,7 +157,7 @@ class MessageReceivedTriggerSource implements TriggerSource
                 continue;
             }
 
-            [$enrollment, $reason] = $this->enrollOutsideCooldown($workflow, $contact, $event->occurrenceKey, $depth);
+            [$enrollment, $reason] = $this->enrollOutsideCooldown($workflow, $contact, $event->occurrenceKey, $depth, $locationId);
 
             if ($enrollment === null) {
                 $result = $this->skip($result, $reason);
@@ -166,19 +176,51 @@ class MessageReceivedTriggerSource implements TriggerSource
     }
 
     /**
-     * Exactly one subscribed contact with this number in this Business, or null.
-     * Limited to two rows: whether there is one or "more than one" is all this
-     * needs to know.
+     * The Location of the ONE conversation this Business has with this number, when
+     * that is unambiguous — the canonical `chat_boxes.location_id` a live writer
+     * already proved when the thread was opened. `(business_id, to)` can match more
+     * than one thread (a contact who wrote to several of the Business's numbers),
+     * and picking one would be a guess, so ambiguity is null.
      */
-    private function theOneSubscribedContact(int $businessId, string $phone): ?Contacts
+    private function conversationLocationId(int $businessId, string $phone): ?int
     {
         if ($phone === '') {
             return null;
         }
 
-        $matches = Contacts::query()
+        $matches = ChatBox::query()
             ->where('business_id', $businessId)
-            ->where('phone', $phone)
+            ->where('to', $phone)
+            ->orderBy('id')
+            ->limit(2)
+            ->get(['id', 'location_id']);
+
+        if ($matches->count() !== 1 || $matches->first()->location_id === null) {
+            return null;
+        }
+
+        return (int) $matches->first()->location_id;
+    }
+
+    /**
+     * Exactly one subscribed contact with this number in this Business, or null.
+     * Limited to two rows: whether there is one or "more than one" is all this
+     * needs to know.
+     */
+    private function theOneSubscribedContact(Business $business, string $senderPhone): ?Contacts
+    {
+        // Business scope first, then the one Contact phone normalization:
+        // the provider's E.164 sender matches a Contact stored in any
+        // equivalent form, and never one of another Business.
+        $forms = ContactPhone::candidates($senderPhone, ContactPhone::regionFor($business));
+
+        if ($forms === []) {
+            return null;
+        }
+
+        $matches = Contacts::query()
+            ->where('business_id', (int) $business->id)
+            ->whereIn('phone', $forms)
             ->where('status', Contacts::STATUS_SUBSCRIBE)
             ->orderBy('id')
             ->limit(2)
@@ -272,15 +314,16 @@ class MessageReceivedTriggerSource implements TriggerSource
         Contacts $contact,
         string $occurrenceKey,
         int $depth,
+        ?int $locationId = null,
     ): array {
-        return DB::transaction(function () use ($workflow, $contact, $occurrenceKey, $depth): array {
+        return DB::transaction(function () use ($workflow, $contact, $occurrenceKey, $depth, $locationId): array {
             Contacts::query()->whereKey($contact->getKey())->lockForUpdate()->first();
 
             if ($this->inCooldown($workflow, $contact)) {
                 return [null, self::SKIPPED_COOLDOWN];
             }
 
-            $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceKey, $depth);
+            $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceKey, $depth, $locationId);
 
             // Null here is EnrollmentService's own refusal: a redelivered
             // message losing its unique key, a contact still part-way through,

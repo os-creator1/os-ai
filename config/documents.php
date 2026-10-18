@@ -37,6 +37,15 @@ return [
     'reminder_sweep_limit' => env('DOCUMENTS_REMINDER_SWEEP_LIMIT', 100),
     'stale_payment_sweep_limit' => env('DOCUMENTS_STALE_PAYMENT_SWEEP_LIMIT', 100),
 
+    // Contract 17B §3/§7 — the automatic balance payment request
+    // (documents:dispatch-balance-requests). Batch size, how many delivery
+    // attempts one balance item gets before the sweep stops trying, and how
+    // long a claim whose job never reported back is honoured before the item
+    // may be claimed again.
+    'balance_request_sweep_limit' => env('DOCUMENTS_BALANCE_REQUEST_SWEEP_LIMIT', 100),
+    'balance_request_max_attempts' => 3,
+    'balance_request_lease_minutes' => 30,
+
     // §7.5 — how long a payment attempt may sit in a non-terminal local status
     // before the reconciliation sweep asks the provider about it. The sweep
     // never invents a terminal state itself.

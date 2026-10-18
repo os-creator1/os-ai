@@ -14,7 +14,6 @@
     use App\Http\Middleware\LocaleMiddleware;
     use App\Http\Middleware\PreventRequestsDuringMaintenance;
     use App\Http\Middleware\RedirectIfAuthenticated;
-    use App\Http\Middleware\RedirectIfNotValid;
     use App\Http\Middleware\ResolveCustomDomainWebsite;
     use App\Http\Middleware\ResolveCustomerContext;
     use App\Http\Middleware\SubAccountRestriction;
@@ -119,6 +118,7 @@
             'throttle'         => ThrottleRequests::class,
             'verified'         => EnsureEmailIsVerified::class,
             'auth.session'     => AuthenticateSession::class,
+            'private.offers'   => \App\Http\Middleware\EnsurePrivateOffersEnabled::class,
             'password.confirm' => RequirePassword::class,
 
             /*
@@ -127,14 +127,15 @@
             |--------------------------------------------------------------------------
             */
 
-            'ValidProduct'      => RedirectIfNotValid::class,
             'twofactor'         => TwoFactor::class,
             'json.response'     => ForceJsonResponse::class,
             'customer.sub_only' => SubAccountRestriction::class,
+            'legacy.payments'   => \App\Http\Middleware\LegacyPaymentGate::class,
             'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,
             'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,
             'business.profile.accessible' => EnsureBusinessProfileIsAccessible::class,
             'customer.context'  => ResolveCustomerContext::class,
+            'attribution.capture' => \App\Http\Middleware\CaptureAttributionTouch::class,
 
 
         ];

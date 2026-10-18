@@ -19,6 +19,7 @@
 
                 @include('admin.platform-owner.partials.access')
                 @include('admin.platform-owner.partials.subscription')
+                @include('admin.platform-owner.partials.offers')
                 @include('admin.platform-owner.partials.agency')
             </div>
         </div>

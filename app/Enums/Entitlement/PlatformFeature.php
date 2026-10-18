@@ -20,9 +20,12 @@ enum PlatformFeature: string
     case AiCooBasic = 'ai_coo_basic';
     case SeoBasicVisibility = 'seo_basic_visibility';
     case AdsBasicVisibility = 'ads_basic_visibility';
+    // Provider-neutral full Ads capability (Meta Ads V1 contract 24 §8, M10).
+    case AdsModule = 'ads_module';
     case SeoModule = 'seo_module';
     case GoogleAdsModule = 'google_ads_module';
     case GoogleBusinessProfileModule = 'google_business_profile_module';
+    // Legacy synonym of AdsModule; kept valid. Resolved by AdsFeatureAccess.
     case MetaAdsModule = 'meta_ads_module';
     case WhiteLabel = 'white_label';
     case AgencyPackageCapabilities = 'agency_package_capabilities';
@@ -79,4 +82,14 @@ enum PlatformFeature: string
      * feature.
      */
     case PaymentsContracts = 'payments_contracts';
+
+    /**
+     * SEO Keyword Rank Tracking V1 — the PAID third-party SERP rank-tracking
+     * capability (DataForSEO). Deliberately separate from SeoBasicVisibility /
+     * SeoModule so the paid provider surface is entitled, packaged and
+     * switched on its own. Packaged for Core, Growth and Agency; per-tier
+     * numeric limits live in config/seo.php (SeoConfig), never in plan-name
+     * checks.
+     */
+    case SeoRankTracking = 'seo_rank_tracking';
 }

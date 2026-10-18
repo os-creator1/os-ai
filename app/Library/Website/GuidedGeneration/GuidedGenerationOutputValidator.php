@@ -29,6 +29,15 @@ use Illuminate\Validation\ValidationException;
  */
 final class GuidedGenerationOutputValidator
 {
+    /** Two service-area pages whose text (area names removed) is this similar are treated as one page. */
+    private const AREA_MAX_SIMILARITY = 88.0;
+
+    /** About copy: about 120 words asked for, so ~900 characters; the cap leaves slack. */
+    public const ABOUT_MAX_CHARS = 1100;
+
+    /** similar_text() is quadratic-plus; bound what is compared. */
+    private const AREA_COMPARE_CHARS = 1500;
+
     public function __construct(
         private readonly WebsiteSectionValidator $sectionValidator,
     ) {
@@ -129,10 +138,93 @@ final class GuidedGenerationOutputValidator
         }
 
         $this->assertNoDuplicateSeoFields($pages, $errors);
+        $this->assertAreaPagesAreDistinct($pages, $planByKey, $errors);
+        $this->assertAboutIsConcise($pages, $planByKey, $errors);
 
         if (! empty($errors)) {
             throw ValidationException::withMessages($errors);
         }
+    }
+
+    /**
+     * Anti-doorway protection for service-area pages: each must actually be
+     * about ITS area (it names that area), and no two may be the same copy
+     * with only the place name swapped. Checked mechanically so a
+     * near-duplicate batch fails validation — and takes the existing
+     * corrective retry — instead of ever becoming thin, repeated pages.
+     */
+    private function assertAreaPagesAreDistinct(array $pages, Collection $planByKey, array &$errors): void
+    {
+        $texts = [];
+
+        foreach ($pages as $index => $page) {
+            $planPage = $planByKey->get($page['page_key'] ?? '');
+            $area = is_array($planPage['entity'] ?? null) ? ($planPage['entity']['area'] ?? null) : null;
+
+            if (! is_string($area) || $area === '') {
+                continue;
+            }
+
+            $text = mb_strtolower($this->plainText($page));
+
+            if (! str_contains($text, mb_strtolower($area))) {
+                $errors["pages.{$index}.area"][] = "Service-area page '{$page['page_key']}' never mentions its own area '{$area}'.";
+            }
+
+            $texts[$index] = mb_substr(trim(str_replace(mb_strtolower($area), '', $text)), 0, self::AREA_COMPARE_CHARS);
+        }
+
+        $indexes = array_keys($texts);
+        foreach ($indexes as $position => $a) {
+            foreach (array_slice($indexes, $position + 1) as $b) {
+                similar_text($texts[$a], $texts[$b], $percent);
+
+                if ($percent >= self::AREA_MAX_SIMILARITY) {
+                    $errors["pages.{$b}.area"][] = "Service-area page '{$pages[$b]['page_key']}' is nearly identical to '{$pages[$a]['page_key']}' — each area page needs its own wording.";
+                }
+            }
+        }
+    }
+
+    /**
+     * The About page tells a short story. A very long one fails validation and takes the
+     * existing corrective retry, so the owner never publishes a wall of text.
+     */
+    private function assertAboutIsConcise(array $pages, Collection $planByKey, array &$errors): void
+    {
+        foreach ($pages as $index => $page) {
+            $planPage = $planByKey->get($page['page_key'] ?? '');
+
+            if (($planPage['page_type'] ?? null) !== 'about') {
+                continue;
+            }
+
+            $length = 0;
+            foreach ($page['sections'] ?? [] as $section) {
+                if (in_array($section['type'] ?? null, ['text', 'image_text'], true)) {
+                    $length += mb_strlen((string) ($section['data']['body'] ?? ''));
+                }
+            }
+
+            if ($length > self::ABOUT_MAX_CHARS) {
+                $errors["pages.{$index}.about"][] = "The About page is too long (" . $length . " characters, at most " . self::ABOUT_MAX_CHARS . ") — keep it to two short paragraphs.";
+            }
+        }
+    }
+
+    private function plainText(array $page): string
+    {
+        $parts = [(string) ($page['title'] ?? ''), (string) ($page['seo_title'] ?? ''), (string) ($page['meta_description'] ?? '')];
+
+        $sections = is_array($page['sections'] ?? null) ? $page['sections'] : [];
+
+        array_walk_recursive($sections, function ($value, $key) use (&$parts) {
+            if (is_string($value) && ! in_array($key, ['type', 'url'], true)) {
+                $parts[] = $value;
+            }
+        });
+
+        return implode(' ', $parts);
     }
 
     /**
@@ -261,7 +353,10 @@ final class GuidedGenerationOutputValidator
             return;
         }
 
-        $haystack = mb_strtolower(json_encode($page));
+        // Unescaped on purpose: the default json_encode turns "/" into "\/" and every non-ASCII
+        // letter into \uXXXX, so a prohibited claim such as "24/7" or any accented term could
+        // never match its own needle.
+        $haystack = mb_strtolower((string) json_encode($page, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
         foreach ($prohibitedClaims as $claim) {
             $needle = mb_strtolower(trim((string) $claim));

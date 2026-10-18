@@ -182,7 +182,11 @@ class ContextSwitcherTest extends TestCase
         $startShell = $this->shellHtml($start->getContent());
         $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Agency account\s*</', $startShell);
         $this->assertSame(1, $this->optionCount($startShell, 'context-option-business'));
-        $this->assertStringContainsString('Client accounts', $startShell);
+        // The one Business listed is the Agency's OWN (Agency V1 final): never headed "Client accounts", and
+        // never offered "View … as a client" — a managed client is reached through Clients → View As.
+        $this->assertStringContainsString('Your business', $startShell);
+        $this->assertStringNotContainsString('Client accounts', $startShell);
+        $this->assertStringNotContainsString('as a client', $startShell);
         $this->assertStringNotContainsString($managed['clientBusiness']->name, $startShell);
         $this->assertStringNotContainsString($managed['clientWorkspace']->name, $startShell);
 
@@ -190,9 +194,9 @@ class ContextSwitcherTest extends TestCase
         $this->switchTo($workspace, $clientOne)->assertRedirect(route('user.home'));
         $inClient = $this->home()->assertOk();
         $clientShell = $this->shellHtml($inClient->getContent());
-        $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Client account\s*</', $clientShell);
+        $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Your business\s*</', $clientShell);
         $this->assertSame(1, substr_count($clientShell, 'aria-current="true"'));
-        $this->assertStringContainsString('aria-label="Current client account: Client One. Switch client account"', $clientShell);
+        $this->assertStringContainsString('aria-label="Current business: Client One. Switch business"', $clientShell);
 
         // Back to the Agency account home in one action, from inside the client.
         $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
@@ -214,12 +218,12 @@ class ContextSwitcherTest extends TestCase
 
         $this->switchTo($workspace, $clientOne);
         $first = $this->home()->assertOk()->getContent();
-        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($first));
+        $this->assertContains(route('customer.workspaces.businesses.people.index', [$workspace->uid, $clientOne->uid]), $this->menuLinks($first));
 
         $this->switchTo($second['workspace'], $second['business']);
         $secondPage = $this->home()->assertOk()->getContent();
-        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$second['workspace']->uid, $second['business']->uid]), $this->menuLinks($secondPage));
-        $this->assertNotContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($secondPage));
+        $this->assertContains(route('customer.workspaces.businesses.people.index', [$second['workspace']->uid, $second['business']->uid]), $this->menuLinks($secondPage));
+        $this->assertNotContains(route('customer.workspaces.businesses.people.index', [$workspace->uid, $clientOne->uid]), $this->menuLinks($secondPage));
     }
 
     public function test_a_filter_appears_only_once_there_are_enough_businesses_to_need_one(): void

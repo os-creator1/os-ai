@@ -87,7 +87,9 @@ class TwoFactorController extends Controller
 
         $user = auth()->user();
 
-        if ($request->input('two_factor_code') == $user->two_factor_code) {
+        $expired = $user->two_factor_expires_at !== null && now()->greaterThan($user->two_factor_expires_at);
+
+        if ( ! $expired && $user->two_factor_code !== null && $request->input('two_factor_code') == $user->two_factor_code) {
 
             $user->resetTwoFactorCode();
 
@@ -97,7 +99,7 @@ class TwoFactorController extends Controller
 
             Session::reflash();
 
-            return redirect(Helper::home_route());
+            return redirect(\App\Library\PlatformBilling\PendingVerification::uri() ?? \App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route());
         }
 
         Session::reflash();
@@ -137,6 +139,10 @@ class TwoFactorController extends Controller
 
         if (isset($backUpCode) && is_array($backUpCode) && in_array($request->input('two_factor_code'), $backUpCode)) {
 
+            // A backup code is single-use: consume it so a leaked/used code cannot be replayed.
+            $remaining = array_values(array_filter($backUpCode, fn ($c) => (string) $c !== (string) $request->input('two_factor_code')));
+            $user->forceFill(['two_factor_backup_code' => json_encode($remaining)])->save();
+
             $user->resetTwoFactorCode();
 
             Session::flash('two-factor-login-success', 'success');
@@ -145,7 +151,7 @@ class TwoFactorController extends Controller
 
             Session::reflash();
 
-            return redirect(Helper::home_route());
+            return redirect(\App\Library\PlatformBilling\PendingVerification::uri() ?? \App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route());
         }
 
         return redirect()->back()->with([

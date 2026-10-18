@@ -14,13 +14,10 @@
 
 @section('content')
     {{-- The shared title bar (panels.breadcrumb) is switched off on this page
-         so its <h2> never precedes the page's own <h1>; the View-as-client
-         banner it normally carries is therefore rendered here, first, in
-         every branch (§3, §15). The component renders nothing unless a
-         view-as session is active. --}}
-    <x-view-as-banner />
-
-    <div class="customer-dashboard" data-role="dashboard" data-kind="{{ $dashboard->kind }}">
+         so its <h2> never precedes the page's own <h1>. The View-as-client
+         banner is rendered by the layout master (every page, every branch),
+         so it is not repeated here. --}}
+    <div class="customer-dashboard @if($dashboard->kind === \App\Library\Dashboard\DashboardSnapshot::KIND_BUSINESS && $dashboard->has(\App\Library\Dashboard\DashboardSnapshot::BAND_COMMAND)) customer-dashboard--hv2 @endif" data-role="dashboard" data-kind="{{ $dashboard->kind }}">
         <div class="mb-2" data-role="dashboard-header">
             <h1 class="text-page-title mb-0" id="dashboard-title">
                 <span class="d-block text-caption text-uppercase text-muted" data-role="dashboard-frame">{{ $dashboard->frameLabel }}</span>
@@ -100,6 +97,14 @@
                             // The band may have been swapped again while this
                             // request was out; never draw into a detached mount.
                             if (!document.body.contains(mount)) { return; }
+
+                            // No contact in the whole period: say so instead of drawing a flat line that looks like a result.
+                            var hasActivity = chart.series.new_contacts.some(function (n) { return Number(n) > 0; });
+                            if (!hasActivity) {
+                                mount.style.minHeight = '0';
+                                mount.innerHTML = '<div class="home-chart-empty" data-role="chart-empty"><strong>No activity to chart yet</strong><span>The trend chart appears once something happens in this period.</span></div>';
+                                return;
+                            }
 
                             var fitting = Math.max(2, Math.floor(mount.clientWidth / LABEL_SPACING_PX));
                             mount.innerHTML = '';

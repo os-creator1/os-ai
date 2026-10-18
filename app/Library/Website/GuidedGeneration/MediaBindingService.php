@@ -7,6 +7,8 @@ use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Website\WebsiteStarterDraftService;
 use App\Models\BusinessBackdrop;
 use App\Models\CatalogItem;
+use App\Models\BusinessService;
+use App\Models\BusinessServiceImage;
 use App\Models\CatalogItemImage;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
@@ -62,6 +64,90 @@ use App\Models\WebsiteAsset;
  */
 final class MediaBindingService
 {
+    public function __construct(private readonly \App\Library\Website\WebsiteCatalogReferences $catalogReferences)
+    {
+    }
+
+    /**
+     * Guarantees every service-area page real internal links, whatever the
+     * AI wrote: one call-to-action to the contact page and the services
+     * overview (when they exist) and one pointing at up to two of the
+     * owner's other area pages. Deterministic — built only from the
+     * planned slugs, never from AI output.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, mixed>>
+     */
+    private function linkAreaPages(array $pages): array
+    {
+        $slugOf = fn (string $type) => collect($pages)->firstWhere('page_type', $type)['slug'] ?? null;
+        $contactSlug = $slugOf('contact');
+        $servicesSlug = $slugOf('services_overview');
+        $areaPages = array_values(array_filter($pages, fn ($p) => is_array($p['entity'] ?? null) && isset($p['entity']['area'])));
+
+        if ($areaPages === []) {
+            return $pages;
+        }
+
+        $linksTo = function (array $page, string $slug): bool {
+            foreach ($page['sections'] ?? [] as $section) {
+                foreach ($section['data']['buttons'] ?? [] as $button) {
+                    if (ltrim((string) ($button['url'] ?? ''), '/') === $slug) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        };
+
+        foreach ($pages as $index => $page) {
+            $area = is_array($page['entity'] ?? null) ? ($page['entity']['area'] ?? null) : null;
+
+            if (! is_string($area)) {
+                continue;
+            }
+
+            // A page that already closes with a call to action of its own does not get a second,
+            // near-identical "Planning an event in X?" band stacked under it.
+            $hasOwnCta = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'cta');
+
+            $buttons = [];
+            if (! $hasOwnCta && $contactSlug && ! $linksTo($page, $contactSlug)) {
+                $buttons[] = ['label' => 'Get in touch', 'url' => '/' . $contactSlug];
+            }
+            if (! $hasOwnCta && $servicesSlug && ! $linksTo($page, $servicesSlug)) {
+                $buttons[] = ['label' => 'See our services', 'url' => '/' . $servicesSlug];
+            }
+            if ($buttons !== []) {
+                $pages[$index]['sections'][] = ['type' => 'cta', 'data' => [
+                    'heading' => \Illuminate\Support\Str::limit('Planning an event in ' . $area . '?', 120, ''),
+                    'body' => null,
+                    'buttons' => array_slice($buttons, 0, 2),
+                ]];
+            }
+
+            $nearby = [];
+            foreach ($areaPages as $other) {
+                if ($other['slug'] !== $page['slug'] && ! $linksTo($page, (string) $other['slug'])) {
+                    $nearby[] = ['label' => \Illuminate\Support\Str::limit('Also serving ' . $other['entity']['area'], 40, ''), 'url' => '/' . $other['slug']];
+                }
+                if (count($nearby) === 2) {
+                    break;
+                }
+            }
+            if ($nearby !== []) {
+                $pages[$index]['sections'][] = ['type' => 'cta', 'data' => [
+                    'heading' => 'We also serve nearby',
+                    'body' => null,
+                    'buttons' => $nearby,
+                ]];
+            }
+        }
+
+        return $pages;
+    }
+
     /**
      * @param  array<int, array{page_key: string, page_type: string, is_home: bool, slug: ?string, title: string, seo_title: ?string, meta_description: ?string, sections: array}>  $pages
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  see WebsitePageStrategy::buildPlan()'s matching parameter
@@ -74,6 +160,12 @@ final class MediaBindingService
         $pages = $this->bindBackdrops($website, $pages);
         $pages = $this->bindCustomSection($pages, $customSection);
         $pages = $this->bindCustomerFaq($pages, $customerFaq);
+        // Package blocks reference their canonical Packages & Products row
+        // by uid (resolved live at preview/publish) — stamped here from the
+        // catalog, never trusted from AI output.
+        $pages = $this->linkAreaPages($pages);
+        $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);
+        $pages = $this->mirrorServiceImages($website, $pages);
         $pages = $this->mirrorPackageImages($website, $pages);
 
         // Independent-review correction round 2 — only GALLERY-purpose
@@ -97,7 +189,11 @@ final class MediaBindingService
         // cover (WebsiteGalleryManager::setCover()) is the homepage hero
         // candidate whenever one is set; only when none exists does the
         // first asset by sort_order act as the deterministic fallback.
-        $heroAsset = $assets->firstWhere('is_cover', true) ?? $assets->first();
+        // The Hero image the owner chose on Review (Brand & look) outranks both: it is the one hero every other page
+        // already uses, so the Home page must not show a different photo.
+        $ownerHeroUid = $website->theme['hero_asset_uid'] ?? null;
+        $ownerHero = is_string($ownerHeroUid) ? $website->assets()->where('uid', $ownerHeroUid)->where('purpose', WebsiteAssetPurpose::Hero->value)->first() : null;
+        $heroAsset = $ownerHero ?? $assets->firstWhere('is_cover', true) ?? $assets->first();
         $heroAssetUid = $heroAsset->uid;
         $remainingPool = $assets->reject(fn (WebsiteAsset $asset) => $asset->is($heroAsset))->values();
         // Every asset is still eligible for the round-robin pool at
@@ -121,7 +217,9 @@ final class MediaBindingService
                     continue;
                 }
 
-                if ($type === 'image_text' && empty($section['data']['image'])) {
+                // A photo slot that belongs to ONE service is that service's own picture or nothing (it was
+                // already decided by mirrorServiceImages()) — never filled with an unrelated gallery photo.
+                if ($type === 'image_text' && empty($section['data']['image']) && empty($section['data']['service_uid'])) {
                     $imageTextSlotsSeen++;
 
                     // roundRobinPool is never empty once $assets itself
@@ -278,7 +376,7 @@ final class MediaBindingService
                 continue;
             }
 
-            $pages[$index]['sections'][] = ['type' => 'backdrops', 'data' => ['heading' => 'Our Backdrops', 'items' => $items]];
+            $pages[$index]['sections'] = $this->withContentSection($page['sections'] ?? [], ['type' => 'backdrops', 'data' => ['heading' => 'Our Backdrops', 'items' => $items]]);
         }
 
         return $pages;
@@ -384,45 +482,127 @@ final class MediaBindingService
      */
     private function mirrorPackageImages(Website $website, array $pages): array
     {
-        $catalogItemsByName = CatalogItem::where('business_id', $website->business_id)
+        $catalogItems = CatalogItem::where('business_id', $website->business_id)
             ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
             ->with('images')
-            ->get()
-            ->keyBy(fn (CatalogItem $item) => mb_strtolower(trim($item->name)));
+            ->get();
 
-        if ($catalogItemsByName->isEmpty()) {
+        if ($catalogItems->isEmpty()) {
             return $pages;
         }
 
-        foreach ($pages as $index => $page) {
-            if (($page['page_type'] ?? null) !== 'packages') {
-                continue;
-            }
+        $byUid = $catalogItems->keyBy('uid');
+        $byName = $catalogItems->keyBy(fn (CatalogItem $item) => mb_strtolower(trim($item->name)));
 
+        foreach ($pages as $index => $page) {
             foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
                 if (($section['type'] ?? null) !== 'services') {
                     continue;
                 }
 
                 foreach (($section['data']['items'] ?? []) as $itemIndex => $item) {
-                    if (! empty($item['image'])) {
+                    $isPackage = ! empty($item['catalog_item_uid']) || ($page['page_type'] ?? null) === 'packages';
+                    $linkKey = $item['link_service_key'] ?? null;
+                    unset($pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['link_service_key']);
+
+                    if (! $isPackage || ! empty($item['image'])) {
                         continue;
                     }
 
-                    $catalogItem = $catalogItemsByName->get(mb_strtolower(trim($item['name'] ?? '')));
+                    $catalogItem = (! empty($item['catalog_item_uid']) ? $byUid->get($item['catalog_item_uid']) : null)
+                        ?? $byName->get(mb_strtolower(trim($item['name'] ?? '')));
+
+                    // 1. the package's own photo; 2. the photo of the booth the owner explicitly linked it to;
+                    // 3. nothing — the card is then a designed text-only card (never an empty frame or a stray photo).
                     $cover = $catalogItem?->coverImage();
 
-                    if ($cover === null) {
+                    if ($cover !== null) {
+                        $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredAssetFor($website, $cover)->uid;
+
                         continue;
                     }
 
-                    $mirrored = $this->mirroredAssetFor($website, $cover);
-                    $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $mirrored->uid;
+                    $service = is_string($linkKey) && $linkKey !== '' ? $this->serviceForKey($website, $linkKey) : null;
+                    $serviceCover = $service?->coverImage();
+
+                    if ($serviceCover !== null) {
+                        $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredServiceAsset($website, $serviceCover)->uid;
+                    }
                 }
             }
         }
 
         return $pages;
+    }
+
+    /**
+     * A booth service's own photo, attached by the service's stable id: on its card (a `services` item carrying
+     * `service_uid`) and beside its own page copy (an `image_text` carrying `service_uid`). A service with no photo
+     * gets none — and an `image_text` slot that belongs to it is removed rather than filled with another booth's
+     * picture or an unrelated gallery photo.
+     */
+    private function mirrorServiceImages(Website $website, array $pages): array
+    {
+        $services = BusinessService::where('business_id', $website->business_id)->with('images')->get()->keyBy('uid');
+
+        foreach ($pages as $index => $page) {
+            foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
+                $type = $section['type'] ?? null;
+
+                if ($type === 'services') {
+                    foreach (($section['data']['items'] ?? []) as $itemIndex => $item) {
+                        $cover = empty($item['image']) && ! empty($item['service_uid']) ? $services->get($item['service_uid'])?->coverImage() : null;
+
+                        if ($cover !== null) {
+                            $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredServiceAsset($website, $cover)->uid;
+                        }
+                    }
+                }
+
+                if ($type === 'image_text' && ! empty($section['data']['service_uid']) && empty($section['data']['image'])) {
+                    $cover = $services->get($section['data']['service_uid'])?->coverImage();
+
+                    if ($cover !== null) {
+                        $pages[$index]['sections'][$sectionIndex]['data']['image'] = $this->mirroredServiceAsset($website, $cover)->uid;
+                    }
+                }
+            }
+        }
+
+        return $pages;
+    }
+
+    /** The booth a package was explicitly linked to: by its wizard card key, or `svc:<uid>` for a service that already existed. */
+    private function serviceForKey(Website $website, string $key): ?BusinessService
+    {
+        $query = BusinessService::where('business_id', $website->business_id)->with('images');
+
+        return str_starts_with($key, 'svc:')
+            ? $query->where('uid', substr($key, 4))->first()
+            : $query->where('source_questionnaire_item_key', $key)->first();
+    }
+
+    private function mirroredServiceAsset(Website $website, BusinessServiceImage $cover): WebsiteAsset
+    {
+        $existing = WebsiteAsset::where('website_id', $website->id)->where('source_business_service_image_id', $cover->id)->first();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        return WebsiteAsset::create([
+            'website_id' => $website->id,
+            'disk' => $cover->disk,
+            'path' => $cover->path,
+            'mime_type' => $cover->mime_type,
+            'size' => $cover->size,
+            'width' => $cover->width,
+            'height' => $cover->height,
+            'alt_text' => $cover->alt_text,
+            'source_business_service_image_id' => $cover->id,
+            // A derived copy for rendering only: never in the hero/gallery pool, never counted as an upload.
+            'purpose' => WebsiteAssetPurpose::ServiceMirror->value,
+        ]);
     }
 
     /**
@@ -486,9 +666,35 @@ final class MediaBindingService
             }
 
             $items = array_map(fn ($asset) => ['image' => $asset->uid], array_slice($assets, 0, 24));
-            $pages[$index]['sections'][] = ['type' => 'gallery', 'data' => ['heading' => 'Photos', 'items' => $items]];
+            $pages[$index]['sections'] = $this->withContentSection($page['sections'] ?? [], ['type' => 'gallery', 'data' => ['heading' => 'Photos', 'items' => $items]]);
         }
 
         return $pages;
+    }
+
+    /**
+     * A system-built content section (the photos, the backdrops) belongs with the page's content,
+     * after its hero and any copy, but BEFORE the closing contact / call-to-action / form blocks,
+     * so a Gallery page reads hero -> photos -> contact rather than hero -> contact -> photos.
+     *
+     * @param  array<int, array<string, mixed>>  $sections
+     * @param  array<string, mixed>  $section
+     * @return array<int, array<string, mixed>>
+     */
+    private function withContentSection(array $sections, array $section): array
+    {
+        $position = count($sections);
+
+        foreach ($sections as $i => $existing) {
+            if ($i > 0 && in_array($existing['type'] ?? null, ['contact_details', 'cta', 'form'], true)) {
+                $position = $i;
+
+                break;
+            }
+        }
+
+        array_splice($sections, $position, 0, [$section]);
+
+        return $sections;
     }
 }

@@ -103,11 +103,13 @@ class ResetPasswordController extends Controller
         $status = Password::reset(
                 $request->only('email', 'password', 'password_confirmation', 'token'),
                 function ($user, $password) use ($request) {
+                    // password_changed_at invalidates every other live session (CheckPasswordChanged);
+                    // the remember token is saved so remember-me cookies die too.
                     $user->forceFill([
-                            'password' => Hash::make($password),
+                            'password'            => Hash::make($password),
+                            'password_changed_at' => now(),
+                            'remember_token'      => Str::random(60),
                     ])->save();
-
-                    $user->setRememberToken(Str::random(60));
 
                     event(new PasswordReset($user));
                 }

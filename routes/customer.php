@@ -16,6 +16,14 @@
 
     Route::get('account-locked', 'AccountLockedController@show')->name('account-locked.show');
 
+    // Platform Automations / Announcements, customer side: mark one's own in-app notice
+    // read and dismiss one's own banner. Each acts only on the signed-in user's rows.
+    Route::get('platform-notices', 'PlatformNoticeController@feed')->middleware('throttle:60,1')->name('platform-notices.feed');
+    Route::post('platform-notices/{notice}/read', 'PlatformNoticeController@read')
+        ->whereUuid('notice')->middleware('throttle:60,1')->name('platform-notices.read');
+    Route::post('platform-announcements/{announcement}/dismiss', 'PlatformNoticeController@dismiss')
+        ->whereUuid('announcement')->middleware('throttle:60,1')->name('platform-announcements.dismiss');
+
     /*
     |--------------------------------------------------------------------------
     | Lane C, Task 1 — the ONE fixed, platform-wide Stripe OAuth callback for
@@ -34,6 +42,17 @@
     */
     Route::get('agency/stripe/connect-existing/callback', 'Agency\AgencySaasController@connectExistingCallback')
         ->name('agency.stripe.connect-existing.callback');
+
+    /*
+    | Business payments (lane B) — the ONE fixed, tenant-free Stripe OAuth
+    | callback for "Connect existing Stripe account". Register this exact URL
+    | (customer.business.stripe.connect-existing.callback) as a redirect URI on
+    | the Business Connect OAuth client (STRIPE_BUSINESS_CONNECT_CLIENT_ID).
+    | Workspace/Business/user are bound server-side by the `state` record.
+    */
+    Route::get('business/stripe/connect-existing/callback', 'Business\BusinessPaymentsController@existingCallback')
+        ->middleware('throttle:30,1')
+        ->name('business.stripe.connect-existing.callback');
 
     /*
     |--------------------------------------------------------------------------
@@ -102,6 +121,7 @@
 
     Route::post('senderid/search', 'SenderIDController@search')->name('senderid.search');
     Route::get('senderid/request', 'SenderIDController@request')->name('senderid.request');
+    Route::get('senderid/{senderid}/document', 'SenderIDController@document')->name('senderid.document');
     Route::get('senderid/{senderid}/pay', 'SenderIDController@pay')->name('senderid.pay');
     Route::post('senderid/{senderid}/pay', 'SenderIDController@payment');
     Route::any('senderid/{senderid}/success', 'PaymentController@successfulSenderIDPayment')->name('senderid.payment_success');
@@ -555,14 +575,60 @@
     | accessible show an empty state, exactly one redirects through, several
     | show a chooser. "Accessible" includes ENTITLEMENT. Before any of that,
     | the entry checks the registry's implementation-availability floor
-    | FIRST: SeoBasicVisibility stays Planned until Sub-slice H, so today the
-    | whole route is 404 for every caller (no 200 empty state, and no 401 that
-    | would reveal the surface exists). The name is customer.seo.index —
+    | FIRST: SeoBasicVisibility is Available (Sub-slice H flipped it), and the
+    | floor still turns the whole route into a 404 for every caller if it
+    | ever stops being (no 200 empty state, and no 401 that would reveal the
+    | surface exists). The name is customer.seo.index —
     | never customer.keywords.*, the legacy inbound-SMS keyword namespace.
     | See Business\SeoController.
     |
     */
     Route::get('seo', 'Business\SeoController@entry')->name('seo.index');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Ads entry (Google Ads Module V1, contract 23 §7)
+    |--------------------------------------------------------------------------
+    |
+    | Bare selector only — the module lives at
+    | customer.workspaces.businesses.ads.*. Never guesses a Business: zero
+    | accessible show an empty state, exactly one redirects through, several
+    | show a chooser. "Accessible" includes ENTITLEMENT (ads_basic_visibility
+    | or google_ads_module). While neither feature is Available in the
+    | registry the whole route is 404. See Business\AdsController::entry().
+    |
+    */
+    Route::get('ads', 'Business\AdsController@entry')->name('ads.index');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Ads OAuth callback — ONE FIXED, TENANT-FREE URI
+    |--------------------------------------------------------------------------
+    |
+    | Google matches `redirect_uri` EXACTLY, so this can never carry a
+    | Workspace or Business segment; GoogleAdsOAuthConfig refuses to start a
+    | flow unless services.google_ads.redirect equals this URL. The Business
+    | is resolved ONLY from the signed, single-use state and the whole
+    | tenancy / entitlement / permission chain is re-run before the nonce is
+    | consumed or any code exchanged. It stays GET because Google redirects
+    | the browser here; it never authenticates or creates a user and never
+    | places a code or token in a URL, flash or log. See
+    | Business\AdsConnectionController::callback().
+    |
+    */
+    Route::get('ads/oauth/callback', 'Business\AdsConnectionController@callback')
+        ->middleware('throttle:20,1')
+        ->name('ads.oauth.callback');
+
+    /*
+    | Meta Ads OAuth callback — ONE FIXED, TENANT-FREE URI (contract 24 §3).
+    | Same rules as the Google callback above: the Business comes ONLY from
+    | the signed single-use state (product claim `meta_ads`); no code/token
+    | ever reaches a URL, flash or log. See Business\MetaAdsConnectionController::callback().
+    */
+    Route::get('ads/meta/oauth/callback', 'Business\MetaAdsConnectionController@callback')
+        ->middleware('throttle:20,1')
+        ->name('ads.meta.oauth.callback');
 
     /*
     |--------------------------------------------------------------------------
@@ -709,15 +775,22 @@
 
     Route::prefix('onboarding')->name('onboarding.')->middleware('business.onboarding.enabled')->group(function () {
         Route::get('/{step?}', 'BusinessOnboardingController@show')->name('show');
-        Route::post('/goals', 'BusinessOnboardingController@storeGoals')->name('goals.store');
         Route::post('/business', 'BusinessOnboardingController@storeBusiness')->name('business.store');
         Route::post('/location', 'BusinessOnboardingController@storeLocation')->name('location.store');
         Route::post('/services', 'BusinessOnboardingController@storeServices')->name('services.store');
-        Route::post('/assets', 'BusinessOnboardingController@storeAssets')->name('assets.store');
-        Route::post('/assets/skip', 'BusinessOnboardingController@skipAssets')->name('assets.skip');
-        Route::post('/analysis', 'BusinessOnboardingController@requestAnalysis')->middleware('throttle:5,60')->name('analysis.request');
-        Route::get('/analysis/status', 'BusinessOnboardingController@analysisStatus')->middleware('throttle:60,1')->name('analysis.status');
-        Route::post('/action', 'BusinessOnboardingController@completeAction')->name('action.complete');
+        Route::post('/website', 'BusinessOnboardingController@storeWebsite')->name('website.store');
+        Route::post('/later', 'BusinessOnboardingController@complete')->name('later');
+
+        // Goals, Assets, Analysis, Results and the Services "skip" are no longer steps.
+        // Old bookmarks and stale forms are redirected to the step the customer is really
+        // on; none of these writes anything or skips a prerequisite.
+        Route::match(['get', 'post'], '/analysis/status', 'BusinessOnboardingController@retired')->name('analysis.status');
+        Route::post('/goals', 'BusinessOnboardingController@retired')->name('goals.store');
+        Route::post('/assets', 'BusinessOnboardingController@retired')->name('assets.store');
+        Route::post('/assets/skip', 'BusinessOnboardingController@retired')->name('assets.skip');
+        Route::post('/services/skip', 'BusinessOnboardingController@retired')->name('services.skip');
+        Route::post('/analysis', 'BusinessOnboardingController@retired')->name('analysis.request');
+        Route::post('/action', 'BusinessOnboardingController@retired')->name('action.complete');
         Route::post('/complete', 'BusinessOnboardingController@complete')->name('complete');
     });
 
@@ -953,6 +1026,11 @@
         | never something done "as" a client.
         |----------------------------------------------------------------------
         */
+        // The Agency's OWN operating workspace (CRM, Calendar, Automations, SEO, Ads):
+        // owner-only, asserted inside AgencyOperationsManager. Prohibited under View As.
+        Route::post('{workspaceUid}/agency/operations', 'Agency\AgencyOperationsController@enable')
+            ->middleware('throttle:30,1')->name('agency.operations.enable');
+
         Route::get('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@show')
             ->name('agency.white-label.show');
         Route::post('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@update')
@@ -1098,6 +1176,22 @@
             Route::post('/{locationUid}/primary', 'Business\BusinessLocationsController@makePrimary')->name('primary');
         });
 
+        /*
+        |----------------------------------------------------------------------
+        | Settings -> Business -> Services (BusinessService editor)
+        |----------------------------------------------------------------------
+        | The services THIS Business offers, Business-scoped, so a secondary Business can satisfy the primary-Service
+        | readiness step without the customer's one onboarding wizard. Writes go through BusinessServiceManager.
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/services')->name('businesses.services.')->group(function () {
+            Route::get('/', 'Business\BusinessServicesController@index')->name('index');
+            Route::post('/', 'Business\BusinessServicesController@store')->middleware('throttle:60,1')->name('store');
+            Route::post('/{serviceUid}/rename', 'Business\BusinessServicesController@rename')->middleware('throttle:60,1')->name('rename');
+            Route::post('/{serviceUid}/activate', 'Business\BusinessServicesController@activate')->middleware('throttle:60,1')->name('activate');
+            Route::post('/{serviceUid}/deactivate', 'Business\BusinessServicesController@deactivate')->middleware('throttle:60,1')->name('deactivate');
+            Route::post('/{serviceUid}/primary', 'Business\BusinessServicesController@makePrimary')->middleware('throttle:60,1')->name('primary');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/analytics')->name('businesses.analytics.')->group(function () {
             Route::get('/', 'Business\AnalyticsController@overview')->name('overview');
             Route::get('/campaigns', 'Business\AnalyticsController@campaigns')->name('campaigns');
@@ -1116,7 +1210,7 @@
         |
         | The OAuth callback is registered HERE, inside the authenticated
         | group, so it inherits ['web','auth','can:access_backend',
-        | 'ValidProduct','twofactor']. It is deliberately NOT in
+        | 'twofactor']. It is deliberately NOT in
         | routes/auth.php: it must never authenticate or create a User.
         |
         | No route accepts a redirect_to/return/next/url parameter — there
@@ -1188,12 +1282,13 @@
         | Every action runs Workspace -> Business -> userCanAccessBusiness()
         | -> active Business -> SeoBasicVisibility entitlement -> view_seo.
         | Every tenancy/entitlement failure is 404, never 403. SeoBasicVisibility
-        | is Planned until Sub-slice H, so every route here is 404 today.
+        | is Available (Sub-slice H flipped it) for Core, Growth and Agency.
         |
-        | There is no write route in this sub-slice and no implicit route-model
-        | binding. Later sub-slices add their sections beneath this prefix
-        | (keywords, search-console, citations, reviews, site-audit); nothing
-        | here is, or may ever begin with, customer.keywords.
+        | The Overview route itself has no write route and no implicit
+        | route-model binding. The later sub-slices live beneath this prefix
+        | (keywords, citations, reviews, site-audit, rank targets); Search
+        | Console is not built. Nothing here is, or may ever begin with,
+        | customer.keywords.
         |----------------------------------------------------------------------
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/seo')->name('businesses.seo.')->group(function () {
@@ -1207,6 +1302,12 @@
             // by a guessable id, and both are resolved through the Business.
             Route::get('/citations', 'Business\SeoCitationController@citations')->name('citations.index');
             Route::put('/citations/{locationUid}/{directoryKey}', 'Business\SeoCitationController@saveCitation')->name('citations.update');
+            // Citations V1 — Not applicable / restore, and a Business's own
+            // custom directories (manage_seo; Location ACL in the manager).
+            Route::post('/citations/{locationUid}/custom', 'Business\SeoCitationController@storeCustom')->middleware('throttle:30,1')->name('citations.custom.store');
+            Route::put('/citations/{locationUid}/custom/{directoryKey}', 'Business\SeoCitationController@updateCustom')->middleware('throttle:30,1')->name('citations.custom.update');
+            Route::post('/citations/{locationUid}/custom/{directoryKey}/archive', 'Business\SeoCitationController@archiveCustom')->middleware('throttle:30,1')->name('citations.custom.archive');
+            Route::post('/citations/{locationUid}/{directoryKey}/applicability', 'Business\SeoCitationController@setApplicability')->middleware('throttle:60,1')->name('citations.applicability');
 
             // Sub-slice D — SEO keywords (NOT the legacy inbound-SMS
             // customer.keywords.* namespace). Reads need view_seo, writes
@@ -1216,6 +1317,18 @@
             Route::post('/keywords/{keywordUid}/update', 'Business\SeoKeywordsController@update')->middleware('throttle:30,1')->name('keywords.update');
             Route::post('/keywords/{keywordUid}/archive', 'Business\SeoKeywordsController@archive')->middleware('throttle:30,1')->name('keywords.archive');
             Route::post('/keywords/{keywordUid}/reactivate', 'Business\SeoKeywordsController@reactivate')->middleware('throttle:30,1')->name('keywords.reactivate');
+
+            // SEO Keyword Rank Tracking V1 — rank targets (keyword + search
+            // geography + device). Gated by the SeoRankTracking entitlement and
+            // view_seo / manage_seo; targets resolve only inside the Business and
+            // behind the keyword's Location ACL. "Check now" only queues work the
+            // budget authority has just reserved.
+            Route::get('/keywords/rank-locations', 'Business\SeoRankTargetsController@locationSearch')->middleware('throttle:60,1')->name('keywords.rank-locations');
+            Route::post('/keywords/{keywordUid}/rank/track', 'Business\SeoRankTargetsController@track')->middleware('throttle:30,1')->name('keywords.rank.track');
+            Route::get('/rank-targets/{targetUid}', 'Business\SeoRankTargetsController@show')->name('rank-targets.show');
+            Route::post('/rank-targets/{targetUid}/stop', 'Business\SeoRankTargetsController@stop')->middleware('throttle:30,1')->name('rank-targets.stop');
+            Route::post('/rank-targets/{targetUid}/restart', 'Business\SeoRankTargetsController@restart')->middleware('throttle:30,1')->name('rank-targets.restart');
+            Route::post('/rank-targets/{targetUid}/check', 'Business\SeoRankTargetsController@check')->middleware('throttle:10,1')->name('rank-targets.check');
 
             // Sub-slice 18F — Reviews: workflow tracking only (a manual review
             // link per Location and a request ledger with a cooldown). SEO
@@ -1235,11 +1348,177 @@
             // fetches a URL, never crawls and never writes a Website table
             // (contract §8.7, §12). Reads need view_seo, the throttled manual
             // re-run needs manage_seo; both need the SeoModule entitlement
-            // (Planned until Sub-slice H, so 404 today). The re-run takes no
+            // (Growth and Agency; anything else is 404). The re-run takes no
             // input and names no revision: the server audits whichever
             // revision is published, and re-auditing one is idempotent.
             Route::get('/site-audit', 'Business\SeoAuditController@audit')->name('audit.index');
             Route::post('/site-audit/run', 'Business\SeoAuditController@rerun')->middleware('throttle:6,1')->name('audit.rerun');
+
+            // SEO Content Engine V1 — SEO -> Content: the Content Plan, Articles, Opportunities and the
+            // article editor. Articles (list, editor, preview, publish flow) ride SeoBasicVisibility;
+            // Opportunities, the plan's clusters and AI drafting ride SeoModule (404 without it). Reads
+            // need view_seo, writes manage_seo. An article is addressed by uid and always resolved
+            // through the Business. The AI is reachable from exactly one POST (opportunities.draft).
+            Route::prefix('/content')->name('content.')->group(function () {
+                Route::get('/', 'Business\SeoContentController@plan')->name('plan');
+                Route::get('/articles', 'Business\SeoContentController@articles')->name('articles.index');
+                Route::get('/opportunities', 'Business\SeoContentController@opportunities')->name('opportunities');
+
+                // Content Autopilot (Contract 25) - rides SeoModule (404 without it). The Content Profile is the short
+                // first-enable flow: only what MotionGrove cannot already know.
+                Route::get('/autopilot', 'Business\SeoContentAutopilotController@show')->name('autopilot');
+                Route::post('/autopilot/enable', 'Business\SeoContentAutopilotController@enable')->middleware('throttle:20,1')->name('autopilot.enable');
+                Route::post('/autopilot/disable', 'Business\SeoContentAutopilotController@disable')->middleware('throttle:20,1')->name('autopilot.disable');
+                Route::post('/autopilot/pause', 'Business\SeoContentAutopilotController@pause')->middleware('throttle:20,1')->name('autopilot.pause');
+                Route::post('/autopilot/resume', 'Business\SeoContentAutopilotController@resume')->middleware('throttle:20,1')->name('autopilot.resume');
+                Route::post('/autopilot/answer', 'Business\SeoContentAutopilotController@answer')->middleware('throttle:20,1')->name('autopilot.answer');
+                Route::post('/autopilot/suggestions/{decisionUid}/dismiss', 'Business\SeoContentAutopilotController@dismissSuggestion')->middleware('throttle:30,1')->name('autopilot.suggestion.dismiss');
+                Route::get('/autopilot/profile', 'Business\SeoContentAutopilotController@profile')->name('autopilot.profile');
+                Route::post('/autopilot/profile', 'Business\SeoContentAutopilotController@saveProfile')->middleware('throttle:30,1')->name('autopilot.profile.save');
+
+                Route::post('/opportunities/draft', 'Business\SeoContentArticleController@opportunityDraft')->middleware('throttle:10,1')->name('opportunities.draft');
+                Route::post('/opportunities/start', 'Business\SeoContentArticleController@opportunityStart')->middleware('throttle:30,1')->name('opportunities.start');
+
+                Route::get('/articles/create', 'Business\SeoContentArticleController@create')->name('articles.create');
+                Route::post('/articles', 'Business\SeoContentArticleController@store')->middleware('throttle:30,1')->name('articles.store');
+                Route::post('/markdown-preview', 'Business\SeoContentArticleController@markdownPreview')->middleware('throttle:120,1')->name('markdown-preview');
+                Route::get('/articles/{articleUid}/edit', 'Business\SeoContentArticleController@edit')->name('articles.edit');
+                Route::post('/articles/{articleUid}/update', 'Business\SeoContentArticleController@update')->middleware('throttle:60,1')->name('articles.update');
+                Route::get('/articles/{articleUid}/preview', 'Business\SeoContentArticleController@preview')->name('articles.preview');
+                Route::get('/articles/{articleUid}/analysis', 'Business\SeoContentArticleController@analysis')->middleware('throttle:60,1')->name('articles.analysis');
+                Route::post('/articles/{articleUid}/publish', 'Business\SeoContentArticleController@publish')->middleware('throttle:30,1')->name('articles.publish');
+                Route::post('/articles/{articleUid}/schedule', 'Business\SeoContentArticleController@schedule')->middleware('throttle:30,1')->name('articles.schedule');
+                Route::post('/articles/{articleUid}/draft', 'Business\SeoContentArticleController@draft')->middleware('throttle:30,1')->name('articles.draft');
+                Route::post('/articles/{articleUid}/discard', 'Business\SeoContentArticleController@discard')->middleware('throttle:30,1')->name('articles.discard');
+                Route::post('/articles/{articleUid}/archive', 'Business\SeoContentArticleController@archive')->middleware('throttle:30,1')->name('articles.archive');
+                Route::post('/articles/{articleUid}/restore', 'Business\SeoContentArticleController@restore')->middleware('throttle:30,1')->name('articles.restore');
+                Route::post('/articles/{articleUid}/reviewed', 'Business\SeoContentArticleController@reviewed')->middleware('throttle:30,1')->name('articles.reviewed');
+                Route::post('/articles/{articleUid}/track', 'Business\SeoContentArticleController@track')->middleware('throttle:30,1')->name('articles.track');
+            });
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | Growth Center — the evidence-first "what is holding growth back" surface.
+        |
+        | A READER of the canonical Opportunity Engine, the stored Growth Score
+        | history and the Daily Brief. Gate chain: Workspace -> Business ->
+        | userCanAccessBusiness() -> active Business -> the AI COO entitlement
+        | (404 on any failure, never 403) -> the `business_advisor` capability.
+        | Location access is applied inside GrowthOpportunityReader, in SQL,
+        | before any list or count. Mutations (snooze/dismiss/reopen) go through
+        | OpportunityManager; there is no route that writes another module's data.
+        |
+        | Distinct from the CRM sales-deal "Opportunities" board, which lives under
+        | .../opportunities; this surface lives under .../growth.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/growth')->name('businesses.growth.')->group(function () {
+            Route::get('/', 'Business\GrowthCenterController@overview')->name('index');
+            Route::get('/brief', 'Business\GrowthCenterController@briefPage')->name('brief');
+            Route::get('/score', 'Business\GrowthCenterController@score')->name('score');
+            Route::get('/insights', 'Business\GrowthCenterController@insights')->name('insights');
+            Route::get('/advisor', 'Business\GrowthCenterController@advisor')->name('advisor');
+            Route::post('/advisor', 'Business\GrowthCenterController@ask')->middleware('throttle:10,1')->name('advisor.ask');
+            Route::get('/opportunities', 'Business\GrowthCenterController@opportunities')->name('opportunities.index');
+            Route::get('/opportunities/{opportunityUid}', 'Business\GrowthCenterController@show')->name('opportunities.show');
+            Route::get('/opportunities/{opportunityUid}/go', 'Business\GrowthCenterController@go')->name('opportunities.go');
+            Route::post('/opportunities/{opportunityUid}/snooze', 'Business\GrowthCenterController@snooze')->middleware('throttle:30,1')->name('opportunities.snooze');
+            Route::post('/opportunities/{opportunityUid}/dismiss', 'Business\GrowthCenterController@dismiss')->middleware('throttle:30,1')->name('opportunities.dismiss');
+            Route::post('/opportunities/{opportunityUid}/reopen', 'Business\GrowthCenterController@reopen')->middleware('throttle:30,1')->name('opportunities.reopen');
+            Route::post('/refresh', 'Business\GrowthCenterController@refresh')->middleware('throttle:6,1')->name('refresh');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | Google Ads (Google Ads Module V1, contract 23 §7/§8).
+        |
+        | Every action runs Workspace -> Business -> BusinessRouteAccess ->
+        | active Business -> entitlement -> capability. Tenancy/entitlement
+        | failures are 404, never 403. Overview, Settings and the connection
+        | actions are entitled by ads_basic_visibility OR google_ads_module
+        | (Core connects + reads); Budget and every later page (campaigns,
+        | keywords, search-terms, leads, recommendations) need google_ads_module
+        | only. Reads need view_google_ads; connect, choose the account,
+        | disconnect, save the budget target and refresh need manage_google_ads.
+        |
+        | Every non-GET route under this prefix is View-As prohibited by
+        | PATTERN (ViewAsProhibitedActions), so the later mutation routes are
+        | covered the moment they are registered.
+        |
+        | Data pages and mutations: campaigns.*, keywords.*, search-terms.*,
+        | leads.*, recommendations.* (contract 23 §19). The sidebar
+        | shows each child once its route exists.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/ads')->name('businesses.ads.')->group(function () {
+            Route::get('/', 'Business\AdsController@overview')->name('index');
+            Route::get('/series', 'Business\AdsController@series')->middleware('throttle:60,1')->name('series');
+            Route::get('/budget', 'Business\AdsController@budget')->name('budget');
+            // Full-module data pages (contract 23 §19): google_ads_module only, view_google_ads.
+            Route::get('/campaigns', 'Business\AdsCampaignsController@listing')->name('campaigns.index');
+            Route::get('/campaigns/{campaignUid}', 'Business\AdsCampaignsController@detail')->name('campaigns.show');
+            Route::get('/keywords', 'Business\AdsKeywordsController@listing')->name('keywords.index');
+            Route::get('/search-terms', 'Business\AdsSearchTermsController@listing')->name('search-terms.index');
+            Route::get('/leads', 'Business\AdsLeadsController@listing')->name('leads.index');
+            Route::get('/recommendations', 'Business\AdsRecommendationsController@listing')->name('recommendations.index');
+
+            // Safe mutations (contract 23 §6): manage_google_ads, throttled, View-As prohibited by prefix.
+            Route::post('/campaigns/{campaignUid}/pause', 'Business\AdsMutationController@pauseCampaign')->middleware('throttle:20,1')->name('campaigns.pause');
+            Route::post('/campaigns/{campaignUid}/resume', 'Business\AdsMutationController@resumeCampaign')->middleware('throttle:20,1')->name('campaigns.resume');
+            Route::post('/keywords/{keywordUid}/pause', 'Business\AdsMutationController@pauseKeyword')->middleware('throttle:20,1')->name('keywords.pause');
+            Route::post('/keywords/{keywordUid}/resume', 'Business\AdsMutationController@resumeKeyword')->middleware('throttle:20,1')->name('keywords.resume');
+            Route::post('/search-terms/negative/preview', 'Business\AdsMutationController@previewNegative')->middleware('throttle:20,1')->name('search-terms.negative.preview');
+            Route::post('/search-terms/negative', 'Business\AdsMutationController@storeNegative')->middleware('throttle:20,1')->name('search-terms.negative.store');
+            Route::post('/search-terms/ignore', 'Business\AdsMutationController@ignoreTerm')->middleware('throttle:20,1')->name('search-terms.ignore');
+            Route::post('/search-terms/unignore', 'Business\AdsMutationController@unignoreTerm')->middleware('throttle:20,1')->name('search-terms.unignore');
+
+            Route::get('/settings', 'Business\AdsConnectionController@settings')->name('settings');
+            Route::post('/settings', 'Business\AdsConnectionController@saveSettings')->middleware('throttle:20,1')->name('settings.update');
+            Route::post('/connect', 'Business\AdsConnectionController@connect')->middleware('throttle:10,1')->name('connect');
+            Route::get('/accounts', 'Business\AdsConnectionController@accounts')->middleware('throttle:20,1')->name('accounts');
+            Route::post('/accounts/select', 'Business\AdsConnectionController@selectAccount')->middleware('throttle:20,1')->name('accounts.select');
+            Route::post('/disconnect', 'Business\AdsConnectionController@disconnect')->name('disconnect');
+            Route::post('/refresh', 'Business\AdsConnectionController@refresh')->middleware('throttle:10,1')->name('refresh');
+
+            // Cross-channel Ads Overview (Meta Ads V1, contract 24 §9): per-provider cached figures, never blended.
+            Route::get('/overview', 'Business\Ads\AdsOverviewController@overview')->name('overview');
+
+            // Acquisition Purpose V1: Goals & economics (what the ads are for, what a good result costs, which
+            // campaign serves which goal). GET needs a provider read capability, every POST a provider manage
+            // capability; the `ads.` prefix makes every POST View-As prohibited.
+            Route::get('/goals', 'Business\Ads\AdsGoalsController@show')->name('goals');
+            Route::post('/goals', 'Business\Ads\AdsGoalsController@store')->middleware('throttle:20,1')->name('goals.store');
+            Route::post('/goals/campaigns', 'Business\Ads\AdsGoalsController@assignCampaign')->middleware('throttle:60,1')->name('goals.campaigns');
+            Route::post('/goals/{purposeUid}/economics', 'Business\Ads\AdsGoalsController@saveEconomics')->middleware('throttle:20,1')->name('goals.economics');
+            Route::post('/goals/{purposeUid}/links', 'Business\Ads\AdsGoalsController@saveLinks')->middleware('throttle:20,1')->name('goals.links');
+            Route::post('/goals/{purposeUid}/active', 'Business\Ads\AdsGoalsController@toggle')->middleware('throttle:20,1')->name('goals.toggle');
+
+            // Meta Ads (contract 24). Tenancy/entitlement 404; view_meta_ads for reads, manage_meta_ads
+            // for connect/accounts/select/settings/refresh/pause/resume. Non-GET is View-As prohibited by prefix.
+            Route::get('/meta', 'Business\MetaAdsController@overview')->name('meta.index');
+            Route::get('/meta/series', 'Business\MetaAdsController@series')->middleware('throttle:60,1')->name('meta.series');
+            Route::get('/meta/campaigns', 'Business\MetaAdsCampaignsController@listing')->name('meta.campaigns.index');
+            Route::get('/meta/campaigns/{campaignUid}', 'Business\MetaAdsCampaignsController@detail')->name('meta.campaigns.show');
+            Route::get('/meta/ad-sets', 'Business\MetaAdsAdSetsController@listing')->name('meta.ad-sets.index');
+            Route::get('/meta/ads', 'Business\MetaAdsAdsController@listing')->name('meta.ads.index');
+            Route::get('/meta/recommendations', 'Business\MetaAdsRecommendationsController@listing')->name('meta.recommendations.index');
+            Route::get('/meta/leads', 'Business\MetaAdsLeadsController@listing')->name('meta.leads.index');
+
+            Route::post('/meta/campaigns/{campaignUid}/pause', 'Business\MetaAdsMutationController@campaignPause')->middleware('throttle:20,1')->name('meta.campaigns.pause');
+            Route::post('/meta/campaigns/{campaignUid}/resume', 'Business\MetaAdsMutationController@campaignResume')->middleware('throttle:20,1')->name('meta.campaigns.resume');
+            Route::post('/meta/ad-sets/{adSetUid}/pause', 'Business\MetaAdsMutationController@adSetPause')->middleware('throttle:20,1')->name('meta.ad-sets.pause');
+            Route::post('/meta/ad-sets/{adSetUid}/resume', 'Business\MetaAdsMutationController@adSetResume')->middleware('throttle:20,1')->name('meta.ad-sets.resume');
+            Route::post('/meta/ads/{adUid}/pause', 'Business\MetaAdsMutationController@adPause')->middleware('throttle:20,1')->name('meta.ads.pause');
+            Route::post('/meta/ads/{adUid}/resume', 'Business\MetaAdsMutationController@adResume')->middleware('throttle:20,1')->name('meta.ads.resume');
+
+            Route::get('/meta/settings', 'Business\MetaAdsConnectionController@settings')->name('meta.settings');
+            Route::post('/meta/settings', 'Business\MetaAdsConnectionController@saveSettings')->middleware('throttle:20,1')->name('meta.settings.update');
+            Route::post('/meta/connect', 'Business\MetaAdsConnectionController@connect')->middleware('throttle:10,1')->name('meta.connect');
+            Route::get('/meta/accounts', 'Business\MetaAdsConnectionController@accounts')->middleware('throttle:20,1')->name('meta.accounts');
+            Route::post('/meta/accounts/select', 'Business\MetaAdsConnectionController@selectAccount')->middleware('throttle:20,1')->name('meta.accounts.select');
+            Route::post('/meta/disconnect', 'Business\MetaAdsConnectionController@disconnect')->name('meta.disconnect');
+            Route::post('/meta/refresh', 'Business\MetaAdsConnectionController@refresh')->middleware('throttle:10,1')->name('meta.refresh');
         });
 
         /*
@@ -1283,6 +1562,48 @@
             // is ever accepted from the browser. Throttled like the other
             // actions that reach the provider.
             Route::post('{documentUid}/payments/{paymentUid}/refund', 'Business\DocumentsController@refund')->middleware('throttle:30,1')->name('payments.refund');
+
+            // Contract 17B — the Proposal / Contract visual editor. The same
+            // gate chain as every route above (DocumentEditorController uses the
+            // same ResolvesBusinessDocuments trait); JSON endpoints answer with
+            // explicit 200/404/409/422 and require `expected_lock_version`.
+            Route::get('editor/contacts', 'Business\DocumentEditorController@contactSearch')->middleware('throttle:60,1')->name('editor.contacts.search');
+            Route::get('{documentUid}/editor', 'Business\DocumentEditorController@edit')->name('editor.edit');
+            Route::get('{documentUid}/editor/preview', 'Business\DocumentEditorController@preview')->middleware('throttle:60,1')->name('editor.preview');
+            Route::put('{documentUid}/editor/blocks', 'Business\DocumentEditorController@blocks')->middleware('throttle:240,1')->name('editor.blocks');
+            Route::put('{documentUid}/editor/plan', 'Business\DocumentEditorController@plan')->middleware('throttle:120,1')->name('editor.plan');
+            Route::post('{documentUid}/editor/lines/catalog', 'Business\DocumentEditorController@catalogLine')->middleware('throttle:120,1')->name('editor.lines.catalog');
+            Route::post('{documentUid}/editor/lines/custom', 'Business\DocumentEditorController@customLine')->middleware('throttle:120,1')->name('editor.lines.custom');
+            Route::put('{documentUid}/editor/lines/order', 'Business\DocumentEditorController@order')->middleware('throttle:120,1')->name('editor.lines.order');
+            Route::patch('{documentUid}/editor/lines/{lineUid}', 'Business\DocumentEditorController@quantity')->middleware('throttle:120,1')->name('editor.lines.quantity');
+            Route::delete('{documentUid}/editor/lines/{lineUid}', 'Business\DocumentEditorController@destroyLine')->middleware('throttle:120,1')->name('editor.lines.destroy');
+            Route::get('{documentUid}/editor/catalog', 'Business\DocumentEditorController@catalogSearch')->middleware('throttle:60,1')->name('editor.catalog.search');
+            Route::post('{documentUid}/editor/catalog', 'Business\DocumentEditorController@catalogStore')->middleware('throttle:30,1')->name('editor.catalog.store');
+            Route::get('{documentUid}/editor/contact-dates', 'Business\DocumentEditorController@contactDates')->middleware('throttle:60,1')->name('editor.contact.dates');
+            Route::post('{documentUid}/editor/upgrade', 'Business\DocumentEditorController@upgrade')->middleware('throttle:30,1')->name('editor.upgrade');
+            Route::post('{documentUid}/editor/send', 'Business\DocumentEditorController@send')->middleware('throttle:30,1')->name('editor.send');
+            Route::post('{documentUid}/editor/save-template', 'Business\DocumentEditorController@saveTemplate')->middleware('throttle:30,1')->name('editor.save-template');
+        });
+
+        /*
+        |----------------------------------------------------------------
+        | Contract 17B §6 — the Business's proposal / contract template
+        | library and template editor. Same gate chain as the documents
+        | group (Workspace -> Business -> payments_contracts capability ->
+        | PaymentsContracts entitlement); a template is addressed by uid
+        | INSIDE the Business (foreign / forged = 404). Templates hold the
+        | layout only: never a Contact, product, price or payment plan.
+        |----------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/document-templates')->name('businesses.document-templates.')->group(function () {
+            Route::get('/', 'Business\DocumentTemplatesController@library')->name('index');
+            Route::post('/', 'Business\DocumentTemplatesController@create')->middleware('throttle:30,1')->name('create');
+            Route::get('{templateUid}/editor', 'Business\DocumentTemplatesController@edit')->name('edit');
+            Route::get('{templateUid}/preview', 'Business\DocumentTemplatesController@preview')->middleware('throttle:60,1')->name('preview');
+            Route::put('{templateUid}/blocks', 'Business\DocumentTemplatesController@blocks')->middleware('throttle:240,1')->name('blocks');
+            Route::post('{templateUid}/duplicate', 'Business\DocumentTemplatesController@duplicate')->middleware('throttle:30,1')->name('duplicate');
+            Route::post('{templateUid}/archive', 'Business\DocumentTemplatesController@archive')->middleware('throttle:30,1')->name('archive');
+            Route::post('{templateUid}/restore', 'Business\DocumentTemplatesController@restore')->middleware('throttle:30,1')->name('restore');
         });
 
         /*
@@ -1308,6 +1629,7 @@
             // Each mutating action reaches Stripe, so all three are throttled
             // at the same rate the other Business write surfaces use.
             Route::post('/', 'Business\BusinessPaymentsController@connect')->middleware('throttle:30,1')->name('start');
+            Route::post('/existing', 'Business\BusinessPaymentsController@connectExisting')->middleware('throttle:30,1')->name('existing');
             Route::get('/resume', 'Business\BusinessPaymentsController@resume')->middleware('throttle:30,1')->name('resume');
             Route::post('/refresh', 'Business\BusinessPaymentsController@refresh')->middleware('throttle:30,1')->name('refresh');
             Route::post('/disconnect', 'Business\BusinessPaymentsController@disconnect')->middleware('throttle:30,1')->name('disconnect');
@@ -1421,6 +1743,30 @@
         | for view-as, so the middleware refuses any pair other than the one
         | being viewed.
         */
+        /*
+        |----------------------------------------------------------------
+        | Home V2 — action drawers and Ask MotionGrove
+        |----------------------------------------------------------------
+        |
+        | Read-only drawer fragments (GET) and one intent-resolution POST. Neither
+        | writes anything: every write a drawer performs is the module's OWN endpoint
+        | (conversations.reply, booking-types.store, appointments.store), which keeps
+        | its own tenancy, entitlement, permission and Location gates. Carrying
+        | {businessUid} makes both BusinessScoped for view-as.
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/home')->name('businesses.home.')->group(function () {
+            Route::get('/drawers/{drawer}', 'Business\HomeActionsController@drawer')->name('drawer');
+            Route::post('/ask', 'Business\HomeActionsController@ask')->middleware('throttle:30,1')->name('ask');
+
+            // Ask MotionGrove — the conversation and the approval of the actions it prepares.
+            Route::get('/assistant', 'Business\AssistantController@show')->middleware('throttle:60,1')->name('assistant.show');
+            Route::get('/assistant/conversations', 'Business\AssistantController@index')->middleware('throttle:60,1')->name('assistant.conversations');
+            Route::post('/assistant/messages', 'Business\AssistantController@message')->middleware('throttle:20,1')->name('assistant.message');
+            Route::post('/assistant/conversations/{conversationUid}/delete', 'Business\\AssistantController@destroy')->middleware('throttle:20,1')->name('assistant.delete');
+            Route::post('/assistant/proposals/{proposalUid}/approve', 'Business\AssistantController@approve')->middleware('throttle:20,1')->name('assistant.approve');
+            Route::post('/assistant/proposals/{proposalUid}/decline', 'Business\AssistantController@decline')->middleware('throttle:20,1')->name('assistant.decline');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/conversations')->name('businesses.conversations.')->group(function () {
             Route::get('/', 'ChatBoxController@index')->name('index');
             Route::get('/new', 'ChatBoxController@new')->name('new');
@@ -1513,6 +1859,7 @@
             Route::get('/import', 'Business\ContactDirectoryController@import')->name('import');
             Route::post('/first-list', 'Business\ContactDirectoryController@createFirstList')->name('first-list');
             Route::get('/{contactUid}', 'Business\ContactDirectoryController@show')->name('show');
+            Route::post('/{contactUid}/custom-fields', 'Business\ContactDirectoryController@updateCustomFields')->name('custom-fields.update');
         });
 
         /*
@@ -1561,6 +1908,23 @@
         | group's own static-before-dynamic ordering.
         |----------------------------------------------------------------
         */
+        /*
+        |----------------------------------------------------------------
+        | Business-wide Custom Fields — Settings → Custom fields (the
+        | definitions) and the Contact-details save. Same permissions as
+        | Contact Tags (view_contact / update_contact); the field uid of
+        | another Business is a 404.
+        |----------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/custom-fields')->name('businesses.custom-fields.')->group(function () {
+            Route::get('/', 'Business\CustomFieldsController@list')->name('index');
+            Route::post('/', 'Business\CustomFieldsController@store')->name('store');
+            Route::post('/{fieldUid}', 'Business\CustomFieldsController@update')->name('update');
+            Route::post('/{fieldUid}/archive', 'Business\CustomFieldsController@archive')->name('archive');
+            Route::post('/{fieldUid}/restore', 'Business\CustomFieldsController@restore')->name('restore');
+            Route::post('/{fieldUid}/move', 'Business\CustomFieldsController@move')->name('move');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/tags')->name('businesses.tags.')->group(function () {
             Route::get('/', 'Business\ContactTagsController@list')->name('index');
             Route::post('/', 'Business\ContactTagsController@store')->name('store');
@@ -1602,10 +1966,12 @@
             Route::get('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@edit')->name('booking-types.edit');
             Route::post('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@update')->name('booking-types.update');
             Route::post('/booking-types/{bookingTypeUid}/active', 'Business\BookingTypesController@toggleActive')->name('booking-types.active');
+            Route::post('/booking-types/{bookingTypeUid}/notification-preview', 'Business\BookingTypesController@previewNotification')->name('booking-types.notification-preview');
             Route::post('/booking-types/{bookingTypeUid}/staff', 'Business\BookingTypesController@syncStaff')->name('booking-types.staff');
 
             Route::get('/availability', 'Business\StaffAvailabilityController@index')->name('availability.index');
             Route::post('/availability/rules', 'Business\StaffAvailabilityController@storeRule')->name('availability.rules.store');
+            Route::post('/availability/week', 'Business\StaffAvailabilityController@updateWeek')->name('availability.week.update');
             Route::post('/availability/rules/{ruleId}/delete', 'Business\StaffAvailabilityController@destroyRule')->whereNumber('ruleId')->name('availability.rules.destroy');
             Route::post('/availability/time-off', 'Business\StaffAvailabilityController@storeTimeOff')->name('availability.time-off.store');
             Route::post('/availability/time-off/{timeOffId}/delete', 'Business\StaffAvailabilityController@destroyTimeOff')->whereNumber('timeOffId')->name('availability.time-off.destroy');
@@ -1628,6 +1994,8 @@
         // (no Location in the path): it lists ONLY the Locations the actor may
         // reach and, when that is exactly one, redirects straight to it.
         Route::get('{workspaceUid}/businesses/{businessUid}/calendar', 'Business\CalendarController@index')->name('businesses.calendar.index');
+        // Home's Bookings card: the appointments BOOKED (created) in a period, across the Locations the actor may reach.
+        Route::get('{workspaceUid}/businesses/{businessUid}/calendar/bookings', 'Business\CalendarController@bookings')->name('businesses.calendar.bookings');
 
         /*
         |----------------------------------------------------------------
@@ -1711,6 +2079,14 @@
             Route::post('/{formUid}/activate', 'Business\FormsController@activate')->name('activate');
             Route::post('/{formUid}/deactivate', 'Business\FormsController@deactivate')->name('deactivate');
             Route::post('/{formUid}/locations/{locationUid}', 'Business\FormsController@setLocation')->name('locations.set');
+
+            // Visual builder: autosave + preview are JSON; Notifications and
+            // Analytics are read-only tabs. Submissions is the existing list
+            // filtered to this form (submissions.index?form=<uid>).
+            Route::post('/{formUid}/builder', 'Business\FormBuilderController@save')->name('builder.save');
+            Route::post('/{formUid}/builder/preview', 'Business\FormBuilderController@preview')->name('builder.preview');
+            Route::get('/{formUid}/notifications', 'Business\FormBuilderController@notifications')->name('notifications');
+            Route::get('/{formUid}/analytics', 'Business\FormBuilderController@analytics')->name('analytics');
         });
 
         /*
@@ -1749,6 +2125,25 @@
             Route::get('/setup', 'Business\WebsiteController@setup')->name('setup');
             Route::post('/', 'Business\WebsiteController@store')->name('store');
 
+            // External Website Audit Mode V1: the first-screen choice (build / use my existing website / later)
+            // and the existing-website screens. Nothing under `external` publishes, edits or rebuilds a site.
+            Route::post('/mode', 'Business\ExternalWebsiteController@chooseMode')->middleware('throttle:20,1')->name('mode.choose');
+            Route::prefix('external')->name('external.')->group(function () {
+                Route::get('/', 'Business\ExternalWebsiteController@overview')->name('overview');
+                Route::get('/audit', 'Business\ExternalWebsiteController@audit')->name('audit');
+                Route::get('/plan', 'Business\ExternalWebsiteController@plan')->name('plan');
+                Route::post('/plan/{itemKey}', 'Business\ExternalWebsiteController@updatePlanItem')->where('itemKey', '[a-f0-9]{40}')->middleware('throttle:60,1')->name('plan.update');
+                Route::get('/status', 'Business\ExternalWebsiteController@status')->middleware('throttle:120,1')->name('status');
+                Route::get('/pages', 'Business\ExternalWebsiteController@pages')->name('pages');
+                Route::get('/pages/{pageId}', 'Business\ExternalWebsiteController@page')->whereNumber('pageId')->name('page');
+                Route::get('/settings', 'Business\ExternalWebsiteController@settings')->name('settings');
+                Route::post('/settings', 'Business\ExternalWebsiteController@saveSettings')->middleware('throttle:20,1')->name('settings.update');
+                Route::post('/settings/test', 'Business\ExternalWebsiteController@testConnection')->middleware('throttle:10,1')->name('settings.test');
+                Route::post('/crawl', 'Business\ExternalWebsiteController@crawl')->middleware('throttle:10,1')->name('crawl');
+                Route::post('/crawl/cancel', 'Business\ExternalWebsiteController@cancel')->middleware('throttle:10,1')->name('crawl.cancel');
+                Route::post('/stop', 'Business\ExternalWebsiteController@stop')->middleware('throttle:10,1')->name('stop');
+            });
+
             Route::prefix('studio')->name('studio.')->group(function () {
                 Route::get('/{tab?}', 'Business\WebsiteStudioController@show')->name('show');
             });
@@ -1761,6 +2156,11 @@
             // was registered first, regardless of route name). Route
             // NAMES stay "setup.*" since that is the concept, only the
             // URL segment differs.
+            // Website V1 final — the real-renderer template preview (the Review
+            // screen's cards and the rebuild flow) and the one look-update POST.
+            Route::get('/template-preview/{templateKey}', 'Business\WebsiteLookController@templatePreview')->name('template-preview');
+            Route::post('/look', 'Business\WebsiteLookController@update')->name('look.update');
+
             Route::prefix('build')->name('setup.')->group(function () {
                 Route::get('/', 'Business\WebsiteWizardController@start')->name('start');
                 Route::get('/review', 'Business\WebsiteWizardController@reviewGenerate')->name('review');
@@ -1776,15 +2176,27 @@
                 Route::delete('/custom-section/image/{assetUid}', 'Business\WebsiteWizardController@removeCustomSectionImage')->name('custom-section.remove');
                 Route::post('/custom-section/improve', 'Business\WebsiteWizardController@improveCustomSection')->name('custom-section.improve');
 
+                Route::post('/backdrop-image/upload', 'Business\WebsiteWizardController@uploadBackdropImage')->name('backdrop-image.upload');
+                Route::post('/backdrop-image/remove', 'Business\WebsiteWizardController@removeBackdropImage')->name('backdrop-image.remove');
+                Route::post('/logo', 'Business\WebsiteWizardController@uploadLogo')->name('logo.upload');
+                Route::delete('/logo', 'Business\WebsiteWizardController@removeLogo')->name('logo.remove');
+                Route::post('/service-description', 'Business\WebsiteWizardController@suggestServiceDescription')->name('service-description');
+
+                Route::get('/service-area-suggestions', 'Business\WebsiteWizardController@areaSuggestions')->name('area-suggestions');
+                Route::get('/content-default', 'Business\WebsiteWizardController@contentDefault')->name('content-default');
+
                 Route::get('/{stepKey}', 'Business\WebsiteWizardController@show')->name('step');
                 Route::post('/{stepKey}/back', 'Business\WebsiteWizardController@goBack')->name('back');
                 Route::post('/{stepKey}/answers', 'Business\WebsiteWizardController@autosaveAnswer')->name('autosave');
+                Route::post('/{stepKey}/draft', 'Business\WebsiteWizardController@draftAnswer')->name('draft');
+                Route::post('/{stepKey}/visit', 'Business\WebsiteWizardController@visitStep')->name('visit');
             });
             Route::get('/edit-setup', 'Business\WebsiteWizardController@editSetupAnswers')->name('edit-setup');
 
             Route::get('/pages', 'Business\WebsiteController@pages')->name('pages.index');
             Route::get('/pages/create', 'Business\WebsiteController@createPage')->name('pages.create');
             Route::post('/pages', 'Business\WebsiteController@storePage')->name('pages.store');
+            Route::post('/pages/allow-indexing', 'Business\WebsiteController@allowIndexing')->name('pages.allowIndexing');
             Route::get('/pages/{pageUid}/edit', 'Business\WebsiteController@editPage')->name('pages.edit');
             Route::put('/pages/{pageUid}', 'Business\WebsiteController@updatePage')->name('pages.update');
             Route::delete('/pages/{pageUid}', 'Business\WebsiteController@destroyPage')->name('pages.destroy');
@@ -1809,6 +2221,8 @@
 
             Route::get('/forms', 'Business\WebsiteFormsController@home')->name('forms.index');
             Route::post('/forms', 'Business\WebsiteFormsController@store')->name('forms.store');
+            Route::get('/forms/{formUid}/edit', 'Business\WebsiteFormsController@edit')->name('forms.edit');
+            Route::put('/forms/{formUid}', 'Business\WebsiteFormsController@update')->name('forms.update');
             Route::get('/forms/{formUid}/submissions', 'Business\WebsiteFormsController@submissions')->name('forms.submissions');
 
             Route::get('/domains', 'Business\WebsiteDomainController@home')->name('domains.index');
@@ -1923,6 +2337,11 @@
             // metrics live here now, never on the Results page).
             Route::get('/delivery-usage', 'Business\TextMessagingController@deliveryUsage')->name('delivery-usage');
 
+            // STATE 3 — which Locations use this number. Lets a workflow limited to
+            // Locations prove its text speaks for them (see
+            // BusinessMessagingIdentityResolver::numberServes).
+            Route::put('/number/locations', 'Business\TextMessagingController@updateNumberLocations')->name('number.locations.update');
+
             // STATE 3 — port a number out (messaging contract §13.4). Records
             // and tracks the request only; see PortOutRequestManager.
             Route::post('/number/port-out', 'Business\TextMessagingController@requestPortOut')->name('number.port-out.request');
@@ -1962,6 +2381,17 @@
             Route::post('/campaigns/{campaign}/config', 'Workspace\AgencyProspectingController@updateCampaignConfig')->name('campaigns.config');
             Route::post('/campaigns/{campaign}/start', 'Workspace\AgencyProspectingController@startCampaign')->name('campaigns.start');
 
+            // Agency Outreach V1 — Conversations, Script & Settings, managed campaigns.
+            // View-As never reaches these: every customer.workspaces.* route is Denied there.
+            Route::get('/conversations', 'Workspace\AgencyOutreachController@conversations')->name('conversations.index');
+            Route::post('/conversations/{member}/pause-ai', 'Workspace\AgencyOutreachController@pauseAi')->name('conversations.pause');
+            Route::post('/conversations/{member}/resume-ai', 'Workspace\AgencyOutreachController@resumeAi')->name('conversations.resume');
+            Route::get('/script', 'Workspace\AgencyOutreachController@script')->name('script.show');
+            Route::post('/script', 'Workspace\AgencyOutreachController@updateScript')->name('script.update');
+            Route::post('/script/preview', 'Workspace\AgencyOutreachController@previewScript')->name('script.preview');
+            Route::post('/campaigns-managed', 'Workspace\AgencyOutreachController@storeManagedCampaign')->name('campaigns.managed.store');
+            Route::post('/sending/resume', 'Workspace\AgencyOutreachController@resumeSending')->name('sending.resume');
+
             /*
             |----------------------------------------------------------------
             | Runtime pass — Prospecting Channels (Workspace-owned Twilio/
@@ -1969,6 +2399,9 @@
             | Workspace\AgencyProspectingChannelController.
             |----------------------------------------------------------------
             */
+            Route::get('/phone-messaging', 'Workspace\AgencyProspectingChannelController@phoneMessaging')->name('phone-messaging');
+            Route::post('/phone-messaging/sender', 'Workspace\AgencyProspectingChannelController@setSender')->name('phone-messaging.sender');
+
             Route::prefix('channels')->name('channels.')->group(function () {
                 Route::get('/', 'Workspace\AgencyProspectingChannelController@channels')->name('index');
                 Route::get('/connect/{provider}', 'Workspace\AgencyProspectingChannelController@connect')->name('connect');
@@ -1977,6 +2410,7 @@
                 Route::match(['put', 'patch'], '/{channel}', 'Workspace\AgencyProspectingChannelController@update')->name('update');
                 Route::post('/{channel}/enable', 'Workspace\AgencyProspectingChannelController@enable')->name('enable');
                 Route::post('/{channel}/disable', 'Workspace\AgencyProspectingChannelController@disable')->name('disable');
+                Route::post('/{channel}/disconnect', 'Workspace\AgencyProspectingChannelController@disconnect')->name('disconnect');
             });
         });
     });

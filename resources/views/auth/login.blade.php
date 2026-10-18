@@ -1,30 +1,20 @@
 @php
-    use App\Helpers\Helper;$configData = Helper::applClasses();
+    use App\Helpers\Helper;
 @endphp
 @inject('authBranding', 'App\Library\Branding\AuthBrandPresenter')
 @php $authBrand = $authBranding->for(request()); @endphp
 
-@extends('layouts/fullLayoutMaster')
+@extends('layouts/authCover')
 
 @section('title', __('locale.auth.login'))
 
-@section('page-style')
-    {{-- Page Css files --}}
-    <link rel="stylesheet" href="{{ asset(mix('css/base/pages/authentication.css')) }}">
+@section('auth-style')
     @if(config('no-captcha.login'))
         {!! RecaptchaV3::initJs() !!}
     @endif
-
-    <style>
-        .auth-bg {
-            position: relative;
-            min-height: 100vh;
-        }
-    </style>
-
 @endsection
 
-@section('content')
+@section('auth-form')
 
     {{--
         Customer Experience Slice 2 (contract §9.1, brief §3-§5): the
@@ -35,25 +25,6 @@
         a decorative image. One <h1>, visible labels, an accessible
         password toggle, error text tied to its field.
     --}}
-    <div class="auth-wrapper auth-cover">
-        <div class="auth-inner row m-0">
-            <!-- Brand logo-->
-            <a class="brand-logo" href="{{route('login')}}" aria-label="{{ $authBrand->displayName }}">
-                <x-branding-illustration surface="auth-mark" />
-            </a>
-            <!-- /Brand logo-->
-
-            <!-- Brand panel-->
-            <div class="d-none d-lg-flex col-lg-8 align-items-center p-5">
-                <div class="w-100 d-lg-flex align-items-center justify-content-center px-5">
-                    <x-branding-illustration surface="auth" :dark="$configData['theme'] === 'dark'" />
-                </div>
-            </div>
-            <!-- /Brand panel-->
-
-            <!-- Login-->
-            <div class="d-flex col-lg-4 align-items-center auth-bg px-2 p-lg-5">
-                <div class="col-12 col-sm-8 col-md-6 col-lg-12 px-xl-2 mx-auto">
                     <h1 class="card-title fw-bold mb-1 h2">{{ __('locale.labels.welcome_to') }} {{ $authBrand->displayName }}</h1>
                     <p class="card-text mb-2">{{__('locale.auth.welcome_message')}}</p>
 
@@ -217,11 +188,6 @@
                     @if($hasCustomScript !== null)
                         {!! $hasCustomScript !!}
                     @endif
-                </div>
-            </div>
-            <!-- /Login-->
-        </div>
-    </div>
 @endsection
 
 

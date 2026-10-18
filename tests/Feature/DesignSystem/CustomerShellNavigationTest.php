@@ -50,10 +50,10 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertStringNotContainsString('locale.menu.', $agencyHome);
 
         // The six labels that used to render as raw keys (E-10) now render as words.
-        foreach (['Website', 'Get found'] as $label) {
+        foreach (['Website', 'Google Business Profile'] as $label) {
             $this->assertStringContainsString($label, $this->shellText($growthHome));
         }
-        $this->assertStringContainsString('Prospecting', $this->shellText($agencyHome));
+        $this->assertStringContainsString('Outreach', $this->shellText($agencyHome));
     }
 
     public function test_every_navigation_entry_carries_a_human_label_and_a_hidden_icon(): void
@@ -84,7 +84,7 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertSame(['home'], $this->activeMenuKeys($home->getContent()));
 
         $analytics = $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]))->assertOk();
-        $this->assertSame(['analytics'], $this->activeMenuKeys($analytics->getContent()));
+        $this->assertSame(['home'], $this->activeMenuKeys($analytics->getContent()));
 
         // Billing is a Settings screen: the one Settings entry is the current
         // page's place in the menu, and nothing expands.
@@ -111,7 +111,8 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertStringContainsString('id="customer-context-switcher-toggle"', $shell);
         $this->assertStringContainsString('aria-haspopup="menu"', $shell);
         $this->assertStringContainsString('aria-expanded="false"', $shell);
-        $this->assertStringContainsString('aria-label="Choose a client account"', $shell);
+        // In the Agency shell the switcher lists the owner's OWN Business, so that is what it says it chooses.
+        $this->assertStringContainsString('aria-label="Choose a business"', $shell);
         $this->assertStringContainsString('role="menu"', $shell);
         $this->assertStringContainsString('role="menuitem"', $shell);
         $this->assertStringContainsString('aria-labelledby="customer-context-switcher-toggle"', $shell);
@@ -126,7 +127,7 @@ class CustomerShellNavigationTest extends TestCase
 
         $this->switchTo($workspace, $clientOne);
         $selected = $this->shellHtml($this->home()->assertOk()->getContent());
-        $this->assertStringContainsString('aria-label="Current client account: Client One. Switch client account"', $selected);
+        $this->assertStringContainsString('aria-label="Current business: Client One. Switch business"', $selected);
         $this->assertSame(1, substr_count($selected, 'aria-current="true"'));
         $this->assertStringContainsString('Current', $selected);
     }
@@ -282,7 +283,7 @@ class CustomerShellNavigationTest extends TestCase
         $this->withSession(['permissions' => collect(['access backend'])]);
         $this->actingAs($admin);
 
-        $adminResponse = $this->get(route('admin.home'))->assertOk();
+        $adminResponse = $this->followingRedirects()->get(route('admin.home'))->assertOk();
         $this->assertStringNotContainsString('data-nav-key="accounts"', $adminResponse->getContent(), 'The admin horizontal branch must not switch to CustomerMenuBuilder.');
     }
 }

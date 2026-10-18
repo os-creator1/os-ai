@@ -62,6 +62,10 @@ final class WebsiteAssetUploadService
             throw new InvalidWebsiteAssetException('The Website asset failed integrity verification after storage.');
         }
 
+        // Responsive derivatives (WebP next to the original). Never fails the upload: a
+        // failure just leaves the original as the only source.
+        app(\App\Library\Website\Media\ImageVariants::class)->generate($relativePath, \App\Library\Website\Media\WebsiteMediaPayload::stepsFor($purpose));
+
         return $website->assets()->create([
             'disk' => 'public',
             'path' => $relativePath,
@@ -100,11 +104,18 @@ final class WebsiteAssetUploadService
         }
 
         $fullPath = public_path($asset->path);
+        $path = $asset->path;
 
         $asset->delete();
 
         if (is_file($fullPath)) {
             @unlink($fullPath);
+        }
+
+        // Derivatives go with the original — unless another row (a package picture this asset
+        // mirrored) still points at the same stored image.
+        if (! \App\Models\WebsiteAsset::where('path', $path)->exists() && ! \App\Models\CatalogItemImage::where('path', $path)->exists()) {
+            app(\App\Library\Website\Media\ImageVariants::class)->delete($path);
         }
     }
 

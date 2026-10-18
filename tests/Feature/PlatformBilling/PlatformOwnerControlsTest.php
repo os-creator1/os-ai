@@ -49,7 +49,7 @@ class PlatformOwnerControlsTest extends TestCase
         return array_merge([
             'price' => '297.00',
             'currency_id' => $this->fixtureCurrencyId(),
-            'billing_cycle' => 'monthly',
+            'billing_cycle' => 'every_28_days',
             'trial_enabled' => '1',
             'trial_days' => '14',
             'available_for_signup' => '1',
@@ -90,7 +90,7 @@ class PlatformOwnerControlsTest extends TestCase
         // §11 — the Price must genuinely exist on the platform account and
         // match the terms being saved.
         $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
-            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'day', 'interval_count' => 28,
         ]);
 
         $this->post(route('admin.platform-billing.update', ['growth']), $this->config())
@@ -98,7 +98,7 @@ class PlatformOwnerControlsTest extends TestCase
 
         $catalog = WorkspacePlanCatalog::query()->where('tier', 'growth')->firstOrFail();
         $this->assertSame('297.00', (string) $catalog->price);
-        $this->assertSame('monthly', (string) $catalog->billing_cycle);
+        $this->assertSame('every_28_days', (string) $catalog->billing_cycle);
         $this->assertTrue((bool) $catalog->trial_enabled);
         $this->assertSame(14, (int) $catalog->trial_days);
         $this->assertTrue((bool) $catalog->available_for_signup);
@@ -155,7 +155,7 @@ class PlatformOwnerControlsTest extends TestCase
     {
         $this->signInAsPlatformOwner();
         $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
-            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'day', 'interval_count' => 28,
         ]);
         $this->post(route('admin.platform-billing.update', ['growth']), $this->config());
 
@@ -177,7 +177,7 @@ class PlatformOwnerControlsTest extends TestCase
     {
         $this->signInAsPlatformOwner();
         $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
-            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'day', 'interval_count' => 28,
         ]);
 
         $this->post(route('admin.platform-billing.update', ['growth']),
@@ -192,7 +192,7 @@ class PlatformOwnerControlsTest extends TestCase
     {
         $this->signInAsPlatformOwner();
         $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
-            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'day', 'interval_count' => 28,
         ]);
 
         // A trial was configured once, exactly like a real operator would.
@@ -215,7 +215,7 @@ class PlatformOwnerControlsTest extends TestCase
     {
         $this->signInAsPlatformOwner();
         $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
-            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'day', 'interval_count' => 28,
         ]);
 
         $this->post(route('admin.platform-billing.update', ['growth']),
@@ -248,7 +248,7 @@ class PlatformOwnerControlsTest extends TestCase
     {
         $this->signInAsPlatformOwner();
         $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
-            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'day', 'interval_count' => 28,
         ]);
         $this->post(route('admin.platform-billing.update', ['growth']),
             $this->config(['trial_enabled' => '1', 'trial_days' => '14']));

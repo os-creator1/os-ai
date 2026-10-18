@@ -51,6 +51,19 @@ class SettingsHubNavigationTest extends TestCase
         $this->get($automationsUrl)->assertOk()->assertSee('data-role="wf-list-header"', false);
     }
 
+    public function test_the_settings_hub_links_to_the_profile_page_where_the_language_is_changed(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->hub($workspace, $business)->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-role="settings-profile-language"', $html);
+        $this->assertStringContainsString('href="' . route('user.account') . '"', $html);
+        // Language is not a top-bar control.
+        $this->assertStringNotContainsString('dropdown-language', $html);
+    }
+
     public function test_core_and_growth_get_a_flat_sidebar_with_one_direct_settings_destination(): void
     {
         // The Opportunity engine is on, so an Advisor entry would render if
@@ -65,16 +78,21 @@ class SettingsHubNavigationTest extends TestCase
             $sidebar = $this->sidebarHtml($html);
             $keys = $this->menuKeys($html);
 
-            // Opportunities (the CRM sales board) sits directly after Contacts.
-            $expected = ['home', 'conversations', 'contacts', 'opportunities', 'automations', 'website', 'packages_products', 'analytics', 'settings'];
+            // The final V1 sidebar: Home (= the Growth Center), Opportunities, Contacts, Conversations,
+            // Calendar, Automations, Website, SEO, Forms, Packages & Products, Payments & Contracts,
+            // Settings. Results and Growth are not top-level entries (SEO's two children are keys, not
+            // an expanding group, as before).
+            $expected = ['home', 'opportunities', 'contacts', 'conversations', 'calendar', 'automations', 'website', 'seo', 'seo-overview', 'seo-keywords', 'forms', 'packages_products', 'payments_contracts', 'settings'];
             if ($tier === WorkspacePlanTier::Growth) {
-                array_splice($expected, 6, 0, ['gbp']);
+                array_splice($expected, 10, 0, ['gbp', 'seo-audit', 'seo-citations', 'seo-reviews']);
             }
             $this->assertSame($expected, $keys, "[{$tier->value}] the contracted flat sidebar, in order — no Advisor.");
             $this->assertStringNotContainsString('Advisor', $this->shellText($html), 'Business Home carries the next best move; there is no separate Advisor module.');
 
-            $this->assertStringNotContainsString('has-sub', $sidebar, 'Nothing expands in the sidebar.');
-            $this->assertStringNotContainsString('menu-content', $sidebar);
+            // The one expandable entry is the SEO group (its children are SEO's own pages).
+            // The SEO and Ads groups (Ads V1 added the second) are the only entries that expand.
+            $this->assertLessThanOrEqual(2, substr_count($sidebar, 'has-sub'), 'Nothing but the SEO and Ads groups expand.');
+            $this->assertLessThanOrEqual(1, substr_count($sidebar, 'menu-content'));
             $this->assertStringNotContainsString('Messages', $this->shellText($html));
 
             $links = $this->menuLinks($html);
@@ -101,6 +119,7 @@ class SettingsHubNavigationTest extends TestCase
         foreach ([
             route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]),
             route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]),
+            route('customer.workspaces.businesses.services.index', [$workspace->uid, $business->uid]),
             route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]),
             route('customer.workspaces.plan.show', $workspace->uid),
             route('customer.workspaces.team.show', $workspace->uid),
@@ -122,8 +141,9 @@ class SettingsHubNavigationTest extends TestCase
             $html = $this->hub($workspace, $business)->getContent();
 
             $this->assertSame([
-                'business-setup' => ['business-details', 'locations'],
+                'business-setup' => ['business-details', 'locations', 'services', 'custom-fields'],
                 'communication' => ['text-messaging', 'email'],
+                'payments' => ['payment-processing'],
                 'billing-team' => ['usage-billing', 'plan', 'team'],
                 'features' => [],
             ], $this->settingsHubModules($html), "[{$tier->value}] Business setup, Communication, Billing & team.");
@@ -131,6 +151,8 @@ class SettingsHubNavigationTest extends TestCase
             foreach ([
                 'business-details' => route('customer.business.edit'),
                 'locations' => route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]),
+                'services' => route('customer.workspaces.businesses.services.index', [$workspace->uid, $business->uid]),
+                'custom-fields' => route('customer.workspaces.businesses.custom-fields.index', [$workspace->uid, $business->uid]),
                 'text-messaging' => route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]),
                 'email' => route('customer.workspaces.businesses.email.show', [$workspace->uid, $business->uid]),
                 'usage-billing' => route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]),
@@ -240,7 +262,7 @@ class SettingsHubNavigationTest extends TestCase
             ->assertRedirect($team);
     }
 
-    public function test_an_agency_assigns_client_access_from_its_team_page_and_its_overview_keeps_client_creation(): void
+    public function test_an_agency_assigns_client_access_from_its_team_page_and_its_overview_offers_no_second_business(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
@@ -255,7 +277,10 @@ class SettingsHubNavigationTest extends TestCase
         $this->assertStringNotContainsString('id="member-scope" name="business_access_scope"', $team, 'Nothing to choose between.');
 
         $overview = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
-        $this->assertStringContainsString('data-workspace-action="businesses"', $overview, 'Agency client creation remains.');
+        // An account holds ONE Business (Contract 13): clients are invited from Clients, never created here, so the
+        // overview of an Agency that already has its Business offers no Create Business form (it only ever ended in a
+        // duplicate-key 500).
+        $this->assertStringNotContainsString('data-workspace-action="businesses"', $overview, 'No second Business can be created from the Agency overview.');
         $this->assertStringNotContainsString('data-workspace-action="members"', $overview, 'Members live on Team, not twice.');
     }
 
@@ -271,7 +296,7 @@ class SettingsHubNavigationTest extends TestCase
 
         $home = $this->home()->assertOk()->getContent();
         $this->assertContains(route('customer.workspaces.settings.show', $workspace->uid), $this->menuLinks($home));
-        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($home));
+        $this->assertLessThanOrEqual(2, substr_count($this->sidebarHtml($home), 'has-sub'), 'Nothing but the SEO and Ads groups expand.');
 
         $html = $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent();
         $modules = $this->settingsHubModules($html);
@@ -297,7 +322,7 @@ class SettingsHubNavigationTest extends TestCase
 
         $modules = $this->settingsHubModules($this->hub($workspace, $clientOne)->getContent());
 
-        $this->assertSame(['communication', 'billing-team'], array_values(array_diff(array_keys($modules), ['business-setup'])));
+        $this->assertSame(['communication', 'payments', 'billing-team'], array_values(array_diff(array_keys($modules), ['business-setup'])));
         $this->assertSame(['usage-billing'], $modules['billing-team'], "Only the client's own billing.");
         foreach (['plan', 'team', 'account-details', 'blocked-numbers', 'messaging-provider'] as $agencyOnly) {
             $this->assertNotContains($agencyOnly, array_merge(...array_values($modules)), "[{$agencyOnly}] belongs to the Agency account.");
@@ -339,8 +364,9 @@ class SettingsHubNavigationTest extends TestCase
         $modules = $this->settingsHubModules($this->hub($workspace, $business)->getContent());
 
         // Email is offered to an actor holding an email permission (here every
-        // permission but view_numbers), exactly as Text messaging would be.
-        $this->assertSame(['business-setup' => ['locations'], 'communication' => ['email']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
+        // permission but view_numbers), exactly as Text messaging would be. Payment
+        // processing is the read-only Stripe status page for staff; only an owner gets its controls.
+        $this->assertSame(['business-setup' => ['locations', 'services', 'custom-fields'], 'communication' => ['email'], 'payments' => ['payment-processing']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
         $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();

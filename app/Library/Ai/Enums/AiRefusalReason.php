@@ -20,6 +20,12 @@ enum AiRefusalReason: string
     case NoRouteAffordable = 'no_route_affordable';
 
     /**
+     * A per-Business, per-category ceiling (`config('ai.business_category_ceilings')`, AiBusinessCategoryCeiling)
+     * was reached for this period. Independent of the Workspace cap; refused before any reservation.
+     */
+    case CategoryCeilingReached = 'category_ceiling_reached';
+
+    /**
      * Contract §5.7a C, §6.7, R-28 — a Platform request whose `actorUserId`
      * does not resolve, on a freshly read `User` row, to `is_admin`. Refused
      * before any reservation and before any provider call.

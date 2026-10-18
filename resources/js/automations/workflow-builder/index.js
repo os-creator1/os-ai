@@ -10,6 +10,7 @@ import { createAutosave } from './autosave.js'
 import { createApiClient } from './api.js'
 import { createStepPicker } from './step-picker.js'
 import { createTestPanel } from './test-panel.js'
+import { createJourneys } from './journeys.js'
 import { listRecipes } from './recipes.js'
 import { newNode, countNodes, insertAt, insertBranchAt, removeFrom, moveWithin } from './document-model.js'
 import { renderDocumentBanner, hasErrors, countIssues } from './validation.js'
@@ -115,6 +116,12 @@ function initBuilder(root) {
         catalogs: data.catalogs,
         dateOffsets: data.dateOffsets,
         limits: data.limits,
+        locationScope: data.locationScope,
+        capabilities: data.capabilities || {},
+        currency: data.currency || '',
+        // The trigger as the document has it NOW, so a condition or an action only
+        // offers what the workflow's trigger can give it.
+        triggerType: () => (doc && doc.root && doc.root.config ? doc.root.config.trigger_type : null),
         onSave(node, config) {
             node.config = config
             onDocumentChanged()
@@ -149,13 +156,33 @@ function initBuilder(root) {
         },
     })
 
+    // The two read-only tabs: who entered the workflow, and what happened to each.
+    const historyPane = root.querySelector('[data-role="wf-journeys-history"]')
+    const logsPane = root.querySelector('[data-role="wf-journeys-logs"]')
+
+    if (historyPane && logsPane) {
+        const logsTab = root.querySelector('[data-bs-target="#wf-tabs-logs"]')
+        const journeys = createJourneys({
+            api,
+            basePath: data.basePath,
+            historyEl: historyPane,
+            logsEl: logsPane,
+            showLogsTab: () => logsTab && logsTab.click(),
+        })
+
+        const historyTab = root.querySelector('[data-bs-target="#wf-tabs-enrollments"]')
+
+        historyTab && historyTab.addEventListener('click', () => journeys.showHistory())
+        logsTab && logsTab.addEventListener('click', () => journeys.showLogs())
+    }
+
     function selectNode(node) {
         if (testPanel.isOpen()) {
             testPanel.close()
         }
 
         selectedKey = node.key
-        drawer.open(node, errors[node.key] || [], { readOnly })
+        drawer.open(node, errors[node.key] || [], { readOnly, triggerType: doc.root && doc.root.config ? doc.root.config.trigger_type : '' })
         syncPanels()
         rerender()
     }
@@ -261,6 +288,7 @@ function initBuilder(root) {
         picker.open(anchorEl, {
             types,
             hints,
+            capabilities: data.capabilities || {},
             note: canBranch ? '' : 'If / Else can’t be nested any deeper here.',
             onPick(type) {
                 const node = newNode(type, defaultConfigFor(type))
@@ -417,12 +445,26 @@ function initBuilder(root) {
 
 function initChooser(root) {
     const scratchCard = root.querySelector('[data-role="wf-chooser-scratch"]')
-    const recipesContainer = root.querySelector('[data-role="wf-chooser-recipes"]')
+    const readyContainer = root.querySelector('[data-role="wf-chooser-recipes"]')
+    const setupContainer = root.querySelector('[data-role="wf-chooser-setup-recipes"]')
+    const readyGroup = root.querySelector('[data-role="wf-chooser-ready-group"]')
+    const setupGroup = root.querySelector('[data-role="wf-chooser-setup-group"]')
+    const banner = root.querySelector('[data-role="wf-chooser-banner"]')
     const nameInput = root.querySelector('[data-role="wf-chooser-name"]')
     const errorEl = root.querySelector('[data-role="wf-chooser-error"]')
     const createUrl = root.dataset.createUrl
-    const labelsEl = document.getElementById('wf-recipe-labels')
-    const labels = labelsEl ? JSON.parse(labelsEl.textContent) : {}
+    const readJson = (id, fallback) => {
+        const el = document.getElementById(id)
+
+        return el ? JSON.parse(el.textContent) : fallback
+    }
+    const labels = readJson('wf-recipe-labels', {})
+    const capabilities = readJson('wf-capabilities', {})
+    const config = readJson('wf-chooser-config', { text: {}, triggers: {}, setupLinks: {} })
+    const text = config.text || {}
+    const setupLinks = config.setupLinks || {}
+    const capabilitiesEl = document.getElementById('wf-capabilities')
+    const unavailablePrefix = capabilitiesEl ? capabilitiesEl.dataset.unavailablePrefix || '' : ''
     const api = createApiClient(createUrl)
     let busy = false
 
@@ -475,16 +517,74 @@ function initChooser(root) {
     }
 
     scratchCard.addEventListener('click', () => createWorkflow('Untitled workflow', null))
-    scratchCard.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            createWorkflow('Untitled workflow', null)
+
+    function chooserIcon(name) {
+        const holder = root.querySelector(`#wf-chooser-icons`)
+        const source = holder && holder.content ? holder.content.querySelector(`[data-icon="${name}"] > *`) : null
+
+        return source ? source.cloneNode(true) : document.createTextNode('')
+    }
+
+    function el(tag, className, content) {
+        const node = document.createElement(tag)
+
+        if (className) {
+            node.className = className
         }
-    })
+
+        if (content !== undefined) {
+            node.textContent = content
+        }
+
+        return node
+    }
+
+    function plural(count, one, other) {
+        return count === 1 ? one : other.replace(':count', String(count))
+    }
+
+    // Which of sms / email / payments is the first thing missing, else a plan limit.
+    function classify(missing) {
+        const known = ['sms', 'email', 'payments']
+        const keys = missing.map((entry) => entry.key)
+        const setup = known.find((key) => keys.includes(key))
+
+        return setup || 'plan'
+    }
+
+    const ready = []
+    const needsSetup = []
 
     listRecipes().forEach((recipe) => {
-        const col = document.createElement('div')
-        col.className = 'col-12 col-md-6 col-xl-3'
+        const missing = (recipe.requires || [])
+            .map((key) => Object.assign({ key }, capabilities[key]))
+            .filter((entry) => entry.available === false)
+
+        ;(missing.length > 0 ? needsSetup : ready).push({ recipe, missing })
+    })
+
+    function triggerLine(recipe) {
+        let triggerType = null
+
+        try {
+            triggerType = recipe.build().root.config.trigger_type
+        } catch (error) {
+            triggerType = null
+        }
+
+        const title = triggerType && config.triggers ? config.triggers[triggerType] : null
+
+        return title ? `${text.trigger_prefix || ''} ${title}`.trim() : null
+    }
+
+    function buildTile(entry) {
+        const { recipe, missing } = entry
+        const labelSet = labels[recipe.key] || {}
+        const unavailable = missing.length > 0
+        const kind = unavailable ? classify(missing) : 'ready'
+
+        const tile = el('div', 'wf-chooser-tile' + (unavailable ? ' is-unavailable' : ''))
+        tile.dataset.role = 'wf-chooser-tile'
 
         const card = document.createElement('button')
         card.type = 'button'
@@ -492,25 +592,131 @@ function initChooser(root) {
         card.dataset.role = 'wf-chooser-recipe'
         card.dataset.recipeKey = recipe.key
 
-        const labelSet = labels[recipe.key] || {}
+        const head = el('span', 'wf-chooser-card__head')
+        const iconName = unavailable ? ({ sms: 'message-circle', email: 'mail', payments: 'credit-card', plan: 'lock' })[kind] : 'zap'
+        const iconWrap = el('span', 'wf-chooser-card__icon')
+        iconWrap.appendChild(chooserIcon(iconName))
+        head.appendChild(iconWrap)
 
-        const title = document.createElement('span')
-        title.className = 'wf-chooser-card__title'
-        title.textContent = labelSet.title || recipe.titleKey
+        const chip = el('span', 'wf-chooser-chip wf-chooser-chip--' + (unavailable ? 'setup' : 'ready'))
+        chip.dataset.role = 'wf-chooser-chip'
+        chip.appendChild(chooserIcon(unavailable ? 'alert-circle' : 'check-circle'))
+        chip.appendChild(document.createTextNode(unavailable ? (text[`chip_${kind}`] || '') : (text.chip_ready || '')))
+        head.appendChild(chip)
+        card.appendChild(head)
 
-        const description = document.createElement('span')
-        description.className = 'wf-chooser-card__description'
-        description.textContent = labelSet.description || recipe.descriptionKey
+        card.appendChild(el('span', 'wf-chooser-card__title', labelSet.title || recipe.titleKey))
+        card.appendChild(el('span', 'wf-chooser-card__description', labelSet.description || recipe.descriptionKey))
 
-        card.appendChild(title)
-        card.appendChild(description)
-        col.appendChild(card)
-        recipesContainer.appendChild(col)
+        const trigger = triggerLine(recipe)
+        const foot = el('span', 'wf-chooser-card__foot')
+
+        if (trigger) {
+            foot.appendChild(el('span', 'wf-chooser-card__trigger', trigger))
+        }
+
+        if (!unavailable) {
+            const use = el('span', 'wf-chooser-card__use', text.use_template || '')
+            use.appendChild(chooserIcon('arrow-right'))
+            foot.appendChild(use)
+        }
+
+        if (trigger || !unavailable) {
+            card.appendChild(foot)
+        }
+
+        tile.appendChild(card)
+
+        // A recipe the account cannot run is shown, disabled, with the reason — never
+        // created and then refused at publish.
+        if (unavailable) {
+            card.disabled = true
+            card.classList.add('is-disabled')
+            card.dataset.unavailable = 'true'
+            card.dataset.missing = missing.map((item) => item.key).join(' ')
+            card.appendChild(el('span', 'wf-chooser-card__reason', `${unavailablePrefix}${missing[0].reason || ''}`))
+
+            // Only a destination this person is already allowed to open (the Settings
+            // hub's own permission-aware list); a plan limit has no setup destination.
+            const link = setupLinks[kind]
+
+            if (link) {
+                const anchor = document.createElement('a')
+                anchor.className = 'wf-chooser-tile__action'
+                anchor.dataset.role = 'wf-chooser-setup-link'
+                anchor.href = link
+                anchor.appendChild(document.createTextNode(text[`action_${kind}`] || ''))
+                anchor.appendChild(chooserIcon('arrow-right'))
+                tile.appendChild(anchor)
+            }
+
+            return tile
+        }
 
         card.addEventListener('click', () => {
             createWorkflow(labelSet.title || 'Untitled workflow', recipe.build())
         })
-    })
+
+        return tile
+    }
+
+    function fillGroup(group, container, entries, titleRole, countRole, heading) {
+        group.hidden = entries.length === 0
+        group.querySelector(`[data-role="${titleRole}"]`).textContent = heading || ''
+        group.querySelector(`[data-role="${countRole}"]`).textContent = plural(entries.length, text.template_count_one || '', text.template_count_other || '')
+        entries.forEach((entry) => container.appendChild(buildTile(entry)))
+    }
+
+    fillGroup(readyGroup, readyContainer, ready, 'wf-chooser-ready-title', 'wf-chooser-ready-count', text.ready_heading)
+    fillGroup(setupGroup, setupContainer, needsSetup, 'wf-chooser-setup-title', 'wf-chooser-setup-count', text.setup_heading)
+
+    if (ready.length === 0 && needsSetup.length > 0) {
+        readyGroup.hidden = false
+        readyGroup.querySelector('[data-role="wf-chooser-ready-count"]').textContent = ''
+        readyContainer.appendChild(el('p', 'wf-chooser-empty', text.none_ready || ''))
+    }
+
+    if (needsSetup.length > 0) {
+        const kinds = needsSetup.map((entry) => classify(entry.missing))
+        const needed = ['sms', 'email', 'payments'].filter((kind) => kinds.includes(kind))
+        const parts = []
+
+        banner.appendChild(el('span', 'wf-chooser-banner__icon')).appendChild(chooserIcon('alert-circle'))
+        parts.push(el('strong', 'wf-chooser-banner__title', plural(needsSetup.length, text.banner_title_one || '', text.banner_title_other || '')))
+
+        const sentences = []
+
+        if (needed.length > 0) {
+            const items = needed.map((kind) => text[`banner_${kind}`]).filter(Boolean).join(', ')
+            sentences.push((text.banner_connect || '').replace(':items', items))
+        }
+
+        if (kinds.includes('plan')) {
+            sentences.push(text.banner_plan || '')
+        }
+
+        const body = el('span', 'wf-chooser-banner__body')
+        parts.forEach((part) => body.appendChild(part))
+        body.appendChild(el('span', 'wf-chooser-banner__text', sentences.join(' ')))
+        banner.appendChild(body)
+
+        // One shortcut per missing product, only where this person may open its setup.
+        const actions = el('span', 'wf-chooser-banner__actions')
+        needed.forEach((kind) => {
+            if (setupLinks[kind]) {
+                const link = el('a', 'btn btn-outline-secondary btn-sm', text[`banner_${kind}`] || '')
+                link.href = setupLinks[kind]
+                link.dataset.role = 'wf-chooser-banner-link'
+                actions.appendChild(link)
+            }
+        })
+
+        if (actions.childNodes.length > 0) {
+            banner.appendChild(actions)
+        }
+
+        banner.hidden = false
+    }
 }
 
 window.AutomationsWorkflowBuilder = { initBuilder, initChooser }

@@ -46,6 +46,15 @@ trait CreatesBusinessEmailFixtures
         }
     }
 
+    /** An active Staff member assigned to this Business; not the Workspace owner. */
+    protected function assignedStaff(object $workspace, object $business): \App\Models\Customer
+    {
+        $staff = $this->createCustomer();
+        $this->assign($this->member($workspace, $staff->user, \App\Enums\Workspace\WorkspaceMembershipRole::Staff, \App\Enums\Workspace\WorkspaceBusinessAccessScope::Selected), $business);
+
+        return $staff;
+    }
+
     /**
      * A tenant whose Business already has its Primary Location, as every V1
      * Business does (the tenant fixture itself creates none).

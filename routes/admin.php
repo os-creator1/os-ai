@@ -10,7 +10,9 @@
      * Author URL: https://codecanyon.net/user/codeglen
      */
 
-    Route::get('/dashboard', 'AdminBaseController@index')->name('home');
+    // Retired inherited dashboard: `/dashboard` only redirects to the user's current landing page (see AdminBaseController).
+    Route::get('/dashboard', 'AdminHomeController@index')->name('home');
+    Route::get('/staff-home', 'AdminHomeController@staffHome')->name('staff-home');
 
     /*
     |--------------------------------------------------------------------------
@@ -252,6 +254,7 @@
 
     Route::post('senderid/search', 'SenderIDController@search')->name('senderid.search');
     Route::get('senderid/export', 'SenderIDController@export')->name('senderid.export');
+    Route::get('senderid/{senderid}/document', 'SenderIDController@document')->name('senderid.document');
     Route::get('senderid/{senderid}/show', 'SenderIDController@show')->name('senderid.show');
     Route::post('senderid/batch_action', 'SenderIDController@batchAction')->name('senderid.batch_action');
     Route::resource('senderid', 'SenderIDController', [
@@ -363,6 +366,8 @@
     Route::get('administrators/export', 'AdministratorController@export')->name('administrators.export');
     Route::get('administrators/{administrator}/show', 'AdministratorController@show')->name('administrators.show');
     Route::post('administrators/{administrator}/active', 'AdministratorController@activeToggle')->name('administrators.active');
+    Route::post('administrators/{administrator}/resend-invitation', 'AdministratorController@resendInvitation')->name('administrators.resend-invitation');
+    Route::post('administrators/{administrator}/status', 'AdministratorController@setStatus')->name('administrators.status');
     Route::post('administrators/batch_action', 'AdministratorController@batchAction')->name('administrators.batch_action');
     Route::resource('administrators', 'AdministratorController', [
         'only' => ['index', 'create', 'store', 'update', 'destroy'],
@@ -619,6 +624,10 @@
         // admin-only AI usage ledger summary. Read-only, paginated, and inside
         // this EnsureUserIsAdministrator group so no customer can reach it.
         Route::get('ai-usage', 'AiUsageController@summary')->name('ai-usage.index');
+
+        // SEO Keyword Rank Tracking V1 §24 — admin-only, read-only platform
+        // provider-cost summary ("how much did rank tracking cost this month?").
+        Route::get('seo-rank-cost', 'SeoRankCostController@summary')->name('seo-rank-cost.index');
     });
     Route::post('ai-settings-toggle', 'SettingsController@toggleAiSettings')->name('settings.ai-settings.toggle');
 
@@ -727,6 +736,40 @@
         | like workspaces.index/workspaces.show above.
         |
         */
+        /*
+        |--------------------------------------------------------------------------
+        | Platform Automations + Announcements (Platform Owner only)
+        |--------------------------------------------------------------------------
+        |
+        | The platform-scoped automation engine (its own tables and runner; see the
+        | 2026_11_03_090001 migration) and the Announcements system. Same
+        | no-"admin/"-segment shape as the routes above; this group's
+        | EnsureUserIsAdministrator is the boundary and every action re-checks the
+        | Platform Owner marker.
+        |
+        */
+        Route::get('platform-automations', 'PlatformAutomationController@list')->name('platform-automations.index');
+        Route::get('platform-automations/create', 'PlatformAutomationController@create')->name('platform-automations.create');
+        Route::post('platform-automations', 'PlatformAutomationController@store')->name('platform-automations.store');
+        Route::post('platform-automations/recipes/{recipe}', 'PlatformAutomationController@useRecipe')
+            ->where('recipe', '[a-z_]+')->name('platform-automations.recipes.use');
+        Route::get('platform-automations/runs/{run}', 'PlatformAutomationController@showRun')
+            ->whereUuid('run')->name('platform-automations.runs.show');
+        Route::post('platform-automations/runs/{run}/retry', 'PlatformAutomationController@retryRun')
+            ->whereUuid('run')->name('platform-automations.runs.retry');
+        Route::post('platform-automations/runs/{run}/steps/{index}/approve', 'PlatformAutomationController@approveStep')
+            ->whereUuid('run')->whereNumber('index')->name('platform-automations.runs.approve');
+        Route::post('platform-automations/runs/{run}/steps/{index}/reject', 'PlatformAutomationController@rejectStep')
+            ->whereUuid('run')->whereNumber('index')->name('platform-automations.runs.reject');
+        Route::get('platform-automations/{automation}/edit', 'PlatformAutomationController@edit')
+            ->whereUuid('automation')->name('platform-automations.edit');
+        Route::put('platform-automations/{automation}', 'PlatformAutomationController@update')
+            ->whereUuid('automation')->name('platform-automations.update');
+        foreach (['enable', 'disable', 'duplicate', 'archive'] as $verb) {
+            Route::post('platform-automations/{automation}/' . $verb, 'PlatformAutomationController@' . $verb)
+                ->whereUuid('automation')->name('platform-automations.' . $verb);
+        }
+
         Route::get('workspace-plan-catalog', 'WorkspacePlanCatalogController@index')->name('workspace-plan-catalog.index');
 
         /*
@@ -749,7 +792,55 @@
         |
         */
         Route::get('platform-billing', 'PlatformBillingController@index')->name('platform-billing.index');
-        Route::post('platform-billing/{tier}', 'PlatformBillingController@update')->name('platform-billing.update');
+        Route::post('platform-billing/{tier}', 'PlatformBillingController@update')->where('tier', 'core|growth|agency')->name('platform-billing.update');
+        Route::post('platform-billing/{tier}/price', 'PlatformBillingController@provisionPrice')->where('tier', 'core|growth|agency')->name('platform-billing.provision-price');
+
+        /*
+        | Private Offers — special terms for ONE customer (a trial of any length,
+        | a negotiated recurring price, a fixed or percentage discount for
+        | forever / one / N 28-day periods), delivered as a unique expiring
+        | link. Platform Owner → Billing & Revenue → Private Offers → Create
+        | Offer → Copy Link. The owner never opens Stripe: the Prices are
+        | created and verified by MotionGrove.
+        */
+        Route::get('platform-billing/offers', 'PlatformPrivateOffersController@index')->middleware('private.offers')->name('platform-billing.offers.index');
+        Route::post('platform-billing/offers', 'PlatformPrivateOffersController@store')->middleware('private.offers')->name('platform-billing.offers.store');
+        Route::get('platform-billing/offers/{offer}', 'PlatformPrivateOffersController@show')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.show');
+        Route::post('platform-billing/offers/{offer}/revoke', 'PlatformPrivateOffersController@revoke')->whereUuid('offer')->name('platform-billing.offers.revoke');
+        Route::post('platform-billing/offers/{offer}/link', 'PlatformPrivateOffersController@newLink')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.new-link');
+        Route::post('platform-billing/offers/{offer}/apply', 'PlatformPrivateOffersController@applyChange')->whereUuid('offer')->middleware('private.offers')->name('platform-billing.offers.apply');
+
+        /*
+        | Platform Owner V1 final — Plans: the one plan authority. Edit name,
+        | price, cycle, trial, signup availability, slots, feature packaging;
+        | archive instead of delete (PlatformPlanAdministrator).
+        */
+        Route::get('platform-plans', 'PlatformPlansController@index')->name('platform-plans.index');
+        Route::get('platform-plans/{tier}', 'PlatformPlansController@edit')->name('platform-plans.edit');
+        Route::put('platform-plans/{tier}', 'PlatformPlansController@update')->name('platform-plans.update');
+
+        /*
+        | Platform Owner V1 final — Users, Support and Announcements management.
+        | Inside the EnsureUserIsAdministrator group; each controller also
+        | authorizes a permission string (second, independent layer).
+        */
+        Route::get('platform-users', 'PlatformUsersController@index')->name('platform-users.index');
+        Route::get('platform-users/{uid}', 'PlatformUsersController@show')->name('platform-users.show');
+        Route::get('platform-users/{uid}/delete', 'PlatformUsersController@confirmDelete')->name('platform-users.delete');
+        Route::post('platform-users/{uid}/delete', 'PlatformUsersController@destroy')->name('platform-users.destroy');
+        Route::post('platform-users/{uid}/closure/retry', 'PlatformUsersController@retryClosure')->name('platform-users.closure.retry');
+        Route::post('platform-users/{uid}/{action}', 'PlatformUsersController@act')
+            ->where('action', 'password-reset|resend-verification|suspend|reactivate|revoke-sessions')->name('platform-users.act');
+        Route::get('platform-support', 'PlatformSupportController@index')->name('platform-support.index');
+        Route::get('platform-features', 'PlatformFeaturesController@index')->name('platform-features.index');
+
+        Route::get('platform-announcements', 'PlatformAnnouncementsController@index')->name('platform-announcements.index');
+        Route::get('platform-announcements/create', 'PlatformAnnouncementsController@create')->name('platform-announcements.create');
+        Route::post('platform-announcements', 'PlatformAnnouncementsController@store')->name('platform-announcements.store');
+        Route::get('platform-announcements/{uid}/edit', 'PlatformAnnouncementsController@edit')->whereUuid('uid')->name('platform-announcements.edit');
+        Route::put('platform-announcements/{uid}', 'PlatformAnnouncementsController@update')->whereUuid('uid')->name('platform-announcements.update');
+        Route::post('platform-announcements/{uid}/{action}', 'PlatformAnnouncementsController@transition')->whereUuid('uid')
+            ->where('action', 'publish|cancel|schedule')->name('platform-announcements.transition');
 
         /*
         |--------------------------------------------------------------------------
@@ -947,6 +1038,26 @@
                 Route::post('deactivate', 'NicheBlueprintController@deactivate')->name('deactivate')
                     ->missing(fn () => abort(404));
 
+                // Blueprint Workspace (Niche Blueprint V2). Every route runs under
+                // EnterBlueprintMode (Blueprint Safety Mode): nothing reached from
+                // here may send, charge, connect a provider or publish for real.
+                Route::prefix('workspace')->name('workspace.')
+                    ->middleware(\App\Http\Middleware\EnterBlueprintMode::class)
+                    ->group(function () {
+                        Route::post('enter', 'NicheBlueprintWorkspaceController@enter')->name('enter')->missing(fn () => abort(404));
+                        Route::post('save', 'NicheBlueprintWorkspaceController@saveDraft')->name('save')->missing(fn () => abort(404));
+                        Route::post('publish', 'NicheBlueprintWorkspaceController@publish')->name('publish')->missing(fn () => abort(404));
+                        Route::post('exit', 'NicheBlueprintWorkspaceController@exit')->name('exit')->missing(fn () => abort(404));
+                        Route::get('{surface?}', 'NicheBlueprintWorkspaceController@show')->name('show')
+                            ->where('surface', '[a-z]+')->missing(fn () => abort(404));
+                        Route::post('{surface}/components', 'NicheBlueprintWorkspaceController@storeComponent')->name('components.store')
+                            ->where('surface', '[a-z]+')->missing(fn () => abort(404));
+                        Route::patch('{surface}/components/{component}', 'NicheBlueprintWorkspaceController@updateComponent')->name('components.update')
+                            ->where('surface', '[a-z]+')->whereNumber('component')->missing(fn () => abort(404));
+                        Route::delete('{surface}/components/{component}', 'NicheBlueprintWorkspaceController@destroyComponent')->name('components.destroy')
+                            ->where('surface', '[a-z]+')->whereNumber('component')->missing(fn () => abort(404));
+                    });
+
                 Route::post('versions', 'NicheBlueprintController@storeVersion')->name('versions.store')
                     ->missing(fn () => abort(404));
 
@@ -973,6 +1084,30 @@
             });
         });
 
+        // Citations V1 — the Platform Owner's directory catalog and the
+        // per-niche recommendations. Writes go through
+        // SeoCitationCatalogManager, which re-checks is_admin itself.
+        Route::prefix('citation-directories')->name('citation-directories.')->group(function () {
+            Route::get('/', 'SeoCitationCatalogController@directories')->name('index');
+            Route::get('create', 'SeoCitationCatalogController@createDirectory')->name('create');
+            Route::post('/', 'SeoCitationCatalogController@storeDirectory')->name('store');
+            Route::prefix('{uid}')->whereUuid('uid')->group(function () {
+                Route::get('edit', 'SeoCitationCatalogController@editDirectory')->name('edit');
+                Route::put('/', 'SeoCitationCatalogController@updateDirectory')->name('update');
+                Route::post('active', 'SeoCitationCatalogController@setDirectoryActive')->name('active');
+            });
+        });
+
+        Route::prefix('citation-niches')->name('citation-niches.')->group(function () {
+            Route::get('/', 'SeoCitationCatalogController@niches')->name('index');
+            Route::prefix('{niche}')->where(['niche' => '[a-z_]+'])->group(function () {
+                Route::get('/', 'SeoCitationCatalogController@showNiche')->name('show');
+                Route::post('recommendations', 'SeoCitationCatalogController@recommend')->name('recommendations.store');
+                Route::put('recommendations/{uid}', 'SeoCitationCatalogController@updateRecommendation')->whereUuid('uid')->name('recommendations.update');
+                Route::delete('recommendations/{uid}', 'SeoCitationCatalogController@removeRecommendation')->whereUuid('uid')->name('recommendations.destroy');
+            });
+        });
+
         Route::prefix('template-library')->name('template-library.')->group(function () {
             Route::get('/', 'BlueprintTemplateLibraryController@index')->name('index');
 
@@ -984,6 +1119,46 @@
                     ->whereUuid('version')
                     ->name('versions.show')
                     ->missing(fn () => abort(404));
+            });
+        });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Proposal / contract templates (Implementation Contract 17B §6b)
+        |--------------------------------------------------------------------------
+        |
+        | The Platform Owner's own surface for platform-owned templates
+        | (document_templates.business_id IS NULL): create, edit in the shared
+        | visual editor bundle (mode `platform_template`), preview, publish /
+        | disable, and "Assign to niches". Distinct from Template Library above
+        | (that one is the read-only niche-blueprint catalog); an assignment is
+        | written as a `document_template` blueprint component, through
+        | NicheBlueprintPublisher only, in two explicit steps (save to the
+        | draft, then publish the blueprint version).
+        |
+        | Same EnsureUserIsAdministrator group as everything here; {template}
+        | binds by uid and an unresolved uid goes through refuseMissingTarget()
+        | so a non-owner never learns whether it exists. A Business-owned uid
+        | resolves but is 404ed by the controller. No Business route reaches
+        | any of these.
+        |
+        */
+        Route::prefix('document-templates')->name('document-templates.')->group(function () {
+            Route::get('/', 'DocumentTemplateController@index')->name('index');
+            Route::get('create', 'DocumentTemplateController@create')->name('create');
+            Route::post('/', 'DocumentTemplateController@store')->middleware('throttle:30,1')->name('store');
+
+            Route::prefix('{template}')->whereUuid('template')->group(function () {
+                $missing = fn (\Illuminate\Http\Request $request) => app(\App\Library\PlatformOwner\PlatformOwnerAuthority::class)->refuseMissingTarget($request);
+
+                Route::get('editor', 'DocumentTemplateController@edit')->name('edit')->missing($missing);
+                Route::put('blocks', 'DocumentTemplateController@blocks')->middleware('throttle:240,1')->name('blocks')->missing($missing);
+                Route::get('preview', 'DocumentTemplateController@preview')->middleware('throttle:60,1')->name('preview')->missing($missing);
+                Route::post('publish', 'DocumentTemplateController@publish')->middleware('throttle:30,1')->name('publish')->missing($missing);
+                Route::post('disable', 'DocumentTemplateController@disable')->middleware('throttle:30,1')->name('disable')->missing($missing);
+                Route::get('niches', 'DocumentTemplateController@niches')->name('niches')->missing($missing);
+                Route::put('niches', 'DocumentTemplateController@assignNiches')->middleware('throttle:30,1')->name('niches.update')->missing($missing);
+                Route::post('niches/publish', 'DocumentTemplateController@publishBlueprint')->middleware('throttle:30,1')->name('niches.publish')->missing($missing);
             });
         });
     });

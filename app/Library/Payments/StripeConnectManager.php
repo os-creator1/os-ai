@@ -40,8 +40,228 @@ use Illuminate\Support\Facades\DB;
  */
 final class StripeConnectManager
 {
-    public function __construct(private readonly StripeConnectGateway $gateway)
+    public function __construct(
+        private readonly StripeConnectGateway $gateway,
+        private readonly StripeAccountClaims $claims,
+    ) {
+    }
+
+    /** Whether the platform key is live — bound into every OAuth attempt. */
+    public function platformIsLive(): bool
     {
+        return $this->gateway->platformIsLive();
+    }
+
+    /**
+     * "Connect existing Stripe account" — the Stripe-hosted OAuth URL for a
+     * Business that holds no live connection. The caller supplies the random
+     * `state` (it also stores the binding); the account is chosen by the owner
+     * on Stripe's own page and never typed in or supplied by the browser.
+     *
+     * @throws StripeConnectException
+     */
+    public function oauthAuthorizeUrl(int $actorUserId, Business $business, string $state, string $redirectUri): string
+    {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('provider_oauth');
+
+        $business = $this->ownedBusiness($actorUserId, $business);
+
+        if ($this->liveConnection($business) !== null) {
+            throw StripeConnectException::alreadyConnected();
+        }
+
+        return $this->gateway->oauthAuthorizeUrl($state, $redirectUri);
+    }
+
+    /**
+     * Completes the OAuth flow. The account id is the one Stripe returned for
+     * the one-time code — never anything the browser sent — and the account is
+     * independently re-read from Stripe to learn charge/payout capability.
+     *
+     * Idempotent: a retry that finds THIS Business already live on the SAME
+     * account returns that row without creating another. A different account,
+     * or one live elsewhere (another Business or an Agency lane), is refused.
+     *
+     * @param  bool  $expectedLive  the mode recorded when the attempt started
+     *
+     * @throws StripeConnectException
+     */
+    public function connectExisting(int $actorUserId, Business $business, string $authorizationCode, bool $expectedLive): BusinessStripeConnection
+    {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('provider_oauth');
+
+        $business = $this->ownedBusiness($actorUserId, $business);
+
+        if ($this->liveConnection($business) !== null) {
+            throw StripeConnectException::alreadyConnected();
+        }
+
+        // ---- network, outside every transaction and lock (§7) -------------
+        try {
+            $grant = $this->gateway->exchangeOAuthCode($authorizationCode);
+        } catch (StripeConnectException $e) {
+            throw $e->reason === StripeConnectException::PROVIDER_FAILED ? StripeConnectException::oauthRejected() : $e;
+        }
+
+        if ($grant->stripeAccountId === '' || ! str_starts_with($grant->stripeAccountId, 'acct_')) {
+            throw StripeConnectException::oauthRejected();
+        }
+
+        // We need to act for the account, so anything short of read_write is unusable.
+        if ($grant->scope !== 'read_write') {
+            $this->revokeUnclaimedGrant($grant->stripeAccountId);
+            throw StripeConnectException::accountNotEligible();
+        }
+
+        if ($grant->livemode !== $expectedLive || $grant->livemode !== $this->gateway->platformIsLive()) {
+            $this->revokeUnclaimedGrant($grant->stripeAccountId);
+            throw StripeConnectException::modeMismatch();
+        }
+
+        $snapshot = $this->gateway->retrieveAccount($grant->stripeAccountId);
+
+        // Fail closed: only an account Stripe positively reports as `standard`
+        // is accepted. An absent or unrecognised type is NOT assumed eligible.
+        if ($snapshot->stripeAccountId !== $grant->stripeAccountId
+            || $snapshot->accountType !== 'standard') {
+            $this->revokeUnclaimedGrant($grant->stripeAccountId);
+            throw StripeConnectException::accountNotEligible();
+        }
+
+        // ---- apply locally ---------------------------------------------------
+        // Conflicts are NOT revoked: the grant is shared with whoever already
+        // holds this account, so revoking would sever their working connection.
+        return DB::transaction(function () use ($business, $grant, $snapshot, $actorUserId) {
+            $locked = Business::query()->whereKey($business->id)->lockForUpdate()->firstOrFail();
+
+            $existing = $this->liveConnection($locked);
+
+            if ($existing !== null) {
+                if ($existing->stripe_account_id === $grant->stripeAccountId) {
+                    return $existing;
+                }
+
+                throw StripeConnectException::alreadyConnected();
+            }
+
+            $connection = new BusinessStripeConnection([
+                'business_id' => $locked->id,
+                'stripe_account_id' => $grant->stripeAccountId,
+            ]);
+
+            $connection->forceFill($this->providerColumns($snapshot, $this->statusFor($snapshot)) + [
+                'connection_method' => 'oauth',
+                'connected_by_user_id' => $actorUserId,
+                'connected_at' => now(),
+                'last_synced_at' => now(),
+                'lock_version' => 0,
+            ]);
+
+            try {
+                $connection->save();
+            } catch (\Illuminate\Database\QueryException $e) {
+                // The row's own unique(active_stripe_account_id) fired first: a
+                // live Business connection already holds this account.
+                if ((string) $e->getCode() === '23000') {
+                    throw StripeConnectException::accountInUse();
+                }
+
+                throw $e;
+            }
+
+            // The shared, database-unique claim: refuses if any Business OR
+            // Agency connection (or an in-flight revocation) holds the account.
+            // A refusal rolls this transaction back, row included.
+            $this->claimAccount($grant->stripeAccountId, (int) $connection->id);
+
+            return $connection;
+        });
+    }
+
+    /**
+     * `account.application.deauthorized` — the owner revoked this platform at
+     * Stripe. Local-only (no provider call is possible): the live row for that
+     * exact account becomes terminal so nothing new can be charged through it.
+     * Idempotent, and never touches an Agency row or another account.
+     */
+    public function markRevokedByProvider(string $stripeAccountId, ?int $eventCreatedAt = null): void
+    {
+        if (trim($stripeAccountId) === '' || $eventCreatedAt === null) {
+            // Without the event's own timestamp we cannot prove it is about the
+            // CURRENT connection, so a live connection is left alone.
+            return;
+        }
+
+        DB::transaction(function () use ($stripeAccountId, $eventCreatedAt) {
+            $connection = BusinessStripeConnection::query()
+                ->where('stripe_account_id', $stripeAccountId)
+                ->whereIn('status', self::liveStatuses())
+                ->lockForUpdate()
+                ->first();
+
+            if ($connection === null) {
+                return;
+            }
+
+            // A delayed event from an OLDER connection to this same account
+            // (including the echo of our own revocation) predates the current
+            // authorisation and must not disconnect it.
+            // Strictly AFTER: Stripe timestamps have one-second resolution, so
+            // an old event sharing the new connection's second cannot be proven
+            // newer and is ignored (a genuine same-second revocation is caught
+            // by the next status check instead).
+            if ($connection->connected_at === null || $eventCreatedAt <= $connection->connected_at->getTimestamp()) {
+                return;
+            }
+
+            $connection->forceFill([
+                'status' => StripeConnectionStatus::Disconnected->value,
+                'disconnected_at' => now(),
+                'charges_enabled' => false,
+                'payouts_enabled' => false,
+                'requirements_disabled_reason' => 'provider_revoked_access',
+                'lock_version' => (int) $connection->lock_version + 1,
+            ])->save();
+
+            // Not while a disconnect is mid-revocation: it releases the claim itself.
+            $this->claims->releaseUnlessRevoking((string) $connection->stripe_account_id, StripeAccountClaims::LANE_BUSINESS, (int) $connection->id);
+        });
+    }
+
+    /**
+     * Claim the account for this connection inside the creating transaction.
+     *
+     * @throws StripeConnectException ACCOUNT_IN_USE
+     */
+    private function claimAccount(string $stripeAccountId, int $connectionId): void
+    {
+        try {
+            $this->claims->claim($stripeAccountId, StripeAccountClaims::LANE_BUSINESS, $connectionId);
+        } catch (\App\Exceptions\Payments\StripeAccountClaimedException) {
+            throw StripeConnectException::accountInUse();
+        }
+    }
+
+    /**
+     * Best-effort revocation of a grant we received but will NOT use (so it
+     * holds no claim). It takes the short-lived revocation lock first: if any
+     * connection owns the account, or another revocation is running, this does
+     * nothing — it can never revoke access a winner is using. The provider call
+     * is made outside any transaction.
+     */
+    private function revokeUnclaimedGrant(string $stripeAccountId): void
+    {
+        if (! $this->claims->acquireRevocationLock($stripeAccountId)) {
+            return;
+        }
+
+        try {
+            $this->gateway->deauthorizeAccount($stripeAccountId);
+        } catch (StripeConnectException) {
+            \Illuminate\Support\Facades\Log::warning('Business Stripe OAuth: could not revoke an unused grant.');
+        } finally {
+            $this->claims->releaseRevocationLock($stripeAccountId);
+        }
     }
 
     /**
@@ -78,6 +298,8 @@ final class StripeConnectManager
      */
     public function connect(int $actorUserId, Business $business, string $refreshUrl, string $returnUrl): string
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('provider_oauth');
+
         $business = $this->ownedBusiness($actorUserId, $business);
 
         // Cheap pre-check so the ordinary "already connected" case never
@@ -114,6 +336,8 @@ final class StripeConnectManager
                 'lock_version' => 0,
             ])->save();
 
+            $this->claimAccount($snapshot->stripeAccountId, (int) $connection->id);
+
             return $connection;
         });
 
@@ -129,6 +353,8 @@ final class StripeConnectManager
      */
     public function resumeOnboarding(int $actorUserId, Business $business, string $refreshUrl, string $returnUrl): string
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('provider_oauth');
+
         $business = $this->ownedBusiness($actorUserId, $business);
         $connection = $this->liveConnection($business);
 
@@ -192,28 +418,76 @@ final class StripeConnectManager
     public function disconnect(int $actorUserId, Business $business): BusinessStripeConnection
     {
         $business = $this->ownedBusiness($actorUserId, $business);
+        $live = $this->liveConnection($business) ?? throw StripeConnectException::notConnected();
 
-        return DB::transaction(function () use ($business) {
+        // An OAuth-linked account also carries OUR grant at Stripe. It is
+        // revoked FIRST, outside any transaction, while this connection still
+        // holds the account's claim — so no other connection can have claimed
+        // the account yet, and the revocation can never cut off a winner. The
+        // Stripe account itself is never deleted. If revocation fails the
+        // local disconnect still proceeds; the transient (never persisted)
+        // `oauth_revocation` attribute lets the UI say so.
+        $revocation = null;
+
+        if ($live->connection_method === 'oauth') {
+            // Pin the claim for the whole revocation: a deauthorisation webhook
+            // that terminates this row meanwhile must not free the account for
+            // a competitor before the provider call below has finished.
+            //
+            // If the pin does not take, the claim is no longer ours: a provider
+            // revocation webhook already ended this connection and freed the
+            // account, so Stripe has revoked the grant itself and a competitor
+            // may now hold it. Making our own revoke call then could cut off
+            // that competitor, so it is skipped.
+            if ($this->claims->beginRevocation((string) $live->stripe_account_id, StripeAccountClaims::LANE_BUSINESS, (int) $live->id)) {
+                try {
+                    $this->gateway->deauthorizeAccount((string) $live->stripe_account_id);
+                    $revocation = 'revoked';
+                } catch (StripeConnectException) {
+                    \Illuminate\Support\Facades\Log::warning('Business Stripe OAuth: could not revoke a grant.');
+                    $revocation = 'failed';
+                }
+            } else {
+                $revocation = 'revoked';
+            }
+        }
+
+        $disconnected = DB::transaction(function () use ($business, $live) {
             $connection = BusinessStripeConnection::query()
+                ->whereKey($live->id)
                 ->where('business_id', $business->id)
-                ->whereIn('status', self::liveStatuses())
                 ->lockForUpdate()
                 ->first();
 
-            if ($connection === null) {
+            $stillLive = $connection !== null && in_array($connection->status->value, self::liveStatuses(), true);
+
+            // A webhook may already have terminated the row while we revoked;
+            // that is fine for an OAuth disconnect (we still own the release).
+            if ($connection === null || (! $stillLive && $live->connection_method !== 'oauth')) {
                 throw StripeConnectException::notConnected();
             }
 
-            $connection->forceFill([
-                'status' => StripeConnectionStatus::Disconnected->value,
-                'disconnected_at' => now(),
-                'charges_enabled' => false,
-                'payouts_enabled' => false,
-                'lock_version' => (int) $connection->lock_version + 1,
-            ])->save();
+            if ($stillLive) {
+                $connection->forceFill([
+                    'status' => StripeConnectionStatus::Disconnected->value,
+                    'disconnected_at' => now(),
+                    'charges_enabled' => false,
+                    'payouts_enabled' => false,
+                    'lock_version' => (int) $connection->lock_version + 1,
+                ])->save();
+            }
+
+            // Only now does the account become claimable again.
+            $this->claims->release((string) $connection->stripe_account_id, StripeAccountClaims::LANE_BUSINESS, (int) $connection->id);
 
             return $connection->refresh();
         });
+
+        if ($revocation !== null) {
+            $disconnected->setAttribute('oauth_revocation', $revocation);
+        }
+
+        return $disconnected;
     }
 
     /**
@@ -271,6 +545,7 @@ final class StripeConnectManager
             'payouts_enabled' => $snapshot->payoutsEnabled,
             'details_submitted' => $snapshot->detailsSubmitted,
             'requirements_disabled_reason' => $snapshot->requirementsDisabledReason,
+            'requirements_due' => json_encode($snapshot->requirementsDue),
             'default_currency' => $snapshot->defaultCurrency,
         ];
     }

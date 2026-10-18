@@ -186,8 +186,9 @@ class BusinessHomeNextBestMoveTest extends TestCase
 
         $this->assertNull($band['move']);
         $this->assertNull($band['recommendations']);
-        $this->assertStringContainsString("You're all caught up.", html_entity_decode($html));
-        $this->assertStringContainsString('data-band="next_best_move"', $this->home()->getContent(), 'The band is always shown.');
+        $this->assertStringNotContainsString('data-role="next-best-move"', $html, 'A quiet Business gets no empty urgent-action card, only the small calm one.');
+        $this->assertStringContainsString('data-role="caught-up"', $html);
+        $this->assertStringContainsString('all caught up', html_entity_decode($html));
     }
 
     public function test_billing_is_never_the_move_even_when_it_is_the_only_problem(): void
@@ -221,7 +222,7 @@ class BusinessHomeNextBestMoveTest extends TestCase
 
         $this->assertSame(1, substr_count($main, 'data-role="next-best-move"'), 'Exactly one move.');
         $this->assertSame(1, substr_count($this->bandHtml($html, 'next_best_move'), 'data-role="next-best-move-action"'), 'Exactly one action.');
-        $this->assertStringNotContainsString('data-band="attention"', $main, "Slice 4's attention list is gone.");
+        $this->assertStringNotContainsString('data-band="attention-list"', $main, "Slice 4's attention list is gone.");
         $this->assertStringNotContainsString('data-band="recommendations"', $main, 'And its list of five.');
         $this->assertStringNotContainsString('Recommended next steps', $main);
         $this->assertStringNotContainsString('Needs attention', $this->mainText($html));
@@ -401,7 +402,8 @@ class BusinessHomeNextBestMoveTest extends TestCase
         $sql = $this->sqlDuring(fn () => $this->dashboardFor($customer->user));
 
         $awaitingReads = array_filter($sql, fn (string $s) => str_contains($s, 'chat_box_messages') && str_contains($s, 'last_message_id'));
-        $opportunityReads = array_filter($sql, fn (string $s) => str_contains($s, 'from `opportunities`'));
+        // The Growth band (Home = Growth Center) reads its own bounded top list; this test is about the move's queue read.
+        $opportunityReads = array_filter($sql, fn (string $s) => str_contains($s, 'from `opportunities`') && str_contains(strtolower($s), 'limit ' . BusinessHomePresenter::RECOMMENDATION_QUEUE_CAP));
 
         $this->assertCount(1, $awaitingReads, 'Awaiting reply is read ONCE, shared by the Conversations band and the move.');
         $this->assertCount(1, $opportunityReads, 'One bounded read of the work queue: ' . implode(' | ', $opportunityReads));

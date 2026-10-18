@@ -119,13 +119,11 @@ class WebsiteSeoTest extends TestCase
         $this->get($canonicalUrl)->assertOk()->assertDontSee('rel="canonical"', false);
     }
 
-    public function test_platform_path_canonical_points_to_the_active_custom_domain_when_one_exists(): void
+    public function test_platform_path_moves_permanently_to_the_active_custom_domain_when_one_exists(): void
     {
-        // Both hosts serve identical content from the same published
-        // snapshot — without a shared canonical, search engines could
-        // treat them as competing duplicates. The platform path's own
-        // <link rel="canonical"> must point at the domain that is
-        // actually indexable, never at itself.
+        // Both hosts used to serve identical content, the platform path with
+        // noindex AND a canonical to the custom domain (a mixed signal). It
+        // now answers a 301 to the one real, indexable address.
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $this->homePage($website);
@@ -141,12 +139,12 @@ class WebsiteSeoTest extends TestCase
         ]);
 
         $this->get(route('public.website.home', $website->public_id))
-            ->assertOk()
-            ->assertSee('<link rel="canonical" href="https://canonical-target.test/">', false);
+            ->assertStatus(301)
+            ->assertRedirect('https://canonical-target.test/');
 
         $this->get(route('public.website.page', [$website->public_id, 'about']))
-            ->assertOk()
-            ->assertSee('<link rel="canonical" href="https://canonical-target.test/about">', false);
+            ->assertStatus(301)
+            ->assertRedirect('https://canonical-target.test/about');
     }
 
     public function test_per_page_noindex_value_survives_publish_snapshot_round_trip(): void
@@ -166,7 +164,7 @@ class WebsiteSeoTest extends TestCase
         $this->assertFalse($pagesByUid[$about->uid]['seo']['noindex']);
     }
 
-    public function test_sitemap_includes_only_pages_from_the_current_published_snapshot(): void
+    public function test_custom_domain_sitemap_includes_only_pages_from_the_current_published_snapshot(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
@@ -174,35 +172,78 @@ class WebsiteSeoTest extends TestCase
         $this->subPage($website, 'about');
 
         app(WebsitePublisher::class)->publish($website, $business->customer_id);
+        $website->domains()->create([
+            'domain' => 'snapshot-sitemap.test',
+            'is_primary' => true,
+            'status' => WebsiteDomainStatus::Active,
+            'verification_token' => 'token',
+            'verified_at' => now(),
+            'activated_at' => now(),
+        ]);
 
         // Added to the draft AFTER the only publish so far — must never
         // appear in the sitemap, which reflects only the published
         // snapshot.
         $this->subPage($website, 'contact');
 
-        $response = $this->get(route('public.website.sitemap', $website->public_id));
+        $response = $this->get('http://snapshot-sitemap.test/sitemap.xml');
 
         $response->assertOk();
         $body = $response->getContent();
 
-        $this->assertStringContainsString(e(route('public.website.home', $website->public_id)), $body);
-        $this->assertStringContainsString(e(route('public.website.page', [$website->public_id, 'about'])), $body);
+        $this->assertStringContainsString('<loc>https://snapshot-sitemap.test/</loc>', $body);
+        $this->assertStringContainsString('<loc>https://snapshot-sitemap.test/about</loc>', $body);
         $this->assertStringNotContainsString('contact', $body);
     }
 
-    public function test_sitemap_route_resolves_successfully_and_returns_xml(): void
+    public function test_custom_domain_sitemap_is_valid_xml_with_the_xml_content_type(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $this->homePage($website);
 
         app(WebsitePublisher::class)->publish($website, $business->customer_id);
+        $website->domains()->create([
+            'domain' => 'xml-sitemap.test',
+            'is_primary' => true,
+            'status' => WebsiteDomainStatus::Active,
+            'verification_token' => 'token',
+            'verified_at' => now(),
+            'activated_at' => now(),
+        ]);
 
-        $response = $this->get(route('public.website.sitemap', $website->public_id));
+        $response = $this->get('http://xml-sitemap.test/sitemap.xml');
 
         $response->assertOk();
-        $response->assertHeader('Content-Type', 'application/xml');
+        $this->assertStringContainsString('application/xml', (string) $response->headers->get('Content-Type'));
         $this->assertStringStartsWith('<?xml', $response->getContent());
+        $this->assertNotFalse(simplexml_load_string($response->getContent()));
+    }
+
+    public function test_platform_path_has_no_sitemap_of_its_own(): void
+    {
+        // The platform path is never indexable, so a sitemap listing its URLs
+        // would list only noindex pages. With no custom domain it is a 404.
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+
+        app(WebsitePublisher::class)->publish($website, $business->customer_id);
+
+        $this->get(route('public.website.sitemap', $website->public_id))->assertNotFound();
+
+        $website->domains()->create([
+            'domain' => 'platform-sitemap-redirect.test',
+            'is_primary' => true,
+            'status' => WebsiteDomainStatus::Active,
+            'verification_token' => 'token',
+            'verified_at' => now(),
+            'activated_at' => now(),
+        ]);
+
+        $this->get(route('public.website.sitemap', $website->public_id))
+            ->assertStatus(301)
+            ->assertRedirect('https://platform-sitemap-redirect.test/sitemap.xml');
     }
 
     public function test_creating_page_with_reserved_sitemap_slug_is_rejected(): void

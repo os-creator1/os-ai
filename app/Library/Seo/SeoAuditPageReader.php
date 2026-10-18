@@ -2,7 +2,6 @@
 
 namespace App\Library\Seo;
 
-use App\Enums\Seo\SeoIndexabilityState;
 use App\Enums\Website\WebsiteStatus;
 use App\Models\Business;
 use App\Models\SeoAuditFinding;
@@ -19,11 +18,17 @@ use App\Models\Website;
  * revision, run or finding id resolves to nothing rather than to another
  * tenant's data.
  *
- * CONSTANT QUERY COST (§11.4). Five reads, whatever the number of pages,
- * findings or historical runs: the Website, the retained run window, the
- * latest run's findings, and the audited revision's snapshot (one read inside
- * SeoPublishedContentReader, which is itself two at most). Nothing here loops
- * a query, so an N+1 cannot appear as the site or its problems grow.
+ * THE RUN SHOWN IS THE ONE FOR THE PUBLISHED REVISION. Not "the newest row":
+ * after a rollback the newest run can describe a revision that is no longer
+ * live, and presenting its findings as the site's current state would be
+ * wrong. No run for the published revision (never audited, pruned, or a newer
+ * rule set not run yet) is reported as "not checked yet for this version".
+ *
+ * CONSTANT QUERY COST (§11.4). Six reads, whatever the number of pages,
+ * findings or historical runs: the Website, the published revision's snapshot
+ * (also the source of page names), the Website's domain check (two), the
+ * retained run window, and the shown run's findings. Nothing here loops a
+ * query, so an N+1 cannot appear as the site or its problems grow.
  *
  * It never fetches a URL and never calls a provider or AI — it reads rows the
  * audit already wrote plus the immutable snapshot those rows describe.
@@ -40,16 +45,22 @@ final class SeoAuditPageReader
             ->where('business_id', $business->id)
             ->first(['id', 'status', 'published_revision_id']);
 
-        $indexability = ($website === null
-            || $website->status !== WebsiteStatus::Published
-            || $website->published_revision_id === null)
-            // §5.2.4 / §8.7 — a platform property, never a finding.
-            ? SeoIndexabilityState::NoPublishedWebsite
-            : SeoIndexabilityState::PlatformPathNotIndexable;
-
         if ($website === null) {
-            return new SeoAuditPage($indexability, null, [], []);
+            return new SeoAuditPage(SeoIndexability::resolve(null, false), null, [], []);
         }
+
+        $published = $website->status === WebsiteStatus::Published && $website->published_revision_id !== null;
+
+        $publishedContent = $published
+            ? $this->content->forRevision((int) $website->id, (int) $website->published_revision_id)
+            : null;
+
+        // Whether search engines can find the site: a status about how it is
+        // set up today (§5.2.4), never a finding.
+        $indexability = SeoIndexability::resolve(
+            $publishedContent,
+            $publishedContent !== null && $this->content->hasActivePrimaryDomain((int) $website->id),
+        );
 
         // Scoped by BOTH the Business and its Website. The Website was
         // already selected by `business_id`, so the second predicate is
@@ -66,19 +77,37 @@ final class SeoAuditPageReader
             ->get()
             ->all();
 
-        $latest = $history[0] ?? null;
+        $current = $published ? $this->runForPublishedRevision($history, (int) $website->published_revision_id) : null;
 
-        if ($latest === null) {
-            return new SeoAuditPage($indexability, null, [], []);
+        if ($current === null) {
+            return new SeoAuditPage($indexability, null, [], $history, $published);
         }
 
-        return new SeoAuditPage($indexability, $latest, $this->findings($latest, (int) $website->id), $history);
+        return new SeoAuditPage($indexability, $current, $this->findings($current, $publishedContent), $history, $published);
+    }
+
+    /**
+     * The newest run of the CURRENT rule set that audited the published
+     * revision, from the already-loaded window — no query.
+     *
+     * @param  array<int, SeoAuditRun>  $history  newest first
+     */
+    private function runForPublishedRevision(array $history, int $publishedRevisionId): ?SeoAuditRun
+    {
+        foreach ($history as $run) {
+            if ((int) $run->website_revision_id === $publishedRevisionId
+                && (int) $run->rule_set_version === SeoAuditRuleRegistry::VERSION) {
+                return $run;
+            }
+        }
+
+        return null;
     }
 
     /**
      * @return array<int, SeoAuditFindingView>
      */
-    private function findings(SeoAuditRun $run, int $websiteId): array
+    private function findings(SeoAuditRun $run, ?SeoPublishedContent $audited): array
     {
         $rows = SeoAuditFinding::query()
             ->where('seo_audit_run_id', $run->id)
@@ -89,10 +118,9 @@ final class SeoAuditPageReader
             return [];
         }
 
-        // Page NAMES come from the revision the run actually audited, not from
-        // whatever is published now: a finding must be labelled with the page
-        // as it was when the problem was found.
-        $names = $this->pageNames($websiteId, (int) $run->website_revision_id);
+        // Page NAMES come from the revision the run audited — which is the
+        // published revision, already read above, so no second read.
+        $names = $this->pageNames($audited);
 
         $views = [];
 
@@ -121,14 +149,12 @@ final class SeoAuditPageReader
     }
 
     /**
-     * uid => page name, from the audited snapshot. One read, no loop.
+     * uid => page name, from the audited snapshot. No query, no loop.
      *
      * @return array<string, string>
      */
-    private function pageNames(int $websiteId, int $revisionId): array
+    private function pageNames(?SeoPublishedContent $content): array
     {
-        $content = $this->content->forRevision($websiteId, $revisionId);
-
         if ($content === null) {
             return [];
         }

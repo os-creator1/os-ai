@@ -170,13 +170,32 @@ final class WebsiteSetupSessionManager
      */
     public function saveAnswer(QuestionnaireResponse $response, string $stepKey, mixed $value, int $expectedRevision): QuestionnaireResponse
     {
-        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $value, $expectedRevision) {
+        return $this->saveAnswers($response, $stepKey, [$stepKey => $value], $expectedRevision);
+    }
+
+    /**
+     * Saves every answer of ONE wizard screen atomically (a screen groups
+     * several atomic steps; the revision check, size cap and step advance
+     * apply once to the whole screen). `$screenKey` is the screen's
+     * address — its first step's key — and the resume position advances to
+     * the next screen.
+     *
+     * @param  array<string, mixed>  $values  step key => validated value
+     *
+     * @throws AnswerRevisionConflictException
+     */
+    public function saveAnswers(QuestionnaireResponse $response, string $screenKey, array $values, int $expectedRevision): QuestionnaireResponse
+    {
+        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($screenKey, $values, $expectedRevision) {
             if ((int) $locked->answers_revision !== $expectedRevision) {
                 throw new AnswerRevisionConflictException((int) $locked->answers_revision);
             }
 
             $answers = $locked->answers ?? [];
-            $answers[$stepKey] = $value;
+            foreach ($values as $key => $value) {
+                $answers[$key] = $value;
+            }
+            $stepKey = $screenKey;
 
             if (strlen((string) json_encode($answers)) > self::MAX_ANSWERS_JSON_BYTES) {
                 throw new DomainException('This answer is too large to save.');
@@ -189,6 +208,55 @@ final class WebsiteSetupSessionManager
                 'answers' => $answers,
                 'answers_revision' => $locked->answers_revision + 1,
                 'current_step_key' => $nextStepKey ?? $stepKey,
+            ])->save();
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
+     * The autosave path: persists a screen's current (possibly unfinished)
+     * values under the same lock and the same optimistic revision check as
+     * saveAnswers(), but never moves the resume position and never bumps the
+     * revision when nothing actually changed — so a debounce tick that fires
+     * after an identical save is a harmless no-op rather than a revision
+     * churn that would invalidate another open form.
+     *
+     * Only the keys in `$values` (this screen's own steps) are ever written;
+     * every other stored answer is carried over untouched.
+     *
+     * @param  array<string, mixed>  $values  step key => (draft-validated) value
+     *
+     * @throws AnswerRevisionConflictException
+     */
+    public function saveDraft(QuestionnaireResponse $response, array $values, int $expectedRevision): QuestionnaireResponse
+    {
+        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($values, $expectedRevision) {
+            if ((int) $locked->answers_revision !== $expectedRevision) {
+                throw new AnswerRevisionConflictException((int) $locked->answers_revision);
+            }
+
+            $answers = $locked->answers ?? [];
+            $changed = false;
+
+            foreach ($values as $key => $value) {
+                if (! array_key_exists($key, $answers) || $answers[$key] !== $value) {
+                    $answers[$key] = $value;
+                    $changed = true;
+                }
+            }
+
+            if (! $changed) {
+                return $locked;
+            }
+
+            if (strlen((string) json_encode($answers)) > self::MAX_ANSWERS_JSON_BYTES) {
+                throw new DomainException('This answer is too large to save.');
+            }
+
+            $locked->forceFill([
+                'answers' => $answers,
+                'answers_revision' => $locked->answers_revision + 1,
             ])->save();
 
             return $locked->refresh();
@@ -371,6 +439,41 @@ final class WebsiteSetupSessionManager
         $website = Website::findOrFail($completed->website_id);
 
         return $this->generationCoordinator->runExclusive($website, $open);
+    }
+
+    /**
+     * Website creation flow fix — a `completed` response whose website
+     * never actually has pages (generation never succeeded on its behalf,
+     * or every generated page was later deleted) must not strand the
+     * owner: this flips it back to a plain first-time `in_progress`
+     * session (NOT edit_mode — finishing it MUST generate) parked on its
+     * final question, which is exactly where the wizard sends an owner to
+     * the review/generate screen. Never creates a second response or
+     * Website.
+     */
+    public function reopenForGeneration(QuestionnaireResponse $completed): QuestionnaireResponse
+    {
+        if ($completed->status !== QuestionnaireResponseStatus::Completed) {
+            return $completed;
+        }
+
+        return $this->runIfNotGenerating($completed, function (QuestionnaireResponse $locked) {
+            if ($locked->status !== QuestionnaireResponseStatus::Completed) {
+                return $locked;
+            }
+
+            $visible = $this->stepResolver->visibleSteps($locked->version->steps(), $locked->answers ?? []);
+            $lastKey = $visible !== [] ? (string) end($visible)['key'] : (string) $locked->current_step_key;
+
+            $locked->forceFill([
+                'status' => QuestionnaireResponseStatus::InProgress,
+                'edit_mode' => false,
+                'current_step_key' => $lastKey,
+                'completed_at' => null,
+            ])->save();
+
+            return $locked->refresh();
+        });
     }
 
     /**

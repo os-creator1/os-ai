@@ -28,6 +28,13 @@ final class DashboardSnapshot
     /** Unified Business Home §2.2 row 0 — one actionable billing exception. */
     public const BAND_BILLING_EXCEPTION = 'billing_exception';
 
+    /**
+     * Home = Growth Center — the top recommendations, what is working and the
+     * business health score. When it renders it REPLACES the next-best-move
+     * band (both read the same Opportunity Engine; one voice on Home).
+     */
+    public const BAND_GROWTH = 'growth';
+
     /** Unified Business Home §2.3 — what changed since this customer's last visit. */
     public const BAND_ACTIVITY = 'activity';
 
@@ -50,6 +57,13 @@ final class DashboardSnapshot
     public const BAND_RECENT_WORK = 'recent_work';
 
     public const BAND_ACTIONS = 'actions';
+
+    /**
+     * Home V2 — the coordinated command-center model (HomeCommandCenter): the one
+     * primary move, attention with duplicates removed, briefing, setup journey,
+     * handled-work panel and Ask MotionGrove. Built from the bands above.
+     */
+    public const BAND_COMMAND = 'command_center';
     public const BAND_CLIENTS = 'clients';
 
     /** Unified Home §3.1 (A-1) — per-client new contacts and conversations for the period. */

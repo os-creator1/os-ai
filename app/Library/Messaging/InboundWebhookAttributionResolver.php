@@ -8,15 +8,19 @@ use App\Enums\Messaging\MessagingOperationStatus;
 use App\Enums\Messaging\MessagingProvider;
 use App\Enums\Messaging\MessagingTransportMode;
 use App\Enums\Messaging\WebhookRejectionReason;
+use App\Library\AgencyOutreach\AgencyByoSender;
+use App\Library\AgencyOutreach\AgencyOutreachBusinessResolver;
 use App\Library\Conversations\ConversationHistoryWriter;
 use App\Library\Messaging\Contracts\MessagingProviderAdapter;
 use App\Library\Messaging\DTO\InboundWebhookEvent;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\SMSCounter;
 use App\Library\Usage\UsageWalletManager;
+use App\Models\AgencyProspectingChannel;
 use App\Models\Business;
 use App\Models\BusinessMessagingIdentity;
 use App\Models\Reports;
+use App\Models\Workspace;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -79,6 +83,7 @@ class InboundWebhookAttributionResolver
         private readonly MessagingWebhookRejectionRecorder $rejections,
         private readonly UsageWalletManager $walletManager,
         private readonly ConversationHistoryWriter $history,
+        private readonly InboundOptOutHandler $optOuts,
     ) {
     }
 
@@ -124,6 +129,104 @@ class InboundWebhookAttributionResolver
         return $event->kind === InboundWebhookEventKind::DeliveryStatus
             ? $this->handleDeliveryStatus($event, $rawBody)
             : $this->handleMessageReceived($event, $rawBody);
+    }
+
+    /**
+     * An agency's OWN Telnyx account's webhook, for one of its channels.
+     *
+     * Authentication is account-specific: the channel is identified by its opaque
+     * uid plus its HMAC token (checked by the controller), and the request must
+     * carry a valid Ed25519 signature from the public key THIS agency stored for
+     * the channel — the platform key never vouches for it, and this agency's key
+     * never vouches for managed traffic. Attribution then needs the event's
+     * Messaging profile AND destination number to be this channel's own; the
+     * Business is the channel's Workspace's own Business, never anything in the
+     * payload. An event for anyone else's number, profile or message id changes
+     * nothing.
+     */
+    public function handleAgencyByo(Request $request, AgencyProspectingChannel $channel): JsonResponse
+    {
+        $rawBody = $request->getContent();
+        $publicKey = trim((string) $channel->webhook_public_key);
+
+        if ($publicKey === '' || ! TelnyxMessagingAdapter::verifySignatureWithKey($publicKey, $rawBody, self::headers($request))) {
+            $this->rejections->record(WebhookRejectionReason::InvalidSignature, MessagingProvider::Telnyx, $rawBody);
+
+            return response()->json(['status' => 'rejected'], 403);
+        }
+
+        try {
+            $event = TelnyxMessagingAdapter::parseWebhookBody($rawBody);
+        } catch (\Throwable) {
+            $this->rejections->record(WebhookRejectionReason::MalformedPayload, MessagingProvider::Telnyx, $rawBody);
+
+            return response()->json(['status' => 'rejected'], 400);
+        }
+
+        // A validly signed event proves the agency's webhook setup works end to end.
+        if ($channel->webhook_verified_at === null) {
+            $channel->forceFill(['webhook_verified_at' => Carbon::now()])->save();
+        }
+
+        $credentials = AgencyByoSender::credentials($channel);
+        $profileId = $event->messagingProfileId !== null ? trim($event->messagingProfileId) : '';
+
+        // Evidence the payload carries must be THIS channel's, or nothing happens.
+        if ($profileId !== '' && ($credentials === null || $profileId !== $credentials['profile_id'])) {
+            $this->rejections->record(WebhookRejectionReason::ConflictingMapping, MessagingProvider::Telnyx, $rawBody, $profileId, $event->destinationNumber);
+
+            return response()->json(['status' => 'unattributed'], 200);
+        }
+
+        if ($event->kind === InboundWebhookEventKind::DeliveryStatus) {
+            return $this->handleDeliveryStatus($event, $rawBody, $channel);
+        }
+
+        return $this->handleAgencyByoMessageReceived($channel, $event, $rawBody, $profileId, $credentials);
+    }
+
+    /** @param array{api_key: string, profile_id: string}|null $credentials */
+    private function handleAgencyByoMessageReceived(
+        AgencyProspectingChannel $channel,
+        InboundWebhookEvent $event,
+        string $rawBody,
+        string $profileId,
+        ?array $credentials,
+    ): JsonResponse {
+        if ($event->providerMessageId !== null && $event->providerMessageId !== ''
+            && DB::table(ManagedMessageDispatcher::TABLE)
+                ->where('provider', MessagingProvider::Telnyx->value)
+                ->where('provider_message_id', $event->providerMessageId)
+                ->exists()) {
+            $this->rejections->record(WebhookRejectionReason::Duplicate, MessagingProvider::Telnyx, $rawBody, $profileId, $event->destinationNumber);
+
+            return response()->json(['status' => 'duplicate'], 200);
+        }
+
+        $destination = E164Normalizer::normalize($event->destinationNumber);
+        $own = E164Normalizer::normalize((string) $channel->sender_number);
+
+        // Both signals, as for managed: this channel's Messaging profile AND this channel's number.
+        if ($profileId === '' || $destination === null) {
+            $this->rejections->record(WebhookRejectionReason::MalformedPayload, MessagingProvider::Telnyx, $rawBody, $event->messagingProfileId, $event->destinationNumber);
+
+            return response()->json(['status' => 'rejected'], 400);
+        }
+
+        $workspace = Workspace::query()->find((int) $channel->workspace_id);
+        $business = $workspace !== null ? AgencyOutreachBusinessResolver::forWorkspace($workspace) : null;
+
+        if ($credentials === null || $own === null || $destination !== $own || $business === null) {
+            $this->rejections->record(WebhookRejectionReason::UnknownMapping, MessagingProvider::Telnyx, $rawBody, $profileId, $destination);
+
+            return response()->json(['status' => 'unattributed'], 200);
+        }
+
+        if (! $this->persistInboundFor((int) $business->id, null, MessagingTransportMode::Byo, $channel, $event, $destination)) {
+            return response()->json(['status' => 'duplicate'], 200);
+        }
+
+        return response()->json(['status' => 'accepted'], 200);
     }
 
     private function handleMessageReceived(InboundWebhookEvent $event, string $rawBody): JsonResponse
@@ -208,14 +311,25 @@ class InboundWebhookAttributionResolver
         return response()->json(['status' => 'accepted'], 200);
     }
 
-    private function handleDeliveryStatus(InboundWebhookEvent $event, string $rawBody): JsonResponse
+    private function handleDeliveryStatus(InboundWebhookEvent $event, string $rawBody, ?AgencyProspectingChannel $byoChannel = null): JsonResponse
     {
-        // 1. Locate, never create.
+        // 1. Locate, never create. The two Telnyx endpoints are walled off from
+        // each other: the platform-signed managed endpoint can only move a
+        // managed operation, and an agency's own endpoint can only move an
+        // operation that agency's channel sent — an id belonging to anyone else
+        // is simply "not found" here.
         $operation = $event->providerMessageId === null || $event->providerMessageId === ''
             ? null
             : DB::table(ManagedMessageDispatcher::TABLE)
                 ->where('provider', MessagingProvider::Telnyx->value)
                 ->where('provider_message_id', $event->providerMessageId)
+                ->when(
+                    $byoChannel === null,
+                    fn ($query) => $query->where('transport_mode', MessagingTransportMode::Managed->value),
+                    fn ($query) => $query
+                        ->where('transport_mode', MessagingTransportMode::Byo->value)
+                        ->where('agency_prospecting_channel_id', (int) $byoChannel->id),
+                )
                 ->first();
 
         if ($operation === null) {
@@ -480,17 +594,35 @@ class InboundWebhookAttributionResolver
         InboundWebhookEvent $event,
         string $destinationNumber,
     ): bool {
+        return $this->persistInboundFor((int) $identity->business_id, (int) $identity->id, MessagingTransportMode::Managed, null, $event, $destinationNumber);
+    }
+
+    /**
+     * The one inbound persistence, shared by managed traffic (an identity) and an
+     * agency's own Telnyx channel (no identity; the channel is recorded on the
+     * operation instead). Same transaction, same unique-key replay guard, same
+     * conversation bridge, opt-out handling and domain event for both.
+     */
+    private function persistInboundFor(
+        int $businessId,
+        ?int $identityId,
+        MessagingTransportMode $mode,
+        ?AgencyProspectingChannel $channel,
+        InboundWebhookEvent $event,
+        string $destinationNumber,
+    ): bool {
         $now = Carbon::now();
-        $businessId = (int) $identity->business_id;
         $messageType = $event->mediaUrls === [] ? 'sms' : 'mms';
         $operationId = null;
 
         try {
-            DB::transaction(function () use ($identity, $event, $businessId, $destinationNumber, $messageType, $now, &$operationId): void {
+            DB::transaction(function () use ($identityId, $mode, $channel, $event, $businessId, $destinationNumber, $messageType, $now, &$operationId): void {
                 $operationId = DB::table(ManagedMessageDispatcher::TABLE)->insertGetId([
                     'business_id' => $businessId,
-                    'business_messaging_identity_id' => (int) $identity->id,
-                    'transport_mode' => MessagingTransportMode::Managed->value,
+                    'business_messaging_identity_id' => $identityId,
+                    'transport_mode' => $mode->value,
+                    'sender_number' => $channel !== null ? $destinationNumber : null,
+                    'agency_prospecting_channel_id' => $channel?->id,
                     'provider' => MessagingProvider::Telnyx->value,
                     'direction' => 'inbound',
                     'message_type' => $messageType,
@@ -511,7 +643,7 @@ class InboundWebhookAttributionResolver
                         self::segmentQuantityFor($event->body),
                         'segment',
                         'inbound:' . MessagingProvider::Telnyx->value . ':' . $event->providerMessageId,
-                        MessagingTransportMode::Managed->value,
+                        $mode->value,
                     );
                 }
 
@@ -532,6 +664,12 @@ class InboundWebhookAttributionResolver
                         $event->mediaUrls,
                         $messageType,
                     );
+
+                    // A STOP-like command withdraws SMS consent for THIS Business
+                    // only. Same transaction and same single execution as the
+                    // history write above, and before the domain event below
+                    // fires, so no automation can text the sender back.
+                    $this->optOuts->handle($business, $event->fromNumber, $event->body);
                 }
             });
         } catch (UniqueConstraintViolationException) {

@@ -194,7 +194,7 @@ class DocumentActivityCenterTest extends TestCase
         $this->authenticateAs($staff);
         $html = $this->get(route('user.home'))->assertOk()->getContent();
 
-        $this->assertStringNotContainsString('badge-up">1<', $html);
+        $this->assertStringNotContainsString('data-role="notification-unread-count" data-count="1"', $html);
     }
 
     public function test_the_owner_sees_the_count_and_item_rendered_in_the_navbar(): void
@@ -209,7 +209,7 @@ class DocumentActivityCenterTest extends TestCase
         $this->assertStringContainsString('Your proposal was sent.', $html);
     }
 
-    public function test_existing_legacy_notification_behavior_remains_intact(): void
+    public function test_legacy_ultimate_sms_notifications_no_longer_surface_but_the_rows_are_kept(): void
     {
         $tenant = $this->sendableTenant();
 
@@ -223,8 +223,9 @@ class DocumentActivityCenterTest extends TestCase
         $this->authenticateAs($tenant['customer']);
         $html = $this->get(route('user.home'))->assertOk()->getContent();
 
-        $this->assertStringContainsString('New Inbox Message', $html);
-        $this->assertStringContainsString('badge-up">1<', $html);
+        $this->assertStringNotContainsString('New Inbox Message', $html);
+        $this->assertStringNotContainsString('data-role="notification-unread-count"', $html);
+        $this->assertSame(1, Notifications::where('user_id', $tenant['customer']->user_id)->count(), 'historical rows are never deleted');
     }
 
     public function test_written_through_platform_database_notifications_not_the_legacy_table(): void

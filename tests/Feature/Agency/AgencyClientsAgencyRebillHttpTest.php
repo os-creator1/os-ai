@@ -336,7 +336,9 @@ class AgencyClientsAgencyRebillHttpTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('agency-rebill-assign-form', false);
-        $response->assertSee('Usage funding (AgencyRebill)');
+        // Agency V1 final: the card is titled in the owner's words, never with the internal product term.
+        $response->assertSee('Usage funding');
+        $response->assertDontSee('AgencyRebill', false);
         $response->assertSee('SaaS subscription');
     }
 }

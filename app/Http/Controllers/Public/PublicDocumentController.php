@@ -6,6 +6,10 @@ use App\Exceptions\Documents\DocumentLinkException;
 use App\Exceptions\Payments\PaymentStartException;
 use App\Exceptions\Payments\StripeConnectException;
 use App\Http\Controllers\Controller;
+use App\Enums\Documents\DocumentStatus;
+use App\Library\Documents\Blocks\BlockSchema;
+use App\Library\Documents\Blocks\DocumentBlockRenderer;
+use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Library\Documents\DocumentManager;
 use App\Library\Documents\PublicDocumentAccess;
 use App\Library\Documents\PublicDocumentGuard;
@@ -13,6 +17,7 @@ use App\Library\Payments\PaymentManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -44,6 +49,7 @@ class PublicDocumentController extends Controller
         private readonly PublicDocumentGuard $guard,
         private readonly DocumentManager $manager,
         private readonly PaymentManager $payments,
+        private readonly DocumentBlockRenderer $blocks,
     ) {
     }
 
@@ -120,9 +126,24 @@ class PublicDocumentController extends Controller
             return $this->refusal();
         }
 
+        $document = $access->document->refresh();
+
+        // Contract 17B §7 — signing never ends on a dead page: the signed page
+        // leads on to payment when something is payable now, and otherwise says
+        // what is due next. paymentState() creates nothing and calls no provider.
+        $payment = $this->payments->paymentState($access);
+        $next = $payment['payable_item']
+            ?? $access->version->paymentScheduleItems()->orderBy('sequence')->get()
+                ->first(fn ($row) => $row->status === \App\Enums\Documents\PaymentScheduleItemStatus::Pending);
+
         return response()->view('public.documents.signed', [
-            'document' => $access->document->refresh(),
+            'document' => $document,
             'parties' => $this->parties($access),
+            'brand' => $this->brand($access),
+            'payment' => $payment,
+            'payUrl' => route('public.documents.show', ['uid' => $document->uid, 'token' => $token]) . '#pay',
+            'nextItem' => $next,
+            'timezone' => (string) ($access->business->timezone ?: config('app.timezone', 'UTC')),
         ]);
     }
 
@@ -154,7 +175,19 @@ class PublicDocumentController extends Controller
         try {
             $access = $this->guard->resolve($uid, $token);
             $result = $this->payments->start($access);
-        } catch (DocumentLinkException|PaymentStartException|StripeConnectException) {
+        } catch (PaymentStartException $e) {
+            // The one refusal that is not an oracle: the caller already holds
+            // a valid link, and "nothing left to pay" means an earlier attempt
+            // settled (a double click, a second tab, a return from Stripe).
+            // Saying so lets the page show the real outcome instead of a
+            // generic "not available". Every other reason stays uniform.
+            if (in_array($e->reason, [PaymentStartException::NOTHING_PAYABLE, PaymentStartException::DOCUMENT_NOT_PAYABLE], true)
+                && $this->payments->statusFor($access)['state'] !== 'none') {
+                return response()->json(['error' => 'already_settled'], 409);
+            }
+
+            return $this->refusal();
+        } catch (DocumentLinkException|StripeConnectException) {
             // A provider failure is refused exactly like every other reason:
             // it must never surface as a 500 that leaks a stack trace, and the
             // customer must not learn whether the fault was theirs, the
@@ -165,6 +198,25 @@ class PublicDocumentController extends Controller
         // §7.2.1 — the minimum transient browser material, and nothing more.
         // The platform SECRET key is never here.
         return response()->json($result->toResponse());
+    }
+
+    /**
+     * Where the customer stands after Stripe sends the browser back (or while
+     * a payment settles). The attempt is resolved from the verified document
+     * token and our own payment rows; nothing in the request names a payment,
+     * an intent or an account, and the response carries no secret and no
+     * provider identifier. Never creates an attempt.
+     */
+    public function payStatus(string $uid, string $token): Response|JsonResponse
+    {
+        try {
+            $access = $this->guard->resolve($uid, $token);
+        } catch (DocumentLinkException) {
+            return $this->refusal();
+        }
+
+        return response()->json($this->payments->statusFor($access))
+            ->header('Cache-Control', 'no-store, private');
     }
 
     /**
@@ -212,7 +264,7 @@ class PublicDocumentController extends Controller
      * name. Nothing else about the tenant — no id, uid, Workspace or plan —
      * ever reaches the page.
      *
-     * @return array{business_name: string, business_location_name: ?string}
+     * @return array{business_name: string, business_location_name: ?string, recipient_name: ?string}
      */
     private function parties(PublicDocumentAccess $access): array
     {
@@ -221,6 +273,38 @@ class PublicDocumentController extends Controller
         return [
             'business_name' => is_string($frozen['business_name'] ?? null) ? $frozen['business_name'] : (string) $access->business->name,
             'business_location_name' => is_string($frozen['business_location_name'] ?? null) ? $frozen['business_location_name'] : null,
+            'recipient_name' => is_string($frozen['recipient_name'] ?? null) && trim($frozen['recipient_name']) !== '' ? $frozen['recipient_name'] : null,
+        ];
+    }
+
+    /**
+     * Presentation-only branding of the Business whose document this is, from
+     * its own Website theme (owner `brand_color` and logo). Never the platform,
+     * the Agency workspace or a signed-in user; unavailable branding yields a
+     * neutral fallback.
+     *
+     * @return array{name: string, color: string, ink: string, logo_url: ?string, initials: string}
+     */
+    private function brand(PublicDocumentAccess $access): array
+    {
+        $business = $access->business;
+        $name = $this->parties($access)['business_name'];
+        $website = \App\Models\Website::query()->where('business_id', $business->id)->first();
+        $theme = is_array($website?->theme) ? $website->theme : [];
+
+        $tokens = \App\Library\Website\Design\BrandColors::tokens($theme['brand_color'] ?? null);
+
+        $logoUid = $theme['logo_asset_uid'] ?? null;
+        $logo = $website !== null && is_string($logoUid) && $logoUid !== ''
+            ? \App\Models\WebsiteAsset::query()->where('website_id', $website->id)->where('uid', $logoUid)->first()
+            : null;
+
+        return [
+            'name' => $name,
+            'color' => $tokens['accent'] ?? '#1f2933',
+            'ink' => $tokens['accent_ink'] ?? '#ffffff',
+            'logo_url' => $logo?->url(),
+            'initials' => mb_strtoupper(mb_substr(trim($name), 0, 1)) ?: '•',
         ];
     }
 
@@ -232,9 +316,11 @@ class PublicDocumentController extends Controller
     {
         $version = $access->version;
 
-        return [
+        $data = [
             'document' => $access->document,
             'parties' => $this->parties($access),
+            // Presentation only: the ISSUING Business's own name, logo and brand colour.
+            'brand' => $this->brand($access),
             'body' => is_string($version->content['body'] ?? null) ? $version->content['body'] : null,
             'version' => $version,
             'lines' => $version->lineItems()->orderBy('position')->orderBy('id')->get(),
@@ -253,6 +339,46 @@ class PublicDocumentController extends Controller
             // Deliberately NOT named $errors: that would shadow Blade's own
             // ViewErrorBag and change how every shared partial behaves.
             'formErrors' => $errors,
+            // The sign form is offered only to an unsigned, sent document that
+            // requires a signature (the one condition, shared by both render paths).
+            'signable' => $access->document->requires_signature
+                && $access->document->signature()->doesntExist()
+                && $access->document->status === DocumentStatus::Sent,
+        ];
+
+        return $data + $this->blockData($access, $data);
+    }
+
+    /**
+     * Contract 17B — a block document renders through the one
+     * DocumentBlockRenderer, from the FROZEN version only: merge values come
+     * from content.parties (never the live Business or Contact), and the real
+     * sign form is handed in to be placed at the signature block. A legacy
+     * version (no content.blocks) yields nulls and keeps the original page.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function blockData(PublicDocumentAccess $access, array $data): array
+    {
+        $content = $access->version->content;
+
+        if (! BlockSchema::hasBlocks($content)) {
+            return ['blocksHtml' => null, 'signatureInBlocks' => false];
+        }
+
+        $hasSignatureBlock = BlockSchema::countOfType($content['blocks'], 'signature') > 0;
+        $frozen = is_array($content['parties'] ?? null) ? $content['parties'] : [];
+
+        return [
+            'signatureInBlocks' => $hasSignatureBlock,
+            'blocksHtml' => $this->blocks->renderVersion($access->version, 'public', DocumentMergeFields::fromFrozenParties($frozen), [
+                'business_id' => (int) $access->document->business_id,
+                'timezone' => (string) ($access->business->timezone ?? ''),
+                'signature_html' => $hasSignatureBlock && $data['signable']
+                    ? new HtmlString(view('public.documents._sign_form', $data)->render())
+                    : null,
+            ]),
         ];
     }
 }

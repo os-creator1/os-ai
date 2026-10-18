@@ -239,6 +239,15 @@ Active for that Business is the client owner's own explicit confirmation,
 (`ClientBusinessActivationController`, owner-only) — never automatic on
 acceptance, and never callable by the inviting Agency.
 
+**Onboarding completion (V1 signup hand-off).** The Draft Business a paid V1
+signup provisioned (or one the legacy wizard created) is activated by
+`BusinessManager::activateForCompletedOnboarding()`, called only from
+`OnboardingManager::complete()` after every completion prerequisite holds. It
+is not a general "activate any Draft Business" path: it re-verifies the
+Workspace and Business ownership under lock, refuses an Agency-managed Client
+Workspace (which keeps the path above), and is idempotent for an already
+Active Business.
+
 ### 7.2 `BusinessIndustry`
 
 ```php

@@ -320,6 +320,10 @@ human**, not made here.
 * `manage_business_email` (new, default **false**, like
   `manage_google_business_profile`) governs connect / reconnect / disconnect.
   Not every staff member can connect or disconnect the Business's mailbox.
+  The Workspace's actual owner (`workspaces.owner_user_id`) may always manage
+  it without the permission, via the one `WorkspaceManagementAuthority` decision
+  shared by the page, connect, disconnect and the OAuth callback; a View-As
+  session never manages a client's mailbox, owner or not.
 * Sending uses the existing conversation/contact keys (`chat_box` + `view_contact`);
   no parallel authorization system. Viewing the page needs either email key.
 * Every action runs Workspace → Business → `BusinessRouteAccess` → active

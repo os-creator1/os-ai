@@ -48,6 +48,16 @@ Clients list, the SaaS Plan entitlement and deactivation rules, White Label for
 the signed-in client chrome, and the explicit list of what is deferred
 (custom branded domain, Agency-initiated suspension, per-plan feature limits).
 
+**Google Ads Module V1** is likewise outside the 14 numbered contracts.
+[Contract 23](./implementation-contracts/23-GOOGLE-ADS-MODULE-V1.md) is the
+contract for the first real Google Ads module: a connection on the shared
+`business_google_connections` authority (`google_ads` product), explicit account
+selection, a cached read sync, Overview / Campaigns / Keywords / Search terms /
+Leads & conversions / Budget / Recommendations / Settings, owner-confirmed safe
+mutations, a minimal first-party attribution foundation, and the explicit list
+of what is deferred (offline conversion upload, Opportunity Engine integration,
+AI, Meta/Microsoft Ads, campaign creation, live provider acceptance).
+
 ## Wave mapping (for reference, full detail in the Roadmap)
 
 - **Wave 1:** 01, 02, 03, 06 (concurrent, no real conflicts).

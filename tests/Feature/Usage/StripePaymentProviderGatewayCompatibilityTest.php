@@ -151,7 +151,9 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
         config(['services.stripe.mode' => null, 'services.stripe.secret' => 'sk_test_fake', 'services.stripe.webhook.secret' => 'whsec_fake', 'services.stripe.api_version' => '2024-06-20']);
 
         $this->expectException(\RuntimeException::class);
-        new StripePaymentProviderGateway();
+        // Fail-closed at the provider-action boundary; construction itself is
+        // lazy so read-only pages never need credentials.
+        (new StripePaymentProviderGateway())->retrievePaymentIntent('pi_fake');
     }
 
     public function test_gateway_fails_closed_on_empty_secret(): void
@@ -159,7 +161,9 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
         config(['services.stripe.mode' => 'test', 'services.stripe.secret' => '', 'services.stripe.webhook.secret' => 'whsec_fake', 'services.stripe.api_version' => '2024-06-20']);
 
         $this->expectException(\RuntimeException::class);
-        new StripePaymentProviderGateway();
+        // Fail-closed at the provider-action boundary; construction itself is
+        // lazy so read-only pages never need credentials.
+        (new StripePaymentProviderGateway())->retrievePaymentIntent('pi_fake');
     }
 
     public function test_gateway_fails_closed_on_empty_webhook_secret(): void
@@ -167,7 +171,9 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
         config(['services.stripe.mode' => 'test', 'services.stripe.secret' => 'sk_test_fake', 'services.stripe.webhook.secret' => null, 'services.stripe.api_version' => '2024-06-20']);
 
         $this->expectException(\RuntimeException::class);
-        new StripePaymentProviderGateway();
+        // Fail-closed at the provider-action boundary; construction itself is
+        // lazy so read-only pages never need credentials.
+        (new StripePaymentProviderGateway())->retrievePaymentIntent('pi_fake');
     }
 
     public function test_gateway_fails_closed_on_empty_api_version(): void
@@ -175,7 +181,9 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
         config(['services.stripe.mode' => 'test', 'services.stripe.secret' => 'sk_test_fake', 'services.stripe.webhook.secret' => 'whsec_fake', 'services.stripe.api_version' => null]);
 
         $this->expectException(\RuntimeException::class);
-        new StripePaymentProviderGateway();
+        // Fail-closed at the provider-action boundary; construction itself is
+        // lazy so read-only pages never need credentials.
+        (new StripePaymentProviderGateway())->retrievePaymentIntent('pi_fake');
     }
 
     public function test_gateway_fails_closed_on_live_key_with_test_mode(): void
@@ -183,7 +191,9 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
         config(['services.stripe.mode' => 'test', 'services.stripe.secret' => 'sk_live_fake', 'services.stripe.webhook.secret' => 'whsec_fake', 'services.stripe.api_version' => '2024-06-20']);
 
         $this->expectException(\RuntimeException::class);
-        new StripePaymentProviderGateway();
+        // Fail-closed at the provider-action boundary; construction itself is
+        // lazy so read-only pages never need credentials.
+        (new StripePaymentProviderGateway())->retrievePaymentIntent('pi_fake');
     }
 
     public function test_gateway_constructs_successfully_with_valid_test_mode_config(): void

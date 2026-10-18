@@ -72,15 +72,52 @@ class DashboardQueryBudgetTest extends TestCase
      * the next-best-move band and the headlines band's own insight() read, so
      * this sub-slice's entire cost is the one new SELECT.
      */
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 13;
+    // 13 -> 17 with Home = Growth Center: the Growth band reads the Location ACL ids, the top
+    // recommendations, the latest score and (only when the list is full) one open count.
+    //
+    // 17 -> 25 with Home V2 (command center), for a Calendar-entitled Business that has finished setup
+    // (every Dashboard fixture Business now has — see completeCalendarSetup()). Eight reads, each bounded
+    // and flat in rows, contacts, conversations and messages:
+    //   1. business_locations the actor may reach (CalendarScheduleService::accessibleLocations), and
+    //      2. the guard's per-Location read inside it (one Location here);
+    //   3. booking_types at those Locations (LIMIT 10);
+    //   4. the staff pool, 5. LocationAccessGuard's Location read for each pool member, and
+    //   6. the availability-exists check — BookingTypeManager's own readiness, evaluated for at most
+    //      3 booking types (this fixture has one);
+    //   7. appointments booked, ONE statement carrying every window (activity + both KPI periods);
+    //   8. the cached MoveExplanation read that Home now always makes, because the move is selected
+    //      even when Growth rendered (it used to be skipped), exactly as 19.C budgets it.
+    // A Business with no Calendar entitlement pays only the eighth.
+    //
+    // 25 -> 30 with the final Home (HomeV2Facts and its presenter): five more bounded reads that decide whether a setup
+    // step is genuinely done or what a card may say (never a metric, never a scan) — a connected email account, a priced
+    // catalog item, an active automation, an active Stripe connection and the earliest booking type — each a single
+    // Business-scoped statement that does not grow with rows, contacts, conversations or messages. (The import-running
+    // check is B5's and is counted in BUSINESS_HOME_ANALYTICS.)
+    //
+    // 30 -> 31: the actor's reachable Location ids, read ONCE and handed to the contacts and conversations cards so their figures equal the
+    // lists they open (CrmLocationScope::reachableIds). One bounded read, flat in rows, contacts, conversations and messages.
+    //
+    // 31 -> 32: ONE existence read, "does this Business have a Location the actor cannot reach" (CrmLocationScope::hasUnreachableLocation).
+    // The daily chart is a Business-wide series, so it is withheld from such an actor; without this read the chart could show records their
+    // cards do not count. Flat in rows, contacts, conversations and messages.
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 32;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
      * H-5's one bounded read of the automation ledger — issued by the seam
      * that owns it, which is why it counts here rather than as a
      * Dashboard-owned read.
+     *
+     * 7 -> 8 with the final Home: B5's one `exists()` check for a contact
+     * import still running (BusinessAnalyticsQueries::contactImportRunning),
+     * asked through B5's own class because contacts are B5's. It decides only
+     * whether a comparison shows "Updating…" instead of a half-imported figure.
+     *
+     * 8 -> 9: the contacts card's own scoped statement (BusinessAnalyticsQueries::newContactsForActor): both periods in ONE statement,
+     * over only the contacts in the actor's Locations, so the figure equals the contact list it opens.
      */
-    private const BUSINESS_HOME_ANALYTICS = 7;
+    private const BUSINESS_HOME_ANALYTICS = 9;
 
     /**
      * Observed: the two Business performance periods (H-3), then H-4's two —
@@ -101,7 +138,10 @@ class DashboardQueryBudgetTest extends TestCase
      * below re-measure with three times the clients and require the SAME
      * count, and the ceiling stays where it was.
      */
-    private const AGENCY_HOME_DASHBOARD_OWNED = 10;
+    // 10 -> 8 with the Agency shell: the Account frame now also resolves the Agency's own
+    // Business entitlement snapshot in the shell (warmShellEntitlements), and two reads the
+    // Agency Home used to issue for itself are served from what that warm-up already loaded.
+    private const AGENCY_HOME_DASHBOARD_OWNED = 8;
 
     /**
      * Unified Home §3.1 (A-1) — cross-client performance costs exactly one
@@ -146,10 +186,10 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(self::BUSINESS_HOME_ANALYTICS, $cost['analytics']);
         $this->assertSame(self::BUSINESS_HOME_CONVERSATIONS, $cost['conversations']);
 
-        $this->assertLessThanOrEqual(18, $cost['dashboard'], 'Contract §16: the dashboard-owned ceiling, Recent work included.');
-        $this->assertLessThanOrEqual(7, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read.');
+        $this->assertLessThanOrEqual(33, $cost['dashboard'], 'Contract §16 ceiling (18) plus the fifteen bounded Home V2 reads documented above.');
+        $this->assertLessThanOrEqual(9, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read, plus the import-running check and the actor-scoped contacts statement.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
-        $this->assertLessThanOrEqual(31, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling.');
+        $this->assertLessThanOrEqual(46, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling (31) plus the fifteen Home V2 reads.');
 
         // Within the TTL the CACHED Business performance figures cost nothing.
         // What remains is the one read deliberately never cached: Recent work
@@ -157,7 +197,10 @@ class DashboardQueryBudgetTest extends TestCase
         // happened must not be served from a five-minute-old answer. Contract
         // §16 budgets exactly this (warm ≤ 1).
         $warm = $this->businessHomeCost($customer->user, flush: false);
-        $this->assertSame(1, $warm['analytics'], 'Only the uncached Recent work read survives a warm cache.');
+        // Recent work must be fresh, and so must "is an import still running" (a stale answer would hold a comparison back as
+        // "Updating…" after it finished): each is one bounded read.
+        // The actor-scoped contacts statement is per actor (Location reach), so it is not part of the shared cached comparison either.
+        $this->assertSame(3, $warm['analytics'], 'Only the uncached Recent work, import-running and actor-scoped contacts reads survive a warm cache.');
     }
 
     /**

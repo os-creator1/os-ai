@@ -1148,6 +1148,15 @@ published naming the component → existing Businesses see it surfaced (if
 entitled), new Businesses receive it at install.* **At no point is an
 existing Business silently changed.**
 
+### Registered adapters
+
+| `component_type` | Class | Target module / seam | Entitlement key | Install behaviour |
+|---|---|---|---|---|
+| `crm_pipeline` | `CrmPipelineComponentAdapter` | CRM, `BusinessTemplateApplier::copyPipeline()` | `crm` | **Copies** a pipeline into the Business (§5.5, §12.D) |
+| `document_template` | `DocumentTemplateComponentAdapter` (Implementation Contract 17B §6b) | Proposals / Contracts, platform `document_templates` rows (`business_id` NULL) | `payments_contracts` | **Reference only, the one deliberate exception to "copy, never link".** `install()` creates and copies nothing; it returns an `InstalledComponentReference('document_template', <platform template id>)` that the installer records as provenance. A platform template is canonical platform content a Business is merely *recommended*; the effect is computed live from the **published** version by `RecommendedPlatformTemplates`, never from the installation row. `validateDescriptor()` requires `{template_uid}` of an existing **platform** template (optional `label`); a Business-owned or unknown uid cannot be published. |
+
+§11 rule 3 held: the adapter is one class plus one registration line in `AppServiceProvider`, with no change to the installer, the publisher or any existing adapter. Assigning a template to a niche is a new Blueprint version written only through `NicheBlueprintPublisher` (17B §6b).
+
 ### Dependency map
 
 | This slice depends on | Status on `main` | Nature |

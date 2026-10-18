@@ -4,6 +4,7 @@ namespace App\Library\Opportunity;
 
 use App\Enums\Business\BusinessGoal;
 use App\Enums\Opportunity\OpportunityWorkerKey;
+use App\Library\Growth\GrowthRuleRegistry;
 
 /**
  * Closed, source-controlled Opportunity type definitions (RFC-002 §13.2).
@@ -178,20 +179,25 @@ final class OpportunityTypeRegistry
 
     public static function has(string $workerKey, string $type): bool
     {
-        return $workerKey === OpportunityWorkerKey::BusinessAdvisor->value
-            && array_key_exists($type, self::DEFINITIONS);
+        return self::get($workerKey, $type) !== null;
     }
 
     /**
+     * Growth Center lane: every worker other than business_advisor owns the
+     * Growth rules registered to it in GrowthRuleRegistry (the sales, website,
+     * seo and reputation workers). business_advisor's eleven types above are
+     * untouched and still resolve exactly as before. A (worker, type) pair
+     * that is in neither source is unsupported, as ever.
+     *
      * @return array<string, mixed>|null
      */
     public static function get(string $workerKey, string $type): ?array
     {
-        if (! self::has($workerKey, $type)) {
-            return null;
+        if ($workerKey === OpportunityWorkerKey::BusinessAdvisor->value) {
+            return self::DEFINITIONS[$type] ?? null;
         }
 
-        return self::DEFINITIONS[$type];
+        return GrowthRuleRegistry::typeDefinitionsFor($workerKey)[$type] ?? null;
     }
 
     /**
@@ -201,6 +207,6 @@ final class OpportunityTypeRegistry
     {
         return $workerKey === OpportunityWorkerKey::BusinessAdvisor->value
             ? self::DEFINITIONS
-            : [];
+            : GrowthRuleRegistry::typeDefinitionsFor($workerKey);
     }
 }

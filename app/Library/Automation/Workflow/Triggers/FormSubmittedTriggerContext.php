@@ -31,6 +31,7 @@ final readonly class FormSubmittedTriggerContext
         public string $submissionUid,
         public ?int $contactId,
         public ?int $opportunityId,
+        public int $pages = 1,
     ) {
     }
 

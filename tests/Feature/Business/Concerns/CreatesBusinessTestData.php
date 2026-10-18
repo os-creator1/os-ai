@@ -56,4 +56,33 @@ trait CreatesBusinessTestData
 
         return app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $attributes);
     }
+
+    /**
+     * Gives the Business's Workspace a confirmed plan assignment — what a paid
+     * customer has by the time onboarding can activate their Draft Business
+     * (release-risk closure item 3: an unpaid Workspace may not activate).
+     */
+    protected function assignPaidPlanFixture(Business $business): void
+    {
+        $workspace = Workspace::query()->findOrFail($business->workspace_id);
+
+        $admin = User::create([
+            'first_name' => 'Platform',
+            'last_name' => 'Owner',
+            'email' => 'platform-owner-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            $workspace,
+            \App\Enums\Entitlement\WorkspacePlanTier::Growth,
+            (int) $admin->id,
+            'Onboarding fixture: paid plan.',
+            true,
+            0,
+        );
+    }
 }

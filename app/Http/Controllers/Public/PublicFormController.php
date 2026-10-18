@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers\Public;
 
+use App\Enums\GoogleAds\LeadAttributionEntrySurface;
+use App\Enums\GoogleAds\LeadAttributionSubjectType;
 use App\Http\Controllers\Controller;
+use App\Library\GoogleAds\Attribution\LeadAttributionRecorder;
 use App\Library\Forms\Exceptions\FormUnavailableException;
 use App\Library\Forms\FormDeploymentContext;
 use App\Library\Forms\FormDeploymentResolver;
@@ -47,6 +50,7 @@ class PublicFormController extends Controller
         private readonly FormDeploymentResolver $resolver,
         private readonly FormSubmissionService $submissions,
         private readonly FormSessionStore $sessions,
+        private readonly LeadAttributionRecorder $attribution,
     ) {
     }
 
@@ -96,6 +100,19 @@ class PublicFormController extends Controller
             return redirect()->route('public.forms.page', [
                 $deploymentUid, (string) $request->input(FormSubmissionService::TOKEN_FIELD), $result->nextPage,
             ]);
+        }
+
+        // Google Ads contract §10 — after commit, never able to fail the submission.
+        if (! $result->replayed) {
+            $this->attribution->record(
+                (int) $result->submission->business_id,
+                (int) $result->submission->business_location_id,
+                $result->submission->contact_id === null ? null : (int) $result->submission->contact_id,
+                LeadAttributionSubjectType::FormSubmission,
+                (int) $result->submission->id,
+                LeadAttributionEntrySurface::PublicForm,
+                $request,
+            );
         }
 
         return redirect()->route('public.forms.thanks', ['deploymentUid' => $deploymentUid, 's' => $result->submission->uid]);

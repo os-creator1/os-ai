@@ -135,6 +135,22 @@ final class AgencyClientListReader
     }
 
     /**
+     * The plan name and account state of ONE client, through the exact reads and the exact
+     * Contract 03 truth table the list uses (the client detail page shows the same words).
+     *
+     * @return array{plan_name: ?string, account: array{label: string, variant: string, reason: ?string}}
+     */
+    public function planAndAccountFor(int $clientWorkspaceId): array
+    {
+        $assignment = $this->assignments->lifecycleFactsForWorkspaces([$clientWorkspaceId])[$clientWorkspaceId] ?? null;
+
+        return [
+            'plan_name' => $assignment?->plan_display_name,
+            'account' => $this->account($assignment),
+        ];
+    }
+
+    /**
      * @param  array<int, object>  $rows
      * @return array<int, array<string, mixed>>
      */

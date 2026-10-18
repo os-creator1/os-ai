@@ -83,11 +83,21 @@ export function createStepPicker(hostEl) {
             option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false')
             option.classList.toggle('is-active', index === activeIndex)
 
+            // A step the account cannot use is shown, disabled, with the reason — never
+            // offered and then refused at publish.
+            const reason = unavailableReason(entry)
+
+            if (reason) {
+                option.classList.add('is-disabled')
+                option.setAttribute('aria-disabled', 'true')
+                option.dataset.unavailable = 'true'
+            }
+
             option.appendChild(icon(entry.icon, `wf-tone wf-tone--${entry.type}`))
 
             const text = el('span', 'wf-picker__text')
             text.appendChild(el('span', 'wf-picker__label', NODE_LABELS[entry.type]))
-            text.appendChild(el('span', 'wf-picker__description', (options.hints && options.hints[entry.type]) || entry.description))
+            text.appendChild(el('span', 'wf-picker__description', reason || (options.hints && options.hints[entry.type]) || entry.description))
             option.appendChild(text)
 
             option.addEventListener('mouseenter', () => {
@@ -124,7 +134,20 @@ export function createStepPicker(hostEl) {
         panel.style.top = `${top}px`
     }
 
+    /** The plain reason this step cannot be used by this account, or null when it can. */
+    function unavailableReason(entry) {
+        const capability = entry.requires && options && options.capabilities ? options.capabilities[entry.requires] : null
+
+        return capability && capability.available === false ? capability.reason || 'Not available on your account.' : null
+    }
+
     function choose(type) {
+        const entry = STEP_CATALOG.find((candidate) => candidate.type === type)
+
+        if (entry && unavailableReason(entry)) {
+            return
+        }
+
         const chosen = options
         close()
         chosen.onPick(type)

@@ -32,9 +32,21 @@ interface BusinessRepository extends BaseRepository
      */
     public function findForUpdate(int $id): ?Business;
 
+    /** NULL -> seo_first_v1 on the Business row (a no-op when it already carries a policy). Used when the SEO-first onboarding completes. */
+    public function adoptReadinessPolicy(Business $business): void;
+
     public function findOwnedByCustomer(int $businessId, int $customerId): ?Business;
 
     public function findPrimaryByCustomer(int $customerId): ?Business;
+
+    /**
+     * Every Draft Business this customer owns, ascending by id. Onboarding
+     * uses it to find the Business a signup already provisioned, so that the
+     * wizard continues that Business instead of creating a second one.
+     *
+     * @return Collection<int, Business>
+     */
+    public function draftBusinessesForCustomer(int $customerId): Collection;
 
     /**
      * The earliest Business ever created for this customer_id, by id — no

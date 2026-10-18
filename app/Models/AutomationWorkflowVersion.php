@@ -7,10 +7,12 @@ use App\Enums\Automation\Workflow\EnrollmentPolicySource;
 use App\Enums\Automation\Workflow\FailurePolicy;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Enums\Automation\Workflow\WorkflowVersionState;
+use App\Library\Automation\Workflow\WorkflowLocationScope;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -48,6 +50,8 @@ class AutomationWorkflowVersion extends Model
         'enrollment_policy',
         'enrollment_policy_source',
         'failure_policy',
+        'business_location_id',
+        'scope_mode',
         'published_at',
         'published_by_user_id',
     ];
@@ -57,6 +61,7 @@ class AutomationWorkflowVersion extends Model
         'definition' => 'array',
         'definition_revision' => 'integer',
         'node_count' => 'integer',
+        'business_location_id' => 'integer',
         'trigger_type' => WorkflowTriggerType::class,
         'enrollment_policy' => EnrollmentPolicy::class,
         'enrollment_policy_source' => EnrollmentPolicySource::class,
@@ -78,6 +83,39 @@ class AutomationWorkflowVersion extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    /**
+     * The Location scope this version was published with: Business-wide, one
+     * Location, or a list of selected Locations. Read from the version's own
+     * columns/rows (promoted from the trigger node's config at publish, after being
+     * proved to be active Locations of the Business); the runtime reads this and
+     * never the node config.
+     *
+     * FAIL CLOSED: a "one" version with no Location column, or a "selected" one with
+     * no rows, is bound and admits nothing; an unknown mode reads the same way. It
+     * is never mistaken for Business-wide.
+     */
+    public function scope(): WorkflowLocationScope
+    {
+        $mode = (string) ($this->scope_mode ?? WorkflowLocationScope::BUSINESS);
+
+        return match ($mode) {
+            WorkflowLocationScope::BUSINESS => WorkflowLocationScope::business(),
+            WorkflowLocationScope::ONE => new WorkflowLocationScope(
+                WorkflowLocationScope::ONE,
+                $this->business_location_id === null ? [] : [(int) $this->business_location_id],
+            ),
+            WorkflowLocationScope::SELECTED => new WorkflowLocationScope(
+                WorkflowLocationScope::SELECTED,
+                DB::table('automation_workflow_version_locations')
+                    ->where('version_id', (int) $this->getKey())
+                    ->pluck('business_location_id')
+                    ->map(fn ($id): int => (int) $id)
+                    ->all(),
+            ),
+            default => new WorkflowLocationScope(WorkflowLocationScope::ONE, []),
+        };
     }
 
     public function nodes(): HasMany

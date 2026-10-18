@@ -186,8 +186,7 @@ class BusinessHomeActivityTest extends TestCase
         $this->assertSame('3 new contacts', $activity['items'][0]['text'], 'An hourly visit still summarises the day, not the last two hours.');
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('Business activity', $this->mainText($html));
-        $this->assertStringContainsString('Today so far', $this->mainText($html));
+        $this->assertStringContainsString('Today so far, you gained 3 new contacts', $this->mainText($html), 'The briefing sentence, from the same counts.');
     }
 
     public function test_a_visit_days_ago_counts_from_that_visit(): void
@@ -297,7 +296,8 @@ class BusinessHomeActivityTest extends TestCase
         $this->assertSame([], $activity['items']);
 
         $main = $this->mainText($this->home()->assertOk()->getContent());
-        $this->assertStringContainsString('No new activity since your last visit', $main);
+        // The final Home leads with the plain line when there is nothing new (the approved design); the sentence is only for real news.
+        $this->assertStringContainsString("Here's what's happening with your business.", $main);
         $this->assertDoesNotMatchRegularExpression('/\b0 (new contacts|new conversations|messages received)\b/', $main, 'A zero is never rendered as an item.');
     }
 
@@ -327,10 +327,10 @@ class BusinessHomeActivityTest extends TestCase
         $this->contactsAt($business, 2, $this->ago('1 day'));
         $this->receivedAt($business, 3, $this->ago('1 day'));
 
-        $main = $this->mainText($this->home()->assertOk()->getContent());
+        $main = $this->mainTextWithoutAsk($this->home()->assertOk()->getContent());
 
         $this->assertDoesNotMatchRegularExpression(
-            '/\b(leads?|bookings?|appointments?|revenue|sales|visitors?|page views?|impressions?|rankings?|seo|conversion(s| rate)?|roi)\b/i',
+            '/\b(leads?|bookings?|revenue|sales|visitors?|page views?|impressions?|rankings?|seo|conversion(s| rate)?|roi)\b/i',
             $main,
             'None of these has a canonical source in this application.'
         );
@@ -365,7 +365,8 @@ class BusinessHomeActivityTest extends TestCase
         // The whole Business Home, activity band included, stays inside the
         // contract's ceiling for this state.
         $product = $this->matching($sql, '/\b(reports|contacts|contact_groups|automation_executions|campaigns|chat_boxes|chat_box_messages|business_home_visits|businesses|business_usage_wallets|websites|business_google_connections|opportunities)\b/');
-        $this->assertLessThanOrEqual(25, count($product), 'Business Home product-data ceiling: ' . count($product));
+        // 25 -> 26: the contacts card's actor-scoped statement (both periods in one), so its figure equals the contact list it opens.
+        $this->assertLessThanOrEqual(26, count($product), 'Business Home product-data ceiling: ' . count($product));
     }
 
     // -----------------------------------------------------------------

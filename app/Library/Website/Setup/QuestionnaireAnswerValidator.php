@@ -35,12 +35,30 @@ final class QuestionnaireAnswerValidator
 
     public const MAX_FEATURE_LENGTH = 200;
 
+    /** A reasonable ceiling for one-per-row lists such as service areas (matches UpsertBusinessLocationRequest's own bound). */
+    public const MAX_LIST_ITEMS = 50;
+
+    public const MAX_LIST_ITEM_LENGTH = 120;
+
+    public const MAX_SELECTED_PACKAGES = 30;
+
+    public const MAX_BACKDROP_ALT = 160;
+
+    public const MAX_CATEGORY_LENGTH = 40;
+
     /**
+     * `$draft` is the autosave / Back path: the owner is still typing, so
+     * "required", "not empty" and "is a complete email address" are NOT
+     * enforced (they are enforced when they press Continue). Everything that
+     * bounds the stored value — type, length, option membership, item counts,
+     * shape — is enforced identically, so a draft can never persist something
+     * Continue would have refused on size or shape grounds.
+     *
      * @throws InvalidAnswerException
      */
-    public function validate(array $step, mixed $value): void
+    public function validate(array $step, mixed $value, bool $draft = false): void
     {
-        $required = (bool) ($step['required'] ?? false);
+        $required = (bool) ($step['required'] ?? false) && ! $draft;
         $inputType = (string) ($step['input_type'] ?? '');
 
         if ($value === null) {
@@ -53,17 +71,60 @@ final class QuestionnaireAnswerValidator
 
         match ($inputType) {
             'text', 'tel' => $this->validateText($value, self::MAX_TEXT),
-            'email' => $this->validateEmail($value, $required),
+            'email' => $draft ? $this->validateText($value, self::MAX_TEXT) : $this->validateEmail($value, $required),
             'textarea' => $this->validateText($value, self::MAX_TEXTAREA),
             'select' => $this->validateSelect($step, $value),
             'multi_select' => $this->validateMultiSelect($step, $value),
             'boolean' => $this->validateBoolean($value),
-            'repeatable_group' => $this->validateRepeatableGroup($step, $value),
+            'repeatable_group' => $draft ? $this->validateRepeatableGroupDraft($step, $value) : $this->validateRepeatableGroup($step, $value),
+            'string_list' => $this->validateStringList($value),
+            'catalog_selection' => $this->validateCatalogSelection($value),
+            'location' => $this->validateLocation($value, $draft),
             default => null,
         };
 
         if ($required && $this->isEffectivelyEmpty($value)) {
             throw new InvalidAnswerException('This question requires an answer.');
+        }
+    }
+
+    /**
+     * A base location: {city, region, country_code}. The city is what the
+     * website and the nearby-area suggestions are built on, so Continue
+     * demands it; a draft only bounds the shapes.
+     */
+    private function validateLocation(mixed $value, bool $draft): void
+    {
+        if (! is_array($value) || array_is_list($value)) {
+            throw new InvalidAnswerException('That location is not valid.');
+        }
+
+        $city = $value['city'] ?? null;
+        $region = $value['region'] ?? null;
+        $country = $value['country_code'] ?? null;
+
+        if ($city !== null && (! is_string($city) || mb_strlen($city) > self::MAX_LIST_ITEM_LENGTH)) {
+            throw new InvalidAnswerException('The city must be at most ' . self::MAX_LIST_ITEM_LENGTH . ' characters.');
+        }
+
+        if ($region !== null && (! is_string($region) || mb_strlen($region) > self::MAX_LIST_ITEM_LENGTH)) {
+            throw new InvalidAnswerException('The state or region must be at most ' . self::MAX_LIST_ITEM_LENGTH . ' characters.');
+        }
+
+        if ($country !== null && (! is_string($country) || preg_match('/^[A-Z]{2}$/', $country) !== 1)) {
+            throw new InvalidAnswerException('Choose a country from the list.');
+        }
+
+        if ($draft) {
+            return;
+        }
+
+        if (trim((string) $city) === '') {
+            throw new InvalidAnswerException('Enter the city your business is based in.');
+        }
+
+        if ($country === null || ! array_key_exists($country, app(\App\Library\Business\BusinessLocaleOptions::class)->countries())) {
+            throw new InvalidAnswerException('Choose a country from the list.');
         }
     }
 
@@ -78,6 +139,62 @@ final class QuestionnaireAnswerValidator
         }
 
         return false;
+    }
+
+    /**
+     * A one-per-row list of short strings (service areas). Already
+     * normalized by valueFromRequest() (trimmed, whitespace-collapsed,
+     * de-duplicated, blanks dropped); this only bounds shape and size.
+     */
+    private function validateStringList(mixed $value): void
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidAnswerException('That answer is not a valid list.');
+        }
+
+        if (count($value) > self::MAX_LIST_ITEMS) {
+            throw new InvalidAnswerException('Too many entries — the limit is ' . self::MAX_LIST_ITEMS . '.');
+        }
+
+        foreach ($value as $entry) {
+            if (! is_string($entry) || trim($entry) === '' || mb_strlen($entry) > self::MAX_LIST_ITEM_LENGTH) {
+                throw new InvalidAnswerException('Every entry must be 1 to ' . self::MAX_LIST_ITEM_LENGTH . ' characters.');
+            }
+        }
+    }
+
+    /**
+     * The owner's chosen canonical packages, in display order: each entry
+     * is ONLY a Packages & Products uid. Names and prices are never stored
+     * here — the catalog is the one source of truth (ownership and
+     * lifecycle of every uid are verified against the Business when the
+     * selection is saved).
+     */
+    private function validateCatalogSelection(mixed $value): void
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidAnswerException('That answer is not valid.');
+        }
+
+        if (count($value) > self::MAX_SELECTED_PACKAGES) {
+            throw new InvalidAnswerException('Too many packages — the limit is ' . self::MAX_SELECTED_PACKAGES . '.');
+        }
+
+        $seen = [];
+        foreach ($value as $entry) {
+            $uid = is_array($entry) ? ($entry['uid'] ?? null) : null;
+
+            if (! is_string($uid) || $uid === '' || mb_strlen($uid) > 64 || isset($seen[$uid])) {
+                throw new InvalidAnswerException('A selected package is not valid.');
+            }
+
+            $serviceKey = $entry['service_key'] ?? null;
+            if ($serviceKey !== null && (! is_string($serviceKey) || preg_match('/^[A-Za-z0-9:_-]{1,64}$/', $serviceKey) !== 1)) {
+                throw new InvalidAnswerException('A package\'s linked booth is not valid.');
+            }
+
+            $seen[$uid] = true;
+        }
     }
 
     private function validateText(mixed $value, int $max): void
@@ -177,6 +294,31 @@ final class QuestionnaireAnswerValidator
     /** Matches WebsiteGalleryManager::MAX_CUSTOM_SECTION_ASSETS exactly — one consistent limit, never two. */
     public const MAX_CUSTOM_SECTION_IMAGES = 6;
 
+    /**
+     * A draft keeps a half-finished row (e.g. a testimonial with a quote but
+     * no author yet) instead of refusing the whole autosave; the missing
+     * parts are demanded when the owner presses Continue. Only the bounds are
+     * enforced here.
+     */
+    private function validateRepeatableGroupDraft(array $step, mixed $value): void
+    {
+        if (! is_array($value) || ! array_is_list($value) || count($value) > self::MAX_REPEATABLE_ITEMS) {
+            throw new InvalidAnswerException('That answer is not valid.');
+        }
+
+        foreach ($value as $item) {
+            if (! is_array($item)) {
+                throw new InvalidAnswerException('That answer is not valid.');
+            }
+
+            foreach (['name', 'description', 'question', 'answer', 'quote', 'author_name', 'author_title', 'body'] as $field) {
+                if (isset($item[$field]) && (! is_string($item[$field]) || mb_strlen($item[$field]) > self::MAX_TEXTAREA)) {
+                    throw new InvalidAnswerException('One of the entries is too long.');
+                }
+            }
+        }
+    }
+
     private function validateRepeatableGroup(array $step, mixed $value): void
     {
         if (! is_array($value)) {
@@ -227,6 +369,14 @@ final class QuestionnaireAnswerValidator
 
             if ($targetModule === 'catalog_item') {
                 $this->validateCatalogItemEntry($item);
+            }
+
+            if ($targetModule === 'business_service') {
+                $this->validateServiceEntry($item);
+            }
+
+            if ($targetModule === 'backdrop') {
+                $this->validateBackdropEntry($step, $item);
             }
 
             if ($targetModule === 'custom_section') {
@@ -298,6 +448,90 @@ final class QuestionnaireAnswerValidator
         $authorTitle = $item['author_title'] ?? null;
         if ($authorTitle !== null && (! is_string($authorTitle) || mb_strlen($authorTitle) > self::MAX_TESTIMONIAL_AUTHOR)) {
             throw new InvalidAnswerException('A testimonial author title is too long.');
+        }
+    }
+
+    /**
+     * A backdrop entry's optional category must be one of the niche
+     * definition's own `categories` (never free text when the step defines
+     * a vocabulary); alt text is bounded; the image is only a reference to
+     * a file this Business's own upload endpoint already stored.
+     */
+    private function validateBackdropEntry(array $step, array $item): void
+    {
+        $category = $item['category'] ?? null;
+        if ($category !== null) {
+            $allowed = array_map('strval', array_keys($step['categories'] ?? []));
+
+            if (! is_string($category) || mb_strlen($category) > self::MAX_CATEGORY_LENGTH
+                || ($allowed !== [] && ! in_array($category, $allowed, true))) {
+                throw new InvalidAnswerException('Choose one of the listed backdrop categories.');
+            }
+        }
+
+        $alt = $item['alt_text'] ?? null;
+        if ($alt !== null && (! is_string($alt) || mb_strlen($alt) > self::MAX_BACKDROP_ALT)) {
+            throw new InvalidAnswerException('Image alt text is too long (max ' . self::MAX_BACKDROP_ALT . ' characters).');
+        }
+
+        $imagePath = $item['image_path'] ?? null;
+        if ($imagePath !== null && (! is_string($imagePath) || mb_strlen($imagePath) > 255)) {
+            throw new InvalidAnswerException('A backdrop image reference is invalid.');
+        }
+    }
+
+    /**
+     * A booth service / event type card: optional starting price, features,
+     * website visibility, the preset it started from and its photo references
+     * (files this Business's own upload endpoint already stored — their facts
+     * are re-derived from the file, never trusted from the form).
+     */
+    private function validateServiceEntry(array $item): void
+    {
+        $price = $item['starting_price'] ?? null;
+        if ($price !== null && (! is_numeric($price) || $price < 0 || $price > 10_000_000)) {
+            throw new InvalidAnswerException('A starting price must be a non-negative amount.');
+        }
+
+        $currency = $item['currency_code'] ?? null;
+        if ($currency !== null && (! is_string($currency) || strlen($currency) !== 3)) {
+            throw new InvalidAnswerException('A currency must be a 3-letter code.');
+        }
+
+        $features = $item['features'] ?? [];
+        if (! is_array($features) || count($features) > self::MAX_FEATURES) {
+            throw new InvalidAnswerException('Too many features — the limit is ' . self::MAX_FEATURES . '.');
+        }
+        foreach ($features as $feature) {
+            if (! is_string($feature) || mb_strlen($feature) > self::MAX_FEATURE_LENGTH) {
+                throw new InvalidAnswerException('A feature is too long.');
+            }
+        }
+
+        if (array_key_exists('visible', $item) && ! is_bool($item['visible'])) {
+            throw new InvalidAnswerException('Visibility must be on or off.');
+        }
+
+        $preset = $item['preset'] ?? null;
+        if ($preset !== null && (! is_string($preset) || preg_match('/^[a-z0-9_]{1,40}$/', $preset) !== 1)) {
+            throw new InvalidAnswerException('That starting point is not valid.');
+        }
+
+        foreach (['image_path'] as $field) {
+            $path = $item[$field] ?? null;
+            if ($path !== null && (! is_string($path) || mb_strlen($path) > 255)) {
+                throw new InvalidAnswerException('An image reference is invalid.');
+            }
+        }
+
+        $extras = $item['extra_image_paths'] ?? [];
+        if (! is_array($extras) || count($extras) > \App\Library\Business\BusinessServiceImageManager::MAX_IMAGES - 1) {
+            throw new InvalidAnswerException('A service may have up to ' . (\App\Library\Business\BusinessServiceImageManager::MAX_IMAGES - 1) . ' additional photos.');
+        }
+        foreach ($extras as $extra) {
+            if (! is_string($extra) || mb_strlen($extra) > 255) {
+                throw new InvalidAnswerException('An image reference is invalid.');
+            }
         }
     }
 

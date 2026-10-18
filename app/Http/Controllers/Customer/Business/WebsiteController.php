@@ -78,6 +78,8 @@ class WebsiteController extends CustomerBaseController
         private readonly GuidedGenerationCommitService $guidedGeneration,
         private readonly QuestionnaireResolver $questionnaireResolver,
         private readonly \App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator $generationCoordinator,
+        private readonly \App\Library\Website\Setup\WebsiteCreationStateResolver $creationState,
+        private readonly \App\Library\Website\WebsiteCatalogReferences $catalogReferences,
     ) {
     }
 
@@ -224,11 +226,18 @@ class WebsiteController extends CustomerBaseController
         ]);
     }
 
-    public function pages(string $workspaceUid, string $businessUid): View|Factory|Application
+    public function pages(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
+
+        // A website with no pages has not been created yet — the Pages
+        // management screen (checklist, Preview, Publish...) is for a
+        // generated site only. Send the owner to the one creation journey.
+        if (! $this->creationState->hasGeneratedPages($website)) {
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
+        }
 
         $isPhotoBooth = WebsiteStarterDraftService::isPhotoBooth($business);
 
@@ -245,20 +254,115 @@ class WebsiteController extends CustomerBaseController
             ? count(array_intersect($this->profiles->completenessCheck($business, $website)->missingFieldKeys, $aboutFaqFieldKeys))
             : null;
 
+        $pages = $website->pages()->orderBy('sort_order')->orderBy('id')->get();
+        $reusable = $isPhotoBooth ? $this->starterDrafts->reusableContent($business) : null;
+        $photoCount = $isPhotoBooth ? $website->assets()->count() : null;
+        $galleryPage = $isPhotoBooth ? $pages->firstWhere('slug', 'gallery') : null;
+        $quoteForm = $isPhotoBooth ? $website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->withCount('submissions')->first() : null;
+
         return view('customer.business.website.pages', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
-            'pages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get(),
+            'pages' => $pages,
             'isPhotoBooth' => $isPhotoBooth,
-            'reusable' => $isPhotoBooth ? $this->starterDrafts->reusableContent($business) : null,
-            'photoCount' => $isPhotoBooth ? $website->assets()->count() : null,
-            'galleryPage' => $isPhotoBooth ? $website->pages()->where('slug', 'gallery')->first() : null,
-            'quoteForm' => $isPhotoBooth ? $website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->first() : null,
+            'reusable' => $reusable,
+            'photoCount' => $photoCount,
+            'galleryPage' => $galleryPage,
+            'quoteForm' => $quoteForm,
             'aboutFaqMissingCount' => $aboutFaqMissingCount,
+            'checklist' => $isPhotoBooth
+                ? $this->pagesChecklist($workspaceUid, $businessUid, $pages, $reusable, $photoCount, $galleryPage, $quoteForm, $aboutFaqMissingCount)
+                : [],
         ]);
     }
 
+    /**
+     * The "Make your site stronger" rows. Every row is derived from saved Business/Website data — nothing is
+     * assumed done: a page merely existing never completes a row whose requirement (own-words detail, a usable
+     * form, a public location) is unmet.
+     *
+     * @return list<array{key: string, done: bool, title: string, sub: string, action: string, url: ?string}>
+     */
+    private function pagesChecklist(string $workspaceUid, string $businessUid, $pages, array $reusable, int $photoCount, ?WebsitePage $galleryPage, ?WebsiteForm $quoteForm, ?int $aboutFaqMissingCount): array
+    {
+        $ids = [$workspaceUid, $businessUid];
+        $editUrl = fn (?WebsitePage $page) => $page ? route('customer.workspaces.businesses.website.pages.edit', [...$ids, $page->uid]) : null;
+        $hasOwnWords = fn (?WebsitePage $page) => $page !== null && collect($page->sections ?? [])->contains(
+            fn ($s) => ($s['type'] ?? null) === 'text' && trim((string) ($s['data']['body'] ?? '')) !== ''
+        );
+        $plural = fn (int $n, string $one, string $many) => $n . ' ' . ($n === 1 ? $one : $many);
+        $rows = [];
+
+        if ($aboutFaqMissingCount !== null) {
+            $done = $aboutFaqMissingCount === 0;
+            $rows[] = [
+                'key' => 'about_faq', 'done' => $done,
+                'title' => $done ? 'About & FAQ answers' : 'Answer ' . $plural($aboutFaqMissingCount, 'question', 'questions') . ' for About & FAQ',
+                'sub' => $done ? 'Every fact your About and FAQ pages can show is confirmed.' : 'Years in business, credentials, guarantees, pricing, financing, what makes you different, who you serve. We never guess these for you.',
+                'action' => $done ? 'Review Knowledge Profile' : 'Complete Knowledge Profile',
+                'url' => route('customer.workspaces.businesses.knowledge-profile.edit', $ids),
+            ];
+        }
+
+        $servicesPage = $pages->firstWhere('slug', 'photo-booth-services');
+        $serviceCount = $reusable['services']->count();
+        $done = $hasOwnWords($servicesPage);
+        $rows[] = [
+            'key' => 'services', 'done' => $done,
+            'title' => $done ? 'Services described' : 'Describe your booths on the Services page',
+            'sub' => $done ? 'Your own booth descriptions are on the Services page.' : ($serviceCount > 0
+                ? 'Describe your booth types, backdrops, props, and extras in your own words. Your ' . $plural($serviceCount, 'service is', 'services are') . ' already listed.'
+                : 'No services saved yet. Describe your booth types, backdrops, props and extras in your own words.'),
+            'action' => 'Edit Services page', 'url' => $editUrl($servicesPage),
+        ];
+
+        $packagesPage = $pages->firstWhere('slug', 'photo-booth-packages');
+        $catalog = $reusable['catalog'];
+        $done = $catalog->isNotEmpty() && $hasOwnWords($packagesPage);
+        $rows[] = [
+            'key' => 'packages', 'done' => $done,
+            'title' => $done ? 'Packages described' : ($catalog->isEmpty() ? 'Add your packages' : "Say what's in each package"),
+            'sub' => $done ? 'What each package includes is on the Packages page.' : ($catalog->isNotEmpty()
+                ? $catalog->pluck('name')->implode(', ') . ' show price and description only.'
+                : 'No packages saved yet.'),
+            'action' => $catalog->isEmpty() ? 'Add a package' : 'Edit Packages page',
+            'url' => $catalog->isEmpty() ? route('customer.workspaces.businesses.catalog.create', $ids) : $editUrl($packagesPage),
+        ];
+
+        $onGallery = count(collect($galleryPage?->sections ?? [])->firstWhere('type', 'gallery')['data']['items'] ?? []);
+        $rows[] = [
+            'key' => 'photos', 'done' => $photoCount > 0,
+            'title' => 'Photos',
+            'sub' => $photoCount > 0 ? $photoCount . ' uploaded, ' . $onGallery . ' on your Gallery page.' : 'No photos uploaded yet. Real event photos build trust.',
+            'action' => $photoCount > 0 ? 'Manage photos' : 'Upload photos',
+            'url' => route('customer.workspaces.businesses.website.photos.index', $ids),
+        ];
+
+        $location = $reusable['location'];
+        $rows[] = [
+            'key' => 'location', 'done' => $location !== null,
+            'title' => 'Location',
+            'sub' => $location !== null
+                ? 'Your public location' . ($location->city ? ' in ' . $location->city : '') . ' is used in your contact details.'
+                : 'Your contact details need one: no active public location is available.',
+            'action' => $location !== null ? 'Review locations' : 'Add a location',
+            'url' => route('customer.workspaces.businesses.locations.index', $ids),
+        ];
+
+        $formReady = $quoteForm !== null && $quoteForm->is_active && $quoteForm->location_id !== null;
+        $rows[] = [
+            'key' => 'quote_form', 'done' => $formReady,
+            'title' => 'Quote request form',
+            'sub' => $quoteForm === null ? 'Not created yet.' : (! $formReady
+                ? 'Switch it on and choose a location before it can take inquiries.'
+                : $plural((int) $quoteForm->submissions_count, 'inquiry', 'inquiries') . ' received so far.'),
+            'action' => $quoteForm === null ? 'Create form' : 'Manage form',
+            'url' => route('customer.workspaces.businesses.website.forms.index', $ids),
+        ];
+
+        return $rows;
+    }
     public function createPage(string $workspaceUid, string $businessUid): View|Factory|Application
     {
         $this->authorize('website');
@@ -272,6 +376,7 @@ class WebsiteController extends CustomerBaseController
             'page' => null,
             'assets' => $website->assets()->latest()->get(),
             'forms' => $website->forms()->get(),
+            'formsModule' => app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->options($business, (int) Auth::id()),
         ]);
     }
 
@@ -281,6 +386,8 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
         $attributes = $this->pageAttributesFromRequest($request);
+        // A new page the owner creates with "Hide from search engines" ticked is their own choice.
+        $attributes['noindex_explicit'] = (bool) $attributes['noindex'];
 
         // Independent-review correction round 5 (item 1) — this advanced,
         // direct draft-page editor had NO lease guard at all, despite
@@ -315,6 +422,7 @@ class WebsiteController extends CustomerBaseController
             'page' => $page,
             'assets' => $website->assets()->latest()->get(),
             'forms' => $website->forms()->get(),
+            'formsModule' => app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->options($business, (int) Auth::id()),
         ]);
     }
 
@@ -325,6 +433,9 @@ class WebsiteController extends CustomerBaseController
         $website = $this->resolveWebsite($business);
         $page = $this->resolvePage($website, $pageUid);
         $attributes = $this->pageAttributesFromRequest($request);
+        // The box is pre-ticked on a generated page, so merely saving the page is not a choice: only CHANGING
+        // the box is. Ticking it makes the hide the owner's own; unticking releases it; unchanged keeps what was.
+        $attributes['noindex_explicit'] = $attributes['noindex'] !== (bool) $page->noindex ? (bool) $attributes['noindex'] : (bool) $page->noindex_explicit;
 
         // Independent-review correction round 5 (item 1) — re-resolves
         // the page UNDER the Website lock (never the pre-lock read above)
@@ -343,6 +454,40 @@ class WebsiteController extends CustomerBaseController
         return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([
             'status' => 'success',
             'message' => 'Page saved.',
+        ]);
+    }
+
+    /**
+     * Website V1 acceptance — generated pages start hidden from search ("noindex
+     * until the owner has reviewed them"). This is the owner's one-step way to
+     * say "I have reviewed them: let search engines find these pages", instead of
+     * clearing the box on every page. It changes only the per-page setting, under
+     * the same Website lock every other page mutation takes; nothing goes live
+     * until the owner publishes.
+     */
+    public function allowIndexing(string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
+            return $demo;
+        }
+
+        try {
+            $result = $this->generationCoordinator->runExclusive($website, fn () => app(\App\Library\Website\WebsiteSearchVisibility::class)->release($website));
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => ($result['released'] === 0 && $result['kept_by_owner'] === 0 && $result['kept_thin'] === 0)
+                ? 'Every page can already be found in search.'
+                : ($result['released'] === 0 ? 'No page was released.' : $result['released'] . ($result['released'] === 1 ? ' page' : ' pages') . ' can now be found in search. Publish to update your live website.')
+                    . ($result['kept_by_owner'] > 0 ? ($result['kept_by_owner'] === 1 ? ' 1 page you chose to hide stays hidden.' : ' ' . $result['kept_by_owner'] . ' pages you chose to hide stay hidden.') : '')
+                    . ($result['kept_thin'] > 0 ? ($result['kept_thin'] === 1 ? ' 1 page has nothing of its own to show yet and stays hidden.' : ' ' . $result['kept_thin'] . ' pages have nothing of their own to show yet and stay hidden.') : ''),
         ]);
     }
 
@@ -369,11 +514,15 @@ class WebsiteController extends CustomerBaseController
         ]);
     }
 
-    public function preview(string $workspaceUid, string $businessUid, ?string $pageUid = null): View|Factory|Application
+    public function preview(string $workspaceUid, string $businessUid, ?string $pageUid = null): View|Factory|Application|RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
+
+        if ($pageUid === null && ! $this->creationState->hasGeneratedPages($website)) {
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
+        }
 
         $page = $pageUid !== null
             ? $this->resolvePage($website, $pageUid)
@@ -381,11 +530,8 @@ class WebsiteController extends CustomerBaseController
 
         abort_unless($page !== null, 404);
 
-        $assetsByUid = $website->assets()->get()->keyBy('uid')->map(fn ($asset) => [
-            'uid' => $asset->uid,
-            'url' => $asset->url(),
-            'alt_text' => $asset->alt_text,
-        ])->all();
+        $media = app(\App\Library\Website\Media\WebsiteMediaPayload::class);
+        $assetsByUid = $website->assets()->get()->keyBy('uid')->map(fn ($asset) => $media->forAsset($asset))->all();
 
         $formsByUid = $website->forms()->get()->keyBy('uid')->map(fn ($form) => [
             'uid' => $form->uid,
@@ -405,6 +551,7 @@ class WebsiteController extends CustomerBaseController
             'websiteMeta' => ['name' => $website->name, 'theme' => $website->theme ?? []],
             'page' => (object) [
                 'uid' => $page->uid,
+                'slug' => $page->slug,
                 'title' => $page->title,
                 'seo' => (object) [
                     'seo_title' => $page->seo_title,
@@ -412,7 +559,7 @@ class WebsiteController extends CustomerBaseController
                     'noindex' => $page->noindex,
                 ],
             ],
-            'sections' => $page->sections ?? [],
+            'sections' => $media->enrichSections($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id)),
             'assetsByUid' => $assetsByUid,
             'formsByUid' => $formsByUid,
             'isPreview' => true,
@@ -420,6 +567,11 @@ class WebsiteController extends CustomerBaseController
                 'uid' => $candidate->uid,
                 'title' => $candidate->title,
                 'is_home' => $candidate->is_home,
+                'slug' => $candidate->slug,
+                'has_form' => collect($candidate->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
+                'service_uid' => str_starts_with((string) $candidate->slug, 'service-')
+                    ? collect($candidate->sections ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
+                    : null,
                 'url' => route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid, $candidate->uid]),
             ])->all(),
         ]);
@@ -540,7 +692,29 @@ class WebsiteController extends CustomerBaseController
             return $demo;
         }
 
-        $this->publisher->publish($website, (int) Auth::id());
+        // Nothing to publish before the website is generated; say so
+        // plainly instead of surfacing a raw validation exception.
+        if (! $website->pages()->exists()) {
+            $message = 'Your website has no pages yet. Create your website first, then publish.';
+
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid])
+                ->withErrors(['website' => $message])
+                ->with(['status' => 'error', 'message' => $message]);
+        }
+
+        try {
+            $this->publisher->publish($website, (int) Auth::id());
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Say plainly what is missing — a refused publish is never a silent bounce.
+            $messages = collect($e->errors())->flatten()->values();
+
+            return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])
+                ->withErrors($e->errors())
+                ->with([
+                    'status' => 'error',
+                    'message' => 'Your website can\'t be published yet. ' . $messages->take(4)->implode(' ') . ($messages->count() > 4 ? ' …and ' . ($messages->count() - 4) . ' more — see the checklist below.' : ''),
+                ]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
@@ -594,11 +768,22 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
 
+        $previews = app(\App\Library\Website\Design\WebsiteTemplatePreviewRenderer::class);
+        $templates = WebsiteTemplate::where('is_active', true)->get()
+            ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
+            ->values();
+
         return view('customer.business.website.rebuild', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
-            'templates' => WebsiteTemplate::where('is_active', true)->orderBy('key')->get(),
+            'templates' => $templates,
+            'templateCards' => $templates->map(fn (WebsiteTemplate $template) => [
+                'key' => $template->key,
+                'design' => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($template->key),
+                'current' => $website->template_key === $template->key,
+                'html' => $previews->render($business, $website, $template),
+            ])->all(),
             'currentPageCount' => $website->pages()->count(),
             'isPublished' => $website->published_revision_id !== null,
         ]);
@@ -627,6 +812,25 @@ class WebsiteController extends CustomerBaseController
 
         if ($template === null) {
             throw ValidationException::withMessages(['template_key' => ['Choose one of the available templates.']]);
+        }
+
+        // Website V1 final — "change the look only": every page, word, photo
+        // and price is kept; only the template's layout changes. No AI call,
+        // nothing is regenerated, and the published site is untouched until
+        // the owner publishes.
+        if ($request->input('mode') === 'look_only') {
+            try {
+                $this->generationCoordinator->runExclusive($website, function (Website $locked) use ($template) {
+                    $this->starterDrafts->changeTemplateKeepingPages($locked, $template);
+                });
+            } catch (GenerationInProgressException $e) {
+                return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+            }
+
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid])->with([
+                'status' => 'success',
+                'message' => 'Your website now uses the ' . $template->display_name . ' template. Preview it, then publish to update your live website.',
+            ]);
         }
 
         // Acceptance-correction Blocker 1/4 — the customer-facing
@@ -704,8 +908,8 @@ class WebsiteController extends CustomerBaseController
             $customerFaq = WizardPresentationAnswers::customerFaq($completedResponse);
 
             $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
-                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq)
-                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq);
+                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse))
+                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse));
 
             if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
                 return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
@@ -718,7 +922,9 @@ class WebsiteController extends CustomerBaseController
 
             return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
                 'status' => 'error',
-                'message' => $attempt->failure_reason ?: 'AI generation is currently unavailable. Please try again later or add pages manually.',
+                'message' => $attempt->failure_reason
+                    ? \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt->failure_reason)
+                    : 'AI generation is currently unavailable. Please try again later or add pages manually.',
             ]);
         } finally {
             $this->generationCoordinator->release($website, $leaseToken);

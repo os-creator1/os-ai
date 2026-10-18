@@ -131,6 +131,10 @@ final class PlatformOwnerAccountActions
                 ],
             ]);
 
+            // Raised once, after commit, only when the status really changed: the single
+            // canonical seam for "Business suspended / reactivated".
+            DB::afterCommit(fn () => \App\Events\Business\BusinessStatusChanged::dispatch((int) $updated->id, (string) $from?->value, $to->value, $actorUserId));
+
             return $updated;
         });
     }

@@ -2,6 +2,8 @@
 
 namespace App\Library\Seo;
 
+use App\Enums\Entitlement\WorkspacePlanTier;
+
 /**
  * Contract 18 §8/§11 — the single, fail-closed reader of config/seo.php.
  *
@@ -13,6 +15,16 @@ namespace App\Library\Seo;
  */
 final class SeoConfig
 {
+    public function citationsReviewAfterDays(): int
+    {
+        return $this->bounded('seo.citations.review_after_days', 90, 7, 365);
+    }
+
+    public function citationsMaxCustomDirectoriesPerBusiness(): int
+    {
+        return $this->bounded('seo.citations.max_custom_directories', 25, 1, 25);
+    }
+
     public function keywordsMaxActivePerBusiness(): int
     {
         return $this->bounded('seo.keywords.max_active_per_business', 50, 1, 50);
@@ -91,6 +103,139 @@ final class SeoConfig
     public function auditManualRerunCooldownSeconds(): int
     {
         return $this->bounded('seo.audit.manual_rerun_cooldown_seconds', 60, 5, 3600);
+    }
+
+    // -----------------------------------------------------------------
+    // Rank tracking (paid provider) — micro-USD integers, fail closed.
+    // "LowerOnly": the documented default IS the ceiling; config may only
+    // reduce it. A malformed value yields the default, never "off".
+    // -----------------------------------------------------------------
+
+    public const RANK_TIER_TRIAL = 'trial';
+    public const RANK_TIER_CORE = 'core';
+    public const RANK_TIER_GROWTH = 'growth';
+
+    public const RANK_TIERS = [self::RANK_TIER_TRIAL, self::RANK_TIER_CORE, self::RANK_TIER_GROWTH];
+
+    /**
+     * The ONE mapping from an entitlement plan tier to a rank-tracking tier
+     * key. A trial is always the strictest tier. Core is Core. Growth, and an
+     * Agency-tier Workspace ("unlimited locations" never means unlimited paid
+     * queries), use the Growth limits. ANYTHING ELSE — no tier, or a tier added
+     * later that nobody has priced yet — fails CLOSED to the trial tier, never
+     * to a more generous one.
+     */
+    public function rankTierFor(?WorkspacePlanTier $planTier, bool $isTrial): string
+    {
+        if ($isTrial) {
+            return self::RANK_TIER_TRIAL;
+        }
+
+        return match ($planTier) {
+            WorkspacePlanTier::Core => self::RANK_TIER_CORE,
+            WorkspacePlanTier::Growth, WorkspacePlanTier::Agency => self::RANK_TIER_GROWTH,
+            default => self::RANK_TIER_TRIAL,
+        };
+    }
+
+    /** Master switch. Only a literal true / "true" / "1" enables; anything else is OFF. */
+    public function rankTrackingEnabled(): bool
+    {
+        $v = config('seo.rank_tracking.enabled');
+
+        return $v === true || $v === 1 || $v === '1' || (is_string($v) && strtolower($v) === 'true');
+    }
+
+    public function rankCostPerPageMicros(): int
+    {
+        return $this->bounded('seo.rank_tracking.cost_per_page_micros', 600, 100, 5000);
+    }
+
+    public function rankOrganicDepth(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.organic_depth', 100, 10);
+    }
+
+    public function rankLocalDepth(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.local_depth', 10, 10);
+    }
+
+    /** @return array{tracked_targets: int, cadence_days: int, monthly_cap_micros: int} */
+    public function rankTier(string $tier): array
+    {
+        $defaults = [
+            self::RANK_TIER_TRIAL => [5, 3, 500_000],
+            self::RANK_TIER_CORE => [5, 1, 1_500_000],
+            self::RANK_TIER_GROWTH => [20, 1, 4_500_000],
+        ];
+
+        // An unknown tier gets the most restrictive tier, never an open one.
+        $tier = array_key_exists($tier, $defaults) ? $tier : self::RANK_TIER_TRIAL;
+        [$targets, $cadence, $cap] = $defaults[$tier];
+
+        return [
+            'tracked_targets' => $this->lowerOnly("seo.rank_tracking.tiers.{$tier}.tracked_targets", $targets, 1),
+            'cadence_days' => $this->atLeast("seo.rank_tracking.tiers.{$tier}.cadence_days", $cadence, 30),
+            'monthly_cap_micros' => $this->lowerOnly("seo.rank_tracking.tiers.{$tier}.monthly_cap_micros", $cap, 1),
+        ];
+    }
+
+    public function rankManualCooldownHours(): int
+    {
+        return $this->atLeast('seo.rank_tracking.manual_cooldown_hours', 24, 168);
+    }
+
+    public function rankWorkspaceMonthlyCapMicros(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.workspace_monthly_cap_micros', 25_000_000, 1);
+    }
+
+    public function rankGlobalDailyCapMicros(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.global_daily_cap_micros', 10_000_000, 1);
+    }
+
+    public function rankGlobalMonthlyCapMicros(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.global_monthly_cap_micros', 150_000_000, 1);
+    }
+
+    public function rankRetentionMonths(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.retention_months', 13, 1);
+    }
+
+    /**
+     * Days after which a stored rank position is "may be out of date".
+     * Default 7 (a trial checks every 3 days, so a healthy target is never
+     * flagged); range 2-90. A malformed value yields the default.
+     */
+    public function rankStaleAfterDays(): int
+    {
+        return $this->bounded('seo.rank_tracking.stale_after_days', 7, 2, 90);
+    }
+
+    public function rankMaxSubmitAttempts(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.max_submit_attempts', 3, 1);
+    }
+
+    public function rankMaxPollHours(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.max_poll_hours', 24, 1);
+    }
+
+    /** Valid range is [min, default]: the value can only be lowered. */
+    private function lowerOnly(string $key, int $default, int $min): int
+    {
+        return $this->bounded($key, $default, $min, $default);
+    }
+
+    /** Valid range is [default, max]: the value can only be raised (e.g. slower cadence, longer cooldown). */
+    private function atLeast(string $key, int $default, int $max): int
+    {
+        return $this->bounded($key, $default, $default, $max);
     }
 
     private function bounded(string $key, int $default, int $min, int $max): int

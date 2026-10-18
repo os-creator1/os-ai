@@ -25,6 +25,12 @@ enum ConversationSendFailureReason: string
     /** The managed messaging platform itself is off, unconfigured, or the provider declined for a reason this platform cannot make more specific. */
     case MessagingUnavailable = 'messaging_unavailable';
 
+    /** The agency's OWN Telnyx account rejected the access key (revoked, expired or wrong) — fixable by reconnecting it. */
+    case ByoCredentialsRejected = 'byo_credentials_rejected';
+
+    /** The agency's chosen own-Telnyx sender is turned off, disconnected, unverified or has no readable credentials. */
+    case ByoSenderNotReady = 'byo_sender_not_ready';
+
     /** A provider accepted the message and a later delivery-status callback reported failure. */
     case DeliveryFailed = 'delivery_failed';
 
@@ -47,6 +53,8 @@ enum ConversationSendFailureReason: string
             self::InsufficientBalance => __('locale.conversations.send_failure.insufficient_balance'),
             self::MessagingNotReady => __('locale.conversations.send_failure.messaging_not_ready'),
             self::MessagingUnavailable => __('locale.conversations.send_failure.messaging_unavailable'),
+            self::ByoCredentialsRejected => __('locale.conversations.send_failure.byo_credentials_rejected'),
+            self::ByoSenderNotReady => __('locale.conversations.send_failure.byo_sender_not_ready'),
             self::DeliveryFailed => __('locale.conversations.send_failure.delivery_failed'),
             self::SendFailed => __('locale.conversations.send_failure.send_failed'),
             self::Ambiguous => __('locale.conversations.send_failure.ambiguous'),
@@ -96,12 +104,20 @@ enum ConversationSendFailureReason: string
      * have accepted the message — and map to Ambiguous instead, which is
      * never retryable.
      */
-    public static function fromProviderErrorCategory(?ProviderErrorCategory $category): self
+    public static function fromProviderErrorCategory(?ProviderErrorCategory $category, bool $byo = false): self
     {
         return match ($category) {
-            ProviderErrorCategory::Configuration => self::MessagingUnavailable,
+            // On the agency's own Telnyx account an authentication rejection is the
+            // agency's key, not a platform outage.
+            ProviderErrorCategory::Configuration => $byo ? self::ByoCredentialsRejected : self::MessagingUnavailable,
             ProviderErrorCategory::Retryable, ProviderErrorCategory::Unknown => self::Ambiguous,
             ProviderErrorCategory::Terminal, null => self::SendFailed,
         };
+    }
+
+    /** From a ByoSenderNotReadyException reason code (see AgencyByoSender::sendReadiness). */
+    public static function forByoCode(string $code): self
+    {
+        return $code === 'invalid_api_key' ? self::ByoCredentialsRejected : self::ByoSenderNotReady;
     }
 }

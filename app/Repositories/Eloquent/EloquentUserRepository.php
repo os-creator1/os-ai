@@ -231,7 +231,7 @@
             if ($authenticatedUser->id === $user->id
                 || Session::get('admin_user_id') === $user->id
             ) {
-                return redirect()->route('admin.home');
+                return redirect()->to(\App\Helpers\Helper::adminHomeUrl());
             }
 
             if ( ! Session::get('admin_user_id')) {
@@ -276,6 +276,8 @@
          */
         public function batchEnable(array $ids): bool
         {
+            \App\Library\PlatformOwner\AccountDeletion\ClosedAccountGuard::assertMayActivate($ids);
+
             DB::transaction(function () use ($ids) {
                 if ($this->query()->whereIn('uid', $ids)
                     ->update(['status' => true])

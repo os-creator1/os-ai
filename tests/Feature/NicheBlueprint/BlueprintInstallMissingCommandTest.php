@@ -539,9 +539,11 @@ class BlueprintInstallMissingCommandTest extends TestCase
 
         // Sub-slice D's real adapter, registered additively in
         // AppServiceProvider (§11 rule 3) — present, and still the only
-        // adapter, since no later sub-slice has registered another one.
+        // adapter until the Proposal/Contract lane (Implementation Contract 17B §6b)
+        // added the reference-only `document_template` adapter, also registered
+        // additively in AppServiceProvider.
         $this->assertTrue(class_exists('App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter'));
-        $this->assertSame(['crm_pipeline'], app(BlueprintComponentAdapterRegistry::class)->registeredComponentTypes());
+        $this->assertSame(['crm_pipeline', 'document_template', 'crm_tag_set', 'crm_custom_field', 'automation_workflow', 'form', 'booking_type', 'package_template', 'website_config', 'seo_strategy', 'citation_recommendations', 'acquisition_purpose'], app(BlueprintComponentAdapterRegistry::class)->registeredComponentTypes());
     }
 
     // =====================================================================

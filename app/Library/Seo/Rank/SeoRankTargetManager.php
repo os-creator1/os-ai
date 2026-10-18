@@ -1,0 +1,343 @@
+<?php
+
+namespace App\Library\Seo\Rank;
+
+use App\Enums\Business\BusinessStatus;
+use App\Enums\Seo\SeoRankTrackingState;
+use App\Library\Seo\SeoKeywordManager;
+use App\Library\Seo\SeoPhraseNormalizer;
+use App\Library\Workspace\WorkspaceManager;
+use App\Models\Business;
+use App\Models\SeoKeyword;
+use App\Models\SeoRankLocation;
+use App\Models\SeoRankTarget;
+use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * The ONLY writer of seo_rank_targets: start, stop and restart tracking.
+ *
+ * AUTHORITY. Every mutation re-derives everything under a row lock on the
+ * Business: the Business must be Active and reachable by the actor, the keyword
+ * is resolved by uid INSIDE the Business through SeoKeywordManager::findAccessible
+ * (so keyword Location ACL is the existing authority, with no second algorithm),
+ * and the search geography must resolve through SeoRankLocationCatalog. A forged
+ * or foreign id is indistinguishable from a missing one.
+ *
+ * ALLOWANCE. Slots in use = tracking targets whose keyword is active. The limit
+ * comes from SeoRankEntitlement/SeoConfig. The lock on the Business row means two
+ * simultaneous starts cannot both take the last slot.
+ *
+ * Stopping keeps every observation and frees the slot; restarting flips the same
+ * row back, so a keyword/geography/device is never duplicated and history
+ * resumes. No provider call and no spend happens here.
+ */
+class SeoRankTargetManager
+{
+    public function __construct(
+        private readonly SeoKeywordManager $keywords,
+        private readonly SeoRankLocationCatalog $locations,
+        private readonly SeoRankEntitlement $entitlement,
+        private readonly SeoRankTrackingBudget $budget,
+        private readonly WorkspaceManager $workspaces,
+    ) {
+    }
+
+    /**
+     * The Business's existing rank-tracking search location — no second place to store one:
+     * the location of its most recent rank target, preferring a target whose keyword sits in the
+     * same Business Location when one is given. Null until something has been tracked.
+     */
+    public function defaultLocation(Business $business, ?int $businessLocationId = null): ?SeoRankLocation
+    {
+        $base = SeoRankTarget::query()->where('business_id', $business->id)->with('searchLocation')->orderByDesc('id');
+
+        if ($businessLocationId !== null) {
+            $scoped = (clone $base)
+                ->whereHas('keyword', fn ($q) => $q->where('business_location_id', $businessLocationId))
+                ->first();
+
+            if ($scoped?->searchLocation !== null) {
+                return $scoped->searchLocation;
+            }
+        }
+
+        return $base->first()?->searchLocation;
+    }
+
+    /**
+     * defaultLocation() for the Business and for each given Business Location in two queries,
+     * so the keywords page costs the same however many Locations there are.
+     *
+     * @param  array<int, int>  $businessLocationIds
+     * @return array{business: SeoRankLocation|null, locations: array<int, SeoRankLocation|null>}
+     */
+    public function defaultLocations(Business $business, array $businessLocationIds): array
+    {
+        $targets = SeoRankTarget::query()
+            ->where('business_id', $business->id)
+            ->with(['searchLocation', 'keyword:id,business_location_id'])
+            ->orderByDesc('id')
+            ->get();
+
+        $byLocation = [];
+
+        foreach ($targets as $target) {
+            $id = $target->keyword?->business_location_id;
+
+            if ($id !== null && ! array_key_exists((int) $id, $byLocation)) {
+                $byLocation[(int) $id] = $target->searchLocation;
+            }
+        }
+
+        $business_default = $targets->first()?->searchLocation;
+
+        return [
+            'business' => $business_default,
+            'locations' => collect($businessLocationIds)->mapWithKeys(fn ($id) => [(int) $id => $byLocation[(int) $id] ?? $business_default])->all(),
+        ];
+    }
+
+    /**
+     * @throws SeoRankException
+     */
+    public function track(int $actorUserId, Business $business, string $keywordUid, int $locationCode): SeoRankTarget
+    {
+        $keyword = $this->keywords->findAccessible($actorUserId, $business, $keywordUid);
+
+        if ($keyword === null) {
+            throw SeoRankException::accessDenied();
+        }
+
+        $location = $this->locations->find($locationCode);
+
+        if ($location === null) {
+            throw SeoRankException::invalidLocation();
+        }
+
+        return DB::transaction(function () use ($actorUserId, $business, $keyword, $location) {
+            $locked = $this->lockAuthorizedBusiness($actorUserId, $business);
+
+            $freshKeyword = SeoKeyword::query()->where('business_id', $locked->id)->whereKey($keyword->id)->lockForUpdate()->first();
+
+            if ($freshKeyword === null) {
+                throw SeoRankException::accessDenied();
+            }
+
+            if (! $freshKeyword->isActive()) {
+                throw SeoRankException::keywordNotActive();
+            }
+
+            // A keyword saved before operators were refused can still carry
+            // one: never take a slot for a check the provider would reject.
+            if (SeoPhraseNormalizer::hasSearchOperator((string) $freshKeyword->phrase)) {
+                throw SeoRankException::searchOperator();
+            }
+
+            $existing = SeoRankTarget::query()
+                ->where('seo_keyword_id', $freshKeyword->id)
+                ->where('provider', $this->budget->providerKey())
+                ->where('search_location_code', $location->location_code)
+                ->where('device', 'mobile')
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing !== null && $existing->isTracking()) {
+                return $existing;
+            }
+
+            $this->assertSlotAvailable($locked);
+
+            $now = CarbonImmutable::now('UTC');
+
+            if ($existing !== null) {
+                $existing->forceFill([
+                    'tracking_state' => SeoRankTrackingState::Tracking->value,
+                    'stopped_at' => null,
+                    'next_check_at' => null,
+                    'updated_by_user_id' => $actorUserId,
+                ])->save();
+
+                return $existing;
+            }
+
+            $target = new SeoRankTarget();
+            $target->forceFill([
+                'business_id' => $locked->id,
+                'seo_keyword_id' => $freshKeyword->id,
+                'provider' => $this->budget->providerKey(),
+                'seo_rank_location_id' => $location->id,
+                'search_location_code' => $location->location_code,
+                'language_code' => SeoRankLocationCatalog::LANGUAGE,
+                'device' => 'mobile',
+                'tracking_state' => SeoRankTrackingState::Tracking->value,
+                'tracked_since' => $now,
+                'created_by_user_id' => $actorUserId,
+                'updated_by_user_id' => $actorUserId,
+            ])->save();
+
+            return $target;
+        });
+    }
+
+    /**
+     * @throws SeoRankException
+     */
+    public function stop(int $actorUserId, Business $business, string $targetUid): SeoRankTarget
+    {
+        return DB::transaction(function () use ($actorUserId, $business, $targetUid) {
+            $locked = $this->lockAuthorizedBusiness($actorUserId, $business);
+            $target = $this->lockedTarget($actorUserId, $locked, $targetUid);
+
+            if ($target->isTracking()) {
+                $target->forceFill([
+                    'tracking_state' => SeoRankTrackingState::Stopped->value,
+                    'stopped_at' => CarbonImmutable::now('UTC'),
+                    'next_check_at' => null,
+                    'updated_by_user_id' => $actorUserId,
+                ])->save();
+            }
+
+            return $target;
+        });
+    }
+
+    /**
+     * @throws SeoRankException
+     */
+    public function restart(int $actorUserId, Business $business, string $targetUid): SeoRankTarget
+    {
+        return DB::transaction(function () use ($actorUserId, $business, $targetUid) {
+            $locked = $this->lockAuthorizedBusiness($actorUserId, $business);
+            $target = $this->lockedTarget($actorUserId, $locked, $targetUid);
+
+            if ($target->isTracking()) {
+                return $target;
+            }
+
+            if (! $target->keyword->isActive()) {
+                throw SeoRankException::keywordNotActive();
+            }
+
+            if (SeoPhraseNormalizer::hasSearchOperator((string) $target->keyword->phrase)) {
+                throw SeoRankException::searchOperator();
+            }
+
+            $this->assertSlotAvailable($locked);
+
+            $target->forceFill([
+                'tracking_state' => SeoRankTrackingState::Tracking->value,
+                'stopped_at' => null,
+                'next_check_at' => null,
+                'updated_by_user_id' => $actorUserId,
+            ])->save();
+
+            return $target;
+        });
+    }
+
+    /**
+     * Stops EVERY tracking target of one keyword, freeing their slots and keeping
+     * their history. Used when the keyword is archived or reactivated, so a keyword
+     * coming back from the archive never silently resumes paid checks (it must be
+     * started again on purpose). Returns how many targets it stopped.
+     */
+    public function stopForKeyword(int $actorUserId, Business $business, SeoKeyword $keyword): int
+    {
+        return DB::transaction(function () use ($actorUserId, $business, $keyword) {
+            $locked = $this->lockAuthorizedBusiness($actorUserId, $business);
+            $now = CarbonImmutable::now('UTC');
+            $stopped = 0;
+
+            $targets = SeoRankTarget::query()
+                ->where('business_id', $locked->id)
+                ->where('seo_keyword_id', $keyword->id)
+                ->where('tracking_state', SeoRankTrackingState::Tracking->value)
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($targets as $target) {
+                $target->forceFill([
+                    'tracking_state' => SeoRankTrackingState::Stopped->value,
+                    'stopped_at' => $now,
+                    'next_check_at' => null,
+                    'updated_by_user_id' => $actorUserId,
+                ])->save();
+                $stopped++;
+            }
+
+            return $stopped;
+        });
+    }
+
+    /** Whether the keyword has ever been rank tracked (a target exists, tracking or stopped). */
+    public function hasHistory(SeoKeyword $keyword): bool
+    {
+        return SeoRankTarget::query()->where('seo_keyword_id', $keyword->id)->exists();
+    }
+
+    /** A target by uid, resolved inside the Business and behind its keyword's Location ACL. */
+    public function findAccessible(int $actorUserId, Business $business, string $targetUid): ?SeoRankTarget
+    {
+        $target = SeoRankTarget::query()
+            ->where('business_id', $business->id)
+            ->where('uid', $targetUid)
+            ->with(['keyword.location', 'searchLocation'])
+            ->first();
+
+        if ($target === null) {
+            return null;
+        }
+
+        return $this->keywords->findAccessible($actorUserId, $business, $target->keyword->uid) === null ? null : $target;
+    }
+
+    public function slotsUsed(Business $business): int
+    {
+        return $this->budget->trackedTargetsQuery($business)->count();
+    }
+
+    private function assertSlotAvailable(Business $locked): void
+    {
+        $plan = $this->entitlement->planFor($locked);
+
+        if ($plan === null) {
+            throw SeoRankException::notEntitled();
+        }
+
+        $used = $this->slotsUsed($locked);
+
+        if ($used >= $plan->trackedTargets) {
+            throw SeoRankException::limitReached($used, $plan->trackedTargets);
+        }
+    }
+
+    private function lockedTarget(int $actorUserId, Business $locked, string $targetUid): SeoRankTarget
+    {
+        $target = SeoRankTarget::query()
+            ->where('business_id', $locked->id)
+            ->where('uid', $targetUid)
+            ->with('keyword')
+            ->lockForUpdate()
+            ->first();
+
+        if ($target === null || $this->keywords->findAccessible($actorUserId, $locked, $target->keyword->uid) === null) {
+            throw SeoRankException::accessDenied();
+        }
+
+        return $target;
+    }
+
+    private function lockAuthorizedBusiness(int $actorUserId, Business $business): Business
+    {
+        $locked = Business::query()->whereKey($business->id)->lockForUpdate()->first();
+
+        if ($locked === null
+            || $locked->status !== BusinessStatus::Active
+            || ! $this->workspaces->userCanAccessBusiness($actorUserId, $locked)) {
+            throw SeoRankException::accessDenied();
+        }
+
+        return $locked;
+    }
+}

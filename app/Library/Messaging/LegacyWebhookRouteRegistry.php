@@ -149,6 +149,46 @@ final class LegacyWebhookRouteRegistry
     ];
 
     /**
+     * V1 release-risk closure item 4 — the ONLY legacy-family routes still
+     * allowed to reach their controller, and what authenticates each.
+     *
+     * V1's customer-facing provider allowlist is Twilio and Telnyx
+     * (BusinessMessagingProviderCatalog) plus the platform-run managed Telnyx
+     * route. Every other `inbound/*` / `dlr/*` route in MAP belongs to a
+     * gateway no V1 Business can connect and carried no signature or token
+     * check at all, so DisableUnsupportedLegacyWebhooks refuses it (410)
+     * before its controller runs. The block is by default-deny on the route
+     * URI, so a route added later is refused until it is listed here with a
+     * verification mechanism.
+     *
+     * @var array<string, string> route name => authenticity mechanism
+     */
+    public const SUPPORTED = [
+        'inbound.telnyx_managed' => 'Telnyx Ed25519 webhook signature (MessagingProviderAdapter::verifyInboundSignature), dual-signal attribution, throttled',
+        'inbound.twilio' => 'Twilio X-Twilio-Signature HMAC against an active Twilio sending server auth token',
+        'inbound.twilio_copilot' => 'Twilio X-Twilio-Signature HMAC against an active Twilio Copilot sending server auth token',
+        'inbound.webhook' => 'Twilio X-Twilio-Signature HMAC, verified before the owner webhook is forwarded to',
+        'dlr.twilio' => 'Twilio X-Twilio-Signature HMAC, verified before any report is updated',
+        'inbound.telnyx' => 'none possible for BYO Telnyx — always rejected without changing state (DLRController::hasVerifiableTelnyxAuthenticity)',
+    ];
+
+    /**
+     * Whether a request URI belongs to the legacy gateway family: the first
+     * path segment is `inbound` or `dlr`.
+     */
+    public static function isLegacyFamilyUri(string $uri): bool
+    {
+        $first = explode('/', ltrim($uri, '/'), 2)[0];
+
+        return $first === 'inbound' || $first === 'dlr';
+    }
+
+    public static function isSupported(?string $routeName): bool
+    {
+        return $routeName !== null && array_key_exists($routeName, self::SUPPORTED);
+    }
+
+    /**
      * The provider slug for a measured route name, or null when the route
      * is not measured — either because it carries no name, isn't in MAP at
      * all, or is explicitly excluded by default (§3.7).

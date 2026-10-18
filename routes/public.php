@@ -1,13 +1,42 @@
 <?php
 
     Route::get('book/{bookingTypeUuid}', 'Customer\PublicBookingController@show')
-        ->whereUuid('bookingTypeUuid')->name('public.booking.show');
+        ->whereUuid('bookingTypeUuid')->middleware('attribution.capture')->name('public.booking.show');
+    // The scheduler's two read-only questions while a guest browses. Sized for a
+    // real visitor paging months and trying days, far above the 10/minute write.
+    Route::get('book/{bookingTypeUuid}/dates', 'Customer\PublicBookingController@dates')
+        ->whereUuid('bookingTypeUuid')->middleware('throttle:60,1')->name('public.booking.dates');
+    Route::get('book/{bookingTypeUuid}/slots', 'Customer\PublicBookingController@slots')
+        ->whereUuid('bookingTypeUuid')->middleware('throttle:60,1')->name('public.booking.slots');
     // Public mutation: 10 attempts per minute matches the lower end of the
     // existing customer write limits while allowing a real guest to retry a slot.
     Route::post('book/{bookingTypeUuid}', 'Customer\PublicBookingController@store')
         ->whereUuid('bookingTypeUuid')->middleware('throttle:10,1')->name('public.booking.store');
     Route::get('book/{bookingTypeUuid}/confirmed', 'Customer\PublicBookingController@confirmed')
         ->whereUuid('bookingTypeUuid')->name('public.booking.confirmed');
+
+    /*
+    | MotionGrove "Book a Demo" — a fixed, stable address for the marketing site
+    | that adapts the same public booking engine to one designated internal
+    | Booking Type (config demo_booking.*). Same limits as /book/{uuid}; every
+    | route 404s unless a Booking Type is designated and Turnstile is configured.
+    */
+    Route::get('book-demo', 'Customer\DemoBookingController@page')
+        ->middleware('attribution.capture')->name('demo.booking.show');
+    Route::get('book-demo/dates', 'Customer\DemoBookingController@demoDates')
+        ->middleware('throttle:60,1')->name('demo.booking.dates');
+    Route::get('book-demo/slots', 'Customer\DemoBookingController@demoSlots')
+        ->middleware('throttle:60,1')->name('demo.booking.slots');
+    Route::post('book-demo', 'Customer\DemoBookingController@submit')
+        ->middleware('throttle:10,1')->name('demo.booking.store');
+    Route::get('book-demo/confirmed', 'Customer\DemoBookingController@demoConfirmed')
+        ->name('demo.booking.confirmed');
+    // Guest cancel / reschedule: authority is the signed, expiring link (checked in the controller, which
+    // ignores only the browsing `date`), retired when the appointment moves. Same limits as the booking write.
+    Route::get('book-demo/manage/{appointmentUid}', 'Customer\DemoBookingManageController@manage')
+        ->middleware('throttle:60,1')->name('demo.booking.manage');
+    Route::post('book-demo/manage/{appointmentUid}', 'Customer\DemoBookingManageController@act')
+        ->middleware('throttle:10,1')->name('demo.booking.manage.act');
 
     /*
     | Forms V1 — a form's own public link. {deploymentUid} is the persisted
@@ -18,7 +47,7 @@
     | mutations use; the GET is sized for a real visitor who reloads.
     */
     Route::get('forms/{deploymentUid}', 'Public\PublicFormController@show')
-        ->whereUuid('deploymentUid')->middleware('throttle:60,1')->name('public.forms.show');
+        ->whereUuid('deploymentUid')->middleware(['throttle:60,1', 'attribution.capture'])->name('public.forms.show');
     // A questionnaire page. The token (nonce.version.hmac) is part of the address:
     // it is the visitor's bearer for ONE in-progress, version-pinned flow, in the
     // same two-segment spirit as the secure document link. A stale, skipped or
@@ -59,7 +88,7 @@
     Route::get('documents/{uid}/{token}', 'Public\PublicDocumentController@show')
         ->middleware('throttle:30,1')->name('public.documents.show');
     Route::post('documents/{uid}/{token}/sign', 'Public\PublicDocumentController@sign')
-        ->middleware('throttle:10,1')->name('public.documents.sign');
+        ->middleware('throttle:public-document-sign')->name('public.documents.sign');
 
     /*
     | Sub-slice E §6.3.2 — the ONE payment-start endpoint. Same {uid}/{token}
@@ -71,7 +100,16 @@
     | and re-driving an existing attempt is idempotent anyway.
     */
     Route::post('documents/{uid}/{token}/pay', 'Public\PublicDocumentController@payStart')
-        ->middleware('throttle:10,1')->name('public.documents.pay');
+        ->middleware('throttle:public-document-pay')->name('public.documents.pay');
+
+    /*
+    | Payment STATUS for the return from Stripe and for bounded polling. Same
+    | {uid}/{token} possession; read-only for the customer, creates nothing, and
+    | only reconciles the EXISTING attempt through the shared finalizer. Bounded
+    | at 30/minute, comfortably above the page's own capped polling.
+    */
+    Route::get('documents/{uid}/{token}/pay/status', 'Public\PublicDocumentController@payStatus')
+        ->middleware('throttle:public-document-pay-status')->name('public.documents.pay.status');
 
     /*
     | Sub-slice E §5.8/§8.2 — money lane B's OWN Connect webhook, at its own
@@ -130,7 +168,8 @@
      * All public routes listed here. No middleware will not affect these routes
      */
     Route::get('contacts/{contact}/subscribe-url', 'Customer\ContactsController@subscribeURL')->name('contacts.subscribe_url');
-    Route::post('contacts/{contact}/subscribe-url', 'Customer\ContactsController@insertContactBySubscriptionForm');
+    Route::post('contacts/{contact}/subscribe-url', 'Customer\ContactsController@insertContactBySubscriptionForm')
+        ->middleware('throttle:public-contact-consent')->name('contacts.subscribe_url.store');
     Route::any('dlr/twilio', 'Customer\DLRController@dlrTwilio')->name('dlr.twilio');
     Route::any('inbound/twilio/{gateway?}', 'Customer\DLRController@inboundTwilio')->name('inbound.twilio');
 
@@ -258,7 +297,8 @@
     Route::any('inbound/diafaan/{gateway?}', 'Customer\DLRController@inboundDiafaan')->name('inbound.diafaan');
 
     Route::get('contacts/{contact}/unsubscribe-url', 'Customer\ContactsController@unsubscribeURL')->name('contacts.unsubscribe_url');
-    Route::post('contacts/{contact}/unsubscribe-url', 'Customer\ContactsController@postUnsubscribeURL');
+    Route::post('contacts/{contact}/unsubscribe-url', 'Customer\ContactsController@postUnsubscribeURL')
+        ->middleware('throttle:public-contact-consent')->name('contacts.unsubscribe_url.store');
 
     Route::any('inbound/webhook/{user}', 'Customer\DLRController@inboundReceiveWebhook')->name('inbound.webhook');
 
@@ -332,6 +372,13 @@
     Route::post('webhooks/prospecting/{channelUid}/{token}/twilio', 'Prospecting\AgencyProspectingWebhookController@twilio')->name('prospecting.webhooks.twilio');
     Route::post('webhooks/prospecting/{channelUid}/{token}/telnyx', 'Prospecting\AgencyProspectingWebhookController@telnyx')->name('prospecting.webhooks.telnyx');
 
+    // An agency's OWN Telnyx account feeding its Conversations/Outreach/Automations
+    // (not the AI Prospecting engine above). Throttled like the managed route: public
+    // until the agency's Ed25519 signature is verified.
+    Route::post('webhooks/agency-telnyx/{channelUid}/{token}', 'Prospecting\AgencyByoTelnyxWebhookController@handle')
+        ->middleware('throttle:600,1')
+        ->name('prospecting.webhooks.agency_telnyx');
+
     /*
      * Implementation Contract 15 §11/§12.F — inbound Google/Outlook calendar
      * push notification ingestion. Same URL-embedded-HMAC-token precedent as
@@ -369,12 +416,24 @@
      * environment, per its own pre-existing, unmodified behavior —
      * mirroring routes/admin.php's identical {business} precedent).
      */
+    /*
+     * The platform host's robots.txt (everything allowed). A route, not a static file, so the web server
+     * can never serve a file ahead of a customer domain's own, Sitemap-carrying robots.txt
+     * (ResolveCustomDomainWebsite). Byte for byte what public/robots.txt used to say.
+     */
+    Route::get('robots.txt', 'Public\RobotsController@show')->name('public.robots');
+
     Route::prefix('sites')->group(function () {
-        Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->name('public.website.home')
+        Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->middleware('attribution.capture')->name('public.website.home')
             ->missing(fn () => abort(404));
         Route::get('{website:public_id}/sitemap', 'Public\WebsiteController@sitemap')->whereUuid('website')->name('public.website.sitemap')
             ->missing(fn () => abort(404));
-        Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->name('public.website.page')
+        // SEO Content Engine V1 — declared BEFORE the {slug} page route so /blog is never read as a page slug.
+        Route::get('{website:public_id}/blog', 'Public\WebsiteBlogController@index')->whereUuid('website')->middleware('attribution.capture')->name('public.website.blog.index')
+            ->missing(fn () => abort(404));
+        Route::get('{website:public_id}/blog/{slug}', 'Public\WebsiteBlogController@show')->whereUuid('website')->middleware('attribution.capture')->name('public.website.blog.show')
+            ->missing(fn () => abort(404));
+        Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->middleware('attribution.capture')->name('public.website.page')
             ->missing(fn () => abort(404));
 
         // Forms slice — the one public mutation. 10/minute matches the

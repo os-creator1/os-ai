@@ -59,8 +59,8 @@
             $this->authorize('view sender_id');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Sending')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Sending')],
                 ['name' => __('locale.menu.Sender ID')],
             ];
 
@@ -202,7 +202,7 @@
             $this->authorize('create sender_id');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/senderid"), 'name' => __('locale.menu.Sender ID')],
                 ['name' => __('locale.sender_id.add_new_sender_id')],
             ];
@@ -224,12 +224,19 @@
          * @throws AuthorizationException
          */
 
+        public function document(Senderid $senderid)
+        {
+            $this->authorize('edit sender_id');
+
+            return \App\Library\Uploads\SenderIdDocumentStore::response($senderid);
+        }
+
         public function show(Senderid $senderid): Factory|View|Application
         {
             $this->authorize('edit sender_id');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/senderid"), 'name' => __('locale.menu.Sender ID')],
                 ['name' => __('locale.sender_id.update_sender_id')],
             ];
@@ -446,7 +453,7 @@
             $this->authorize('view sender_id');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/senderid"), 'name' => __('locale.menu.Sender ID')],
                 ['name' => __('locale.menu.Plan')],
             ];
@@ -538,7 +545,7 @@
             $this->authorize('create sender_id');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . "/senderid"), 'name' => __('locale.menu.Sender ID')],
                 ['link' => url(config('app.admin_path') . "/senderid/plan"), 'name' => __('locale.menu.Plan')],
                 ['name' => __('locale.labels.create_plan')],

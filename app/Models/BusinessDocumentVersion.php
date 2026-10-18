@@ -47,6 +47,7 @@ class BusinessDocumentVersion extends Model
         'subtotal_minor' => 'integer',
         'total_minor' => 'integer',
         'schema_version' => 'integer',
+        'lock_version' => 'integer',
         'issued_at' => 'datetime',
         'superseded_at' => 'datetime',
     ];

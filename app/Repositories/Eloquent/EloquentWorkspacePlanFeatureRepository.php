@@ -52,6 +52,34 @@ class EloquentWorkspacePlanFeatureRepository extends EloquentBaseRepository impl
         return $feature;
     }
 
+    public function syncFeatureKeys(WorkspacePlanCatalog $catalog, array $featureKeys): array
+    {
+        $wanted = array_values(array_unique($featureKeys));
+
+        foreach ($wanted as $key) {
+            $this->guardKnownFeatureKey($key);
+        }
+
+        $current = $this->query()->where('workspace_plan_catalog_id', $catalog->id)->get()
+            ->map(fn ($row) => $row->feature_key instanceof PlatformFeature ? $row->feature_key->value : (string) $row->feature_key)
+            ->all();
+
+        $added = array_values(array_diff($wanted, $current));
+        $removed = array_values(array_diff($current, $wanted));
+
+        foreach ($added as $key) {
+            $this->create(['workspace_plan_catalog_id' => $catalog->id, 'feature_key' => $key]);
+        }
+
+        if ($removed !== []) {
+            $this->query()->where('workspace_plan_catalog_id', $catalog->id)->whereIn('feature_key', $removed)->delete();
+        }
+
+        $this->forgetRequestCache("workspace_plan_feature:keys:{$catalog->id}");
+
+        return ['added' => $added, 'removed' => $removed];
+    }
+
     private function guardKnownFeatureKey(mixed $featureKey): void
     {
         $value = $featureKey instanceof PlatformFeature ? $featureKey->value : $featureKey;

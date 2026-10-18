@@ -10,7 +10,8 @@
     use Illuminate\Contracts\Foundation\Application;
     use Illuminate\Contracts\View\Factory;
     use Illuminate\Contracts\View\View;
-    use Illuminate\Foundation\Auth\EmailVerificationRequest;
+    use App\Library\PlatformBilling\PendingVerification;
+    use Illuminate\Auth\Events\Verified;
     use Illuminate\Foundation\Auth\VerifiesEmails;
     use Illuminate\Http\RedirectResponse;
     use Illuminate\Http\Request;
@@ -51,16 +52,58 @@
          * @return Application|Redirector|RedirectResponse
          */
 
-        public function verificationVerify(EmailVerificationRequest $request): Redirector|RedirectResponse|Application
+        public function verificationVerify(Request $request, string $id, string $hash): Redirector|RedirectResponse|Application
         {
-            $request->fulfill();
+            $user = $request->user();
+
+            // Invalid, modified or expired link: never verify, and never strand the visitor on a 401/403.
+            if ( ! $request->hasValidSignature()) {
+                PendingVerification::forget();
+
+                return $user
+                    ? redirect()->route('verification.notice')->with([
+                        'status'  => 'error',
+                        'message' => __('locale.auth.verification_link_invalid'),
+                    ])
+                    : redirect()->route('login')->with([
+                        'status'  => 'error',
+                        'message' => __('locale.auth.verification_link_invalid'),
+                    ]);
+            }
+
+            // Signed out (e.g. the session was lost between signup and the email click): sign in, then come back.
+            if ( ! $user) {
+                PendingVerification::remember($request->getRequestUri());
+
+                return redirect()->route('login')->with([
+                    'status'  => 'info',
+                    'message' => __('locale.auth.verification_sign_in'),
+                ]);
+            }
+
+            PendingVerification::forget();
+
+            // The link must belong to the account that is signed in.
+            if ( ! hash_equals((string) $user->getKey(), $id) || ! hash_equals(sha1($user->getEmailForVerification()), $hash)) {
+                return redirect(Helper::home_route())->with([
+                    'status'  => 'error',
+                    'message' => __('locale.auth.verification_wrong_account'),
+                ]);
+            }
+
+            if ($user->hasVerifiedEmail()) {
+                return redirect(\App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route());
+            }
+
+            if ($user->markEmailAsVerified()) {
+                event(new Verified($user));
+            }
 
             if (Helper::app_config('user_registration_notification_email')) {
-                $user = Auth::user();
                 $user->notify(new WelcomeEmailNotification($user->first_name, $user->last_name, $user->email, route('login'), ''));
             }
 
-            return redirect(Helper::home_route());
+            return redirect(\App\Library\Workspace\ClientInvitationReturn::pull() ?? \App\Library\PlatformBilling\Offers\OfferReturn::url() ?? Helper::home_route());
         }
 
         /**

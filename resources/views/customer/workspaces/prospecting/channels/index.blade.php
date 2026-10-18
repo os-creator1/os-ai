@@ -10,7 +10,7 @@
 @section('content')
     <div class="row mb-2">
         <div class="col-12">
-            <h4 class="mb-0">Prospecting</h4>
+            <h4 class="mb-0">Outreach</h4>
             <p class="text-caption mb-0">Connect a dedicated Twilio or Telnyx number owned by this {{ $accountNoun }} — never a client Business's own connection.</p>
         </div>
     </div>
@@ -48,7 +48,11 @@
                                     @if($channel->status === 'active')
                                         <x-badge variant="success">Active</x-badge>
                                     @else
-                                        <x-badge variant="neutral">Disabled</x-badge>
+                                        @if($channel->status === 'disconnected')
+                                            <x-badge variant="neutral">Disconnected</x-badge>
+                                        @else
+                                            <x-badge variant="neutral">Disabled</x-badge>
+                                        @endif
                                     @endif
                                 </td>
                                 <td>

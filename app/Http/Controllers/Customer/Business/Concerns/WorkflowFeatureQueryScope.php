@@ -50,6 +50,31 @@ final class WorkflowFeatureQueryScope
         request()->attributes->remove(self::REQUEST_ATTRIBUTE);
     }
 
+    /**
+     * Run `$work` with the feature scope SUSPENDED, so its statements are filed as
+     * shared. Only for the platform's Location ACL (LocationAccessGuard) — the same
+     * authority tenancy resolution already is, and not workflow-feature SQL. It
+     * never hides feature SQL: nothing the workflow feature itself reads may go
+     * through here.
+     *
+     * @template T
+     * @param \Closure(): T $work
+     * @return T
+     */
+    public static function shared(\Closure $work): mixed
+    {
+        $wasActive = self::isActive();
+        self::end();
+
+        try {
+            return $work();
+        } finally {
+            if ($wasActive) {
+                self::begin();
+            }
+        }
+    }
+
     public static function isActive(): bool
     {
         return request()->attributes->get(self::REQUEST_ATTRIBUTE) === true;

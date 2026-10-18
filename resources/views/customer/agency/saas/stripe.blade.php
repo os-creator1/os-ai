@@ -118,7 +118,7 @@
             <x-card title="Previous accounts">
                 <ul data-role="agency-stripe-history">
                     @foreach ($history as $row)
-                        <li>{{ $row->maskedAccountId() }} — {{ $row->status->value }}</li>
+                        <li>{{ $row->maskedAccountId() }} — {{ ucfirst($row->status->value) }}</li>
                     @endforeach
                 </ul>
             </x-card>

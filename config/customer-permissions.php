@@ -92,6 +92,44 @@
             'category'     => 'SEO',
             'default'      => false,
         ],
+        // Google Ads Module V1 (contract 23 §7). view_google_ads defaults TRUE
+        // (reading the Ads pages is ordinary day-to-day work; the idempotent
+        // backfill migration grants it to existing customers).
+        // manage_google_ads is credential-class — connect, choose the account,
+        // disconnect, save the budget/CPL target, manual refresh and every
+        // approved change made in Google Ads — so, like
+        // manage_google_business_profile and manage_search_console, it
+        // defaults FALSE, is NEVER backfilled to true, and a Workspace owner
+        // grants it explicitly.
+        'view_google_ads'       => [
+            'display_name' => 'view_google_ads',
+            'category'     => 'Google Ads',
+            'default'      => true,
+        ],
+        'manage_google_ads'     => [
+            'display_name' => 'manage_google_ads',
+            'category'     => 'Google Ads',
+            'default'      => false,
+        ],
+        // Meta Ads Module V1 (contract 24 §8), parallel to Google's.
+        // view_meta_ads defaults TRUE (the idempotent backfill migration
+        // 2026_10_29_200002 grants it to existing customers). manage_meta_ads
+        // is credential-class — connect, choose the ad account, disconnect,
+        // settings, refresh and every pause/resume — so it defaults FALSE, is
+        // NEVER backfilled to true, and the account owner grants it explicitly.
+        // Category 'Ads' (the provider-neutral module name). Google's category
+        // label stays 'Google Ads': it is part of the persisted permission
+        // catalog shown to owners, so it is left untouched.
+        'view_meta_ads'         => [
+            'display_name' => 'view_meta_ads',
+            'category'     => 'Ads',
+            'default'      => true,
+        ],
+        'manage_meta_ads'       => [
+            'display_name' => 'manage_meta_ads',
+            'category'     => 'Ads',
+            'default'      => false,
+        ],
         /*
          * Implementation Contract 16 §6/§12.E — Packages & Products. ONE
          * capability for the whole module, the simple single-key shape

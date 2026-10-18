@@ -106,6 +106,25 @@ final class CustomerAccountAccessResolver
     }
 
     /**
+     * Whether $workspace currently holds a genuinely usable platform
+     * subscription — distinct from resolve()'s own "usable" state, which
+     * also treats a Workspace with NO plan assigned at all as usable
+     * (onboarding/plan-selection owns that case, per resolveOwnWorkspaceDecision()'s
+     * own comment) because nothing is locked for an account that was never
+     * billed in the first place. A caller asking "does this account have an
+     * active subscription" needs the stricter, isAssigned-qualified answer
+     * this gives instead: assigned AND not locked, so Active, Trial and a
+     * still-running Grace all count, exactly as they do for every other
+     * product screen this resolver already gates.
+     */
+    public function hasActiveSubscription(Workspace $workspace): bool
+    {
+        $summary = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
+
+        return $summary->isAssigned && ! $this->resolve($workspace)->isLocked();
+    }
+
+    /**
      * Contract 05 §4 — the non-composing primitive: what THIS Workspace's own
      * workspace_plan_assignments row means, and nothing upstream of it. This
      * is Contract 03's per-Workspace truth table, moved here unchanged from

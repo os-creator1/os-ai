@@ -73,6 +73,12 @@
                 <dd>{{ $row['value'] }}</dd>
             @endforeach
         </dl>
+        @foreach (($section['actions'] ?? []) as $action)
+            <form method="post" action="{{ $action['url'] }}" class="mt-1" data-role="contact-panel-action">
+                @csrf
+                <x-button type="submit" variant="outline" size="sm">{{ $action['label'] }}</x-button>
+            </form>
+        @endforeach
     @endforeach
 
     @if ($profileUrl !== null)

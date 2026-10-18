@@ -117,14 +117,12 @@ same one), not a boolean or a new table.
   checkpoint (active Business and Workspace, `automations` entitlement) is the
   existing one.
 
-**Workflow-level Location run-scope is NOT on `origin/main`.** It lives only on the
-unmerged `agent/automations-location-run-scope-foundation` branch (5 commits, 4
-migrations). With owner agreement this lane did not port it: a workflow cannot yet
-be Location-bound, so the clause "Location A event cannot run a Location-bound
-workflow at Location B" has nothing to bind to. What is enforced instead is each
-domain's own Location rule (above). When run-scope merges, the new sources need
-one small follow-up: pin the event's Location onto the enrollment and refuse a
-mismatched Location-bound workflow, in `FoundationTriggerSource::enrollListening()`.
+**Workflow-level Location run-scope was deferred by this lane and has since landed**
+(`AUTOMATIONS-LOCATION-RUN-SCOPE.md`): `FoundationTriggerSource::enrollListening()`
+now passes each fact's Location to `EnrollmentService`, which pins it on the
+enrollment and refuses a mismatched Location-bound workflow. The paragraph above
+describes what this lane enforced on its own; the run-scope contract supersedes the
+"not yet Location-bound" caveat.
 
 ## 7. Send email semantics (Business Email contract §8, preserved)
 
@@ -156,8 +154,12 @@ the Business's own catalog, a bounded select — no async picker was built.
 
 ## 9. Deferred (explicit)
 
-* Payments / Invoices / Documents / Proposals / Contracts triggers (separate lanes).
-* Workflow-level Location run-scope (see §6).
+* ~~Payments / Invoices / Documents / Proposals / Contracts triggers~~ — landed in the
+  final V1 pass with the Move opportunity, Send booking link / form / questionnaire,
+  Create & send proposal and Request payment steps, event-fact conditions, five starter
+  recipes and Location-aware SMS: see `docs/product/v1-acceptance/07-AUTOMATIONS.md`
+  (the final contract) and `AUTOMATIONS-LOCATION-RUN-SCOPE.md` (Selected Locations).
+* ~~Workflow-level Location run-scope~~ — landed: `AUTOMATIONS-LOCATION-RUN-SCOPE.md`.
 * Email suppression / unsubscribe — a declared dependency of the Business Email
   foundation before any promotional-style automation email; inbound / reply triggers.
 * Contact-timeline entries for the new action types (`AutomationActivitySource`).

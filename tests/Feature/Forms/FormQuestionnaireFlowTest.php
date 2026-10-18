@@ -819,7 +819,7 @@ class FormQuestionnaireFlowTest extends TestCase
         $this->assertSame(['alpha', 'beta'], array_column($form->currentVersion()->fields, 'key'));
 
         $this->get($this->formsRoute('edit', $w, $b, [$form->uid]))->assertOk()
-            ->assertSee('data-role="forms-pages"', false)->assertSee('First')->assertSee('Second');
+            ->assertSee('data-role="forms-builder"', false)->assertSee('First')->assertSee('Second');
 
         // Reorder: swap the positions; the keys of the questions are carried by the form.
         $existing = $form->currentVersion()->fields;

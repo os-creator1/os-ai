@@ -62,4 +62,22 @@ enum GoogleOperationType: string
     case MetricsSynced = 'metrics_synced';
 
     case MetricsPurged = 'metrics_purged';
+
+    /**
+     * Google Ads Module V1 contract §15 — extended ADDITIVELY for the third
+     * Google product, on the same rules as the Search Console block above
+     * (no existing value renamed or repurposed; all <= varchar(40)).
+     * Connect / refresh / disconnect reuse the product-neutral types.
+     */
+    case AdsAccountsListed = 'ads_accounts_listed';
+
+    case AdsAccountSelected = 'ads_account_selected';
+
+    case AdsSync = 'ads_sync';
+
+    case AdsCampaignStatusChanged = 'ads_campaign_status_changed';
+
+    case AdsKeywordStatusChanged = 'ads_keyword_status_changed';
+
+    case AdsNegativeKeywordAdded = 'ads_negative_keyword_added';
 }

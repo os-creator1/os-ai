@@ -7,6 +7,10 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\PlatformBilling\Offers\EmailIdentity;
+use App\Library\PlatformBilling\Offers\OfferReconciler;
+use App\Library\PlatformBilling\Offers\SubscriptionTermsHistory;
+use App\Library\PlatformBilling\Offers\TrialLedger;
 use App\Models\AgencyClientSubscription;
 use App\Models\PlatformSubscription;
 use App\Models\Workspace;
@@ -77,6 +81,9 @@ final class PlatformSubscriptionManager
         private readonly PlatformStripeGateway $gateway,
         private readonly PlatformSubscriptionFinalizer $finalizer,
         private readonly EntitlementManager $entitlements,
+        private readonly TrialLedger $trials,
+        private readonly SubscriptionTermsHistory $history,
+        private readonly OfferReconciler $offers,
     ) {
     }
 
@@ -91,14 +98,19 @@ final class PlatformSubscriptionManager
         string $customerEmail,
         string $successUrl,
         string $cancelUrl,
+        ?CheckoutTerms $terms = null,
     ): CheckoutSessionResult {
-        if (! $catalog->isSellable()) {
+        // A Private Offer sells on its own verified Price, so it does not need
+        // the plan to be on public sale; it still needs the plan to be active.
+        if ($terms === null ? ! $catalog->isSellable() : ! $this->isOfferable($catalog)) {
             throw PlatformBillingException::because(
                 (bool) $catalog->available_for_signup && (bool) $catalog->is_active
                     ? PlatformBillingException::TIER_NOT_PRICED
                     : PlatformBillingException::TIER_NOT_AVAILABLE
             );
         }
+
+        $terms ??= $this->publicTerms($workspace, $catalog, $customerEmail);
 
         // ---- 1. durable local row, committed, no network -----------------
         $subscription = DB::transaction(function () use ($workspace, $catalog) {
@@ -134,7 +146,32 @@ final class PlatformSubscriptionManager
             return $row->refresh();
         });
 
-        return $this->driveCheckout($subscription, $catalog, $customerEmail, $successUrl, $cancelUrl);
+        return $this->driveCheckout($subscription, $terms, $customerEmail, $successUrl, $cancelUrl);
+    }
+
+    /** A plan an owner may extend a Private Offer on: active and fully priced. */
+    private function isOfferable(WorkspacePlanCatalog $catalog): bool
+    {
+        return (bool) $catalog->is_active && $catalog->price !== null && $catalog->currency_id !== null;
+    }
+
+    /**
+     * The terms of an ordinary purchase. The catalog's trial is honoured only
+     * if this customer has not already had one — across cancelled Checkouts,
+     * resubscriptions and duplicate accounts (TrialLedger).
+     */
+    private function publicTerms(Workspace $workspace, WorkspacePlanCatalog $catalog, string $customerEmail): CheckoutTerms
+    {
+        // Ordinary signup carries NO trial unless the platform has deliberately
+        // enabled public trials (config/platform_billing.php, off). Special
+        // trials are issued only through eligible Private Offers.
+        $trialDays = config('platform_billing.allow_public_trials') ? $catalog->configuredTrialDays() : null;
+
+        if ($trialDays !== null && ! $this->trials->reserve($workspace, $customerEmail, 'public')) {
+            $trialDays = null;
+        }
+
+        return CheckoutTerms::forCatalog($catalog, $trialDays);
     }
 
     /**
@@ -172,8 +209,9 @@ final class PlatformSubscriptionManager
         string $customerEmail,
         string $successUrl,
         string $cancelUrl,
+        ?CheckoutTerms $terms = null,
     ): CheckoutSessionResult {
-        if (! $catalog->isSellable()) {
+        if ($terms === null ? ! $catalog->isSellable() : ! $this->isOfferable($catalog)) {
             throw PlatformBillingException::because(
                 (bool) $catalog->available_for_signup && (bool) $catalog->is_active
                     ? PlatformBillingException::TIER_NOT_PRICED
@@ -191,9 +229,11 @@ final class PlatformSubscriptionManager
             throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
         }
 
-        $subscription = $this->retireEndedSubscription($subscription, $catalog);
+        $terms ??= $this->publicTerms($workspace, $catalog, $customerEmail);
 
-        return $this->driveCheckout($subscription, $catalog, $customerEmail, $successUrl, $cancelUrl);
+        $subscription = $this->retireEndedSubscription($subscription, $catalog, $terms);
+
+        return $this->driveCheckout($subscription, $terms, $customerEmail, $successUrl, $cancelUrl);
     }
 
     /**
@@ -202,9 +242,9 @@ final class PlatformSubscriptionManager
      * canonical entitlement moves to the newly purchased tier when — and only
      * when — the provider confirms it.
      */
-    private function retireEndedSubscription(PlatformSubscription $subscription, WorkspacePlanCatalog $catalog): PlatformSubscription
+    private function retireEndedSubscription(PlatformSubscription $subscription, WorkspacePlanCatalog $catalog, CheckoutTerms $terms): PlatformSubscription
     {
-        return DB::transaction(function () use ($subscription, $catalog): PlatformSubscription {
+        return DB::transaction(function () use ($subscription, $catalog, $terms): PlatformSubscription {
             $locked = PlatformSubscription::query()->whereKey($subscription->id)->lockForUpdate()->firstOrFail();
 
             $retired = $locked->retiredProviderSubscriptionIds();
@@ -225,13 +265,19 @@ final class PlatformSubscriptionManager
                 // Supersede anything currently in flight (§7's CAS token).
                 'checkout_attempt_generation' => (int) $locked->checkout_attempt_generation + 1,
                 'cancel_at_period_end' => false,
+                // A new life starts on NEW terms: whatever private offer the
+                // previous life was on does not follow the customer back, and
+                // its schedule belonged to a subscription that no longer exists.
+                // The redemption row keeps the history.
+                'offer_redemption_id' => null,
+                'provider_schedule_id' => null,
                 // §10 — the tier being bought, as a durable operation. The
                 // entitlement moves only on provider confirmation.
                 'pending_operation_uid' => (string) Str::uuid(),
                 'pending_kind' => self::PENDING_RESUBSCRIBE,
                 'pending_plan_catalog_id' => $catalog->id,
-                'pending_price_id' => $catalog->provider_price_id,
-                'pending_price_snapshot' => $catalog->price,
+                'pending_price_id' => $terms->providerPriceId,
+                'pending_price_snapshot' => $terms->priceSnapshot ?? $catalog->price,
                 'pending_currency_id' => $catalog->currency_id,
                 'pending_currency_code' => $catalog->currency?->code,
                 'pending_billing_cycle' => (string) $catalog->billing_cycle,
@@ -253,13 +299,13 @@ final class PlatformSubscriptionManager
      */
     private function driveCheckout(
         PlatformSubscription $subscription,
-        WorkspacePlanCatalog $catalog,
+        CheckoutTerms $terms,
         string $customerEmail,
         string $successUrl,
         string $cancelUrl,
     ): CheckoutSessionResult {
         for ($round = 0; $round < self::MAX_CHECKOUT_ROUNDS; $round++) {
-            $subscription = $this->resolveCheckoutAttempt($subscription->refresh(), $catalog);
+            $subscription = $this->resolveCheckoutAttempt($subscription->refresh(), $terms);
             $attemptUid = (string) $subscription->checkout_attempt_uid;
 
             // The idempotency key is the ATTEMPT's, not the subscription's. Two
@@ -268,7 +314,7 @@ final class PlatformSubscriptionManager
             // new key, which is the only way a different Price may legally be
             // sent.
             $result = $this->gateway->createSubscriptionCheckout(
-                providerPriceId: (string) $catalog->provider_price_id,
+                providerPriceId: $terms->providerPriceId,
                 clientReferenceId: (string) $subscription->uid,
                 idempotencyKey: (string) $subscription->checkoutAttemptKey(),
                 successUrl: $successUrl,
@@ -276,6 +322,7 @@ final class PlatformSubscriptionManager
                 customerEmail: $customerEmail,
                 trialDays: $subscription->trial_days_snapshot,
                 existingCustomerId: $subscription->provider_customer_id,
+                options: $this->checkoutOptions($terms),
             );
 
             // Only the session id is recorded, and only if THIS attempt is
@@ -301,6 +348,17 @@ final class PlatformSubscriptionManager
         }
 
         throw PlatformBillingException::because(PlatformBillingException::CHECKOUT_CONTENDED);
+    }
+
+    private function checkoutOptions(CheckoutTerms $terms): CheckoutOptions
+    {
+        $metadata = $terms->redemption === null ? [] : ['app_offer_redemption' => (string) $terms->redemption->uid];
+
+        return new CheckoutOptions(
+            expiresAt: $terms->expiresAt,
+            subscriptionMetadata: $metadata,
+            sessionMetadata: $metadata,
+        );
     }
 
     /**
@@ -369,7 +427,7 @@ final class PlatformSubscriptionManager
      *
      * @throws PlatformBillingException
      */
-    private function resolveCheckoutAttempt(PlatformSubscription $subscription, WorkspacePlanCatalog $catalog): PlatformSubscription
+    private function resolveCheckoutAttempt(PlatformSubscription $subscription, CheckoutTerms $terms): PlatformSubscription
     {
         for ($round = 0; $round < self::MAX_CHECKOUT_ROUNDS; $round++) {
             $subscription->refresh();
@@ -379,9 +437,15 @@ final class PlatformSubscriptionManager
             // world moved on, which is the whole point.
             $observedGeneration = (int) $subscription->checkout_attempt_generation;
 
-            $priceId = (string) $catalog->provider_price_id;
+            $priceId = $terms->providerPriceId;
             $hasAttempt = $subscription->checkout_attempt_uid !== null;
-            $samePrice = (string) $subscription->checkout_attempt_price_id === $priceId;
+            // "The same request" means the same Price AND the same trial AND the
+            // same offer. An attempt recorded before terms were fingerprinted
+            // (null) can only be compared on its Price, as it always was.
+            $samePrice = (string) $subscription->checkout_attempt_price_id === $priceId
+                && ($subscription->checkout_attempt_terms_hash === null
+                    ? $terms->redemption === null && (int) $subscription->trial_days_snapshot === (int) $terms->trialDays
+                    : (string) $subscription->checkout_attempt_terms_hash === $terms->fingerprint());
 
             if ($subscription->provider_checkout_session_id !== null) {
                 $session = $this->gateway->retrieveCheckoutSession((string) $subscription->provider_checkout_session_id);
@@ -409,9 +473,15 @@ final class PlatformSubscriptionManager
                 return $subscription;
             }
 
-            $minted = $this->mintCheckoutAttempt($subscription, $catalog, $observedGeneration);
+            $previousRedemptionId = $subscription->offer_redemption_id === null ? null : (int) $subscription->offer_redemption_id;
+
+            $minted = $this->mintCheckoutAttempt($subscription, $terms, $observedGeneration);
 
             if ($minted !== null) {
+                // The attempt this replaced may have been a Private Offer's;
+                // give that reservation back so the offer is not held hostage.
+                $this->offers->releaseIfSuperseded($previousRedemptionId, $terms->redemption?->id);
+
                 return $minted;
             }
 
@@ -439,10 +509,12 @@ final class PlatformSubscriptionManager
      */
     private function mintCheckoutAttempt(
         PlatformSubscription $subscription,
-        WorkspacePlanCatalog $catalog,
+        CheckoutTerms $terms,
         int $observedGeneration,
     ): ?PlatformSubscription {
-        return DB::transaction(function () use ($subscription, $catalog, $observedGeneration): ?PlatformSubscription {
+        $catalog = $terms->catalog;
+
+        return DB::transaction(function () use ($subscription, $catalog, $terms, $observedGeneration): ?PlatformSubscription {
             $locked = PlatformSubscription::query()->whereKey($subscription->id)->lockForUpdate()->firstOrFail();
 
             if ((int) $locked->checkout_attempt_generation !== $observedGeneration) {
@@ -451,21 +523,37 @@ final class PlatformSubscriptionManager
 
             $locked->forceFill([
                 'checkout_attempt_uid' => (string) Str::uuid(),
-                'checkout_attempt_price_id' => $catalog->provider_price_id,
+                'checkout_attempt_price_id' => $terms->providerPriceId,
+                'checkout_attempt_terms_hash' => $terms->fingerprint(),
                 'checkout_attempt_started_at' => now(),
                 'checkout_attempt_generation' => $observedGeneration + 1,
                 // The retired session is no longer this subscription's.
                 'provider_checkout_session_id' => null,
                 'workspace_plan_catalog_id' => $catalog->id,
-                'price_snapshot' => $catalog->price,
+                'price_snapshot' => $terms->priceSnapshot ?? $catalog->price,
                 'currency_id' => $catalog->currency_id,
                 'currency_code' => $catalog->currency?->code,
                 'billing_cycle_snapshot' => (string) $catalog->billing_cycle,
-                'trial_days_snapshot' => $catalog->configuredTrialDays(),
-                'provider_price_id' => $catalog->provider_price_id,
+                // The trial is the one RESOLVED for this attempt (ledger-checked
+                // for the public path, offer-defined for an offer), never a
+                // fresh read of whatever the catalog says now.
+                'trial_days_snapshot' => $terms->trialDays,
+                'provider_price_id' => $terms->providerPriceId,
+                // The private-offer agreement this attempt would create, so a
+                // later attempt on different terms clears it.
+                'offer_redemption_id' => $terms->redemption?->id,
             ])->save();
 
-            return $locked->refresh();
+            $locked->refresh();
+
+            $this->history->record(
+                $locked,
+                SubscriptionTermsHistory::CHECKOUT_STARTED,
+                $this->history->currentTermsOf($locked),
+                $terms->redemption?->id,
+            );
+
+            return $locked;
         });
     }
 
@@ -500,6 +588,7 @@ final class PlatformSubscriptionManager
 
         $snapshot = $this->gateway->retrieveSubscription($session->subscriptionId);
         $this->finalizer->apply($subscription, $snapshot);
+        $this->offers->afterProviderApply($subscription->refresh(), $snapshot);
 
         return $subscription->refresh();
     }
@@ -519,7 +608,18 @@ final class PlatformSubscriptionManager
     ): string {
         $snapshot = $this->gateway->retrieveSubscription($providerSubscriptionId);
 
-        return $this->finalizer->apply($subscription, $snapshot, $eventId, $eventCreatedAt);
+        $disposition = $this->finalizer->apply($subscription, $snapshot, $eventId, $eventCreatedAt);
+
+        // Offer reconciliation runs for every observation that proved identity
+        // (a mismatch never reaches it) and is itself idempotent, so a replayed
+        // webhook converges on the same state instead of repeating work.
+        if ($disposition === PlatformSubscriptionFinalizer::APPLIED
+            || $disposition === PlatformSubscriptionFinalizer::IGNORED_NO_CHANGE
+            || $disposition === PlatformSubscriptionFinalizer::IGNORED_COMPLIMENTARY) {
+            $this->offers->afterProviderApply($subscription->refresh(), $snapshot);
+        }
+
+        return $disposition;
     }
 
     /**
@@ -540,15 +640,34 @@ final class PlatformSubscriptionManager
      *
      * @throws PlatformBillingException
      */
-    public function requestPlanChange(Workspace $workspace, WorkspacePlanCatalog $target, int $ownerUserId): string
-    {
+    public function requestPlanChange(
+        Workspace $workspace,
+        WorkspacePlanCatalog $target,
+        int $ownerUserId,
+        bool $acknowledgeEndsPrivatePricing = false,
+    ): string {
         $subscription = $this->liveSubscriptionFor($workspace);
+
+        // PRIVATE PRICING IS AN AGREEMENT, NOT A SIDE EFFECT. Moving plans puts
+        // the customer on the target plan's standard price, so it is refused
+        // unless they have been told exactly that and said yes.
+        if ($this->hasPrivatePricing($subscription) && ! $acknowledgeEndsPrivatePricing) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_ENDS_PRIVATE_PRICING);
+        }
 
         if (! $target->is_active || $target->price === null || blank($target->provider_price_id)) {
             throw PlatformBillingException::because(PlatformBillingException::TIER_NOT_PRICED);
         }
 
         $current = WorkspacePlanCatalog::query()->findOrFail($subscription->workspace_plan_catalog_id);
+
+        // A plan change must never silently change the customer's BILLING
+        // SCHEDULE. Moving between cycles (a legacy monthly subscriber onto a
+        // 28-day plan, say) would re-anchor their billing, so it is refused
+        // here and handled as a deliberate, separate move.
+        if ((string) $subscription->billing_cycle_snapshot !== (string) $target->billing_cycle) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
+        }
 
         if ((int) $current->id === (int) $target->id) {
             throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
@@ -583,15 +702,71 @@ final class PlatformSubscriptionManager
 
         // ---- 2. the provider, outside every transaction ------------------
         //
+        // A subscription under a promotion schedule cannot have its items
+        // edited, so the (acknowledged) agreement's schedule is stepped aside for
+        // the call -- but the AGREEMENT is ended only once the provider has
+        // actually moved the subscription. If the call fails, the schedule is put
+        // back (here, or by the sweep) and the customer keeps the negotiated
+        // pricing they had; a retry of the upgrade starts from that state.
+        //
         // The key is the OPERATION's, never the target catalog id: the same
         // catalog can later carry a different immutable Stripe Price, and
         // Stripe errors when one key is reused with different parameters.
-        $snapshot = $this->gateway->changeSubscriptionPrice(
-            (string) $subscription->provider_subscription_id,
-            (string) $subscription->pending_price_id,
-            prorate: true,
-            idempotencyKey: (string) $subscription->planChangeKey(),
-        );
+        $hadAgreement = $this->hasPrivatePricing($subscription);
+
+        if (! $hadAgreement) {
+            // No agreement on file: only a stray schedule, which is simply released.
+            $this->offers->endPrivatePricing($subscription);
+            $subscription->refresh();
+        }
+
+        try {
+            $snapshot = $this->offers->withScheduleSuspended($subscription, function () use ($subscription) {
+                $snapshot = $this->gateway->changeSubscriptionPrice(
+                    (string) $subscription->provider_subscription_id,
+                    (string) $subscription->pending_price_id,
+                    prorate: true,
+                    idempotencyKey: (string) $subscription->planChangeKey(),
+                );
+
+                $this->offers->endPrivatePricing($subscription->refresh());
+
+                return $snapshot;
+            });
+        } catch (Throwable $e) {
+            // A failure AFTER the provider call (a lost response, a local write)
+            // does not mean the upgrade did not happen. The live subscription
+            // decides: already on the target Price means the upgrade took, and the
+            // old schedule must not be put back over it.
+            if (! $hadAgreement) {
+                throw $e;
+            }
+
+            try {
+                $live = $this->gateway->retrieveSubscription((string) $subscription->provider_subscription_id);
+            } catch (Throwable) {
+                $live = null;
+            }
+
+            if ($live !== null && (string) $live->providerPriceId === (string) $subscription->pending_price_id) {
+                $this->offers->endPrivatePricing($subscription->refresh());
+                $this->finalizer->apply($subscription->refresh(), $live);
+
+                return self::CHANGE_UPGRADED;
+            }
+
+            if ($live === null) {
+                // Unknown: leave the agreement's schedule OFF rather than risk
+                // putting it back over an upgrade that may have applied; the
+                // retry (same operation, same key) converges and the sweep
+                // restores it if the customer never retries.
+                throw $e;
+            }
+
+            $this->offers->restoreAfterResume($subscription->refresh());
+
+            throw $e;
+        }
 
         // ---- 3. converge, through the SHARED finalizer -------------------
         //
@@ -679,7 +854,14 @@ final class PlatformSubscriptionManager
     {
         $subscription = $this->liveSubscriptionFor($workspace);
 
-        $snapshot = $this->gateway->setCancelAtPeriodEnd((string) $subscription->provider_subscription_id, true);
+        // Stripe will not change cancelation behaviour on a subscription that a
+        // Subscription Schedule manages, and a Private Offer promotion or
+        // billing change IS such a schedule. The agreement's schedule is
+        // released first (and put back if the customer resumes).
+        $snapshot = $this->offers->withScheduleSuspended(
+            $subscription,
+            fn () => $this->gateway->setCancelAtPeriodEnd((string) $subscription->provider_subscription_id, true),
+        );
         $this->finalizer->apply($subscription, $snapshot);
 
         return $subscription->refresh();
@@ -700,6 +882,10 @@ final class PlatformSubscriptionManager
 
         $snapshot = $this->gateway->setCancelAtPeriodEnd((string) $subscription->provider_subscription_id, false);
         $this->finalizer->apply($subscription, $snapshot);
+
+        // A cancellation released the agreement's schedule; the customer is
+        // staying, so the agreed pricing goes back on.
+        $this->offers->restoreAfterResume($subscription->refresh());
 
         return $subscription->refresh();
     }
@@ -743,6 +929,11 @@ final class PlatformSubscriptionManager
                 if (blank($subscription->pending_price_id) || blank($subscription->provider_subscription_id)) {
                     continue;
                 }
+
+                // The customer acknowledged when they scheduled this that it ends
+                // their private pricing; that happens now, at the boundary.
+                $this->offers->endPrivatePricing($subscription);
+                $subscription->refresh();
 
                 // No proration: the customer already paid for the period that
                 // just ended, and the cheaper tier simply starts now.
@@ -791,6 +982,12 @@ final class PlatformSubscriptionManager
             $subscription->trial_ends_at,
             'platform_subscription_signup',
         );
+    }
+
+    /** Whether the subscription currently sits on a Private Offer agreement. */
+    public function hasPrivatePricing(PlatformSubscription $subscription): bool
+    {
+        return $subscription->offer_redemption_id !== null;
     }
 
     public function findForWorkspace(Workspace $workspace): ?PlatformSubscription

@@ -7,6 +7,7 @@ use App\Exceptions\Usage\UnauthorizedSlotAgreementActionException;
 use App\Http\Requests\Admin\AllocateSlotAgreementAsAdministratorRequest;
 use App\Http\Requests\Admin\CancelSlotAgreementAsAdministratorRequest;
 use App\Http\Requests\Admin\RetrySlotRenewalAsAdministratorRequest;
+use App\Library\Usage\PaymentProviderConfigurationStatus;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Models\AdditionalBusinessSlotAgreement;
 use App\Repositories\Contracts\AdditionalBusinessSlotAgreementRepository;
@@ -36,6 +37,7 @@ class AdditionalBusinessSlotAgreementController extends AdminBaseController
     public function index(): View
     {
         return view('admin.additional-business-slot-agreements.index', [
+            'paymentProviderStatus' => PaymentProviderConfigurationStatus::label(),
             'agreements' => $this->agreementRepository->query()->orderByDesc('id')->paginate(25),
         ]);
     }

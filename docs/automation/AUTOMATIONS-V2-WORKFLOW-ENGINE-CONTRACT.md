@@ -621,8 +621,14 @@ rows. Pure, deterministic, unit-testable, and it enforces:
    passes it to `validate()` and the compiler reads nothing more.
 7. **Reachability**: every emitted node reachable from the root; `nodes =
    edges + 1`. With `UNIQUE(to_node_id)` this proves a tree.
-8. Trigger/action compatibility (e.g. B4 §7.B: `update_contact_field` requires
-   an explicit trigger group).
+8. Trigger/action compatibility (e.g. B4 §7.B: `update_contact_field` with a
+   per-list `field_id` requires an explicit trigger group). **Lead-lifecycle
+   amendment:** `update_contact_field` may instead carry `custom_field_id` — a
+   Business custom field (canonical `custom_field_values`, written through
+   `CustomFieldValueService`), which is Business-wide and needs no trigger group,
+   so it works on every trigger. It must be an active Contact field of the same
+   Business; the executor re-derives that at run time. See
+   `docs/product/v1-acceptance/08-LEAD-LIFECYCLE.md`.
 
 Output is inserted in **one transaction** with bulk inserts: all nodes, then
 all edges.
@@ -1285,9 +1291,15 @@ re-derives the Business from the enrollment row.
 * CSRF on every mutation; `throttle` on autosave.
 * The document is validated on every save; an invalid document is still saved
   as a draft with its errors, so work is never lost, but **it cannot publish**.
-* Message bodies are stored as plain text; merge tags are an allowlist
-  (`{first_name}`, `{last_name}`, `{company}`, `{business_name}`) substituted
-  server-side, with no template-language evaluation.
+* Message bodies are stored as plain text; merge fields are the canonical
+  `{{group.key}}` vocabulary (`{{contact.first_name}}`, `{{contact.event_date}}`,
+  `{{business.name}}`, …) substituted server-side by the one shared engine, with
+  no template-language evaluation. **Superseded detail:** the earlier lowercase
+  `{first_name}` allowlist never had a resolver; those saved tokens (and B4's
+  `{TAG}`) are now handled by a compatibility adapter. The If/Else custom-field
+  subject is `contact.field:{key}` (the legacy `contact.custom_field:{id}` still
+  evaluates for published versions). See
+  `docs/product/implementation-contracts/23-CUSTOM-FIELDS-MERGE-FIELDS-V1.md`.
 
 ### 14.5 Permissions (D8 locked)
 
@@ -1515,6 +1527,16 @@ rule as follows.
 |---|---|
 | Workflow list — page and JSON | **≤ 2**, for any page size |
 | Builder load | **≤ 4**, independent of node count and of how many contact groups and fields the draft references |
+
+**List page — card layout (polish).** The list page shows each workflow as a card with the
+live/draft counts, the "nothing is running yet" guidance and Live / Drafts filters, plus a
+name search (`?status=` and `?q=`). The two budgeted statements are the page and one grouped
+status-count statement, which also supplies the paginator's total, so a list of any size stays
+at **2**, as does the JSON. The card's "N issues to fix before publishing" badge is the same
+`WorkflowCompiler::validate()` the Builder and Publish use; it is read only for the
+never-published drafts on the page and adds exactly **two** statements (those drafts, one
+reference catalog) however many drafts there are — a page holding a draft is therefore ≤ 4.
+This is pinned by `WorkflowIndexPageTest`.
 
 **Shared platform request overhead is measured independently and is NOT charged
 against these budgets.** It includes: authentication and the resolved customer

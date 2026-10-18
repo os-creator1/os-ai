@@ -3,13 +3,52 @@
     Route::group(
         ['namespace' => 'Auth'],
         function () {
+            /*
+            |------------------------------------------------------------
+            | V1 signup steps: PLAN -> ACCOUNT -> BUSINESS -> PAYMENT
+            |------------------------------------------------------------
+            |
+            | Registered whether or not signup is open, on purpose: when
+            | `account.can_register` is off (or nothing is sellable) every
+            | step renders the branded "registrations are unavailable" auth
+            | screen instead of a bare 404 — see V1SignupController's
+            | guestGate(). The authenticated re-entry routes further down
+            | (Checkout return / resume) stay inside the open-signup block.
+            |
+            | GUEST ONLY. An already-authenticated user POSTing here with
+            | another email would create a second User and silently switch
+            | Auth::login() into it; the controller enforces that boundary
+            | itself as well as via the `guest` middleware.
+            */
+            // Only the steps that write (the account check and the payment
+            // commit) are throttled; plan and business answers are session-only.
+            Route::middleware('guest')->group(function () {
+                Route::get('register', 'V1SignupController@show')->name('register');
+                Route::get('register/plan', 'V1SignupController@planStep')->name('register.plan');
+                Route::post('register/plan', 'V1SignupController@selectPlan')->name('register.plan.select');
+                Route::get('register/account', 'V1SignupController@accountStep')->name('register.account');
+                Route::post('register/account', 'V1SignupController@storeAccount')->middleware('throttle:10,1')->name('register.account.store');
+                Route::get('register/business', 'V1SignupController@businessStep')->name('register.business');
+                Route::post('register/business', 'V1SignupController@storeBusiness')->name('register.business.store');
+                Route::get('register/payment', 'V1SignupController@paymentStep')->name('register.payment');
+                Route::post('register/payment', 'V1SignupController@startPayment')->middleware('throttle:10,1')->name('register.payment.start');
+            });
+
+            // Email verification must stay reachable for existing users even when public
+            // registration is closed, so these live outside the can_register block.
+            Route::get('/email/verify', 'VerificationController@verificationNotice')->middleware(['auth'])->name('verification.notice');
+            // Not behind `auth`/`signed`: the controller checks the signature itself so a signed-out
+            // customer is sent to sign in (and brought back) instead of a bare 401.
+            Route::get('/email/verify/{id}/{hash}', 'VerificationController@verificationVerify')->middleware('twofactor')->name('verification.verify');
+            Route::post('/email/verification-notification', 'VerificationController@verificationSend')->middleware(['auth', 'throttle:6,1'])->name('verification.send');
+
             if (config('account.can_register')) {
                 /*
                 |------------------------------------------------------------
                 | Implementation Contract 21 §7 — THE canonical V1 signup.
                 |------------------------------------------------------------
                 |
-                | `register` now resolves to V1SignupController. The legacy
+                | `register` resolves to V1SignupController. The legacy
                 | RegisterController selects a legacy `Plan` and one of eight
                 | inherited payment gateways, and produces a legacy
                 | `Subscription` plus a FABRICATED complimentary Core
@@ -27,16 +66,9 @@
                 | deliberately NOT part of V1 signup. V1 takes exactly one
                 | payment route: a hosted lane-A Stripe Checkout Session.
                 */
-                // GUEST ONLY. These are the anonymous signup surface: an
-                // already-authenticated user POSTing here with another email
-                // would create a second User and silently switch Auth::login()
-                // into it, abandoning their own account mid-session. The
-                // authenticated re-entry routes below (signup.plan /
-                // signup.resume) are the supported path for someone who is
-                // already signed in.
-                Route::get('register', 'V1SignupController@show')->middleware('guest')->name('register');
-                Route::post('register', 'V1SignupController@store')->middleware(['guest', 'throttle:10,1']);
-
+                // The authenticated re-entry routes (signup.plan / signup.resume)
+                // are the supported path for someone who is already signed in;
+                // the guest steps are registered above.
                 // The Checkout return. `success` trusts provider truth, never a
                 // query flag (§8.5); `cancelled` never deletes the account.
                 Route::get('signup/complete', 'V1SignupController@success')->middleware('auth')->name('signup.success');
@@ -53,16 +85,36 @@
                 Route::post('pay-offline', 'RegisterController@PayOffline')->name('payment.offline');
                 Route::post('pay-nowpayments', 'RegisterController@PayNowpayments')->name('payment.nowpayments');
 
-                Route::get('/email/verify', 'VerificationController@verificationNotice')->middleware(['auth'])->name('verification.notice');
-                Route::get('/email/verify/{id}/{hash}', 'VerificationController@verificationVerify')->middleware(['auth', 'signed'])->name('verification.verify');
-                Route::post('/email/verification-notification', 'VerificationController@verificationSend')->middleware(['auth', 'throttle:6,1'])->name('verification.send');
                 Route::get('/sub-account/accept/{token}', 'VerificationController@subAccountAccept')->name('sub_account.accept');
                 Route::post('/sub-account/accept/{token}', 'VerificationController@subAccountAcceptSubmit')->name('sub_account.accept.submit');
             }
 
+            /*
+            |------------------------------------------------------------
+            | Private Offers — the customer's side of a unique offer link.
+            |------------------------------------------------------------
+            |
+            | Registered whether or not public signup is open: an offer is a
+            | private commercial agreement, not a signup page.
+            |
+            | GET on the link is a pure read. Only the authenticated POST in
+            | which the customer ticks "I accept these terms" can start a
+            | Checkout, and nothing is paid or entitled until the provider
+            | confirms it. The token is a 256-bit random secret whose SHA-256 is
+            | all that is stored; the route constraint rejects anything that
+            | could not be one before it reaches the database. The Checkout
+            | return URLs carry the redemption uid, never the secret.
+            */
+            $offerToken = '[A-Za-z0-9_-]{32,64}';
+            Route::get('offers/{token}', 'PrivateOfferController@show')->where('token', $offerToken)->middleware(['private.offers', 'throttle:60,1'])->name('offers.show');
+            Route::get('offers/{token}/signup', 'PrivateOfferController@signup')->where('token', $offerToken)->middleware(['private.offers', 'guest', 'throttle:20,1'])->name('offers.signup');
+            Route::post('offers/{token}/accept', 'PrivateOfferController@accept')->where('token', $offerToken)->middleware(['private.offers', 'auth', 'throttle:10,1'])->name('offers.accept');
+            Route::get('offers/return/{redemption}', 'PrivateOfferController@checkoutReturn')->whereUuid('redemption')->middleware('auth')->name('offers.return');
+            Route::get('offers/cancelled/{redemption}', 'PrivateOfferController@checkoutCancelled')->whereUuid('redemption')->middleware('auth')->name('offers.cancelled');
+
             // Authentication Routes...
             Route::get('login', 'LoginController@showLoginForm')->name('login');
-            Route::post('login', 'LoginController@login');
+            Route::post('login', 'LoginController@login')->middleware('throttle:10,1');
             Route::any('logout', 'LoginController@logout')->name('logout');
 
             Route::get('login/{provider}', 'LoginController@redirectToProvider')->name('social.login');
@@ -77,8 +129,9 @@
             //two-step verification routes
             Route::get('verify/resend', 'TwoFactorController@resend')->name('verify.resend');
             Route::get('verify/backup-code', 'TwoFactorController@backUpCode')->name('verify.backup');
-            Route::post('verify/backup-code', 'TwoFactorController@updateBackUpCode')->name('verify.backup.store');
-            Route::resource('verify', 'TwoFactorController')->only(['index', 'store']);
+            Route::post('verify/backup-code', 'TwoFactorController@updateBackUpCode')->middleware('throttle:6,1')->name('verify.backup.store');
+            Route::get('verify', 'TwoFactorController@index')->name('verify.index');
+            Route::post('verify', 'TwoFactorController@store')->middleware('throttle:6,1')->name('verify.store');
 
             //common or public data access routes
             Route::get('download-sample-file', 'LoginController@downloadSampleFile')->name('sample.file');
@@ -139,7 +192,7 @@
             Route::post('notifications/batch_action', 'AccountController@notificationBatchAction')->name('account.notifications.batch_action');
 
             //Registration Payment
-            Route::any('account/{user}/success/{plan}/{payment_method}', 'AccountController@successfulRegisterPayment')->name('registers.payment_success')->withoutMiddleware(['verified', 'auth']);
+            Route::any('account/{user}/success/{plan}/{payment_method}', 'AccountController@successfulRegisterPayment')->name('registers.payment_success');
             Route::any('account/{user}/cancel', 'AccountController@cancelledRegisterPayment')->name('registers.payment_cancel');
             Route::post('account/{user}/braintree', 'AccountController@braintreeRegister')->name('registers.braintree');
             Route::post('account/{user}/authorize-net', 'AccountController@authorizeNetRegister')->name('registers.authorize_net');

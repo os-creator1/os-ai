@@ -19,7 +19,19 @@ class AgencyProspectCampaign extends Model
         'status',
         'context',
         'opening_message',
+        'sending_mode',
     ];
+
+    /** BYO-channel Prospecting runtime (every pre-Outreach campaign). */
+    public const MODE_CHANNEL = 'channel';
+
+    /** Agency Outreach: canonical messaging + the deterministic engine. */
+    public const MODE_MANAGED = 'managed';
+
+    public function isManaged(): bool
+    {
+        return $this->sending_mode === self::MODE_MANAGED;
+    }
 
     protected $casts = [
         'status' => AgencyProspectCampaignStatus::class,

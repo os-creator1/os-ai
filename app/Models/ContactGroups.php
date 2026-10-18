@@ -564,6 +564,27 @@
 
 
         /**
+         * The import steps round-trip the staged file path through the browser, so it is client input.
+         * Accept only a file that uploadCsv() produced (import-<id>.csv) directly inside the import
+         * temp dir; anything else (traversal, other directories, other file types) is rejected.
+         *
+         * @throws Exception
+         */
+        public function resolveStagedImportFile(?string $path): string
+        {
+            $name = is_string($path) ? basename(str_replace('\\', '/', $path)) : '';
+
+            abort_unless(preg_match('/^import-[0-9a-f.]+\.csv$/i', $name) === 1, 404);
+
+            $dir  = realpath($this->getImportTempDir());
+            $file = realpath($this->getImportTempDir($name));
+
+            abort_unless($dir !== false && $file !== false && dirname($file) === $dir, 404);
+
+            return $file;
+        }
+
+        /**
          * @throws Exception
          */
         public function getImportTempDir($file = null)

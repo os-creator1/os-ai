@@ -17,8 +17,11 @@ use App\Models\BusinessLocation;
 use App\Models\ContactGroups;
 use App\Models\Contacts;
 use App\Models\Currency;
+use App\Models\Customer;
 use App\Models\User;
+use App\Models\Workspace;
 use App\Enums\Business\BusinessServiceMode;
+use App\Enums\Business\BusinessStatus;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
@@ -38,7 +41,61 @@ use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
  */
 trait CreatesDashboardFixtures
 {
-    use CreatesCustomerContextFixtures;
+    use CreatesCustomerContextFixtures {
+        tenant as protected rawTenant;
+        addBusiness as protected rawAddBusiness;
+    }
+
+    /**
+     * Every fixture Business is, unless a test says otherwise, an ESTABLISHED one that predates the SEO-first readiness
+     * policy (businesses.readiness_policy NULL), so the Home behaviour these suites pin is the legacy behaviour. A test of
+     * the new policy opts in with adoptSeoFirstPolicy().
+     */
+    protected function addBusiness(Customer $customer, Workspace $workspace, string $name, BusinessStatus $status = BusinessStatus::Active): Business
+    {
+        $business = $this->rawAddBusiness($customer, $workspace, $name, $status);
+        DB::table('businesses')->where('id', $business->id)->update(['readiness_policy' => null]);
+
+        return $business->fresh();
+    }
+
+    protected function adoptSeoFirstPolicy(Business $business): void
+    {
+        DB::table('businesses')->where('id', $business->id)->update(['readiness_policy' => Business::READINESS_POLICY_SEO_FIRST]);
+    }
+
+    protected function bareTenant(
+        \App\Enums\Entitlement\WorkspacePlanTier $tier = \App\Enums\Entitlement\WorkspacePlanTier::Growth,
+        string $businessName = 'Harbor Lane Studios',
+        string $workspaceName = 'Harbor Lane',
+    ): array {
+        return $this->rawTenant($tier, $businessName, $workspaceName);
+    }
+
+    /**
+     * Home V2 — every Dashboard fixture Business has finished its essential setup
+     * (see completeCalendarSetup()), so a test of the ordinary Home sees the ordinary
+     * Home. A test of the NEW-business journey calls bareTenant() instead.
+     */
+    protected function tenant(
+        \App\Enums\Entitlement\WorkspacePlanTier $tier = \App\Enums\Entitlement\WorkspacePlanTier::Growth,
+        string $businessName = 'Harbor Lane Studios',
+        string $workspaceName = 'Harbor Lane',
+    ): array {
+        $tenant = $this->bareTenant($tier, $businessName, $workspaceName);
+
+        if ($this->tenantsFinishSetup()) {
+            $this->completeCalendarSetup($tenant[1]);
+
+            // An established Business: it was collecting data long before any period a test compares, so a comparison is real
+            // (a Business created inside the previous period would, truthfully, show "First month"). Young-Business tests set
+            // their own created_at.
+            \Illuminate\Support\Facades\DB::table('businesses')->where('id', $tenant[1]->id)->update(['created_at' => '2025-01-01 00:00:00']);
+            $tenant[1]->refresh();
+        }
+
+        return $tenant;
+    }
 
     protected string $frozenNowUtc = '2026-09-10 15:00:00';
 
@@ -596,6 +653,82 @@ trait CreatesDashboardFixtures
         $region = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#si', ' ', $region) ?? '';
 
         return trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($region))) ?? '');
+    }
+
+    /** A consumer that is not about Home (and so should not gain a Location) overrides this. */
+    protected function tenantsFinishSetup(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Home V2 — a Business that has finished the essential setup: one active
+     * Location, one active booking type, and a staff member (the owner) who is
+     * assigned to it and has working hours, so BookingTypeManager reports it
+     * bookable. Without this a Calendar-entitled fixture Business is, truthfully,
+     * a brand-new business and Home shows its setup journey.
+     *
+     * @return array{location: int, bookingType: int}
+     */
+    protected function completeCalendarSetup(Business $business): array
+    {
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'country_code' => 'US',
+        ]);
+        // A Business that finished setup has its onboarding foundation: a PRIMARY Location and PRIMARY Service.
+        $location->forceFill(['is_primary' => true])->save();
+        $this->primaryService($business);
+
+        $typeId = DB::table('booking_types')->insertGetId([
+            'uid' => (string) Str::uuid(),
+            'public_booking_uuid' => (string) Str::uuid(),
+            'business_location_id' => $location->id,
+            'name' => 'Consultation',
+            'duration_minutes' => 30,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('booking_type_staff')->insert([
+            'booking_type_id' => $typeId,
+            'staff_user_id' => (int) $business->customer_id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('staff_availability_rules')->insert([
+            'business_location_id' => $location->id,
+            'staff_user_id' => (int) $business->customer_id,
+            'day_of_week' => 1,
+            'start_time' => '09:00:00',
+            'end_time' => '17:00:00',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return ['location' => (int) $location->id, 'bookingType' => (int) $typeId];
+    }
+
+    /** One active primary Service, the way onboarding leaves it. */
+    protected function primaryService(Business $business, string $name = 'Photo Booth Rental'): void
+    {
+        \App\Models\BusinessService::query()->create([
+            'business_id' => $business->id,
+            'name' => $name,
+            'slug' => \Illuminate\Support\Str::slug($name),
+            'status' => 'active',
+        ])->forceFill(['is_primary' => true])->save();
+    }
+
+    /** mainText() without the Ask MotionGrove section: its chip labels are controls, not claims. */
+    protected function mainTextWithoutAsk(string $html): string
+    {
+        // The Ask card, the suggestions ("Track revenue by connecting payments") and the growth cards' own labels ("Bookings") are prompts and
+        // names of real figures, not claims about them.
+        return $this->mainText((string) preg_replace('#<section[^>]*data-band="(?:ask|suggested|headlines)".*?</section>#s', '', $html));
     }
 
     /** The HTML inside the page's <main>. */

@@ -14,11 +14,7 @@
     </div>
     <div class="wf-field">
         <p class="wf-field__label">{{ __('automations.v2.send_sms_form.personalise') }}</p>
-        <div class="wf-chips">
-            @foreach (['{first_name}' => 'first_name', '{last_name}' => 'last_name', '{company}' => 'company', '{business_name}' => 'business_name'] as $tag => $key)
-                <button type="button" class="wf-chip" data-insert="{{ $tag }}">{{ __('automations.v2.send_sms_form.tag_' . $key) }}</button>
-            @endforeach
-        </div>
+        <x-merge-field-picker :picker="$mergeFieldPicker ?? ['groups' => [], 'extra' => []]" target='[data-field="body"]' />
         <p class="wf-help mb-0">{{ __('automations.v2.send_sms_form.testing_note') }}</p>
     </div>
 </template>

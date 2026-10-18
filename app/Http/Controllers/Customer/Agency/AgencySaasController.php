@@ -584,6 +584,7 @@ class AgencySaasController extends Controller
                 'client_uid' => $client?->uid,
                 'plan_name' => $plans[$subscription->agency_saas_plan_id]->name ?? null,
                 'status' => $subscription->status->value,
+                'status_label' => $subscription->status->label(),
                 'price' => $subscription->price_snapshot,
                 'currency_code' => $subscription->currency_code,
                 'billing_cycle' => $subscription->billing_cycle_snapshot,

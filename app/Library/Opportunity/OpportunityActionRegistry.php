@@ -3,6 +3,7 @@
 namespace App\Library\Opportunity;
 
 use App\Enums\Opportunity\OpportunityCompletionPolicy;
+use App\Library\Growth\GrowthRuleRegistry;
 
 /**
  * Closed, source-controlled action metadata (RFC-002 §13.1).
@@ -281,7 +282,11 @@ final class OpportunityActionRegistry
      */
     public static function get(string $actionKey): ?array
     {
-        return self::DEFINITIONS[$actionKey] ?? null;
+        // Growth Center lane: Growth rules contribute non-executable
+        // navigation actions (no handler, no approval). An action key present
+        // in both sources would be a registry bug, and the reviewed
+        // business_advisor entry wins.
+        return self::DEFINITIONS[$actionKey] ?? GrowthRuleRegistry::actionDefinitions()[$actionKey] ?? null;
     }
 
     /**

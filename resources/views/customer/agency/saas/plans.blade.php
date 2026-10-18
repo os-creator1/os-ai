@@ -48,7 +48,7 @@
                                 <td>{{ $plan->name }}</td>
                                 <td>{{ ucfirst($plan->tier->value) }}</td>
                                 <td>{{ $plan->price }} {{ $plan->currency_code }} / {{ $plan->billing_cycle }}</td>
-                                <td>{{ $plan->configuredTrialDays() === null ? __('None') : $plan->configuredTrialDays() . ' ' . __('days') }}</td>
+                                <td>{{ $plan->configuredTrialDays() === null ? __('None') : $plan->configuredTrialDays() . ' ' . ($plan->configuredTrialDays() === 1 ? __('day') : __('days')) }}</td>
                                 <td data-role="agency-saas-plan-status">
                                     @if ($plan->is_published)
                                         {{ __('Published') }}

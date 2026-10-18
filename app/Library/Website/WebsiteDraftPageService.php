@@ -178,9 +178,11 @@ final class WebsiteDraftPageService
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
         $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 
-        $this->sectionValidator->validate($sections, $validAssetUids, true, $validFormUids);
+        $validFormsModuleUids = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->knownUids($website->business);
 
-        return [
+        $this->sectionValidator->validate($sections, $validAssetUids, true, $validFormUids, true, $validFormsModuleUids);
+
+        $validated = [
             'title' => $attributes['title'],
             'slug' => $slug,
             'is_home' => $isHome,
@@ -189,6 +191,13 @@ final class WebsiteDraftPageService
             'meta_description' => $attributes['meta_description'] ?? null,
             'noindex' => (bool) ($attributes['noindex'] ?? false),
         ];
+
+        // Only the owner's editor says whether noindex is their own choice; every other caller leaves it alone.
+        if (array_key_exists('noindex_explicit', $attributes)) {
+            $validated['noindex_explicit'] = (bool) $attributes['noindex_explicit'] && $validated['noindex'];
+        }
+
+        return $validated;
     }
 
     /**
@@ -242,7 +251,27 @@ final class WebsiteDraftPageService
         $current = $website->pages()->where('is_home', true)->lockForUpdate()->first();
 
         if ($current !== null) {
-            $current->update(['is_home' => false]);
+            // A demoted homepage keeps a real, unique slug: a non-home page
+            // with a NULL slug is unreachable on a custom domain, renders
+            // as a second "/" in the sitemap and breaks every platform-path
+            // URL (route() cannot build a link with no slug).
+            $current->update(['is_home' => false, 'slug' => $this->slugForDemotedHome($website, $current)]);
         }
+    }
+
+    private function slugForDemotedHome(Website $website, WebsitePage $page): string
+    {
+        $base = \Illuminate\Support\Str::slug((string) $page->title);
+        $base = $base !== '' ? \Illuminate\Support\Str::limit($base, 70, '') : 'former-home';
+        $base = trim($base, '-') ?: 'former-home';
+
+        $candidate = $base;
+        $suffix = 2;
+
+        while (! WebsiteSlugRules::isValid($candidate) || $website->pages()->where('slug', $candidate)->where('id', '!=', $page->id)->exists()) {
+            $candidate = $base.'-'.$suffix++;
+        }
+
+        return $candidate;
     }
 }

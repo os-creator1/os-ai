@@ -43,8 +43,11 @@
                     'name'    => 'Stripe',
                     'type'    => 'stripe',
                     'options' => json_encode([
-                        'publishable_key' => 'pk_test_AnS4Ov8GS92XmHeVCDRPIZF4',
-                        'secret_key'      => 'sk_test_iS0xwfgzBF6cmPBBkgO13sjd',
+                        // Deliberately blank: a seeder must not ship a working gateway credential. An owner who
+                        // enables this legacy gateway has to enter their own keys. (V1 platform billing does not
+                        // use this row; it reads STRIPE_* from the environment.)
+                        'publishable_key' => '',
+                        'secret_key'      => '',
                         'environment'     => 'sandbox',
                     ]),
                     'status'  => false,
@@ -384,12 +387,8 @@
                     'name'    => 'Offline Payment',
                     'type'    => 'offline_payment',
                     'options' => json_encode([
-                        'payment_details'      => '<p>Please make a deposit to our bank account at:</p>
-<h6>US BANK USA</h6>
-<p>Routing (ABA): 045134400</p>
-<p>Account number: 6216587467378</p>
-<p>Beneficiary name: Ultimate sms</p>',
-                        'payment_confirmation' => 'After payment please contact with following email address codeglen@gmail.com with your transaction id. Normally it may take 1 - 2 business days to process. Should you have any question, feel free contact with us.',
+                        'payment_details'      => '<p>Payment instructions have not been configured yet. Add your bank or payment details in Platform Settings &rarr; Payment Gateways.</p>',
+                        'payment_confirmation' => 'After payment please contact support with your transaction reference.',
                     ]),
                     'status'  => true,
                 ],

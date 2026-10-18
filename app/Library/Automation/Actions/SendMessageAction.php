@@ -2,6 +2,7 @@
 
 namespace App\Library\Automation\Actions;
 
+use App\Library\Automation\Workflow\Runtime\ContactMergeFields;
 use App\Library\Automation\AutomationActionResult;
 use App\Models\Automation;
 use App\Models\AutomationExecution;
@@ -100,7 +101,7 @@ class SendMessageAction
         $sendData = [
             'business_id' => $business->id,
             'user_id' => $business->customer_id,
-            'message' => $this->renderMessage($message, $contact),
+            'message' => ContactMergeFields::render($message, $contact),
             'sms_type' => $smsType,
             'originator' => 'sender_id',
             'sender_id' => $senderId,
@@ -180,28 +181,6 @@ class SendMessageAction
         } catch (NumberParseException) {
             return null;
         }
-    }
-
-    /**
-     * Deterministic {TAG} substitution from the Contact's own group fields
-     * (the legacy automation behavior, retained) — plain string replacement
-     * only, never template evaluation.
-     */
-    private function renderMessage(string $message, Contacts $contact): string
-    {
-        $group = $contact->contactGroup;
-
-        if ($group === null) {
-            return $message;
-        }
-
-        $replacements = [];
-
-        foreach ($group->getFields()->get() as $field) {
-            $replacements['{' . $field->tag . '}'] = (string) $contact->getValueByField($field);
-        }
-
-        return strtr($message, $replacements);
     }
 
     private function maskedPhone(Contacts $contact): string

@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Implementation Contract 07 §5/§12 — thin claim/accept wiring for the
@@ -47,20 +48,30 @@ class ClientInvitationClaimController extends Controller
     {
         try {
             $this->invitationManager->resolveForClaim($uid, $token);
-        } catch (InvalidClientInvitationClaimException) {
+        } catch (InvalidClientInvitationClaimException $e) {
+            $this->logRefusal('show', $uid, $e);
+
             return view('client_invitations.invalid');
         }
 
         if (! Auth::check()) {
+            // Signing in (or verifying a new account) brings them straight back here.
+            \App\Library\Workspace\ClientInvitationReturn::remember($uid, $token);
+
             return view('client_invitations.sign_in_required');
         }
+
+        // Signed in: the memory has done its job and must never redirect again.
+        \App\Library\Workspace\ClientInvitationReturn::forget();
 
         /** @var User $user */
         $user = Auth::user();
 
         try {
             $this->invitationManager->validateClaim($uid, $token, $user->email);
-        } catch (InvalidClientInvitationClaimException) {
+        } catch (InvalidClientInvitationClaimException $e) {
+            $this->logRefusal('show_authenticated', $uid, $e);
+
             // Deliberately the SAME generic view an invalid/expired/revoked
             // link renders — an authenticated-but-wrong-email actor learns
             // nothing distinguishing their case from any other refusal.
@@ -84,7 +95,9 @@ class ClientInvitationClaimController extends Controller
 
         try {
             $invitation = $this->provisioningManager->accept($user, $uid, $token);
-        } catch (InvalidClientInvitationClaimException) {
+        } catch (InvalidClientInvitationClaimException $e) {
+            $this->logRefusal('accept', $uid, $e);
+
             return redirect()->route('client-invitations.claim', ['uid' => $uid, 'token' => $token]);
         }
 
@@ -93,5 +106,21 @@ class ClientInvitationClaimController extends Controller
         return redirect()
             ->route('customer.workspaces.show', $workspace->uid)
             ->with(['status' => 'success', 'message' => 'Workspace created.']);
+    }
+
+    /**
+     * Internal-only diagnostics: the refusal keyword is logged so an operator
+     * can tell "expired" from "email_mismatch" without the recipient ever
+     * being told. The response stays one generic view. Never logs the token
+     * or any email address — the invitation uid alone cannot be used to claim.
+     */
+    private function logRefusal(string $stage, string $uid, InvalidClientInvitationClaimException $e): void
+    {
+        Log::info('Client invitation claim refused', [
+            'stage' => $stage,
+            'invitation_uid' => $uid,
+            'reason' => $e->reason,
+            'authenticated' => Auth::check(),
+        ]);
     }
 }

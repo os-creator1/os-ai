@@ -93,12 +93,16 @@
          * contact panel. Tokens only; the chat theme keeps drawing bubbles.
          */
         .chat-app-window .active-chat {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
             position: relative;
         }
 
         .conversation-body {
             display: flex;
-            height: calc(100% - 65px);
+            flex: 1 1 auto;
+            min-height: 0;
         }
 
         .conversation-main {
@@ -209,10 +213,11 @@
         .conversation-context {
             background-color: var(--color-surface);
             border-left: 1px solid var(--color-border-subtle);
-            flex: 0 0 300px;
+            flex: 0 0 280px;
+            min-height: 0;
             overflow-y: auto;
             padding: var(--space-5) var(--space-4);
-            width: 300px;
+            width: 280px;
         }
 
         .conversation-context-person {
@@ -292,16 +297,72 @@
          * completely alone.
          */
 
-        .conversations-page-header {
-            margin-bottom: var(--space-4);
+        /*
+         * Open workspace: the inbox is the page, not a card inside it. The
+         * theme boxes .content-area-wrapper (1px border, rounded corners) and
+         * pads .app-content on every side; drop both so the three panes run
+         * edge to edge under the navbar, separated only by hairlines.
+         */
+        html body .app-content.chat-application {
+            padding: var(--conversations-top, 0px) 0 0 !important;
         }
 
-        .conversations-page-header p {
-            color: var(--color-text-muted);
+        /* The theme's min-height (100% minus the footer) is taller than the
+           measured workspace by a sub-pixel or two and would push the footer
+           past the viewport, i.e. a stray page scrollbar. */
+        html body .app-content.chat-application {
+            min-height: 0 !important;
+            /* The theme animates `all` on .content for the menu collapse; only
+               the margin needs it, and an animating padding would be measured
+               mid-transition by the chrome script below. */
+            transition-property: margin-left, margin-right;
         }
 
-        .chat-application .content-area-wrapper {
+        html body .app-content.chat-application .content-area-wrapper {
+            border: 0;
+            border-radius: 0;
             box-shadow: none;
+            height: calc(100vh - var(--conversations-chrome, 7.9rem)) !important;
+            height: calc(var(--vh, 1vh) * 100 - var(--conversations-chrome, 7.9rem)) !important;
+        }
+
+        .chat-application .content-area-wrapper .content-wrapper,
+        .chat-application .content-area-wrapper .content-body {
+            padding: 0;
+        }
+
+        .chat-application .sidebar-content,
+        .conversation-context {
+            background-color: var(--color-surface);
+            border-radius: 0;
+        }
+
+        .chat-application .sidebar-content {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            border-right: 1px solid var(--color-border-subtle);
+        }
+
+        .chat-application .sidebar-content > * {
+            flex: 0 0 auto;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper {
+            flex: 1 1 0;
+            height: auto;
+            min-height: 0;
+        }
+
+        @media (min-width: 576px) {
+            .chat-application .sidebar-content {
+                width: 320px;
+            }
+        }
+
+        .chat-application .sidebar-content .chat-fixed-search,
+        .chat-application .sidebar-content .chat-user-list-wrapper {
+            width: 100%;
         }
 
         /* Sidebar filter row: one compact segmented control, not four
@@ -503,7 +564,7 @@
 
         .composer-template-select {
             flex: 0 0 auto;
-            width: 160px;
+            width: 140px;
         }
 
         @media (max-width: 575.98px) {
@@ -538,10 +599,8 @@
 
 
 @section('content')
-    <div class="conversations-page-header">
-        <h1 class="h3 mb-0">{{ __('locale.menu.Conversations') }}</h1>
-        <p class="text-caption mb-0">Manage customer conversations and follow up from one place.</p>
-    </div>
+    {{-- The shell shows no page title for the inbox; keep the heading for assistive tech only. --}}
+    <h1 class="visually-hidden">{{ __('locale.menu.Conversations') }}</h1>
     <div class="body-content-overlay"></div>
     <!-- Main chat area -->
     <section class="chat-app-window">
@@ -666,6 +725,48 @@
     @if(config('broadcasting.connections.pusher.app_id'))
         <script src="{{ asset(mix('js/scripts/echo.js')) }}"></script>
     @endif
+
+    <script>
+      // The workspace fills exactly what the shell leaves: below the navbar,
+      // above the footer. Both are measured, not assumed, so the navbar and
+      // footer types (static / sticky / fixed / hidden) and any font scale
+      // size it correctly. The CSS reads --conversations-top (clearance for a
+      // fixed navbar) and --conversations-chrome (everything that is not the
+      // workspace); its own fallbacks apply until this runs.
+      (function () {
+        const root = document.documentElement;
+        const wrapper = document.querySelector('.app-content.chat-application .content-area-wrapper');
+        if (!wrapper) return;
+        const navbar = document.querySelector('.header-navbar');
+        const footer = document.querySelector('footer.footer');
+
+        let last = '';
+        const syncChrome = function (pass) {
+          const fixedNav = navbar && getComputedStyle(navbar).position === 'fixed';
+          root.style.setProperty('--conversations-top', fixedNav ? navbar.offsetHeight + 'px' : '0px');
+          const top = wrapper.getBoundingClientRect().top + window.pageYOffset;
+          const footerHeight = footer && getComputedStyle(footer).display !== 'none' ? footer.getBoundingClientRect().height : 0;
+          const chrome = (top + footerHeight).toFixed(2) + 'px';
+          root.style.setProperty('--conversations-chrome', chrome);
+          // The clearance above shifts the top that was just measured; go again
+          // until it is stable (one extra pass at most in practice).
+          if (chrome !== last && pass < 3) {
+            last = chrome;
+            syncChrome(pass + 1);
+          }
+        };
+        const run = function () { syncChrome(0); };
+
+        run();
+        window.addEventListener('load', run);
+        window.addEventListener('resize', run);
+        window.addEventListener('orientationchange', run);
+        if (window.ResizeObserver) {
+          const observer = new ResizeObserver(run);
+          [navbar, footer].forEach(function (el) { if (el) observer.observe(el); });
+        }
+      })();
+    </script>
 
     <script>
       // Customer Experience Redesign Slice 2B — every endpoint is rendered by
@@ -1337,7 +1438,19 @@
 
       $(document).ready(function() {
         let page = 1;
-        let filter = "recents";  // Default filter
+        // A Home card can open this list already narrowed: the inbox's own "waiting for a reply" filter and/or the Business-local
+        // days a figure covers. Only those exact shapes are read; anything else leaves the ordinary list.
+        const homeScope = new URLSearchParams(window.location.search);
+        const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+        const createdFrom = isDay(homeScope.get("created_from")) && isDay(homeScope.get("created_to")) ? homeScope.get("created_from") : "";
+        const createdTo = createdFrom ? homeScope.get("created_to") : "";
+        // The tab the URL names (Home opens "waiting"); anything else is the ordinary default. The pinned rows and the scope banner are
+        // rendered by the server from this same URL, so a tab change while "waiting" is active reloads with the new tab instead of
+        // leaving waiting-filtered pinned rows and a "waiting" banner beside a different list.
+        const knownTabs = ["recents", "unread", "read", "all", "waiting"];
+        let filter = knownTabs.indexOf(homeScope.get("filter")) !== -1 ? homeScope.get("filter") : "recents";  // Default filter
+        $(".tab-button").removeClass("btn-primary").addClass("btn-outline-primary");
+        $(".tab-button").filter(function () { return $(this).data("filter") === filter; }).removeClass("btn-outline-primary").addClass("btn-primary");
         let search = "";     // Default search value
 
         // Function to load chat users
@@ -1351,7 +1464,9 @@
               _token: "{{ csrf_token() }}",
               page: page,
               filter: filter,
-              search: search
+              search: search,
+              created_from: createdFrom,
+              created_to: createdTo
             },
             beforeSend: function() {
               $("#loader").show();  // Show the loader before the request
@@ -1383,6 +1498,19 @@
         // Initial load
         loadChatUsers(page, filter, search);
 
+        // Deep link from Outreach (?open=<conversation uid>): open that conversation
+        // once the list has loaded. Best effort; nothing happens if it is not listed.
+        (function () {
+          const wanted = new URLSearchParams(window.location.search).get("open");
+          if (!wanted) { return; }
+          let tries = 0;
+          const timer = setInterval(function () {
+            const $row = $("#users-list li").filter(function () { return String($(this).attr("data-id")) === wanted; }).first();
+            if ($row.length) { clearInterval(timer); $row.trigger("click"); }
+            else if (++tries > 20) { clearInterval(timer); }
+          }, 250);
+        })();
+
 // Add debounce function to delay the search request
         function debounce(func, delay) {
           let timeout;
@@ -1397,6 +1525,15 @@
           // Change the color of the clicked button to primary and reset others
           $(".tab-button").removeClass("btn-primary").addClass("btn-outline-primary");
           $(this).removeClass("btn-outline-primary").addClass("btn-primary");
+
+          // Leaving the "waiting" view: the server-rendered pinned rows and banner must follow, so reload on the chosen tab
+          // (an explicit created-date range in the URL is kept).
+          if (filter === "waiting") {
+            const next = new URL(window.location.href);
+            next.searchParams.set("filter", $(this).data("filter"));
+            window.location.assign(next.toString());
+            return;
+          }
 
           // Get filter value and reset page
           page = 1;

@@ -83,11 +83,11 @@ class CustomerShellLayoutTest extends TestCase
         $home = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-role="sidebar-context"', $home);
         $this->assertStringContainsString('id="customer-context-switcher-toggle"', $home);
-        $this->assertStringContainsString('aria-label="Choose a client account"', $home, 'Standing in the Account frame with no client account chosen: the switcher asks.');
+        $this->assertStringContainsString('aria-label="Choose a business"', $home, 'Standing in the Agency account frame with no Business chosen: the switcher asks for one of the owner\'s OWN businesses.');
 
         $this->switchTo($workspace, $business)->assertRedirect(route('user.home'));
         $selected = $this->home()->assertOk()->getContent();
-        $this->assertMatchesRegularExpression('/aria-label="Current client account: Client One\. Switch client account"/', $selected);
+        $this->assertMatchesRegularExpression('/aria-label="Current business: Client One\. Switch business"/', $selected);
 
         $this->startViewAs($workspace, $business)->assertRedirect(route('user.home'));
         $viewing = $this->home()->assertOk()->getContent();

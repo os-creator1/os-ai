@@ -33,6 +33,8 @@ final class WebsitePublisher
      */
     public function publish(Website $website, int $actingUserId): WebsiteRevision
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('website_publish');
+
         return DB::transaction(function () use ($website, $actingUserId) {
             // Locks the Website row for the duration of the transaction,
             // serializing concurrent publish attempts for the SAME
@@ -113,11 +115,36 @@ final class WebsitePublisher
             ]);
         }
 
+        // Every non-home page needs a real, unique slug: a NULL one is an
+        // unreachable page and a duplicate "/" in the sitemap.
+        $slugs = [];
+        foreach ($pages->where('is_home', false) as $page) {
+            if ($page->slug === null || ! WebsiteSlugRules::isValid((string) $page->slug) || isset($slugs[$page->slug])) {
+                throw ValidationException::withMessages([
+                    'website' => ['The page "'.$page->title.'" needs its own web address (slug) before the Website can be published.'],
+                ]);
+            }
+
+            $slugs[$page->slug] = true;
+        }
+
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
         $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 
+        $validFormsModuleUids = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->knownUids($website->business);
+
         foreach ($pages as $page) {
-            $this->sectionValidator->validate($page->sections ?? [], $validAssetUids, true, $validFormUids);
+            $this->sectionValidator->validate($page->sections ?? [], $validAssetUids, true, $validFormUids, true, $validFormsModuleUids);
+        }
+
+        // The strict photograph policy of the guided builder: a draft may be built without photos, but it is only
+        // published once the homepage, every shown booth and every backdrop have real ones.
+        $missing = app(WebsiteMediaRequirements::class)->missing($website);
+
+        if ($missing !== []) {
+            throw ValidationException::withMessages([
+                'photos' => array_map(fn (array $item) => $item['detail'], $missing),
+            ]);
         }
     }
 

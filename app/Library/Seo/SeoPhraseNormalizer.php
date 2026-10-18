@@ -39,4 +39,19 @@ final class SeoPhraseNormalizer
 
         return trim($normalized, " \t\n\r\0\x0B");
     }
+
+    /**
+     * Whether a phrase carries a search-engine OPERATOR rather than plain words:
+     * quotes, "*", "|", a leading minus ("-word"), "word:" prefixes such as
+     * "site:", or the words OR / AND in capitals. Such a phrase can never be
+     * matched against page text as typed, and the rank provider bills operator
+     * queries at several times the price, so it is refused where a keyword is
+     * saved or tracked instead of failing silently later.
+     */
+    public static function hasSearchOperator(string $phrase): bool
+    {
+        // "Site:", "INTITLE:" and "Inurl:" are operators in any case; only the capitalised boolean
+        // words OR / AND are (a lower-case "and" or "or" is just a word: "rock and roll").
+        return preg_match('/["*|]|(^|\s)-\S|\b(?i:[a-z]+):|\s(OR|AND)\s/u', $phrase) === 1;
+    }
 }

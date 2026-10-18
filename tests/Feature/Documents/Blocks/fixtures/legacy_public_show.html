@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Kitchen renovation proposal</title>
+    <style>
+        html{color-scheme:light}
+        *{box-sizing:border-box}
+        :root{
+            --pd-accent:#1f2933;
+            --pd-ink:#ffffff;
+            --pd-soft:#f1f1f1;
+            --pd-soft:color-mix(in srgb,var(--pd-accent) 11%,#fff);
+            --pd-line:#e7e4de;
+            --pd-text:#17212b;
+            --pd-muted:#5b6672;
+            /* the shared block renderer reads these; point them at the Business brand */
+            --color-primary:var(--pd-accent);
+            --color-primary-soft-bg:var(--pd-soft);
+            --color-primary-border:var(--pd-line);
+            --color-link:var(--pd-accent);
+        }
+        body{margin:0;background:#f6f5f2;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--pd-text);line-height:1.5}
+        .pd-bar{background:var(--pd-accent);color:var(--pd-ink)}
+        .pd-bar-in{max-width:72rem;margin:0 auto;padding:.8rem 1rem;display:flex;align-items:center;gap:.75rem}
+        .pd-logo{width:2.25rem;height:2.25rem;border-radius:.5rem;background:rgba(255,255,255,.92);object-fit:contain;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;color:var(--pd-accent)}
+        .pd-bar-name{font-weight:600;overflow-wrap:anywhere;min-width:0}
+        .pd-secure{margin-left:auto;display:inline-flex;align-items:center;gap:.4rem;font-size:.8rem;white-space:nowrap}
+        .pd-secure svg{width:.95rem;height:.95rem;flex:none}
+        .pd-wrap{max-width:72rem;margin:0 auto;padding:1.5rem 1rem 3rem;display:grid;gap:1.25rem 1.5rem;grid-template-columns:minmax(0,1fr) 17.5rem;grid-template-areas:"head head" "main summary" "main note" "main .";grid-template-rows:auto auto auto 1fr;align-items:start}
+        .pd-head{grid-area:head;min-width:0}
+        .pd-main{grid-area:main;min-width:0}
+        .pd-summary{grid-area:summary;position:sticky;top:1rem}
+        .pd-note{grid-area:note;color:var(--pd-muted);font-size:.85rem;margin:0}
+        .pd-pill{display:inline-block;background:var(--pd-soft);color:var(--pd-accent);font-size:.75rem;font-weight:600;border-radius:999px;padding:.1rem .6rem}
+        h1.pd-title{font-size:1.6rem;line-height:1.25;margin:.35rem 0 0;overflow-wrap:anywhere}
+        .pd-card{background:#fff;border:1px solid var(--pd-line);border-radius:1rem;margin:0 0 1rem;overflow:hidden}
+        .pd-issuer{display:flex;align-items:center;gap:.75rem;padding:1.25rem 2rem 0}
+        .pd-issuer .pd-logo{width:2.75rem;height:2.75rem;background:var(--pd-soft)}
+        .pd-issuer p{margin:0;font-weight:600;overflow-wrap:anywhere}
+        .pd-issuer .pd-sub{font-weight:400;color:var(--pd-muted);font-size:.875rem}
+                .pd-legacy{padding:1.5rem 2rem}
+        .pd-legacy table{width:100%;border-collapse:collapse;margin:1.25rem 0}
+        .pd-legacy th,.pd-legacy td{text-align:left;padding:.55rem .4rem;border-bottom:1px solid var(--pd-line);vertical-align:top}
+        .pd-legacy th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--pd-muted)}
+        .pd-legacy td.num,.pd-legacy th.num{text-align:right}
+        .pd-legacy .total{font-weight:600}
+        .pd-legacy h2{font-size:1.1rem}
+        .pd-payment{padding:1rem 2rem 1.5rem}
+        .pd-notice{border-radius:.75rem;padding:.8rem 1rem;margin:0 0 1rem;background:var(--pd-soft);border:1px solid var(--pd-line)}
+        .pd-notice p{margin:0}
+        .pd-summary-card{background:#fff;border:1px solid var(--pd-line);border-radius:1rem;padding:1.1rem}
+        .pd-eyebrow{font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pd-muted)}
+        .pd-amount{font-size:1.6rem;font-weight:700;margin:.15rem 0;overflow-wrap:anywhere}
+        .pd-facts{margin:1rem 0;padding:1rem 0 0;border-top:1px solid var(--pd-line);display:grid;grid-template-columns:auto 1fr;gap:.45rem 1rem;font-size:.85rem}
+        .pd-facts dt{color:var(--pd-muted)}
+        .pd-facts dd{margin:0;text-align:right;font-weight:600;overflow-wrap:anywhere}
+        .pd-status{display:inline-block;border-radius:999px;padding:.05rem .6rem;font-size:.75rem;font-weight:600;background:#fdf1d0;color:#6b4e00}
+        .pd-status.is-ok{background:#e1f3e8;color:#14603a}
+        .pd-cta{display:block;width:100%;text-align:center;text-decoration:none;font-weight:600;background:var(--pd-accent);color:var(--pd-ink);border-radius:.6rem;padding:.7rem 1rem}
+        fieldset.pd-sign{border:1px solid var(--pd-line);border-radius:1rem;background:#fff;padding:1.5rem 2rem;margin:0 0 1rem;min-width:0}
+        fieldset.pd-sign legend{font-size:1.15rem;font-weight:700;padding:0 .35rem;margin-left:-.35rem}
+        fieldset.pd-sign legend{margin-bottom:1rem}
+        .pd-sign label{display:block;margin:0 0 .3rem;font-size:.8rem;font-weight:600}
+        .pd-sign input[type=text],.pd-sign input[type=email]{font:inherit;padding:.65rem .75rem;border:1px solid #cfcac1;border-radius:.5rem;width:100%;background:#fff}
+        .pd-sign input:focus-visible,.pd-sign button:focus-visible,.pd-cta:focus-visible{outline:3px solid var(--pd-accent);outline-offset:2px}
+        .pd-sign .pd-row{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem}
+        .pd-sign #typed_name{font-style:italic;font-size:1.15rem;background:#faf9f6;border-style:dashed}
+        .pd-sign .consent{display:flex;gap:.6rem;align-items:flex-start;background:#faf9f6;border:1px solid var(--pd-line);border-radius:.6rem;padding:.8rem 1rem;margin:1rem 0;font-size:.85rem}
+        .pd-sign .consent input{margin-top:.2rem;flex:none}
+        .pd-sign .consent{font-weight:400}
+        .pd-sign .consent span{margin:0}
+                .pd-actions{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+        button,.pd-btn{font:inherit;font-weight:600;background:var(--pd-accent);color:var(--pd-ink);border:0;border-radius:.6rem;padding:.7rem 1.2rem;cursor:pointer}
+        button:disabled{opacity:.6;cursor:not-allowed}
+        .error{color:#a51d24}
+        .muted{color:var(--pd-muted);font-size:.9rem}
+        @media (max-width:860px){
+            .pd-wrap{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "summary" "main" "note";padding:1rem .75rem 2rem}
+            .pd-summary{position:static}
+            .pd-issuer{padding:1rem 1rem 0}
+                    fieldset.pd-sign{padding:1.1rem 1rem}
+            .pd-sign .pd-row{grid-template-columns:1fr}
+            .pd-actions button{width:100%}
+            h1.pd-title{font-size:1.35rem}
+        }
+        @media print{.pd-bar,.pd-summary,.pd-note,.pd-sign{display:none}.pd-wrap{display:block;padding:0}.pd-card{border:0}}
+    </style>
+</head>
+<body>
+<header class="pd-bar" data-role="brand-header">
+    <div class="pd-bar-in">
+                    <span class="pd-logo" data-role="brand-initial" aria-hidden="true">H</span>
+                <span class="pd-bar-name" data-role="brand-name">Harbor Lane Studios</span>
+        <span class="pd-secure">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>
+            Secure signing
+        </span>
+    </div>
+</header>
+
+<div class="pd-wrap">
+    <div class="pd-head">
+        <span class="pd-pill" data-role="document-kind">Proposal</span>
+        <h1 class="pd-title">Kitchen renovation proposal</h1>
+    </div>
+
+
+    <aside class="pd-summary" data-role="summary" aria-label="Summary">
+        <div class="pd-summary-card">
+            <div class="pd-eyebrow">Total</div>
+            <div class="pd-amount" data-role="summary-total">USD 500.00</div>
+            <div class="muted" data-role="summary-how-paid">Paid in full after signing</div>            <dl class="pd-facts">
+                <dt>From</dt><dd data-role="summary-from">Harbor Lane Studios</dd>
+                <dt>For</dt><dd data-role="summary-for">Pat Rivera</dd>                <dt>Status</dt>
+                <dd>
+                                            <span class="pd-status" data-role="summary-status">Waiting for signature</span>
+                                    </dd>
+            </dl>
+                            <a class="pd-cta" data-role="summary-action" href="#sign">Review &amp; sign</a>
+                    </div>
+    </aside>
+
+    <main class="pd-main">
+
+        <section class="pd-card" aria-label="Proposal">
+            <div class="pd-issuer">
+                                    <span class="pd-logo" aria-hidden="true">H</span>
+                                <div>
+                    <p data-role="issuer">Harbor Lane Studios</p>
+                    <p class="pd-sub">Main</p>                </div>
+            </div>
+
+
+
+
+            <div class="pd-legacy">
+
+
+            <table data-role="lines">
+                <thead>
+                <tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr>
+                </thead>
+                <tbody>
+                                    <tr data-role="line">
+                        <td>
+                            Design work
+                            <span class="muted d-block">Initial drawings</span>                        </td>
+                        <td class="num">2</td>
+                        <td class="num">250.00</td>
+                        <td class="num">500.00</td>
+                    </tr>
+                                </tbody>
+                <tfoot>
+                <tr class="total"><td colspan="3">Total</td><td class="num" data-role="total">500.00 USD</td></tr>
+                </tfoot>
+            </table>
+
+                            <h2>Payment schedule</h2>
+                <table data-role="schedule">
+                    <tbody>
+                                            <tr data-role="schedule-item" data-kind="full">
+                            <td>Full</td>
+                            <td></td>
+                            <td class="num">500.00 USD</td>
+                            <td data-role="schedule-status">
+                                                            </td>
+                        </tr>
+                                        </tbody>
+                </table>
+
+                <div id="pay"><p class="muted" data-role="payment-note">
+                                    This document can be paid once it has been signed.
+                            </p>
+        </div>
+                        </div>
+        </section>
+
+                    <fieldset class="pd-sign" id="sign" data-role="sign-form">
+            <legend>Sign this document</legend>
+
+
+            <form method="POST" action="http://localhost/documents/UID/TOKEN/sign">
+                <input type="hidden" name="_token" value="X" autocomplete="off">
+                <input type="hidden" name="displayed_version_uid" value="VUID">
+                <div class="pd-row">
+                    <div>
+                        <label for="signer_name">Your full name</label>
+                        <input id="signer_name" type="text" name="signer_name" maxlength="160" value="" autocomplete="name" required>
+                    </div>
+                    <div>
+                        <label for="signer_email">Your email address</label>
+                        <input id="signer_email" type="email" name="signer_email" maxlength="255" value="" autocomplete="email" required>
+                    </div>
+                </div>
+
+                <label for="typed_name">Type your name to sign</label>
+                <input id="typed_name" type="text" name="typed_name" maxlength="160" value="" placeholder="Your name" autocomplete="off" required>
+
+
+                <label class="consent" for="consent_ack" data-role="consent-statement">
+                    <input id="consent_ack" type="checkbox" required>
+                    <span>By typing my name below and submitting this form, I agree to the contents of this document as shown on this page, and I intend my typed name to act as my signature.</span>
+                </label>
+
+                <div class="pd-actions">
+                    <button type="submit">Sign document &rarr;</button>
+                    <span class="muted">Next: you'll see how to pay.</span>                </div>
+            </form>
+        </fieldset>
+            </main>
+
+            <p class="pd-note" data-role="summary-note">Questions or changes? Get in touch with Harbor Lane Studios before signing.</p>
+    </div>
+</body>
+</html>

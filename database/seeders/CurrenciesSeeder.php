@@ -104,7 +104,10 @@
             ];
 
             foreach ($currency_data as $data) {
-                Currency::create($data);
+                // Keyed by `code`, never a bare create(): `platform:install` runs
+                // this seeder on every execution (it is documented as safe to
+                // repeat) and create() inserted another full set each time.
+                Currency::firstOrCreate(['code' => $data['code']], $data);
             }
 
         }

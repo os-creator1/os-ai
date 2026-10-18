@@ -107,6 +107,72 @@ class AppointmentBookingConcurrencyTest extends TestCase
         $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->count());
     }
 
+    public function test_two_concurrent_first_demo_bookings_by_one_email_share_one_phoneless_contact(): void
+    {
+        [$typeId, , $locationId] = $this->scenario();
+        $this->insertContact($locationId);
+
+        $results = $this->race([
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ada@example.test', '', $this->slot('10:00:00')],
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ADA@example.test', '', $this->slot('12:00:00')],
+        ]);
+        $this->assertGenuinelyRaced($results);
+        $this->assertSame([0, 0], array_column($results, 'exitCode'));
+        $this->assertSame(1, DB::table('contacts')->where('location_id', $locationId)->where('phone', '')->count());
+        $this->assertSame(2, DB::table('appointments')->where('booking_type_id', $typeId)->count());
+        $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->distinct()->count('contact_id'));
+    }
+
+    public function test_two_concurrent_demo_bookings_for_one_slot_leave_one_appointment_and_one_contact(): void
+    {
+        [$typeId, , $locationId] = $this->scenario();
+        $this->insertContact($locationId);
+
+        $results = $this->race([
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ada@example.test', '', $this->slot('10:00:00')],
+            ['demo-contact', (string) $typeId, (string) $locationId, 'grace@example.test', '', $this->slot('10:00:00')],
+        ]);
+        $this->assertGenuinelyRaced($results);
+        $this->assertExactlyOneCommitted($results);
+        $this->assertLoserWasRefusedByTheDomainRule($results, 'NoEligibleStaffAvailableException');
+        $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->count());
+        // The loser's Contact rolled back with its refused booking: no orphan lead.
+        $this->assertSame(1, DB::table('contacts')->where('location_id', $locationId)->where('phone', '')->count());
+    }
+
+    public function test_a_concurrent_phone_booking_and_email_only_booking_resolve_as_if_run_one_after_the_other(): void
+    {
+        [$typeId, , $locationId] = $this->scenario();
+        $seedId = $this->insertContact($locationId);
+
+        // Both go through the Booking Type's tier-1 lock, so the resolver never overlaps itself: the outcome must be one
+        // of the two serial orders, never a state only a race could produce (e.g. the email-only booking missing a
+        // phone booking that had already created the lead).
+        $results = $this->race([
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ada@example.test', '+12025550143', $this->slot('10:00:00')],
+            ['demo-contact', (string) $typeId, (string) $locationId, 'ADA@example.test', '', $this->slot('12:00:00')],
+        ]);
+        $this->assertGenuinelyRaced($results);
+        $this->assertSame([0, 0], array_column($results, 'exitCode'));
+
+        preg_match('/contact_id=(\d+) appointment_id=(\d+)/', $results[0]['stdout'], $phone);
+        preg_match('/contact_id=(\d+) appointment_id=(\d+)/', $results[1]['stdout'], $email);
+        $this->assertCount(3, $phone);
+        $this->assertCount(3, $email);
+
+        $contacts = DB::table('contacts')->where('location_id', $locationId)->where('id', '!=', $seedId)->count();
+        if ((int) $phone[2] < (int) $email[2]) {
+            // Phone booking committed first: the email-only booking must reuse that very lead.
+            $this->assertSame(1, $contacts);
+            $this->assertSame($phone[1], $email[1]);
+        } else {
+            // Email-only committed first: the phone booking identifies by phone, as it always has (two leads, serially too).
+            $this->assertSame(2, $contacts);
+            $this->assertNotSame($phone[1], $email[1]);
+        }
+        $this->assertSame(2, DB::table('appointments')->where('booking_type_id', $typeId)->count());
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

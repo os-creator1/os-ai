@@ -3,15 +3,28 @@
 @include('auth.loggedAs')
 {{--For Logged as customer option end here--}}
 
-{{-- Customer Experience Slice 1B (contract §5.5): persistent View-as-client banner with Exit; renders nothing otherwise. --}}
-<x-view-as-banner />
+{{-- The View-as-client banner is rendered by the layout masters, not here: it must show even when this title bar is switched off. --}}
 
 
-<div class="content-header row">
+@php
+    // One primary heading per page: when the page already renders its own, the shell prints
+    // only the breadcrumbs (see PageHeadingResolver). The browser <title> is untouched.
+    $sharedTitle = trim(strip_tags($__env->yieldContent('title')));
+    $pageOwnsHeading = \App\Library\Navigation\PageHeadingResolver::ownsHeading(
+        (string) $__env->yieldContent('content'),
+        $sharedTitle,
+        $__env->hasSection('page-heading') ? $__env->yieldContent('page-heading') : null
+    );
+    $hasBreadcrumbs = ! empty($breadcrumbs ?? null);
+@endphp
+@if (! $pageOwnsHeading || $hasBreadcrumbs)
+<div class="content-header row" @if($pageOwnsHeading) data-role="shell-breadcrumbs-only" @endif>
     <div class="content-header-left col-md-9 col-12 mb-2">
         <div class="row breadcrumbs-top">
             <div class="col-12">
+                @unless ($pageOwnsHeading)
                 <h2 class="content-header-title text-page-title float-start mb-0">@yield('title')</h2>
+                @endunless
                 <div class="breadcrumb-wrapper">
                     @if(@isset($breadcrumbs))
                         <ol class="breadcrumb">
@@ -34,3 +47,4 @@
         </div>
     </div>
 </div>
+@endif

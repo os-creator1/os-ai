@@ -78,7 +78,9 @@ class NoUnsupportedVocabularyTest extends TestCase
         // `appointment`, `tag_added` and email left this list when their foundations
         // merged and the Automations integration shipped (Calendar, Contact Tags,
         // Business Email). Payment, invoice and document vocabulary stays out.
-        $forbidden = ['payment_received', 'invoice', 'quote', 'crm_stage', 'webhook_action', 'ai_node', 'email_to_contact'];
+        // `invoice` and `quote` left the list with the document and payment steps (an
+        // invoice is a payment-request source; "quote" is a search word for proposals).
+        $forbidden = ['payment_received', 'crm_stage', 'webhook_action', 'ai_node', 'email_to_contact'];
 
         foreach ($this->jsFiles() as $file) {
             $source = $this->stripJsComments(file_get_contents($file));
@@ -92,7 +94,7 @@ class NoUnsupportedVocabularyTest extends TestCase
     public function test_no_unsupported_domain_vocabulary_appears_in_the_builder_views(): void
     {
         // `pipeline` is a supported CRM trigger filter now (contract §9.2).
-        $forbidden = ['payment_received', 'invoice', 'quote', 'webhook_action'];
+        $forbidden = ['payment_received', 'webhook_action'];
 
         foreach ($this->bladeFiles() as $file) {
             $source = $this->stripBladeComments(file_get_contents($file));

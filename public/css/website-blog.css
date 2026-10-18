@@ -1,0 +1,80 @@
+/*
+ * SEO Content Engine V1 — the blog index and article, styled ONLY with the design tokens the four Website
+ * templates already define (--wd-t-ink / --wd-t-muted / --wd-t-line / --wd-card / --wd-a / --wd-radius /
+ * --wd-font-head ...), so Bold Event, Classic Gold, Midnight Gold and Party Luxe each get their own look from
+ * one stylesheet. Every token has a neutral fallback so a non-template (legacy) site is readable too.
+ * Mobile-first; no horizontal overflow at 390px.
+ */
+
+.blog-band { color: var(--wd-t-ink, #14181f); }
+.blog-container { max-width: var(--wd-max, 1180px); }
+.blog-container-article { max-width: 920px; }
+
+.blog-breadcrumbs { font-size: 0.85rem; margin: 0 0 1.5rem; color: var(--wd-t-muted, #4b5563); }
+.blog-breadcrumbs ol { display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; list-style: none; margin: 0; padding: 0; }
+.blog-breadcrumbs li + li::before { content: "/"; margin-right: 0.5rem; opacity: 0.6; }
+.blog-breadcrumbs a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.blog-breadcrumbs [aria-current="page"] { color: var(--wd-t-ink, #14181f); overflow-wrap: anywhere; }
+
+.blog-header { margin: 0 0 clamp(1.75rem, 4vw, 3rem); }
+.blog-title, .blog-article-title { font-family: var(--wd-font-head, inherit); font-weight: var(--wd-head-weight, 700); text-transform: var(--wd-head-transform, none); letter-spacing: var(--wd-head-track, 0); line-height: var(--wd-head-leading, 1.12); margin: 0 0 0.5em; color: inherit; overflow-wrap: anywhere; }
+.blog-title { font-size: clamp(2rem, 5vw, 3.2rem); }
+.blog-article-title { font-size: clamp(1.9rem, 4.6vw, 3rem); }
+.blog-intro, .blog-article-lede { font-size: clamp(1.05rem, 1.8vw, 1.25rem); line-height: 1.55; color: var(--wd-t-muted, #4b5563); max-width: 46em; margin: 0; }
+
+.blog-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; margin: 0 0 0.75rem; font-size: 0.85rem; color: var(--wd-t-muted, #4b5563); }
+.blog-chip { display: inline-block; padding: 0.15rem 0.7rem; border: 1px solid var(--wd-t-line, #e3e6ec); border-radius: 999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; color: var(--wd-a, #7a5c00); }
+
+/* ------------------------------------------------------------ cards */
+
+.blog-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: clamp(1rem, 2.4vw, 1.75rem); }
+@media (min-width: 700px) { .blog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1100px) { .blog-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.blog-card { display: flex; flex-direction: column; background: var(--wd-card, #fff); color: var(--wd-card-ink, var(--wd-t-ink, #14181f)); border: 1px solid var(--wd-t-line, #e3e6ec); border-radius: var(--wd-radius, 0); overflow: hidden; box-shadow: var(--wd-shadow, none); min-width: 0; }
+.blog-card-media { display: block; aspect-ratio: 16 / 10; overflow: hidden; background: var(--wd-t-line, #e3e6ec); }
+.blog-card-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.blog-card-body { display: flex; flex-direction: column; gap: 0.5rem; padding: clamp(1.1rem, 2.2vw, 1.5rem); flex: 1; }
+.blog-card-title { font-family: var(--wd-font-head, inherit); font-weight: var(--wd-head-weight, 700); text-transform: none; font-size: 1.25rem; line-height: 1.25; margin: 0; overflow-wrap: anywhere; }
+.blog-card-title a { color: inherit; text-decoration: none; }
+.blog-card-title a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.blog-card-excerpt { margin: 0; color: var(--wd-t-muted, #4b5563); font-size: 0.98rem; line-height: 1.55; }
+.blog-card .blog-meta { margin-bottom: 0; }
+.blog-readmore { margin-top: auto; padding-top: 0.5rem; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--wd-a, #7a5c00); text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
+.blog-readmore:hover { text-decoration: underline; text-underline-offset: 4px; }
+.blog-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.blog-pagination { display: flex; align-items: center; justify-content: center; gap: 1.25rem; margin: clamp(2rem, 4vw, 3rem) 0 0; flex-wrap: wrap; }
+.blog-page-link { font-weight: 800; color: var(--wd-a, #7a5c00); text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; padding: 0 0.5rem; }
+.blog-page-status { color: var(--wd-t-muted, #4b5563); font-size: 0.9rem; }
+
+/* ---------------------------------------------------------- article */
+
+.blog-article-header { margin: 0 0 1.5rem; }
+.blog-byline { margin: 1rem 0 0; font-size: 0.9rem; color: var(--wd-t-muted, #4b5563); }
+.blog-article-figure { margin: 0 0 clamp(1.5rem, 3vw, 2.5rem); }
+.blog-article-image, .blog-article-figure img { width: 100%; height: auto; display: block; border-radius: var(--wd-radius, 0); max-height: 520px; object-fit: cover; }
+
+.blog-prose { font-size: 1.075rem; line-height: 1.75; color: var(--wd-t-ink, #14181f); max-width: 70ch; overflow-wrap: anywhere; }
+.blog-prose > :first-child { margin-top: 0; }
+.blog-prose h2 { font-family: var(--wd-font-head, inherit); font-weight: var(--wd-head-weight, 700); text-transform: none; letter-spacing: var(--wd-head-track, 0); font-size: clamp(1.45rem, 3vw, 1.9rem); line-height: 1.2; margin: 2.2em 0 0.6em; color: inherit; }
+.blog-prose h3 { font-family: var(--wd-font-head, inherit); font-weight: var(--wd-head-weight, 700); text-transform: none; font-size: 1.25rem; line-height: 1.3; margin: 1.8em 0 0.5em; color: inherit; }
+.blog-prose p { margin: 0 0 1.15em; }
+.blog-prose ul, .blog-prose ol { margin: 0 0 1.25em; padding-left: 1.4em; }
+.blog-prose li { margin: 0.3em 0; }
+.blog-prose a { color: var(--wd-a, #1a56db); text-decoration: underline; text-underline-offset: 3px; }
+.blog-prose blockquote { margin: 1.5em 0; padding: 0.2em 1.1em; border-left: 4px solid var(--wd-a, #7a5c00); color: var(--wd-t-muted, #4b5563); }
+.blog-prose strong { font-weight: 800; }
+
+.blog-related { margin-top: clamp(2.5rem, 6vw, 4rem); padding-top: 2rem; border-top: 1px solid var(--wd-t-line, #e3e6ec); }
+.blog-related-title { font-family: var(--wd-font-head, inherit); font-size: 1.5rem; margin: 0 0 1.25rem; color: inherit; text-align: left; }
+.blog-grid-related { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 700px) { .blog-grid-related { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* -------------------------------------------------------------- CTA */
+
+.blog-cta { text-align: center; }
+.blog-cta-title { font-family: var(--wd-font-head, inherit); font-weight: var(--wd-head-weight, 700); font-size: clamp(1.6rem, 3.4vw, 2.4rem); margin: 0 0 0.5rem; color: inherit; text-align: center; }
+.blog-cta-text { margin: 0 auto 1.5rem; max-width: 40em; color: inherit; opacity: 0.92; }
+.blog-cta-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; }
+.blog-cta-actions .wd-btn { max-width: 100%; text-align: center; }

@@ -167,6 +167,72 @@ class BusinessAnalyticsQueries
     }
 
     /**
+     * New contacts in each half-open window, over the contacts in the given reachable Locations (the contact list's own Location rule), in ONE
+     * statement. Home's card uses it so its figure equals the list it opens; the Results page keeps its Business-wide figure.
+     *
+     * @param  array<string, array{0: CarbonImmutable, 1: CarbonImmutable}>  $windows  label => [start, end)
+     * @return array<string, int>
+     */
+    public function newContactsForActor(Business $business, array $reachableLocationIds, array $windows): array
+    {
+        if ($windows === []) {
+            return [];
+        }
+
+        $selects = [];
+        $bindings = [];
+        $earliest = null;
+        $latest = null;
+
+        foreach (array_values($windows) as $i => [$start, $end]) {
+            $selects[] = "SUM(CASE WHEN created_at >= ? AND created_at < ? THEN 1 ELSE 0 END) AS w{$i}";
+            $bindings[] = $this->ts($start);
+            $bindings[] = $this->ts($end);
+            $earliest = $earliest === null || $start->getTimestamp() < $earliest->getTimestamp() ? $start : $earliest;
+            $latest = $latest === null || $end->getTimestamp() > $latest->getTimestamp() ? $end : $latest;
+        }
+
+        // The windows live only inside the CASE expressions, so bound the scan itself: earliest start up to the latest exclusive end,
+        // never every contact the Business ever had.
+        $query = DB::table('contacts')
+            ->where('business_id', $business->id)
+            ->where('created_at', '>=', $this->ts($earliest))
+            ->where('created_at', '<', $this->ts($latest))
+            ->selectRaw(implode(', ', $selects), $bindings);
+        app(\App\Library\Crm\CrmLocationScope::class)->restrictToIds($query, $reachableLocationIds, 'contacts.location_id');
+        $row = $query->first();
+
+        $result = [];
+
+        foreach (array_keys($windows) as $i => $label) {
+            $result[$label] = (int) ($row->{"w{$i}"} ?? 0);
+        }
+
+        return $result;
+    }
+
+    /** Whether this Business has EVER had a contact (any status, any date): one indexed existence check, for telling established from new. */
+    public function hasAnyContact(Business $business): bool
+    {
+        return DB::table('contacts')->where('business_id', $business->id)->exists();
+    }
+
+    /**
+     * Whether a contact import for this Business is queued or running right now (and fresh: one stuck for hours is stale, not
+     * "updating"). Home holds a contacts comparison back while it is, instead of comparing a half-imported figure.
+     */
+    public function contactImportRunning(Business $business, int $freshHours = 6): bool
+    {
+        return DB::table('job_monitors')
+            ->where('subject_name', \App\Models\ContactGroups::class)
+            ->whereIn('subject_id', DB::table('contact_groups')->where('business_id', $business->id)->select('id'))
+            ->where('job_type', \App\Jobs\ImportContacts::class)
+            ->whereIn('status', ['queued', 'running'])
+            ->where('created_at', '>=', CarbonImmutable::now()->subHours($freshHours))
+            ->exists();
+    }
+
+    /**
      * K1 + K2 + K4 + K5 plus the contact half of the coverage notice, one
      * aggregate query that always yields exactly one row.
      *

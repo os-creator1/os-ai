@@ -38,6 +38,7 @@ class WebsiteAsset extends Model
         'title',
         'category_tag',
         'source_catalog_item_image_id',
+        'source_business_service_image_id',
         'purpose',
         'alt_text_is_custom',
     ];

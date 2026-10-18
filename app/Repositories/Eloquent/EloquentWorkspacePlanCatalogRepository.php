@@ -48,6 +48,19 @@ class EloquentWorkspacePlanCatalogRepository extends EloquentBaseRepository impl
         return $catalog;
     }
 
+    public function updateStructure(WorkspacePlanCatalog $catalog, array $attributes): WorkspacePlanCatalog
+    {
+        $catalog->fill(Arr::only($attributes, [
+            'display_name', 'is_active', 'available_for_signup', 'billing_cycle', 'trial_enabled', 'trial_days',
+            'provider_price_id', 'business_slot_included', 'business_slot_max', 'unlimited_business_slots',
+            'location_slot_included', 'location_slot_max', 'unlimited_location_slots',
+        ]));
+        $catalog->save();
+        $this->forgetRequestCache("workspace_plan_catalog:find:{$catalog->id}");
+
+        return $catalog;
+    }
+
     public function update(WorkspacePlanCatalog $catalog, array $attributes): WorkspacePlanCatalog
     {
         $catalog->fill(Arr::only($attributes, [

@@ -28,6 +28,8 @@
             </div>
             <div class="{{ $configData['contentsidebarClass'] }}">
                 <div class="content-wrapper">
+                    {{-- View-as-client banner + Exit: layout-level, never gated on the title bar. --}}
+                    <x-view-as-banner />
                     <div class="content-body">
                         {{-- Include Page Content --}}
                         @yield('content')
@@ -37,6 +39,9 @@
         </div>
     @else
         <div class="content-wrapper {{ $configData['layoutWidth'] === 'boxed' ? 'container-xxl p-0' : '' }}">
+            {{-- View-as-client banner + Exit: layout-level, never gated on the title bar. --}}
+            <x-view-as-banner />
+
             {{-- Include Breadcrumb --}}
             @if($configData['pageHeader'] === true)
                 @include('panels.breadcrumb')

@@ -27,6 +27,13 @@ use App\Models\Contacts;
  *   5. A workflow that is not `published` enrolls nobody.
  *   6. Returns null — not an exception — when the claim was already taken, so a
  *      duplicate trigger is an ordinary no-op rather than an error.
+ *   7. LOCATION. The caller passes the triggering FACT's own Location (never the
+ *      Contact's current one unless the fact IS the Contact). A workflow whose
+ *      pinned version is bound to a Location enrolls only a fact of exactly that
+ *      Location — a missing Location included, so a source that forgets to pass
+ *      one fails closed. A Business-wide workflow pins whatever Location the fact
+ *      has, or null. Either way a Location that is not the workflow's Business's
+ *      enrolls nobody, and the value stored is immutable for the journey.
  */
 interface EnrollmentService
 {
@@ -36,11 +43,14 @@ interface EnrollmentService
      *        input.
      * @param int $causationDepth how many automations deep this chain already
      *        is; refused beyond WorkflowLimits::MAX_CAUSATION_DEPTH.
+     * @param int|null $locationId the triggering fact's Location, null when the
+     *        fact has none. See rule 7.
      */
     public function enroll(
         AutomationWorkflow $workflow,
         Contacts $contact,
         string $triggerOccurrenceKey,
         int $causationDepth = 0,
+        ?int $locationId = null,
     ): ?AutomationEnrollment;
 }

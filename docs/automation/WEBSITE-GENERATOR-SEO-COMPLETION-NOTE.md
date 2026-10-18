@@ -114,9 +114,14 @@ already-saved `BusinessLocation` row.
 The four visual templates (`WebsiteTemplateSeeder`) share **byte-identical**
 `page_manifest` values — proven by
 `WebsiteTemplateCatalogTest::test_seeded_templates_share_the_same_page_manifest_regardless_of_visual_theme()`.
-Only `theme` (colors, typography, and the bounded, validated presentation-
-variant keys in `WebsiteTemplate::ALLOWED_THEME_VALUES`) differs between
-them. The renderer's `{type, data}` section contract is unchanged; template
-selection only ever changes which CSS rules apply
-(`public/css/website-public.css`'s four new `.website-header-{key}`-scoped
-blocks), never what pages exist, what they contain, or how they are linked.
+Only `theme` and the template's own **design** differ between them. The renderer's
+`{type, data}` section contract is unchanged.
+
+*Updated in Website V1 final:* a template is now a real design
+(`App\Library\Website\Design\WebsiteDesigns`, `public/css/website-design.css`,
+`WEBSITE-TEMPLATES-V1.md`) that owns the header, hero, services/packages
+presentation, footer, typography and the order of a Home page's sections. That is
+still presentation only: template selection never changes what pages exist, what
+they contain, or how they are linked — the page set and the SEO architecture are
+decided by `WebsitePageStrategy`, not by the template, and a template switch
+("change the look only") keeps every page, word, photo and price.

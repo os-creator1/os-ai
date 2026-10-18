@@ -118,7 +118,12 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
     {
         $filters = Arr::only($filters, ['status', 'freshness', 'worker_key']);
 
-        $query = $this->query()->where('business_id', $business->id);
+        $query = $this->query()->where('business_id', $business->id)
+            // Growth Center lane: this is the Business Advisor queue. Growth
+            // Opportunities (sales/website/seo/reputation workers) are read, with
+            // Location ACL applied, by GrowthOpportunityReader only — never here,
+            // where nothing filters by Location.
+            ->where('worker_key', OpportunityWorkerKey::BusinessAdvisor->value);
 
         foreach ($filters as $column => $value) {
             if (filled($value)) {
@@ -148,6 +153,8 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
         return $this->query()
             ->where('business_id', $business->id)
             ->where('freshness', OpportunityFreshness::Current->value)
+            // Business Advisor queue only — see paginateForCustomer().
+            ->where('worker_key', OpportunityWorkerKey::BusinessAdvisor->value)
             ->whereIn('status', $actionableStatuses)
             ->orderByRaw('CASE WHEN status IN (?, ?, ?) THEN 0 ELSE 1 END', $actionableStatuses)
             ->orderByDesc('priority_score')
@@ -185,7 +192,7 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
     {
         /** @var Opportunity $opportunity */
         $opportunity = $this->make(Arr::only($attributes, array_merge(
-            ['business_id', 'worker_key', 'type', 'fingerprint_version', 'fingerprint', 'context_key', 'first_detected_at'],
+            ['business_id', 'location_id', 'worker_key', 'type', 'fingerprint_version', 'fingerprint', 'context_key', 'first_detected_at'],
             self::MUTABLE_FIELDS
         )));
         $opportunity->save();

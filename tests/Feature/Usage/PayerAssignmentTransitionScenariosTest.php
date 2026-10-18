@@ -109,7 +109,11 @@ class PayerAssignmentTransitionScenariosTest extends TestCase
         // Active: can manage the billing contact (non-payer authority).
         app(BillingProfileManager::class)->updateBillingContact($business, null, 'Jane Doe', 'jane@example.test', true, $adminId);
 
-        $membership->update(['is_active' => false]);
+        // The canonical deactivation path (what the Team screen calls), in the SAME request that just read the
+        // membership: the repository's per-request membership cache is invalidated by setActive(), so the very
+        // next billing action is refused. (A bare `$membership->update(['is_active' => false])` bypasses that
+        // service and its cache invalidation, which is why this test used to fail: stale test, not a product defect.)
+        app(\App\Library\Workspace\WorkspaceManager::class)->deactivateMember((int) $customer->user_id, $membership);
 
         $this->expectException(\App\Exceptions\Usage\UnauthorizedUsageBillingManagementException::class);
         app(BillingProfileManager::class)->updateBillingContact($business, null, 'John Doe', 'john@example.test', true, $adminId);

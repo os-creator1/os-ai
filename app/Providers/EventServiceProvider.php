@@ -29,10 +29,12 @@ use App\Events\Website\WebsitePublished;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Events\Forms\FormSubmissionRecorded;
 use App\Listeners\Automation\Workflow\EnrollFromAppointmentEvent;
+use App\Listeners\Calendar\KeepAppointmentNotificationsInStep;
 use App\Listeners\Automation\Workflow\EnrollFromContactTagEvent;
 use App\Listeners\Automation\Workflow\EnrollFromCrmOpportunityEvent;
 use App\Listeners\Automation\Workflow\EnrollFromFormSubmission;
 use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
+use App\Listeners\Outreach\HandleOutreachInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
 use App\Listeners\Seo\QueueSeoAuditOnWebsitePublished;
 use App\Listeners\NicheBlueprint\InstallBlueprintOnBusinessCreated;
@@ -51,6 +53,16 @@ use Illuminate\Queue\Events\JobProcessing;
 class EventServiceProvider extends ServiceProvider
 {
     /**
+     * Platform Automations: maps canonical domain events to Platform triggers.
+     * The subscriber swallows its own failures, so it can never break the flow it listens to.
+     *
+     * @var array
+     */
+    protected $subscribe = [
+        \App\Listeners\PlatformAutomation\PlatformTriggerSubscriber::class,
+    ];
+
+    /**
      * The event listener mappings for the application.
      *
      * @var array
@@ -65,6 +77,17 @@ class EventServiceProvider extends ServiceProvider
         \App\Events\DocumentPaymentSucceeded::class => [
             \App\Listeners\BusinessPayments\SendReceiptOnPaymentSucceeded::class,
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handlePaymentSucceeded',
+            // Automations V2 — "A payment succeeds".
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
+        ],
+        // Automations V2 — "A payment fails". The finalizer emits this once per
+        // payment row that transitions into `failed`; nothing else consumes it.
+        \App\Events\DocumentPaymentFailed::class => [
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
+            // Growth Center — a failed payment is the one document event that
+            // CREATES a finding at once; the debounced trigger keeps a burst of
+            // events to one evaluation per window.
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handlePaymentFailed',
         ],
         // Implementation Contract 17 §12.G — Blueprint §24's "payment events
         // reach the Activity Center", extended to the whole document
@@ -72,12 +95,17 @@ class EventServiceProvider extends ServiceProvider
         // of these durable transitions.
         \App\Events\DocumentSent::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleSent',
+            // Automations V2 — "A proposal or document is sent".
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
         ],
         \App\Events\DocumentSigned::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleSigned',
+            // Automations V2 — "A proposal or document is signed".
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
         ],
         \App\Events\DocumentFullyPaid::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleFullyPaid',
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleFullyPaid',
         ],
         \App\Events\DocumentExpired::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleExpired',
@@ -130,6 +158,9 @@ class EventServiceProvider extends ServiceProvider
         // Queued: the webhook's provider is not kept waiting on enrollment.
         InboundMessageReceived::class => [
             EnrollFromInboundMessage::class,
+            // Agency Outreach V1 (contract §9) — prospect replies. Queued; matches the Agency's own
+            // Business + the sender's number and ignores everything else.
+            HandleOutreachInboundMessage::class,
         ],
         // Automations V2 — CRM sales opportunity facts (App\Events\Crm, never the
         // Advisor's App\Events\Opportunity). The CRM emits after commit; this
@@ -142,9 +173,11 @@ class EventServiceProvider extends ServiceProvider
         ],
         CrmOpportunityWon::class => [
             EnrollFromCrmOpportunityEvent::class,
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleCrmDealClosed',
         ],
         CrmOpportunityLost::class => [
             EnrollFromCrmOpportunityEvent::class,
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleCrmDealClosed',
         ],
         // Automations V2 — the merged foundations' after-commit facts. Each domain
         // emits and knows nothing of workflows; these queued listeners hand each
@@ -161,11 +194,16 @@ class EventServiceProvider extends ServiceProvider
         AppointmentScheduled::class => [
             EnrollFromAppointmentEvent::class,
         ],
+        // Booking Notifications V1 — the Calendar's built-in confirmation/reminder
+        // ledger follows cancels and reschedules. Beside the Automations listener,
+        // never instead of it.
         AppointmentCancelled::class => [
             EnrollFromAppointmentEvent::class,
+            KeepAppointmentNotificationsInStep::class . '@handleCancelled',
         ],
         AppointmentRescheduled::class => [
             EnrollFromAppointmentEvent::class,
+            KeepAppointmentNotificationsInStep::class . '@handleRescheduled',
         ],
         // Unified Business Home §9.3 (AI-3) — cached COO insights stop being
         // shown when their facts stop holding. Invalidation queues nothing;
@@ -193,6 +231,8 @@ class EventServiceProvider extends ServiceProvider
             // swallows its own failures so a publish can never fail
             // because SEO analysis could not be queued.
             QueueSeoAuditOnWebsitePublished::class,
+            // Growth Center — publishing resolves "website not published".
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleWebsitePublished',
         ],
         GoogleBusinessProfileConnected::class => [
             InvalidateCooInsights::class.'@handleGoogleBusinessProfileConnected',

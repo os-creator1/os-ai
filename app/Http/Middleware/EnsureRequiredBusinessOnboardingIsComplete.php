@@ -61,6 +61,11 @@ class EnsureRequiredBusinessOnboardingIsComplete
             return $next($request);
         }
 
+        // An Agency reaches its Agency features without an individual Business setup.
+        if ($this->onboardingManager->isAgencyAccount($customer)) {
+            return $next($request);
+        }
+
         if (in_array($onboarding->status, [OnboardingStatus::Completed, OnboardingStatus::Dismissed], true)) {
             return $next($request);
         }

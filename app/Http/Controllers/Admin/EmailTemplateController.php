@@ -27,8 +27,8 @@ class EmailTemplateController extends AdminBaseController
         $this->authorize('view email_templates');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Settings')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Settings')],
                 ['name' => __('locale.menu.Email Templates')],
         ];
 
@@ -51,7 +51,7 @@ class EmailTemplateController extends AdminBaseController
         $this->authorize('update email_templates');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/email-templates"), 'name' => __('locale.menu.Email Templates')],
                 ['name' => $template->name],
         ];

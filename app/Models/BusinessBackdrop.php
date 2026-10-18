@@ -23,6 +23,7 @@ class BusinessBackdrop extends Model
         'business_id',
         'name',
         'description',
+        'category',
         'availability',
         'position',
         'source_questionnaire_item_key',

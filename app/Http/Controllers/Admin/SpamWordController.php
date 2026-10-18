@@ -50,8 +50,8 @@ class SpamWordController extends AdminBaseController
         $this->authorize('view spam_word');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Security')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Security')],
                 ['name' => __('locale.menu.Spam Word')],
         ];
 
@@ -140,7 +140,7 @@ class SpamWordController extends AdminBaseController
         $this->authorize('create spam_word');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/spam-word"), 'name' => __('locale.menu.Spam Word')],
                 ['name' => __('locale.spam_word.add_new_word')],
         ];

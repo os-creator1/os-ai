@@ -28,6 +28,40 @@
         {
             //
 
+            // Release-risk closure item 6 — the public contact subscribe /
+            // unsubscribe MUTATION endpoints (routes/public.php). Two bounds,
+            // both keyed on the group named in the URL so one Business's
+            // traffic never spends another's allowance: a per-visitor bound
+            // sized for a person fixing typos, and a per-group ceiling so a
+            // distributed flood cannot fill or empty one list. The existing
+            // group lookup / captcha / validation inside the controllers are
+            // untouched.
+            RateLimiter::for('public-contact-consent', function (Request $request) {
+                $group = $request->route('contact');
+                $group = is_object($group) ? ($group->uid ?? get_class($group)) : (string) $group;
+
+                return [
+                    Limit::perMinute(10)->by('visitor|' . $group . '|' . $request->ip()),
+                    Limit::perMinute(120)->by('group|' . $group),
+                ];
+            });
+
+            // Public proposal signing / payment. The framework's string form
+            // (`throttle:10,1`) keys every such route on domain|IP ALONE, so
+            // the document view, signing, pay-start, pay-status polling and the
+            // booking/forms mutations all drew down ONE shared per-IP counter:
+            // a few page views plus a status poll could spend the 10 a signer
+            // needed. These named limiters give each action its own bucket.
+            //
+            // Keys carry a one-way hash of the document uid (a public
+            // identifier, never the bearer token) and the IP. Three bounds:
+            // per document+visitor (a person fixing typos), per visitor across
+            // ALL documents (rotating uids cannot dodge it), and per document
+            // across visitors (a distributed hammer on one link).
+            RateLimiter::for('public-document-sign', fn (Request $request) => $this->documentLimits($request, 'sign', 10, 60, 60));
+            RateLimiter::for('public-document-pay', fn (Request $request) => $this->documentLimits($request, 'pay', 10, 60, 60));
+            RateLimiter::for('public-document-pay-status', fn (Request $request) => $this->documentLimits($request, 'status', 40, 240, 240));
+
             parent::boot();
             $this->map();
         }
@@ -60,21 +94,21 @@
                 ->namespace($this->namespace)
                 ->group(base_path('routes/web.php'));
 
-            Route::middleware(['web', \App\Http\Middleware\RecordLegacyWebhookUsage::class])
+            Route::middleware(['web', \App\Http\Middleware\RecordLegacyWebhookUsage::class, \App\Http\Middleware\DisableUnsupportedLegacyWebhooks::class])
                 ->namespace($this->namespace)
                 ->group(base_path('routes/public.php'));
 
-            Route::middleware(['web', 'auth', 'can:access backend', 'ValidProduct', 'twofactor'])
+            Route::middleware(['web', 'auth', 'can:access backend', 'twofactor'])
                 ->namespace($this->namespace . '\Admin')
                 ->prefix(config('app.admin_path'))
                 ->as('admin.')
                 ->group(base_path('routes/admin.php'));
 
-            Route::middleware(['web', 'twofactor'])
+            Route::middleware(['web', 'twofactor', 'legacy.payments'])
                 ->namespace($this->namespace)
                 ->group(base_path('routes/auth.php'));
 
-            Route::middleware(['web', 'auth', 'can:access_backend', 'ValidProduct', 'twofactor'])
+            Route::middleware(['web', 'auth', 'can:access_backend', 'twofactor', 'legacy.payments'])
                 ->namespace($this->namespace . '\Customer')
                 ->as('customer.')
                 ->group(base_path('routes/customer.php'));
@@ -103,6 +137,21 @@
                 ->namespace($this->namespace . '\API')
                 ->group(base_path('routes/api.php'));
 
+        }
+
+        /**
+         * @return array<int, \Illuminate\Cache\RateLimiting\Limit>
+         */
+        protected function documentLimits(Request $request, string $action, int $perDocumentVisitor, int $perVisitor, int $perDocument): array
+        {
+            $doc = sha1((string) $request->route('uid'));
+            $ip = (string) $request->ip();
+
+            return [
+                Limit::perMinute($perDocumentVisitor)->by($action . '|doc-visitor|' . $doc . '|' . $ip),
+                Limit::perMinute($perVisitor)->by($action . '|visitor|' . $ip),
+                Limit::perMinute($perDocument)->by($action . '|doc|' . $doc),
+            ];
         }
 
         /**

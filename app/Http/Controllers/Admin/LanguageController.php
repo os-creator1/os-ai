@@ -47,8 +47,8 @@ class LanguageController extends AdminBaseController
         $this->authorize('view languages');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Settings')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Settings')],
                 ['name' => __('locale.menu.Language')],
         ];
 
@@ -68,7 +68,7 @@ class LanguageController extends AdminBaseController
         $this->authorize('new languages');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/languages"), 'name' => __('locale.menu.Language')],
                 ['name' => __('locale.settings.add_new')],
         ];
@@ -185,7 +185,7 @@ class LanguageController extends AdminBaseController
         $this->authorize('manage languages');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/languages"), 'name' => __('locale.menu.Language')],
                 ['name' => __('locale.settings.upload_language')],
         ];
@@ -236,7 +236,7 @@ class LanguageController extends AdminBaseController
         $this->authorize('manage languages');
 
         $breadcrumbs = [
-                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path')."/languages"), 'name' => __('locale.menu.Language')],
                 ['name' => $language->name],
         ];

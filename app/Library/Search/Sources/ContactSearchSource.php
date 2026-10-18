@@ -2,9 +2,9 @@
 
 namespace App\Library\Search\Sources;
 
+use App\Library\Crm\CrmLocationScope;
 use App\Library\Search\Contracts\SearchSource;
 use App\Library\Search\SearchResult;
-use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
 use App\Models\Contacts;
 use App\Models\User;
@@ -15,14 +15,18 @@ use Illuminate\Support\Facades\Gate;
  * gated (Contacts carries no separate entitlement — CustomerMenuBuilder's own
  * comment records that Contacts is deliberately not entitlement-gated), and
  * Location-filtered per Contract 08B's established convention (ChatBox,
- * CrmOpportunity): a Contact with a proven `location_id` must pass
- * LocationAccessGuard; a NULL `location_id` is an ordinary legacy value and
- * does not gate on its own — the Business-level check already run below
- * governs, exactly as it does for a ChatBox conversation.
+ * CrmOpportunity): a Contact with a proven `location_id` must be at a Location
+ * LocationAccessGuard lets the actor reach; a NULL `location_id` is an ordinary
+ * legacy value and does not gate on its own — the Business-level check already
+ * run below governs, exactly as it does for a ChatBox conversation.
+ *
+ * The reach is pushed into the SQL (CrmLocationScope), BEFORE the result limit:
+ * filtering a fixed window of newest matches afterwards would let a run of newer
+ * matches at an unreachable Location push every reachable match out of it.
  */
 final class ContactSearchSource implements SearchSource
 {
-    public function __construct(private readonly LocationAccessGuard $locations)
+    public function __construct(private readonly CrmLocationScope $scope)
     {
     }
 
@@ -36,8 +40,10 @@ final class ContactSearchSource implements SearchSource
         $digits = (string) preg_replace('/\D+/', '', $query);
         $like = '%' . addcslashes($query, '%_\\') . '%';
 
-        $candidates = Contacts::query()
-            ->where('business_id', $business->id)
+        $query = Contacts::query()->where('business_id', $business->id);
+        $this->scope->restrict($query, $business, (int) $user->id, 'contacts.location_id');
+
+        $candidates = $query
             ->where(function ($where) use ($digits, $like): void {
                 if ($digits !== '') {
                     $where->orWhere('phone', 'like', '%' . $digits . '%');
@@ -53,7 +59,7 @@ final class ContactSearchSource implements SearchSource
                 });
             })
             ->orderByDesc('id')
-            ->limit($limit * 4)
+            ->limit($limit)
             ->get(['id', 'uid', 'phone', 'location_id']);
 
         if ($candidates->isEmpty()) {
@@ -65,18 +71,6 @@ final class ContactSearchSource implements SearchSource
         $results = [];
 
         foreach ($candidates as $contact) {
-            if (count($results) >= $limit) {
-                break;
-            }
-
-            if ($contact->location_id !== null) {
-                $location = $contact->location;
-
-                if ($location === null || ! $this->locations->userCanAccessLocation((int) $user->id, $location)) {
-                    continue;
-                }
-            }
-
             $name = trim($names[$contact->id] ?? '');
 
             $results[] = new SearchResult(

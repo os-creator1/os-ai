@@ -16,7 +16,7 @@ final class PlatformFeatureCopy
         'automations' => ['Automations', 'Automatically follow up and perform repetitive tasks.'],
         'website_generation' => ['Website', 'Create and manage your business website.'],
         'google_business_profile_module' => ['Google Business Profile', 'Manage how your business appears on Google.'],
-        'prospect_outreach' => ['Prospecting', 'Keep a list of prospective clients and reach them with outreach campaigns.'],
+        'prospect_outreach' => ['Outreach', 'Keep a list of prospective clients and reach them with outreach campaigns.'],
     ];
 
     /**

@@ -41,14 +41,14 @@ class SeoFoundationBoundaryTest extends TestCase
      * seo_basic_visibility is Core+Growth+Agency (contract §5.1), so the
      * real controller — no bypass — now reaches every tier.
      */
-    public function test_the_overview_reaches_every_tier_now_the_feature_is_available(): void
+    public function test_the_former_overview_url_redirects_to_search_keywords_for_every_tier(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$customer, $business, $workspace] = $this->entitledTenant($tier);
             $this->createLocation($business);
             $this->authenticateAsSeoCustomer($customer);
 
-            $this->get($this->seoUrl($workspace, $business))->assertOk();
+            $this->get($this->seoUrl($workspace, $business))->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
         }
     }
 
@@ -63,7 +63,7 @@ class SeoFoundationBoundaryTest extends TestCase
             // (the same zero/one/many selector proven with the bypass
             // below, now exercised through the real, Available floor).
             $this->get(route('customer.seo.index'))
-                ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
+                ->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
         }
     }
 
@@ -82,7 +82,7 @@ class SeoFoundationBoundaryTest extends TestCase
 
         $this->authenticateAsSeoCustomer($holder);
         $this->get(route('customer.seo.index'))
-            ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
+            ->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
 
         $this->authenticateAsSeoCustomer($lacking, ['view_google_business_profile', 'website']);
         $this->get(route('customer.seo.index'))->assertUnauthorized();
@@ -156,7 +156,7 @@ class SeoFoundationBoundaryTest extends TestCase
         $this->authenticateAsSeoCustomer($customer);
 
         $this->get(route('customer.seo.index'))
-            ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
+            ->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
     }
 
     public function test_once_the_floor_is_passed_several_businesses_show_a_chooser(): void
@@ -170,8 +170,8 @@ class SeoFoundationBoundaryTest extends TestCase
         $html = $this->get(route('customer.seo.index'))->assertOk()->getContent();
 
         $this->assertStringContainsString('Choose a Business to continue', $html);
-        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.index', [$firstWorkspace->uid, $first->uid]), $html);
-        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.index', [$secondWorkspace->uid, $second->uid]), $html);
+        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.keywords.index', [$firstWorkspace->uid, $first->uid]), $html);
+        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.keywords.index', [$secondWorkspace->uid, $second->uid]), $html);
     }
 
     public function test_the_selector_never_lists_a_business_the_actor_cannot_access(): void
@@ -184,9 +184,9 @@ class SeoFoundationBoundaryTest extends TestCase
         $response = $this->get(route('customer.seo.index'));
 
         // Exactly one accessible Business, so it redirects to MINE — never the foreign one.
-        $response->assertRedirect(route('customer.workspaces.businesses.seo.index', [$myWorkspace->uid, $mine->uid]));
+        $response->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$myWorkspace->uid, $mine->uid]));
         $this->assertNotSame(
-            route('customer.workspaces.businesses.seo.index', [$foreignWorkspace->uid, $foreign->uid]),
+            route('customer.workspaces.businesses.seo.keywords.index', [$foreignWorkspace->uid, $foreign->uid]),
             $response->headers->get('Location'),
         );
     }
@@ -251,7 +251,7 @@ class SeoFoundationBoundaryTest extends TestCase
         $this->createLocation($business);
         $this->authenticateAsSeoCustomer($customer);
 
-        $this->get($this->seoUrl($workspace, $business))->assertOk();
+        $this->get($this->seoUrl($workspace, $business))->assertRedirect(route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]));
     }
 
     // -----------------------------------------------------------------
@@ -409,7 +409,7 @@ class SeoFoundationBoundaryTest extends TestCase
             // reads the published snapshot and reports, and cannot fetch a
             // URL or mutate anything. SeoAuditRunner's own table-scoped rule
             // is pinned in SeoAuditBoundaryTest.
-            if (in_array(basename($file), ['SeoCitationManager.php', 'SeoReviewLinkManager.php', 'SeoReviewRequestManager.php', 'SeoAuditRunner.php'], true)) {
+            if (in_array(basename($file), ['SeoCitationManager.php', 'SeoCitationCatalogManager.php', 'SeoReviewLinkManager.php', 'SeoReviewRequestManager.php', 'SeoAuditRunner.php'], true)) {
                 continue;
             }
 
@@ -428,6 +428,23 @@ class SeoFoundationBoundaryTest extends TestCase
             // It writes only THROUGH SeoKeywordManager; those call names are
             // not table writes (the manager's own writes are pinned separately).
             $code = (string) preg_replace('/\$this->keywords->(create|update|archive|reactivate)\s*\(/', '', $code);
+            // Rank Tracking V1 — THE ONE NARROW EXEMPTION. This controller may queue
+            // exactly one thing: the rank SCHEDULER job for the target the rank
+            // manager has just created, i.e. the literal statement
+            //     ScheduleSeoRankChecks::dispatch($target->id);
+            // That job holds no spend of its own: it asks SeoRankTrackingBudget for
+            // permission, which fails closed. It is NOT a general "controllers may
+            // queue work" allowance. The statement must appear EXACTLY ONCE (asserted
+            // here), only this literal is stripped, and every other dispatch / Queue /
+            // Bus / Http / provider reference in this file still fails the scan below.
+            // Submitting to the provider is never done from a controller on this path
+            // (see test_rank_controllers_never_call_the_provider_and_queue_only_budgeted_work).
+            $this->assertSame(
+                1,
+                preg_match_all('/\bScheduleSeoRankChecks::dispatch\(\$target->id\);/', $code),
+                'SeoKeywordsController must contain the rank-scheduler dispatch exactly once.'
+            );
+            $code = (string) preg_replace('/\bScheduleSeoRankChecks::dispatch\(\$target->id\);/', '', $code);
         }
 
         $this->assertNotSame('', $code);
@@ -462,6 +479,39 @@ class SeoFoundationBoundaryTest extends TestCase
                 basename($file) . ' must not match ' . $pattern . ' (Contract 18 §12).'
             );
         }
+    }
+
+    /**
+     * Guards the exemption above from becoming a hole: no controller may talk to
+     * the provider or use a vendor/network class, and the only jobs a rank
+     * controller may queue are the rank scheduler (no spend of its own) and, for
+     * "Check now", a submit for a run the budget authority has JUST reserved.
+     */
+    public function test_rank_controllers_never_call_the_provider_and_queue_only_budgeted_work(): void
+    {
+        $root = dirname(__DIR__, 3) . '/app/Http/Controllers/Customer/Business/';
+
+        foreach (['SeoKeywordsController.php', 'SeoRankTargetsController.php'] as $name) {
+            $code = $this->codeWithoutComments($root . $name);
+
+            foreach (['SeoRankProvider', 'DataForSeo', 'FakeSeoRankProvider', 'SeoRankCheckExecutor', '/\bHttp::/', 'GuzzleHttp', '/\bQueue::/', '/\bBus::/'] as $needle) {
+                $matched = str_starts_with($needle, '/') ? preg_match($needle, $code) === 1 : str_contains($code, $needle);
+                $this->assertFalse($matched, "{$name} must not reference {$needle}.");
+            }
+
+            preg_match_all('/([A-Za-z\\\\]+)::dispatch\(/', $code, $m);
+            $allowed = $name === 'SeoKeywordsController.php'
+                ? ['ScheduleSeoRankChecks']
+                : ['ScheduleSeoRankChecks', 'SubmitSeoRankCheck'];
+
+            foreach ($m[1] as $job) {
+                $this->assertContains($job, $allowed, "{$name} may not dispatch {$job}.");
+            }
+        }
+
+        // "Check now" submits only runs the budget authority created in this request.
+        $code = $this->codeWithoutComments($root . 'SeoRankTargetsController.php');
+        $this->assertStringContainsString('$decision->allowed && $decision->run !== null', $code);
     }
 
     public function test_the_keyword_manager_writes_only_seo_keywords(): void

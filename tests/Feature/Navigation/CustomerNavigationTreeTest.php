@@ -60,7 +60,7 @@ class CustomerNavigationTreeTest extends TestCase
 
         // Contract 18 §5.1 — seo_basic_visibility is Core+Growth+Agency, so
         // the SEO entry (Overview, Search keywords) is offered even here.
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'ads', 'ads-google', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Core Business must offer [{$expected}].");
         }
 
@@ -71,13 +71,13 @@ class CustomerNavigationTreeTest extends TestCase
         // The D-20 exemplar: Core's catalog excludes the GBP module.
         $this->assertNotContains('gbp', $keys, 'Core has no Get found.');
 
-        // Contract 18 §5.1 — seo_module (Site Audit, Citations, Reviews) is
-        // Growth+Agency only; Core keeps only the seo_basic_visibility
-        // children (Overview, Search keywords).
-        foreach (['seo-audit', 'seo-citations', 'seo-reviews'] as $growthOnly) {
+        // Contract 18 §5.1 — seo_module (Citations, Reviews) is Growth+Agency
+        // only; Core keeps only the seo_basic_visibility child (Search keywords).
+        // Overview and Site Audit are no longer navigation entries for anyone.
+        foreach (['seo-citations', 'seo-reviews', 'seo-overview', 'seo-audit'] as $growthOnly) {
             $this->assertNotContains($growthOnly, $keys, "Core has no [{$growthOnly}].");
         }
-        foreach (['seo-overview', 'seo-keywords'] as $basic) {
+        foreach (['seo-keywords'] as $basic) {
             $this->assertContains($basic, $keys, "Core must still offer [{$basic}].");
         }
     }
@@ -101,7 +101,24 @@ class CustomerNavigationTreeTest extends TestCase
         $this->assertStringContainsString('href="' . route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]) . '"', $hub);
     }
 
-    public function test_a_growth_business_gets_get_found_because_its_plan_includes_it(): void
+    public function test_the_business_sidebar_reads_in_blueprint_order_and_carries_no_results_entry(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+
+        // V1 Master Product Blueprint §7, in order, for the entries this
+        // Growth fixture is entitled to (Calendar/Payments & Contracts are
+        // asserted by their own suites). Results is reached from Home.
+        $blueprint = ['home', 'opportunities', 'contacts', 'conversations', 'calendar', 'automations', 'website', 'seo', 'forms', 'packages_products', 'payments_contracts', 'settings'];
+        $shown = array_values(array_intersect($keys, $blueprint));
+
+        $this->assertSame(array_values(array_intersect($blueprint, $keys)), $shown, 'The sidebar follows the Blueprint top-level order.');
+        $this->assertNotContains('analytics', $keys, 'Results is not a top-level Business entry.');
+    }
+
+    public function test_a_growth_business_gets_google_business_profile_because_its_plan_includes_it(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -109,7 +126,7 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-audit', 'seo-citations', 'seo-reviews', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-citations', 'seo-reviews', 'ads', 'ads-google', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Growth Business must offer [{$expected}].");
         }
 
@@ -117,8 +134,11 @@ class CustomerNavigationTreeTest extends TestCase
             $this->assertNotContains($gone, $keys, "Conversations is the one messaging entry: no [{$gone}].");
         }
 
-        $this->assertStringContainsString('Get found', $this->shellText($html));
-        $this->assertStringContainsString('Site Audit', $this->shellText($html));
+        $this->assertStringContainsString('Google Business Profile', $this->shellText($html));
+        $this->assertStringNotContainsString('Get found', $this->shellText($html));
+        foreach (['seo-overview', 'seo-audit'] as $retired) {
+            $this->assertNotContains($retired, $keys, "[{$retired}] is no longer a navigation entry.");
+        }
     }
 
     /**
@@ -163,7 +183,7 @@ class CustomerNavigationTreeTest extends TestCase
         $conversations = array_search('conversations', $keys, true);
 
         $this->assertNotFalse($conversations);
-        $this->assertSame('contacts', $keys[$conversations + 1] ?? null, 'Nothing nested under Conversations.');
+        $this->assertSame('calendar', $keys[$conversations + 1] ?? null, 'Nothing nested under Conversations; Calendar follows it.');
         $this->assertDoesNotMatchRegularExpression('/<li class="[^"]*has-sub[^"]*" data-nav-key="conversations"/', $this->sidebarHtml($html));
     }
 
@@ -172,7 +192,7 @@ class CustomerNavigationTreeTest extends TestCase
     // =================================================================
 
     /**
-     * Opportunities sits directly after Contacts and before Automations, and
+     * Opportunities sits directly after Home and before Contacts, and
      * opens the SELECTED Business's CRM board. Advisor stays absent even with
      * the Opportunity (AI COO) engine switched on.
      */
@@ -189,8 +209,8 @@ class CustomerNavigationTreeTest extends TestCase
             $position = array_search('opportunities', $keys, true);
 
             $this->assertNotFalse($position, "[{$tier->value}] offers Opportunities.");
-            $this->assertSame('contacts', $keys[$position - 1] ?? null, "[{$tier->value}] Opportunities comes directly after Contacts.");
-            $this->assertSame('automations', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Automations.");
+            $this->assertSame('home', $keys[$position - 1] ?? null, "[{$tier->value}] Opportunities comes directly after Home.");
+            $this->assertSame('contacts', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Contacts.");
             $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $business->uid]), $this->menuLinks($html));
             $this->assertNotContains('advisor', $keys, "[{$tier->value}] Advisor stays out of the Business sidebar.");
 
@@ -224,18 +244,20 @@ class CustomerNavigationTreeTest extends TestCase
     }
 
     /**
-     * Never in the Agency account frame; offered once the Agency is inside an
-     * authorized client Business, pointing at that client's own board.
+     * The Agency owner is a Business owner too (Blueprint §28): Opportunities
+     * is the Agency's OWN Business board in both frames, never another account's.
      */
-    public function test_an_agency_sees_opportunities_only_inside_a_client_business(): void
+    public function test_an_agency_sees_opportunities_for_its_own_business_in_both_frames(): void
     {
         config(['opportunity.enabled' => true]);
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
 
         $this->switchToAccount($workspace);
-        $this->assertNotContains('opportunities', $this->menuKeys($this->home()->assertOk()->getContent()), 'The Agency account frame has no Opportunities.');
-        $this->assertNotContains('advisor', $this->menuKeys($this->home()->assertOk()->getContent()), 'The account frame cannot open a Business-context Advisor route.');
+        $accountHtml = $this->home()->assertOk()->getContent();
+        $this->assertContains('opportunities', $this->menuKeys($accountHtml), 'The Agency account frame still reaches its own Business Opportunities.');
+        $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $clientOne->uid]), $this->menuLinks($accountHtml));
+        $this->assertNotContains('advisor', $this->menuKeys($accountHtml), 'The account frame cannot open a Business-context Advisor route.');
 
         $this->switchTo($workspace, $clientOne);
         $html = $this->home()->assertOk()->getContent();
@@ -479,12 +501,14 @@ class CustomerNavigationTreeTest extends TestCase
         $this->switchToAccount($workspace);
 
         foreach ([
-            'customer.workspaces.agency.saas.stripe',
-            'customer.workspaces.agency.saas.plans',
-            'customer.workspaces.agency.saas.revenue',
-        ] as $routeName) {
+            'customer.workspaces.agency.saas.stripe' => 'settings',
+            // Plans and revenue are primary Agency entries now (Agency shell), so
+            // they light their own entry instead of the Settings hub's.
+            'customer.workspaces.agency.saas.plans' => 'agency-saas-plans',
+            'customer.workspaces.agency.saas.revenue' => 'agency-saas-revenue',
+        ] as $routeName => $activeKey) {
             $html = $this->get(route($routeName, $workspace->uid))->assertOk()->getContent();
-            $this->assertContains('settings', $this->activeMenuKeys($html), "[{$routeName}] must keep the Settings sidebar entry active.");
+            $this->assertContains($activeKey, $this->activeMenuKeys($html), "[{$routeName}] must keep [{$activeKey}] active.");
         }
     }
 
@@ -618,17 +642,16 @@ class CustomerNavigationTreeTest extends TestCase
     // §13 #9 — the frames never leak into each other
     // =================================================================
 
-    public function test_the_account_frame_offers_no_business_only_entry(): void
+    public function test_the_account_frame_scopes_every_business_entry_to_the_agencys_own_business(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        [$agency, $own, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
         $this->switchToAccount($workspace);
 
-        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+        $html = $this->home()->assertOk()->getContent();
 
-        foreach (self::BUSINESS_ONLY_KEYS as $businessOnly) {
-            $this->assertNotContains($businessOnly, $keys, "[{$businessOnly}] belongs to the Business frame only.");
-        }
+        // No Business module may link anywhere but the Agency's own Business.
+        $this->assertContains(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $own->uid]), $this->menuLinks($html));
     }
 
     /**
@@ -875,7 +898,7 @@ class CustomerNavigationTreeTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        foreach (['seo', 'seo-overview', 'seo-keywords', 'seo-audit', 'seo-citations', 'seo-reviews'] as $expected) {
+        foreach (['seo', 'seo-keywords', 'seo-citations', 'seo-reviews'] as $expected) {
             $this->assertContains($expected, $keys, "[{$expected}] must still render with view_seo held.");
         }
 
@@ -1029,7 +1052,8 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->assertContains('settings', $this->activeMenuKeys($html), 'Settings is active on its screens.');
         $this->assertNotContains('keywords', $this->menuKeys($html), 'The screen itself is a hub module, not a sidebar leaf.');
-        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($html));
+        // The only groups are the own Business's SEO and Ads entries (Agency shell); no Settings module nests under Settings.
+        $this->assertSame(2, substr_count($this->sidebarHtml($html), 'has-sub'));
     }
 
     // =================================================================
@@ -1254,9 +1278,11 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->assertStringNotContainsString('>Inbox<', $horizontal);
 
-        foreach (['Send', 'Campaigns'] as $legacyOutbound) {
-            $this->assertStringNotContainsString('>' . $legacyOutbound . '<', $horizontal, "The horizontal shell must not render [{$legacyOutbound}].");
-        }
+        // The legacy outbound "Send" entry is gone and nothing links to the old
+        // outreach area. The word "Campaigns" can no longer be asserted absent:
+        // it is also the label of the Ads module's own child item.
+        $this->assertStringNotContainsString('>Send<', $horizontal, 'The horizontal shell must not render [Send].');
+        $this->assertStringNotContainsString('/outreach', $horizontal, 'The horizontal shell must not link to the legacy outreach area.');
 
         $this->assertStringNotContainsString('Developers', $horizontal);
     }

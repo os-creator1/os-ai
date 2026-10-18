@@ -93,9 +93,11 @@ final class CustomerShellComposer
     public function currentMenuEntitlements(CustomerContext $context): MenuEntitlements
     {
         $workspace = $context->frameWorkspace();
-        $business = $context->selectedBusiness;
+        // The Agency account frame also lists its own Business's modules, so
+        // it asks for that Business's decisions too (same snapshot, same rules).
+        $business = $context->selectedBusiness ?? $context->agencyOwnBusiness();
 
-        if (! $context->isBusinessFrame() || $workspace === null || $business === null) {
+        if ($workspace === null || $business === null) {
             return MenuEntitlements::none();
         }
 

@@ -126,10 +126,14 @@ final class PlatformFeatureRegistry
         // only) and is unchanged; no new packaging or classification
         // migration is needed (contract §10.3).
         PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Available,
         PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Planned,
-        PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Available,
+        // Meta Ads V1 (contract 24 §8, M10): ads_module is the provider-neutral
+        // full Ads capability; google_ads_module / meta_ads_module stay valid
+        // legacy synonyms, all resolved by App\Library\Ads\AdsFeatureAccess.
+        PlatformFeature::AdsModule->value => PlatformFeatureAvailability::Available,
+        PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Available,
         // Agency V1 completion — Planned -> Available, meeting the evidentiary
         // bar every flip here is held to: a real, executable, Workspace-scoped
         // surface now exists (AgencyWhiteLabelController over
@@ -183,6 +187,12 @@ final class PlatformFeatureRegistry
         // is unchanged; an unassigned, inactive, suspended or override-denied
         // Workspace is still refused by EntitlementManager exactly as before.
         PlatformFeature::PaymentsContracts->value => PlatformFeatureAvailability::Available,
+        // SEO Keyword Rank Tracking V1: a real Business-scoped surface exists
+        // (SeoRankTargetsController over SeoRankTargetManager and the budgeted
+        // check pipeline). Availability is code-level only: the provider master
+        // switch (seo.rank_tracking.enabled) still defaults OFF, so no paid call
+        // can happen until the operator enables it.
+        PlatformFeature::SeoRankTracking->value => PlatformFeatureAvailability::Available,
     ];
 
     /**

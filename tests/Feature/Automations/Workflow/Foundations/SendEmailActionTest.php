@@ -117,19 +117,33 @@ class SendEmailActionTest extends TestCase
 
     public function test_the_executor_has_no_provider_or_ledger_access_of_its_own(): void
     {
-        $source = file_get_contents(base_path('app/Library/Automation/Workflow/Executors/SendEmailNodeExecutor.php'));
-        // Code only: the docblock names the ledger to say this class does not touch it.
-        $source = preg_replace(['#/\*.*?\*/#s', '#^\s*//.*$#m'], '', $source);
+        // The executor holds NO sender of its own: it hands the words to the one email
+        // dispatcher every email-sending action shares, and THAT reaches a mailbox only
+        // through BusinessEmailSender.
+        $executor = (new \ReflectionClass(SendEmailNodeExecutor::class))->getConstructor();
+        $this->assertSame(
+            [\App\Library\Automation\Workflow\Runtime\AutomationEmailDispatcher::class],
+            array_map(fn (\ReflectionParameter $parameter) => (string) $parameter->getType(), $executor->getParameters()),
+        );
 
         foreach ([
-            'GoogleBusinessEmailProvider', 'MicrosoftBusinessEmailProvider', 'BusinessEmailProviderRegistry',
-            'BusinessEmailAccountManager', 'Http::', 'GuzzleHttp', 'BusinessEmailMessage::', 'business_email_messages',
-            'DB::table', 'refresh_token', 'Crypt::',
-        ] as $forbidden) {
-            $this->assertStringNotContainsString($forbidden, $source, 'Send email must reach a mailbox only through BusinessEmailSender.');
+            'app/Library/Automation/Workflow/Executors/SendEmailNodeExecutor.php',
+            'app/Library/Automation/Workflow/Runtime/AutomationEmailDispatcher.php',
+        ] as $path) {
+            $source = file_get_contents(base_path($path));
+            // Code only: the docblock names the ledger to say this class does not touch it.
+            $source = preg_replace(['#/\*.*?\*/#s', '#^\s*//.*$#m'], '', $source);
+
+            foreach ([
+                'GoogleBusinessEmailProvider', 'MicrosoftBusinessEmailProvider', 'BusinessEmailProviderRegistry',
+                'BusinessEmailAccountManager', 'Http::', 'GuzzleHttp', 'BusinessEmailMessage::', 'business_email_messages',
+                'DB::table', 'refresh_token', 'Crypt::',
+            ] as $forbidden) {
+                $this->assertStringNotContainsString($forbidden, $source, 'Send email must reach a mailbox only through BusinessEmailSender.');
+            }
         }
 
-        $constructor = (new \ReflectionClass(SendEmailNodeExecutor::class))->getConstructor();
+        $constructor = (new \ReflectionClass(\App\Library\Automation\Workflow\Runtime\AutomationEmailDispatcher::class))->getConstructor();
         $this->assertSame(
             [BusinessEmailSender::class],
             array_map(fn (\ReflectionParameter $parameter) => (string) $parameter->getType(), $constructor->getParameters()),

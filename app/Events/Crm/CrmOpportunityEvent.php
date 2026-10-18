@@ -33,6 +33,13 @@ use Illuminate\Foundation\Events\Dispatchable;
  *   that recorded the change (`crm_opportunity_history.id`), so a replayed event
  *   composes the same key and V2's EnrollmentService refuses the duplicate.
  *
+ * `origin` IS AN OPAQUE CAUSATION REFERENCE, null for a person's own change — the
+ * same contract as `ContactTagEvent::$origin`. A caller that moves a deal on behalf
+ * of something else (the Automations engine passes `automation_step_run:{id}`) says
+ * so at the service seam and it rides here unchanged. This domain never reads it; a
+ * consumer uses it to tell its own writes from a person's, which is what stops one
+ * automation's stage move from re-triggering the automation that made it.
+ *
  * Automations V2 consumes them without this domain knowing: WorkflowTriggerType
  * declares one trigger per NAME, and EnrollFromCrmOpportunityEvent hands each
  * event to CrmOpportunityTriggerSource, which calls EnrollmentService — exactly
@@ -53,6 +60,7 @@ abstract class CrmOpportunityEvent implements ShouldDispatchAfterCommit
         public readonly ?string $stageSemanticKey,
         public readonly int $historyId,
         public readonly ?int $actorUserId,
+        public readonly ?string $origin = null,
     ) {
     }
 

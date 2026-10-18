@@ -3,33 +3,26 @@
 namespace App\Enums\Seo;
 
 /**
- * Contract 18 §5.2.4 — the single, honest indexability line on the SEO
- * Overview.
+ * Contract 18 §5.2.4 (revised, SEO V1 final) — the closed set of "can search
+ * engines find my website?" states. The words and the page counts that go
+ * with each live in App\Library\Seo\SeoIndexability.
  *
- * Every public Website is served from the platform path and carries a
- * mandatory `noindex` directive until custom domains exist (Website
- * contract §21). SEO therefore never presents a hosted page as indexed,
- * ranked or driving traffic. This is a STATUS, never a finding: it is a
- * property of the platform today, not something the customer did wrong.
+ * A site served from the platform path always carries `noindex`; a site served
+ * from its Active primary custom domain is indexable page by page, unless the
+ * owner marked every page hidden from search. This is a STATUS, never a
+ * finding: it describes how the site is set up today.
  */
 enum SeoIndexabilityState: string
 {
+    /** Nothing is published, so there is nothing for a search engine to find. */
     case NoPublishedWebsite = 'no_published_website';
+
+    /** Published, but only at the platform address (no Active primary domain): always noindex. */
     case PlatformPathNotIndexable = 'platform_path_not_indexable';
 
-    public function label(): string
-    {
-        return match ($this) {
-            self::NoPublishedWebsite => 'No published website yet',
-            self::PlatformPathNotIndexable => 'Your website is not indexed by search engines yet',
-        };
-    }
+    /** Published on an Active primary domain, but every page is marked hidden from search. */
+    case HiddenFromSearch = 'hidden_from_search';
 
-    public function detail(): string
-    {
-        return match ($this) {
-            self::NoPublishedWebsite => 'Publish your website to have something for search engines to find.',
-            self::PlatformPathNotIndexable => 'Your site is served from the platform address, which search engines are asked not to index. It can appear in search results once it is connected to your own domain.',
-        };
-    }
+    /** Published on an Active primary domain with at least one page visible to search engines. */
+    case Indexable = 'indexable';
 }

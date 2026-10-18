@@ -7,8 +7,11 @@ use App\Enums\Automation\Workflow\WorkflowEdgeKind;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry;
+use App\Library\Automation\Workflow\Conditions\Subjects\ContactBusinessFieldSubject;
+use App\Enums\CustomFields\CustomFieldType;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\ContactGroupFields;
+use App\Models\CustomFieldDefinition;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -44,7 +47,25 @@ class WorkflowCompiler
         private readonly WorkflowDefinitionValidator $validator,
         private readonly NodeTypeRegistry $registry,
         private readonly WorkflowReferenceCatalogLoader $catalogs,
+        private readonly ?\App\Library\Messaging\BusinessMessagingIdentityResolver $messagingResolver = null,
+        private readonly ?WorkflowActionVerifier $actionVerifier = null,
     ) {
+    }
+
+    /**
+     * The two collaborators the cross-domain checks need. Optional constructor
+     * arguments resolved from the container on first use, so a caller that builds a
+     * compiler by hand (a spy in a test) keeps the three-argument construction it has
+     * always had, and a document that needs neither never resolves either.
+     */
+    private function messaging(): \App\Library\Messaging\BusinessMessagingIdentityResolver
+    {
+        return $this->messagingResolver ?? app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class);
+    }
+
+    private function actions(): WorkflowActionVerifier
+    {
+        return $this->actionVerifier ?? app(WorkflowActionVerifier::class);
     }
 
     /**
@@ -320,10 +341,34 @@ class WorkflowCompiler
                     $errors[$entry['key']][] = 'That tag does not belong to this business.';
                 }
 
+                // THE WORKFLOW'S LOCATION SCOPE. A bound workflow (one Location, or
+                // selected ones) must name only ACTIVE Locations of THIS Business — a
+                // foreign, missing or archived one cannot publish, so the persisted
+                // scope is always one the runtime can trust. Business-wide names none.
+                foreach (WorkflowLocationScope::fromTriggerConfig($entry['config'] ?? [])->ids() as $scopeId) {
+                    $scope = $references()->location($scopeId);
+
+                    if ($scope === null) {
+                        $errors[$entry['key']][] = 'That location does not belong to this business.';
+                    } elseif (! $scope['active']) {
+                        $errors[$entry['key']][] = 'That location is archived. Choose an active location, or the whole business.';
+                    }
+                }
+
                 $formFilter = $this->positiveId($entry['config']['form_id'] ?? null);
 
                 if ($triggerType === WorkflowTriggerType::FormSubmitted && $formFilter !== null && $references()->form($formFilter) === null) {
                     $errors[$entry['key']][] = 'That form does not belong to this business.';
+                }
+
+                if ($triggerType === WorkflowTriggerType::QuestionnaireSubmitted && $formFilter !== null) {
+                    $questionnaire = $references()->form($formFilter);
+
+                    if ($questionnaire === null) {
+                        $errors[$entry['key']][] = 'That questionnaire does not belong to this business.';
+                    } elseif ($questionnaire['pages'] < 2) {
+                        $errors[$entry['key']][] = 'That is a one-page form, not a questionnaire. Choose a questionnaire, or use the "A form is submitted" trigger.';
+                    }
                 }
             }
         }
@@ -350,10 +395,30 @@ class WorkflowCompiler
                 continue;
             }
 
-            // B4 §7.B, carried forward: a custom field belongs to exactly one
+            // A Business custom field (canonical, by uid) is Business-wide: it needs no
+            // contact group, so it works on every trigger (form, booking, deal…). It
+            // must be one of THIS Business's active Contact fields.
+            $customFieldId = $this->positiveId($entry['config']['custom_field_id'] ?? null);
+
+            if ($customFieldId !== null) {
+                $usable = CustomFieldDefinition::query()
+                    ->where('business_id', $businessId)
+                    ->where('entity', CustomFieldDefinition::ENTITY_CONTACT)
+                    ->where('id', $customFieldId)
+                    ->whereNull('archived_at')
+                    ->exists();
+
+                if (! $usable) {
+                    $errors[$entry['key']][] = 'That custom field does not belong to this business or is archived.';
+                }
+
+                continue;
+            }
+
+            // B4 §7.B, carried forward: a per-list field belongs to exactly one
             // contact group, so a workflow whose field cannot match its audience
             // is structurally impossible and must never be accepted. That means
-            // an explicit trigger group is required for this action.
+            // an explicit trigger group is required for this legacy field.
             if ($triggerGroupId === null) {
                 $errors[$entry['key']][] = 'To update a contact field, the trigger must watch one specific contact group.';
 
@@ -367,17 +432,99 @@ class WorkflowCompiler
             }
         }
 
+        // A workflow limited to Locations may text only from a sender that can be
+        // shown to belong to every one of them. Refusing at publish tells the author
+        // now, instead of failing every journey later; the runtime re-proves it for
+        // the one Location each journey is pinned to (AutomationSmsDispatcher).
+        $scope = WorkflowLocationScope::business();
+
+        foreach ($flattened as $entry) {
+            if ($entry['type'] === WorkflowNodeType::Trigger) {
+                $scope = WorkflowLocationScope::fromTriggerConfig($entry['config'] ?? []);
+            }
+        }
+
+        // The cross-domain actions are checked against what the account holds. A
+        // workflow without one reads nothing extra: the Business is loaded only when
+        // there is something to check.
+        $crossDomain = array_filter($flattened, fn (array $entry): bool => $entry['type']->isCrossDomainAction());
+
+        if ($crossDomain !== []) {
+            $business = \App\Models\Business::query()->find($businessId);
+
+            if ($business !== null) {
+                foreach ($this->actions()->errors($business, $crossDomain, $triggerType, $scope, $references) as $nodeKey => $messages) {
+                    foreach ($messages as $message) {
+                        $errors[$nodeKey][] = $message;
+                    }
+                }
+            }
+        }
+
+        if ($scope->isBound()) {
+            $unprovable = null;
+
+            foreach ($flattened as $entry) {
+                if ($entry['type'] !== WorkflowNodeType::SendSms) {
+                    continue;
+                }
+
+                $unprovable ??= $this->textingLocationProblem($version, $scope);
+
+                if ($unprovable !== null) {
+                    $errors[$entry['key']][] = $unprovable;
+                }
+            }
+        }
+
         foreach ($flattened as $entry) {
             if ($entry['type'] !== WorkflowNodeType::IfElse) {
                 continue;
             }
 
-            foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $references) as $error) {
+            foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $references, $triggerType) as $error) {
                 $errors[$entry['key']][] = $error;
             }
         }
 
         return $errors;
+    }
+
+    /**
+     * Why this Business cannot text for every Location of a Location-limited
+     * scope, or null when it can (or has no sender at all, which fails closed at
+     * run time with its own reason).
+     */
+    private function textingLocationProblem(AutomationWorkflowVersion $version, WorkflowLocationScope $scope): ?string
+    {
+        $business = \App\Models\Business::query()->find((int) $version->business_id);
+
+        if ($business === null) {
+            return null;
+        }
+
+        $identity = $this->messaging()->resolveForBusiness($business);
+        $message = 'This workflow is limited to locations, but your text-message number is not set up for all of them. Choose which locations use your number in Settings > Text messaging, or send an email instead.';
+
+        if ($identity === null) {
+            // A BYO sender has no Location assignment: it cannot be shown to belong to
+            // one Location of several.
+            return count($this->messaging()->activeLocationIds($business)) > 1 ? $message : null;
+        }
+
+        try {
+            $number = $this->messaging()->resolvePrimaryNumber($identity);
+        } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
+            return null;
+        }
+
+        foreach ($scope->ids() as $locationId) {
+            if (! $this->messaging()->numberServes($number, $business, new \App\Library\Messaging\DTO\LocationSendContext($locationId, true))) {
+                return $message;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -397,7 +544,7 @@ class WorkflowCompiler
      *
      * @return list<string>
      */
-    private function conditionReferenceErrors(array $config, \Closure $references): array
+    private function conditionReferenceErrors(array $config, \Closure $references, ?WorkflowTriggerType $triggerType = null): array
     {
         $errors = [];
         $conditions = is_array($config['conditions'] ?? null) ? array_values($config['conditions']) : [];
@@ -409,6 +556,29 @@ class WorkflowCompiler
 
             $position = $index + 1;
             $subject = is_string($condition['subject'] ?? null) ? $condition['subject'] : '';
+
+            // The fact-backed subjects read the CRM deal, document, payment or
+            // appointment behind the journey. Each needs a trigger that provides one,
+            // and a stage operand must be a stage of THIS Business.
+            if (isset(ConditionSubjectRegistry::FACT_SUBJECTS[$subject])) {
+                $problem = ConditionSubjectRegistry::triggerProblem($subject, $triggerType);
+
+                if ($problem !== null) {
+                    $errors[] = sprintf('Condition %d %s.', $position, $problem);
+                }
+
+                if ($subject === ConditionSubjectRegistry::OPPORTUNITY_STAGE) {
+                    $stage = $references()->stage($this->positiveId($condition['operand'] ?? null) ?? 0);
+
+                    if ($stage === null) {
+                        $errors[] = sprintf('Condition %d checks a stage that does not belong to this business.', $position);
+                    } elseif ($stage['archived']) {
+                        $errors[] = sprintf('Condition %d checks a stage that is archived.', $position);
+                    }
+                }
+
+                continue;
+            }
 
             if ($subject === ConditionSubjectRegistry::IN_GROUP) {
                 $operand = $condition['operand'] ?? null;
@@ -427,6 +597,14 @@ class WorkflowCompiler
                 if ($references()->tag($tagId) === null) {
                     $errors[] = sprintf('Condition %d checks a tag that does not belong to this business.', $position);
                 }
+
+                continue;
+            }
+
+            $businessFieldKey = ConditionSubjectRegistry::businessFieldKey($subject);
+
+            if ($businessFieldKey !== null) {
+                array_push($errors, ...$this->businessFieldConditionErrors($condition, $references()->customField($businessFieldKey), $position));
 
                 continue;
             }
@@ -461,6 +639,56 @@ class WorkflowCompiler
         }
 
         return $errors;
+    }
+
+    /**
+     * A `contact.field:{key}` condition against the Business's own definitions:
+     * the field must exist in THIS Business (archived still resolves, so an
+     * existing workflow can be saved again), the operator must belong to the
+     * field's type family, and the operand must be a value of that type — a
+     * number for "greater than", a date for "before", one of the field's own
+     * option ids for a dropdown.
+     *
+     * Read from the Business catalog the Builder already loaded (one statement),
+     * so the check costs no query of its own however many conditions there are.
+     *
+     * @param array<string, mixed> $condition
+     * @param array{id: int, key: string, label: string, type: string, archived: bool, options: list<array{id: string, label: string}>}|null $definition
+     *
+     * @return list<string>
+     */
+    private function businessFieldConditionErrors(array $condition, ?array $definition, int $position): array
+    {
+        if ($definition === null) {
+            return [sprintf('Condition %d checks a contact field that does not belong to this business.', $position)];
+        }
+
+        $operator = ConditionOperator::tryFrom((string) ($condition['operator'] ?? ''));
+
+        if ($operator === null) {
+            return [];
+        }
+
+        $family = CustomFieldType::from($definition['type'])->conditionFamily();
+
+        if (! in_array($operator, ContactBusinessFieldSubject::operatorsForFamily($family), true)) {
+            return [sprintf('Condition %d uses a comparison that does not apply to that field.', $position)];
+        }
+
+        $operand = $condition['operand'] ?? null;
+
+        if (! $operator->requiresOperand() || $operand === null || $operand === '') {
+            return [];
+        }
+
+        $valid = match ($family) {
+            'number' => is_numeric($operand) && ! is_bool($operand),
+            'date' => is_string($operand) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $operand) === 1 && strtotime($operand) !== false,
+            'select', 'multi' => is_string($operand) && in_array($operand, array_column($definition['options'], 'id'), true),
+            default => true,
+        };
+
+        return $valid ? [] : [sprintf('Condition %d needs a value that fits that field.', $position)];
     }
 
     /**

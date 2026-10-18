@@ -12,6 +12,7 @@ use App\Events\Crm\CrmOpportunityLost;
 use App\Events\Crm\CrmOpportunityStageChanged;
 use App\Events\Crm\CrmOpportunityWon;
 use App\Library\Crm\Exceptions\CrmRuleException;
+use App\Library\Crm\Exceptions\CrmStageConflictException;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\Contacts;
@@ -56,7 +57,18 @@ class CrmOpportunityService
             throw new CrmRuleException('That pipeline or contact is not part of this Business.');
         }
 
-        return $this->persist($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, null);
+        // The Contact's own proven Location is authoritative: a deal is never
+        // attributed to a Location other than its Contact's (createAtLocation()
+        // enforces the same rule). Only a Contact with no proven Location falls
+        // back to the single-Active-Location rule in persist() — so a Business with
+        // several Locations never leaves a located Contact's deal Business-wide.
+        $contactLocationId = $contact->location_id === null ? null : (int) $contact->location_id;
+
+        if ($contactLocationId !== null && ! BusinessLocation::query()->where('id', $contactLocationId)->where('business_id', $business->id)->exists()) {
+            throw new CrmRuleException('That contact belongs to a different business location.');
+        }
+
+        return $this->persist($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, $contactLocationId);
     }
 
     /**
@@ -127,7 +139,7 @@ class CrmOpportunityService
      * not depend on how the rows were obtained, then the transaction. Callers
      * have already validated the title and proven tenancy.
      *
-     * @param  ?int  $explicitLocationId  null = the single-Active-Location rule, as create() always applied
+     * @param  ?int  $explicitLocationId  null = the single-Active-Location rule (a Contact with no proven Location)
      */
     private function persist(
         Business $business,
@@ -179,11 +191,22 @@ class CrmOpportunityService
     }
 
     /**
+     * `$expectedFrom` is the board's compare-and-set: the stage the caller last saw
+     * the deal in, checked against the LOCKED row. A deal already in `$to` is a
+     * repeat of the same request and answers false whatever `$expectedFrom` says
+     * (idempotent); a deal anywhere else raises CrmStageConflictException instead of
+     * being silently dragged from a stage the caller never saw. Null = unconditional,
+     * as the detail page's form has always been.
+     * @param string|null $origin an opaque causation reference for the event this
+     *        emits (the Automations engine passes `automation_step_run:{id}`); null
+     *        for a person's own move. Never read here.
+     *
      * @return bool false when the deal was already in that stage (nothing changed)
+     * @throws CrmStageConflictException
      */
-    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null): bool
+    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null, ?CrmPipelineStage $expectedFrom = null, ?string $origin = null): bool
     {
-        return DB::transaction(function () use ($opportunity, $to, $actorUserId): bool {
+        return DB::transaction(function () use ($opportunity, $to, $actorUserId, $expectedFrom, $origin): bool {
             $locked = $this->lock($opportunity);
 
             if ((int) $to->business_id !== (int) $locked->business_id || (int) $to->pipeline_id !== (int) $locked->pipeline_id) {
@@ -202,6 +225,10 @@ class CrmOpportunityService
                 return false;
             }
 
+            if ($expectedFrom !== null && (int) $locked->stage_id !== (int) $expectedFrom->id) {
+                throw new CrmStageConflictException((int) $locked->stage_id);
+            }
+
             $from = CrmPipelineStage::query()->findOrFail($locked->stage_id);
 
             $locked->forceFill(['stage_id' => $to->id, 'stage_entered_at' => now()])->save();
@@ -212,6 +239,7 @@ class CrmOpportunityService
                 ...$this->eventArguments($locked, $to, $history, $actorUserId),
                 fromStageId: $from->id,
                 fromStageSemanticKey: $from->semantic_key,
+                origin: $origin,
             );
 
             $opportunity->setRawAttributes($locked->getAttributes(), true);

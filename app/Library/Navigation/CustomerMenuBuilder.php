@@ -3,6 +3,7 @@
 namespace App\Library\Navigation;
 
 use App\Http\Controllers\Customer\Business\CrmOpportunitiesController;
+use App\Library\Ads\AdsFeatureAccess;
 use App\Library\Support\RequestScopedCache;
 use App\Library\ViewAs\ViewAsRouteClassification;
 use App\Models\User;
@@ -43,6 +44,7 @@ final class CustomerMenuBuilder
         'customer.workspaces.businesses.settings.',
         'customer.business.',
         'customer.workspaces.businesses.locations.',
+        'customer.workspaces.businesses.services.',
         'customer.workspaces.businesses.text-messaging.',
         'customer.workspaces.businesses.usage-billing.',
         'customer.workspaces.plan.',
@@ -80,16 +82,22 @@ final class CustomerMenuBuilder
     public const SETTINGS_DESCRIPTIONS = [
         'business-details' => 'Name, contact details and what the business does.',
         'locations' => 'Addresses and the areas this business serves.',
+        'services' => 'What this business offers, and which service comes first.',
+        'custom-fields' => 'The extra details you keep about contacts, like event date or venue.',
         'text-messaging' => 'This business’s number and whether texting is ready.',
+        'email' => 'The mailbox this business sends and receives email from.',
+        'payment-processing' => 'Connect the Stripe account that collects payments from your own clients.',
         'usage-billing' => 'Balance, top-ups, payment method and spending limits.',
         'plan' => 'What your plan includes and your subscription.',
         'team' => 'Who can work here, their role and what they can open.',
-        'account-details' => 'Agency account name, client accounts and who pays for each.',
+        // Clients are listed, invited and billed from Clients (each client's own page), not from this page.
+        'account-details' => 'Your agency account\'s name, status and the features included in its plan.',
         'blocked-numbers' => 'Numbers that are never messaged.',
         'messaging-provider' => 'Connect your own messaging provider.',
         'sender-ids' => 'Sender names used on outgoing messages.',
         'numbers' => 'Phone numbers on this account.',
         'keywords' => 'Words people can text in to reach you.',
+        'phone-messaging' => 'How your agency sends texts: connect your own Telnyx account, or get a number through us.',
         'agency-stripe' => 'The Stripe account that receives your clients\' subscription payments.',
         'agency-saas-plans' => 'The plans you resell to your clients, and their prices.',
         'agency-saas-revenue' => 'What your resold plans have earned.',
@@ -153,6 +161,20 @@ final class CustomerMenuBuilder
         // fail closed and silently hide the entry, even once Available.
         'seo_basic_visibility',
         'seo_module',
+        // Google Ads (Google Ads Module V1, contract 23 §7). Two independent
+        // decisions: ads_basic_visibility gates the Ads entry itself, its
+        // Overview and Settings (Core+); google_ads_module additionally gates
+        // Campaigns, Keywords, Search terms, Leads & conversions, Budget and
+        // Recommendations (Growth+). Same lesson as every entry above —
+        // omitting either key would fail closed and silently hide the entry.
+        // Nav gating only: every Ads route carries its own entitlement decision.
+        'ads_basic_visibility',
+        'google_ads_module',
+        // Meta Ads V1 (contract 24 §8, M10): the provider-neutral full-module key
+        // and its second legacy synonym. AdsFeatureAccess::gatedFeatureKeys()
+        // must stay a subset of this list (pinned by AdsFeatureAccessTest).
+        'ads_module',
+        'meta_ads_module',
     ];
 
     /**
@@ -219,6 +241,10 @@ final class CustomerMenuBuilder
         // the opposite default would make §6.1 unenforceable by accident.
         $this->entitlements = $entitlements ?? MenuEntitlements::none();
 
+        if ($context->hasAgencyShell()) {
+            return $this->agencyShell($context, $user, $current);
+        }
+
         return $context->isBusinessFrame()
             ? $this->businessFrame($context, $user, $current)
             : $this->accountFrame($context, $user, $current);
@@ -232,19 +258,59 @@ final class CustomerMenuBuilder
      */
     private function businessFrame(CustomerContext $context, User $user, string $current): array
     {
-        $workspaceUid = $context->selectedWorkspace?->uid;
-        $businessUid = $context->selectedBusiness?->uid;
-        $scoped = [$workspaceUid, $businessUid];
+        $scoped = [$context->selectedWorkspace?->uid, $context->selectedBusiness?->uid];
 
+        // Results is not a top-level Business entry (V1 Master Product Blueprint §7): Home's
+        // "See details" opens it, and it keeps Home lit while the owner is there. Its routes,
+        // controller and permission (`view_reports`) are unchanged.
+        $items = [$this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.growth.', 'customer.workspaces.businesses.analytics.', 'customer.analytics.'])];
+
+        $items = array_merge($items, $this->businessModuleItems($user, $scoped, $current));
+
+        // Settings — ONE destination (owner decision). Nothing expands under it
+        // in the sidebar: it opens the Settings hub, a page of cards for the
+        // configuration a Business does not need day to day, each linking to
+        // its own screen. The entry stays active on every one of those screens.
+        if ($this->businessSettingsSections($context, $user, $current) !== []) {
+            $items[] = $this->businessSettingsItem($context, $user, $scoped, $current, 'Settings');
+        }
+
+        return array_values(array_filter($items));
+    }
+
+    /**
+     * The Business modules, in order, WITHOUT Home and Settings — the single
+     * definition both the plain Business frame and the Agency shell's own-
+     * Business group render, so the two can never drift (and the entitlement
+     * gates are the same ones).
+     *
+     * @param  array<int, string|null>  $scoped  [workspaceUid, businessUid]
+     * @return array<int, MenuItem|null>
+     */
+    private function businessModuleItems(User $user, array $scoped, string $current): array
+    {
         $items = [];
-
-        $items[] = $this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
 
         // No separate Advisor entry (owner decision): the Business Home already
         // carries the next best move and the way into its recommendations, and
         // customer-facing Opportunities belong to the CRM sales module. Two
         // primary modules for one idea would confuse. The Advisor's routes,
         // pages and Home links are untouched — only the sidebar entry went.
+
+        // Opportunities — the CRM sales board of the selected Business
+        // (App\Library\Crm; NOT the AI COO Advisor, which has no sidebar entry).
+        // Business frame only: an Agency reaches it after choosing a client
+        // Business. Offered exactly when the CRM boundary would let the actor
+        // in — the `crm` entitlement and the board's own read permission.
+        $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
+            'customer.workspaces.businesses.crm.',
+        ]));
+
+        // Contacts opens the people first ("All contacts"); groups are its
+        // secondary tab and keep the entry active too.
+        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.people.index', $scoped, $current, [
+            'customer.workspaces.businesses.people.', 'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
+        ]);
 
         // Conversations — ONE destination, the selected Business's own
         // conversations (owner decision: no "Messages → Inbox" group around a
@@ -257,21 +323,6 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.conversations.',
         ]));
 
-        // Contacts opens the people first ("All contacts"); groups are its
-        // secondary tab and keep the entry active too.
-        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.people.index', $scoped, $current, [
-            'customer.workspaces.businesses.people.', 'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
-        ]);
-
-        // Opportunities — the CRM sales board of the selected Business
-        // (App\Library\Crm; NOT the AI COO Advisor, which has no sidebar entry).
-        // Business frame only: an Agency reaches it after choosing a client
-        // Business. Offered exactly when the CRM boundary would let the actor
-        // in — the `crm` entitlement and the board's own read permission.
-        $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
-            'customer.workspaces.businesses.crm.',
-        ]));
-
         // Calendar — the authenticated day/week schedule (Contract 15 §12.D). Offered
         // only when the Business is entitled to it; while PlatformFeature::Calendar is
         // Planned that answer is always no, so the entry is absent. The route behind it
@@ -279,6 +330,24 @@ final class CustomerMenuBuilder
         $items[] = $this->entitled('calendar', $this->item($user, 'calendar', 'Calendar', 'calendar', ['access_backend'], 'customer.workspaces.businesses.calendar.index', $scoped, $current, [
             'customer.workspaces.businesses.calendar.',
         ]));
+
+        $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.workflows.index', $scoped, $current, [
+            'customer.workspaces.businesses.automations.', 'customer.automations.',
+        ]));
+
+        $items[] = $this->entitled('website_generation', $this->item($user, 'website', 'Website', 'globe', ['website'], 'customer.workspaces.businesses.website.show', $scoped, $current, [
+            'customer.workspaces.businesses.website.', 'customer.website.',
+        ]));
+
+        // SEO — one parent entry, folding in the existing "Get found" (GBP)
+        // page (Contract 18 §14.2, Sub-slice H). The GBP entry is REMOVED as
+        // a standalone top-level item and re-offered as this group's child,
+        // at the same route/URL it always had (§8.7 of the contract: "GBP
+        // routes keep their names and URLs"). Each child is independently
+        // entitled — the parent showing is never proof a given child does.
+        $items[] = $this->seoMenuItem($user, $scoped, $current);
+        // Ads — one parent entry directly after SEO (Google Ads Module V1).
+        $items[] = $this->adsMenuItem($user, $scoped, $current);
 
         // Forms — the standalone Forms / Questionnaires product (Forms V1). Its
         // own top-level entry, independent of whether the Business uses the
@@ -291,19 +360,6 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.forms.',
         ]));
 
-        $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.workflows.index', $scoped, $current, [
-            'customer.workspaces.businesses.automations.', 'customer.automations.',
-        ]));
-        $items[] = $this->entitled('website_generation', $this->item($user, 'website', 'Website', 'globe', ['website'], 'customer.workspaces.businesses.website.show', $scoped, $current, [
-            'customer.workspaces.businesses.website.', 'customer.website.',
-        ]));
-        // SEO — one parent entry, folding in the existing "Get found" (GBP)
-        // page (Contract 18 §14.2, Sub-slice H). The GBP entry is REMOVED as
-        // a standalone top-level item and re-offered as this group's child,
-        // at the same route/URL it always had (§8.7 of the contract: "GBP
-        // routes keep their names and URLs"). Each child is independently
-        // entitled — the parent showing is never proof a given child does.
-        $items[] = $this->seoMenuItem($user, $scoped, $current);
         // Packages & Products — the Business-wide catalog (Contract 16 §12.E).
         // Offered exactly when the catalog boundary would let the actor in on
         // the first two gates: the `packages_products` capability (item()) and
@@ -324,59 +380,43 @@ final class CustomerMenuBuilder
         $items[] = $this->entitled('payments_contracts', $this->item($user, 'payments_contracts', 'Payments & Contracts', 'file-text', ['payments_contracts'], 'customer.workspaces.businesses.documents.index', $scoped, $current, [
             'customer.workspaces.businesses.documents.',
         ]));
-        $items[] = $this->item($user, 'analytics', 'Results', 'bar-chart-2', ['view_reports'], 'customer.workspaces.businesses.analytics.overview', $scoped, $current, [
-            'customer.workspaces.businesses.analytics.', 'customer.analytics.',
-        ]);
 
-        // Settings — ONE destination (owner decision). Nothing expands under it
-        // in the sidebar: it opens the Settings hub, a page of cards for the
-        // configuration a Business does not need day to day, each linking to
-        // its own screen. The entry stays active on every one of those screens.
-        if ($this->businessSettingsSections($context, $user, $current) !== []) {
-            // An Agency client Business's hub has no Plan or Team (they are the
-            // Agency account's), so those screens do not light it up.
-            $activeRoutes = $context->selectedWorkspace?->isAgency()
-                ? array_values(array_diff(self::BUSINESS_SETTINGS_ROUTES, ['customer.workspaces.plan.', 'customer.workspaces.team.']))
-                : self::BUSINESS_SETTINGS_ROUTES;
-
-            $items[] = $this->item($user, 'settings', 'Settings', 'settings', ['access_backend'], 'customer.workspaces.businesses.settings.show', $scoped, $current, $activeRoutes);
-        }
-
-        return array_values(array_filter($items));
+        return $items;
     }
 
     /**
-     * Contract 18 §14.2, Sub-slice H — the SEO group. The parent shows
-     * exactly when `seo_basic_visibility` is allowed and `view_seo` is
-     * held — proved by requiring the Overview item itself, never a second,
-     * hand-rolled capability check that could drift from it. Overview and
-     * Search keywords are Core+; the Growth+ children (Website SEO audit,
-     * Citations, Reviews) additionally require `seo_module`, and the
-     * folded-in "Get found" child keeps its own independent
-     * `google_business_profile_module` gate, exactly as it had as a
-     * top-level entry — deliberately NOT behind `view_seo`, since it is
-     * still GBP's own permission. A child whose route is not registered or
-     * whose gate refuses is silently absent — the SAME `item()`/
-     * `entitled()` machinery every other entry uses, so visibility here is
-     * no more an authorization boundary than anywhere else in this class.
+     * The Business's Settings entry. An Agency Business's hub has no Plan or
+     * Team (they are the Agency account's), so those screens do not light it up.
      *
-     * REVIEW CORRECTION: an earlier revision gated the PARENT on
-     * `seo_basic_visibility` alone and built Overview as one child among
-     * several. Because "Get found" carries its own independent gate, an
-     * actor with `google_business_profile_module` but WITHOUT `view_seo`
-     * could lose every `view_seo`-gated child yet still have a non-empty
-     * `$children` array (Get found survives alone) — so the parent
-     * rendered, pointing its own URL at the Overview route, which then
-     * refused that same actor (401) the moment they clicked it. Requiring
-     * the Overview item FIRST, and returning null for the whole group when
-     * it is null, makes the parent's existence and its landing URL
-     * inherit Overview's own route/capability/View-As/tenancy-address
-     * shape by construction — there is no second policy to drift.
+     * @param  array<int, string|null>  $scoped
+     */
+    private function businessSettingsItem(CustomerContext $context, User $user, array $scoped, string $current, string $label, string $key = 'settings'): ?MenuItem
+    {
+        $activeRoutes = $context->frameWorkspace()?->isAgency()
+            ? array_values(array_diff(self::BUSINESS_SETTINGS_ROUTES, ['customer.workspaces.plan.', 'customer.workspaces.team.']))
+            : self::BUSINESS_SETTINGS_ROUTES;
+
+        return $this->item($user, $key, $label, 'settings', ['access_backend'], 'customer.workspaces.businesses.settings.show', $scoped, $current, $activeRoutes);
+    }
+
+    /**
+     * Contract 18 §14.2, Sub-slice H — the SEO group, simplified to the five
+     * places an owner actually works: Search keywords, Content, Google
+     * Business Profile, Citations, Reviews. The former Overview and Site
+     * Audit entries are gone from navigation (their routes and domain logic
+     * remain; `/seo` redirects to Search keywords, and the audit engine
+     * still feeds Website Health and Growth facts).
      *
-     * Built outside `item()` because `item()` has no children parameter;
-     * every child is still produced by the ordinary `item()`/`entitled()`
-     * pair so their own route/permission/View-as/active-state rules are
-     * identical to a top-level entry's.
+     * The parent shows exactly when `seo_basic_visibility` is allowed and
+     * `view_seo` is held — proved by requiring the Search keywords item
+     * itself (Core+, `view_seo`), never a second hand-rolled capability
+     * check that could drift from it, so the parent's landing URL inherits
+     * that item's route/capability/View-As/tenancy-address shape. The
+     * Growth+ children (Citations, Reviews) additionally require
+     * `seo_module`, and Google Business Profile keeps its own independent
+     * `google_business_profile_module` gate and permission. A child whose
+     * route is not registered or whose gate refuses is silently absent —
+     * the SAME `item()`/`entitled()` machinery every other entry uses.
      */
     private function seoMenuItem(User $user, array $scoped, string $current): ?MenuItem
     {
@@ -384,24 +424,19 @@ final class CustomerMenuBuilder
             return null;
         }
 
-        $overview = $this->item($user, 'seo-overview', 'Overview', 'bar-chart-2', ['view_seo'], 'customer.workspaces.businesses.seo.index', $scoped, $current, [
-            'customer.workspaces.businesses.seo.index', 'customer.seo.',
+        $keywords = $this->item($user, 'seo-keywords', 'Search keywords', 'hash', ['view_seo'], 'customer.workspaces.businesses.seo.keywords.index', $scoped, $current, [
+            'customer.workspaces.businesses.seo.index', 'customer.seo.', 'customer.workspaces.businesses.seo.keywords.',
         ]);
 
-        if ($overview === null) {
+        if ($keywords === null) {
             return null;
         }
 
         $children = array_values(array_filter([
-            $overview,
-            $this->item($user, 'seo-keywords', 'Search keywords', 'hash', ['view_seo'], 'customer.workspaces.businesses.seo.keywords.index', $scoped, $current, [
-                'customer.workspaces.businesses.seo.keywords.',
-            ]),
-            $this->entitled('google_business_profile_module', $this->item($user, 'gbp', 'Get found', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
+            $keywords,
+            $this->seoContentMenuItem($user, $scoped, $current),
+            $this->entitled('google_business_profile_module', $this->item($user, 'gbp', 'Google Business Profile', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
                 'customer.workspaces.businesses.gbp.', 'customer.gbp.',
-            ])),
-            $this->entitled('seo_module', $this->item($user, 'seo-audit', 'Site Audit', 'search', ['view_seo'], 'customer.workspaces.businesses.seo.audit.index', $scoped, $current, [
-                'customer.workspaces.businesses.seo.audit.',
             ])),
             $this->entitled('seo_module', $this->item($user, 'seo-citations', 'Citations', 'list', ['view_seo'], 'customer.workspaces.businesses.seo.citations.index', $scoped, $current, [
                 'customer.workspaces.businesses.seo.citations.',
@@ -411,9 +446,224 @@ final class CustomerMenuBuilder
             ])),
         ]));
 
-        return new MenuItem('seo', 'SEO', $overview->url, 'trending-up', false, $children);
+        return new MenuItem('seo', 'SEO', $keywords->url, 'trending-up', false, $children);
     }
 
+    /**
+     * SEO Content Engine V1 — SEO → Content, ONE sidebar entry with no children. Autopilot, Articles, Content Plan
+     * and Opportunities are the horizontal tabs inside the Content module (seo/content/_nav), so every
+     * `seo.content.*` route keeps this single item selected. The landing is Autopilot with the SEO module and Articles
+     * without it (so Core is never sent to a 404). Presentation only: the routes enforce the gates themselves.
+     *
+     * @param  array<int, string|null>  $scoped
+     */
+    private function seoContentMenuItem(User $user, array $scoped, string $current): ?MenuItem
+    {
+        $withModule = $this->entitlements->allows('seo_module');
+
+        return $this->item($user, 'seo-content', 'Content', 'file-text', ['view_seo'], $withModule
+            ? 'customer.workspaces.businesses.seo.content.autopilot'
+            : 'customer.workspaces.businesses.seo.content.articles.index', $scoped, $current, [
+            'customer.workspaces.businesses.seo.content.',
+        ]);
+    }
+
+    /**
+     * Agency shell (Blueprint §7 + §28): the Agency owner is a Business owner
+     * too, so the sidebar carries BOTH the own-Business modules and the Agency
+     * management surface, in either frame. The frame only decides which Home is
+     * the page you are on:
+     *
+     *   Business frame: "Business Home" is current; "Agency Home" is a frame move.
+     *   Account frame:  "Agency Home" is current; "Business Home" is a frame move.
+     *
+     * Business entries come from businessModuleItems() — the one definition the
+     * plain Business frame uses, behind the same capability and entitlement
+     * gates; nothing is force-shown. Frame moves are the same CSRF POSTs the
+     * context switcher uses (SwitchAccountAction / SwitchBusinessAction, which
+     * re-authorize every request). Never built while viewing as a client
+     * (CustomerContext::hasAgencyShell()), so the Agency menu cannot leak into a
+     * client's Business.
+     *
+     * Platform Automations (Blueprint §28) has no Agency-level product surface
+     * in code yet, so there is deliberately no entry for it.
+     *
+     * @return array<int, MenuItem>
+     */
+    private function agencyShell(CustomerContext $context, User $user, string $current): array
+    {
+        $agency = $context->frameWorkspace();
+        $own = $context->agencyOwnBusiness();
+        $inBusinessFrame = $context->isBusinessFrame();
+        $items = [];
+
+        // Agency Home stays the single main entry point. (In the Business frame it is a frame move and the
+        // Business's own home is offered first inside "Your agency".)
+        $items[] = $inBusinessFrame
+            ? $this->frameMove($user, 'agency-home', 'Agency Home', 'home', 'customer.context.account.switch', ['workspace' => $agency->uid])
+            : $this->item($user, 'home', 'Agency Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
+
+        // YOUR AGENCY — what the agency itself runs on: its own leads, calendar, automations, outreach, website, SEO
+        // and Ads. Everything here is scoped to the agency's own Business (or, for Outreach, its own Workspace) and
+        // never to a managed client.
+        $items[] = MenuItem::header('own-business', 'Your agency');
+
+        // No own operating workspace yet (an Agency skips Business onboarding by design): the OWNER can turn it on
+        // in one step. A POST the server re-authorizes (AgencyOperationsManager); never offered to anyone else.
+        if ($own === null && $agency->isOwner && Route::has('customer.workspaces.agency.operations.enable') && Gate::forUser($user)->any(['access_backend'])) {
+            $items[] = new MenuItem('agency-operations-setup', 'Set up agency workspace', null, 'power', false, [], false, [
+                'url' => route('customer.workspaces.agency.operations.enable', [$agency->uid]),
+                'fields' => [],
+            ]);
+        }
+
+        // Outreach sits after Automations among the Business modules; it needs no own Business.
+        // Phone & Messaging lives under Agency settings, so that page lights Settings, not Outreach.
+        $outreach = $this->item($user, 'prospecting', 'Outreach', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, $current === 'customer.workspaces.prospecting.phone-messaging' ? [] : [
+            'customer.prospecting.', 'customer.workspaces.prospecting.',
+        ]);
+
+        $modules = [];
+
+        if ($own !== null) {
+            $scoped = [$agency->uid, $own->uid];
+
+            // Results (and the Growth advisor) open from Business Home, which stays lit while the owner is on them —
+            // exactly as in the plain Business frame; without these prefixes nothing in the sidebar was current there.
+            $items[] = $inBusinessFrame
+                ? $this->item($user, 'home', 'Business Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.growth.', 'customer.workspaces.businesses.analytics.', 'customer.analytics.'])
+                : $this->frameMove($user, 'business-home', 'Business Home', 'home', 'customer.context.business.switch', ['workspace' => $agency->uid, 'business' => $own->uid]);
+
+            // In this shell "Contacts" holds the AGENCY's own leads and customer contacts, never a client's.
+            foreach ($this->businessModuleItems($user, $scoped, $current) as $module) {
+                if ($module === null) {
+                    continue;
+                }
+
+                $modules[] = $module->key === 'contacts' ? $this->relabel($module, 'Contacts & CRM') : $module;
+
+                if ($module->key === 'automations') {
+                    $modules[] = $outreach;
+                    $outreach = null;
+                }
+            }
+        }
+
+        // Without an own Business (or if Automations is not offered) Outreach is still the agency's own tool.
+        $items = array_merge($items, $modules, $outreach !== null ? [$outreach] : []);
+
+        if ($own !== null) {
+            $items[] = $this->businessSettingsItem($context, $user, $scoped, $current, 'Business settings', 'business-settings');
+        }
+
+        // AGENCY MANAGEMENT — the managed customer accounts and the agency's own commercial and team surfaces.
+        $items[] = MenuItem::header('agency', 'Agency management');
+
+        $items[] = $this->item($user, 'accounts', 'Clients', 'briefcase', ['access_backend'], 'customer.workspaces.clients.index', [$agency->uid], $current, [
+            'customer.workspaces.clients.', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
+        ]);
+
+        // Same reading authority as the Settings hub's own SaaS entries
+        // (hasAgencyAuthority()); every write stays owner-only inside the managers.
+        if ($agency->hasAgencyAuthority()) {
+            $items[] = $this->item($user, 'agency-saas-plans', 'SaaS Plans', 'list', ['access_backend'], 'customer.workspaces.agency.saas.plans', [$agency->uid], $current, [
+                'customer.workspaces.agency.saas.plans', 'customer.workspaces.agency.saas.plans.',
+            ]);
+            $items[] = $this->item($user, 'agency-saas-revenue', 'Agency Revenue', 'dollar-sign', ['access_backend'], 'customer.workspaces.agency.saas.revenue', [$agency->uid], $current, [
+                'customer.workspaces.agency.saas.revenue',
+            ]);
+            $items[] = $this->item($user, 'agency-white-label', 'White Label', 'droplet', ['access_backend'], 'customer.workspaces.agency.white-label.show', [$agency->uid], $current, [
+                'customer.workspaces.agency.white-label.',
+            ]);
+        }
+
+        if ($agency->canManage()) {
+            $items[] = $this->teamItem($user, $agency->uid, $current);
+        }
+
+        // Agency settings keeps Stripe, plan & subscription, account details, Phone & Messaging,
+        // blocked numbers and the Advanced group. Plans, revenue, white label
+        // and team are primary entries above, so they no longer light it up.
+        if ($this->accountSettingsSections($context, $agency, $user, $current) !== []) {
+            $settingsRoutes = array_merge(
+                array_diff(self::ACCOUNT_SETTINGS_ROUTES, ['customer.workspaces.agency.saas.', 'customer.workspaces.agency.white-label.', 'customer.workspaces.team.']),
+                ['customer.workspaces.agency.saas.stripe', 'customer.workspaces.agency.saas.stripe.', 'customer.workspaces.prospecting.phone-messaging'],
+            );
+
+            $items[] = $this->item($user, 'settings', 'Agency settings', 'settings', ['access_backend'], 'customer.workspaces.settings.show', [$agency->uid], $current, $settingsRoutes);
+        }
+
+        return array_values(array_filter($items));
+    }
+
+    private function relabel(MenuItem $item, string $label): MenuItem
+    {
+        return new MenuItem($item->key, $label, $item->url, $item->icon, $item->active, $item->children, $item->header, $item->post);
+    }
+
+    /**
+     * A menu entry that moves the actor to another frame: a POST the server
+     * re-authorizes, shown only when its route is registered and the actor can
+     * use the customer backend. Never active — it is a move, not a place.
+     *
+     * @param  array<string, string>  $fields
+     */
+    private function frameMove(User $user, string $key, string $label, string $icon, string $routeName, array $fields): ?MenuItem
+    {
+        if (! Route::has($routeName) || ! Gate::forUser($user)->any(['access_backend'])) {
+            return null;
+        }
+
+        return new MenuItem($key, $label, null, $icon, false, [], false, ['url' => route($routeName), 'fields' => $fields]);
+    }
+
+    /**
+     * The Ads group — ONE sidebar parent for every advertising channel
+     * (Meta Ads V1 contract 24 §8, M1; supersedes contract 23 §7's eight
+     * Google children). Children: Overview (cross-channel), Google, Meta.
+     * Google's own pages (Campaigns, Keywords, ...) are reached from the
+     * provider sub-navigation in the shared `_header`, not from the sidebar.
+     *
+     * Every child is produced by the ordinary item()/entitledAny() pair, so a
+     * child whose route is not registered (the cross-channel Overview and the
+     * Meta pages are registered by later lanes) is silently absent. Core
+     * (`ads_basic_visibility`) and Growth/Agency (full module) see the same
+     * three children; each provider limits its own sub-pages elsewhere.
+     * Capability per child: `view_google_ads` for Google, `view_meta_ads` for
+     * Meta, either for the cross-channel Overview.
+     *
+     * The parent exists exactly when at least one child does; its URL is the
+     * cross-channel Overview when that exists, else the first remaining child
+     * (the Google Overview — the previous behaviour). Visibility is never
+     * authorization: every Ads route re-runs the full tenancy / entitlement /
+     * capability chain itself.
+     */
+    private function adsMenuItem(User $user, array $scoped, string $current): ?MenuItem
+    {
+        $prefix = 'customer.workspaces.businesses.ads.';
+
+        $overview = $this->entitledAds($this->item($user, 'ads-overview', 'Overview', 'bar-chart-2', ['view_google_ads', 'view_meta_ads'], $prefix . 'overview', $scoped, $current, [
+            $prefix . 'overview',
+        ]));
+
+        $google = $this->entitledAds($this->item($user, 'ads-google', 'Google', 'search', ['view_google_ads'], $prefix . 'index', $scoped, $current, [
+            $prefix . 'index', $prefix . 'series', $prefix . 'budget', $prefix . 'settings', $prefix . 'accounts', $prefix . 'connect', $prefix . 'disconnect', $prefix . 'refresh',
+            $prefix . 'campaigns.', $prefix . 'keywords.', $prefix . 'search-terms.', $prefix . 'leads.', $prefix . 'recommendations.',
+            'customer.ads.index', 'customer.ads.oauth.',
+        ]));
+
+        $meta = $this->entitledAds($this->item($user, 'ads-meta', 'Meta', 'share-2', ['view_meta_ads'], $prefix . 'meta.index', $scoped, $current, [
+            $prefix . 'meta.', 'customer.ads.meta.',
+        ]));
+
+        $children = array_values(array_filter([$overview, $google, $meta]));
+
+        if ($children === []) {
+            return null;
+        }
+
+        return new MenuItem('ads', 'Ads', ($overview ?? $children[0])->url, 'megaphone', false, $children);
+    }
     /**
      * Contract §8.3 — the Agency (or multi-Business) account frame. Shown
      * whenever no Business is selected.
@@ -448,7 +698,7 @@ final class CustomerMenuBuilder
         }
 
         if ($context->isAgency()) {
-            $items[] = $this->item($user, 'prospecting', 'Prospecting', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
+            $items[] = $this->item($user, 'prospecting', 'Outreach', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
                 'customer.prospecting.', 'customer.workspaces.prospecting.',
             ]);
         }
@@ -531,6 +781,17 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.locations.',
         ]);
 
+        // The services this Business offers (BusinessService, not catalog items); Business-scoped.
+        $setup[] = $this->item($user, 'services', 'Services', 'list', ['access_backend'], 'customer.workspaces.businesses.services.index', $scoped, $current, [
+            'customer.workspaces.businesses.services.',
+        ]);
+
+        // Business-wide Custom Fields — definitions are Business-level, so they
+        // live with the Business's setup (Blueprint §25), not under Contacts.
+        $setup[] = $this->item($user, 'custom-fields', 'Custom fields', 'sliders', ['view_contact'], 'customer.workspaces.businesses.custom-fields.index', $scoped, $current, [
+            'customer.workspaces.businesses.custom-fields.',
+        ]);
+
         // Owner product decision — the plain-language, read-only status
         // surface every tier sees (Core, Growth, and an Agency Business using
         // managed transport).
@@ -587,9 +848,19 @@ final class CustomerMenuBuilder
             ]);
         }
 
+        // Payment processing — the Business's own Stripe Connect account for collecting
+        // from its clients. Not Stripe subscription billing (Billing & team below).
+        // Visibility is never authorization: the Payments routes re-run the full chain.
+        $payments = [
+            $this->entitled('payments_contracts', $this->item($user, 'payment-processing', 'Payment processing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.payments.connect.show', $scoped, $current, [
+                'customer.workspaces.businesses.payments.connect.',
+            ])),
+        ];
+
         return $this->sections([
             'business-setup' => ['Business setup', $setup],
             'communication' => ['Communication', $communication],
+            'payments' => ['Payments', $payments],
             // Plain words: "Account" is not a thing a Core or Growth customer manages.
             'billing-team' => [$agencyClient ? 'Billing' : 'Billing & team', $billingAndTeam],
         ]);
@@ -695,6 +966,10 @@ final class CustomerMenuBuilder
         $outreach = [];
 
         if ($account->isAgency()) {
+            // The ONE messaging setup page: connect your own Telnyx account, or get a number through us.
+            $outreach[] = $this->item($user, 'phone-messaging', 'Phone & Messaging', 'phone', ['access_backend'], 'customer.workspaces.prospecting.phone-messaging', [$account->uid], $current, [
+                'customer.workspaces.prospecting.phone-messaging',
+            ]);
             $outreach[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
         }
 
@@ -828,6 +1103,41 @@ final class CustomerMenuBuilder
         }
 
         return $this->entitlements->allows($featureKey) ? $item : null;
+    }
+
+    /**
+     * entitled() for an Ads entry: basic visibility OR the full Ads module
+     * under any of its keys (AdsFeatureAccess owns the synonym list).
+     */
+    private function entitledAds(?MenuItem $item): ?MenuItem
+    {
+        if ($item === null) {
+            return null;
+        }
+
+        return AdsFeatureAccess::menuHasAnyAds($this->entitlements) ? $item : null;
+    }
+
+    /**
+     * entitled() for an entry that either of several features unlocks (the
+     * Core Ads Overview is allowed by `ads_basic_visibility` OR
+     * `google_ads_module`). Absent when none of them is entitled.
+     *
+     * @param  array<int, string>  $featureKeys
+     */
+    private function entitledAny(array $featureKeys, ?MenuItem $item): ?MenuItem
+    {
+        if ($item === null) {
+            return null;
+        }
+
+        foreach ($featureKeys as $featureKey) {
+            if ($this->entitlements->allows($featureKey)) {
+                return $item;
+            }
+        }
+
+        return null;
     }
 
     /**

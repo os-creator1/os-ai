@@ -6,7 +6,13 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Calendar\CalendarScheduleService;
 use App\Library\Contacts\ContactDirectory;
+use App\Library\Crm\CrmLocationScope;
+use App\Library\CustomFields\CustomFieldRuleException;
+use App\Library\CustomFields\CustomFieldValueService;
+use App\Library\Workspace\LocationAccessGuard;
+use App\Models\Contacts;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\BusinessRouteAccess;
 use App\Models\Business;
@@ -41,6 +47,7 @@ class ContactDirectoryController extends CustomerBaseController
         private readonly EntitlementManager $entitlementManager,
         private readonly ContactsRepository $contactGroups,
         private readonly ContactDirectory $directory,
+        private readonly CustomFieldValueService $customFields,
     ) {
     }
 
@@ -51,9 +58,38 @@ class ContactDirectoryController extends CustomerBaseController
 
         $search = mb_substr(trim((string) $request->query('q', '')), 0, 100);
 
+        // The group filter is offered only to an actor who may view groups
+        // (the same view_contact_group the Groups tab requires), and only
+        // lists groups holding at least one contact this actor may already
+        // see under the CRM Location scope — so it never discloses an empty
+        // group, or one whose contacts are all at unreachable Locations. A
+        // uid outside that list (unknown, foreign, hidden) is ignored rather
+        // than widening or erroring.
+        $groups = collect();
+
+        if (Gate::allows('view_contact_group')) {
+            $visibleContacts = Contacts::query()
+                ->where('business_id', $business->id)
+                ->whereNotNull('group_id');
+            app(CrmLocationScope::class)->restrict($visibleContacts, $business, (int) Auth::id(), 'contacts.location_id');
+
+            $groups = ContactGroups::query()
+                ->where('business_id', $business->id)
+                ->whereIn('id', $visibleContacts->select('group_id'))
+                ->orderBy('name')
+                ->get(['id', 'uid', 'name']);
+        }
+
+        $group = $groups->firstWhere('uid', (string) $request->query('group', ''));
+
+        $added = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($request, $business);
+
         return view('customer.people.index', [
-            'contacts' => $this->directory->page($business, $search),
+            'added' => $added,
+            'contacts' => $this->directory->page($business, $search, (int) Auth::id(), $group?->id, $added),
             'search' => $search,
+            'groups' => $groups,
+            'selectedGroup' => $group,
         ]);
     }
 
@@ -62,13 +98,104 @@ class ContactDirectoryController extends CustomerBaseController
         [$workspace, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
         $this->authorize('view_contact');
 
-        $contact = $this->directory->findForBusiness($business, $contactUid);
+        // A Contact at a Location the actor cannot reach answers exactly like an
+        // unknown uid: knowing the uid never bypasses the Location ACL (Addendum §4).
+        $contact = $this->directory->findForBusiness($business, $contactUid, (int) Auth::id());
         abort_if($contact === null, 404);
+
+        $canConverse = $this->canSeeConversations($workspace, $business);
+        $profile = $this->directory->profile($business, $contact, $canConverse);
 
         return view('customer.people.show', [
             'contactUid' => (string) $contact->uid,
-            'profile' => $this->directory->profile($business, $contact, $this->canSeeConversations($workspace, $business)),
+            'profile' => $profile,
+            'actions' => $this->profileActions($workspace, $business, $contact, $profile, $canConverse),
+            // Business-defined Custom Fields: only shown for a Contact whose
+            // Location the actor may access (the existing Contact Location ACL).
+            'customFields' => $this->locationAccessible($contact)
+                ? $this->customFields->sectionFor($business, $contact)
+                : null,
         ]);
+    }
+
+    /**
+     * Save the Contact-details Custom Fields section: typed validation per
+     * field, all-or-nothing, only this Business's active fields.
+     */
+    public function updateCustomFields(Request $request, string $workspaceUid, string $businessUid, string $contactUid): RedirectResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('update_contact');
+
+        $contact = $this->directory->findForBusiness($business, $contactUid);
+        abort_if($contact === null || ! $this->locationAccessible($contact), 404);
+
+        $input = $request->validate(['custom_fields' => ['nullable', 'array', 'max:200']])['custom_fields'] ?? [];
+
+        try {
+            $this->customFields->saveForContact($business, $contact, $input);
+        } catch (CustomFieldRuleException $exception) {
+            return back()->withInput()->withErrors(['custom_fields' => $exception->getMessage()]);
+        }
+
+        return redirect()
+            ->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contactUid])
+            ->with('flash_success', 'Custom fields saved.');
+    }
+
+    /**
+     * The profile's header actions, each only when it has a real, authorized
+     * destination (otherwise null and the view shows nothing):
+     *  - messageUrl: the existing Inbox / new-conversation screens. They cannot be
+     *    pre-filled with this Contact's number today, so this opens the screen only.
+     *  - bookUrl: the existing "New appointment" screen at the Contact's Location (or
+     *    the actor's only Location) with the Contact pre-searched via `q`; the Contact
+     *    still has to be chosen there because that screen has no contact preselection.
+     *
+     * @return array{messageUrl: ?string, messageIsInbox: bool, bookUrl: ?string}
+     */
+    private function profileActions(Workspace $workspace, Business $business, Contacts $contact, array $profile, bool $canConverse): array
+    {
+        $scope = [$workspace->uid, $business->uid];
+
+        $messageUrl = null;
+
+        if ($canConverse) {
+            $messageUrl = route('customer.workspaces.businesses.conversations.' . ($profile['conversation'] !== null ? 'index' : 'new'), $scope);
+        }
+
+        $bookUrl = null;
+
+        try {
+            $calendar = $this->entitlementManager->decide($workspace, $business, PlatformFeature::Calendar->value, (int) Auth::id())->allowed;
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            $calendar = false;
+        }
+
+        if ($calendar) {
+            $locations = app(CalendarScheduleService::class)->accessibleLocations($business, (int) Auth::id());
+            $location = $contact->location_id !== null
+                ? $locations->firstWhere('id', (int) $contact->location_id)
+                : ($locations->count() === 1 ? $locations->first() : null);
+
+            if ($location !== null) {
+                $bookUrl = route('customer.workspaces.businesses.calendar.appointments.create', [...$scope, $location->uid]) . '?q=' . urlencode((string) $profile['phone']);
+            }
+        }
+
+        return ['messageUrl' => $messageUrl, 'messageIsInbox' => $profile['conversation'] !== null, 'bookUrl' => $bookUrl];
+    }
+
+    /** A Contact with no Location is governed by Business access alone; otherwise the Location must be the actor's. */
+    private function locationAccessible(Contacts $contact): bool
+    {
+        if ($contact->location_id === null) {
+            return true;
+        }
+
+        $location = $contact->location;
+
+        return $location !== null && app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location);
     }
 
     /**

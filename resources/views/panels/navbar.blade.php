@@ -1,4 +1,4 @@
-@php use App\Library\Tool;use App\Models\Notifications; @endphp
+@php use App\Library\Tool; @endphp
 @if(isset($configData["mainLayoutType"]) && $configData["mainLayoutType"] == 'horizontal')
     <nav class="header-navbar navbar-expand-lg navbar navbar-fixed align-items-center navbar-shadow navbar-brand-center transition-base {{ $configData['navbarColor'] }}"
          data-nav="brand-center">
@@ -10,7 +10,7 @@
                         </a>
                     </li>
                 @else
-                    <li class="nav-item"><a class="navbar-brand" href="{{route('admin.home')}}">
+                    <li class="nav-item"><a class="navbar-brand" href="{{\App\Helpers\Helper::adminHomeUrl()}}">
                             <span class="brand-logo"><x-branding-logo variant="full" background="light" /></span>
                         </a>
                     </li>
@@ -64,25 +64,10 @@
                     </div>
 
 
-                    <ul class="nav navbar-nav align-items-center ms-auto">
+                    <ul class="nav navbar-nav align-items-center ms-auto mg-topbar" data-role="topbar-actions">
 
-                        {{--Language Dropdown--}}
-                        <li class="nav-item dropdown dropdown-language">
-                            <a class="nav-link dropdown-toggle" id="dropdown-flag" href="#" data-bs-toggle="dropdown"
-                               aria-haspopup="true">
-                                <i class="flag-icon flag-icon-us"></i>
-                                <span class="selected-language">English</span>
-                            </a>
-                            <div class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-flag">
-                                @foreach(\App\Helpers\Helper::languages() as $lang)
-                                    <a class="dropdown-item" href="{{url('lang/'.$lang['code'])}}"
-                                       data-language="{{$lang['code']}}">
-                                        <i class="flag-icon flag-icon-{{$lang['iso_code']}}"></i> {{ $lang['name'] }}
-                                    </a>
-                                @endforeach
-
-                            </div>
-                        </li>
+                        {{-- The application language is chosen at sign-up and changed under
+                             Profile (users.locale); it is not a top-bar control. --}}
 
                         {{--Dark and light option. It will be theme manager option--}}
                         {{--                        <li class="nav-item d-none d-lg-block">--}}
@@ -97,7 +82,7 @@
                         @if($customerContext?->isBusinessFrame() && $customerContext->selectedWorkspace && $customerContext->selectedBusiness)
                             <li class="nav-item dropdown me-25" data-role="global-search">
                                 <div class="position-relative">
-                                    <x-search-field id="global-search-input" label="Search" placeholder="Search this business" class="me-1" style="width: 220px;" />
+                                    <x-search-field id="global-search-input" label="Search" placeholder="Search this business" class="me-1" style="width: min(220px, 34vw);" />
                                     <div class="dropdown-menu dropdown-menu-media" data-role="global-search-results" style="display:none; width: 320px;">
                                         <div class="scrollable-container media-list" data-role="global-search-results-list"></div>
                                         <div class="p-2 text-muted small" data-role="global-search-empty" style="display:none;">No results.</div>
@@ -174,227 +159,9 @@
                             </script>
                         @endif
 
-                        {{--Notification dropdown--}}
-                        <li class="nav-item dropdown dropdown-notification me-25">
-                            <a class="nav-link" href="javascript:void(0);" data-bs-toggle="dropdown">
-                                <x-ds-icon name="bell" class="ficon" />
-                                @php
-                                    // Shared customer request query-budget optimization
-                                    // (Automations V2 §18) — one read of this customer's
-                                    // unread notifications serves both the badge count
-                                    // and the dropdown's latest-10 list below, instead of
-                                    // querying the identical `user_id`/`mark_read` scope
-                                    // twice.
-                                    $unreadNotifications = Notifications::where('user_id', Auth::user()->id)->where('mark_read', 0)->latest()->get();
-                                    // Implementation Contract 17 §12.G — a SEPARATE substrate
-                                    // (platform_database_notifications), already filtered to
-                                    // exactly what this actor is authorized to see right now.
-                                    $documentActivity = app(\App\Library\Documents\DocumentActivityCenterReader::class)->unreadFor(Auth::user());
-                                    $count = $unreadNotifications->count() + $documentActivity->count();
-                                @endphp
-                                @if($count)
-                                    <span class="badge rounded-pill bg-danger badge-up">{{ $count }}</span>
-                                @endif
-
-                            </a>
-                            <ul class="dropdown-menu dropdown-menu-media dropdown-menu-end">
-                                <li class="dropdown-menu-header">
-                                    <div class="dropdown-header d-flex">
-                                        <h4 class="notification-title mb-0 me-auto">{{ __('locale.labels.notifications') }}</h4>
-                                        <div class="badge rounded-pill badge-light-primary">{{$count}} {{__('locale.labels.new')}}</div>
-                                    </div>
-                                </li>
-                                <li class="scrollable-container media-list">
-
-                                    @foreach($unreadNotifications->take(10) as $value)
-
-                                        <a class="d-flex" href="{{ route('user.account', ['tab' => 'notification']) }}">
-                                            <div class="list-item d-flex align-items-start">
-                                                @switch($value->notification_type)
-
-                                                    @case('user')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-primary">
-                                                                <div class="avatar-content"><x-ds-icon name="user" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span
-                                                                        class="fw-bolder">{{__('locale.labels.you_have_new_user')}}
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                                        </div>
-                                                        @break
-
-                                                    @case('plan')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-success">
-                                                                <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span
-                                                                        class="fw-bolder">{{__('locale.labels.you_have_new_subscription')}}
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                                        </div>
-
-                                                        @break
-
-                                                    @case('senderid')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><x-ds-icon name="user-check" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span
-                                                                        class="fw-bolder">{{__('locale.labels.new_sender_id_notification')}}
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                                        </div>
-                                                        @break
-
-                                                    @case('number')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-info">
-                                                                <div class="avatar-content"><x-ds-icon name="phone" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">New Number sales</span>
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                                        </div>
-                                                        @break
-
-                                                    @case('keyword')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-warning">
-                                                                <div class="avatar-content"><x-ds-icon name="clipboard" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">New Keyword sales</span>
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                                        </div>
-                                                        @break
-
-                                                    @case('chatbox')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><x-ds-icon name="message-square" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">New Inbox Message</span>
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 30) }}</small>
-                                                        </div>
-                                                        @break
-
-
-                                                    @case('subscription')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">Subscription Expired!</span>
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
-                                                        </div>
-                                                        @break
-
-                                                    @case('smsunit')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><x-ds-icon name="message-square" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">SMS Unit Running Low!</span>
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
-                                                        </div>
-                                                        @break
-
-                                                    @case('topup')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">Offline Topup Payment!</span>
-                                                            </p>
-                                                            <small class="notification-text">{{ str_limit($value->message, 60) }}</small>
-                                                        </div>
-                                                        @break
-                                                @endswitch
-                                                <small>
-                                                    <time class="media-meta">{{ Tool::formatHumanTime($value->created_at) }}</time>
-                                                </small>
-
-                                            </div>
-                                        </a>
-
-                                    @endforeach
-
-                                    {{-- Implementation Contract 17 §12.G, Blueprint §24 — Payments &
-                                         Contracts document/payment activity. A SEPARATE producer
-                                         (platform_database_notifications, via
-                                         DocumentActivityCenterReader) from the legacy list above: each
-                                         row here has already been re-authorized right now, so nothing
-                                         further to check at render time. --}}
-                                    @foreach($documentActivity->take(10) as $activityItem)
-                                        <a class="d-flex" href="{{ $activityItem->url }}">
-                                            <div class="list-item d-flex align-items-start">
-                                                <div class="me-1">
-                                                    <div class="avatar bg-light-success">
-                                                        <div class="avatar-content"><x-ds-icon name="file-text" class="avatar-icon" />
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div class="list-item-body flex-grow-1">
-                                                    <p class="media-heading"><span class="fw-bolder">Payments &amp; Contracts</span>
-                                                    </p>
-                                                    <small class="notification-text"> {{ str_limit($activityItem->message, 60) }}</small>
-                                                </div>
-                                                <small>
-                                                    <time class="media-meta">{{ Tool::formatHumanTime($activityItem->createdAt) }}</time>
-                                                </small>
-                                            </div>
-                                        </a>
-                                    @endforeach
-                                </li>
-                                <li class="dropdown-menu-footer">
-                                    <a class="btn btn-primary w-100"
-                                       href="{{ route('user.account', ['tab' => 'notification']) }}">{{__('locale.labels.read_all_notifications')}}</a>
-                                </li>
-                            </ul>
-                        </li>
+                        {{-- Notifications (components/topbar-notifications): the bell, its
+                             unread indicator and the existing notification list. --}}
+                        <x-topbar-notifications />
 
 
                         @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_customer == 1 && Auth::user()->customer->activeSubscription())
@@ -413,75 +180,47 @@
                         @endif
 
 
-                        <li class="dropdown dropdown-user nav-item">
-                            <a class="dropdown-toggle nav-link dropdown-user-link" id="dropdown-user"
-                               href="javascript:void(0);" data-bs-toggle="dropdown" aria-haspopup="true">
-                                <div class="user-nav d-sm-flex d-none">
-                            <span class="user-name fw-bolder">
-                                @if (Auth::check())
-                                    {{ Auth::user()->displayName() }}
-                                @else
-                                    {{config('app.name')}}
-                                @endif
-                            </span>
-                                    <span class="user-status">{{ __('locale.labels.available') }}</span>
-                                </div>
-                                <x-user-avatar :user="Auth::user()" />
-                            </a>
-
-                            <div class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-user">
-                                @if(Auth::user()->active_portal == 'admin' && Auth::user()->is_customer == 1)
-                                    <a class="dropdown-item"
-                                       href="{{ route('user.switch_view', ['portal' => 'customer']) }}"><x-ds-icon name="log-in" class="me-50" />{{ __('locale.labels.switch_view') }}
-                                    </a>
-                                    <div class="dropdown-divider"></div>
-                                @endif
-
-                                @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_admin == 1)
-                                    <a class="dropdown-item"
-                                       href="{{ route('user.switch_view', ['portal' => 'admin']) }}"><x-ds-icon name="log-in" class="me-50" />{{ __('locale.labels.switch_view') }}
-                                    </a>
-                                    <div class="dropdown-divider"></div>
-                                @endif
-
-                                <h6 class="dropdown-header">{{__('locale.labels.manage_profile')}}</h6>
-                                <div class="dropdown-divider"></div>
-
-                                @php
-                                    $isParentImpersonation = session()->has('parent_user_id') && session()->has('temp_user_id');
-                                @endphp
-
-
-                                @if(! $isParentImpersonation)
-
-                                    <a class="dropdown-item" href="{{ route('user.account') }}"><x-ds-icon name="user" class="me-50" />{{ __('locale.labels.profile') }}
-                                    </a>
-
-                                    @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_customer == 1)
-                                        {{-- The person's own menu: who they are, what is new in the
-                                             product, and signing out. Plan & subscription and Team are
-                                             account and Business settings, so they live under Settings
-                                             in the sidebar — one destination each, never repeated here. --}}
-                                        <a class="dropdown-item" href="{{ route('user.account.announcement') }}" data-role="user-menu-product-updates">
-                                            <x-ds-icon name="bell" class="me-50" />
-                                            {{ __('locale.menu.Product updates') }}
-                                        </a>
-                                    @endif
-
-                                    <div class="dropdown-divider"></div>
-                                @endif
-
-
-                                <a class="dropdown-item" href="{{ route('logout') }}"
-                                   onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><x-ds-icon name="power" class="me-50" /> {{__('locale.menu.Logout')}}</a>
-                                <form id="logout-form" action="{{ route('logout') }}" method="POST"
-                                      style="display: none;">
-                                    {{ csrf_field() }}
-                                </form>
-                            </div>
-                        </li>
+                        {{-- The account button and menu (components/topbar-account). Settings
+                             links only where this actor's own sidebar already offers it. --}}
+                        @php
+                            $accountSettingsUrl = app(\App\Library\Navigation\AccountMenuSettingsLink::class)
+                                ->urlFor(Auth::user(), $customerMenu ?? [], request()->path());
+                        @endphp
+                        <x-topbar-account :user="Auth::user()" :settings-url="$accountSettingsUrl" />
                     </ul>
+                    <script>
+                        // The top bar's two menus use Bootstrap's own dropdown. Two gaps it
+                        // leaves in this shell are closed here, once, for both:
+                        //  - the sidebar menu stops click propagation, so a click there never
+                        //    reached Bootstrap's outside-click handling; a capture-phase
+                        //    listener sees it first;
+                        //  - closing from inside the menu (Escape) returns focus to its button
+                        //    instead of dropping it to the page.
+                        document.addEventListener('DOMContentLoaded', function () {
+                            if (!window.bootstrap || !window.bootstrap.Dropdown) { return; }
+
+                            document.querySelectorAll('[data-role="topbar-actions"] > .mg-topbar-item').forEach(function (item) {
+                                var trigger = item.querySelector(':scope > [data-bs-toggle="dropdown"]');
+                                var focusWasInside = false;
+                                if (!trigger) { return; }
+
+                                document.addEventListener('click', function (event) {
+                                    if (trigger.getAttribute('aria-expanded') === 'true' && !item.contains(event.target)) {
+                                        window.bootstrap.Dropdown.getOrCreateInstance(trigger).hide();
+                                    }
+                                }, true);
+
+                                item.addEventListener('hide.bs.dropdown', function () {
+                                    focusWasInside = item.contains(document.activeElement) && document.activeElement !== trigger;
+                                });
+                                item.addEventListener('hidden.bs.dropdown', function () {
+                                    if (focusWasInside) { trigger.focus(); }
+                                });
+                            });
+                        });
+                    </script>
                 </div>
 
             </nav>
             <!-- END: Header-->
+            @include('partials.platform-notices')

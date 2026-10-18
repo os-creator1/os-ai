@@ -19,6 +19,7 @@
     they pass is inherited Ultimate SMS boilerplate ("Attention", "Opps...")
     and the options only position Toastr, so both are ignored.
 --}}
+<x-notice-styles />
 <style>
     .ds-toast-region {
         position: fixed;
@@ -33,64 +34,9 @@
         pointer-events: none;
     }
     .ds-toast {
-        --ds-toast-accent: var(--color-status-info-icon, #00cfe8);
         pointer-events: auto;
-        display: flex;
-        align-items: flex-start;
-        gap: var(--space-3, 0.75rem);
-        padding: var(--space-3, 0.75rem) var(--space-3, 0.75rem) var(--space-3, 0.75rem) var(--space-4, 1rem);
-        background: var(--color-surface, #fff);
-        color: var(--color-text-primary, #262522);
-        border: 1px solid var(--color-border, #e5e1da);
-        border-inline-start: 4px solid var(--ds-toast-accent);
-        border-radius: var(--radius-md, 0.625rem);
+        margin: 0;
         box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.08));
-        font-family: var(--font-family-app, inherit);
-        font-size: 1rem;
-        line-height: 1.45;
-    }
-    .ds-toast--success { --ds-toast-accent: var(--color-status-success-icon, #28c76f); }
-    .ds-toast--warning { --ds-toast-accent: var(--color-status-warning-icon, #ff9f43); }
-    .ds-toast--error { --ds-toast-accent: var(--color-status-danger-icon, #ea5455); }
-    .ds-toast__icon {
-        flex-shrink: 0;
-        display: inline-flex;
-        padding-top: 0.0625rem;
-        color: var(--ds-toast-accent);
-    }
-    .ds-toast__body {
-        flex: 1 1 auto;
-        min-width: 0;
-        overflow-wrap: anywhere;
-    }
-    .ds-toast__title {
-        display: block;
-        font-weight: 600;
-    }
-    .ds-toast__title + .ds-toast__message {
-        color: var(--color-text-secondary, #676664);
-    }
-    .ds-toast__close {
-        flex-shrink: 0;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 1.5rem;
-        height: 1.5rem;
-        padding: 0;
-        border: 0;
-        border-radius: var(--radius-sm, 0.375rem);
-        background: transparent;
-        color: var(--color-text-muted, #6f6d67);
-        cursor: pointer;
-    }
-    .ds-toast__close:hover {
-        color: var(--color-text-primary, #262522);
-        background: var(--color-row-hover, rgba(0, 0, 0, 0.04));
-    }
-    .ds-toast__close:focus-visible {
-        outline: 2px solid var(--color-focus-ring, #b5524c);
-        outline-offset: 1px;
     }
     @media (prefers-reduced-motion: no-preference) {
         .ds-toast {
@@ -117,11 +63,11 @@
 <div class="ds-toast-region" data-role="toast-region" aria-live="polite" aria-relevant="additions"></div>
 
 <template data-role="toast-icons">
-    <span data-variant="success"><x-ds-icon name="check-circle" size="18" aria-hidden="true" /></span>
-    <span data-variant="info"><x-ds-icon name="info" size="18" aria-hidden="true" /></span>
-    <span data-variant="warning"><x-ds-icon name="alert-triangle" size="18" aria-hidden="true" /></span>
-    <span data-variant="error"><x-ds-icon name="alert-circle" size="18" aria-hidden="true" /></span>
-    <span data-variant="close"><x-ds-icon name="x" size="16" aria-hidden="true" /></span>
+    <span data-variant="success"><x-notice-glyph variant="success" /></span>
+    <span data-variant="info"><x-notice-glyph variant="info" /></span>
+    <span data-variant="warning"><x-notice-glyph variant="warning" /></span>
+    <span data-variant="error"><x-notice-glyph variant="danger" /></span>
+    <span data-variant="close"><x-notice-glyph variant="close" /></span>
 </template>
 
 <script type="application/json" data-role="toast-initial">@json(array_values($toasts))</script>
@@ -134,6 +80,7 @@
         var icons = document.querySelector('template[data-role="toast-icons"]');
         var VISIBLE_AT_MOST = 3;
         var DURATION = { success: 5000, info: 6000, warning: 10000, error: 10000 };
+        var NOTICE_STATUS = { success: 'success', info: 'info', warning: 'warning', error: 'danger' };
         var SPOKEN_PREFIX = { warning: 'Warning: ', error: 'Error: ' };
 
         function icon(name) {
@@ -186,39 +133,42 @@
             }
 
             var toast = document.createElement('div');
-            toast.className = 'ds-toast ds-toast--' + variant;
+            toast.className = 'ds-notice ds-toast ds-notice--' + NOTICE_STATUS[variant];
             toast.dataset.variant = variant;
             toast.dataset.key = key;
             toast.setAttribute('role', SPOKEN_PREFIX[variant] ? 'alert' : 'status');
 
             var iconHolder = document.createElement('span');
-            iconHolder.className = 'ds-toast__icon';
+            iconHolder.className = 'ds-notice__icon';
             iconHolder.appendChild(icon(variant));
 
             var body = document.createElement('div');
-            body.className = 'ds-toast__body';
+            body.className = 'ds-notice__body';
             if (SPOKEN_PREFIX[variant]) {
                 var prefix = document.createElement('span');
                 prefix.className = 'visually-hidden';
                 prefix.textContent = SPOKEN_PREFIX[variant];
                 body.appendChild(prefix);
             }
-            if (title !== '') {
-                var heading = document.createElement('strong');
-                heading.className = 'ds-toast__title';
-                heading.textContent = title;
-                body.appendChild(heading);
+            // A message on its own is the title; with a title it is the muted description.
+            if (title === '') {
+                title = message;
+                message = '';
             }
+            var heading = document.createElement('strong');
+            heading.className = 'ds-notice__title';
+            heading.textContent = title;
+            body.appendChild(heading);
             if (message !== '') {
                 var text = document.createElement('div');
-                text.className = 'ds-toast__message';
+                text.className = 'ds-notice__text';
                 text.textContent = message;
                 body.appendChild(text);
             }
 
             var close = document.createElement('button');
             close.type = 'button';
-            close.className = 'ds-toast__close';
+            close.className = 'ds-notice__close';
             close.setAttribute('aria-label', 'Dismiss notification');
             close.appendChild(icon('close'));
             close.addEventListener('click', function () { dismiss(toast); });

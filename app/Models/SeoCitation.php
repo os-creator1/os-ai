@@ -30,6 +30,7 @@ class SeoCitation extends Model
         'listed_name',
         'listed_phone',
         'listed_address',
+        'listed_website',
         'last_verified_at',
         'verification_source',
         'notes',

@@ -21,9 +21,7 @@
 
             @if ($account === null || in_array($state, ['disconnected', 'revoked', 'pending'], true))
                 @if ($state === 'revoked')
-                    <div class="alert alert-warning">
-                        Your email provider ended this connection. Reconnect to send email again.
-                    </div>
+                    <x-alert variant="warning" data-role="email-connection-revoked">Your email provider ended this connection. Reconnect to send email again.</x-alert>
                 @elseif ($state === 'pending')
                     <p class="mb-2">A connection is in progress. If you did not finish it, start again below.</p>
                 @endif
@@ -38,10 +36,10 @@
                             </button>
                         </form>
                     @empty
-                        <p class="text-muted mb-0">Email connection is not available right now. Please contact support.</p>
+                        <p class="text-muted mb-0">Google and Microsoft email connections are not set up on this platform yet, so a mailbox cannot be connected right now. Please contact support.</p>
                     @endforelse
                 @else
-                    <p class="text-muted mb-0">Ask the account owner to connect an email account.</p>
+                    <p class="text-muted mb-0">You do not have permission to connect or change the email account. Ask the account owner to connect it or to grant you access.</p>
                 @endif
             @else
                 <p class="mb-2">
@@ -55,9 +53,7 @@
                     <p class="text-muted mb-2">Connected {{ $account->connected_at->diffForHumans() }}.</p>
                 @endif
                 @if ($account->failure_classification)
-                    <div class="alert alert-warning">
-                        The last send had a problem. If it keeps happening, reconnect your account.
-                    </div>
+                    <x-alert variant="warning" data-role="email-last-send-failed">The last send had a problem. If it keeps happening, reconnect your account.</x-alert>
                 @endif
 
                 @if ($canManage)

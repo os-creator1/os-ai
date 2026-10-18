@@ -773,6 +773,149 @@ class AgencyClientProvisioningTest extends TestCase
         return $user->two_factor_code;
     }
 
+    public function test_a_signed_out_recipient_is_returned_to_the_same_invitation_after_signing_in_once(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $email = 'return-client' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $owner, $email, 'Return Co');
+        $account = $this->realAccount($email);
+        $claim = route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]);
+
+        // Signed out: the sign-in page is shown and the invitation is remembered server-side only.
+        $this->get($claim)->assertOk()->assertViewIs('client_invitations.sign_in_required')
+            ->assertSessionHas(\App\Library\Workspace\ClientInvitationReturn::KEY);
+        $this->assertSame($claim, \App\Library\Workspace\ClientInvitationReturn::pull(), 'It resolves to this app\'s own claim route.');
+        $this->assertNull(\App\Library\Workspace\ClientInvitationReturn::pull(), 'It is consumed: it can never loop.');
+
+        // An unrelated, malformed memory never becomes a redirect.
+        session()->put(\App\Library\Workspace\ClientInvitationReturn::KEY, ['uid' => 'x', 'token' => 'https://evil.test/']);
+        $this->assertNull(\App\Library\Workspace\ClientInvitationReturn::pull());
+
+        // Remembered again, the wrong signed-in user sees the generic invalid view and the memory is gone.
+        $this->get($claim);
+        $other = $this->realAccount('someone-else' . uniqid('', true) . '@example.test');
+        $this->actingAs($other);
+        $this->get($claim)->assertOk()->assertViewIs('client_invitations.invalid');
+        $this->assertNull(\App\Library\Workspace\ClientInvitationReturn::pull());
+
+        // The invited user, once signed in, reaches the confirmation page (email match unchanged).
+        $this->actingAs($account);
+        $this->get($claim)->assertOk()->assertViewIs('client_invitations.confirm');
+    }
+
+    public function test_signing_in_after_opening_the_invitation_lands_on_the_invitation_confirmation(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $email = 'login-return' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $owner, $email, 'Login Return Co');
+        $account = $this->realAccount($email);
+        $account->forceFill(['password' => \Illuminate\Support\Facades\Hash::make('Secret-passw0rd!')])->save();
+        $claim = route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]);
+
+        $this->get($claim)->assertViewIs('client_invitations.sign_in_required');
+
+        // One sign-in, straight back to the same invitation (its own checks then run as before).
+        $this->post(route('login'), ['email' => $email, 'password' => 'Secret-passw0rd!'])->assertRedirect($claim);
+    }
+
+    public function test_a_verification_link_clicked_after_opening_the_invitation_still_returns_to_the_invitation(): void
+    {
+        config(['account.verify_account' => true, 'app.two_factor' => false, 'no-captcha.login' => false]);
+        [$agency, $owner] = $this->agency();
+        $email = 'verify-return' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $owner, $email, 'Verify Return Co');
+        $account = $this->realAccount($email);
+        $account->forceFill(['password' => \Illuminate\Support\Facades\Hash::make('Secret-passw0rd!'), 'email_verified_at' => null])->save();
+        $claim = route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]);
+        $verify = \Illuminate\Support\Facades\URL::temporarySignedRoute('verification.verify', now()->addMinutes(60), [
+            'id' => $account->getKey(), 'hash' => sha1($account->getEmailForVerification()),
+        ]);
+
+        $this->get($claim)->assertViewIs('client_invitations.sign_in_required');
+        $this->get($verify)->assertRedirect(route('login'));
+
+        // Sign-in completes the verification first; the invitation memory survives it.
+        $location = $this->post(route('login'), ['email' => $email, 'password' => 'Secret-passw0rd!'])->headers->get('Location');
+        $this->assertStringContainsString('/email/verify/', $location);
+        $this->assertNotNull(session(\App\Library\Workspace\ClientInvitationReturn::KEY));
+
+        $this->get($location)->assertRedirect($claim);
+        $this->assertTrue($account->fresh()->hasVerifiedEmail());
+    }
+
+    /** @return array{0: User, 1: string, 2: string, 3: object} account with a pending 2FA challenge and a backup code */
+    private function accountAtBackupCodeChallenge(): array
+    {
+        [$agency, $owner] = $this->agency();
+        $email = 'backup' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $owner, $email, 'Backup Co');
+        $account = $this->realAccount($email);
+        $this->markPendingTwoFactor($account);
+        $account = $account->fresh();
+        $account->forceFill(['two_factor_backup_code' => json_encode(['111111', '222222'])])->save();
+        $this->actingAs($account->fresh());
+
+        return [$account, route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]), $token, $invitation];
+    }
+
+    public function test_backup_code_two_factor_returns_to_the_pending_invitation_and_consumes_the_code_once(): void
+    {
+        [$account, $claim, $token, $invitation] = $this->accountAtBackupCodeChallenge();
+        \App\Library\Workspace\ClientInvitationReturn::remember($invitation->uid, $token);
+
+        $this->post(route('verify.backup.store'), ['two_factor_code' => 111111])->assertRedirect($claim);
+
+        $this->assertSame(['222222'], json_decode($account->fresh()->two_factor_backup_code, true), 'The used code is consumed.');
+        $this->assertNull(\App\Library\Workspace\ClientInvitationReturn::pull(), 'The memory is consumed: no loop.');
+        $this->assertNull($invitation->fresh()->accepted_at, 'Returning to the invitation never accepts it.');
+
+        // The same code cannot be replayed: it no longer matches, so nothing is consumed or redirected to the invitation.
+        $this->post(route('verify.backup.store'), ['two_factor_code' => 111111])->assertRedirect();
+        $this->assertSame(['222222'], json_decode($account->fresh()->two_factor_backup_code, true));
+    }
+
+    public function test_backup_code_two_factor_completes_a_pending_verification_link_first_and_keeps_the_invitation(): void
+    {
+        [$account, $claim, $token, $invitation] = $this->accountAtBackupCodeChallenge();
+        $verify = \Illuminate\Support\Facades\URL::temporarySignedRoute('verification.verify', now()->addMinutes(60), [
+            'id' => $account->getKey(), 'hash' => sha1($account->getEmailForVerification()),
+        ]);
+        $parts = parse_url($verify);
+        \App\Library\PlatformBilling\PendingVerification::remember($parts['path'] . '?' . $parts['query']);
+        \App\Library\Workspace\ClientInvitationReturn::remember($invitation->uid, $token);
+
+        $location = $this->post(route('verify.backup.store'), ['two_factor_code' => 222222])->headers->get('Location');
+
+        $this->assertStringContainsString($parts['path'], $location);
+        $this->assertNotNull(session(\App\Library\Workspace\ClientInvitationReturn::KEY), 'The invitation is still remembered for after verification.');
+        $this->assertNull($invitation->fresh()->accepted_at);
+    }
+
+    public function test_a_wrong_backup_code_returns_nowhere_and_an_invalid_invitation_is_never_accepted(): void
+    {
+        [$account, $claim, $token, $invitation] = $this->accountAtBackupCodeChallenge();
+
+        // While the 2FA challenge is pending the claim route is blocked outright; a tampered token is never remembered either.
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => 'wrong' . $token]))->assertRedirect();
+        $this->assertNull(session(\App\Library\Workspace\ClientInvitationReturn::KEY));
+
+        $wrong = $this->post(route('verify.backup.store'), ['two_factor_code' => 999999]);
+        $this->assertNotSame($claim, $wrong->headers->get('Location'));
+        $this->assertSame(['111111', '222222'], json_decode($account->fresh()->two_factor_backup_code, true));
+        $this->assertNull($invitation->fresh()->accepted_at);
+    }
+
+    public function test_an_expired_or_revoked_invitation_is_never_remembered_for_return(): void
+    {
+        [$agency, $owner] = $this->agency();
+        [$invitation, $token] = $this->pendingInvitation($agency, $owner, 'gone' . uniqid('', true) . '@example.test', 'Gone Co');
+
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => 'wrong' . $token]))
+            ->assertViewIs('client_invitations.invalid');
+
+        $this->assertNull(\App\Library\Workspace\ClientInvitationReturn::pull());
+    }
+
     public function test_a_pending_two_factor_challenge_blocks_both_claim_and_accept_until_completed(): void
     {
         [$agency, $owner] = $this->agency();
@@ -971,5 +1114,61 @@ class AgencyClientProvisioningTest extends TestCase
             ->assertRedirect();
 
         $this->assertSame(ClientInvitationStatus::Accepted, $invitation->fresh()->status);
+    }
+
+    // ------------------------------------------------------------------
+    // Staging acceptance — a FRESH invitation, followed exactly as the
+    // recipient's browser would: the URL is taken from the real rendered
+    // email (not rebuilt by the test), then guest -> sign-in -> confirm ->
+    // accept -> relationship.
+    // ------------------------------------------------------------------
+
+    public function test_a_fresh_invitation_link_from_the_delivered_email_completes_the_full_recipient_flow(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $email = 'Fresh-Client' . uniqid('', true) . '@Example.test';
+        [$invitation] = $this->pendingInvitation($agency, $owner, $email, 'Fresh Co');
+
+        // Delivery: render the actual notification and pull the claim link.
+        $claimUrl = null;
+        Notification::assertSentOnDemand(
+            ClientInvitationNotification::class,
+            function (ClientInvitationNotification $notification, array $channels, object $notifiable) use (&$claimUrl) {
+                $claimUrl = $notification->toMail($notifiable)->actionUrl;
+
+                return true;
+            }
+        );
+        $this->assertNotNull($claimUrl);
+        $this->assertStringContainsString('/client-invitations/' . $invitation->uid . '/', $claimUrl);
+        $path = parse_url($claimUrl, PHP_URL_PATH);
+
+        // An unauthenticated browser gets the sign-in prompt, NOT the generic rejection.
+        $this->get($path)->assertOk()->assertViewIs('client_invitations.sign_in_required');
+
+        // A signed-in account with a different email is refused generically.
+        $this->actingAs($this->realAccount('someone-else' . uniqid('', true) . '@example.test'));
+        $this->get($path)->assertOk()->assertViewIs('client_invitations.invalid');
+
+        // The intended recipient (email differs only by case) can confirm and accept.
+        $recipient = $this->realAccount(strtolower($email));
+        $this->actingAs($recipient);
+        $this->get($path)->assertOk()->assertViewIs('client_invitations.confirm');
+
+        $acceptPath = $path . '/accept';
+        $this->post($acceptPath)->assertRedirect();
+
+        $accepted = $invitation->fresh();
+        $this->assertSame(ClientInvitationStatus::Accepted, $accepted->status);
+        $this->assertNotNull($accepted->created_client_workspace_id);
+        $this->assertSame(
+            1,
+            AgencyClientWorkspaceRelationship::where('agency_workspace_id', $agency->id)
+                ->where('client_workspace_id', $accepted->created_client_workspace_id)
+                ->count()
+        );
+
+        // Replay protection: the same link is refused afterwards.
+        $this->get($path)->assertOk()->assertViewIs('client_invitations.invalid');
     }
 }

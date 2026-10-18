@@ -120,6 +120,7 @@ class ManagedDispatchDelegate
         ?string $sendUid = null,
         ?int $conversationBoxId = null,
         bool $requireManaged = false,
+        ?\App\Library\Messaging\DTO\LocationSendContext $location = null,
     ): ?OutboundMessageResult {
         if ($businessId === null || $toNumber === null || $toNumber === '') {
             return null;
@@ -135,6 +136,42 @@ class ManagedDispatchDelegate
 
         if (! $business instanceof Business) {
             return null;
+        }
+
+        // The agency's explicitly chosen own-Telnyx sender is the transport when
+        // one is selected — through this same seam, so Conversations, Outreach,
+        // Automations and campaigns all reach it with no separate engine. Chosen
+        // and unusable means refused (ByoSenderNotReadyException), never a quiet
+        // switch to the platform-paid managed path or a legacy gateway.
+        // A retry of an existing bubble keeps the transport its conversation started on
+        // (found from the conversation's own number), not whatever is the default now.
+        $byoChannel = $conversationBoxId !== null
+            ? \App\Library\AgencyOutreach\AgencyByoSender::channelForConversation($business, $conversationBoxId)
+            : \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business);
+
+        if ($byoChannel !== null) {
+            if ($operationKey === null || $operationKey === '') {
+                throw new MessagingIdentityConflictException(sprintf(
+                    'Dispatch for Business [%d] requires a durable operation key; refusing to invent one.',
+                    $businessId,
+                ));
+            }
+
+            $byoResult = app(ByoMessageDispatcher::class)->dispatch(
+                $business,
+                $byoChannel,
+                $toNumber,
+                (string) $body,
+                $operationKey,
+                $mediaUrls,
+                $quantity,
+            );
+
+            if ($byoResult->accepted) {
+                self::recordConversationHistory($business, $toNumber, $body, $mediaUrls, $smsType, $operationKey, $historySource, $sendUid, $conversationBoxId);
+            }
+
+            return $byoResult;
         }
 
         // Resolved from the Business alone — never from caller input.
@@ -188,6 +225,7 @@ class ManagedDispatchDelegate
             $operationKey,
             $mediaUrls,
             $quantity,
+            $location,
         );
 
         if ($result->accepted) {
@@ -386,6 +424,13 @@ class ManagedDispatchDelegate
 
         if (! $business instanceof Business) {
             return false;
+        }
+
+        // An agency that chose its own Telnyx account is on the tracked dispatch
+        // seam just like a managed Business: Conversations must route its sends
+        // through attempt(), which either sends via that account or refuses.
+        if (\App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business) !== null) {
+            return true;
         }
 
         return app(BusinessMessagingIdentityResolver::class)->resolveForBusiness($business) !== null;

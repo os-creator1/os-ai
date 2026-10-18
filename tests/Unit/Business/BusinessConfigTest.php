@@ -11,9 +11,13 @@ class BusinessConfigTest extends TestCase
      * .env.testing, so this reflects config/business.php's own env()
      * defaults actually taking effect — not a runtime override.
      */
-    public function test_defaults_are_disabled_and_use_the_default_queue(): void
+    public function test_defaults_enable_the_wizard_but_do_not_force_legacy_registrations_into_it(): void
     {
-        $this->assertFalse(config('business.onboarding.enabled'));
+        // On by default: the V1 signup journey ends in first-run onboarding
+        // (Contract 21 §7.1), so an unset variable must not strand a paid
+        // customer on a Draft Business. A customer with no onboarding row is
+        // never redirected, so existing accounts are unaffected.
+        $this->assertTrue(config('business.onboarding.enabled'));
         $this->assertFalse(config('business.onboarding.require_for_new_customers'));
         $this->assertSame('default', config('business.onboarding.analysis_queue'));
     }

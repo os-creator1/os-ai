@@ -34,6 +34,7 @@ class Website extends Model
         'theme',
         'template_key',
         'gallery_page_enabled',
+        'indexing_released_at',
         'presentation_changes_pending_at',
         'generation_lease_token',
         'generation_lease_started_at',
@@ -44,6 +45,7 @@ class Website extends Model
         'status' => WebsiteStatus::class,
         'theme' => 'array',
         'gallery_page_enabled' => 'boolean',
+        'indexing_released_at' => 'datetime',
         'presentation_changes_pending_at' => 'datetime',
         'generation_lease_started_at' => 'datetime',
     ];

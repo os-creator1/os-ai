@@ -123,15 +123,17 @@ class SeoAuditTest extends TestCase
 
     public function test_seo_title_over_recommended_fires_only_above_the_configured_maximum(): void
     {
+        // The length is that of the REAL <title>: the SEO title plus " | Test Website" (the
+        // snapshot's site name, 15 characters), composed by WebsiteHeadMeta::title().
         [, , $over] = $this->audit([$this->snapshotPage('p1', 'Home', [
-            'seo_title' => str_repeat('x', 61),
+            'seo_title' => str_repeat('x', 46),
             'meta_description' => str_repeat('a', 80),
         ])]);
         $this->assertContains(SeoAuditRuleRegistry::SEO_TITLE_OVER_RECOMMENDED, $this->ruleKeys($over));
 
-        // Exactly at the threshold is fine: the rule is "> 60".
+        // Exactly at the threshold is fine: the rule is "> 60" (45 + 15 = 60).
         [, , $at] = $this->audit([$this->snapshotPage('p1', 'Home', [
-            'seo_title' => str_repeat('x', 60),
+            'seo_title' => str_repeat('x', 45),
             'meta_description' => str_repeat('a', 80),
         ])]);
         $this->assertNotContains(SeoAuditRuleRegistry::SEO_TITLE_OVER_RECOMMENDED, $this->ruleKeys($at));
@@ -328,15 +330,17 @@ class SeoAuditTest extends TestCase
 
         $reader = app(SeoAuditPageReader::class);
 
+        // No Active primary domain: served from the platform path only. (The states
+        // for a site on its own domain are pinned in SeoIndexabilityTest.)
         $this->assertSame(
             SeoIndexabilityState::PlatformPathNotIndexable,
-            $reader->read($published)->indexability,
+            $reader->read($published)->indexability->state,
             'A published platform-path site is not indexable — a status, not a finding.'
         );
 
         [, $unpublished] = $this->entitledTenant(WorkspacePlanTier::Growth);
 
-        $this->assertSame(SeoIndexabilityState::NoPublishedWebsite, $reader->read($unpublished)->indexability);
+        $this->assertSame(SeoIndexabilityState::NoPublishedWebsite, $reader->read($unpublished)->indexability->state);
     }
 
     // -----------------------------------------------------------------

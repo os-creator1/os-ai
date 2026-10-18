@@ -6,7 +6,10 @@ use App\Library\Crm\Templates\BusinessTemplate;
 use App\Library\Crm\Templates\BusinessTemplateApplier;
 use App\Library\Crm\Templates\PipelineBlueprint;
 use App\Library\Crm\Templates\StageBlueprint;
+use App\Enums\NicheBlueprint\BlueprintUpdatePolicy;
+use App\Library\NicheBlueprint\Workspace\BlueprintChecksum;
 use App\Models\Business;
+use App\Models\CrmPipeline;
 use InvalidArgumentException;
 
 /**
@@ -34,7 +37,7 @@ use InvalidArgumentException;
  * field this adapter reads fails Blueprint publication (§6.2 gate 5) and
  * never reaches a Business's installation transaction.
  */
-final class CrmPipelineComponentAdapter implements BlueprintComponentAdapter
+final class CrmPipelineComponentAdapter implements BlueprintComponentAdapter, BlueprintComponentDefinition, FingerprintsInstalledComponent
 {
     /** The `niche_blueprint_components.component_type` this adapter claims. */
     public const TYPE = 'crm_pipeline';
@@ -144,5 +147,91 @@ final class CrmPipelineComponentAdapter implements BlueprintComponentAdapter
         }
 
         return $value;
+    }
+    public function fingerprint(Business $business, InstalledComponentReference $reference, array $payload): ?string
+    {
+        $pipeline = CrmPipeline::query()->where('business_id', $business->id)->whereKey($reference->recordId)->first();
+
+        if ($pipeline === null || $pipeline->archived_at !== null) {
+            return null;
+        }
+
+        return BlueprintChecksum::of([
+            $pipeline->name,
+            $pipeline->stages()->orderBy('position')->orderBy('id')->get()->map(fn ($s) => [$s->name, $s->semantic_key ?? null])->all(),
+        ]);
+    }
+
+    public function surface(): string
+    {
+        return 'crm';
+    }
+
+    public function updatePolicy(): BlueprintUpdatePolicy
+    {
+        return BlueprintUpdatePolicy::Copy;
+    }
+
+    public function featureKey(): string
+    {
+        return 'crm';
+    }
+
+    public function typeLabel(): string
+    {
+        return 'Pipeline';
+    }
+
+    public function summary(array $payload): string
+    {
+        return ($payload['name'] ?? '?').': '.count($payload['stages'] ?? []).' stages';
+    }
+
+    public function formFields(): array
+    {
+        return [
+            ['name' => 'name', 'label' => 'Pipeline name', 'type' => 'text', 'required' => true],
+            ['name' => 'stages', 'label' => 'Stages', 'type' => 'lines', 'required' => true,
+                'help' => 'One per line: "Stage name | semantic_key" (key optional). The first stage must be "new_inquiry".'],
+        ];
+    }
+
+    public function payloadFromInput(array $input): array
+    {
+        $stages = [];
+
+        foreach (preg_split('/\r\n|\r|\n/', (string) ($input['stages'] ?? '')) ?: [] as $line) {
+            $line = trim($line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            $parts = array_map('trim', explode('|', $line, 2));
+            $stages[] = ['name' => $parts[0], 'semantic_key' => ($parts[1] ?? '') !== '' ? $parts[1] : null];
+        }
+
+        $name = trim((string) ($input['name'] ?? ''));
+        $payload = [
+            'template_key' => 'blueprint',
+            'template_version' => 1,
+            'pipeline_key' => \Illuminate\Support\Str::slug($name, '_') ?: 'sales',
+            'name' => $name,
+            'stages' => $stages,
+        ];
+
+        $this->parse($payload);
+
+        return $payload;
+    }
+
+    public function inputFromPayload(array $payload): array
+    {
+        $lines = array_map(
+            fn (array $stage) => $stage['name'].(! empty($stage['semantic_key']) ? ' | '.$stage['semantic_key'] : ''),
+            $payload['stages'] ?? [],
+        );
+
+        return ['name' => $payload['name'] ?? '', 'stages' => implode("\n", $lines)];
     }
 }

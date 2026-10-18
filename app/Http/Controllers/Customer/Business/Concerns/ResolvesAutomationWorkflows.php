@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Customer\Business\Concerns;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Library\Automation\Workflow\WorkflowLocationAuthority;
 use App\Models\AutomationWorkflow;
 use App\Models\Business;
 use App\Models\Workspace;
@@ -10,6 +11,8 @@ use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
@@ -132,12 +135,60 @@ trait ResolvesAutomationWorkflows
      */
     protected function resolveWorkflow(Business $business, string $workflowUid): AutomationWorkflow
     {
+        // The facts the Location gate needs ride the SAME statement as subselects —
+        // the live version's scope (mode, single Location, selected list), and a
+        // never-published draft's declared scope — so the gate costs the workflow
+        // feature no extra read.
         $workflow = AutomationWorkflow::query()
+            ->select('automation_workflows.*')
+            ->selectSub(
+                DB::table('automation_workflow_versions as lv')
+                    ->select('lv.scope_mode')
+                    ->whereColumn('lv.id', 'automation_workflows.published_version_id')
+                    ->limit(1),
+                'live_scope_mode',
+            )
+            ->selectSub(
+                DB::table('automation_workflow_versions as lv')
+                    ->select('lv.business_location_id')
+                    ->whereColumn('lv.id', 'automation_workflows.published_version_id')
+                    ->limit(1),
+                'live_location_id',
+            )
+            ->selectSub(
+                DB::table('automation_workflow_version_locations as vl')
+                    ->selectRaw('GROUP_CONCAT(vl.business_location_id)')
+                    ->whereColumn('vl.version_id', 'automation_workflows.published_version_id'),
+                'live_scope_location_ids',
+            )
+            ->selectSub(
+                DB::table('automation_workflow_versions as dv')
+                    ->selectRaw("JSON_EXTRACT(dv.definition, '$.root.config')")
+                    ->whereColumn('dv.workflow_id', 'automation_workflows.id')
+                    ->where('dv.state', 'draft')
+                    ->limit(1),
+                'draft_scope_config',
+            )
             ->where('business_id', (int) $business->id)
             ->where('uid', $workflowUid)
             ->first();
 
         abort_unless($workflow !== null, 404);
+
+        // THE ACTOR'S LOCATION AUTHORITY over an existing workflow, for EVERY
+        // operation that resolves one (open, edit, publish, pause, resume, archive,
+        // history, logs, stop-all, manual enrollment, Test workflow). An actor who
+        // cannot reach the workflow's scope gets exactly what an unknown uid gets —
+        // a 404 — before any contact is queried, any job queued or any run row read.
+        // The scope is the published version's, never inferred from a contact.
+        $mayOperate = WorkflowFeatureQueryScope::shared(
+            fn (): bool => app(WorkflowLocationAuthority::class)->mayOperate((int) Auth::id(), $business, $workflow),
+        );
+
+        abort_unless($mayOperate, 404);
+
+        // Scaffolding for the gate only; nothing downstream should see or save it.
+        unset($workflow->live_scope_mode, $workflow->live_location_id, $workflow->live_scope_location_ids, $workflow->draft_scope_config);
 
         return $workflow;
     }

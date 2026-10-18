@@ -13,8 +13,19 @@
 --}}
 @php use App\Library\Dashboard\DashboardSnapshot; @endphp
 
+{{-- Home V2: the coordinated command center. The legacy band stack below is the
+     fallback only when the coordinator itself could not run (it degrades alone). --}}
+@if($dashboard->has(DashboardSnapshot::BAND_COMMAND))
+    @include('customer.dashboard.home.command-center')
+@else
 @if($dashboard->has(DashboardSnapshot::BAND_BILLING_EXCEPTION))
     @include('customer.dashboard.bands.billing-exception', ['exception' => $dashboard->band(DashboardSnapshot::BAND_BILLING_EXCEPTION)])
+@endif
+
+@if($dashboard->failed(DashboardSnapshot::BAND_GROWTH))
+    @include('customer.dashboard.band-failed', ['band' => 'growth', 'title' => 'Needs your attention'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_GROWTH))
+    @include('customer.dashboard.bands.growth', ['growth' => $dashboard->band(DashboardSnapshot::BAND_GROWTH)])
 @endif
 
 @if($dashboard->failed(DashboardSnapshot::BAND_ACTIVITY))
@@ -61,4 +72,5 @@
 
 @if($dashboard->has(DashboardSnapshot::BAND_ACTIONS) && $dashboard->band(DashboardSnapshot::BAND_ACTIONS)['items'] !== [])
     @include('customer.dashboard.bands.actions', ['actions' => $dashboard->band(DashboardSnapshot::BAND_ACTIONS)])
+@endif
 @endif

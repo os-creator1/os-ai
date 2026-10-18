@@ -44,6 +44,12 @@ final class AutomationActivitySource implements TimelineSource
         WorkflowNodeType::SendSms->value,
         WorkflowNodeType::UpdateContactField->value,
         WorkflowNodeType::InternalNotification->value,
+        WorkflowNodeType::MoveOpportunity->value,
+        WorkflowNodeType::SendBookingLink->value,
+        WorkflowNodeType::SendForm->value,
+        WorkflowNodeType::SendQuestionnaire->value,
+        WorkflowNodeType::CreateSendProposal->value,
+        WorkflowNodeType::RequestPayment->value,
     ];
 
     /** Known reason codes → what a person reads. Prefix matched: some codes carry a suffix. */
@@ -60,6 +66,32 @@ final class AutomationActivitySource implements TimelineSource
         'mms_media_missing' => 'The automation message is not set up',
         'send_failed' => 'The message could not be sent',
         'send_exception' => 'The message could not be sent',
+        // Location run-scope.
+        'location_sender_unavailable' => 'No text-message number is set up for this location',
+        'contact_outside_workflow_location' => 'The contact is no longer at this automation\'s location',
+        'run_location_mismatch' => 'This automation does not cover that location',
+        'resource_outside_workflow_location' => 'That belongs to a different location',
+        // Cross-domain actions.
+        'opportunity_not_found' => 'There is no open opportunity to move',
+        'opportunity_ambiguous' => 'There is more than one open opportunity, so none was moved',
+        'stage_unavailable' => 'The stage is no longer available',
+        'move_refused' => 'The opportunity could not be moved',
+        'booking_type_unavailable' => 'The booking type is no longer available',
+        'form_deployment_unavailable' => 'The form has no public link at this location',
+        'form_unavailable' => 'The form is no longer available',
+        'questionnaire_unavailable' => 'The questionnaire is no longer available',
+        'contact_email_unavailable' => 'The contact has no single valid email address',
+        'catalog_item_unavailable' => 'The product or package is no longer available',
+        'document_location_unresolved' => 'No single location could be chosen for the document',
+        'document_unavailable' => 'Proposals are not available on this plan',
+        'document_refused' => 'The proposal could not be created',
+        'document_not_found' => 'There is no document to request payment for',
+        'document_not_payable' => 'The document is not waiting for payment',
+        'nothing_to_pay' => 'Nothing is left to pay',
+        'payment_request_unavailable' => 'Payments are not set up',
+        'payment_request_refused' => 'The payment request could not be sent',
+        'email_refused' => 'The email could not be sent',
+        'email_failed' => 'The email could not be sent',
     ];
 
     public static function stepKey(int $stepRunId): string
@@ -223,6 +255,11 @@ final class AutomationActivitySource implements TimelineSource
         return match ($nodeType) {
             WorkflowNodeType::UpdateContactField->value => 'update',
             WorkflowNodeType::InternalNotification->value => 'notify',
+            WorkflowNodeType::MoveOpportunity->value => 'move',
+            WorkflowNodeType::SendBookingLink->value => 'booking',
+            WorkflowNodeType::SendForm->value, WorkflowNodeType::SendQuestionnaire->value => 'form',
+            WorkflowNodeType::CreateSendProposal->value => 'proposal',
+            WorkflowNodeType::RequestPayment->value => 'payment',
             default => 'text',
         };
     }
@@ -235,11 +272,22 @@ final class AutomationActivitySource implements TimelineSource
             ['update', true] => "Automation {$name} updated contact details",
             ['update', false] => "Automation {$name} did not update contact details",
             ['notify', true] => "Automation {$name} notified your team",
+            ['move', true] => "Automation {$name} moved an opportunity",
+            ['move', false] => "Automation {$name} did not move an opportunity",
+            ['booking', true] => "Automation {$name} sent a booking link",
+            ['booking', false] => "Automation {$name} did not send a booking link",
+            ['form', true] => "Automation {$name} sent a form",
+            ['form', false] => "Automation {$name} did not send a form",
+            ['proposal', true] => "Automation {$name} sent a proposal",
+            ['proposal', false] => "Automation {$name} did not send a proposal",
+            ['payment', true] => "Automation {$name} requested a payment",
+            ['payment', false] => "Automation {$name} did not request a payment",
             default => "Automation {$name} did not notify your team",
         };
     }
 
-    private static function reason(?string $code): ?string
+    /** What a person reads for a known reason code (the history and log panels reuse it). */
+    public static function reason(?string $code): ?string
     {
         $code = trim((string) $code);
 

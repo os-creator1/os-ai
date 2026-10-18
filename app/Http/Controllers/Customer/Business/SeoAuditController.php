@@ -33,8 +33,9 @@ use Illuminate\Support\Facades\RateLimiter;
  * `manage_seo` to re-run). Every mismatch is `abort(404)`, never 403, and no
  * implicit route-model binding is used.
  *
- * FAIL-CLOSED WHILE `Planned`. SeoModule is Planned until Sub-slice H, so
- * every route here answers 404 today.
+ * ENTITLEMENT. SeoModule is Available (Sub-slice H flipped it): Growth and
+ * Agency reach these routes, Core and every foreign or unentitled caller gets
+ * the same 404.
  */
 class SeoAuditController extends CustomerBaseController
 {
@@ -80,7 +81,9 @@ class SeoAuditController extends CustomerBaseController
      * It is also consumed LAST. Tenancy, entitlement and the capability gate
      * all run first, so an unauthorized or unentitled request is refused
      * without ever touching the limiter — otherwise a stranger's 404s could
-     * burn the real customer's cooldown.
+     * burn the real customer's cooldown. For the same reason it is consumed
+     * only once there is a published website to check: a request that queues
+     * nothing must not start a cooldown on a real one.
      */
     public function rerun(string $workspaceUid, string $businessUid): RedirectResponse
     {
@@ -89,6 +92,15 @@ class SeoAuditController extends CustomerBaseController
         $this->authorize('manage_seo');
 
         $back = redirect()->route('customer.workspaces.businesses.seo.audit.index', [$workspaceUid, $businessUid]);
+
+        $target = $this->runner->publishedTargetFor((int) $business->id);
+
+        if ($target === null) {
+            return $back->with([
+                'status' => 'error',
+                'message' => 'There is no published website to check yet. Publish your website first.',
+            ]);
+        }
 
         $limiterKey = $this->rerunLimiterKey((int) Auth::id(), (int) $business->id);
 
@@ -100,15 +112,6 @@ class SeoAuditController extends CustomerBaseController
         }
 
         RateLimiter::hit($limiterKey, $this->config->auditManualRerunCooldownSeconds());
-
-        $target = $this->runner->publishedTargetFor((int) $business->id);
-
-        if ($target === null) {
-            return $back->with([
-                'status' => 'error',
-                'message' => 'There is no published website to check yet.',
-            ]);
-        }
 
         RunSeoAuditForRevision::dispatch((int) $business->id, $target['website_id'], $target['revision_id']);
 

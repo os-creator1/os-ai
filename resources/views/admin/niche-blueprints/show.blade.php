@@ -26,6 +26,8 @@
                 @endif
             </div>
 
+            @include('admin.niche-blueprints._overview')
+
             {{-- Identity ------------------------------------------------- --}}
             <div class="col-12">
                 <x-card title="Blueprint identity">

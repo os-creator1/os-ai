@@ -157,7 +157,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'sitemap-domain.test');
 
-        $response = $this->get('http://'.$domain->domain.'/sitemap');
+        $response = $this->get('http://'.$domain->domain.'/sitemap.xml');
         $response->assertOk();
         $this->assertStringContainsString('https://sitemap-domain.test/about', $response->getContent());
         $this->assertStringNotContainsString($website->public_id, $response->getContent());
@@ -178,7 +178,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'sitemap-noindex.test');
 
-        $response = $this->get('http://'.$domain->domain.'/sitemap');
+        $response = $this->get('http://'.$domain->domain.'/sitemap.xml');
 
         $response->assertOk();
         $this->assertStringContainsString('https://sitemap-noindex.test/about', $response->getContent());
@@ -635,8 +635,21 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $this->activeDomain($website, 'unrelated-active-domain.test');
 
-        // The platform's own path-based route still works exactly as
-        // before, unaffected by any active custom domain existing.
+        // The platform's own path-based route is still reachable (it is not
+        // swallowed by custom-domain resolution), and with an Active domain it
+        // sends visitors and crawlers to the one canonical address.
+        $this->get(route('public.website.home', $website->public_id))
+            ->assertStatus(301)
+            ->assertRedirect('https://unrelated-active-domain.test/');
+    }
+
+    public function test_the_platform_path_still_renders_noindex_when_no_domain_is_active(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
         $this->get(route('public.website.home', $website->public_id))
             ->assertOk()
             ->assertSee('Welcome')
@@ -831,6 +844,8 @@ class WebsiteCustomDomainRenderingTest extends TestCase
     public function test_the_websites_own_quote_form_submission_still_works_on_a_custom_domain(): void
     {
         [, $business] = $this->entitledTenant();
+        // Forms V1: a form carries its Location, and a form with none accepts nothing.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $website = $this->createWebsite($business);
         $form = $website->forms()->create([
             'business_id' => $website->business_id,
@@ -838,6 +853,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
             'name' => 'Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
             'submit_label' => 'Send',
+            'location_id' => \App\Models\BusinessLocation::where('business_id', $business->id)->value('id'),
         ]);
         $home = $this->homePage($website, [
             'sections' => [$this->section('hero'), $this->section('form', ['form_uid' => $form->uid])],

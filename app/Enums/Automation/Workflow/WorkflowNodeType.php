@@ -35,6 +35,19 @@ enum WorkflowNodeType: string
     case AddTag = 'add_tag';
     case RemoveTag = 'remove_tag';
 
+    /*
+     * Cross-domain actions. Each calls its owning domain's canonical seam — the
+     * CRM opportunity service, the Calendar's public booking link, the Forms
+     * deployment link, the DocumentManager — and none talks to a provider or
+     * writes a domain table itself.
+     */
+    case MoveOpportunity = 'move_opportunity';
+    case SendBookingLink = 'send_booking_link';
+    case SendForm = 'send_form';
+    case SendQuestionnaire = 'send_questionnaire';
+    case CreateSendProposal = 'create_send_proposal';
+    case RequestPayment = 'request_payment';
+
     case Wait = 'wait';
     case IfElse = 'if_else';
     case End = 'end';
@@ -47,8 +60,28 @@ enum WorkflowNodeType: string
             // second attach of a held tag, or a detach of an absent one, writes
             // nothing and emits nothing.
             self::UpdateContactField, self::AddTag, self::RemoveTag => NodeSideEffectClass::IdempotentDatabase,
+            // CrmOpportunityService::moveToStage reports a deal already in the target
+            // stage as "nothing changed" — a second run writes and emits nothing.
+            self::MoveOpportunity => NodeSideEffectClass::IdempotentDatabase,
             self::SendSms, self::InternalNotification, self::SendEmail => NodeSideEffectClass::External,
+            // Every one of these reaches a person (a message, a document, a payment
+            // request) or mints a record that does: never re-run by recovery.
+            self::SendBookingLink, self::SendForm, self::SendQuestionnaire,
+            self::CreateSendProposal, self::RequestPayment => NodeSideEffectClass::External,
         };
+    }
+
+    /** The actions that reach another domain's resources and so need the account to hold them. */
+    public function isCrossDomainAction(): bool
+    {
+        return in_array($this, [
+            self::MoveOpportunity,
+            self::SendBookingLink,
+            self::SendForm,
+            self::SendQuestionnaire,
+            self::CreateSendProposal,
+            self::RequestPayment,
+        ], true);
     }
 
     /** A branching node emits `yes`/`no` edges instead of a single `next`. */
@@ -79,6 +112,12 @@ enum WorkflowNodeType: string
             self::SendEmail => 'Send an email',
             self::AddTag => 'Add a tag',
             self::RemoveTag => 'Remove a tag',
+            self::MoveOpportunity => 'Move an opportunity',
+            self::SendBookingLink => 'Send a booking link',
+            self::SendForm => 'Send a form',
+            self::SendQuestionnaire => 'Send a questionnaire',
+            self::CreateSendProposal => 'Create & send a proposal',
+            self::RequestPayment => 'Request a payment',
             self::Wait => 'Wait',
             self::IfElse => 'If / Else',
             self::End => 'End',

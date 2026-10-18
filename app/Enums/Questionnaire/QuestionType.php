@@ -27,6 +27,33 @@ enum QuestionType: string
     /** One or more image uploads. */
     case PhotoUpload = 'photo_upload';
 
+    /**
+     * A flat, ordered list of short strings, one per row (service areas,
+     * package features). Replaces comma-separated text: one entry per row,
+     * never parsed apart by a delimiter.
+     */
+    case StringList = 'string_list';
+
+    /**
+     * The owner's choice among the Business's CANONICAL Packages & Products
+     * (existing ones to include, edits, new ones created in the catalog).
+     * The answer stores only catalog uids — never a copy of a name or price.
+     */
+    case CatalogSelection = 'catalog_selection';
+
+    /**
+     * A place: city, region/state and country on one question — the owner's
+     * base location. Answer shape: {city, region, country_code}.
+     */
+    case Location = 'location';
+
+    /**
+     * One brand image uploaded immediately on its own (the business logo),
+     * attached to the Website's look. The answer itself stores nothing: the
+     * asset is the durable record.
+     */
+    case Image = 'image';
+
     // Independent-review correction round 2 — `price_or_quote` was
     // removed: it had no real Blade renderer, no
     // WebsiteWizardController::valueFromRequest() parser, no

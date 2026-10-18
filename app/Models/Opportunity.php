@@ -16,6 +16,7 @@ class Opportunity extends Model
 
     protected $fillable = [
         'business_id',
+        'location_id',
         'worker_key',
         'type',
         'fingerprint_version',
@@ -80,6 +81,11 @@ class Opportunity extends Model
         'dismissed_at' => 'datetime',
         'stale_at' => 'datetime',
     ];
+
+    public function location(): BelongsTo
+    {
+        return $this->belongsTo(BusinessLocation::class, 'location_id');
+    }
 
     public function business(): BelongsTo
     {

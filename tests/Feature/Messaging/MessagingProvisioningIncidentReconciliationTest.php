@@ -341,7 +341,7 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
      */
     private function usageBillingSubmenu(): array
     {
-        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Usage Billing')['submenu'] ?? [];
+        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Number Operations')['submenu'] ?? [];
 
         return json_decode(json_encode($submenu));
     }
@@ -388,8 +388,11 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
 
         $this->assertStringNotContainsString(url(config('app.admin_path') . '/messaging-provisioning-incidents'), $html);
         // And the sibling items untouched by this fix keep their prior,
-        // unrelated behaviour — this correction changes nothing for them.
-        $this->assertStringContainsString(url(config('app.admin_path') . '/provider-events'), $html);
+        // unrelated behaviour — this correction changes nothing for them. They
+        // stay in Usage Billing; only the incident link moved to Number Operations.
+        $usage = collect(Helper::menuData()['admin'])->firstWhere('name', 'Usage Billing')['submenu'] ?? [];
+        $usageHtml = view('panels.submenu', ['menu' => json_decode(json_encode($usage))])->render();
+        $this->assertStringContainsString(url(config('app.admin_path') . '/provider-events'), $usageHtml);
     }
 
     // =================================================================

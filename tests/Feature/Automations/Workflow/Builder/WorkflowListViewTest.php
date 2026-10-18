@@ -63,7 +63,7 @@ class WorkflowListViewTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Draft', false);
-        $response->assertSee('Published', false);
+        $response->assertSee('Live', false);
         $response->assertSee('Paused', false);
         $response->assertSee('Welcome flow');
         $response->assertSee('Reminder flow');

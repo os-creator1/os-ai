@@ -24,6 +24,16 @@ interface ClientWorkspaceInvitationRepository extends BaseRepository
     public function findByUid(string $uid): ?ClientWorkspaceInvitation;
 
     /**
+     * The invitations THIS Agency Workspace sent that can still be accepted — Pending and not
+     * yet past their expiry — newest first, at most $limit. Keyed by the Agency Workspace id
+     * alone, so another Agency's invitations are unreachable by construction. Plain data access:
+     * who may see them is the caller's (the Clients page's) gate.
+     *
+     * @return \Illuminate\Support\Collection<int, ClientWorkspaceInvitation>
+     */
+    public function pendingForAgencyWorkspace(int $agencyWorkspaceId, int $limit = 25): \Illuminate\Support\Collection;
+
+    /**
      * Row-locking variant of findByUid(), for callers that must hold the
      * row lock for the duration of a transaction — the same shape
      * WorkspaceRepository::findForUpdate() established. Used by

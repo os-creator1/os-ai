@@ -7,8 +7,11 @@ use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
+use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
+use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
+use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
@@ -233,6 +236,185 @@ class BusinessManager
 
         return $activated;
     }
+
+    /**
+     * V1 self-signup's own activation step (Implementation Contract 21 §7).
+     * Unlike activateClientBusiness()'s Agency-invited-client case, the
+     * Business a self-signup Workspace provisions already carries the real
+     * identity the owner entered at signup — there is no placeholder to
+     * correct — so activation is only ever the Draft -> Active transition
+     * itself, made the moment the platform subscription that pays for it is
+     * provider-confirmed (V1SignupManager::activateFromConfirmedSubscription(),
+     * the one seam both the Checkout-return request and the billing webhook
+     * call). Idempotent and safe to call on every re-entry into that seam: a
+     * Business that is not currently Draft (already Active from an earlier
+     * call) is left untouched.
+     *
+     * WORKSPACE-BEFORE-BUSINESS, UNDER LOCK (ChatGPT review correction).
+     * $business is the caller's own read, taken before any lock here — a
+     * caller (WorkspaceController's historical repair among them) derives
+     * its authority to activate (the Workspace's plan assignment, its
+     * PlatformSubscription) from the Workspace it read $business FROM. If a
+     * concurrent WorkspaceManager::reassignBusiness() moves this exact
+     * Business to a different Workspace between that read and this method's
+     * lock, activating on the strength of the OLD Workspace's authority
+     * would cross Workspaces. So the Workspace $business claimed at read
+     * time is locked FIRST (findForUpdate(), the same order
+     * updateOwnBusinessProfile() and reassignBusiness() already use), the
+     * Business second, and a stale mismatch throws the identical typed
+     * BusinessWorkspaceMismatchException updateOwnBusinessProfile() reuses
+     * for the same scenario — never a bespoke string check.
+     *
+     * @return bool true only when THIS call performed the Draft -> Active
+     *              transition; false for a row that was already Active (or
+     *              never Draft). V1SignupManager's own caller ignores this:
+     *              a repeated webhook or Checkout-return revisit replaying
+     *              an already-activated Business is expected, not an error.
+     *
+     * @throws BusinessWorkspaceMismatchException $business no longer belongs
+     *         to the Workspace it was read from — a stale caller reference.
+     */
+    public function activateForConfirmedSignup(Business $business): bool
+    {
+        $expectedWorkspaceId = (int) $business->workspace_id;
+
+        // ChatGPT review correction — re-checked under the SAME Workspace
+        // lock this transaction takes below, never the caller's earlier
+        // unlocked read. AgencyClientRelationshipManager::establish() also
+        // locks the Client Workspace before its own relationship
+        // current-read/create (Workspace-before-relationship, the same
+        // order this method now uses), so that shared Workspace lock is the
+        // serialization boundary: if an Active relationship commits between
+        // a caller's pre-check and this method's lock, the LOCKING read
+        // (findActiveForClientWorkspaceForUpdate(), never the plain
+        // findActiveForClientWorkspace()) is guaranteed to see it. A Client
+        // Workspace's self-signup Draft Business belongs to the
+        // Client/Agency provisioning flow the moment that relationship
+        // exists — never this historical-repair seam — so activation
+        // refuses outright: no write, false, the same idempotent shape as
+        // an already-Active row.
+        //
+        // Retried up to 3 attempts on a genuine MySQL deadlock: terminate()
+        // takes relationship locks before Workspace locks — the exact
+        // inverse of establish()'s (and now this method's) order — so
+        // either side may legitimately be chosen as a deadlock victim.
+        // Retrying from the start is correct because every read this
+        // closure makes is taken again under fresh locks. No lock
+        // reordering on either side.
+        return DB::transaction(function () use ($business, $expectedWorkspaceId): bool {
+            $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+            $workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            $relationshipRepository = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+
+            if ($relationshipRepository->findActiveForClientWorkspaceForUpdate($expectedWorkspaceId) !== null) {
+                return false;
+            }
+
+            $locked = $this->businessRepository->findForUpdate($business->id);
+
+            if ($locked === null || (int) $locked->workspace_id !== $expectedWorkspaceId) {
+                throw new BusinessWorkspaceMismatchException(
+                    $business->id,
+                    $expectedWorkspaceId,
+                    $locked === null ? 0 : (int) $locked->workspace_id,
+                );
+            }
+
+            if ($locked->status !== BusinessStatus::Draft) {
+                return false;
+            }
+
+            $this->businessRepository->updateStatus($locked, BusinessStatus::Active);
+
+            return true;
+        }, 3);
+    }
+
+    /**
+     * RFC-001 §7.1/§32 — a finished onboarding is what activates the Draft
+     * Business it has been completing: the Business a paid V1 signup
+     * provisioned, or one the legacy wizard created.
+     *
+     * Called only by OnboardingManager::complete(), after every completion
+     * prerequisite (one primary Location, an active primary service, the
+     * initial analysis) has been proved. It is NOT a general "activate any
+     * Draft Business I own" shortcut, so it independently re-verifies under
+     * lock, in the established Workspace-then-Business order: the Workspace
+     * is active and still owned by this customer, it is NOT an
+     * Agency-managed Client Workspace (that Business keeps its own owner
+     * confirmation path, activateClientBusiness()), and the Business still
+     * belongs to that Workspace and customer.
+     *
+     * Idempotent: an already-Active Business is returned unchanged and
+     * dispatches nothing, so a replayed completion can never re-announce it.
+     *
+     * @throws WorkspaceAccessDeniedException the Workspace/Business does not belong to $customer, or is Agency-managed
+     * @throws RuntimeException the Business is neither Draft nor Active
+     */
+    public function activateForCompletedOnboarding(Customer $customer, Business $business): Business
+    {
+        $this->assertOwnership($customer, $business);
+
+        $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+        $relationshipRepository = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+        $expectedWorkspaceId = $business->workspace_id;
+
+        [$result, $changed] = DB::transaction(function () use ($customer, $business, $workspaceRepository, $relationshipRepository, $expectedWorkspaceId) {
+            $lockedWorkspace = $expectedWorkspaceId !== null ? $workspaceRepository->findForUpdate((int) $expectedWorkspaceId) : null;
+
+            if ($lockedWorkspace === null
+                || ! $lockedWorkspace->is_active
+                || (int) $lockedWorkspace->owner_user_id !== (int) $customer->user_id) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            if ($relationshipRepository->findActiveForClientWorkspaceForUpdate((int) $lockedWorkspace->id) !== null) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            $locked = $this->businessRepository->findForUpdate($business->id);
+
+            if ($locked === null
+                || (int) $locked->customer_id !== (int) $customer->user_id
+                || (int) $locked->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            if ($locked->status === BusinessStatus::Active) {
+                return [$locked, false];
+            }
+
+            if ($locked->status !== BusinessStatus::Draft) {
+                throw new RuntimeException(
+                    "Business [{$locked->id}] is not Draft (status: {$locked->status->value}); onboarding cannot activate it."
+                );
+            }
+
+            // Release-risk closure (item 3): a Draft Business becomes Active
+            // only while its Workspace holds a genuinely usable plan — the
+            // canonical CustomerAccountAccessResolver::hasActiveSubscription()
+            // answer (assigned AND not locked), the same one every other
+            // product surface uses. An unpaid signup's Workspace has no plan
+            // assignment, so opening /onboarding by hand can no longer
+            // activate the Draft Business it already owns. Checked under the
+            // Workspace lock, only for the Draft -> Active transition.
+            if (! app(CustomerAccountAccessResolver::class)->hasActiveSubscription($lockedWorkspace)) {
+                throw app(EntitlementManager::class)->getWorkspaceEntitlementSummary($lockedWorkspace)->isAssigned
+                    ? new InactiveWorkspacePlanException((int) $lockedWorkspace->id)
+                    : new WorkspacePlanUnassignedException((int) $lockedWorkspace->id);
+            }
+
+            return [$this->businessRepository->updateStatus($locked, BusinessStatus::Active), true];
+        });
+
+        if ($changed) {
+            BusinessUpdated::dispatch($result->id, ['status', 'activated_at']);
+        }
+
+        return $result;
+    }
+
 
     /**
      * Update an already-existing business. Always re-checks ownership.

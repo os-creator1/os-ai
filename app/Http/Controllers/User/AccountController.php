@@ -243,10 +243,7 @@
                     $permissions = collect(json_decode($user->customer->permissions, true));
                     session(['permissions' => $permissions]);
 
-                    return redirect()->route('user.home')->with([
-                        'status'  => 'success',
-                        'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
-                    ]);
+                    return redirect()->route('user.home');
 
                 case 'admin':
                     if ($user->is_admin == 0) {
@@ -264,7 +261,7 @@
 
                     session(['permissions' => $user->getPermissions()]);
 
-                    return redirect()->route('admin.home')->with([
+                    return redirect()->to(\App\Helpers\Helper::adminHomeUrl())->with([
                         'status'  => 'success',
                         'message' => __('locale.auth.welcome_come_back', ['name' => $user->displayName()]),
                     ]);
@@ -359,12 +356,8 @@
 
             $user = Auth::user();
 
-            if ($status == 'disabled') {
-                $user->update([
-                    'two_factor' => false,
-                ]);
-            }
-
+            // Disabling is only ever done by the code-verified POST (updateTwoFactorAuthentication);
+            // a bare GET must never switch 2FA off.
             if ($user->two_factor_code == null && $user->two_factor_expires_at == null) {
                 $user->generateTwoFactorCode();
                 $user->notify(new TwoFactorCode(route('user.account.twofactor.auth', ['status' => $status])));
@@ -533,167 +526,42 @@
             ]);
         }
 
-        #[NoReturn]
-        public function notifications(Request $request): void
+        /**
+         * The inherited Ultimate SMS notification feed is retired from the
+         * product UI. These endpoints stay routable (old bookmarks and open tabs
+         * must not 500) but expose and change nothing: no row is listed, marked
+         * or deleted, and the historical `notifications` rows are left intact.
+         */
+        public function notifications(Request $request): JsonResponse
         {
-
-            $columns = [
-                0 => 'responsive_id',
-                1 => 'uid',
-                2 => 'uid',
-                3 => 'notification_type',
-                4 => 'message',
-                5 => 'mark_read',
-                6 => 'action',
-            ];
-
-            $totalData = Notifications::where('user_id', Auth::user()->id)->count();
-
-            $totalFiltered = $totalData;
-
-            $limit = $request->input('length');
-            $start = $request->input('start');
-            $order = $columns[$request->input('order.0.column')];
-            $dir   = $request->input('order.0.dir');
-
-            if (empty($request->input('search.value'))) {
-                $notifications = Notifications::where('user_id', Auth::user()->id)->offset($start)
-                    ->limit($limit)
-                    ->orderBy($order, $dir)
-                    ->get();
-            } else {
-                $search = $request->input('search.value');
-
-                $notifications = Notifications::where('user_id', Auth::user()->id)->whereLike(['uid', 'notification_type', 'message'], $search)
-                    ->offset($start)
-                    ->limit($limit)
-                    ->orderBy($order, $dir)
-                    ->get();
-
-                $totalFiltered = Notifications::where('user_id', Auth::user()->id)->whereLike(['uid', 'notification_type', 'message'], $search)->count();
-            }
-
-            $data = [];
-            if ( ! empty($notifications)) {
-                foreach ($notifications as $notification) {
-
-                    if ($notification->mark_read == 1) {
-                        $status = 'checked';
-                    } else {
-                        $status = '';
-                    }
-
-                    $nestedData['responsive_id']     = '';
-                    $nestedData['uid']               = $notification->uid;
-                    $nestedData['notification_type'] = ucfirst($notification->notification_type);
-                    $nestedData['message']           = $notification->message;
-                    $nestedData['mark_read']         = "<div class='form-check form-switch form-check-primary'>
-                <input type='checkbox' class='form-check-input get_status' id='status_$notification->uid' data-id='$notification->uid' name='status' $status>
-                <label class='form-check-label' for='status_$notification->uid'>
-                  <span class='switch-icon-left'><i data-feather='check'></i> </span>
-                  <span class='switch-icon-right'><i data-feather='x'></i> </span>
-                </label>
-              </div>";
-                    $data[]                          = $nestedData;
-
-                }
-            }
-
-            $json_data = [
+            return response()->json([
                 'draw'            => intval($request->input('draw')),
-                'recordsTotal'    => $totalData,
-                'recordsFiltered' => $totalFiltered,
-                'data'            => $data,
-            ];
-
-            echo json_encode($json_data);
-            exit();
+                'recordsTotal'    => 0,
+                'recordsFiltered' => 0,
+                'data'            => [],
+            ]);
         }
 
-        /**
-         * mark notification status
-         *
-         *
-         * @throws GeneralException
-         */
         public function notificationToggle(Notifications $notification): JsonResponse
         {
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-            try {
-
-                if ($notification->update(['mark_read' => ! $notification->mark_read])) {
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => 'Notification read status was successfully changed',
-                    ]);
-                }
-
-                throw new GeneralException(__('locale.exceptions.something_went_wrong'));
-            } catch (ModelNotFoundException $exception) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => $exception->getMessage(),
-                ]);
-            }
-
+            return $this->legacyNotificationsRetired();
         }
 
         public function notificationBatchAction(Request $request): JsonResponse
         {
-
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-            $action = $request->get('action');
-            $ids    = $request->get('ids');
-
-            switch ($action) {
-                case 'destroy':
-
-                    Notifications::where('user_id', Auth::user()->id)->whereIn('uid', $ids)->delete();
-
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => 'Notifications was successfully deleted',
-                    ]);
-
-                case 'read':
-
-                    Notifications::where('user_id', Auth::user()->id)->whereIn('uid', $ids)->update([
-                        'mark_read' => true,
-                    ]);
-
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => 'Mark notifications as read',
-                    ]);
-
-            }
-
-            return response()->json([
-                'status'  => 'error',
-                'message' => __('locale.exceptions.invalid_action'),
-            ]);
-
+            return $this->legacyNotificationsRetired();
         }
 
         public function deleteNotification(Notifications $notification): JsonResponse
         {
-            Notifications::where('uid', $notification->uid)->where('user_id', Auth::user()->id)->delete();
+            return $this->legacyNotificationsRetired();
+        }
 
+        private function legacyNotificationsRetired(): JsonResponse
+        {
             return response()->json([
-                'status'  => 'success',
-                'message' => 'Notification was successfully deleted',
+                'status'  => 'error',
+                'message' => __('This notification list has been retired.'),
             ]);
         }
 
@@ -893,8 +761,19 @@
         /**
          * @throws Exception
          */
+        /**
+         * Legacy registration-payment return URLs name the user in the path; they may only ever
+         * act on the signed-in actor themselves, never on a user id supplied by the caller.
+         */
+        private function actorMustBe(?User $user): void
+        {
+            abort_unless($user !== null && Auth::check() && (int) Auth::id() === (int) $user->id, 404);
+        }
+
         public function successfulRegisterPayment(User $user, Plan $plan, PaymentMethods $payment_method, Request $request): RedirectResponse
         {
+            $this->actorMustBe($user);
+
             $price = Session::get('price');
             if ($price == null) {
                 $price = $plan->price;
@@ -3171,6 +3050,8 @@ POSTXML;
 
         public function cancelledRegisterPayment(User $user): RedirectResponse
         {
+            $this->actorMustBe($user);
+
             $user->delete();
 
             return redirect()->route('register')->with([
@@ -3184,6 +3065,7 @@ POSTXML;
 
             $plan = Plan::where('uid', $request->plan)->first();
             $user = User::where('uid', $request->user)->first();
+            $this->actorMustBe($user);
 
             if ( ! $plan) {
                 return redirect()->route('user.home')->with([
@@ -3322,6 +3204,7 @@ POSTXML;
 
         public function authorizeNetRegister(User $user, Request $request): RedirectResponse
         {
+            $this->actorMustBe($user);
 
             $plan = Plan::where('uid', $request->plan)->first();
 
@@ -3784,6 +3667,7 @@ POSTXML;
 
         public function vodacommpesaRegister(User $user, Request $request): RedirectResponse
         {
+            $this->actorMustBe($user);
 
             $plan = Plan::where('uid', $request->plan)->first();
 
@@ -4176,7 +4060,14 @@ POSTXML;
          */
         public function impersonate(User $user): mixed
         {
-            return $this->account->impersonate($user);
+            try {
+                return $this->account->impersonate($user);
+            } catch (GeneralException $exception) {
+                return redirect()->route('user.home')->with([
+                    'status'  => 'error',
+                    'message' => $exception->getMessage(),
+                ]);
+            }
 
         }
 

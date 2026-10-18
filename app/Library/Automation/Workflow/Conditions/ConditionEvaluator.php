@@ -45,6 +45,9 @@ class ConditionEvaluator
             ConditionOperator::Before => $this->compareDates($value, $operand, 'before'),
             ConditionOperator::After => $this->compareDates($value, $operand, 'after'),
             ConditionOperator::OnDate => $this->compareDates($value, $operand, 'on'),
+
+            ConditionOperator::GreaterThan => $this->compareNumbers($value, $operand, 'greater'),
+            ConditionOperator::LessThan => $this->compareNumbers($value, $operand, 'less'),
         };
     }
 
@@ -59,11 +62,21 @@ class ConditionEvaluator
             return false;
         }
 
+        if (is_array($value)) {
+            return $value === [];
+        }
+
         return trim((string) $value) === '';
     }
 
     private function equals(mixed $value, mixed $operand): bool
     {
+        // A numeric custom field reads as a float: compare as numbers, never as
+        // truncated integers (180.5 is not 180).
+        if (is_float($value)) {
+            return is_numeric($operand) && abs($value - (float) $operand) < 1e-9;
+        }
+
         // A reference subject compares as an integer id, so "12" and 12 are the
         // same group rather than two different ones.
         if (is_int($value) || (is_numeric($value) && is_numeric($operand) && ! is_string($value))) {
@@ -87,7 +100,22 @@ class ConditionEvaluator
             return false;
         }
 
+        if (is_array($value)) {
+            // A multi-select custom field: "includes" one of its stored options.
+            return in_array($needle, array_map(fn ($item): string => $this->normalize($item), $value), true);
+        }
+
         return str_contains($this->normalize($value), $needle);
+    }
+
+    /** An unreadable number is never greater or less than anything. */
+    private function compareNumbers(mixed $value, mixed $operand, string $direction): bool
+    {
+        if (is_bool($value) || ! is_numeric($value) || is_bool($operand) || ! is_numeric($operand)) {
+            return false;
+        }
+
+        return $direction === 'greater' ? (float) $value > (float) $operand : (float) $value < (float) $operand;
     }
 
     private function normalize(mixed $value): string

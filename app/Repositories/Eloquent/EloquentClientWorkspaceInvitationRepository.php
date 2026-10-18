@@ -40,6 +40,19 @@ class EloquentClientWorkspaceInvitationRepository extends EloquentBaseRepository
         return $this->query()->where('uid', $uid)->first();
     }
 
+    public function pendingForAgencyWorkspace(int $agencyWorkspaceId, int $limit = 25): \Illuminate\Support\Collection
+    {
+        return $this->query()
+            ->where('agency_workspace_id', $agencyWorkspaceId)
+            ->where('status', ClientInvitationStatus::Pending->value)
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->orderByDesc('id')
+            ->limit(max(1, $limit))
+            ->get();
+    }
+
     public function findByUidForUpdate(string $uid): ?ClientWorkspaceInvitation
     {
         return $this->query()->where('uid', $uid)->lockForUpdate()->first();

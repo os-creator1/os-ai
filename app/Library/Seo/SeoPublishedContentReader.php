@@ -20,7 +20,9 @@ use App\Models\WebsiteRevision;
  * draft pages, so what SEO reports is exactly what the public site serves.
  *
  * Constant cost: two queries (the Business's Website, then its published
- * revision), independent of page count.
+ * revision), independent of page count. hasActivePrimaryDomain() is a separate,
+ * explicit two-query read for the callers (Overview, Website check) that report
+ * whether search engines can find the site.
  *
  * Returns null when the Business has no published Website — a Website that
  * is a draft, archived, or has no published revision is "not published".
@@ -121,6 +123,22 @@ final class SeoPublishedContentReader
             }
         }
 
-        return new SeoPublishedContent($websiteId, $revisionId, $pages, $assets);
+        $website = is_array($snapshot['website'] ?? null) ? $snapshot['website'] : [];
+
+        return new SeoPublishedContent($websiteId, $revisionId, $pages, $assets, trim((string) ($website['name'] ?? '')));
+    }
+
+    /**
+     * Whether the Website has an ACTIVE PRIMARY custom domain — asked of
+     * Website::activePrimaryDomain(), the same canonical-address authority the
+     * public renderer uses, so SEO never has its own idea of "has a domain".
+     * It is what separates a platform-path site (always noindex) from one
+     * search engines may list. Read-only: two queries, whatever the page count.
+     */
+    public function hasActivePrimaryDomain(int $websiteId): bool
+    {
+        $website = Website::query()->whereKey($websiteId)->first(['id']);
+
+        return $website?->activePrimaryDomain() !== null;
     }
 }

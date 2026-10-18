@@ -15,7 +15,9 @@ use Illuminate\Support\Str;
  * `UPDATED_AT = null` mirrors `website_revisions`: the row is written once,
  * complete, and never edited. Re-auditing the same revision is prevented by
  * the table's `unique(website_revision_id, rule_set_version)`, not by an
- * update.
+ * update. The one exception is a FAILED run (a snapshot that could not be
+ * read): "Check again" completes that same row in place, because the unique
+ * key leaves no room for a second run of the revision.
  */
 class SeoAuditRun extends Model
 {

@@ -212,6 +212,48 @@ class SeoReviewsHttpTest extends TestCase
         $this->assertSame('declined', $second->fresh()->status->value);
     }
 
+    public function test_the_redesigned_page_shows_summary_tiles_status_and_the_right_actions_per_location(): void
+    {
+        [, $business, $workspace, $location] = $this->tenant();
+        $linked = $this->reviewLocation($business, 'Linked Branch');
+        $this->makeReviewLink($business, $linked, 'https://g.page/r/abc/review');
+        $this->makeReviewRequest($business, $linked);
+
+        $html = $this->page($workspace, $business);
+
+        // Summary tiles are derived from the sections already read.
+        foreach (['summary-with-link', 'summary-missing-link', 'summary-requests', 'summary-last-request'] as $tile) {
+            $this->assertStringContainsString('data-role="' . $tile . '"', $html);
+        }
+        $this->assertStringContainsString('data-role="record-request-open"', $html, 'A manager can record a request from the header.');
+
+        // One empty state (no link) and one ready state (link) with copy + open.
+        $this->assertSame(1, substr_count($html, 'data-role="review-link-empty"'));
+        $this->assertSame(1, substr_count($html, 'data-role="copy-link"'));
+        $this->assertSame(1, substr_count($html, 'data-role="review-link-url"'));
+        $this->assertStringContainsString('data-copy-link="https://g.page/r/abc/review"', $html);
+        $this->assertSame(2, substr_count($html, 'data-role="review-link-status"'));
+        $this->assertStringContainsString('Needs a review link', $html);
+        $this->assertMatchesRegularExpression('/data-role="review-link-status"[^>]*>\s*(?:<[^>]+>\s*)*Ready/', $html);
+        // The empty-state Location has no requests yet.
+        $this->assertSame(0, substr_count($html, 'data-role="requests-empty"'));
+    }
+
+    public function test_a_reader_without_manage_seo_sees_state_but_no_forms_or_jump_button(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $this->reviewLocation($business, 'Read Only Branch');
+        $this->authenticateAsSeoCustomer($customer, ['view_seo', 'view_google_business_profile', 'website']);
+
+        $html = $this->page($workspace, $business);
+
+        $this->assertStringContainsString('data-role="review-link-none"', $html);
+        $this->assertStringContainsString('Someone who manages SEO can add the link', $html);
+        foreach (['data-role="link-form"', 'data-role="request-form"', 'record-request-open'] as $control) {
+            $this->assertStringNotContainsString($control, $html);
+        }
+    }
+
     public function test_the_page_shows_a_plain_count_and_no_target_or_ranking(): void
     {
         [, $business, $workspace, $location] = $this->tenant();
@@ -220,7 +262,7 @@ class SeoReviewsHttpTest extends TestCase
 
         $html = $this->page($workspace, $business);
 
-        $this->assertStringContainsString('Requests recorded: 2', $html);
+        $this->assertStringContainsString('Requests recorded 2 ', preg_replace('/\s+/', ' ', strip_tags((string) (preg_match('/data-role="summary-requests">(.*?)<\/div>/s', $html, $m) ? $m[1] : ''))) . ' ');
         // Investigated: a bare strip_tags($html) over the FULL page (shell
         // included) false-positived on the customer shell's own generic
         // global-search script (`event.target.closest(...)`,
@@ -231,7 +273,9 @@ class SeoReviewsHttpTest extends TestCase
         // technique DashboardInvoiceScopeTest::mainText() already uses —
         // this is the actual contract check: no gating/quota/ranking copy
         // in what the Reviews page itself renders.
-        $this->assertDoesNotMatchRegularExpression('/\b(target|goal|quota|leaderboard|ranking|of \d+ )\b/i', $this->mainText($html));
+        // The "1 of 1" in the Locations-with-a-review-link card is a plain count of Locations, not progress toward anything.
+        $text = (string) preg_replace('/Locations with a review link \d+ of \d+/', 'Locations with a review link', $this->mainText($html));
+        $this->assertDoesNotMatchRegularExpression('/\b(target|goal|quota|leaderboard|ranking|of \d+ )\b/i', $text);
     }
 
     private function mainHtml(string $html): string
@@ -274,7 +318,7 @@ class SeoReviewsHttpTest extends TestCase
 
         $this->assertSame(1, substr_count($html, 'data-section="review-location"'));
         $this->assertSame(1, substr_count($html, 'data-role="review-request"'));
-        $this->assertStringContainsString('Requests recorded: 1', $html, 'Counted only over the accessible Location.');
+        $this->assertStringContainsString('Requests recorded 1 ', preg_replace('/\s+/', ' ', strip_tags((string) (preg_match('/data-role="summary-requests">(.*?)<\/div>/s', $html, $m) ? $m[1] : ''))) . ' ', 'Counted only over the accessible Location.');
         foreach (['Hidden Branch', 'Hidden Person', $hidden->uid, 'hidden-branch/review', $hiddenContact->uid] as $secret) {
             $this->assertStringNotContainsString($secret, $html);
         }

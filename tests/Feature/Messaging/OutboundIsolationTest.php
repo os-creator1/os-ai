@@ -194,7 +194,10 @@ class OutboundIsolationTest extends TestCase
         );
 
         $this->assertSame(
-            ['business', 'toNumber', 'body', 'operationKey', 'mediaUrls', 'quantity'],
+            // `location` is a RESTRICTION (the Location a send must provably speak for), never a
+            // way to choose a sender: the dispatcher still resolves identity and number itself
+            // and refuses when it cannot show the number serves that Location.
+            ['business', 'toNumber', 'body', 'operationKey', 'mediaUrls', 'quantity', 'location'],
             $parameters,
         );
 

@@ -146,6 +146,343 @@ a:focus-visible {
     box-shadow: none;
 }
 
+// Top bar — notifications and account (components/topbar-notifications and
+// components/topbar-account, rendered by panels.navbar for every portal and
+// layout). ONE component with two appearances: it reads the bar it sits on
+// instead of knowing its colour. A coloured bar (any navbarColor `bg-*`, the
+// same test the base navbar styles use) or the dark skin gets the inverse
+// appearance; the default white bar gets the light one. The appearance is a
+// handful of custom properties, so every rule below is written once.
+.header-navbar .mg-topbar {
+    --mg-topbar-fg: var(--color-text-primary);
+    --mg-topbar-btn-bg: var(--color-sidebar);
+    --mg-topbar-btn-bg-hover: var(--color-border);
+    --mg-topbar-focus: var(--color-focus-ring);
+    --mg-topbar-avatar-bg: var(--color-primary);
+    --mg-topbar-avatar-fg: var(--color-button-text);
+    --mg-topbar-dot: var(--color-status-danger);
+    --mg-topbar-dot-ring: var(--color-surface);
+    --mg-topbar-control: 2.25rem;
+    --mg-topbar-avatar: 1.75rem;
+
+    gap: var(--space-2);
+}
+
+.header-navbar[class*='bg-'] .mg-topbar,
+.dark-layout .header-navbar .mg-topbar {
+    --mg-topbar-fg: var(--color-text-inverse);
+    --mg-topbar-btn-bg: color-mix(in srgb, var(--color-text-inverse) 16%, transparent);
+    --mg-topbar-btn-bg-hover: color-mix(in srgb, var(--color-text-inverse) 26%, transparent);
+    --mg-topbar-focus: var(--color-text-inverse);
+    --mg-topbar-avatar-bg: var(--color-text-inverse);
+    --mg-topbar-avatar-fg: var(--color-primary);
+    --mg-topbar-dot: var(--color-text-inverse);
+    --mg-topbar-dot-ring: transparent;
+}
+
+// Touch screens get a full-size tap target; the look stays compact.
+@media (pointer: coarse) {
+    .header-navbar .mg-topbar {
+        --mg-topbar-control: 2.75rem;
+        --mg-topbar-avatar: 2rem;
+    }
+}
+
+// The row never wraps (Bootstrap's .nav would): the bell and the account
+// keep their size, and on a narrow bar the other items around them — the
+// Business search field, the horizontal layout's switcher — give way first.
+.header-navbar .navbar-container {
+    min-width: 0;
+
+    .bookmark-wrapper,
+    .bookmark-wrapper > [data-role='context-switcher'] {
+        min-width: 0;
+    }
+
+    .mg-topbar {
+        flex-wrap: nowrap;
+        min-width: 0;
+
+        > li {
+            flex-shrink: 0;
+        }
+
+        // At its narrowest the search field is an icon-sized pill, still usable.
+        > [data-role='global-search'] {
+            flex: 0 1 auto;
+            min-width: 2.5rem;
+            margin-right: 0 !important;
+
+            [data-role='search-field'] {
+                max-width: 100%;
+                margin-right: 0 !important;
+            }
+
+            input {
+                min-width: 0;
+            }
+        }
+
+        > .mg-topbar-item {
+            display: flex;
+            align-items: center;
+            margin: 0;
+        }
+
+        // The account menu hangs from its own button at every width (the base
+        // navbar makes phone dropdowns static and full-width).
+        > .mg-account {
+            position: relative;
+        }
+    }
+}
+
+.mg-topbar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    height: var(--mg-topbar-control);
+    min-width: var(--mg-topbar-control);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-full);
+    background-color: var(--mg-topbar-btn-bg);
+    color: var(--mg-topbar-fg);
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color var(--duration-base) var(--ease-standard);
+
+    &:hover,
+    &[aria-expanded='true'] {
+        background-color: var(--mg-topbar-btn-bg-hover);
+    }
+
+    &:focus {
+        outline: none;
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--mg-topbar-focus);
+        outline-offset: 2px;
+    }
+
+    .ds-icon {
+        flex-shrink: 0;
+        color: inherit;
+    }
+}
+
+.mg-topbar-icon-btn {
+    position: relative;
+    width: var(--mg-topbar-control);
+}
+
+.mg-topbar-dot {
+    position: absolute;
+    top: 22%;
+    right: 22%;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: var(--radius-full);
+    background-color: var(--mg-topbar-dot);
+    box-shadow: 0 0 0 2px var(--mg-topbar-dot-ring);
+    pointer-events: none;
+}
+
+// The avatar: initials (or a photo) in a circle, coloured by the bar.
+.mg-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: var(--mg-topbar-avatar, 1.75rem);
+    height: var(--mg-topbar-avatar, 1.75rem);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    background-color: var(--mg-topbar-avatar-bg, var(--color-primary));
+    color: var(--mg-topbar-avatar-fg, var(--color-button-text));
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+}
+
+.mg-avatar-photo {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.mg-avatar-initials {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+// The account button: avatar, name (truncated, never wrapping), chevron.
+.mg-account-trigger {
+    justify-content: flex-start;
+    max-width: 16rem;
+    padding: 0 var(--space-3) 0 calc((var(--mg-topbar-control) - var(--mg-topbar-avatar)) / 2);
+}
+
+.mg-account-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.mg-account-chevron {
+    opacity: 0.8;
+    transition: transform var(--duration-base) var(--ease-standard);
+
+    [aria-expanded='true'] > & {
+        transform: rotate(180deg);
+    }
+}
+
+// The account menu: a compact white panel right-aligned under the button.
+// Selectors carry the base navbar's own specificity so its legacy
+// full-width and fixed-offset dropdown rules never apply here.
+.header-navbar .navbar-container .mg-topbar .mg-account .mg-account-menu {
+    --mg-topbar-avatar: 2rem;
+    --mg-topbar-avatar-bg: var(--color-primary);
+    --mg-topbar-avatar-fg: var(--color-button-text);
+
+    position: absolute;
+    top: calc(100% + var(--space-2)) !important;
+    right: 0;
+    left: auto !important;
+    width: max-content !important;
+    min-width: 13.5rem;
+    max-width: min(18rem, calc(100vw - 2 * var(--space-4)));
+    margin: 0;
+    padding: var(--space-2);
+    border: 1px solid var(--color-border-neutral);
+    border-radius: var(--radius-lg);
+    background-color: var(--color-dropdown);
+    box-shadow: var(--shadow-lg);
+    overflow: visible;
+
+    .dropdown-divider {
+        margin: var(--space-2) calc(-1 * var(--space-2));
+        border-color: var(--color-border-neutral);
+    }
+
+    .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        width: 100%;
+        padding: var(--space-2) var(--space-3);
+        border-radius: var(--radius-sm);
+        color: var(--color-text-primary);
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+
+        .ds-icon {
+            width: 16px;
+            height: 16px;
+            vertical-align: middle;
+            color: var(--color-icon-muted) !important;
+        }
+
+        &:hover .ds-icon,
+        &:focus .ds-icon {
+            color: inherit !important;
+        }
+
+        &:focus-visible {
+            outline: 2px solid var(--color-focus-ring);
+            outline-offset: -2px;
+        }
+    }
+
+    .dropdown-item.mg-account-signout,
+    .dropdown-item.mg-account-signout:hover,
+    .dropdown-item.mg-account-signout:focus {
+        color: var(--color-status-danger) !important;
+
+        .ds-icon {
+            color: var(--color-status-danger) !important;
+        }
+    }
+}
+
+.mg-account-menu-identity {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+}
+
+.mg-account-menu-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-text-primary);
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.mg-account-signout-form {
+    margin: 0;
+}
+
+// Narrow screens: the bell and avatar always stay; the name gives way first.
+@media (max-width: 991.98px) {
+    .mg-account-trigger {
+        max-width: 12rem;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .header-navbar .mg-topbar {
+        gap: var(--space-1);
+    }
+
+    // Visually hidden, never removed: it stays the button's accessible name.
+    .mg-account-name {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+    }
+
+    .mg-account-trigger {
+        gap: var(--space-1);
+        padding-right: var(--space-2);
+    }
+}
+
+// The very narrowest phones: the avatar alone is the account button.
+@media (max-width: 359.98px) {
+    .mg-account-chevron {
+        display: none;
+    }
+
+    .mg-account-trigger {
+        width: var(--mg-topbar-control);
+        padding: 0;
+        justify-content: center;
+    }
+}
+
 .footer {
     background-color: var(--color-surface-secondary);
     border-top: 1px solid var(--color-border-neutral);

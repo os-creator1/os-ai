@@ -667,7 +667,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
         $activity = $snapshot->band(DashboardSnapshot::BAND_ACTIVITY);
 
         $this->assertSame(
-            ['new_contacts', 'new_conversations', 'messages_received'],
+            ['new_contacts', 'new_conversations', 'appointments_booked', 'messages_received'],
             array_map(fn ($headline) => $headline->key, $headlines['items']),
             'Business performance still carries exactly its three figures.',
         );
@@ -675,7 +675,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
         $this->assertSame([['key' => 'new_contacts', 'text' => '2 new contacts'], ['key' => 'new_conversations', 'text' => '1 new conversation']], $activity['items']);
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('data-role="chart-new-contacts"', $html, 'The chart is still deferred, not loaded here.');
+        $this->assertStringContainsString('data-role="home-chart"', $html, 'The chart is still deferred, not loaded here.');
         $this->assertStringContainsString('data-role="chart-placeholder"', $html);
     }
 

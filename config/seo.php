@@ -23,6 +23,17 @@
 
 return [
 
+    'citations' => [
+        // Citations V1 — a manually tracked listing that was last checked
+        // longer ago than this is flagged "Review recommended" (in-product
+        // reminder only; nothing is sent). Default 90 days, range 7-365.
+        'review_after_days' => env('SEO_CITATIONS_REVIEW_AFTER_DAYS'),
+
+        // Citations V1 — custom directories one Business may keep. Default
+        // and ceiling 25: a safety ceiling, not a plan limit.
+        'max_custom_directories' => env('SEO_CITATIONS_MAX_CUSTOM_DIRECTORIES'),
+    ],
+
     'keywords' => [
         // Contract §8.4 — 50 active keywords per Business, all tiers.
         // Ceiling is also 50: config may lower it, never raise it.
@@ -74,6 +85,117 @@ return [
         // correctness rests on the (website_revision_id, rule_set_version)
         // UNIQUE key, never on this.
         'manual_rerun_cooldown_seconds' => env('SEO_AUDIT_MANUAL_RERUN_COOLDOWN_SECONDS'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rank tracking (SEO KEYWORD RANK TRACKING V1) — PAID provider safety model
+    |--------------------------------------------------------------------------
+    |
+    | Money is always integer micro-USD (1 USD = 1_000_000) — never a float.
+    | Every value is read through SeoConfig, which FAILS CLOSED: a malformed,
+    | absent, zero-or-negative or out-of-range value is ignored and the
+    | documented default is used. A lower value may REDUCE a limit; nothing
+    | here can raise a limit above its documented hard maximum, and a bad
+    | value can never switch a safeguard off. The master switch defaults OFF:
+    | no provider call is possible until it is explicitly enabled.
+    |
+    | These are platform-cost guards, not customer pricing.
+    */
+    'rank_tracking' => [
+        'enabled' => env('SEO_RANK_TRACKING_ENABLED', false),
+
+        'dataforseo' => [
+            'login' => env('DATAFORSEO_LOGIN'),
+            'password' => env('DATAFORSEO_PASSWORD'),
+            'base_url' => env('DATAFORSEO_BASE_URL', 'https://api.dataforseo.com'),
+        ],
+
+        // Provider cost FACTS (not business logic): micro-USD per 10-result
+        // SERP page on the Standard queue ($0.0006). Used only to ESTIMATE
+        // the reservation; the provider-reported cost reconciles it.
+        'cost_per_page_micros' => env('SEO_RANK_COST_PER_PAGE_MICROS'),
+
+        // Result depths. Lower only.
+        'organic_depth' => env('SEO_RANK_ORGANIC_DEPTH'),
+        'local_depth' => env('SEO_RANK_LOCAL_DEPTH'),
+
+        // Plan tiers. Tracked targets and caps can only be lowered; cadence
+        // can only be made slower. Keys are entitlement tiers, not plan names
+        // scattered through SEO code.
+        'tiers' => [
+            'trial' => [
+                'tracked_targets' => env('SEO_RANK_TRIAL_TARGETS'),
+                'cadence_days' => env('SEO_RANK_TRIAL_CADENCE_DAYS'),
+                'monthly_cap_micros' => env('SEO_RANK_TRIAL_CAP_MICROS'),
+            ],
+            'core' => [
+                'tracked_targets' => env('SEO_RANK_CORE_TARGETS'),
+                'cadence_days' => env('SEO_RANK_CORE_CADENCE_DAYS'),
+                'monthly_cap_micros' => env('SEO_RANK_CORE_CAP_MICROS'),
+            ],
+            'growth' => [
+                'tracked_targets' => env('SEO_RANK_GROWTH_TARGETS'),
+                'cadence_days' => env('SEO_RANK_GROWTH_CADENCE_DAYS'),
+                'monthly_cap_micros' => env('SEO_RANK_GROWTH_CAP_MICROS'),
+            ],
+        ],
+
+        // Hours a target must wait between paid MANUAL refreshes. Longer only.
+        'manual_cooldown_hours' => env('SEO_RANK_MANUAL_COOLDOWN_HOURS'),
+
+        // Aggregate ceilings (micro-USD). Lower only.
+        'workspace_monthly_cap_micros' => env('SEO_RANK_WORKSPACE_MONTHLY_CAP_MICROS'),
+        'global_daily_cap_micros' => env('SEO_RANK_GLOBAL_DAILY_CAP_MICROS'),
+        'global_monthly_cap_micros' => env('SEO_RANK_GLOBAL_MONTHLY_CAP_MICROS'),
+
+        // Retention of observations, in months.
+        'retention_months' => env('SEO_RANK_RETENTION_MONTHS'),
+
+        // Freshness window, in days: a position whose last completed check
+        // is older than this is shown with "may be out of date", and Growth
+        // ignores it. Display/judgement only: it never changes what is
+        // scheduled or spent. Default 7, range 2-90.
+        'stale_after_days' => env('SEO_RANK_STALE_AFTER_DAYS'),
+
+        // Bounded queue behaviour.
+        'max_submit_attempts' => env('SEO_RANK_MAX_SUBMIT_ATTEMPTS'),
+        'max_poll_hours' => env('SEO_RANK_MAX_POLL_HOURS'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Content Autopilot (Contract 25)
+    |--------------------------------------------------------------------------
+    |
+    | Product policy for the Autopilot, NOT owner settings. `max_new_articles_per_month` is a CEILING, never a quota or a
+    | target: a month may legitimately publish zero. The AI spend ceiling lives in config/ai.php
+    | (`business_category_ceilings.content_autopilot`), not here.
+    |
+    */
+    'content_autopilot' => [
+        'max_new_articles_per_month' => (int) env('SEO_AUTOPILOT_MAX_NEW_ARTICLES_PER_MONTH', 4),
+        // Anti-burst cadence: a new article is started, and a self-publishing one scheduled, at least this many days after
+        // the previous one. Self-published articles land on weekday mornings in the Business's own time zone.
+        'min_days_between_articles' => (int) env('SEO_AUTOPILOT_MIN_DAYS_BETWEEN_ARTICLES', 5),
+        // Stop writing while this many drafts already wait for the owner (or for their slot).
+        'max_awaiting_approval' => (int) env('SEO_AUTOPILOT_MAX_AWAITING_APPROVAL', 2),
+        // Maintenance (weekly): an existing article is reviewed at most this often, and an outcome has its own cool-down.
+        'maintenance_review_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_REVIEW_DAYS', 60),
+        'maintenance_rewrite_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_REWRITE_DAYS', 90),
+        'maintenance_proposal_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_PROPOSAL_DAYS', 180),
+        // The only AI spend maintenance has: at most this many article rewrites per Business per month (a ceiling, never a target).
+        'maintenance_max_rewrites_per_month' => (int) env('SEO_AUTOPILOT_MAINTENANCE_MAX_REWRITES', 1),
+        'maintenance_archive_after_days' => (int) env('SEO_AUTOPILOT_MAINTENANCE_ARCHIVE_AFTER_DAYS', 540),
+        'maintenance_max_reviews_per_run' => (int) env('SEO_AUTOPILOT_MAINTENANCE_MAX_REVIEWS', 25),
+        // Deterministic opportunity score bands (0-100). >= eligible: may be written. hold..eligible: wait or ask for one
+        // missing fact. Below hold: skipped.
+        'eligible_score' => (int) env('SEO_AUTOPILOT_ELIGIBLE_SCORE', 70),
+        'hold_score' => (int) env('SEO_AUTOPILOT_HOLD_SCORE', 45),
+        // A topic whose draft was rejected or held is not tried again for this many days.
+        'retry_cooldown_days' => (int) env('SEO_AUTOPILOT_RETRY_COOLDOWN_DAYS', 90),
+        // An identical "nothing worth doing" evaluation is not recorded again within this many days.
+        'idle_record_days' => (int) env('SEO_AUTOPILOT_IDLE_RECORD_DAYS', 7),
     ],
 
 ];

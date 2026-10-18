@@ -66,8 +66,22 @@ class BusinessDocument extends Model
         'access_token_rotated_at' => 'datetime',
         'link_delivered_at' => 'datetime',
         'link_delivery_failed_at' => 'datetime',
+        'sms_link_delivered_at' => 'datetime',
+        'sms_link_delivery_failed_at' => 'datetime',
         'expiry_reminder_last_sent_at' => 'datetime',
     ];
+
+    /**
+     * Clear every per-channel delivery marker of the CURRENT link (17B §7).
+     * Called whenever the link token rotates; the caller saves.
+     */
+    public function clearLinkDeliveryOutcome(): void
+    {
+        $this->link_delivered_at = null;
+        $this->link_delivery_failed_at = null;
+        $this->sms_link_delivered_at = null;
+        $this->sms_link_delivery_failed_at = null;
+    }
 
     public function generateUid(): void
     {

@@ -27,6 +27,10 @@ class AgencyProspectCampaignMember extends Model
         'proposed_slot',
         'last_provider_message_id',
         'soft_negative_count',
+        'chat_box_id',
+        'ai_paused_at',
+        'ai_paused_by_user_id',
+        'sequence_sent_ids',
     ];
 
     protected $casts = [
@@ -39,6 +43,8 @@ class AgencyProspectCampaignMember extends Model
         'followup_sent_at' => 'datetime',
         'followup_cancelled_at' => 'datetime',
         'soft_negative_count' => 'integer',
+        'ai_paused_at' => 'datetime',
+        'sequence_sent_ids' => 'array',
     ];
 
     public function workspace(): BelongsTo
@@ -54,6 +60,11 @@ class AgencyProspectCampaignMember extends Model
     public function prospect(): BelongsTo
     {
         return $this->belongsTo(AgencyProspect::class, 'prospect_id');
+    }
+
+    public function isAiPaused(): bool
+    {
+        return $this->ai_paused_at !== null;
     }
 
     public function messages(): HasMany

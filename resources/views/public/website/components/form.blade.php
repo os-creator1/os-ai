@@ -7,7 +7,7 @@
 @if ($websiteForm)
     <section class="website-section website-form">
         @if (! empty($data['heading']))
-            <h2>{{ $data['heading'] }}</h2>
+            <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
         @endif
 
         @if ($isPreview ?? false)
@@ -35,8 +35,13 @@
             @if (session('status') === 'success' && ! empty(session('message')))
                 <p class="website-form-success" role="status">{{ session('message') }}</p>
             @endif
+            @if (isset($errors) && $errors->any())
+                <p class="website-form-error" role="alert">{{ $errors->first() }}</p>
+            @endif
             <form method="POST" action="{{ route('public.website.form.submit', [$website->public_id, $websiteForm['uid'], $pageUid]) }}" class="website-form-fields">
                 @csrf
+                {{-- One token per page render: the same token posted again (double-click, browser or network retry) is the SAME submission. --}}
+                <input type="hidden" name="{{ \App\Library\Website\WebsiteFormSubmissionService::TOKEN_FIELD }}" value="{{ \Illuminate\Support\Str::uuid() }}">
                 <input type="text" name="{{ \App\Library\Website\WebsiteFormSubmissionService::HONEYPOT_FIELD }}" value="" tabindex="-1" autocomplete="off" class="website-form-honeypot" aria-hidden="true">
                 @foreach ($websiteForm['fields'] as $field)
                     <div class="website-form-field">
@@ -49,6 +54,10 @@
                     </div>
                 @endforeach
                 <button type="submit" class="website-btn website-btn-primary">{{ $websiteForm['submit_label'] }}</button>
+                @php($formPrivacyUrl = \App\Library\Website\Design\WebsiteLegalLinks::fromTheme($websiteMeta['theme'] ?? [])['privacy'])
+                @if ($formPrivacyUrl)
+                    <p class="website-form-privacy"><a href="{{ $formPrivacyUrl }}" rel="noopener" data-testid="form-privacy-link">Privacy notice</a></p>
+                @endif
             </form>
         @endif
     </section>

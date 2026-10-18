@@ -59,7 +59,14 @@ class ManualEnrollmentTriggerSource implements TriggerSource
             return null;
         }
 
-        $enrollment = $this->enrollments->enroll($workflow, $contact, $requestUid);
+        // The selected contact's own Location. A Location-bound workflow refuses a
+        // contact of any other Location (or none), exactly as every trigger does.
+        $enrollment = $this->enrollments->enroll(
+            $workflow,
+            $contact,
+            $requestUid,
+            locationId: $contact->location_id === null ? null : (int) $contact->location_id,
+        );
 
         if ($enrollment !== null) {
             AdvanceWorkflowEnrollment::dispatch((int) $enrollment->getKey());

@@ -19,8 +19,9 @@
     use App\Console\Commands\SMPPDLRReports;
     use App\Console\Commands\UpdateImartGroupDLR;
     use App\Console\Commands\VisionUpInboundMessage;
-    use App\Console\Commands\WarmDashboardCache;
     use App\Jobs\Ai\ExpireStaleAiReservations;
+    use App\Jobs\GoogleAds\SweepGoogleAdsSyncs;
+    use App\Jobs\MetaAds\SweepMetaAdsSyncs;
     use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
     use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
     use App\Jobs\Messaging\RefreshPendingCampaignAssignments;
@@ -44,6 +45,7 @@
          */
         protected $commands = [
             CheckSubscription::class,
+            \App\Console\Commands\PurgeAssistantConversations::class,
             CheckKeywords::class,
             CheckPhoneNumbers::class,
             CheckSenderID::class,
@@ -63,7 +65,7 @@
             CleanDatabase::class,
             DiafaanDLR::class,
             CleanUpJobMonitors::class,
-            WarmDashboardCache::class,
+            \App\Console\Commands\Outreach\DispatchDueOutreachFollowUps::class,
         ];
 
         /**
@@ -95,6 +97,9 @@
             // so withoutOverlapping() is protection against a slow run
             // stacking on the next tick, not a correctness requirement.
             $schedule->command('workspaces:advance-account-lifecycle')->hourly()->withoutOverlapping();
+            // Platform Owner account deletion: retry provider cancellations and
+            // other prerequisites of unfinished closures. Idempotent and claim-guarded.
+            $schedule->command('platform:advance-account-closures')->everyTenMinutes()->withoutOverlapping();
             // Customer Experience Slice 3 §4.2 — retention/disposal for the
             // bounded webhook rejection audit.
             $schedule->command('messaging:purge-webhook-rejections')->daily();
@@ -111,8 +116,9 @@
             // dominant source of provider request volume.
             $schedule->command('calendar:sync-external-connections')->everyFifteenMinutes()->withoutOverlapping();
             //   $schedule->command('imartgroup:dlr')->hourly();
-            $schedule->command('dashboard:warm')->hourly();
             $schedule->command('keywords:check')->daily();
+            // Ask MotionGrove retention (config('assistant.retention_days')): idempotent, safe to overlap with customer deletes.
+            $schedule->command('assistant:purge-expired')->daily()->withoutOverlapping();
             $schedule->command('numbers:check')->daily();
             $schedule->command('senderid:check')->daily();
             $schedule->command('user:preferences')->daily()->between('10:00', '18:00');
@@ -136,6 +142,17 @@
             // cadence, and the command is bounded and idempotent by the
             // enrollment claim, so an overlapping tick enrolls nobody twice.
             $schedule->command('automation:workflows-date-sweep')->everyFiveMinutes();
+
+            // Agency Outreach V1 (contract §11) — re-dispatches follow-ups that are due and were
+            // neither sent nor cancelled, so a lost delayed job still gets its one nudge. Idempotent
+            // by the ledger key claimed under the member lock.
+            $schedule->command('outreach:dispatch-due-followups')->everyFiveMinutes();
+
+            // Booking Notifications V1 — queues due booking confirmations and reminders.
+            // Every minute: a reminder's resolution is the minute. Bounded by --limit and
+            // idempotent by the appointment_notifications ledger, so an overlapping or
+            // repeated tick sends nothing twice.
+            $schedule->command('calendar:dispatch-due-reminders')->everyMinute();
             $schedule->command('app:clean-database')->monthly();
             // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
 
@@ -155,6 +172,15 @@
                 '--page=' . (int) config('opportunity.sweep_page', 100),
             ])->dailyAt('03:10')->withoutOverlapping();
 
+            // Growth Center — the daily full evaluation, after the Business
+            // Advisor sweep so profile gaps are settled first. Same contract:
+            // the command owns the engine-enabled no-op, is bounded by
+            // --limit/--page, and is idempotent per Business per day.
+            $schedule->command('growth:evaluate', [
+                '--limit=' . (int) config('growth.evaluation.sweep_limit', 500),
+                '--page=' . (int) config('growth.evaluation.sweep_page', 100),
+            ])->dailyAt('03:40')->withoutOverlapping();
+
             // Implementation Contract 17 §12.F — the three document sweeps.
             // Registered unconditionally for exactly the reason the snooze
             // sweep above is: each command owns the documents.enabled no-op,
@@ -164,6 +190,11 @@
             // overlapping tick expires, reminds or reconciles nothing twice.
             $schedule->command('documents:expire-due')->everyFifteenMinutes();
             $schedule->command('documents:dispatch-due-reminders')->hourly();
+            // Contract 17B §3/§7 — the one send-once balance payment request
+            // (fresh secure link) at the balance item's frozen due_at. Same
+            // flag-gated no-op in the command; durable per-item claim markers
+            // dedupe, withoutOverlapping only avoids two ticks doing the work.
+            $schedule->command('documents:dispatch-balance-requests')->hourly()->withoutOverlapping();
             $schedule->command('documents:reconcile-stale-payments')->everyFiveMinutes();
 
             // Implementation Contract 21 §10.2 — a downgrade takes effect at
@@ -174,6 +205,19 @@
             // extra day on a tier it cancelled. Bounded and idempotent, so an
             // overlapping tick applies nothing twice.
             $schedule->command('platform-subscriptions:apply-due-plan-changes')->hourly();
+
+            // Private Offers — release lapsed unpaid reservations and finish
+            // temporary-promotion schedules the provider has not yet been told
+            // about. Without it a promotion whose scheduling call failed would
+            // stay on its discounted price for ever.
+            $schedule->command('platform-offers:sweep')->everyFifteenMinutes()->withoutOverlapping();
+
+            // Customer Experience Slice 5 §12.2 — "alerts before thresholds".
+            // The command was built (and tested) but nothing ever ran it, so
+            // no billing contact was ever warned before a spending limit was
+            // reached. The once-per-period marker lives in UsageWalletManager,
+            // so an overlapping or repeated tick notifies nobody twice.
+            $schedule->command('usage:spending-threshold-alerts')->hourly()->withoutOverlapping();
 
             // Lane C §C7 — the same sweep for AGENCY SaaS client downgrades,
             // on the agencies' own connected accounts. Deliberately a separate
@@ -230,6 +274,53 @@
             // distribution". Manual refresh remains the primary mechanism.
             $schedule->job(new PurgeExpiredGoogleBusinessProfileMirrors())->hourly();
             $schedule->job(new SweepGoogleBusinessProfileRefreshes())->daily();
+
+            // Platform Automations: state-based triggers every 15 minutes, and the
+            // announcement lifecycle (publish due / expire lapsed) every minute.
+            $schedule->command('platform-automation:sweep')->everyFifteenMinutes()->withoutOverlapping();
+            $schedule->command('platform-announcements:sweep')->everyMinute()->withoutOverlapping();
+
+            // SEO Keyword Rank Tracking V1 — paid provider pipeline. Registered
+            // unconditionally; each job owns its own fail-closed master switch
+            // (seo.rank_tracking.enabled, default OFF). The hourly tick only
+            // RESERVES budgeted runs; the five-minute sweep moves them along and
+            // can create no new spend; pruning is the 13-month retention.
+            $schedule->job(new \App\Jobs\Seo\ScheduleSeoRankChecks())->hourly()->withoutOverlapping();
+            $schedule->job(new \App\Jobs\Seo\ProcessSeoRankChecks())->everyFiveMinutes()->withoutOverlapping();
+            $schedule->job(new \App\Jobs\Seo\PruneSeoRankObservations())->dailyAt('03:40');
+            $schedule->command('seo:rank-sync-locations')->weeklyOn(1, '04:20')->withoutOverlapping();
+
+            // SEO Content Engine V1 — owner-scheduled articles go live at their time. publishDue()
+            // re-checks every article first (an article that no longer passes goes back to Draft), so
+            // a one-minute cadence only means "at the time they chose", never "publish whatever is waiting".
+            $schedule->command('articles:publish-due')->everyMinute()->withoutOverlapping();
+
+            // Content Autopilot (Contract 25) - one daily, off-peak sweep that only QUEUES a per-Business job (spread over
+            // several hours so no two Businesses ever hit the writer together). The sweep itself is deterministic and free;
+            // AI is reached only from a queued writer job, and only after the Business's budget is checked.
+            $schedule->command('content:autopilot-tick')->dailyAt('03:30')->withoutOverlapping();
+
+            // Content Autopilot - the weekly review of existing articles (related links, a rare rewrite when facts changed, owner
+            // suggestions). Only queues per-Business jobs; most reviews change nothing.
+            $schedule->command('content:autopilot-maintain')->weeklyOn(2, '04:10')->withoutOverlapping();
+
+            // Google Ads Module V1 contract §5 — the daily, staggered Ads read
+            // sync sweep. It only queues per-account jobs (deduplicated, behind
+            // the project circuit breaker); registered unconditionally like the
+            // GBP sweep and at a fixed off-peak time so it never coincides with
+            // the 00:00 daily jobs. withoutOverlapping() stops a slow sweep
+            // stacking on the next tick.
+            $schedule->job(new SweepGoogleAdsSyncs())->dailyAt('02:40')->withoutOverlapping();
+
+            // Meta Ads Module V1 (contract 24 §6) — the same shape for Meta,
+            // 30 minutes after Google's sweep so the two never overlap, and
+            // with its own call budget, breaker and quota.
+            $schedule->job(new SweepMetaAdsSyncs())->dailyAt('03:10')->withoutOverlapping();
+
+            // External Website Audit Mode V1 — queue the weekly re-check of every Business that keeps its
+            // existing website. It only queues jobs (one active crawl per Business, a per-run limit, the
+            // cadence from config/external_site_audit.php); the crawl itself runs on the queue.
+            $schedule->command('website:recrawl-external')->dailyAt('04:20')->withoutOverlapping();
 
             // PR #295 Correction Round 1, item 6 — the one canonical
             // mechanism that advances a submitted carrier registration.

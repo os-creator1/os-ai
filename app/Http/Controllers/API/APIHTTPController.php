@@ -32,7 +32,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -78,7 +78,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',

@@ -71,7 +71,14 @@ class ContactCreatedTriggerSource implements TriggerSource
             // The occurrence key is the contact id: a contact is created once,
             // so `once_ever` and `once_per_occurrence` agree, and a replayed
             // job composes the same key and loses the same claim.
-            $enrollment = $this->enrollments->enroll($workflow, $contact, (string) $contact->getKey());
+            // The Location is the new contact's own — never a "first" or "primary"
+            // fallback. None means no Location-bound workflow takes it.
+            $enrollment = $this->enrollments->enroll(
+                $workflow,
+                $contact,
+                (string) $contact->getKey(),
+                locationId: $contact->location_id === null ? null : (int) $contact->location_id,
+            );
 
             if ($enrollment === null) {
                 continue;

@@ -19,11 +19,11 @@
 
             <div class="col-12">
                 @if (session('flash_success'))
-                    <x-alert variant="success" icon="check-circle" class="mb-2">{{ session('flash_success') }}</x-alert>
+                    <x-alert :dismissible="true" variant="success" icon="check-circle" class="mb-2">{{ session('flash_success') }}</x-alert>
                 @endif
 
                 @if (session('flash_error'))
-                    <x-alert variant="danger" icon="alert-circle" class="mb-2">{{ session('flash_error') }}</x-alert>
+                    <x-alert :dismissible="true" variant="danger" icon="alert-circle" class="mb-2">{{ session('flash_error') }}</x-alert>
                 @endif
 
                 @if ($errors->any())

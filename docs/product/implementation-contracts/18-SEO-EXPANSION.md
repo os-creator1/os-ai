@@ -518,6 +518,29 @@ a documented one-directional SEO→GBP-library dependency).
 **GBP appears in Citations as a synthetic, read-only row** derived from the
 read model (§9.2) — never stored as a citation.
 
+**Citations dashboard (presentation only — no schema, route or write-path
+change).** The page renders **one Location at a time** (`?location=<uid>`, chosen
+only among the Locations `SeoCitationManager::page()` already filtered to the
+actor's access; an unknown, foreign or inaccessible uid is the usual 404), so NAP
+from different Locations is never combined. It shows: a canonical *Business
+information* card (read from the Business/Location, never copied into Citations);
+four summary cards that are counts of stored rows and of the read-time comparison
+only — *Listings tracked*, *Complete / linked*, *Needs attention*, and *NAP
+consistency* as `matched / compared` over fields where **both** a canonical and a
+recorded value exist (an unchecked field is never in the denominator and never a
+mismatch; no score, no visibility percentage); a *Needs attention* list that
+exists only when a real action does; and one row per tracked directory plus the
+synthetic Google row. Each directory row has a **display-only** state
+(`SeoCitationDisplayState`: Accurate · Listed · Needs attention · In progress ·
+Not started · Not applicable) derived from the user's own `status` plus the
+comparison; it is never persisted and never written back. Details and edits live
+in a drawer that posts to the one existing write route. The page says **"Manually
+tracked"** and never "synced", "live", "real-time" or "monitored"; only the Google
+row (connected / not linked / connection lost) reflects a real integration, via the
+GBP read model. **Superseded in part by Contract 23 (Citations V1 complete):** the
+directory catalog, niche recommendations, Business custom directories, the listing
+website column and the Platform Owner screens are specified there.
+
 **The platform never fetches `listing_url`** (GBP §31: no server-side fetching
 of user-supplied URLs). It is rendered as an `https`-validated link with
 `rel="noopener noreferrer nofollow"` only. Directory submission, claiming and
@@ -574,7 +597,15 @@ filters, and no UI or API accepts one; (2) **no incentive** fields, copy or
 templates; (3) **no staff quotas or goal-setting** — Overview shows a plain
 count of requests, never a target, leaderboard or per-staff ranking.
 
+**Legacy status repair.** `status` is only ever `requested|reviewed|declined`. A legacy or hand-seeded `resolved` value (a completed outcome, not a rejection) is migrated to `reviewed` by `2026_10_26_100001_repair_legacy_resolved_seo_review_request_status` (no rating inferred, `resolved_at` untouched, count logged). The Reviews page reads the raw status and shows any other unrecognised value as "Unknown" with no outcome action, so one bad row can never take the page down.
+
 ### 8.7 Website SEO / technical audit (Sub-slice G)
+
+> **Amended by contract 26 (External Website Audit Mode V1).** The HOSTED audit below is unchanged: it reads **only** the immutable
+> `website_revisions.snapshot`, never crawls and never fetches a URL, and its evaluator (`SeoAuditEvaluator`) is still pure. A Business whose
+> primary website is *external* is now audited by the **same evaluator and registry** from a separate, SSRF-safe, bounded crawler that lives
+> outside `app/Library/Seo` (`app/Library/ExternalSite`) and feeds the evaluator normalised facts (`SeoAuditSiteFacts`). The hosted rule set
+> (`ruleKeys()`, rule-set version 1) is unchanged; the external-only rules are additive and cannot fire for a hosted site.
 
 Reads **only** the immutable `website_revisions.snapshot` of the published
 revision. It never crawls, never fetches a URL, and never audits an external
@@ -948,6 +979,15 @@ Website SEO; H = entitlement/nav/integration.
   code); no Google review content stored (schema test: no rating/reviewer/text
   columns); no dead Ratings tab.
 - **Risk:** Low–Medium (Contact linkage).
+- **Page layout (presentation only, no behaviour change):** header, four
+  summary tiles (Locations with / missing a link, requests recorded, awaiting an
+  outcome, last request — all derived from the sections the page reader already
+  returns, no extra query), then one card per Location with a status badge, the
+  link field with Copy link / Open link, in-page `<details>` forms for Add/Change
+  link and Record a request, and empty states. No tabs, no modal `data-bs-*`
+  hooks and no script inside `reviews.blade.php` (the boundary test scans that
+  file); the copy-to-clipboard helper and styles live in the
+  `_reviews-copy` / `_reviews-style` partials and make no network request.
 
 ### Sub-slice G — Technical / Website SEO audit
 
@@ -1248,3 +1288,127 @@ the Roadmap Slice 18 row, Traceability row 12, Acceptance Matrix "Manage SEO"
 status and the Contract Index (§3.2). Do not add anything to the Locked-account
 allowlist. Run the full entitlement/Core-vs-Growth matrix in §15.H.
 ```
+
+---
+
+## 22. Addendum — SEO V1 final audit repairs (Citations, Reviews, Google in SEO, Growth)
+
+Behavior that changed after the V1 static audit. Where this section and an earlier one disagree, this section wins. Nothing here adds a table, a route or a provider call.
+
+### 22.1 NAP comparison is conservative (§8.5)
+
+`SeoNapComparator` still answers one of four words per field, and a name is still compared as in GBP §22.3. Phone and address are free text a person typed into a directory, so a byte comparison would report a false "Mismatch" for the same number or address written differently. They are now compared with the Business country as context, in the same spirit as GBP (which refuses address equality outright): **when the comparison cannot be confident, the answer is `NotComparable` ("unable to verify"), never `Mismatch`.**
+
+- Phone: digits only; the Business country's calling code is dropped from an international form (US/CA also a leading `1` without `+`), a trunk `0` and an extension are ignored. `(312) 555-1212` equals `+1 312 555 1212`. A number that is a tail of the other (no area code; a `+` form beside a bare form with no known country) is unverifiable. Different digits, or an explicit other-country number, is a `Mismatch`.
+- Address: case, punctuation, whitespace, street-suffix / direction / unit / state abbreviations, ZIP+4, the Location's own country and the order of the postal code are not differences. A listing that states less than the profile and agrees with all it states (and names the house number) is `Consistent`. A different house number or postal code is a `Mismatch`. Anything else (an extra suite, an unfamiliar spelling) is unverifiable.
+- An unrecorded field is never a mismatch. A recorded value the comparison could not verify is neither a match nor a mismatch, and its row is never called "Accurate" (it is "Listed", with the field named).
+- A secondary Location of a multi-Location Business does not claim the Business-wide phone: the phone is compared only on the main Location (or the Business's only Location) and is labelled "Business phone". The Google row follows the same rule. No per-Location phone column exists or was added.
+
+The Growth citation reader uses the same comparator and the same country / phone context, so an unverifiable field is never a Growth "does not match" finding.
+
+### 22.2 The Google row (§9.2)
+
+- `Connected` requires an **active** connection (the same rule as the Website review-source status). A bound Location whose connection is revoked, pending or disconnected is `connection_lost`: not connected, not complete, not "checked automatically", and no Google comparison is shown.
+- `Not linked` is neutral. A Business may have no Google listing and the row cannot be marked not-applicable, so it is never an attention item and not counted as attention; the row and the page header keep the Connect action.
+- Health survives the mirror purge, so every status carries its age: the GBP status DTO exposes `healthAsOf` (last sync, else mirror fetch) and `healthIsStale` (mirror no longer fresh, or older than `GoogleBusinessProfileRetention::MAX_MIRROR_RETENTION_DAYS`). The Citations row prints `as of <date>` and "Google data may be out of date" beyond that. Computed at read time; no provider request on page render.
+- "N details differ from Google" is built from the fields named beside it: the Name / Phone / Website chips (this comparator) plus any other GBP comparison rows that differ (city, country, service model, coordinates), listed by name and never counted as attention.
+
+### 22.3 "Needs setup" is not "Needs attention" (§8.5)
+
+One definition per concept, on `SeoCitationRow`, used by the summary, the list filter and the row flag so they cannot disagree:
+
+- **Needs attention** = a real problem: the owner marked the listing as needing correction, a recorded value differs from the business profile, a manual listing is due a review, or the Google connection is not active / a shown Google detail differs.
+- **Needs setup** = not started or in progress. It is work to do, not a problem, and is never counted as attention. The page shows it as its own count and filter.
+
+Statuses stay honest: recommended / listed / needs attention / manually completed / unavailable. Nothing says a listing was updated, because the software cannot update a directory.
+
+### 22.4 Authorization edges (§10)
+
+- A write to a platform directory is accepted only when the page would **offer** it (core or niche-recommended, enabled, and applicable to the Location's country — `SeoCitationApplicability::isOffered`), so a forged POST cannot write what the UI shows read-only or not at all.
+- A custom directory that applies to **all** Locations may be added, renamed or archived only by an actor who can access **every** Location of the Business (`SeoLocationScope::accessesEveryLocation`). A restricted user may manage directories scoped to their own Location.
+- The custom-directory ceiling counts what the actor can see (Business-wide plus directories scoped to Locations they can reach), so reaching it never reveals a directory scoped to a Location they cannot access.
+- Adding a custom directory is one transaction under the Business row lock: the directory and its first citation are saved together or not at all, and two adds cannot both pass the ceiling.
+
+### 22.5 Blueprint publish and the niche recommendation table (§15.E, Blueprint V2)
+
+`CitationRecommendationsComponentAdapter` now syncs through `SeoCitationCatalogManager::syncRecommendation`: a missing row is created enabled; an existing row is left as the Platform Owner set it — a disabled recommendation stays disabled, order is untouched, and importance / guidance change only while they still equal what the previous published version declared (nobody edited them since). `recommend()` (the admin screen's explicit add / re-enable) is unchanged.
+
+### 22.6 Growth citations and reputation (Growth Center §22–§23)
+
+- "Priority directories" are the first `citation_priority_directories` **Essential or Recommended** directories the page offers at the Location, in the page's order (`SeoCitationApplicability::orderKey`: effective importance, the niche's order, then the catalog order). A directory the niche calls Optional is never a priority.
+- Growth builds the page's own `SeoCitationRow` for each stored citation: not started and in progress are "not checked"; a needs-correction status or a mismatch on name, phone, address **or website** is "needs attention". The page's review-due reminder is a staleness nudge, not a difference, so it is not a Growth finding.
+- The Growth citation action label is "Review listings" (Business OS cannot edit a directory listing).
+- "Has a review link" uses `SeoReviewLinkResolver`, the same rule as the Reviews page: the safe manual link, else the fresh Google review link read through `GoogleBusinessProfileStatusReader::freshReviewLinks` (same GBP entitlement, no provider call, nothing stored).
+
+### 22.7 Reviews page (§8.6)
+
+The request ledger and the Contact choices are capped **per Location** (`SeoPerLocationLimit`, one `UNION ALL` query), so a busy Location cannot starve the others. The header counts (requests recorded, awaiting an outcome) are taken over the whole ledger, and a Location whose list is capped says "Showing the latest N of M". The link is called a "review link": the manager accepts any https link, not only Google's. Reviews stay workflow-only — a self-reported outcome, no rating or count metric, no review markup.
+
+## Addendum — SEO V1 final (supersedes where it differs)
+
+Status: implemented on `agent/seo-v1-final-a`. These notes correct statements above that
+the product has since outgrown; everything not named here is unchanged.
+
+* **§5.2.4 / §8.7 indexability is now truthful.** Custom domains exist, so "every
+  published site is not indexed" is no longer true. `SeoIndexability` (one pure class,
+  states in `SeoIndexabilityState`) reports, from the **published** snapshot only:
+  no published website; published but no **Active primary** domain (platform path, always
+  `noindex`; action: connect a domain); published + domain with every page hidden from
+  search ("Your site is live but hidden from search"; action: allow search engines in
+  Website, then Pages); published + domain with at least one visible page ("Search engines
+  can find N of M pages", exact counts). Plain-word status Good / Needs attention / Action
+  on both the Overview and the Website check (one shared partial). Still a status, never a
+  finding.
+* **§8.7 audit honesty.** The run shown, and the one Growth trusts, is the run for the
+  **currently published revision** (current rule set); after a rollback the newest row is
+  not shown as if it described the live site, and "no run for this version" reads "not
+  checked yet". A **failed** run reads "We couldn't check your site this time — try again"
+  (never "nothing to fix") and "Check again" completes that same run row in place (the
+  unique key leaves one run per revision). The manual re-run checks that something is
+  published **before** it consumes the cooldown.
+* **§8.7 rules, in plain words.** The title-length rule measures the real `<title>`
+  (page title + business name, `WebsiteHeadMeta::title`). Owner copy says "page title",
+  "search result description", "hidden from search" and "image description" instead of SEO
+  jargon; rule keys are unchanged. Canonical, JSON-LD, Open Graph and the sitemap are
+  emitted by the platform on a custom domain, so there is still no rule for them: they are
+  the platform's job, not "missing".
+* **§8.3 Search Console.** Not built. The Overview shows an honest "Not connected / Not
+  available yet" card with no figure of any kind (no zero). Growth's `search_console`
+  domain stays Unavailable.
+* **§8.4 keywords.** Coverage text now includes every visible section (custom section,
+  form and gallery headings, backdrops, call-to-action button labels); `contact_details`
+  contributes nothing (its values are shown or withheld by a live privacy check). A phrase
+  only on pages hidden from search reports "Only on pages hidden from search", not
+  Covered. Search operators (quotes, `site:`, `-word`, `OR`/`AND`, `*`, `|`) are refused
+  at create/update with a clear message. **Suggested keywords:** the Business's Niche
+  Blueprint SEO strategy (`BlueprintConfigReader::seoStrategy`) feeds up to 10 suggestions
+  (3 per pattern, round-robin), filled **only** with the Business's own active service
+  names and the cities of the actor's own active Locations, de-duplicated against every
+  existing keyword by `SeoPhraseNormalizer`; each has an Add button that is the ordinary
+  keyword create POST. Nothing is auto-created and rank-tracking slots stay separate.
+* **Growth.** See `GROWTH-CENTER-OPPORTUNITY-ENGINE-V1.md` (coverage is one Business-wide
+  finding, `v2`; `audit_ran` is a completed audit of the published revision; two rank rules
+  read stored observations only).
+* **Comments.** The "Planned until Sub-slice H, so 404 today" wording in the SEO
+  controllers/routes is obsolete: SeoBasicVisibility and SeoModule are Available.
+
+### 22.8 Review follow-up
+
+- Address: a number after a sub-unit word (`shop`, `flat`, `level`, `lot`, `suite`, `unit`, `floor`) or before a slash (`3/123 Smith St`) is the unit, never the house number; a house-number difference is definite only when neither side also carries the other's number. Otherwise the answer is "unable to verify".
+- Phone, country with no known calling code: a `+` form beside a national form, or a trunk `0`, is unable to verify; only two clearly same-form numbers with different digits are a mismatch.
+- Website: the query string and fragment are ignored; the same host with another path is unable to verify; another host is a mismatch. (GBP's own comparator keeps its stricter contract §22.3 rule and is unchanged.)
+- Name: apostrophes / curly quotes, `&` / `and` / `&amp;`, repeated punctuation and a trailing legal suffix (LLC, Inc, Ltd, Co, Corp ...) are not differences; a different name is.
+- The connected Google row is a finished Essential only while the listing health is not suspended, disabled, in ownership conflict, duplicate, not verified or verification-pending. Those are "Needs attention" items (first in "What to do next", linking to Google Business Profile). Stale health is only the "may be out of date" note.
+- Reviews summary tiles count ACTIVE Locations only; archived Locations are shown separately, without an action.
+- A Blueprint republish never recreates a recommendation the Platform Owner removed: a missing row is created only for a directory the previous version did not list.
+
+---
+
+## Amendment — SEO navigation simplified (V1 UX polish)
+
+The customer SEO group is now exactly five entries: **Search keywords, Content, Google Business Profile, Citations, Reviews.** (This supersedes the Overview, Site Audit and "Get found" entries named in §14.2 above.)
+
+* **Overview is gone as a page.** `/seo` and `/workspaces/{ws}/businesses/{biz}/seo` (`customer.workspaces.businesses.seo.index`) redirect to Search keywords, after the same tenancy / entitlement / `view_seo` chain, so a foreign or unentitled Business is still an indistinguishable 404. Search keywords is the SEO results surface; cross-product recommendations belong to Business Home (Next Best Move / Growth Center). `SeoOverviewReader` and its tests remain; nothing renders it today.
+* **Site Audit has no navigation entry.** The audit engine, its routes and its findings stay: they feed Website Health, Growth facts and generation QA. An owner is not asked to repair things the generated Website controls; owner-action issues (for example a missing custom domain) surface through the Website and Home next steps. The `seo.audit.index` route is still reachable for deep links.
+* **"Get found" is renamed "Google Business Profile"** (same route, permission and entitlement gates).
+* **Citations** keeps every canonical behaviour (manual tracking, NAP comparison, Google row read from the GBP read model, niche recommendations from `seo_niche_citation_recommendations` keyed on `businesses.industry`). Only the page composition changed: four metric cards, "What to do next" beside "Business information", then the directory list with filter chips (the old progress strip's counts now live on the chips) and one primary action per row.

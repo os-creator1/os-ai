@@ -1101,6 +1101,13 @@ is the exact seam a future Slice B custom-domain SEO integration reuses —
 **the sitemap route's existence does not itself authorize indexing**; that
 is governed entirely by the noindex directive below.
 
+**Amendment (Website V1 closure):** `public/robots.txt` is replaced by the route `GET /robots.txt`
+(`Public\RobotsController`), serving byte for byte the same body (`User-agent: *` / `Disallow:`) for the platform
+host. A static file is served by the web server ahead of Laravel, which made a per-site robots.txt impossible: a
+published site on its active primary custom domain now gets its own `robots.txt` from `ResolveCustomDomainWebsite`
+(the same rules plus `Sitemap: https://<domain>/sitemap`). Preview and the platform path never carry a
+Sitemap line. The paragraph below describes the original Slice A decision.
+
 **Robots and indexing — LOCKED:** a single static
 `/home/user/os-ai/public/robots.txt` already exists (`User-agent: *` /
 `Disallow:` — everything allowed) and is served directly by the webserver

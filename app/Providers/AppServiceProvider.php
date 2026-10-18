@@ -113,6 +113,13 @@
          */
         public function register()
         {
+            // The ONE announcement delivery seam, bound to the Platform Automations delivery
+            // runtime (queued, chunked, idempotent; banner / notification / email).
+            $this->app->bind(
+                \App\Library\PlatformOwner\Announcements\PlatformAnnouncementDelivery::class,
+                \App\Library\PlatformAutomation\Announcements\CanonicalPlatformAnnouncementDelivery::class,
+            );
+
             // Shared customer request query-budget optimization (Automations
             // V2 §18, the V2-E blocker on PR #280) — bound as a singleton so
             // every resolution within one request/container shares the same
@@ -121,6 +128,12 @@
             // (no Octane) and per test (refreshApplication()) means nothing
             // cached here ever survives past the request/test that wrote it.
             $this->app->singleton(\App\Library\Support\RequestScopedCache::class);
+
+            // SEO Keyword Rank Tracking V1 — the paid SERP provider boundary and
+            // the Search Console seam. Tests rebind SeoRankProvider to
+            // FakeSeoRankProvider; nothing else depends on a vendor class.
+            $this->app->singleton(\App\Library\Seo\Rank\Provider\SeoRankProvider::class, \App\Library\Seo\Rank\Provider\DataForSeoRankProvider::class);
+            $this->app->singleton(\App\Library\Seo\Rank\SeoSearchConsoleReader::class, \App\Library\Seo\Rank\NullSeoSearchConsoleReader::class);
 
             // Customer Experience Slice 3 §4.13 step 4 — the default
             // messaging-adapter binding, behind the adapter's own
@@ -346,6 +359,16 @@
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\AddTagNodeExecutor::class));
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\RemoveTagNodeExecutor::class));
 
+                    // Cross-domain actions: each calls its owning domain's canonical
+                    // seam (CRM service, Calendar's public page, Forms' deployment
+                    // link, DocumentManager) and none reaches a provider itself.
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\MoveOpportunityNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendBookingLinkNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendFormNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendQuestionnaireNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\CreateSendProposalNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\RequestPaymentNodeExecutor::class));
+
                     return $registry;
                 },
             );
@@ -393,10 +416,28 @@
                         ));
                     }
 
-                    $registry->register($app->make(
-                        \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
-                        ['triggerType' => \App\Enums\Automation\Workflow\WorkflowTriggerType::FormSubmitted],
-                    ));
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::FormSubmitted,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::QuestionnaireSubmitted,
+                    ] as $formTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+                            ['triggerType' => $formTrigger],
+                        ));
+                    }
+
+                    // Documents and payments — one source instance per trigger type.
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::DocumentSent,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::DocumentSigned,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::PaymentSucceeded,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::PaymentFailed,
+                    ] as $documentTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+                            ['triggerType' => $documentTrigger],
+                        ));
+                    }
 
                     foreach ([
                         \App\Enums\Automation\Workflow\WorkflowTriggerType::AppointmentScheduled,
@@ -428,6 +469,72 @@
             // context-free copy and every reservation would fail closed.
             $this->app->singleton(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget::class);
 
+            // Google Ads Module V1 (contract 23 §2 / §5). The call budget is a
+            // singleton for the same reason as the GBP one above. The three
+            // provider interfaces resolve to the real HTTP clients, or — only
+            // when GOOGLE_ADS_DRIVER=fake, which GoogleAdsConfig refuses in
+            // production — to ONE shared FakeGoogleAdsClient preloaded with the
+            // deterministic PhotoBoothFixture (so auth, read and mutation see the
+            // same in-memory provider). Tests may still swap their own instance in
+            // via app()->instance(), exactly like the GBP suites.
+            $this->app->singleton(\App\Library\GoogleAds\GoogleAdsConfig::class);
+            $this->app->singleton(\App\Library\GoogleAds\GoogleAdsCallBudget::class);
+            $this->app->singleton(\App\Library\GoogleAds\FakeGoogleAdsClient::class, fn ($app) => (new \App\Library\GoogleAds\FakeGoogleAdsClient(
+                $app->make(\App\Library\GoogleAds\GoogleAdsCallBudget::class),
+                $app->make(\App\Library\GoogleAds\GoogleAdsConfig::class),
+            ))->usePhotoBoothFixture());
+
+            foreach ([
+                \App\Library\GoogleAds\Contracts\GoogleAdsAuthClient::class => \App\Library\GoogleAds\HttpGoogleAdsAuthClient::class,
+                \App\Library\GoogleAds\Contracts\GoogleAdsReadClient::class => \App\Library\GoogleAds\HttpGoogleAdsReadClient::class,
+                \App\Library\GoogleAds\Contracts\GoogleAdsMutationClient::class => \App\Library\GoogleAds\HttpGoogleAdsMutationClient::class,
+            ] as $contract => $http) {
+                $this->app->bind($contract, fn ($app) => $app->make(\App\Library\GoogleAds\GoogleAdsConfig::class)->driver() === \App\Library\GoogleAds\GoogleAdsConfig::DRIVER_FAKE
+                    ? $app->make(\App\Library\GoogleAds\FakeGoogleAdsClient::class)
+                    : $app->make($http));
+            }
+
+            // Sync observers: unknown (ambiguous) mutations are reconciled
+            // against freshly synced Google state, never replayed.
+            $this->app->tag(
+                [\App\Library\GoogleAds\Mutations\ReconcileMutationsAfterSync::class],
+                \App\Library\GoogleAds\Sync\GoogleAdsSyncCoordinator::OBSERVER_TAG,
+            );
+
+            // Meta Ads Module V1 (contract 24 §6 / §14). Same shape as the Google
+            // Ads block above: a singleton call budget that IS the call counter
+            // every Meta client reserves through, and the three provider
+            // interfaces resolving to the real HTTP clients or — only when
+            // META_ADS_DRIVER=fake, which MetaAdsConfig refuses in production —
+            // to ONE shared FakeMetaClient preloaded with the Photo Booth fixture.
+            $this->app->singleton(\App\Library\MetaAds\MetaAdsConfig::class);
+            $this->app->singleton(\App\Library\MetaAds\MetaAdsCallBudget::class);
+            $this->app->bind(
+                \App\Library\MetaAds\Contracts\MetaAdsCallCounter::class,
+                fn ($app) => $app->make(\App\Library\MetaAds\MetaAdsCallBudget::class),
+            );
+            $this->app->singleton(\App\Library\MetaAds\FakeMetaClient::class, fn ($app) => (new \App\Library\MetaAds\FakeMetaClient(
+                $app->make(\App\Library\MetaAds\MetaAdsCallBudget::class),
+                $app->make(\App\Library\MetaAds\MetaAdsConfig::class),
+            ))->usePhotoBoothFixture());
+
+            foreach ([
+                \App\Library\MetaAds\Contracts\MetaAuthClient::class => \App\Library\MetaAds\HttpMetaAuthClient::class,
+                \App\Library\MetaAds\Contracts\MetaReadClient::class => \App\Library\MetaAds\HttpMetaReadClient::class,
+                \App\Library\MetaAds\Contracts\MetaMutationClient::class => \App\Library\MetaAds\HttpMetaMutationClient::class,
+            ] as $contract => $http) {
+                $this->app->bind($contract, fn ($app) => $app->make(\App\Library\MetaAds\MetaAdsConfig::class)->driver() === \App\Library\MetaAds\MetaAdsConfig::DRIVER_FAKE
+                    ? $app->make(\App\Library\MetaAds\FakeMetaClient::class)
+                    : $app->make($http));
+            }
+
+            // Meta sync observers: unknown (ambiguous) pause/resume mutations
+            // are reconciled against freshly synced Meta state, never replayed.
+            $this->app->tag(
+                [\App\Library\MetaAds\Mutations\ReconcileMetaMutationsAfterSync::class],
+                \App\Library\MetaAds\Sync\MetaAdsSyncCoordinator::OBSERVER_TAG,
+            );
+
             // Conversations — the contact activity timeline. Its sources, in
             // merge order, and the contact panel's optional sections (none
             // registered yet). Email, forms, invoices, payments, bookings or a
@@ -443,12 +550,15 @@
                 // implementing TimelineSource and being tagged here. The
                 // Conversations screen itself does not change.
                 \App\Library\Timeline\Sources\DocumentActivitySource::class,
+                // Forms V1 (§16) — a Contact's form submissions.
+                \App\Library\Timeline\Sources\FormSubmissionActivitySource::class,
             ], \App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG);
 
             $this->app->bind(\App\Library\Timeline\ContactActivityTimeline::class, fn ($app) => new \App\Library\Timeline\ContactActivityTimeline(
                 $app->tagged(\App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG),
             ));
 
+            $this->app->tag([\App\Library\AgencyOutreach\OutreachConversationContextSection::class], \App\Library\Conversations\ConversationContextReader::SECTIONS_TAG);
             $this->app->bind(\App\Library\Conversations\ConversationContextReader::class, fn ($app) => new \App\Library\Conversations\ConversationContextReader(
                 $app->make(\App\Library\Contacts\ContactDirectory::class),
                 $app->tagged(\App\Library\Conversations\ConversationContextReader::SECTIONS_TAG),
@@ -476,11 +586,60 @@
 
                     $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter::class));
 
+                    // 17B §6b — reference-only Proposal/Contract template recommendation.
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\DocumentTemplateComponentAdapter::class));
+
+                    // Niche Blueprint V2 — one line per component type.
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\TagSetComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CustomFieldComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\AutomationWorkflowComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\FormComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\BookingTypeComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\PackageTemplateComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\WebsiteConfigComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\SeoStrategyComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CitationRecommendationsComponentAdapter::class));
+
+                    // Acquisition Purpose V1 — one goal (pipeline + form + economics questions) per component.
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\AcquisitionPurposeComponentAdapter::class));
+
                     return $registry;
                 },
             );
 
             $this->app->singleton(HookManager::class, fn() => new HookManager());
+
+            // Acquisition Purpose + Ads Decisioning V1 — the decision thresholds, read once from config/ads_decisions.php.
+            $this->app->singleton(\App\Library\Ads\Decisions\AdsDecisionPolicy::class, fn () => \App\Library\Ads\Decisions\AdsDecisionPolicy::fromConfig());
+
+            // External Website Audit Mode V1 — the crawler's limits, and its DNS + transport. driver=fake serves a
+            // built-in fixture site (tests and browser acceptance only) and is refused in production, exactly like
+            // the Google and Meta Ads fake drivers.
+            $this->app->singleton(\App\Library\ExternalSite\ExternalSiteConfig::class, fn () => \App\Library\ExternalSite\ExternalSiteConfig::fromConfig());
+            $this->app->singleton(\App\Library\ExternalSite\Fixtures\FixtureHostResolver::class);
+            $this->app->singleton(\App\Library\ExternalSite\Fixtures\FixtureExternalSiteTransport::class);
+            $this->app->bind(\App\Library\ExternalSite\HostResolver::class, function ($app) {
+                if ($app->make(\App\Library\ExternalSite\ExternalSiteConfig::class)->driver() === 'fake') {
+                    if ($app->isProduction()) {
+                        throw new \RuntimeException('EXTERNAL_SITE_AUDIT_DRIVER=fake is not allowed in production.');
+                    }
+
+                    return $app->make(\App\Library\ExternalSite\Fixtures\FixtureHostResolver::class);
+                }
+
+                return new \App\Library\ExternalSite\DnsHostResolver();
+            });
+            $this->app->bind(\App\Library\ExternalSite\ExternalSiteTransport::class, function ($app) {
+                if ($app->make(\App\Library\ExternalSite\ExternalSiteConfig::class)->driver() === 'fake') {
+                    if ($app->isProduction()) {
+                        throw new \RuntimeException('EXTERNAL_SITE_AUDIT_DRIVER=fake is not allowed in production.');
+                    }
+
+                    return $app->make(\App\Library\ExternalSite\Fixtures\FixtureExternalSiteTransport::class);
+                }
+
+                return new \App\Library\ExternalSite\CurlExternalSiteTransport();
+            });
         }
 
         /**
@@ -490,6 +649,45 @@
         public function boot()
         {
             Schema::defaultStringLength(191);
+
+            // External Website Audit Mode V1 — a Business whose primary website is external is re-checked when its
+            // website address changes, from ANY edit surface (Website settings or the Business profile). The crawl
+            // manager keeps this bounded (one active crawl per Business) and never takes a URL from the request.
+            \App\Models\Business::updated(function (\App\Models\Business $business): void {
+                if (! $business->wasChanged('website_url') || (string) $business->getAttribute('website_mode') !== 'external') {
+                    return;
+                }
+
+                try {
+                    app(\App\Library\ExternalSite\ExternalSiteCrawlManager::class)->request($business, 'url_change');
+                } catch (\Throwable) {
+                    // Nothing to crawl (cleared or invalid address): the Website screens explain it.
+                }
+            });
+
+            // Blueprint Safety Mode — the Blueprint Workspace may never reach the
+            // outside world. One flag (BlueprintMode), enforced at the generic
+            // choke points here and by BlueprintSafetyGuard::check() at the
+            // domain ones. A no-op unless the mode is active.
+            $this->app->singleton(\App\Library\NicheBlueprint\Safety\BlueprintMode::class);
+            \Illuminate\Support\Facades\Event::listen(
+                \Illuminate\Mail\Events\MessageSending::class,
+                fn () => \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('email_send'),
+            );
+            \Illuminate\Support\Facades\Event::listen(
+                \Illuminate\Notifications\Events\NotificationSending::class,
+                fn () => \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('notification_send'),
+            );
+            \Illuminate\Support\Facades\Http::globalRequestMiddleware(function ($request) {
+                \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('http_request');
+
+                return $request;
+            });
+
+            // Website V1 final — the template-driven public layout's header,
+            // navigation, CTA and brand tokens (preview, platform path and
+            // custom domain all render this one view).
+            \Illuminate\Support\Facades\View::composer('public.website.page', \App\Http\View\Composers\WebsitePageComposer::class);
 
             // Force HTTPS if enabled
             if (config('app.url_force_https') === true) {

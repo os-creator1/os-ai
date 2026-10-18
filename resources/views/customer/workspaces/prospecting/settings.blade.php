@@ -5,7 +5,7 @@
 @section('content')
     <div class="row mb-2">
         <div class="col-12">
-            <h4 class="mb-0">Prospecting</h4>
+            <h4 class="mb-0">Outreach</h4>
         </div>
     </div>
 

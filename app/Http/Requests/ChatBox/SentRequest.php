@@ -2,7 +2,6 @@
 
     namespace App\Http\Requests\ChatBox;
 
-    use App\Rules\Phone;
     use Illuminate\Foundation\Http\FormRequest;
 
     class SentRequest extends FormRequest
@@ -20,12 +19,19 @@
         /**
          * Get the validation rules that apply to the request.
          *
+         * Sender requirements depend on the selected Business's transport.
+         * That decision deliberately happens in ChatBoxController only after
+         * the Workspace/Business pair and the actor's access have been
+         * resolved. Looking up a route Business here would run before that
+         * tenancy boundary and let a foreign Business's managed state change
+         * the validation response.
+         *
          * @return array
          */
         public function rules(): array
         {
             return [
-                'sender_id' => ['required', new Phone($this->sender_id)],
+                'sender_id' => ['nullable'],
                 'recipient' => 'required',
                 'message'   => 'required',
                 'idempotency_token' => 'required|uuid',

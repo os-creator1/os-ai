@@ -40,10 +40,10 @@
 @section('content')
     {{-- The shared title bar is switched off here (the controller passes
          pageHeader => false) so its <h2> never precedes this page's <h1>.
-         Both banners it normally carries are therefore rendered first; each
-         renders nothing unless its session is active. --}}
+         The admin "logged in as" banner it normally carries is therefore
+         rendered first; the View-as-client banner is rendered by the layout
+         master on every page. --}}
     @include('auth.loggedAs')
-    <x-view-as-banner />
 
     {{-- Everything in this section follows the chosen range, so the range
          control updates THIS section in place (window.AsyncRegion) and the
@@ -61,7 +61,7 @@
             <div class="col-12">
                 {{-- Flash left by the legacy campaign actions, which redirect here now that the customer Reports product is gone. --}}
                 @if (session('status'))
-                    <x-alert variant="{{ match (session('status')) { 'success' => 'success', 'warning' => 'warning', 'info' => 'accent', default => 'danger' } }}" icon="alert-circle" class="mb-2" data-role="flash-message">
+                    <x-alert :dismissible="true" variant="{{ match (session('status')) { 'success' => 'success', 'warning' => 'warning', 'info' => 'accent', default => 'danger' } }}" icon="alert-circle" class="mb-2" data-role="flash-message">
                         {{ session('message') }}
                     </x-alert>
                 @endif

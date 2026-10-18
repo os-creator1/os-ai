@@ -49,6 +49,9 @@ class ContactsCrmOpportunityPipelineAcceptanceTest extends TestCase
         $group = ContactGroups::query()->where('business_id', $business->id)->sole();
         $this->assertSame('Contacts', $group->name);
 
+        // Contacts are Location-bound: the Business's Primary Location.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
+
         $this->get(route('customer.workspaces.businesses.people.add', [$workspace->uid, $business->uid]))
             ->assertRedirect(route('customer.workspaces.businesses.contact.create', [$workspace->uid, $business->uid, $group->uid]));
 

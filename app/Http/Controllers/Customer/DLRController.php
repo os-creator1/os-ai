@@ -457,6 +457,20 @@
          */
         public function dlrTwilio(Request $request)
         {
+            // V1 release-risk closure item 4: a status callback may only
+            // update a delivery report when Twilio's own request signature
+            // validates. Unsigned or wrongly signed => nothing is read,
+            // nothing is written.
+            if ( ! $this->twilioSignatureIsValid($request)) {
+                app(MessagingWebhookRejectionRecorder::class)->record(
+                    WebhookRejectionReason::InvalidSignature,
+                    SendingServer::TYPE_TWILIO,
+                    $request->getContent(),
+                );
+
+                return response('Invalid signature', 403);
+            }
+
             $message_id = $request->input('MessageSid');
             $status     = $request->input('MessageStatus');
 
@@ -874,6 +888,18 @@
 
             $phone_number = $assignedMatches->count() === 1 ? $assignedMatches->first() : null;
 
+            // A customer-owned (BYO) sending server may only deliver inbound traffic for numbers that
+            // same customer owns. Its signature proves the server, not the receiving number: without
+            // this, tenant A's own Twilio account could inject messages into tenant B's inbox.
+            // Platform-owned servers (user_id 1 / null) stay allowed to receive for any assigned number.
+            if ($phone_number) {
+                $serverOwnerId = (int) ($sending_server->user_id ?? 0);
+
+                if ($serverOwnerId > 1 && $serverOwnerId !== (int) $phone_number->user_id) {
+                    $phone_number = null;
+                }
+            }
+
             if ($phone_number) {
                 $user_id = $phone_number->user_id;
                 $user    = User::find($user_id);
@@ -1100,7 +1126,7 @@ $chatBox->touch();
                     event(new MessageReceived($user, $message, $chatBox));
                     //  $user->notify(new \App\Notifications\MessageReceived($message, $to));
 
-                    if (isset($user->webhook_url)) {
+                    if (isset($user->webhook_url) && \App\Rules\PublicHttpsUrl::isSafe($user->webhook_url)) {
                         $countryName = Locale::getDisplayRegion('-' . $iso_code, 'en');
                         // Prepare data to send to the webhook
                         $webhookData = [
@@ -4250,6 +4276,27 @@ $chatBox->touch();
 
             $response = new MessagingResponse();
 
+            // V1 release-risk closure item 4: authenticity is decided FIRST.
+            // This used to forward the body to the owner's webhook_url before
+            // the Twilio signature was ever checked, so any unauthenticated
+            // caller could make the platform POST to that URL.
+            $webhookServer = $this->getSendingServer(
+                SendingServer::TYPE_TWILIO,
+                SendingServer::TYPE_TWILIO
+            );
+
+            if ($webhookServer === null || ! $this->twilioSignatureIsValid($request)) {
+                app(MessagingWebhookRejectionRecorder::class)->record(
+                    WebhookRejectionReason::InvalidSignature,
+                    SendingServer::TYPE_TWILIO,
+                    $request->getContent(),
+                    null,
+                    destinationNumber: $request->input('To'),
+                );
+
+                return $response->message('Invalid signature');
+            }
+
             try {
 
                 $to      = $request->input('From');
@@ -4267,7 +4314,7 @@ $chatBox->touch();
                 }
 
 
-                if (isset($user->webhook_url)) {
+                if (isset($user->webhook_url) && \App\Rules\PublicHttpsUrl::isSafe($user->webhook_url)) {
 
                     $to = str_replace(['(', ')', '+', '-', ' '], '', trim($to));
 
@@ -4298,35 +4345,6 @@ $chatBox->touch();
 
                 $message_count = strlen(preg_replace('/\s+/', ' ', trim($message))) / 160;
                 $cost          = ceil($message_count);
-
-                // Security Correction 36 — the second Twilio bypass.
-                //
-                // This passed the literal STRING 'Twilio' where every other
-                // caller passes a resolved SendingServer. A provider name
-                // typed into an argument is not evidence that the request
-                // came from that provider; it just skipped the signature
-                // path entirely, and inboundDLR() then dereferenced a string
-                // as if it were a model.
-                //
-                // The connection is resolved authoritatively and the request
-                // is validated with the same canonical Twilio validator, or
-                // nothing happens.
-                $webhookServer = $this->getSendingServer(
-                    SendingServer::TYPE_TWILIO,
-                    SendingServer::TYPE_TWILIO
-                );
-
-                if ($webhookServer === null || ! $this->twilioSignatureIsValid($request)) {
-                    app(MessagingWebhookRejectionRecorder::class)->record(
-                        WebhookRejectionReason::InvalidSignature,
-                        SendingServer::TYPE_TWILIO,
-                        $request->getContent(),
-                        null,
-                        destinationNumber: $from,
-                    );
-
-                    return $response->message('Invalid signature');
-                }
 
                 $feedback = $this::inboundDLR($to, $message, $webhookServer, $cost, $from);
 

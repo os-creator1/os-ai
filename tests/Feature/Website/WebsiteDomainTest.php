@@ -288,6 +288,38 @@ class WebsiteDomainTest extends TestCase
             ->assertSessionHasErrors('domain');
     }
 
+    public function test_the_first_domain_to_go_live_becomes_primary_when_the_first_attached_one_never_does(): void
+    {
+        // The first domain a website attaches is flagged primary at once. If it never activates
+        // (wrong DNS, abandoned) and a later domain does, the site must not become unreachable
+        // (an alias with no live primary to redirect to answers 404).
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->publish($website);
+        $this->fakeDnsVerifier(true);
+        $provisioner = $this->fakeDomainProvisioner();
+        $provisioner->shouldReceive('requestCertificate')->andReturn('ref-2');
+        $provisioner->shouldReceive('certificateStatus')->andReturn(WebsiteDomainCertificateStatus::Active);
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.website.domains.store', [$workspace->uid, $business->uid]), ['domain' => 'never-live.test'])->assertRedirect();
+        $this->post(route('customer.workspaces.businesses.website.domains.store', [$workspace->uid, $business->uid]), ['domain' => 'goes-live.test'])->assertRedirect();
+        $stuck = $website->domains()->where('domain', 'never-live.test')->sole();
+        $live = $website->domains()->where('domain', 'goes-live.test')->sole();
+        $this->assertTrue($stuck->is_primary);
+        $this->assertFalse($live->is_primary);
+
+        $this->post(route('customer.workspaces.businesses.website.domains.verify', [$workspace->uid, $business->uid, $live->uid]));
+        $this->post(route('customer.workspaces.businesses.website.domains.provision', [$workspace->uid, $business->uid, $live->uid]));
+        $this->post(route('customer.workspaces.businesses.website.domains.checkCertificate', [$workspace->uid, $business->uid, $live->uid]));
+
+        $this->assertTrue($live->fresh()->is_primary, 'The live domain takes the primary role.');
+        $this->assertFalse($stuck->fresh()->is_primary);
+        $this->assertSame('goes-live.test', $website->fresh()->activePrimaryDomain()?->domain);
+
+        $this->get('http://goes-live.test/')->assertOk();
+    }
+
     public function test_removing_the_primary_domain_promotes_another_active_domain(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

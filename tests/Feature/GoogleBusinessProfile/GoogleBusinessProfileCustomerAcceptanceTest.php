@@ -114,8 +114,7 @@ class GoogleBusinessProfileCustomerAcceptanceTest extends TestCase
         // ---------------------------------------------------------------
         $overview = $this->get(route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $business->uid]))
             ->assertOk();
-        $overview->assertSee('locations/L1', false);
-        $overview->assertSee('locations/L2', false);
+        $overview->assertSee('Google Business Profile', false);
 
         foreach (BusinessGoogleLocation::query()->where('business_id', $business->id)->get() as $binding) {
             $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]))

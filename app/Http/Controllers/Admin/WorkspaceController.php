@@ -79,6 +79,14 @@ class WorkspaceController extends AdminBaseController
             'breadcrumbs' => $this->breadcrumbs($workspace),
         ];
 
+        // Private Offers for this Workspace (explicit, audited billing-change
+        // workflow and special pricing). Read model only; every mutation is on
+        // the owner's offer screens.
+        if (Gate::allows('view workspace plans') && \App\Library\PlatformBilling\Offers\PrivateOffersFeature::enabled()) {
+            $viewData['workspaceOffers'] = app(\App\Library\PlatformBilling\Offers\PrivateOfferManager::class)
+                ->overview((int) $workspace->id, 20);
+        }
+
         // The read card (§14, gated by @can('view workspace plans')) and the
         // mutate card (gated by @can('manage workspace plans')) are
         // independent permissions -- an administrator can legitimately hold
@@ -169,7 +177,7 @@ class WorkspaceController extends AdminBaseController
     private function breadcrumbs(?Workspace $workspace = null): array
     {
         $breadcrumbs = [
-            ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => route('admin.workspaces.index'), 'name' => 'Workspaces'],
         ];
 

@@ -70,16 +70,53 @@
                     @else
                         <x-alert variant="warning" data-role="business-data-integrity-warning">
                             @if ($businessCount === 0)
-                                This client has no Business on file. This is a data-integrity
-                                issue outside this screen's scope to repair.
+                                This client's Business could not be found, so there is nothing to show here yet.
+                                Please contact support.
                             @else
-                                This client has {{ $businessCount }} Businesses on file, more
-                                than the one this screen expects. This is a data-integrity
-                                issue outside this screen's scope to repair.
+                                This client has more than one Business on file, so this page cannot show a single
+                                summary. Please contact support.
                             @endif
                         </x-alert>
                     @endif
                 </x-card>
+
+                {{--
+                    Agency V1 final — the client at a glance: is it set up, what needs the
+                    owner, and are leads arriving. Plain words from
+                    AgencyClientSummaryReader (the Agency Home portfolio's own readers); no
+                    booking figure, because the product has no canonical one to read.
+                --}}
+                @if ($clientSummary !== null)
+                    <x-card title="At a glance">
+                        <dl class="row mb-2" data-role="client-summary">
+                            <dt class="col-sm-4">Business</dt>
+                            <dd class="col-sm-8" data-role="summary-business"><x-badge :variant="$clientSummary['business']['variant']">{{ $clientSummary['business']['label'] }}</x-badge></dd>
+
+                            <dt class="col-sm-4">Website</dt>
+                            <dd class="col-sm-8" data-role="summary-website"><x-badge :variant="$clientSummary['website']['variant']">{{ $clientSummary['website']['label'] }}</x-badge></dd>
+
+                            <dt class="col-sm-4">Google listing</dt>
+                            <dd class="col-sm-8" data-role="summary-google"><x-badge :variant="$clientSummary['google']['variant']">{{ $clientSummary['google']['label'] }}</x-badge></dd>
+
+                            <dt class="col-sm-4">Usage funding</dt>
+                            <dd class="col-sm-8" data-role="summary-funding"><x-badge :variant="$clientSummary['funding']['variant']">{{ $clientSummary['funding']['label'] }}</x-badge></dd>
+                        </dl>
+
+                        <p class="text-label mb-50">Needs attention</p>
+                        @forelse ($clientSummary['attention'] as $sentence)
+                            <p class="mb-50" data-role="summary-attention">{{ $sentence }}</p>
+                        @empty
+                            <p class="text-muted mb-2" data-role="summary-attention-none">Nothing needs attention.</p>
+                        @endforelse
+
+                        <p class="text-label mb-50 mt-1">{{ $clientSummary['activity']['rangeLabel'] }}</p>
+                        <p class="mb-0" data-role="summary-activity">
+                            {{ number_format($clientSummary['activity']['newContacts']) }} new {{ \Illuminate\Support\Str::plural('contact', $clientSummary['activity']['newContacts']) }}
+                            &middot;
+                            {{ number_format($clientSummary['activity']['newConversations']) }} new {{ \Illuminate\Support\Str::plural('conversation', $clientSummary['activity']['newConversations']) }}
+                        </p>
+                    </x-card>
+                @endif
             </div>
 
             <div class="col-12 col-lg-4">
@@ -87,7 +124,7 @@
                     <dl class="row mb-0" data-role="relationship-facts">
                         <dt class="col-sm-5">Status</dt>
                         <dd class="col-sm-7">
-                            <x-badge variant="success" data-role="relationship-status">{{ ucfirst($relationship->status->value) }}</x-badge>
+                            <x-badge variant="success" data-role="relationship-status">{{ $relationship->status->value === 'active' ? 'Managing' : 'Ended' }}</x-badge>
                         </dd>
 
                         <dt class="col-sm-5">Managed since</dt>
@@ -95,14 +132,20 @@
                     </dl>
                 </x-card>
 
-                <x-card title="Account access">
-                    <p class="mb-0" data-role="account-access-state">
-                        @if ($accessDecision->isLocked())
-                            <x-badge variant="danger">{{ $accessDecision->heading ?? 'Locked' }}</x-badge>
-                        @else
-                            <x-badge variant="success">Usable</x-badge>
-                        @endif
-                    </p>
+                <x-card title="Plan and account">
+                    <dl class="row mb-0" data-role="plan-and-account">
+                        <dt class="col-sm-5">Plan</dt>
+                        <dd class="col-sm-7" data-role="client-plan">{{ $planAndAccount['plan_name'] ?? 'No plan yet' }}</dd>
+
+                        <dt class="col-sm-5">Account</dt>
+                        <dd class="col-sm-7" data-role="account-access-state">
+                            @if ($accessDecision->isLocked())
+                                <x-badge variant="danger">{{ $accessDecision->heading ?? 'Locked' }}</x-badge>
+                            @else
+                                <x-badge :variant="$planAndAccount['account']['variant']">{{ $planAndAccount['account']['label'] }}</x-badge>
+                            @endif
+                        </dd>
+                    </dl>
                 </x-card>
 
                 {{--
@@ -120,7 +163,7 @@
                     @else
                         <dl class="row mb-0" data-role="agency-saas-client-facts">
                             <dt class="col-sm-5">Status</dt>
-                            <dd class="col-sm-7" data-role="agency-saas-client-state">{{ $agencySubscription->status->value }}</dd>
+                            <dd class="col-sm-7" data-role="agency-saas-client-state">{{ $agencySubscription->status->label() }}</dd>
 
                             @if ($agencySubscription->price_snapshot !== null)
                                 <dt class="col-sm-5">They pay</dt>
@@ -184,10 +227,10 @@
                         $isAgencyRebillPayer = $billingResponsibility['payer_type'] === \App\Enums\Usage\PayerType::AgencyRebill->value;
                         $consentedAt = $billingResponsibility['agency_rebill_consented_at'];
                     @endphp
-                    <x-card title="Usage funding (AgencyRebill)">
+                    <x-card title="Usage funding">
                         <dl class="row mb-0" data-role="agency-rebill-facts">
                             <dt class="col-sm-5">Who pays</dt>
-                            <dd class="col-sm-7" data-role="agency-rebill-payer-type">{{ $billingResponsibility['payer_type'] }}</dd>
+                            <dd class="col-sm-7" data-role="agency-rebill-payer-type">{{ $isAgencyRebillPayer ? ($consentedAt !== null ? 'Your Agency' : 'Paused — no new usage is funded') : 'The client' }}</dd>
                         </dl>
 
                         @if ($isAgencyRebillPayer && $consentedAt !== null)

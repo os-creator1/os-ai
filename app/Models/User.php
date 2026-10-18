@@ -108,6 +108,9 @@
             'password',
             'remember_token',
             'invitation_token',
+            'api_token',
+            'two_factor_code',
+            'two_factor_backup_code',
         ];
 
         /**
@@ -120,6 +123,7 @@
             'is_customer'           => 'boolean',
             'status'                => 'boolean',
             'two_factor'            => 'boolean',
+            'email_verified_at'     => 'datetime',
             'last_access_at'        => 'datetime',
             'two_factor_expires_at' => 'datetime',
             'password_changed_at'   => 'datetime',
@@ -136,6 +140,14 @@
         public static function boot(): void
         {
             parent::boot();
+
+            // A closed/closing account can never be switched back on, by any caller.
+            static::saving(function ($item) {
+                if ($item->exists && $item->isDirty('status') && $item->status
+                    && \App\Models\PlatformAccountClosure::query()->where('user_uid', $item->uid)->exists()) {
+                    throw new \App\Library\PlatformOwner\AccountDeletion\AccountClosureRefused(__('A closed or closing account cannot be reactivated. Nothing was changed.'));
+                }
+            });
 
             // Create uid when creating list.
             static::creating(function ($item) {
@@ -162,7 +174,7 @@
         {
             $backUpCode = [];
             for ($i = 0; $i < 8; $i++) {
-                $backUpCode[] = rand(100000, 999999);
+                $backUpCode[] = random_int(100000, 999999);
             }
 
             return json_encode($backUpCode);
@@ -238,12 +250,33 @@
         }
 
         /**
+         * Resolve a user from a request-supplied legacy api_token.
+         *
+         * Never use User::where('api_token', $input): a missing/null input compiles to
+         * "api_token IS NULL" and would authenticate the caller as the first user without a token.
+         */
+        public static function findByApiToken(mixed $token, bool $activeOnly = false): ?self
+        {
+            if ( ! is_string($token) || trim($token) === '') {
+                return null;
+            }
+
+            $query = static::where('api_token', $token);
+
+            if ($activeOnly) {
+                $query->where('status', true);
+            }
+
+            return $query->first();
+        }
+
+        /**
          * generate two-factor code
          */
         public function generateTwoFactorCode(): void
         {
             $this->timestamps            = false;
-            $this->two_factor_code       = rand(100000, 999999);
+            $this->two_factor_code       = random_int(100000, 999999);
             $this->two_factor_expires_at = now()->addMinutes(10);
             $this->save();
         }

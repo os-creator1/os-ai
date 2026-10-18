@@ -85,8 +85,8 @@
             $this->authorize('view customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Customer')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.menu.Customers')],
             ];
 
@@ -212,7 +212,7 @@
             $this->authorize('create customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customers')],
                 ['name' => __('locale.customer.add_new')],
             ];
@@ -283,7 +283,7 @@
 
             // Breadcrumbs & additional data
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customers')],
                 ['name' => $customer->displayName()],
             ];
@@ -345,6 +345,8 @@
          */
         public function updateAvatar(User $customer, UpdateAvatarRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -414,8 +416,22 @@
         /**
          * update customer basic account information
          */
+        /**
+         * Platform admins (incl. the super admin) may only be touched by the super admin; every
+         * mutating action on a User must pass through here, not just show/activeToggle.
+         */
+        private function mayMutateAccount(User $customer): void
+        {
+            $actor = auth()->user();
+
+            abort_if($customer->is_super_admin && ! $actor->is_super_admin, 403);
+            abort_if($customer->is_admin && (int) $actor->id !== 1, 403);
+        }
+
         public function update(User $customer, UpdateCustomerRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -436,6 +452,8 @@
          */
         public function updateInformation(User $customer, UpdateInformationRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -456,6 +474,8 @@
          */
         public function permissions(User $customer, PermissionRequest $request): RedirectResponse
         {
+            $this->mayMutateAccount($customer);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.customers.show', $customer->uid)->with([
                     'status'  => 'error',
@@ -500,9 +520,18 @@
 
                 $this->authorize('edit customer');
 
-                $customer->status = ! $customer->status;
+                // The legacy toggle must not re-enable a customer whose closure
+                // has begun, even if the request was made from the older admin UI.
+                $saved = \Illuminate\Support\Facades\DB::transaction(function () use ($customer) {
+                    $locked = User::query()->whereKey($customer->id)->lockForUpdate()->firstOrFail();
+                    if (\App\Models\PlatformAccountClosure::query()->where('user_uid', $locked->uid)->exists()) {
+                        throw new GeneralException('This account is closing or closed and cannot be reactivated.');
+                    }
+                    $locked->status = ! $locked->status;
+                    return $locked->save();
+                });
 
-                if ($customer->save()) {
+                if ($saved) {
                     return response()->json([
                         'status'  => 'success',
                         'message' => __('locale.customer.customer_successfully_change'),
@@ -514,7 +543,7 @@
                     'message' => __('locale.exceptions.something_went_wrong'),
                 ]);
 
-            } catch (ModelNotFoundException|AuthorizationException $exception) {
+            } catch (ModelNotFoundException|AuthorizationException|GeneralException $exception) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => $exception->getMessage(),
@@ -548,7 +577,11 @@
 
                     $this->authorize('edit customer');
 
-                    $this->customers->batchEnable($ids);
+                    try {
+                        $this->customers->batchEnable($ids);
+                    } catch (GeneralException $e) {
+                        return response()->json(['status' => 'error', 'message' => $e->getMessage()]);
+                    }
 
                     return response()->json([
                         'status'  => 'success',
@@ -570,12 +603,7 @@
 
                     $this->authorize('delete customer');
 
-                    $this->customers->batchDelete($ids);
-
-                    return response()->json([
-                        'status'  => 'success',
-                        'message' => __('locale.customer.customers_deleted'),
-                    ]);
+                    return $this->legacyDeleteRetired();
             }
 
             return response()->json([
@@ -594,58 +622,26 @@
          */
         public function destroy(User $customer): JsonResponse
         {
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
             $this->authorize('delete customer');
 
-            if ($customer->is_super_admin) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Super Admin cannot be deleted',
-                ]);
-            }
+            return $this->legacyDeleteRetired();
+        }
 
-            PhoneNumbers::where('user_id', $customer->id)->update([
-                'status'  => 'available',
-                'user_id' => 1,
-            ]);
-
-            Blacklists::where('user_id', $customer->id)->delete();
-            Campaigns::where('user_id', $customer->id)->delete();
-            ChatBox::where('user_id', $customer->id)->delete();
-            ContactGroups::where('customer_id', $customer->id)->delete();
-            Customer::where('user_id', $customer->id)->delete();
-            Invoices::where('user_id', $customer->id)->delete();
-            Keywords::where('user_id', $customer->id)->delete();
-            Notifications::where('user_id', $customer->id)->delete();
-            Plan::where('user_id', $customer->id)->delete();
-            Reports::where('user_id', $customer->id)->delete();
-            Senderid::where('user_id', $customer->id)->delete();
-            SendingServer::where('user_id', $customer->id)->delete();
-            Subscription::where('user_id', $customer->id)->delete();
-            Templates::where('user_id', $customer->id)->delete();
-            Announcements::where('user_id', $customer->id)->get()->each(function (Announcements $announcement) {
-                $announcement->users()->detach();
-                $announcement->delete();
-            });
-
-            if ( ! $customer->delete()) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => __('locale.exceptions.something_went_wrong'),
-                ]);
-            }
-
+        /**
+         * The legacy hard delete is retired for EVERY customer. It removed
+         * invoices and subscription rows (historical financial records)
+         * without cancelling anything with a payment provider, and it knew
+         * nothing about Workspaces, Businesses or usage ledgers. Customer
+         * accounts are now removed only through the Platform Owner account
+         * closure lifecycle, which cancels billing first and retains protected
+         * records.
+         */
+        private function legacyDeleteRetired(): JsonResponse
+        {
             return response()->json([
-                'status'  => 'success',
-                'message' => __('locale.customer.customer_successfully_deleted'),
+                'status'  => 'error',
+                'message' => __('Deleting customers from this page has been retired. Use Platform Owner > Users to delete or close a customer account; it cancels billing safely and keeps financial records.'),
             ]);
-
         }
 
         public function customerGenerator(): Generator
@@ -933,7 +929,7 @@
         public function coverage(User $customer)
         {
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.buttons.add_coverage')],
             ];
@@ -1022,7 +1018,7 @@
             $this->authorize('edit customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/customers'), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.buttons.update_coverage')],
             ];
@@ -1265,8 +1261,8 @@
             $this->authorize('create customer');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Customer')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.customer.import_customers')],
             ];
 

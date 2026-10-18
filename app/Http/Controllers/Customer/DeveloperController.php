@@ -163,6 +163,13 @@
             }
 
 
+            if ( ! \App\Rules\PublicHttpsUrl::isSafe($request->webhook_url)) {
+                return redirect()->route('user.account')->withInput(['tab' => 'webhook'])->with([
+                    'status'  => 'error',
+                    'message' => 'The webhook URL must be a public https URL.',
+                ]);
+            }
+
             $user = Auth::user();
 
             $user->update([

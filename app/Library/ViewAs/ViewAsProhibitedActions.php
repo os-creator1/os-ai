@@ -39,6 +39,8 @@ final class ViewAsProhibitedActions
         'customer.workspaces.ownership.transfer',
         'customer.workspaces.businesses.store',
         'customer.workspaces.businesses.reassign',
+        // choosing which of the Agency's own numbers (and so whose Telnyx account) sends its texts
+        'customer.workspaces.prospecting.phone-messaging.sender',
         // phone / keyword resources
         'customer.numbers.release',
         'customer.keywords.release',
@@ -50,6 +52,18 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.gbp.bind',
         'customer.workspaces.businesses.gbp.unbind',
         'customer.gbp.oauth.callback',
+        // provider credentials, account choice, settings and refresh (Google Ads)
+        'customer.workspaces.businesses.ads.connect',
+        'customer.workspaces.businesses.ads.accounts',
+        'customer.workspaces.businesses.ads.accounts.select',
+        'customer.workspaces.businesses.ads.disconnect',
+        'customer.workspaces.businesses.ads.settings.update',
+        'customer.workspaces.businesses.ads.refresh',
+        'customer.ads.oauth.callback',
+        // Meta Ads V1 (contract 24 §8): the fixed Meta OAuth callback, and the account
+        // listing GET (it asks Meta for the client's ad accounts: a provider call, like Google's).
+        'customer.ads.meta.oauth.callback',
+        'customer.workspaces.businesses.ads.meta.accounts',
         // provider credentials and sending as the Business (Business Email)
         'customer.workspaces.businesses.email.connect',
         'customer.workspaces.businesses.email.disconnect',
@@ -63,6 +77,9 @@ final class ViewAsProhibitedActions
         'customer.contact.delete-contact-field',
         'customer.workspaces.businesses.contact.delete-contact-field',
         'user.account.delete',
+        // bringing an archived SEO keyword back can put a rank-tracked keyword (and so the client's paid
+        // checks and slots) back in play; treated as spend-class like the rank routes below
+        'customer.workspaces.businesses.seo.keywords.reactivate',
         // spending the viewed client's AI allowance (AI-3, contract §15.5)
         'customer.workspaces.businesses.performance.explain',
         // funding the actor's own account
@@ -85,6 +102,8 @@ final class ViewAsProhibitedActions
         // something a View As session (which is "the client") may read or
         // change. Both the page and the save are refused outright.
         'customer.workspaces.agency.white-label.',
+        // The Agency's own operating workspace is set up by the Agency, never as "the client".
+        'customer.workspaces.agency.operations.',
         'customer.workspaces.members.',
         'customer.workspaces.additional-business-slots.',
         'customer.workspaces.businesses.locations.allocations.',
@@ -103,11 +122,16 @@ final class ViewAsProhibitedActions
         'user.callback.',
         'user.registers.',
         'customer.gbp.oauth.',
+        'customer.ads.oauth.',
+        'customer.ads.meta.oauth.',
         'customer.email.oauth.',
         // Contract 21 §7 — the authenticated V1 signup re-entry and its hosted
         // Checkout return buy a lane-A plan for the ACTOR's own account. A View
         // As session never starts, resumes or confirms a platform purchase.
         'signup.',
+        // Private Offers: accepting terms, paying and returning from Checkout
+        // commit the ACTOR's own account to a price. Never done while viewing.
+        'offers.',
     ];
 
     /** GET-only read exceptions inside the prefixes above. */
@@ -136,6 +160,30 @@ final class ViewAsProhibitedActions
         'App\Http\Controllers\Customer\SubscriptionController@checkoutPurchase',
         'App\Http\Controllers\Customer\SubscriptionController@renewPost',
         'App\Http\Controllers\User\AccountController@checkoutTopUp',
+    ];
+
+    /**
+     * Google Ads Module V1 — EVERY non-GET route under the `ads.` prefix is
+     * prohibited while viewing, by PATTERN rather than by listing: connect,
+     * account choice, settings, refresh and every change made in the
+     * Business's Google Ads account (pause/resume, add negative keyword) are
+     * credential- or spend-class actions a View As actor never takes for the
+     * client. A route added later under the prefix is covered the moment it
+     * is registered; the read pages (GET) stay viewable. SEO rank tracking
+     * (spend-class, below) is held to the same rule.
+     */
+    public const NON_GET_PROHIBITED_PREFIXES = [
+        'customer.workspaces.businesses.ads.',
+        // SEO rank tracking is SPEND-class: starting or resuming tracking and
+        // "Check now" commit the viewed client's paid-provider allowance (budget
+        // authority SeoRankTrackingBudget), exactly like a change in the client's
+        // Ads account, so they are prohibited by PATTERN here too — keyword
+        // tracking (`...seo.keywords.rank.*`: track) and rank targets
+        // (`...seo.rank-targets.*`: stop, restart, check). The read pages (GET) and
+        // the ordinary SEO keyword edits (`...seo.keywords.*`) stay available;
+        // the add-keyword form's "track rank" box is closed in SeoKeywordsController.
+        'customer.workspaces.businesses.seo.keywords.rank.',
+        'customer.workspaces.businesses.seo.rank-targets.',
     ];
 
     /** Name suffixes that delete data (non-GET only). */
@@ -182,6 +230,12 @@ final class ViewAsProhibitedActions
         }
 
         if ($method !== 'GET' && $method !== 'HEAD') {
+            foreach (self::NON_GET_PROHIBITED_PREFIXES as $prefix) {
+                if (str_starts_with($name, $prefix)) {
+                    return true;
+                }
+            }
+
             foreach (self::DELETING_SUFFIXES as $suffix) {
                 if (str_ends_with($name, $suffix)) {
                     return true;

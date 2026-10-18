@@ -9,6 +9,7 @@ use App\Library\Automation\Workflow\WorkflowLimits;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -43,6 +44,7 @@ class WorkflowEnrollmentService implements EnrollmentService
         Contacts $contact,
         string $triggerOccurrenceKey,
         int $causationDepth = 0,
+        ?int $locationId = null,
     ): ?AutomationEnrollment {
         if ($causationDepth > WorkflowLimits::MAX_CAUSATION_DEPTH) {
             // One automation triggering another, too many levels deep. Refusing
@@ -70,6 +72,24 @@ class WorkflowEnrollmentService implements EnrollmentService
             return null;
         }
 
+        // LOCATION RUN-SCOPE. The scope is the PINNED version's, never the workflow
+        // row's or any node's config. A bound workflow takes only a fact of exactly
+        // its Location — a null Location included, so a trigger source that did not
+        // supply one fails closed rather than enrolling everywhere. And whatever
+        // Location arrives must be one of THIS Business's, so a forged id from any
+        // source enrolls nobody. A Business-wide workflow pins the fact's Location
+        // (or null) and applies no further restriction.
+        if (! $version->scope()->allows($locationId)) {
+            return null;
+        }
+
+        if ($locationId !== null && ! BusinessLocation::query()
+            ->whereKey($locationId)
+            ->where('business_id', $fresh->business_id)
+            ->exists()) {
+            return null;
+        }
+
         $rootNodeId = $this->rootNodeId($version);
 
         if ($rootNodeId === null) {
@@ -84,12 +104,14 @@ class WorkflowEnrollmentService implements EnrollmentService
         );
 
         try {
-            return DB::transaction(function () use ($fresh, $version, $contact, $key, $triggerOccurrenceKey, $causationDepth, $rootNodeId): AutomationEnrollment {
+            return DB::transaction(function () use ($fresh, $version, $contact, $key, $triggerOccurrenceKey, $causationDepth, $rootNodeId, $locationId): AutomationEnrollment {
                 $enrollment = new AutomationEnrollment([
                     'business_id' => $fresh->business_id,
                     'workflow_id' => $fresh->getKey(),
                     'version_id' => $version->getKey(),
                     'contact_id' => $contact->getKey(),
+                    // Pinned for the life of the journey: the one writer of this column.
+                    'business_location_id' => $locationId,
                     'status' => EnrollmentStatus::Active,
                     'current_node_id' => $rootNodeId,
                     'trigger_type' => $version->trigger_type,

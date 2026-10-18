@@ -28,3 +28,8 @@ Thumbs.db
 !/storage/tmp/.keep
 
 /naujas/
+# Customer uploads live only on disk (back them up; never commit them).
+/public/images/websites/*/
+/public/images/business/*/
+/public/images/branding/agency/
+/public/mms/

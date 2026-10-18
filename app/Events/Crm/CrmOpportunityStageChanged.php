@@ -22,7 +22,8 @@ class CrmOpportunityStageChanged extends CrmOpportunityEvent
         ?int $actorUserId,
         public readonly int $fromStageId,
         public readonly ?string $fromStageSemanticKey,
+        ?string $origin = null,
     ) {
-        parent::__construct($businessId, $opportunityId, $contactId, $pipelineId, $stageId, $stageSemanticKey, $historyId, $actorUserId);
+        parent::__construct($businessId, $opportunityId, $contactId, $pipelineId, $stageId, $stageSemanticKey, $historyId, $actorUserId, $origin);
     }
 }

@@ -2,8 +2,13 @@
 
 @section('title', 'Text messaging')
 
+@section('page-style')
+    @include('customer.settings._redesign-assets')
+@endsection
+
 @section('content')
-    @include('customer.settings._module-header', [
+<div class="sr-page sr-page--wide">
+    @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
         'description' => 'How this Business sends and receives text messages.',
@@ -52,8 +57,31 @@
                 </x-button>
             </x-card>
         </div>
+        @if (! empty($locationChoices))
+            <div class="col-md-6 mb-2">
+                <x-card title="Locations that use this number" :padded="true">
+                    <p class="text-caption text-muted mb-2">
+                        Choose which locations text from this number. Automations limited to particular
+                        locations only send texts for locations chosen here. Leave all unchecked to keep it
+                        as your business-wide number.
+                    </p>
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.text-messaging.number.locations.update', [$workspaceUid, $businessUid]) }}" data-role="number-locations-form">
+                        @csrf
+                        @method('PUT')
+                        @foreach ($locationChoices as $choice)
+                            <div class="form-check mb-1">
+                                <input class="form-check-input" type="checkbox" name="location_uids[]" id="number-location-{{ $choice['uid'] }}" value="{{ $choice['uid'] }}" @checked($choice['checked'])>
+                                <label class="form-check-label" for="number-location-{{ $choice['uid'] }}">{{ $choice['name'] }}</label>
+                            </div>
+                        @endforeach
+                        <x-button type="submit" variant="outline" size="sm" class="mt-1">Save locations</x-button>
+                    </form>
+                </x-card>
+            </div>
+        @endif
         <div class="col-md-6 mb-2">
             @include('customer.settings.text-messaging._port-out-card')
         </div>
     </div>
+</div>
 @endsection

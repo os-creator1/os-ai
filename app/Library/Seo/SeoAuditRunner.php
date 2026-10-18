@@ -91,7 +91,9 @@ final class SeoAuditRunner
         //    it is entitled to see this revision's audit.
         $existing = $this->existingRun($revisionId);
 
-        if ($existing !== null) {
+        // A COMPLETED run is canonical. A FAILED one is not: "Check again"
+        // must be able to complete it, so it falls through to a fresh attempt.
+        if ($existing !== null && $existing->status !== SeoAuditRunStatus::Failed) {
             return $existing;
         }
 
@@ -99,8 +101,9 @@ final class SeoAuditRunner
 
         if ($content === null) {
             // The revision exists (proved at step 2) but its snapshot is not
-            // a usable document: an honest failed run, not silence.
-            return $this->persist($businessId, $websiteId, $revisionId, SeoAuditRunStatus::Failed, 0, []);
+            // a usable document: an honest failed run, not silence. A failed
+            // run that is already recorded stays as it is.
+            return $existing ?? $this->persist($businessId, $websiteId, $revisionId, SeoAuditRunStatus::Failed, 0, []);
         }
 
         return $this->persist(
@@ -110,6 +113,7 @@ final class SeoAuditRunner
             SeoAuditRunStatus::Completed,
             $content->pageCount(),
             $this->evaluator->evaluate($content),
+            $existing,
         );
     }
 
@@ -142,6 +146,7 @@ final class SeoAuditRunner
 
     /**
      * @param  array<int, SeoAuditFindingDraft>  $drafts
+     * @param  SeoAuditRun|null  $retry  a FAILED run of this revision to complete in place (the unique key allows one run per revision)
      */
     private function persist(
         int $businessId,
@@ -150,6 +155,7 @@ final class SeoAuditRunner
         SeoAuditRunStatus $status,
         int $pageCount,
         array $drafts,
+        ?SeoAuditRun $retry = null,
     ): SeoAuditRun {
         $counts = [
             SeoAuditSeverity::Critical->value => 0,
@@ -162,18 +168,26 @@ final class SeoAuditRunner
         }
 
         try {
-            $run = DB::transaction(function () use ($businessId, $websiteId, $revisionId, $status, $pageCount, $counts, $drafts): SeoAuditRun {
-                $run = SeoAuditRun::query()->create([
-                    'business_id' => $businessId,
-                    'website_id' => $websiteId,
-                    'website_revision_id' => $revisionId,
-                    'rule_set_version' => SeoAuditRuleRegistry::VERSION,
-                    'status' => $status->value,
-                    'page_count' => $pageCount,
-                    'critical_count' => $counts[SeoAuditSeverity::Critical->value],
-                    'warning_count' => $counts[SeoAuditSeverity::Warning->value],
-                    'info_count' => $counts[SeoAuditSeverity::Info->value],
-                ]);
+            $run = DB::transaction(function () use ($businessId, $websiteId, $revisionId, $status, $pageCount, $counts, $drafts, $retry): ?SeoAuditRun {
+                $run = $retry === null
+                    ? SeoAuditRun::query()->create([
+                        'business_id' => $businessId,
+                        'website_id' => $websiteId,
+                        'website_revision_id' => $revisionId,
+                        'rule_set_version' => SeoAuditRuleRegistry::VERSION,
+                        'status' => $status->value,
+                        'page_count' => $pageCount,
+                        'critical_count' => $counts[SeoAuditSeverity::Critical->value],
+                        'warning_count' => $counts[SeoAuditSeverity::Warning->value],
+                        'info_count' => $counts[SeoAuditSeverity::Info->value],
+                    ])
+                    : $this->completeFailedRun($retry, $status, $pageCount, $counts);
+
+                if ($run === null) {
+                    // Another worker completed the failed run first; its
+                    // findings are canonical and ours must not be added.
+                    return null;
+                }
 
                 if ($drafts !== []) {
                     // ONE insert for every finding: §11.4 requires the query
@@ -207,9 +221,39 @@ final class SeoAuditRunner
             throw $e;
         }
 
+        if ($run === null) {
+            return $this->existingRun($revisionId) ?? $retry;
+        }
+
         $this->prune($websiteId);
 
         return $run;
+    }
+
+    /**
+     * Completes a FAILED run in place (row lock, re-checked): the run row is the
+     * revision's one canonical audit, so a successful retry fills it rather than
+     * adding a second. Returns null when it is no longer failed.
+     *
+     * @param  array<string, int>  $counts
+     */
+    private function completeFailedRun(SeoAuditRun $failed, SeoAuditRunStatus $status, int $pageCount, array $counts): ?SeoAuditRun
+    {
+        $locked = SeoAuditRun::query()->whereKey($failed->id)->lockForUpdate()->first();
+
+        if ($locked === null || $locked->status !== SeoAuditRunStatus::Failed) {
+            return null;
+        }
+
+        $locked->forceFill([
+            'status' => $status->value,
+            'page_count' => $pageCount,
+            'critical_count' => $counts[SeoAuditSeverity::Critical->value],
+            'warning_count' => $counts[SeoAuditSeverity::Warning->value],
+            'info_count' => $counts[SeoAuditSeverity::Info->value],
+        ])->save();
+
+        return $locked;
     }
 
     private function existingRun(int $revisionId): ?SeoAuditRun

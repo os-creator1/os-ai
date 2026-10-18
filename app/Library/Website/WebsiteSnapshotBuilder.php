@@ -41,6 +41,9 @@ final class WebsiteSnapshotBuilder
 
     public function __construct(
         private readonly WebsiteAddressPrivacyGate $privacyGate,
+        private readonly WebsiteCatalogReferences $catalogReferences,
+        private readonly \App\Library\Website\Media\WebsiteMediaPayload $media,
+        private readonly \App\Library\Website\Forms\WebsiteFormsModuleReferences $formsModule,
     ) {}
 
     public function build(Website $website): array
@@ -50,8 +53,11 @@ final class WebsiteSnapshotBuilder
         $referencedAssetUids = [];
         $referencedFormUids = [];
 
-        $pageSnapshots = $pages->map(function ($page) use ($business, &$referencedAssetUids, &$referencedFormUids) {
-            $sections = collect($page->sections ?? [])->map(function ($section) use ($business, &$referencedAssetUids, &$referencedFormUids) {
+        $pageSnapshots = $pages->map(function ($page) use ($website, $business, &$referencedAssetUids, &$referencedFormUids) {
+            // Package blocks are resolved from Packages & Products at
+            // publish time (name + price), then frozen into this immutable
+            // revision exactly like `contact_details` values are.
+            $sections = collect($this->media->enrichSections($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id)))->map(function ($section) use ($business, $page, &$referencedAssetUids, &$referencedFormUids) {
                 $type = WebsiteSectionType::tryFrom($section['type'] ?? '');
                 $data = $section['data'] ?? [];
 
@@ -61,6 +67,22 @@ final class WebsiteSnapshotBuilder
 
                 if ($type === WebsiteSectionType::Form && ! empty($data['form_uid'])) {
                     $referencedFormUids[$data['form_uid']] = true;
+                }
+
+                if ($type === WebsiteSectionType::FormsModuleForm) {
+                    // Resolved at publish time and frozen, like a package price: the page then shows exactly the
+                    // reference that was live when the owner published. A reference that no longer resolves
+                    // (form switched off, Location closed) is frozen as null and renders nothing. Keys are in
+                    // MySQL's JSON order (length, then alphabetical) so the stored snapshot round-trips byte for byte.
+                    $frozen = [];
+
+                    if (isset($data['heading'])) {
+                        $frozen['heading'] = $data['heading'];
+                    }
+
+                    $frozen['resolved'] = $this->formsModule->resolve($business, (string) ($data['forms_module_deployment_uid'] ?? ''));
+                    $frozen['forms_module_deployment_uid'] = $data['forms_module_deployment_uid'] ?? null;
+                    $data = $frozen;
                 }
 
                 if ($type === WebsiteSectionType::ContactDetails) {
@@ -74,7 +96,7 @@ final class WebsiteSnapshotBuilder
                     $data['resolved'] = [
                         'phone' => $data['show_phone'] ? $business?->phone : null,
                         'email' => $data['show_email'] ? $business?->email : null,
-                        'address' => ($data['show_address'] && $this->addressPermitted($business)) ? $this->formatAddress($business) : null,
+                        'address' => ($data['show_address'] && $this->addressPermitted($business) && \App\Library\Website\Seo\WebsiteLocationPageAddress::pageMayShowAddress($page->slug, $business)) ? $this->formatAddress($business) : null,
                     ];
                 }
 
@@ -95,14 +117,21 @@ final class WebsiteSnapshotBuilder
             ];
         })->values()->all();
 
+        // The owner's logo and hero image are site chrome, not sections: they are
+        // referenced from the theme, so they are carried into the revision explicitly.
+        foreach (['logo_asset_uid', 'hero_asset_uid'] as $themeKey) {
+            $chromeUid = $website->theme[$themeKey] ?? null;
+            if (is_string($chromeUid) && $chromeUid !== '') {
+                $referencedAssetUids[$chromeUid] = true;
+            }
+        }
+
         $assets = WebsiteAsset::where('website_id', $website->id)
             ->whereIn('uid', array_keys($referencedAssetUids))
             ->get()
-            ->map(fn ($asset) => [
-                'uid' => $asset->uid,
-                'url' => $asset->url(),
-                'alt_text' => $asset->alt_text,
-            ])->values()->all();
+            // Frozen with the revision: the exact derivative URLs this version serves. An asset that
+            // predates responsive images gets its derivatives made now (additive, original untouched).
+            ->map(fn ($asset) => $this->media->forAsset($asset, ensure: true))->values()->all();
 
         // Embedded, not live-read: a `form` section's rendered fields and a
         // submission's validation rules both come from this frozen copy, so
@@ -124,11 +153,20 @@ final class WebsiteSnapshotBuilder
             'website' => [
                 'name' => $website->name,
                 'theme' => $website->theme ?? [],
+                'contact' => $this->chromeContact($business, $this->visibleContactFacts($pageSnapshots)),
                 'localBusiness' => $this->localBusinessFacts($business, $this->visibleContactFacts($pageSnapshots)),
             ],
             'pages' => $pageSnapshots,
             'assets' => $assets,
             'forms' => $forms,
+            // Old address -> new address for pages renamed since the live revision
+            // (see WebsiteRedirectMap): the public renderers 301 these instead of 404ing.
+            'redirects' => (new \App\Library\Website\Seo\WebsiteRedirectMap())->compute(
+                $website->published_revision_id !== null
+                    ? \App\Models\WebsiteRevision::find($website->published_revision_id)?->snapshot
+                    : null,
+                $pageSnapshots,
+            ),
         ];
     }
 
@@ -166,9 +204,35 @@ final class WebsiteSnapshotBuilder
         return $visible;
     }
 
+    /**
+     * The phone/email the template's header strip and footer may show —
+     * frozen at publish time, and only the facts the owner chose to display
+     * somewhere on the site (the same rule LocalBusiness JSON-LD follows).
+     *
+     * @param  array{phone: bool, email: bool, address: bool}  $visible
+     * @return array{phone: ?string, email: ?string}
+     */
+    private function chromeContact(?Business $business, array $visible): array
+    {
+        // Key order matters: MySQL JSON stores object keys length-then-alphabetically, and a
+        // revision's snapshot is compared byte-for-byte after a round trip.
+        return [
+            'email' => $visible['email'] ? ($business?->email ?: null) : null,
+            'phone' => $visible['phone'] ? ($business?->phone ?: null) : null,
+        ];
+    }
+
     private function assetUidsIn(?WebsiteSectionType $type, array $data): array
     {
         $uids = [];
+
+        if ($type === WebsiteSectionType::CustomSection) {
+            foreach (($data['images'] ?? []) as $imageUid) {
+                if (is_string($imageUid) && $imageUid !== '') {
+                    $uids[] = $imageUid;
+                }
+            }
+        }
 
         if ($type === WebsiteSectionType::Hero && ! empty($data['background_image'])) {
             $uids[] = $data['background_image'];

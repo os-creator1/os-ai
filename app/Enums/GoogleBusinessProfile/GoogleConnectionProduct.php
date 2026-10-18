@@ -28,6 +28,13 @@ enum GoogleConnectionProduct: string
     case SearchConsole = 'search_console';
 
     /**
+     * Google Ads Module V1 contract §3 — the third product on the same
+     * connection authority. Its own Google account, lifecycle and
+     * revocation, managed only by App\Library\GoogleAds\GoogleAdsConnectionManager.
+     */
+    case GoogleAds = 'google_ads';
+
+    /**
      * §7.2's scope column. Business Profile's is the existing, unchanged
      * HttpGoogleBusinessProfileReadClient::SCOPE constant, duplicated here
      * only as documentation — that constant, not this method, is what the
@@ -38,6 +45,7 @@ enum GoogleConnectionProduct: string
         return match ($this) {
             self::BusinessProfile => 'https://www.googleapis.com/auth/business.manage',
             self::SearchConsole => 'https://www.googleapis.com/auth/webmasters.readonly',
+            self::GoogleAds => 'https://www.googleapis.com/auth/adwords',
         };
     }
 }

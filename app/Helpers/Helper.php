@@ -228,10 +228,36 @@
         public static function home_route(): string
         {
             if (Gate::allows('access backend')) {
-                return route('admin.home');
+                return self::adminHomeUrl();
             }
 
             return route('user.home');
+        }
+
+        /**
+         * Can this user open the Platform Owner Home (admin.platform-owner.overview)? An administrator account with the
+         * `view workspace` permission, exactly the authority that route enforces.
+         */
+        public static function isPlatformOwnerHome(?\App\Models\User $user): bool
+        {
+            return $user !== null
+                && (bool) $user->is_admin
+                && Gate::forUser($user)->allows('view workspace')
+                && \Illuminate\Support\Facades\Route::has('admin.platform-owner.overview');
+        }
+
+        /**
+         * The current MotionGrove landing page for a backend user: the Platform Owner Home for Platform Owners, the
+         * authorised staff landing page for everyone else with backend access. The inherited Ultimate SMS dashboard
+         * no longer exists; breadcrumbs, logos and redirects all resolve through here.
+         */
+        public static function adminHomeUrl(): string
+        {
+            if (self::isPlatformOwnerHome(\Illuminate\Support\Facades\Auth::user())) {
+                return route('admin.platform-owner.overview');
+            }
+
+            return route('admin.staff-home');
         }
 
         public static function is_admin_route(Request $request): bool
@@ -245,7 +271,9 @@
         {
             $conf = AppConfig::where('setting', $value)->first();
 
-            return $conf->value;
+            // A migrated-but-not-installed database has no app_config rows (platform:install seeds them):
+            // a missing record reads as "not set", never as a crash on a public page.
+            return $conf?->value;
         }
 
         /**
@@ -552,302 +580,224 @@
             return [
                 'admin'    => [
                     [
-                        'url'    => url(config('app.admin_path') . '/dashboard'),
-                        'slug'   => config('app.admin_path') . '/dashboard',
-                        'name'   => 'Dashboard',
-                        'i18n'   => 'Dashboard',
-                        'icon'   => 'home',
-                        'access' => 'access backend',
+                        // Platform Owner shell V1 — Home is the Platform Owner
+                        // overview (the support/operations cockpit). Staff who are
+                        // not Platform Owners get the staff home below instead.
+                        // 'admin_only' / 'staff_only' are the opt-in account-type
+                        // boundaries App\Library\Navigation\AdminMenuBuilder
+                        // enforces; every route re-checks authority server-side.
+                        'url'        => url(config('app.admin_path') . '/platform-owner'),
+                        'slug'       => config('app.admin_path') . '/platform-owner',
+                        'name'       => 'Home',
+                        'i18n'       => 'Home',
+                        'icon'       => 'home',
+                        'access'     => 'view workspace',
+                        'admin_only' => true,
                     ],
                     [
-                        // Platform Owner / Admin V1 — the support surface, kept to
-                        // four entries. 'admin_only' is the same additional
-                        // is_admin boundary the entries below use; every route
-                        // behind it is EnsureUserIsAdministrator-gated and the
-                        // 'access' string alone does not guarantee that. The menu
-                        // is only a convenience: every route re-checks authority
-                        // server-side whether or not the link is shown.
+                        // Backend staff who are not Platform Owners land on the staff home (authorised sections only).
+                        'url'        => url(config('app.admin_path') . '/staff-home'),
+                        'slug'       => config('app.admin_path') . '/staff-home',
+                        'name'       => 'Home',
+                        'i18n'       => 'Home',
+                        'icon'       => 'home',
+                        'access'     => 'access backend',
+                        'staff_only' => true,
+                    ],
+                    ['navheader' => 'Accounts & Operations', 'admin_only' => true],
+                    [
+                        'url'        => url(config('app.admin_path') . '/workspaces'),
+                        'slug'       => config('app.admin_path') . '/workspaces',
+                        'name'       => 'Workspaces',
+                        'i18n'       => 'Workspaces',
+                        'icon'       => 'briefcase',
+                        'access'     => 'view workspace',
+                        'admin_only' => true,
+                    ],
+                    [
+                        'url'        => url(config('app.admin_path') . '/businesses'),
+                        'slug'       => config('app.admin_path') . '/businesses',
+                        'name'       => 'Businesses',
+                        'i18n'       => 'Businesses',
+                        'icon'       => 'store',
+                        'access'     => 'view business',
+                        'admin_only' => true,
+                    ],
+                    [
+                        'url'        => url(config('app.admin_path') . '/platform-users'),
+                        'slug'       => config('app.admin_path') . '/platform-users',
+                        'name'       => 'Users',
+                        'i18n'       => 'Users',
+                        'icon'       => 'users',
+                        'access'     => 'view customer',
+                        'admin_only' => true,
+                    ],
+                    [
+                        'url'        => url(config('app.admin_path') . '/platform-support'),
+                        'slug'       => config('app.admin_path') . '/platform-support',
+                        'name'       => 'Support',
+                        'i18n'       => 'Support',
+                        'icon'       => 'life-buoy',
+                        'access'     => 'view workspace',
+                        'admin_only' => true,
+                    ],
+                    [
+                        // Only while config('opportunity.enabled') is on; the
+                        // whole surface answers 404 otherwise.
+                        'url'        => url(config('app.admin_path') . '/opportunities'),
+                        'slug'       => config('app.admin_path') . '/opportunities',
+                        'name'       => 'Opportunities',
+                        'i18n'       => 'Opportunities',
+                        'icon'       => 'target',
+                        'access'     => 'view opportunities',
+                        'admin_only' => true,
+                        'requires_config' => 'opportunity.enabled',
+                    ],
+                    ['navheader' => 'Commercial', 'admin_only' => true],
+                    [
+                        // The ONE plan authority (Core / Growth / Agency).
+                        // Platform Owner V1 final: replaces the read-only
+                        // Plan Catalog and the legacy SMS "Plan > Plans".
+                        'url'        => url(config('app.admin_path') . '/platform-plans'),
+                        'slug'       => config('app.admin_path') . '/platform-plans',
+                        'name'       => 'Plans',
+                        'i18n'       => 'Plans',
+                        'icon'       => 'layers',
+                        'access'     => 'view workspace plans',
+                        'admin_only' => true,
+                    ],
+                    [
+                        // Revenue, subscriptions and invoices-as-payments for
+                        // platform SaaS plans (Stripe lane A). There is no
+                        // separate Subscriptions or Invoices page: the page
+                        // carries both, so neither is linked twice.
+                        'url'        => url(config('app.admin_path') . '/platform-billing'),
+                        'slug'       => config('app.admin_path') . '/platform-billing',
+                        'name'       => 'Billing & Revenue',
+                        'i18n'       => 'Billing & Revenue',
+                        'icon'       => 'credit-card',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                    ],
+                    [
                         'url'        => '',
-                        'slug'       => '',
-                        'name'       => 'Platform Owner',
-                        'i18n'       => 'Platform Owner',
-                        'icon'       => 'shield',
+                        'name'       => 'Usage & Provider Costs',
+                        'i18n'       => 'Usage & Provider Costs',
+                        'icon'       => 'activity',
                         'access'     => 'access backend',
                         'admin_only' => true,
                         'submenu'    => [
                             [
-                                'url'        => url(config('app.admin_path') . '/platform-owner'),
-                                'slug'       => config('app.admin_path') . '/platform-owner',
-                                'name'       => 'Overview',
-                                'i18n'       => 'Overview',
-                                'access'     => 'access backend',
-                                'admin_only' => true,
-                                'icon'       => 'activity',
+                                'url'    => url(config('app.admin_path') . '/usage-billing/safety-limits'),
+                                'slug'   => config('app.admin_path') . '/usage-billing/safety-limits',
+                                'name'   => 'Safety Limits',
+                                'i18n'   => 'Safety Limits',
+                                'access' => 'access backend',
+                                'icon'   => 'shield',
                             ],
                             [
-                                'url'        => url(config('app.admin_path') . '/workspaces'),
-                                'slug'       => config('app.admin_path') . '/workspaces',
-                                'name'       => 'Workspaces',
-                                'i18n'       => 'Workspaces',
-                                'access'     => 'access backend',
-                                'admin_only' => true,
-                                'icon'       => 'users',
+                                'url'    => url(config('app.admin_path') . '/ai-usage'),
+                                'slug'   => config('app.admin_path') . '/ai-usage',
+                                'name'   => 'AI Usage',
+                                'i18n'   => 'AI Usage',
+                                'access' => 'access backend',
+                                'icon'   => 'cpu',
                             ],
                             [
-                                'url'        => url(config('app.admin_path') . '/businesses'),
-                                'slug'       => config('app.admin_path') . '/businesses',
-                                'name'       => 'Businesses',
-                                'i18n'       => 'Businesses',
-                                'access'     => 'access backend',
-                                'admin_only' => true,
-                                'icon'       => 'briefcase',
-                            ],
-                            [
-                                'url'        => url(config('app.admin_path') . '/platform-owner/audit'),
-                                'slug'       => config('app.admin_path') . '/platform-owner/audit',
-                                'name'       => 'Audit',
-                                'i18n'       => 'Audit',
-                                'access'     => 'access backend',
-                                'admin_only' => true,
-                                'icon'       => 'clipboard',
+                                'url'    => url(config('app.admin_path') . '/provider-events'),
+                                'slug'   => config('app.admin_path') . '/provider-events',
+                                'name'   => 'Provider Events',
+                                'i18n'   => 'Provider Events',
+                                'access' => 'access backend',
+                                'icon'   => 'zap',
                             ],
                         ],
                     ],
+                    ['navheader' => 'Product & Configuration', 'admin_only' => true],
                     [
-                        // Implementation Contract 20 §12.F/§18.F, Blueprint §30 —
-                        // the Platform Owner's Niche Blueprint authoring surface.
-                        // Deliberately a SEPARATE top-level entry from Template
-                        // Library below, per Blueprint §30's own wording: the two
-                        // share the same underlying domain authority
-                        // (NicheBlueprintPublisher) but are distinct product
-                        // surfaces and must never collapse into one link.
-                        // 'admin_only' is the same additional is_admin boundary
-                        // the Usage Billing submenu's admin-only entries use —
-                        // extended to top-level entries by this same slice
-                        // (resources/views/panels/sidebar.blade.php) because
-                        // every route here is EnsureUserIsAdministrator-gated
-                        // and the 'access' gate alone does not guarantee that.
                         'url'        => url(config('app.admin_path') . '/niche-blueprints'),
                         'slug'       => config('app.admin_path') . '/niche-blueprints',
                         'name'       => 'Niche Blueprints',
                         'i18n'       => 'Niche Blueprints',
-                        'icon'       => 'layers',
+                        'icon'       => 'layout',
                         'access'     => 'access backend',
                         'admin_only' => true,
                     ],
                     [
-                        // Implementation Contract 20 §12.F/§18.F, Blueprint §30 —
-                        // the Platform Owner's read-only Template Library catalog
-                        // surface, backed by the same niche_blueprint_* rows as
-                        // Niche Blueprints above. See that entry's comment for why
-                        // this is a separate top-level link rather than a submenu
-                        // item of it.
+                        // Website template library (the four site designs).
                         'url'        => url(config('app.admin_path') . '/template-library'),
                         'slug'       => config('app.admin_path') . '/template-library',
-                        'name'       => 'Template Library',
-                        'i18n'       => 'Template Library',
-                        'icon'       => 'book-open',
+                        'name'       => 'Website Templates',
+                        'i18n'       => 'Website Templates',
+                        'icon'       => 'globe',
                         'access'     => 'access backend',
                         'admin_only' => true,
                     ],
                     [
-                        'url'     => '',
-                        'name'    => 'Customer',
-                        'icon'    => 'users',
-                        'i18n'    => 'Customer',
-                        'access'  => 'view customer|view subscription|view announcement',
-                        'submenu' => [
-                            [
-                                'url'    => url(config('app.admin_path') . '/customers'),
-                                'slug'   => config('app.admin_path') . '/customers',
-                                'name'   => 'Customers',
-                                'i18n'   => 'Customers',
-                                'access' => 'view customer',
-                                'icon'   => 'users',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/subscriptions'),
-                                'slug'   => config('app.admin_path') . '/subscriptions',
-                                'name'   => 'Subscriptions',
-                                'i18n'   => 'Subscriptions',
-                                'access' => 'view subscription',
-                                'icon'   => 'credit-card',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/announcements'),
-                                'slug'   => config('app.admin_path') . '/announcements',
-                                'name'   => 'Announcements',
-                                'i18n'   => 'Announcements',
-                                'access' => 'view announcement',
-                                'icon'   => 'tv',
-                            ],
-                        ],
-                    ],
-
-                    [
-                        'url'     => '',
-                        'name'    => 'Plan',
-                        'i18n'    => 'Plan',
-                        'icon'    => 'credit-card',
-                        'access'  => 'manage plans|manage currencies',
-                        'submenu' => [
-                            [
-                                'url'    => url(config('app.admin_path') . '/plans'),
-                                'slug'   => config('app.admin_path') . '/plans',
-                                'name'   => 'Plans',
-                                'i18n'   => 'Plans',
-                                'access' => 'manage plans',
-                                'icon'   => 'credit-card',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/currencies'),
-                                'slug'   => config('app.admin_path') . '/currencies',
-                                'name'   => 'Currencies',
-                                'i18n'   => 'Currencies',
-                                'access' => 'manage currencies',
-                                'icon'   => 'dollar-sign',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/tax/settings'),
-                                'slug'   => config('app.admin_path') . '/tax/settings',
-                                'name'   => 'Tax Settings',
-                                'i18n'   => 'Tax Settings',
-                                'access' => 'manage tax',
-                                'icon'   => 'percent',
-                            ],
-                        ],
+                        'url'        => url(config('app.admin_path') . '/document-templates'),
+                        'slug'       => config('app.admin_path') . '/document-templates',
+                        'name'       => 'Proposal Templates',
+                        'i18n'       => 'Proposal Templates',
+                        'icon'       => 'file-text',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
                     ],
                     [
-                        'url'     => '',
-                        'name'    => 'Sending',
-                        'icon'    => 'send',
-                        'i18n'    => 'Sending',
-                        'access'  => 'view sender_id|view keywords|view sending_servers|view phone_numbers|view tags',
-                        'submenu' => [
-                            [
-                                'url'    => url(config('app.admin_path') . '/sending-servers'),
-                                'slug'   => config('app.admin_path') . '/sending-servers',
-                                'name'   => 'Sending Servers',
-                                'i18n'   => 'Sending Servers',
-                                'access' => 'view sending_servers',
-                                'icon'   => 'send',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/senderid'),
-                                'slug'   => config('app.admin_path') . '/senderid',
-                                'name'   => 'Sender ID',
-                                'i18n'   => 'Sender ID',
-                                'access' => 'view sender_id',
-                                'icon'   => 'book',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/phone-numbers'),
-                                'slug'   => config('app.admin_path') . '/phone-numbers',
-                                'name'   => 'Numbers',
-                                'i18n'   => 'Numbers',
-                                'access' => 'view phone_numbers',
-                                'icon'   => 'phone',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/keywords'),
-                                'slug'   => config('app.admin_path') . '/keywords',
-                                'name'   => 'Keywords',
-                                'i18n'   => 'Keywords',
-                                'access' => 'view keywords',
-                                'icon'   => 'hash',
-                            ],
-                            /*Version 3.5*/
-
-                            [
-                                'url'    => url(config('app.admin_path') . '/templates'),
-                                'slug'   => config('app.admin_path') . '/templates',
-                                'name'   => 'Templates',
-                                'i18n'   => 'Templates',
-                                'access' => 'view templates',
-                                'icon'   => 'bookmark',
-                            ],
-                        ],
+                        'url'        => url(config('app.admin_path') . '/platform-features'),
+                        'slug'       => config('app.admin_path') . '/platform-features',
+                        'name'       => 'Feature Management',
+                        'i18n'       => 'Feature Management',
+                        'icon'       => 'toggle-right',
+                        'access'     => 'view workspace plans',
+                        'admin_only' => true,
                     ],
                     [
-                        'url'     => '',
-                        'name'    => 'Security',
-                        'i18n'    => 'Security',
-                        'icon'    => 'shield',
-                        'access'  => 'view blacklist|view spam_word|view blocked_senderids',
-                        'submenu' => [
-                            [
-                                'url'    => url(config('app.admin_path') . '/blacklists'),
-                                'slug'   => config('app.admin_path') . '/blacklists',
-                                'name'   => 'Blacklist',
-                                'i18n'   => 'Blacklist',
-                                'access' => 'view blacklist',
-                                'icon'   => 'user-x',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/spam-word'),
-                                'slug'   => config('app.admin_path') . '/spam-word',
-                                'name'   => 'Spam Word',
-                                'i18n'   => 'Spam Word',
-                                'access' => 'view spam_word',
-                                'icon'   => 'x-square',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/block-senderid'),
-                                'slug'   => config('app.admin_path') . '/block-senderid',
-                                'name'   => 'Block Sender ID',
-                                'i18n'   => 'Block Sender ID',
-                                'access' => 'view block_senderid',
-                                'icon'   => 'slash',
-                            ],
-                        ],
+                        'url'        => url(config('app.admin_path') . '/platform-announcements'),
+                        'slug'       => config('app.admin_path') . '/platform-announcements',
+                        'name'       => 'Announcements',
+                        'i18n'       => 'Announcements',
+                        'icon'       => 'megaphone',
+                        'access'     => 'view announcement',
+                        'admin_only' => true,
                     ],
                     [
-                        'url'     => '',
-                        'name'    => 'Administrator',
-                        'i18n'    => 'Administrator',
-                        'icon'    => 'user',
-                        'access'  => 'view administrator|view roles',
-                        'submenu' => [
-                            [
-                                'url'    => url(config('app.admin_path') . '/administrators'),
-                                'slug'   => config('app.admin_path') . '/administrators',
-                                'name'   => 'Administrators',
-                                'i18n'   => 'Administrators',
-                                'access' => 'view administrator',
-                                'icon'   => 'users',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/roles'),
-                                'slug'   => config('app.admin_path') . '/roles',
-                                'name'   => 'Admin Roles',
-                                'i18n'   => 'Admin Roles',
-                                'access' => 'view roles',
-                                'icon'   => 'user-check',
-                            ],
-                        ],
+                        // Platform Automations (platform-scoped automation engine and
+                        // its Runs / Failures / Recipes pages). A normal Platform Owner
+                        // entry: Platform Owner only, no feature flag.
+                        'url'        => url(config('app.admin_path') . '/platform-automations'),
+                        'slug'       => config('app.admin_path') . '/platform-automations',
+                        'name'       => 'Platform Automations',
+                        'i18n'       => 'Platform Automations',
+                        'icon'       => 'zap',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
                     ],
-                    /*
-                     * B3 Simplified Platform Settings §15/§24. "All
-                     * Settings" (general settings|view languages|
-                     * view payment_gateways|view email_templates|
-                     * manage maintenance_mode|manage ai_settings" access
-                     * string) is replaced by "Platform Settings" — the
-                     * new one-page, six-section screen; AI Settings folds
-                     * into it (SettingsController::general() itself now
-                     * grants entry to anyone holding at least one of the
-                     * section abilities, 'manage ai_settings' included,
-                     * so that independent access path is preserved even
-                     * though its own nav link is gone). Countries and
-                     * Payment Gateways are legacy billing resources
-                     * outside B3's scope (deferred to the RFC-005 billing
-                     * cutover) — hidden from Settings navigation, not
-                     * deleted; both controllers/routes/backends are
-                     * untouched and still directly reachable by URL for
-                     * any admin holding their existing ability. Theme
-                     * Presets (Design System M2's own screen) had no nav
-                     * entry at all before B3 — added here, closing that
-                     * gap.
-                     */
+                    ['navheader' => 'Governance', 'admin_only' => true],
+                    [
+                        'url'        => url(config('app.admin_path') . '/platform-owner/audit'),
+                        'slug'       => config('app.admin_path') . '/platform-owner/audit',
+                        'name'       => 'Audit Logs',
+                        'i18n'       => 'Audit Logs',
+                        'icon'       => 'clipboard',
+                        'access'     => 'view workspace',
+                        'admin_only' => true,
+                    ],
+                    [
+                        'url'        => url(config('app.admin_path') . '/administrators'),
+                        'slug'       => config('app.admin_path') . '/administrators',
+                        'name'       => 'Administrators',
+                        'i18n'       => 'Administrators',
+                        'icon'       => 'user-check',
+                        'access'     => 'view administrator',
+                    ],
+                    [
+                        'url'        => url(config('app.admin_path') . '/roles'),
+                        'slug'       => config('app.admin_path') . '/roles',
+                        'name'       => 'Roles',
+                        'i18n'       => 'Roles',
+                        'icon'       => 'key',
+                        'access'     => 'view roles',
+                    ],
                     [
                         'url'     => '',
                         'name'    => 'Settings',
@@ -913,147 +863,118 @@
                             ],
                         ],
                     ],
+                    /*
+                     * System / Advanced — infrastructure the Business OS still
+                     * runs on but that is not a primary Platform Owner task.
+                     * Everything inherited from the Ultimate SMS gateway is
+                     * hidden unless LEGACY_MESSAGING_MENU=true (routes stay
+                     * registered); the genuine operational screens (number
+                     * lifecycle, slot agreements, citation catalogs) live here.
+                     */
+                    ['navheader' => 'System / Advanced', 'admin_only' => true],
                     [
-                        'url'     => '',
-                        'name'    => 'Reports',
-                        'i18n'    => 'Reports',
-                        'icon'    => 'bar-chart-2',
-                        'access'  => 'view sms_history',
-                        'submenu' => [
+                        'url'        => '',
+                        'name'       => 'Messaging Operations',
+                        'i18n'       => 'Messaging Operations',
+                        'icon'       => 'phone-call',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                        'submenu'    => [
                             [
-                                'url'    => url(config('app.admin_path') . '/reports/dashboard'),
-                                'slug'   => config('app.admin_path') . '/reports/dashboard',
-                                'name'   => 'Dashboard',
-                                'i18n'   => 'Dashboard',
-                                'access' => 'view sms_history',
-                                'icon'   => 'home',
+                                'url'        => url(config('app.admin_path') . '/messaging-provisioning-incidents'),
+                                'slug'       => config('app.admin_path') . '/messaging-provisioning-incidents',
+                                'name'       => 'Provisioning Incidents',
+                                'i18n'       => 'Provisioning Incidents',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'alert-circle',
                             ],
                             [
-                                'url'    => url(config('app.admin_path') . '/reports/history'),
-                                'slug'   => config('app.admin_path') . '/reports/history',
-                                'name'   => 'SMS History',
-                                'i18n'   => 'SMS History',
-                                'access' => 'view sms_history',
-                                'icon'   => 'bar-chart-2',
+                                'url'        => url(config('app.admin_path') . '/messaging-port-out-requests'),
+                                'slug'       => config('app.admin_path') . '/messaging-port-out-requests',
+                                'name'       => 'Port-Out Requests',
+                                'i18n'       => 'Port-Out Requests',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'log-out',
                             ],
                             [
-                                'url'    => url(config('app.admin_path') . '/reports/campaigns'),
-                                'slug'   => config('app.admin_path') . '/reports/campaigns',
-                                'name'   => 'Campaigns',
-                                'i18n'   => 'Campaigns',
-                                'access' => 'view sms_history',
-                                'icon'   => 'pie-chart',
+                                'url'        => url(config('app.admin_path') . '/messaging-number-lifecycle'),
+                                'slug'       => config('app.admin_path') . '/messaging-number-lifecycle',
+                                'name'       => 'Number Lifecycle',
+                                'i18n'       => 'Number Lifecycle',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'phone',
                             ],
                         ],
                     ],
-
                     [
-                        'url'    => url(config('app.admin_path') . '/invoices'),
-                        'slug'   => config('app.admin_path') . '/invoices',
-                        'name'   => 'Invoices',
-                        'i18n'   => 'Invoices',
-                        'access' => 'view invoices',
-                        'icon'   => 'shopping-cart',
+                        // Grandfathered extra-Business-slot commitments (Contract
+                        // 11 froze new sales). Only meaningful while any exist,
+                        // so it is advanced, not a commercial primary.
+                        'url'        => url(config('app.admin_path') . '/additional-business-slot-agreements'),
+                        'slug'       => config('app.admin_path') . '/additional-business-slot-agreements',
+                        'name'       => 'Legacy Slot Agreements',
+                        'i18n'       => 'Legacy Slot Agreements',
+                        'icon'       => 'archive',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
                     ],
                     [
-                        // RFC-005 Admin Usage Billing Surface Contract §2.7 —
-                        // the first sidebar nav entry any RFC-00x admin-only
-                        // module has received. Read-only cross-links to the
-                        // two already-shipped Usage-domain admin surfaces
-                        // (provider-event disposition, additional-slot-
-                        // agreement administration); no route/controller/
-                        // mutation is duplicated for either.
-                        'url'     => '',
-                        'slug'    => '',
-                        'name'    => 'Usage Billing',
-                        'i18n'    => 'Usage Billing',
-                        'icon'    => 'credit-card',
-                        'access'  => 'access backend',
-                        'submenu' => [
+                        'url'        => '',
+                        'name'       => 'Citation Catalogs',
+                        'i18n'       => 'Citation Catalogs',
+                        'icon'       => 'map-pin',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                        'submenu'    => [
                             [
-                                'url'    => url(config('app.admin_path') . '/usage-billing/safety-limits'),
-                                'slug'   => config('app.admin_path') . '/usage-billing/safety-limits',
-                                'name'   => 'Safety Limits',
-                                'i18n'   => 'Safety Limits',
-                                'access' => 'access backend',
-                                'icon'   => 'shield',
-                            ],
-                            [
-                                // Slice AI-2 — the admin AI usage ledger summary.
-                                'url'    => url(config('app.admin_path') . '/ai-usage'),
-                                'slug'   => config('app.admin_path') . '/ai-usage',
-                                'name'   => 'AI Usage',
-                                'i18n'   => 'AI Usage',
-                                'access' => 'access backend',
-                                'icon'   => 'cpu',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/provider-events'),
-                                'slug'   => config('app.admin_path') . '/provider-events',
-                                'name'   => 'Provider Events',
-                                'i18n'   => 'Provider Events',
-                                'access' => 'access backend',
-                                'icon'   => 'alert-triangle',
-                            ],
-                            [
-                                // Phone Numbers + A2P lane — the support/ops
-                                // reconciliation surface for
-                                // business_messaging_provisioning_incidents.
-                                // 'admin_only' is an additional, stricter
-                                // boundary panels/submenu.blade.php enforces on
-                                // top of the 'access' gate below: this entry's
-                                // OWN route is gated by EnsureUserIsAdministrator
-                                // (users.is_admin), which the 'access backend'
-                                // gate alone does not guarantee — hasPermission()
-                                // only checks the permission collection, not
-                                // account type, so a non-admin backend account
-                                // holding that permission string would otherwise
-                                // still see a link to a page it cannot open.
-                                'url'        => url(config('app.admin_path') . '/messaging-provisioning-incidents'),
-                                'slug'       => config('app.admin_path') . '/messaging-provisioning-incidents',
-                                'name'       => 'Messaging Provisioning Incidents',
-                                'i18n'       => 'Messaging Provisioning Incidents',
+                                'url'        => url(config('app.admin_path') . '/citation-directories'),
+                                'slug'       => config('app.admin_path') . '/citation-directories',
+                                'name'       => 'Directories',
+                                'i18n'       => 'Directories',
                                 'access'     => 'access backend',
                                 'admin_only' => true,
-                                'icon'       => 'life-buoy',
+                                'icon'       => 'list',
                             ],
                             [
-                                // Phone Numbers + A2P lane — messaging
-                                // contract §13.4's tracking surface for
-                                // number port-out requests. Read-only;
-                                // 'admin_only' is the same additional
-                                // is_admin boundary the sibling entry above
-                                // uses, for the same reason.
-                                'url'        => url(config('app.admin_path') . '/messaging-port-out-requests'),
-                                'slug'       => config('app.admin_path') . '/messaging-port-out-requests',
-                                'name'       => 'Messaging Port-Out Requests',
-                                'i18n'       => 'Messaging Port-Out Requests',
+                                'url'        => url(config('app.admin_path') . '/citation-niches'),
+                                'slug'       => config('app.admin_path') . '/citation-niches',
+                                'name'       => 'Niches',
+                                'i18n'       => 'Niches',
                                 'access'     => 'access backend',
                                 'admin_only' => true,
-                                'icon'       => 'arrow-right-circle',
+                                'icon'       => 'tag',
                             ],
-                            [
-                                // Phone Numbers + A2P lane — messaging
-                                // contract §13.2/§13.3's suspended-number
-                                // release surface. Same 'admin_only'
-                                // boundary as its two siblings above, for
-                                // the same reason.
-                                'url'        => url(config('app.admin_path') . '/messaging-number-lifecycle'),
-                                'slug'       => config('app.admin_path') . '/messaging-number-lifecycle',
-                                'name'       => 'Messaging Number Lifecycle',
-                                'i18n'       => 'Messaging Number Lifecycle',
-                                'access'     => 'access backend',
-                                'admin_only' => true,
-                                'icon'       => 'pause-circle',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/additional-business-slot-agreements'),
-                                'slug'   => config('app.admin_path') . '/additional-business-slot-agreements',
-                                'name'   => 'Additional Slot Agreements',
-                                'i18n'   => 'Additional Slot Agreements',
-                                'access' => 'access backend',
-                                'icon'   => 'layers',
-                            ],
+                        ],
+                    ],
+                    [
+                        // Legacy Ultimate SMS gateway surfaces, one entry each,
+                        // all hidden by default (requires_config).
+                        'url'        => '',
+                        'name'       => 'Legacy SMS Gateway',
+                        'i18n'       => 'Legacy SMS Gateway',
+                        'icon'       => 'send',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                        'requires_config' => 'app.legacy_messaging_menu',
+                        'submenu'    => [
+                            ['url' => url(config('app.admin_path') . '/customers'), 'slug' => config('app.admin_path') . '/customers', 'name' => 'Customers', 'i18n' => 'Customers', 'access' => 'view customer', 'icon' => 'users'],
+                            ['url' => url(config('app.admin_path') . '/subscriptions'), 'slug' => config('app.admin_path') . '/subscriptions', 'name' => 'Subscriptions', 'i18n' => 'Subscriptions', 'access' => 'view subscription', 'icon' => 'repeat'],
+                            ['url' => url(config('app.admin_path') . '/plans'), 'slug' => config('app.admin_path') . '/plans', 'name' => 'SMS Plans', 'i18n' => 'SMS Plans', 'access' => 'manage plans', 'icon' => 'layers'],
+                            ['url' => url(config('app.admin_path') . '/currencies'), 'slug' => config('app.admin_path') . '/currencies', 'name' => 'Currencies', 'i18n' => 'Currencies', 'access' => 'manage currencies', 'icon' => 'dollar-sign'],
+                            ['url' => url(config('app.admin_path') . '/tax/settings'), 'slug' => config('app.admin_path') . '/tax/settings', 'name' => 'Tax Settings', 'i18n' => 'Tax Settings', 'access' => 'manage tax', 'icon' => 'percent'],
+                            ['url' => url(config('app.admin_path') . '/invoices'), 'slug' => config('app.admin_path') . '/invoices', 'name' => 'SMS Invoices', 'i18n' => 'SMS Invoices', 'access' => 'view invoices', 'icon' => 'file-text'],
+                            ['url' => url(config('app.admin_path') . '/sending-servers'), 'slug' => config('app.admin_path') . '/sending-servers', 'name' => 'Sending Servers', 'i18n' => 'Sending Servers', 'access' => 'view sending_servers', 'icon' => 'server'],
+                            ['url' => url(config('app.admin_path') . '/senderid'), 'slug' => config('app.admin_path') . '/senderid', 'name' => 'Sender ID', 'i18n' => 'Sender ID', 'access' => 'view sender_id', 'icon' => 'book'],
+                            ['url' => url(config('app.admin_path') . '/phone-numbers'), 'slug' => config('app.admin_path') . '/phone-numbers', 'name' => 'Numbers', 'i18n' => 'Numbers', 'access' => 'view phone_numbers', 'icon' => 'phone'],
+                            ['url' => url(config('app.admin_path') . '/keywords'), 'slug' => config('app.admin_path') . '/keywords', 'name' => 'Keywords', 'i18n' => 'Keywords', 'access' => 'view keywords', 'icon' => 'hash'],
+                            ['url' => url(config('app.admin_path') . '/templates'), 'slug' => config('app.admin_path') . '/templates', 'name' => 'Templates', 'i18n' => 'Templates', 'access' => 'view templates', 'icon' => 'file'],
+                            ['url' => url(config('app.admin_path') . '/reports/history'), 'slug' => config('app.admin_path') . '/reports/history', 'name' => 'SMS History', 'i18n' => 'SMS History', 'access' => 'view sms_history', 'icon' => 'clock'],
+                            ['url' => url(config('app.admin_path') . '/blacklists'), 'slug' => config('app.admin_path') . '/blacklists', 'name' => 'Blacklist', 'i18n' => 'Blacklist', 'access' => 'view blacklist', 'icon' => 'slash'],
+                            ['url' => url(config('app.admin_path') . '/spam-word'), 'slug' => config('app.admin_path') . '/spam-word', 'name' => 'Spam Word', 'i18n' => 'Spam Word', 'access' => 'view spam_word', 'icon' => 'x-octagon'],
+                            ['url' => url(config('app.admin_path') . '/block-senderid'), 'slug' => config('app.admin_path') . '/block-senderid', 'name' => 'Block Sender ID', 'i18n' => 'Block Sender ID', 'access' => 'view block_senderid', 'icon' => 'user-x'],
                         ],
                     ],
                 ],

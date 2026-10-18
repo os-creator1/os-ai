@@ -145,7 +145,7 @@ class NicheBlueprintAdminNavigationTest extends TestCase
 
         // ...and the sidebar itself never advertises a link it cannot open,
         // proven from a page this account CAN reach.
-        $html = $this->get(route('admin.home'))->assertOk()->getContent();
+        $html = $this->followingRedirects()->get(route('admin.home'))->assertOk()->getContent();
 
         $this->assertStringNotContainsString('admin/niche-blueprints', $html);
         $this->assertStringNotContainsString('admin/template-library', $html);

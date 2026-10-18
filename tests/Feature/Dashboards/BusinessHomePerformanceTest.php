@@ -221,13 +221,15 @@ class BusinessHomePerformanceTest extends TestCase
         $band = $this->performance($customer->user);
 
         $this->assertSame(
-            ['new_contacts', 'new_conversations', 'messages_received'],
+            ['new_contacts', 'new_conversations', 'appointments_booked', 'messages_received'],
             array_map(fn ($headline) => $headline->key, $band['items']),
         );
-        $this->assertSame(['3', '2', '6'], array_map(fn ($headline) => $headline->figure, $band['items']));
+        $this->assertSame(['3', '2', '0', '6'], array_map(fn ($headline) => $headline->figure, $band['items']));
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertSame(['new_contacts', 'new_conversations', 'messages_received'], $this->headlineKeys($html));
+        // Home shows the three cards the final design names (bookings, new contacts, waiting for reply); the rest stay band figures.
+        $this->assertSame(['appointments_booked', 'new_contacts', 'awaiting_reply'], $this->headlineKeys($html));
+        $this->assertSame(['0', '3', '0'], array_map(fn ($key) => preg_match('/data-headline="' . $key . '".*?data-role="headline-figure">([^<]+)</s', $html, $m) ? $m[1] : null, $this->headlineKeys($html)));
 
         foreach (['messages_sent', 'provider_accepted', 'confirmed_failed', 'automation_runs'] as $absent) {
             $this->assertNotContains($absent, $this->headlineKeys($html), "{$absent} is not a Business performance figure.");
@@ -243,7 +245,7 @@ class BusinessHomePerformanceTest extends TestCase
         );
         $this->assertDoesNotMatchRegularExpression(
             '/\b(leads?|bookings?|revenue|conversions?|google views|rankings?|SEO)\b/i',
-            $this->mainText($html),
+            $this->mainTextWithoutAsk($html),
         );
     }
 
@@ -349,7 +351,9 @@ class BusinessHomePerformanceTest extends TestCase
         }
 
         $this->assertStringNotContainsString('data-role="headline-judgement"', $html);
-        $this->assertStringContainsString('Up 8 (800.0%) from 1 in the previous 10 days.', $this->mainText($html));
+        // The card states the real difference (9 now, 1 before) as an up-arrow and a number: never a percentage, a verdict or a win.
+        $this->assertStringContainsString('▲ 8', $this->bandHtml($html, 'headlines'));
+        $this->assertStringNotContainsString('800', $this->bandHtml($html, 'headlines'));
     }
 
     public function test_the_period_caption_states_both_windows(): void
@@ -432,7 +436,7 @@ class BusinessHomePerformanceTest extends TestCase
             $workspace->uid, $business->uid, 'range' => AnalyticsDateRange::PRESET_LAST_MONTH,
         ]);
 
-        $this->assertStringContainsString('data-role="chart-new-contacts"', $band);
+        $this->assertStringContainsString('data-role="home-chart"', $band);
         $this->assertStringContainsString('data-series-url="' . e($expected) . '"', $band, 'The chart asks for the very period the tiles show.');
         $this->assertStringContainsString('data-role="chart-placeholder"', $band, 'The page ships without a series.');
 
@@ -465,7 +469,7 @@ class BusinessHomePerformanceTest extends TestCase
 
         $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'headlines');
         $this->assertStringContainsString('data-role="results-link"', $band);
-        $this->assertStringContainsString('See details', $band);
+        $this->assertStringContainsString('See all analytics', $band);
 
         // Results itself still answers on its own route: H-3 neither redirects
         // nor removes it.
@@ -515,7 +519,7 @@ class BusinessHomePerformanceTest extends TestCase
         $this->assertSame('Today so far', $ninety['window']->label(), 'The activity window is the visit marker, never the performance period.');
         $this->assertSame($default['items'], $ninety['items']);
         $this->assertSame([['key' => 'new_contacts', 'text' => '2 new contacts']], $ninety['items']);
-        $this->assertStringContainsString('Business activity', $this->mainText($html));
+        $this->assertStringContainsString('Today so far, you gained 2 new contacts', $this->mainText($html));
         $this->assertSame(1, DB::table('business_home_visits')->count(), 'One marker row, per user and Business.');
     }
 

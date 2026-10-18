@@ -283,13 +283,18 @@ class SendSmsExecutorTest extends TestCase
         $this->assertSame('no_business_sending_path', $enrollment->exit_reason);
     }
 
-    /** 6b. An originator the Business does not own is never invented. */
+    /**
+     * 6b. An originator the Business does not own is never invented. A managed
+     * identity WITH an active number is itself an originator (see
+     * ManagedOnlySenderPathTest); one with no usable number is not, and fails closed.
+     */
     public function test_a_business_with_no_originator_fails_closed_even_when_managed(): void
     {
         [, $business] = $this->entitledTenant();
         $this->sendableChannel($business);
         $this->giveManagedIdentity($business);
         $this->removeOriginators($business);
+        \Illuminate\Support\Facades\DB::table('business_messaging_numbers')->delete();
 
         [$workflow] = $this->publishWorkflow($business, [$this->smsStep(), $this->endStep()]);
         $contact = $this->contactFor($business);

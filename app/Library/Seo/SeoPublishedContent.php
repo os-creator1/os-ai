@@ -11,12 +11,14 @@ final class SeoPublishedContent
     /**
      * @param  array<int, SeoPublishedPage>  $pages
      * @param  array<int, array{uid: string, alt_text: ?string}>  $assets  assets referenced by the snapshot
+     * @param  string  $siteName  the snapshot's own site name — the Business name the public <title> appends (WebsiteHeadMeta::title)
      */
     public function __construct(
         public readonly int $websiteId,
         public readonly int $revisionId,
         public readonly array $pages,
         private readonly array $assets,
+        public readonly string $siteName = '',
     ) {
     }
 

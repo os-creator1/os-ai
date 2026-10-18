@@ -18,6 +18,8 @@ final readonly class AiCompletionRequest
         public array $messages,
         public int $maxOutputTokens,
         public bool $jsonMode = false,
+        // A route may ask for a SHORTER provider timeout than the client's ceiling (never a longer one).
+        public ?int $timeoutSeconds = null,
     ) {
     }
 }

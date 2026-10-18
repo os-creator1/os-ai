@@ -66,6 +66,12 @@ export function createApiClient(basePath) {
         testContacts(workflowBasePath, search) {
             return request(`${workflowBasePath}/test-contacts?q=${encodeURIComponent(search || '')}`, { method: 'GET' })
         },
+        enrollments(workflowBasePath) {
+            return request(`${workflowBasePath}/enrollments`, { method: 'GET' })
+        },
+        enrollmentLogs(workflowBasePath, enrollmentUid) {
+            return request(`${workflowBasePath}/enrollments/${encodeURIComponent(enrollmentUid)}/logs`, { method: 'GET' })
+        },
         pause(workflowBasePath) {
             return request(`${workflowBasePath}/pause`, { method: 'POST' })
         },

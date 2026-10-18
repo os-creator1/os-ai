@@ -175,7 +175,9 @@ class DocumentConcurrencyTest extends TestCase
         // Exactly ONE lifecycle event across both processes ...
         $this->assertSame(1, $results[0]['events']['sent'] + $results[1]['events']['sent'], json_encode($results));
         // ... one queued link email ...
-        $this->assertSame(1, DB::table('jobs')->count(), 'Exactly one link email may be queued.');
+        // (Other consumers of the sent event — Automations' trigger listener — queue their own
+        // jobs; the assertion is about the link email, so it counts that job alone.)
+        $this->assertSame(1, DB::table('jobs')->where('payload', 'like', '%SendDocumentLinkEmail%')->count(), 'Exactly one link email may be queued.');
         // ... and one issued version, no draft left, one live link.
         $versions = BusinessDocumentVersion::query()->where('business_document_id', $document->id)->get();
         $this->assertCount(1, $versions);

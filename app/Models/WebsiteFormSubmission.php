@@ -26,11 +26,15 @@ class WebsiteFormSubmission extends Model
     protected $fillable = [
         'uid',
         'website_form_id',
+        'location_id',
         'contact_id',
         'crm_opportunity_id',
+        'contact_resolution',
         'page_slug',
+        'page_uid',
+        'source_revision_id',
         'data',
-        'dedupe_key',
+        'idempotency_key',
         'ip_hash',
         'is_spam',
         'status',
@@ -49,6 +53,11 @@ class WebsiteFormSubmission extends Model
     public function form(): BelongsTo
     {
         return $this->belongsTo(WebsiteForm::class, 'website_form_id');
+    }
+
+    public function location(): BelongsTo
+    {
+        return $this->belongsTo(BusinessLocation::class, 'location_id');
     }
 
     public function contact(): BelongsTo

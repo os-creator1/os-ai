@@ -4,7 +4,12 @@ namespace App\Http\Middleware;
 
 use App\Enums\Website\WebsiteDomainStatus;
 use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
+use App\Library\Website\Seo\WebsiteAssetUrls;
 use App\Library\Website\Seo\WebsiteBreadcrumbStructuredData;
+use App\Library\Website\Seo\WebsiteCrawlFiles;
+use App\Library\Website\Seo\WebsiteFaqStructuredData;
+use App\Library\Website\Seo\WebsiteHeadMeta;
+use App\Library\Website\Seo\WebsiteRedirectMap;
 use App\Library\Website\Seo\WebsiteLocalBusinessStructuredData;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
@@ -52,6 +57,8 @@ class ResolveCustomDomainWebsite
         private readonly WebsiteLocalBusinessStructuredData $structuredData,
         private readonly WebsiteAddressPrivacyGate $privacyGate,
         private readonly WebsiteBreadcrumbStructuredData $breadcrumbs,
+        private readonly \App\Library\Website\Seo\WebsiteFaqStructuredData $faq,
+        private readonly \App\Library\Website\Blog\WebsiteBlogRenderer $blog,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -118,7 +125,9 @@ class ResolveCustomDomainWebsite
             // No active primary to redirect to (e.g. it just failed
             // renewal) — a stale alias serving nothing is worse than a
             // 404, and the platform-path URL always still works.
-            abort_if($primary === null, 404);
+            if ($primary === null) {
+                return $this->notFound($domain->domain);
+            }
 
             // Always canonicalizes to https, regardless of the scheme
             // this particular request arrived on: the primary domain is
@@ -132,26 +141,82 @@ class ResolveCustomDomainWebsite
 
         $website = $domain->website;
 
-        abort_unless($this->gate->allows($website), 404);
+        if (! $this->gate->allows($website)) {
+            return $this->notFound($domain->domain);
+        }
 
         $cacheKey = "website_public_{$website->public_id}_v{$website->published_revision_id}";
         $snapshot = Cache::remember($cacheKey, self::SNAPSHOT_CACHE_TTL_SECONDS, function () use ($website) {
             return WebsiteRevision::find($website->published_revision_id)?->snapshot;
         });
 
-        abort_unless($snapshot !== null, 404);
+        if ($snapshot === null) {
+            return $this->notFound($domain->domain);
+        }
+
+        // Photos load from the customer's own domain, whichever host published the revision.
+        $snapshot = WebsiteAssetUrls::rebase($snapshot, 'https://'.$domain->domain);
+
+        // One address per page: "/about/" is the same page as "/about", so it
+        // answers a permanent redirect instead of a second indexable URL.
+        $requestPath = $request->getPathInfo();
+        if (strlen($requestPath) > 1 && str_ends_with($requestPath, '/')) {
+            $query = $request->getQueryString();
+
+            return redirect()->away('https://'.$domain->domain.rtrim($requestPath, '/').($query !== null && $query !== '' ? '?'.$query : ''), 301);
+        }
 
         $path = trim((string) $request->path(), '/');
 
+        if ($path === 'robots.txt') {
+            return response(WebsiteCrawlFiles::customDomainRobots($domain->domain, $snapshot), 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
+        }
+
+        // One sitemap address: the older extensionless /sitemap permanently redirects to /sitemap.xml.
         if ($path === 'sitemap') {
+            return redirect()->away('https://'.$domain->domain.'/sitemap.xml', 301);
+        }
+
+        if ($path === 'sitemap.xml') {
             return $this->renderSitemap($domain, $snapshot);
         }
 
+        // SEO Content Engine V1 — /blog and /blog/{slug}, through the same renderer the platform path uses.
+        // (`blog` is a reserved slug, so no Website page can ever collide with it.)
+        if ($path === 'blog' || (str_starts_with($path, 'blog/') && substr_count($path, '/') === 1)) {
+            $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($website, $domain->domain);
+
+            try {
+                if ($path === 'blog') {
+                    $page = filter_var($request->query('page', 1), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+                    return $this->blog->index($website, $surface, $page === false ? 1 : $page);
+                }
+
+                return $this->blog->article($website, $surface, substr($path, 5));
+            } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+                // The customer's own 404, like every other missing page on this domain.
+                return $this->notFound($domain->domain, $snapshot['website']['name'] ?? null);
+            }
+        }
+
+        // Strict comparison on purpose: a loose one would make "/010" and "/1e1"
+        // answer the page whose slug is "10".
         $page = $path === ''
             ? collect($snapshot['pages'])->firstWhere('is_home', true)
-            : collect($snapshot['pages'])->firstWhere('slug', $path);
+            : collect($snapshot['pages'])->first(fn ($candidate) => (string) ($candidate['slug'] ?? '') === $path && empty($candidate['is_home']));
 
-        abort_unless($page !== null, 404);
+        if ($page === null) {
+            // A page whose address changed since it was indexed: send visitors and
+            // crawlers to the new one (301) rather than a 404.
+            $target = WebsiteRedirectMap::target($snapshot, $path);
+
+            if ($target !== null && $path !== '') {
+                return redirect()->away('https://'.$domain->domain.($target === '' ? '/' : '/'.$target), 301);
+            }
+
+            return $this->notFound($domain->domain, $snapshot['website']['name'] ?? null);
+        }
 
         return $this->renderPage($domain, $website, $snapshot, $page);
     }
@@ -174,8 +239,8 @@ class ResolveCustomDomainWebsite
         // (even one reached through rollback), never only starting with
         // the next publish. `$business` is a live read on purpose.
         $business = $website->business;
-        $sections = $this->privacyGate->redactSections($page['sections'], $business);
-        $localBusiness = $this->privacyGate->redactLocalBusiness($snapshot['website']['localBusiness'] ?? [], $business);
+        $sections = $this->privacyGate->redactSections($page['sections'], $business, $page['slug'] ?? null);
+        $localBusiness = $this->privacyGate->redactLocalBusiness($snapshot['website']['localBusiness'] ?? [], $business, $page['slug'] ?? null);
 
         // LocalBusiness structured data is otherwise built ONLY from the
         // frozen snapshot's own localBusiness facts (WebsiteSnapshotBuilder::
@@ -190,16 +255,25 @@ class ResolveCustomDomainWebsite
         // content") is never in tension with the robots directive on the
         // same response.
         $localBusinessJsonLd = $indexable
-            ? $this->structuredData->build($localBusiness, $canonicalUrl)
+            ? $this->structuredData->build($localBusiness, $urlFor(['is_home' => true, 'slug' => null]), $this->logoUrl($snapshot, $assetsByUid))
             : null;
 
         // BreadcrumbList: the same real, deterministic page/URL facts
         // every other piece of structured data on this page already
         // uses — never AI, never fabricated — and only on an indexable
         // page for the same reason localBusinessJsonLd is.
+        // Every snapshot page addressed for the custom domain, plus the Blog entry once an article is published.
+        $navigationPages = $this->blog->navigationPages($website, $snapshot, \App\Library\Website\Blog\WebsiteBlogSurface::custom($website, $domain->domain));
+
+        // The same trail the visible breadcrumb shows (the page composer
+        // derives it from these very navigation pages).
         $breadcrumbJsonLd = $indexable
-            ? $this->breadcrumbs->build($page, $urlFor(['is_home' => true, 'slug' => null]), $urlFor, $snapshot['pages'])
+            ? $this->breadcrumbs->build(WebsiteBreadcrumbStructuredData::trail($page, $navigationPages))
             : null;
+
+        // FAQPage: built from the FAQ sections this very page renders (so it can only say what is visible),
+        // and only on an indexable page, like every other schema block.
+        $faqJsonLd = $indexable ? $this->faq->build($sections) : null;
 
         // The site "actually works" on this domain — active certificate,
         // published, gate passed, this exact page resolved from the
@@ -217,15 +291,24 @@ class ResolveCustomDomainWebsite
             'canonicalUrl' => $canonicalUrl,
             'localBusinessJsonLd' => $localBusinessJsonLd,
             'breadcrumbJsonLd' => $breadcrumbJsonLd,
-            'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
-                'uid' => $candidate['uid'],
-                'title' => $candidate['title'],
-                'is_home' => $candidate['is_home'],
-                'url' => $urlFor($candidate),
-            ])->all(),
+            'faqJsonLd' => $faqJsonLd,
+            'navigationPages' => $navigationPages,
         ]);
 
         return $response->header('X-Robots-Tag', $indexable ? 'index, follow' : 'noindex, follow');
+    }
+
+    /**
+     * The owner's published logo (a Business-owned image), for structured data.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @param  array<string, array<string, mixed>>  $assetsByUid
+     */
+    private function logoUrl(array $snapshot, array $assetsByUid): ?string
+    {
+        $uid = $snapshot['website']['theme']['logo_asset_uid'] ?? null;
+
+        return $uid !== null && isset($assetsByUid[$uid]) ? WebsiteHeadMeta::bestUrl($assetsByUid[$uid]) : null;
     }
 
     /**
@@ -238,16 +321,27 @@ class ResolveCustomDomainWebsite
      */
     private function renderSitemap(WebsiteDomain $domain, array $snapshot): Response
     {
-        $urls = collect($snapshot['pages'])
-            ->reject(fn ($page) => $page['seo']['noindex'] ?? false)
-            ->map(function ($page) use ($domain) {
-                $loc = 'https://'.$domain->domain.($page['is_home'] ? '/' : '/'.$page['slug']);
+        $xml = WebsiteCrawlFiles::sitemap($domain->domain, $snapshot, $this->blog->sitemapUrls($domain->website, \App\Library\Website\Blog\WebsiteBlogSurface::custom($domain->website, $domain->domain)));
 
-                return '<url><loc>'.e($loc).'</loc></url>';
-            })->implode('');
+        // A sitemap with no <url> is invalid, and a site with nothing
+        // indexable has nothing to announce: 404, never an empty urlset.
+        if ($xml === null) {
+            return $this->notFound($domain->domain);
+        }
 
-        $xml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'.$urls.'</urlset>';
+        return response($xml, 200, ['Content-Type' => 'application/xml; charset=UTF-8']);
+    }
 
-        return response($xml, 200, ['Content-Type' => 'application/xml']);
+    /**
+     * The custom domain's own 404: the customer's site, not the platform's
+     * error page (whose "back" link points at the platform login, a route
+     * a custom domain refuses), and never indexable.
+     */
+    private function notFound(string $host, ?string $siteName = null): Response
+    {
+        return response()->view('public.website.not-found', [
+            'siteName' => $siteName,
+            'homeUrl' => 'https://'.$host.'/',
+        ], 404)->header('X-Robots-Tag', 'noindex, follow');
     }
 }

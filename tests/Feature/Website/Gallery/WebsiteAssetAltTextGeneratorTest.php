@@ -65,16 +65,18 @@ class WebsiteAssetAltTextGeneratorTest extends TestCase
         $this->assertStringContainsString('Snap Booth Co', $altText);
     }
 
-    public function test_an_untitled_uncategorized_asset_gets_no_fabricated_caption(): void
+    public function test_an_untitled_uncategorized_asset_still_gets_a_safe_editable_default_never_null(): void
     {
         $this->bindClientThatMustNeverBeCalled();
-        [, $business] = $this->entitledTenant();
-        DB::table('businesses')->where('id', $business->id)->update(['name' => '']);
+        [, $business] = $this->entitledTenant(['name' => 'Snap Booth Co']);
         $website = $this->createWebsite($business);
         $asset = $this->makeAsset($website, ['title' => null, 'category_tag' => null]);
 
-        $altText = app(WebsiteAssetAltTextGenerator::class)->suggest($business->fresh(), $asset);
+        $this->assertSame('Snap Booth Co photo', app(WebsiteAssetAltTextGenerator::class)->suggest($business, $asset));
 
-        $this->assertNull($altText);
+        // Even with nothing at all to go on, the default is a plain word —
+        // never null, never keyword-stuffed.
+        DB::table('businesses')->where('id', $business->id)->update(['name' => '']);
+        $this->assertSame('Photo', app(WebsiteAssetAltTextGenerator::class)->suggest($business->fresh(), $asset));
     }
 }

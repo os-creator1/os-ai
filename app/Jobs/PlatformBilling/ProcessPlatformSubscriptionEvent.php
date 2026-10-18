@@ -308,9 +308,11 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
      */
     private function providerSubscriptionId(string $eventType, array $object): ?string
     {
+        // An invoice names its subscription at the top level on older API
+        // versions and under `parent.subscription_details` on newer ones.
         $value = str_starts_with($eventType, 'customer.subscription.')
             ? ($object['id'] ?? null)
-            : ($object['subscription'] ?? null);
+            : ($object['subscription'] ?? ($object['parent']['subscription_details']['subscription'] ?? null));
 
         if (is_string($value) && $value !== '') {
             return $value;

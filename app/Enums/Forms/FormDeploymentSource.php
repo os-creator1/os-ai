@@ -7,12 +7,15 @@ namespace App\Enums\Forms;
  * Location, from this source"; its public uid is the deterministic evidence of
  * which Location a submission belongs to.
  *
- * V1 has exactly one source, the form's own public link. The Website lane
- * will add its own case when it consumes this domain (see
+ * Sources: the form's own public link, and the Website reference. The Website
+ * case was added by the visual builder as the embeddable seam (see
  * docs/automation/FORMS-V1-DOMAIN-FOUNDATION-CONTRACT.md §11) — adding a case
  * is additive: the column is a plain string, so no migration is needed.
  */
 enum FormDeploymentSource: string
 {
     case DirectLink = 'direct_link';
+
+    /** Offered to Website pages: the stable embeddable reference (see FormWebsiteEmbed). */
+    case Website = 'website';
 }

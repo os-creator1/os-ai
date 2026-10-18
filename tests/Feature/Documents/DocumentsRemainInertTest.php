@@ -315,6 +315,10 @@ class DocumentsRemainInertTest extends TestCase
             foreach ($needles as $needle) {
                 if ((str_contains($uri, $needle) || str_contains($name, $needle))
                     && ! str_contains($name, 'businesses.documents.')
+                    // 17B §6: the Business's authenticated template library / template editor.
+                    && ! str_contains($name, 'businesses.document-templates.')
+                    // 17B §6b: the Platform Owner's admin-only (EnsureUserIsAdministrator) platform template surface.
+                    && ! str_starts_with($name, 'admin.document-templates.')
                     // Sub-slice D's owner-only Stripe Connect onboarding.
                     && ! str_contains($name, 'businesses.payments.connect.')
                     // Sub-slice C's secure link plus Sub-slice E's payment
@@ -425,11 +429,11 @@ class DocumentsRemainInertTest extends TestCase
     }
 
     /**
-     * Sub-slice F added exactly three `documents:*` commands and no more. The
+     * Sub-slice F added three `documents:*` commands; contract 17B added the balance payment request sweep as the fourth. The
      * assertion stayed rather than being deleted, so it keeps working as an
-     * inventory: a fourth scheduled documents command would fail here.
+     * inventory: a fifth scheduled documents command would fail here.
      */
-    public function test_only_the_three_contracted_documents_commands_are_scheduled(): void
+    public function test_only_the_four_contracted_documents_commands_are_scheduled(): void
     {
         $schedule = new Schedule();
         $kernel = app(\App\Console\Kernel::class);
@@ -448,7 +452,7 @@ class DocumentsRemainInertTest extends TestCase
         sort($scheduled);
 
         $this->assertSame(
-            ['documents:dispatch-due-reminders', 'documents:expire-due', 'documents:reconcile-stale-payments'],
+            ['documents:dispatch-balance-requests', 'documents:dispatch-due-reminders', 'documents:expire-due', 'documents:reconcile-stale-payments'],
             $scheduled,
         );
     }

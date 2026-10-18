@@ -29,7 +29,11 @@ class MigrationIntegrityTest extends TestCase
 {
     use UsesFreshSchema;
 
-    /** The six V2-0 migrations, in the order the contract fixes. */
+    /**
+     * The six V2-0 migrations, in the order the contract fixes — plus the one later
+     * table that holds a foreign key INTO the versions table (a selected-Locations
+     * list), which has to go before the table it points at and come back after it.
+     */
     private const V2_MIGRATIONS = [
         '2026_09_15_100001_create_automation_workflows_table',
         '2026_09_15_100002_create_automation_workflow_versions_table',
@@ -37,6 +41,7 @@ class MigrationIntegrityTest extends TestCase
         '2026_09_15_100004_create_automation_workflow_edges_table',
         '2026_09_15_100005_create_automation_enrollments_table',
         '2026_09_15_100006_create_automation_step_runs_table',
+        '2026_10_28_090002_create_automation_workflow_version_locations_table',
     ];
 
     private const V2_TABLES = [
@@ -46,6 +51,7 @@ class MigrationIntegrityTest extends TestCase
         'automation_workflow_edges',
         'automation_enrollments',
         'automation_step_runs',
+        'automation_workflow_version_locations',
     ];
 
     protected function setUp(): void

@@ -26,6 +26,10 @@
             'token' => env('POSTMARK_TOKEN'),
         ],
 
+        'resend' => [
+            'key' => env('RESEND_API_KEY'),
+        ],
+
         'ses' => [
             'key'    => env('AWS_ACCESS_KEY_ID'),
             'secret' => env('AWS_SECRET_ACCESS_KEY'),
@@ -106,6 +110,13 @@
             // A mismatch here fails every "Connect existing account"
             // attempt at Stripe, before this application ever sees it.
             'agency_connect_client_id' => env('STRIPE_AGENCY_CONNECT_CLIENT_ID'),
+            // Business payments (lane B) — "Connect existing Stripe account."
+            // The platform's Connect OAuth client_id (ca_...), separate from the
+            // Agency client id above and from subscription billing. The single
+            // redirect_uri to register for it (TEST and LIVE) is
+            // route('customer.business.stripe.connect-existing.callback')
+            // e.g. https://<app-host>/business/stripe/connect-existing/callback.
+            'business_connect_client_id' => env('STRIPE_BUSINESS_CONNECT_CLIENT_ID'),
             // RFC-005 M3 contract §19 — new keys, additive only.
             'mode'         => env('STRIPE_MODE', 'test'),
             'api_version'  => env('STRIPE_API_VERSION'),
@@ -161,6 +172,38 @@
             'client_id'     => env('GOOGLE_BUSINESS_PROFILE_CLIENT_ID'),
             'client_secret' => env('GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET'),
             'redirect'      => env('GOOGLE_BUSINESS_PROFILE_REDIRECT'),
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Google Ads (Module V1, contract 23 §2)
+        |--------------------------------------------------------------------------
+        |
+        | A DEDICATED OAuth client for the sensitive adwords scope — never the
+        | Socialite `google` client and never the Business Profile client. The
+        | redirect must equal the one fixed `ads/oauth/callback` URL exactly.
+        | The optional developer token and all tuning live in config/google_ads.php.
+        |
+        */
+        'google_ads' => [
+            'client_id'     => env('GOOGLE_ADS_CLIENT_ID'),
+            'client_secret' => env('GOOGLE_ADS_CLIENT_SECRET'),
+            'redirect'      => env('GOOGLE_ADS_REDIRECT'),
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Meta Ads (Module V1, contract 24)
+        |--------------------------------------------------------------------------
+        |
+        | The Meta app used for the Marketing API. The redirect must equal the one
+        | fixed `ads/meta/oauth/callback` URL. All tuning lives in config/meta_ads.php.
+        |
+        */
+        'meta_ads' => [
+            'app_id'     => env('META_ADS_APP_ID'),
+            'app_secret' => env('META_ADS_APP_SECRET'),
+            'redirect'   => env('META_ADS_REDIRECT_URI'),
         ],
 
         'github' => [
@@ -233,5 +276,11 @@
             'site_id'           => env('FORGE_SITE_ID'),
             'cname_target'      => env('FORGE_CNAME_TARGET'),
             'a_record_ip'       => env('FORGE_A_RECORD_IP'),
+        ],
+
+        // Platform Automations "Call a webhook" steps are signed with this secret
+        // (X-Platform-Signature: sha256=HMAC of the JSON body). Never stored in the database.
+        'platform_automation' => [
+            'webhook_secret' => env('PLATFORM_AUTOMATION_WEBHOOK_SECRET'),
         ],
     ];

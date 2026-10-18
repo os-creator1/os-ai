@@ -35,6 +35,7 @@ final class BusinessBackdropManager
             $attributes['description'] ?? null,
             $attributes['availability'] ?? true,
             $attributes['source_questionnaire_item_key'] ?? null,
+            $attributes['category'] ?? null,
         );
 
         return DB::transaction(function () use ($business, $validated) {
@@ -59,6 +60,7 @@ final class BusinessBackdropManager
                 array_key_exists('description', $attributes) ? $attributes['description'] : $locked->description,
                 array_key_exists('availability', $attributes) ? $attributes['availability'] : $locked->availability,
                 array_key_exists('source_questionnaire_item_key', $attributes) ? $attributes['source_questionnaire_item_key'] : $locked->source_questionnaire_item_key,
+                array_key_exists('category', $attributes) ? $attributes['category'] : $locked->category,
             );
 
             $locked->fill($validated);
@@ -82,6 +84,88 @@ final class BusinessBackdropManager
                 'business_backdrop_id' => $locked->id,
                 'position' => $nextPosition,
             ]);
+        });
+    }
+
+    /**
+     * Applies the owner's chosen order to the backdrops a setup created:
+     * the listed source keys take positions 0..n-1 in that order. Other
+     * backdrops (created elsewhere) keep their relative order after them.
+     *
+     * @param  array<int, string>  $sourceKeysInOrder
+     */
+    public function reorderBySourceKeys(Business $business, array $sourceKeysInOrder): void
+    {
+        if ($sourceKeysInOrder === []) {
+            return;
+        }
+
+        DB::transaction(function () use ($business, $sourceKeysInOrder) {
+            $this->lockBusiness($business);
+
+            $position = 0;
+            foreach ($sourceKeysInOrder as $key) {
+                BusinessBackdrop::where('business_id', $business->id)
+                    ->where('source_questionnaire_item_key', $key)
+                    ->update(['position' => $position++]);
+            }
+
+            BusinessBackdrop::where('business_id', $business->id)
+                ->whereNotIn('source_questionnaire_item_key', $sourceKeysInOrder)
+                ->orWhere(fn ($q) => $q->where('business_id', $business->id)->whereNull('source_questionnaire_item_key'))
+                ->orderBy('position')
+                ->get()
+                ->each(function (BusinessBackdrop $other) use (&$position) {
+                    $other->forceFill(['position' => $position++])->save();
+                });
+        });
+    }
+
+    /**
+     * Makes $imageAttributes the backdrop's one picture: any other image
+     * rows are removed and the paths they pointed at are returned so the
+     * caller can clean up files nothing references any more (the backdrop
+     * UI holds exactly one image per backdrop).
+     *
+     * @param  array{disk: string, path: string, mime_type: string, size: int, width: ?int, height: ?int, alt_text: ?string}  $imageAttributes
+     * @return array<int, string> paths of the superseded images' files
+     */
+    public function replaceImage(Business $business, BusinessBackdrop $backdrop, array $imageAttributes): array
+    {
+        return DB::transaction(function () use ($business, $backdrop, $imageAttributes) {
+            $locked = $this->lockBackdropForBusiness($business, $backdrop);
+
+            $existing = BusinessBackdropImage::where('business_backdrop_id', $locked->id)->get();
+            $current = $existing->firstWhere('path', $imageAttributes['path']);
+
+            if ($current !== null) {
+                // Same file: only the alt text may have changed.
+                $current->forceFill(['alt_text' => $imageAttributes['alt_text'] ?? null])->save();
+
+                return [];
+            }
+
+            $superseded = $existing->pluck('path')->all();
+            BusinessBackdropImage::where('business_backdrop_id', $locked->id)->delete();
+            BusinessBackdropImage::create($imageAttributes + ['business_backdrop_id' => $locked->id, 'position' => 0]);
+
+            return $superseded;
+        });
+    }
+
+    /**
+     * Removes every picture of the backdrop; returns the file paths freed.
+     *
+     * @return array<int, string>
+     */
+    public function clearImages(Business $business, BusinessBackdrop $backdrop): array
+    {
+        return DB::transaction(function () use ($business, $backdrop) {
+            $locked = $this->lockBackdropForBusiness($business, $backdrop);
+            $paths = BusinessBackdropImage::where('business_backdrop_id', $locked->id)->pluck('path')->all();
+            BusinessBackdropImage::where('business_backdrop_id', $locked->id)->delete();
+
+            return $paths;
         });
     }
 
@@ -121,9 +205,9 @@ final class BusinessBackdropManager
     }
 
     /**
-     * @return array{name: string, description: ?string, availability: bool, source_questionnaire_item_key: ?string}
+     * @return array{name: string, description: ?string, category: ?string, availability: bool, source_questionnaire_item_key: ?string}
      */
-    private function validate(mixed $name, mixed $description, mixed $availability, mixed $sourceQuestionnaireItemKey): array
+    private function validate(mixed $name, mixed $description, mixed $availability, mixed $sourceQuestionnaireItemKey, mixed $category = null): array
     {
         $name = trim((string) $name);
 
@@ -141,9 +225,18 @@ final class BusinessBackdropManager
             throw new BusinessBackdropRuleException('Use a description of at most ' . self::DESCRIPTION_MAX . ' characters.');
         }
 
+        $category = $category !== null ? trim((string) $category) : null;
+        if ($category === '') {
+            $category = null;
+        }
+        if ($category !== null && preg_match('/^[a-z0-9_]{1,40}$/', $category) !== 1) {
+            throw new BusinessBackdropRuleException('Use a valid backdrop category.');
+        }
+
         return [
             'name' => $name,
             'description' => $description,
+            'category' => $category,
             'availability' => (bool) $availability,
             'source_questionnaire_item_key' => $sourceQuestionnaireItemKey !== null && $sourceQuestionnaireItemKey !== ''
                 ? (string) $sourceQuestionnaireItemKey

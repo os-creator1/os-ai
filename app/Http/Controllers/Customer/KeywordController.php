@@ -337,9 +337,21 @@
          * @throws AuthorizationException
          */
 
+        /**
+         * Keywords are bound by uid with no tenant scope: a permission gate alone lets any customer
+         * address another tenant's row. Owner-only for everything except buying an available one.
+         */
+        private function ownedKeywordOrAbort(Keywords $keyword): Keywords
+        {
+            abort_unless((int) $keyword->user_id === (int) Auth::id(), 404);
+
+            return $keyword;
+        }
+
         public function show(Keywords $keyword)
         {
             $this->authorize('update_keywords');
+            $this->ownedKeywordOrAbort($keyword);
 
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -368,6 +380,7 @@
 
         public function update(Keywords $keyword, CustomerUpdate $request): RedirectResponse
         {
+            $this->ownedKeywordOrAbort($keyword);
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.keywords.show', $keyword->uid)->with([
@@ -379,11 +392,15 @@
 
             try {
 
+                // Whitelist: price / user_id / status / validity_date / currency_id are billing + ownership
+                // fields and must never be set from a customer request.
+                $editable = ['reply_text', 'reply_voice', 'reply_mms', 'sender_id', 'originator', 'phone_number'];
+
                 if (Auth::user()->can('create_keywords')) {
-                    $input = $request->except('_method', '_token');
-                } else {
-                    $input = $request->except('_method', '_token', 'title', 'keyword_name');
+                    $editable = array_merge($editable, ['title', 'keyword_name']);
                 }
+
+                $input = $request->only($editable);
 
                 $this->keywords->updateByCustomer($keyword, $input);
 
@@ -419,7 +436,9 @@
             }
 
 
-            if ( ! $keyword->where('user_id', Auth::user()->id)->update(['reply_mms' => null])) {
+            $this->ownedKeywordOrAbort($keyword);
+
+            if ( ! $keyword->update(['reply_mms' => null])) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.exceptions.something_went_wrong'),
@@ -510,6 +529,9 @@
         {
 
             $this->authorize('buy_keywords');
+
+            // Only an unassigned keyword (or one the actor already holds, e.g. renewal) may be bought.
+            abort_unless($keyword->status === 'available' || (int) $keyword->user_id === (int) Auth::id(), 404);
 
             $pageConfigs = [
                 'bodyClass' => 'ecommerce-application',

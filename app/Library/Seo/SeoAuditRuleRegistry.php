@@ -26,16 +26,19 @@ use App\Enums\Seo\SeoAuditSeverity;
  * editor. That is why this list is shorter than a generic SEO checklist would
  * be, and why it must not grow on taste.
  *
- * PLATFORM LIMITATIONS ARE NEVER FINDINGS (§8.7, G-2/G-3). There is
- * deliberately no rule for a missing canonical tag, missing JSON-LD /
- * structured data, sitemap scope, or the platform-path `noindex` that every
- * hosted site currently carries: the platform does not offer those controls,
- * so presenting them as the customer's mistakes would be dishonest. The
- * platform-path state is reported separately as an indexability STATUS
- * (SeoIndexabilityState), which is a property of the product, not a defect of
- * the customer's site. Note the distinction from `page_marked_noindex` below:
- * that rule fires only for a page the CUSTOMER chose to mark noindex, which
- * they can un-mark.
+ * PLATFORM-HANDLED TECHNICALITIES ARE NEVER FINDINGS (§8.7, G-2/G-3). There is
+ * deliberately no rule for a canonical tag, JSON-LD / structured data, Open
+ * Graph tags, the sitemap, or the platform-path `noindex`. Since SEO V1 final
+ * the platform EMITS the first four itself on a custom domain (a canonical
+ * URL, LocalBusiness and BreadcrumbList JSON-LD, og: tags and a sitemap of the
+ * indexable pages) and the customer has no control over them, so there is
+ * nothing for them to fix and nothing honest to report as their mistake. They
+ * are not "checked" and not "missing": they are the platform's job. Whether
+ * search engines can find the site at all is reported separately as an
+ * indexability STATUS (SeoIndexability), a property of how the site is set up,
+ * not a defect. Note the distinction from `page_marked_noindex` below: that
+ * rule fires only for a page the CUSTOMER chose to hide from search, which
+ * they can change.
  *
  * LOCATION-PAGE RULES ARE DEFERRED (G-1) until Website provides a canonical
  * page<->Location association. Nothing here infers Location ownership from a
@@ -44,6 +47,13 @@ use App\Enums\Seo\SeoAuditSeverity;
  * The 60/70 character thresholds are CONVENTIONAL GUIDANCE, not Google-stated
  * requirements (§8.7). They are labelled "recommended" in the copy and live in
  * config through SeoConfig, never as literals in a rule body.
+ *
+ * EXTERNAL WEBSITES (External Website Audit Mode V1). The same registry serves a
+ * customer's own, externally hosted website, where the owner DOES control the
+ * canonical tag, headings, sharing preview and structured data. Those extra rules
+ * live in EXTERNAL_RULES and only ever fire from facts a crawl supplies; they are
+ * not part of ruleKeys(), so the hosted rule set, its stored runs and its tests
+ * are unchanged.
  *
  * Pure: facts in, descriptions out. No database, no clock, no network, no AI.
  */
@@ -76,6 +86,23 @@ final class SeoAuditRuleRegistry
 
     public const ASSET_MISSING_ALT = 'asset_missing_alt';
 
+    // EXTERNAL-ONLY rules (External Website Audit Mode V1). They fire only when the audit SOURCE supplied
+    // the fact they need, which only a crawl of the owner's own site does; a hosted revision never supplies
+    // them, so they can never become findings against a hosted customer (§8.7, G-2/G-3 stands).
+    public const PAGE_NOT_REACHABLE = 'page_not_reachable';
+
+    public const BROKEN_INTERNAL_LINK = 'broken_internal_link';
+
+    public const H1_MISSING = 'h1_missing';
+
+    public const H1_MULTIPLE = 'h1_multiple';
+
+    public const CANONICAL_MISSING = 'canonical_missing';
+
+    public const OPEN_GRAPH_MISSING = 'open_graph_missing';
+
+    public const STRUCTURED_DATA_MISSING = 'structured_data_missing';
+
     /**
      * The closed rule set. `facts` lists the EXACT keys that rule may carry;
      * `template` may reference only those keys as `{key}` placeholders.
@@ -83,73 +110,153 @@ final class SeoAuditRuleRegistry
      * @var array<string, array{severity: SeoAuditSeverity, site_level: bool, title: string, template: string, facts: array<int, string>}>
      */
     private const RULES = [
+        // OWNER-FACING WORDS ARE PLAIN. The rule KEYS keep their technical names
+        // (they are stored and pinned by tests); what a customer reads says
+        // "page title", "search result description", "hidden from search" and
+        // "image description" instead of SEO jargon.
         self::SEO_TITLE_BLANK => [
             'severity' => SeoAuditSeverity::Info,
             'site_level' => false,
-            'title' => 'No SEO title set',
-            'template' => 'This page has no SEO title, so its page name is used in search results instead. Setting one lets you control that wording.',
+            'title' => 'No page title set',
+            'template' => 'This page has no page title of its own, so its page name is used in search results instead. Setting one lets you control that wording.',
             'facts' => [],
         ],
         self::SEO_TITLE_OVER_RECOMMENDED => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'SEO title longer than recommended',
-            'template' => 'This page\'s SEO title is {length} characters. A recommended length is {recommended_max} or fewer, so longer titles may be shortened in search results.',
+            // Measured on the title visitors and search engines really get:
+            // the page title plus your business name, composed exactly as the
+            // public page composes it (WebsiteHeadMeta::title).
+            'title' => 'Page title longer than recommended',
+            'template' => 'This page\'s title in search results is {length} characters, including your business name. A recommended length is {recommended_max} or fewer, so longer titles may be cut off in search results.',
             'facts' => ['length', 'recommended_max'],
         ],
         self::META_DESCRIPTION_BLANK => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'No meta description set',
-            'template' => 'This page has no meta description, so search engines choose their own summary of it.',
+            'title' => 'No search result description set',
+            'template' => 'This page has no search result description, so search engines choose their own summary of it.',
             'facts' => [],
         ],
         self::META_DESCRIPTION_SHORT => [
             'severity' => SeoAuditSeverity::Info,
             'site_level' => false,
-            'title' => 'Meta description shorter than recommended',
-            'template' => 'This page\'s meta description is {length} characters. A recommended length is around {recommended_min} or more, which gives searchers a fuller summary.',
+            'title' => 'Search result description shorter than recommended',
+            'template' => 'This page\'s search result description is {length} characters. A recommended length is around {recommended_min} or more, which gives searchers a fuller summary.',
             'facts' => ['length', 'recommended_min'],
         ],
         self::DUPLICATE_SEO_TITLE => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'SEO title used on more than one page',
-            'template' => 'This page\'s SEO title is also used on {shared_by} other page(s). A distinct title per page helps search engines tell them apart.',
+            'title' => 'Page title used on more than one page',
+            'template' => 'This page\'s title is also used on {shared_by} other page(s). A distinct title per page helps search engines tell them apart.',
             'facts' => ['shared_by'],
         ],
         self::DUPLICATE_META_DESCRIPTION => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => false,
-            'title' => 'Meta description used on more than one page',
-            'template' => 'This page\'s meta description is also used on {shared_by} other page(s). A distinct description per page describes each one more accurately.',
+            'title' => 'Search result description used on more than one page',
+            'template' => 'This page\'s search result description is also used on {shared_by} other page(s). A distinct description per page describes each one more accurately.',
             'facts' => ['shared_by'],
         ],
         self::PAGE_MARKED_NOINDEX => [
             'severity' => SeoAuditSeverity::Info,
             'site_level' => false,
-            'title' => 'Page marked as not indexable',
-            'template' => 'This page is marked "noindex", so search engines are asked not to list it. That is intentional for some pages; clear the setting if this one should be found.',
+            'title' => 'Page hidden from search',
+            'template' => 'This page is hidden from search engines, so it will not appear in results. That is intentional for some pages; allow search engines if this one should be found.',
             'facts' => [],
         ],
         self::ASSET_MISSING_ALT => [
             'severity' => SeoAuditSeverity::Warning,
             'site_level' => true,
-            'title' => 'Images without alternative text',
-            'template' => '{asset_count} image(s) on your site have no alternative text. Alt text describes an image to search engines and to people using a screen reader.',
+            'title' => 'Images without a description',
+            'template' => '{asset_count} image(s) on your site have no image description. A description tells search engines, and people using a screen reader, what the image shows.',
             'facts' => ['asset_count'],
         ],
     ];
 
-    /** @return array<int, string> every rule key, in fixed order */
+    /**
+     * The additional rules that apply ONLY to an external website, where the owner
+     * controls the canonical tag, headings, sharing preview and structured data.
+     * Same shape, same registry-owned words, same fact validation as RULES. They are
+     * kept in their own table on purpose: ruleKeys() — the closed set Contract 18 §8.7
+     * fixes for a hosted revision — is unchanged, and no hosted audit can emit one.
+     *
+     * @var array<string, array{severity: SeoAuditSeverity, site_level: bool, title: string, template: string, facts: array<int, string>}>
+     */
+    private const EXTERNAL_RULES = [
+        self::PAGE_NOT_REACHABLE => [
+            'severity' => SeoAuditSeverity::Critical,
+            'site_level' => false,
+            'title' => 'Page could not be loaded',
+            'template' => 'This page could not be opened when we checked it, so visitors and search engines cannot see it. Check that the address is right and that the page still exists.',
+            'facts' => ['http_status'],
+        ],
+        self::BROKEN_INTERNAL_LINK => [
+            'severity' => SeoAuditSeverity::Warning,
+            'site_level' => false,
+            'title' => 'Links to pages that do not work',
+            'template' => '{link_count} link(s) on this page lead to pages on your own site that did not load. Visitors who click them reach an error.',
+            'facts' => ['link_count'],
+        ],
+        self::H1_MISSING => [
+            'severity' => SeoAuditSeverity::Warning,
+            'site_level' => false,
+            'title' => 'No main heading',
+            'template' => 'This page has no main heading. A clear main heading tells visitors and search engines what the page is about.',
+            'facts' => [],
+        ],
+        self::H1_MULTIPLE => [
+            'severity' => SeoAuditSeverity::Info,
+            'site_level' => false,
+            'title' => 'More than one main heading',
+            'template' => 'This page has {h1_count} main headings. One clear main heading is easier for search engines to understand.',
+            'facts' => ['h1_count'],
+        ],
+        self::CANONICAL_MISSING => [
+            'severity' => SeoAuditSeverity::Info,
+            'site_level' => false,
+            'title' => 'No preferred address set',
+            'template' => 'This page does not say which web address is its preferred one. Without that, search engines may treat copies of it (for example with and without www) as separate pages.',
+            'facts' => [],
+        ],
+        self::OPEN_GRAPH_MISSING => [
+            'severity' => SeoAuditSeverity::Info,
+            'site_level' => false,
+            'title' => 'No sharing preview set',
+            'template' => 'This page has no sharing preview, so a link to it shared on social networks or in messages may look plain.',
+            'facts' => [],
+        ],
+        self::STRUCTURED_DATA_MISSING => [
+            'severity' => SeoAuditSeverity::Info,
+            'site_level' => true,
+            'title' => 'No structured business information',
+            'template' => 'None of the pages we checked describe your business in a form search engines can read directly, such as your address and opening hours. Adding it can help search engines show accurate details.',
+            'facts' => [],
+        ],
+    ];
+
+    /** @return array<int, string> every HOSTED rule key, in fixed order (the closed §8.7 set) */
     public static function ruleKeys(): array
     {
         return array_keys(self::RULES);
     }
 
+    /** @return array<int, string> the rules that apply only to an external website, in fixed order */
+    public static function externalRuleKeys(): array
+    {
+        return array_keys(self::EXTERNAL_RULES);
+    }
+
+    /** @return array{severity: SeoAuditSeverity, site_level: bool, title: string, template: string, facts: array<int, string>}|null */
+    private static function definition(string $ruleKey): ?array
+    {
+        return self::RULES[$ruleKey] ?? self::EXTERNAL_RULES[$ruleKey] ?? null;
+    }
+
     public static function has(string $ruleKey): bool
     {
-        return array_key_exists($ruleKey, self::RULES);
+        return self::definition($ruleKey) !== null;
     }
 
     /**
@@ -160,21 +267,21 @@ final class SeoAuditRuleRegistry
     {
         self::assertKnown($ruleKey);
 
-        return self::RULES[$ruleKey]['severity'];
+        return self::definition($ruleKey)['severity'];
     }
 
     public static function isSiteLevel(string $ruleKey): bool
     {
         self::assertKnown($ruleKey);
 
-        return self::RULES[$ruleKey]['site_level'];
+        return self::definition($ruleKey)['site_level'];
     }
 
     public static function titleFor(string $ruleKey): string
     {
         self::assertKnown($ruleKey);
 
-        return self::RULES[$ruleKey]['title'];
+        return self::definition($ruleKey)['title'];
     }
 
     /**
@@ -192,7 +299,7 @@ final class SeoAuditRuleRegistry
         self::assertKnown($ruleKey);
 
         $validated = self::validateFacts($ruleKey, $facts);
-        $template = self::RULES[$ruleKey]['template'];
+        $template = self::definition($ruleKey)['template'];
 
         foreach ($validated as $key => $value) {
             $template = str_replace('{' . $key . '}', self::scalarToString($value), $template);
@@ -217,7 +324,7 @@ final class SeoAuditRuleRegistry
     {
         self::assertKnown($ruleKey);
 
-        $allowed = self::RULES[$ruleKey]['facts'];
+        $allowed = self::definition($ruleKey)['facts'];
 
         if (count($facts) > self::MAX_FACT_KEYS) {
             throw new \InvalidArgumentException(
@@ -257,7 +364,7 @@ final class SeoAuditRuleRegistry
 
     private static function assertKnown(string $ruleKey): void
     {
-        if (! array_key_exists($ruleKey, self::RULES)) {
+        if (self::definition($ruleKey) === null) {
             throw new \InvalidArgumentException("Unknown SEO audit rule [{$ruleKey}].");
         }
     }

@@ -10,6 +10,6 @@
     @if (config('account.can_register'))
         <p><a href="{{ route('register') }}">Create an account</a></p>
     @endif
-    <p>Once signed in, return to this same invitation link to continue.</p>
+    <p>After you sign in or verify your email, we bring you back to this invitation automatically.</p>
 </body>
 </html>

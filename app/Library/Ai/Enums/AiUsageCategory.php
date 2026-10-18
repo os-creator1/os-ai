@@ -23,6 +23,20 @@ enum AiUsageCategory: string
     case AgencyProspectReply = 'agency_prospect_reply';
 
     /**
+     * Content Autopilot — everything the SEO Content Autopilot asks a model (brief assist, article draft and
+     * rewrite, soft-finding judge). Hard-budgeted from its first call, and additionally capped per Business per
+     * period by `config('ai.business_category_ceilings.content_autopilot')` (AiBusinessCategoryCeiling).
+     */
+    case ContentAutopilot = 'content_autopilot';
+
+    /**
+     * Ask MotionGrove — the conversational assistant on Home: tool selection, the grounded answer and the
+     * proposal of an action. Interactive lane, hard-enforced, and entitled exactly like the other customer-facing
+     * COO surfaces (`ai_coo_basic`). Its conversation compaction is billed as `conversation_compaction`.
+     */
+    case AskAssistant = 'ask_assistant';
+
+    /**
      * Contract §19.3 rule 2 — new COO AI categories are hard-budgeted from
      * their very first production call, unconditionally, regardless of
      * `config('ai.enforce_budgets_for_existing_categories')`. Only the
@@ -31,7 +45,7 @@ enum AiUsageCategory: string
     public function isAlwaysHardEnforced(): bool
     {
         return match ($this) {
-            self::CooDiagnosis, self::CooInteractive, self::CooMoveExplanation, self::ConversationCompaction => true,
+            self::CooDiagnosis, self::CooInteractive, self::CooMoveExplanation, self::ConversationCompaction, self::ContentAutopilot, self::AskAssistant => true,
             self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
         };
     }
@@ -46,8 +60,8 @@ enum AiUsageCategory: string
     public function requiresCooEntitlement(): bool
     {
         return match ($this) {
-            self::CooDiagnosis, self::CooInteractive, self::CooMoveExplanation, self::ConversationCompaction => true,
-            self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
+            self::CooDiagnosis, self::CooInteractive, self::CooMoveExplanation, self::ConversationCompaction, self::AskAssistant => true,
+            self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply, self::ContentAutopilot => false,
         };
     }
 
@@ -67,7 +81,7 @@ enum AiUsageCategory: string
     {
         return match ($this) {
             self::CooDiagnosis, self::CooMoveExplanation, self::ConversationCompaction => true,
-            self::CooInteractive, self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
+            self::CooInteractive, self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply, self::ContentAutopilot, self::AskAssistant => false,
         };
     }
 }

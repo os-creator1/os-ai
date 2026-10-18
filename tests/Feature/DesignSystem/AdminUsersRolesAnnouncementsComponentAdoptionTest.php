@@ -18,10 +18,10 @@ use Tests\TestCase;
 class AdminUsersRolesAnnouncementsComponentAdoptionTest extends TestCase
 {
     private const A3_VIEWS = [
-        'resources/views/admin/Administrator/index.blade.php',
-        'resources/views/admin/Administrator/create.blade.php',
-        'resources/views/admin/Administrator/show.blade.php',
-        'resources/views/admin/AdminRoles/index.blade.php',
+        // Administrator (index/create/show) and AdminRoles/index were replaced by
+        // server-rendered pages in Platform Owner V1 final (contract 24 §6) and
+        // are covered by tests/Feature/PlatformOwner/PlatformOwnerV1*. The
+        // roles permission-matrix form is unchanged and stays pinned here.
         'resources/views/admin/AdminRoles/create.blade.php',
         'resources/views/admin/Announcements/index.blade.php',
         'resources/views/admin/Announcements/create.blade.php',
@@ -35,11 +35,11 @@ class AdminUsersRolesAnnouncementsComponentAdoptionTest extends TestCase
     public function test_exact_total_marker_counts(): void
     {
         $expected = [
-            '<x-card' => 7,
-            '<x-button' => 7,
-            '<x-input' => 10,
-            '<x-select' => 2,
-            '<x-ds-icon' => 21,
+            '<x-card' => 3,
+            '<x-button' => 3,
+            '<x-input' => 3,
+            '<x-select' => 1,
+            '<x-ds-icon' => 7,
             '<x-alert' => 0,
             '<x-table' => 0,
             '<x-empty-state' => 0,
@@ -55,18 +55,6 @@ class AdminUsersRolesAnnouncementsComponentAdoptionTest extends TestCase
     public function test_exact_per_file_marker_breakdown(): void
     {
         $expected = [
-            'resources/views/admin/Administrator/index.blade.php' => [
-                '<x-card' => 1, '<x-button' => 1, '<x-input' => 0, '<x-select' => 0, '<x-ds-icon' => 5,
-            ],
-            'resources/views/admin/Administrator/create.blade.php' => [
-                '<x-card' => 1, '<x-button' => 1, '<x-input' => 4, '<x-select' => 1, '<x-ds-icon' => 2,
-            ],
-            'resources/views/admin/Administrator/show.blade.php' => [
-                '<x-card' => 1, '<x-button' => 1, '<x-input' => 3, '<x-select' => 0, '<x-ds-icon' => 2,
-            ],
-            'resources/views/admin/AdminRoles/index.blade.php' => [
-                '<x-card' => 1, '<x-button' => 1, '<x-input' => 0, '<x-select' => 0, '<x-ds-icon' => 5,
-            ],
             'resources/views/admin/AdminRoles/create.blade.php' => [
                 '<x-card' => 1, '<x-button' => 1, '<x-input' => 1, '<x-select' => 0, '<x-ds-icon' => 0,
             ],
@@ -93,31 +81,14 @@ class AdminUsersRolesAnnouncementsComponentAdoptionTest extends TestCase
     // Native carve-outs — repeated/JS-critical-id/select2 fields
     // -----------------------------------------------------------------
 
-    public function test_password_toggle_fields_remain_native_in_administrator_forms(): void
+    public function test_administrator_forms_never_ask_for_or_show_a_password(): void
     {
-        foreach ([
-            'resources/views/admin/Administrator/create.blade.php',
-            'resources/views/admin/Administrator/show.blade.php',
-        ] as $view) {
-            $contents = file_get_contents(base_path($view));
+        foreach (['create', 'show'] as $view) {
+            $contents = file_get_contents(base_path("resources/views/admin/Administrator/{$view}.blade.php"));
 
-            $this->assertStringContainsString('class="input-group input-group-merge form-password-toggle"', $contents);
-            $this->assertSame(0, preg_match('/<x-input\s+name="password"/', $contents), "{$view} must never adopt x-input for the password-toggle field.");
-            $this->assertSame(0, preg_match('/<x-input\s+name="password_confirmation"/', $contents), "{$view} must never adopt x-input for the password-confirmation field.");
+            $this->assertStringNotContainsString('name="password"', $contents);
+            $this->assertStringNotContainsString('form-password-toggle', $contents);
         }
-    }
-
-    public function test_role_timezone_locale_selects_remain_native_select2(): void
-    {
-        $create = file_get_contents(base_path('resources/views/admin/Administrator/create.blade.php'));
-        $this->assertStringContainsString('<select class="select2 w-100" id="role" name="roles[]">', $create);
-        $this->assertSame(0, preg_match('/<x-select\s+name="roles\[\]"/', $create));
-
-        $show = file_get_contents(base_path('resources/views/admin/Administrator/show.blade.php'));
-        $this->assertStringContainsString('<select class="select2 w-100" id="role" name="roles[]">', $show);
-        $this->assertStringContainsString('<select class="select2 w-100" id="timezone" name="timezone">', $show);
-        $this->assertStringContainsString('<select class="select2 w-100" id="locale" name="locale">', $show);
-        $this->assertSame(0, preg_match('/<x-select\s+name="(roles\[\]|timezone|locale)"/', $show));
     }
 
     public function test_customer_selection_radios_and_multiselect_remain_native_in_announcements(): void
@@ -172,8 +143,6 @@ class AdminUsersRolesAnnouncementsComponentAdoptionTest extends TestCase
     public function test_datatables_tables_remain_plain_native_markup_inside_x_card(): void
     {
         $expectations = [
-            'resources/views/admin/Administrator/index.blade.php',
-            'resources/views/admin/AdminRoles/index.blade.php',
             'resources/views/admin/Announcements/_announcements.blade.php',
         ];
 

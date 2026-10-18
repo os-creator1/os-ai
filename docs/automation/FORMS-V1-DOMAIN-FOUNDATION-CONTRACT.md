@@ -13,6 +13,15 @@ Revision history: the foundation shipped at `a9463d5d`; **correction/completion 
 added (a) version pinning of every public flow (§6) and (b) multi-page questionnaires
 (§4, §7); **round 2** made the final questionnaire step converge at one atomic boundary (§7).
 
+> **Superseded in part by `FORMS-VISUAL-BUILDER-V1.md`.** The visual builder extended the closed element
+> set (number, currency, date & time, multi-select, radio, yes/no, two separate consent types, and
+> heading/paragraph/divider/spacer content blocks), added optional placeholder / help / width / default /
+> first- and last-name markers, a versioned `design` style, and an optional stale-version guard on
+> `FormManager::update()`. Everything else in this contract — versioning, pinning, Location deployment,
+> sessions, idempotency, the event — is unchanged. §2's "Field types and bounds" and §13 ("file uploads,
+> payment fields") should be read together with that document; the "one customer editor" described in §4 is
+> now the visual builder.
+
 ## 1. Decisions this slice implements (authoritative, not re-derived)
 
 1. Forms / Questionnaires is its **own V1 product surface**.

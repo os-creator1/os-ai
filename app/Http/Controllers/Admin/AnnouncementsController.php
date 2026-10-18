@@ -40,8 +40,8 @@
             $this->authorize('view announcement');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Customer')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Customer')],
                 ['name' => __('locale.menu.Announcements')],
             ];
 
@@ -138,7 +138,7 @@
             $this->authorize('create announcement');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/announcements'), 'name' => __('locale.menu.Announcements')],
                 ['name' => __('locale.announcements.send_announcement')],
             ];
@@ -202,7 +202,7 @@
             $this->authorize('edit announcement');
 
             $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url(config('app.admin_path') . '/announcements'), 'name' => __('locale.menu.Announcements')],
                 ['name' => __('locale.announcements.update_announcement')],
             ];

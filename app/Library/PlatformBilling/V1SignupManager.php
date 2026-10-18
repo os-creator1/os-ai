@@ -5,6 +5,8 @@ namespace App\Library\PlatformBilling;
 use App\Exceptions\Entitlement\WorkspacePlanAlreadyAssignedException;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Business\BusinessManager;
+use App\Enums\Business\BusinessStatus;
+use App\Library\Business\OnboardingManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Customer;
@@ -54,6 +56,7 @@ final class V1SignupManager
         private readonly BusinessManager $businesses,
         private readonly PlatformSubscriptionManager $subscriptions,
         private readonly WorkspacePlanAssignmentRepository $assignments,
+        private readonly OnboardingManager $onboarding,
     ) {
     }
 
@@ -110,6 +113,18 @@ final class V1SignupManager
      *
      * @throws PlatformBillingException
      */
+    /**
+     * Creates the account's Workspace, Business and Primary Location WITHOUT
+     * opening a Checkout — for a customer arriving from a Private Offer, who
+     * must first review and accept the offer's terms before any payment starts.
+     * Provisioning grants nothing: the plan is assigned only after the provider
+     * confirms payment.
+     */
+    public function provisionWithoutCheckout(Customer $customer, array $draft): Workspace
+    {
+        return $this->provision($customer, $draft);
+    }
+
     public function restartCheckout(
         Customer $customer,
         WorkspacePlanCatalog $catalog,
@@ -230,6 +245,11 @@ final class V1SignupManager
         }
 
         if ($this->assignments->findByWorkspaceId((int) $workspace->id) !== null) {
+            // Already assigned by an earlier call. Still hand off, so a
+            // hand-off that failed after the assignment is repaired by the
+            // next confirmation instead of stranding a paid account.
+            $this->handOffToOnboarding($workspace);
+
             return true;
         }
 
@@ -242,10 +262,50 @@ final class V1SignupManager
             );
         } catch (WorkspacePlanAlreadyAssignedException) {
             // The other path won the race. One assignment, which is the point.
-            return true;
         }
 
+        $this->handOffToOnboarding($workspace);
+
         return true;
+    }
+
+    /**
+     * Step 4 — the signup's Business becomes the onboarding's Business.
+     *
+     * Provisioning already created the Workspace's one Draft Business and its
+     * initial Location before payment. Onboarding must CONTINUE that Business,
+     * never create another (one Business per Workspace), so once the provider
+     * has confirmed payment the customer's onboarding row is started and
+     * attached to it. Done here, in the one activation seam, and not at
+     * provisioning: a signup that never pays has no onboarding row and cannot
+     * be sent into the wizard instead of back to payment.
+     *
+     * Idempotent (see OnboardingManager::startForProvisionedBusiness()). A
+     * failure here is reported but never undoes the paid subscription; the
+     * wizard also adopts the Draft Business on its Business step, so the
+     * account is recoverable either way.
+     */
+    private function handOffToOnboarding(Workspace $workspace): void
+    {
+        try {
+            $customer = Customer::query()->where('user_id', $workspace->owner_user_id)->first();
+            $business = Business::query()->where('workspace_id', $workspace->id)->first();
+
+            // Only a Business that genuinely still needs onboarding (Draft) is
+            // handed off. A renewal, replay or any later confirmation of the
+            // same subscription reaches this seam too; an Active (or
+            // otherwise non-Draft) Business must never gain, or be sent back
+            // into, an onboarding requirement because of it.
+            if ($customer !== null && $business !== null && $business->status === BusinessStatus::Draft) {
+                $this->onboarding->startForProvisionedBusiness(
+                    $customer,
+                    $business,
+                    required: ! $this->onboarding->isAgencyAccount($customer),
+                );
+            }
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /**

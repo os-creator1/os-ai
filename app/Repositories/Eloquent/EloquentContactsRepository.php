@@ -7,6 +7,7 @@
     use App\Exceptions\GeneralException;
     use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
     use App\Jobs\AutomationJob;
+    use App\Library\Contacts\ContactPhone;
     use App\Library\Tool;
     use App\Models\Business;
     use App\Models\Campaigns;
@@ -39,7 +40,7 @@
             string $rawPhone,
             array $input = [],
         ): Contacts {
-            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            [$phone, $phoneForms] = $this->phoneForms($location, $rawPhone);
             $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
             if (! DB::table('booking_contact_identity_locks')->where($key)->exists()) {
                 DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
@@ -48,10 +49,11 @@
             }
             $this->lockBookingIdentity($location, $phone);
 
-            $contact = Contacts::query()->where('location_id', $location->id)
-                ->where('phone', $phone)->orderBy('id')->first();
+            $contact = Contacts::query()->where('business_id', (int) $location->business_id)
+                ->where('location_id', $location->id)
+                ->whereIn('phone', $phoneForms)->orderBy('id')->first();
             if ($contact !== null) {
-                if ($contact->isListedInBlacklist()) {
+                if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'phone' => __('locale.blacklist.phone_was_blacklisted'),
                     ]);
@@ -60,7 +62,7 @@
             }
 
             $contact = new Contacts(['phone' => $phone]);
-            if ($contact->isListedInBlacklist()) {
+            if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'phone' => __('locale.blacklist.phone_was_blacklisted'),
                 ]);
@@ -86,6 +88,51 @@
             return $contact;
         }
 
+        /**
+         * The canonical phone and every stored form an equivalent number may
+         * already carry, for a Contact that belongs to $location's Business
+         * (App\Library\Contacts\ContactPhone — the one normalization path).
+         *
+         * @return array{0: string, 1: list<string>}
+         */
+        private function phoneForms(BusinessLocation $location, string $rawPhone): array
+        {
+            $region = ContactPhone::regionFor($location->business, $location);
+
+            return [ContactPhone::canonical($rawPhone, $region), ContactPhone::candidates($rawPhone, $region)];
+        }
+
+        /**
+         * Whether this number is blacklisted FOR THIS BUSINESS: the Business's
+         * own rows, its legacy un-attributed rows (owner = the Business's
+         * customer), and platform-admin rows, which apply everywhere.
+         *
+         * Another Business's opt-out (an inbound STOP is recorded per
+         * Business) must never refuse a booking or form at this one, which is
+         * what the old number-only lookup did.
+         *
+         * @param  list<string>  $phoneForms
+         */
+        private function blacklistedForBusiness(int $businessId, array $phoneForms): bool
+        {
+            if ($phoneForms === []) {
+                return false;
+            }
+
+            $customerId = Business::query()->whereKey($businessId)->value('customer_id');
+
+            return \App\Models\Blacklists::query()
+                ->whereIn('number', $phoneForms)
+                ->where(function ($query) use ($businessId, $customerId): void {
+                    $query->where('business_id', $businessId)
+                        ->orWhere(function ($legacy) use ($customerId): void {
+                            $legacy->whereNull('business_id')->where('user_id', $customerId);
+                        })
+                        ->orWhereIn('user_id', User::query()->where('is_admin', true)->select('id'));
+                })
+                ->exists();
+        }
+
         public function lockBookingIdentity(BusinessLocation $location, string $phone): void
         {
             DB::table('booking_contact_identity_locks')
@@ -95,52 +142,86 @@
         }
 
         /**
-         * A public Website form's own find-or-create seam — same identity
-         * rule as findOrCreateForBooking() (Business-scoped by phone,
-         * blacklist-checked, default field values written through the
-         * existing updateFields() custom-field seam), without a Location
-         * lock: a form submission is not competing for a scarce calendar
-         * slot, so there is nothing to serialize against.
+         * A public Website form's own find-or-create seam. Identity is
+         * LOCATION-LOCAL (Blueprint §10): the Contact is looked up by the
+         * Business, the already-resolved Location and the phone — the same
+         * person at another Location of the same Business is a separate
+         * Contact (no cross-Location merge in V1), and another Business's
+         * Contact is unreachable because the Business is part of the key.
          *
-         * @param  array<string, string>  $fields  e.g. ['FIRST_NAME' => ..., 'LAST_NAME' => ...]
+         * Serialised with the booking seam on the same Location+phone lock
+         * (`booking_contact_identity_locks`) so a form submission and a
+         * booking racing for one new person cannot create two Contacts.
+         *
+         * AMBIGUOUS IDENTITY IS NEVER RESOLVED BY GUESSING: when more than
+         * one Contact already shares this Location+phone (legacy duplicates)
+         * no row is picked or created — the caller records the submission
+         * with the Contact link empty so a person can decide.
+         *
+         * An existing Contact is linked, never modified: an anonymous public
+         * submission must not overwrite a Business's own Contact data.
+         *
+         * @param  array<string, string>  $fields  e.g. ['FIRST_NAME' => ..., 'LAST_NAME' => ...] — written only to a Contact this call creates
+         * @return array{0: ?Contacts, 1: string}  the Contact (null when ambiguous) and how it was reached: created | matched | ambiguous
          */
-        public function findOrCreateForWebsiteForm(Business $business, string $rawPhone, array $fields): Contacts
+        public function findOrCreateForWebsiteForm(BusinessLocation $location, string $rawPhone, array $fields): array
         {
-            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            [$phone, $phoneForms] = $this->phoneForms($location, $rawPhone);
+            $businessId = (int) $location->business_id;
 
-            $contact = Contacts::query()->where('business_id', $business->id)->where('phone', $phone)->first();
+            $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
+            if (! DB::table('booking_contact_identity_locks')->where($key)->exists()) {
+                DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+            $this->lockBookingIdentity($location, $phone);
+
+            $matches = Contacts::query()
+                ->where('business_id', $businessId)
+                ->where('location_id', $location->id)
+                ->whereIn('phone', $phoneForms)
+                ->orderBy('id')
+                ->limit(2)
+                ->get();
+
+            if ($matches->count() > 1) {
+                return [null, 'ambiguous'];
+            }
 
             // Blacklisting is re-checked on every call, not only when a new
             // row is about to be created — a phone blacklisted AFTER an
             // earlier, legitimate inquiry must still refuse this one.
-            if ($contact !== null) {
-                if ($contact->isListedInBlacklist()) {
+            if ($matches->count() === 1) {
+                $contact = $matches->first();
+
+                if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'phone' => __('locale.blacklist.phone_was_blacklisted'),
                     ]);
                 }
 
-                return $contact;
+                return [$contact, 'matched'];
             }
 
             $contact = new Contacts(['phone' => $phone]);
-            if ($contact->isListedInBlacklist()) {
+            if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'phone' => __('locale.blacklist.phone_was_blacklisted'),
                 ]);
             }
 
-            $group = ContactGroups::query()->where('business_id', $business->id)->orderBy('id')->first();
+            $group = ContactGroups::query()->where('business_id', $businessId)->orderBy('id')->first();
             if ($group === null) {
                 $group = $this->store([
-                    'name' => 'Contacts', 'business_id' => $business->id, 'user_id' => $business->customer_id,
+                    'name' => 'Contacts', 'business_id' => $businessId, 'user_id' => Business::query()->whereKey($businessId)->value('customer_id'),
                 ]);
             }
 
             $contact->group_id = $group->id;
             $contact->customer_id = $group->customer_id;
-            $contact->business_id = $business->id;
-            $contact->location_id = Contacts::singleActiveLocationIdFor($business->id);
+            $contact->business_id = $businessId;
+            $contact->location_id = $location->id;
             // NOT STATUS_SUBSCRIBE, and no contact-created automation
             // dispatch below: submitting a quote-request form is an
             // inquiry, never messaging consent. The Contact and its CRM
@@ -152,7 +233,7 @@
             $contact->save();
             $contact->updateFields($fields + ['PHONE' => $phone]);
 
-            return $contact;
+            return [$contact, 'created'];
         }
 
         /**
@@ -187,7 +268,7 @@
          */
         public function findOrCreateForForm(BusinessLocation $location, string $rawPhone, array $fields): array
         {
-            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            [$phone, $phoneForms] = $this->phoneForms($location, $rawPhone);
 
             if ($phone === '') {
                 return [null, FormContactResolution::None];
@@ -218,7 +299,7 @@
             $matches = Contacts::query()
                 ->where('business_id', $businessId)
                 ->where('location_id', $location->id)
-                ->where('phone', $phone)
+                ->whereIn('phone', $phoneForms)
                 ->orderBy('id')
                 ->limit(2)
                 ->get();
@@ -233,7 +314,7 @@
             if ($matches->count() === 1) {
                 $contact = $matches->first();
 
-                if ($contact->isListedInBlacklist()) {
+                if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'phone' => __('locale.blacklist.phone_was_blacklisted'),
                     ]);
@@ -243,7 +324,7 @@
             }
 
             $contact = new Contacts(['phone' => $phone]);
-            if ($contact->isListedInBlacklist()) {
+            if ($this->blacklistedForBusiness((int) $location->business_id, $phoneForms)) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'phone' => __('locale.blacklist.phone_was_blacklisted'),
                 ]);
@@ -369,6 +450,13 @@
             if ( ! isset($input['send_keyword_message'])) {
                 $input['send_keyword_message'] = false;
             }
+
+            // Whitelist: customer_id / business_id / batch_id / sending_server / cache are tenancy
+            // and provider fields and must never come from the request.
+            $input = Arr::only($input, [
+                'name', 'sender_id', 'send_welcome_sms', 'unsubscribe_notification',
+                'send_keyword_message', 'welcome_sms', 'unsubscribe_sms',
+            ]);
 
             if ( ! $contactGroups->update($input)) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));
@@ -863,7 +951,14 @@
             $saved_ids = [];
             foreach ($input['fields'] as $item) {
 
-                $field = ContactGroupFields::findByUid($item['uid']);
+                // A field is looked up INSIDE this list. A uid that names another
+                // list's field — another Business's included — or none at all is
+                // treated as a new field of THIS list: knowing a foreign field's uid
+                // never lets a save rewrite, re-home or (below) delete it.
+                $field = ContactGroupFields::query()
+                    ->where('contact_group_id', $contactGroups->id)
+                    ->where('uid', $item['uid'])
+                    ->first();
                 if ( ! $field) {
                     $field                   = new ContactGroupFields();
                     $field->contact_group_id = $contactGroups->id;
@@ -886,6 +981,10 @@
                     }
 
                     $field->fill($item);
+
+                    // `contact_group_id` is mass-assignable: a posted value must never
+                    // move a field into (or out of) a list other than this one.
+                    $field->contact_group_id = $contactGroups->id;
 
                 } else {
                     $field->label         = $item['label'];
@@ -918,6 +1017,7 @@
             ContactGroups $contactGroups,
             array $input,
             ContactCreationSource $creationSource = ContactCreationSource::Other,
+            ?int $locationId = null,
         )
         {
             $messages = [];
@@ -932,26 +1032,74 @@
 
 
             $rules = $contactGroups->getFieldRules();
-            $phone = isset($input['PHONE']) ? str_replace(['+', '-', '(', ')', ' '], '', $input['PHONE']) : '';
+            // The one canonical form (ContactPhone): an explicit international
+            // number keeps its digits exactly as before, and a number typed
+            // without a country code resolves against the Business's own
+            // country when — and only when — that yields a valid number there.
+            $region = ContactPhone::regionFor(
+                $contactGroups->business_id === null ? null : Business::query()->find($contactGroups->business_id)
+            );
+            $phone = isset($input['PHONE']) ? ContactPhone::canonical($input['PHONE'], $region) : '';
+
+            if (isset($input['PHONE'])) {
+                // updateFields() writes the PHONE field back onto contacts.phone;
+                // it must receive the canonical value, never the raw typing.
+                $input['PHONE'] = $phone;
+            }
 
             $rules['PHONE'] = [
                 'required',
                 new Phone($phone),
-                Rule::unique('contacts')->where(function ($query) use ($contactGroups) {
-                    return $query->where('group_id', $contactGroups->id);
+                // Identity is Business + Location + normalized phone (Blueprint §10)
+                // when the caller names the Location the Contact is being created at:
+                // the same number in another list of that Location is the same
+                // Contact, and the same number at another Location is a separate one.
+                // A caller that names none keeps the per-list rule.
+                Rule::unique('contacts')->where(function ($query) use ($contactGroups, $locationId) {
+                    return $locationId === null
+                        ? $query->where('group_id', $contactGroups->id)
+                        : $query->where('business_id', $contactGroups->business_id)->where('location_id', $locationId);
                 }),
             ];
 
-            $validator = Validator::make($input, $rules, $messages);
+            // The number is validated in the form it is stored and matched in
+            // (digits only), so "+1 (415) 555-0151" is the SAME contact as
+            // "14155550151": the per-list unique rule must see the normalized value,
+            // or a re-typed number would slip past it, match the existing row below,
+            // and silently overwrite that contact's details and re-subscribe it.
+            $validator = Validator::make(array_merge($input, ['PHONE' => $phone]), $rules, $messages);
 
 
-            $subscriber = $contactGroups->subscribers()->firstOrNew([
-                'phone' => trim($phone),
-            ]);
+            $subscriber = $contactGroups->subscribers()->firstOrNew(
+                $locationId === null ? ['phone' => trim($phone)] : ['phone' => trim($phone), 'location_id' => $locationId]
+            );
 
             if ($subscriber->isListedInBlacklist()) {
                 $validator->after(function ($validator) {
                     $validator->errors()->add('phone', __('locale.blacklist.phone_was_blacklisted'));
+                });
+            }
+
+            // A row written before canonicalization (the same number in its
+            // national form) is the same Contact: refuse it exactly as the
+            // unique rule refuses the canonical form, instead of letting the
+            // re-typed number create a duplicate beside it.
+            $historicalForms = array_values(array_diff(ContactPhone::candidates($input['PHONE'] ?? '', $region), [$phone]));
+
+            if ($historicalForms !== []) {
+                $validator->after(function ($validator) use ($historicalForms, $contactGroups, $locationId) {
+                    $exists = Contacts::query()
+                        ->whereIn('phone', $historicalForms)
+                        ->where(function ($query) use ($contactGroups, $locationId) {
+                            $locationId === null
+                                ? $query->where('group_id', $contactGroups->id)
+                                : $query->where('business_id', $contactGroups->business_id)->where('location_id', $locationId);
+                        })
+                        ->exists();
+
+                    if ($exists) {
+                        $validator->errors()->add('PHONE', __('validation.unique', ['attribute' => 'PHONE']));
+                    }
                 });
             }
 
@@ -971,7 +1119,7 @@
                 // Contact, so its Location is resolved now, once, from the
                 // group's own Business. An existing (re-saved) subscriber
                 // keeps whatever location_id it already has.
-                $subscriber->location_id = Contacts::singleActiveLocationIdFor($contactGroups->business_id);
+                $subscriber->location_id = $locationId ?? Contacts::singleActiveLocationIdFor($contactGroups->business_id);
             }
 
             $subscriber->save();

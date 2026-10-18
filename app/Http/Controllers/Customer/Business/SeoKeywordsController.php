@@ -6,8 +6,18 @@ use App\Exceptions\Seo\SeoKeywordException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesSeoBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Seo\Rank\SeoRankDashboardReader;
+use App\Library\Navigation\CustomerContext;
+use App\Library\Seo\Rank\SeoRankEntitlement;
+use App\Library\Seo\Rank\SeoRankException;
+use App\Library\Seo\Rank\SeoRankFirstCheckNotice;
+use App\Library\Seo\Rank\SeoRankLocationCatalog;
+use App\Library\Seo\Rank\SeoRankTargetManager;
+use App\Library\Seo\Rank\SeoRankTrackingBudget;
+use App\Jobs\Seo\ScheduleSeoRankChecks;
 use App\Library\Seo\SeoKeywordCoverageReader;
 use App\Library\Seo\SeoKeywordManager;
+use App\Library\Seo\SeoKeywordSuggester;
 use App\Library\Seo\SeoLocationScope;
 use App\Library\Seo\SeoPublishedContentReader;
 use App\Models\Business;
@@ -51,6 +61,12 @@ class SeoKeywordsController extends CustomerBaseController
         private readonly SeoLocationScope $locationScope,
         private readonly SeoPublishedContentReader $publishedContent,
         private readonly SeoKeywordCoverageReader $coverage,
+        private readonly SeoRankDashboardReader $rankDashboard,
+        private readonly SeoRankEntitlement $rankEntitlement,
+        private readonly SeoRankTargetManager $rankTargets,
+        private readonly SeoRankTrackingBudget $rankBudget,
+        private readonly SeoRankFirstCheckNotice $firstCheckNotice,
+        private readonly SeoKeywordSuggester $suggester,
     ) {
     }
 
@@ -71,14 +87,58 @@ class SeoKeywordsController extends CustomerBaseController
         $keywords = $this->keywords->listVisible($actorId, $business, $accessibleIds);
         $active = $keywords->filter(fn (SeoKeyword $k) => $k->isActive());
 
+        // Rank tracking is its own entitlement: without it the page is still the
+        // keyword list with Website coverage, and rank columns show "—".
+        $rankPlan = $this->rankEntitlement->planFor($business);
+        $rank = $this->rankDashboard->build($business, $active->values(), $rankPlan);
+        $activeLocations = $accessibleLocations->filter(fn (BusinessLocation $l) => $l->isActive())->values();
+
         return view('customer.business.seo.keywords', [
+            'rank' => $rank,
+            'rankPlan' => $rankPlan,
+            'rankUnavailable' => $rankPlan !== null && ! $this->rankBudget->enabled(),
+            'rankPaused' => $rankPlan !== null && $this->rankBudget->isPausedBySpend($business),
+            // Paid rank checks are never started on a client's behalf while viewing as them.
+            'viewingAsClient' => $this->viewingAsClient(request()),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
             'keywords' => $keywords,
             'coverage' => $this->coverage->forKeywords($active, $this->publishedContent->forBusiness($business)),
-            'locations' => $accessibleLocations->filter(fn (BusinessLocation $l) => $l->isActive())->values(),
+            'locations' => $activeLocations,
+            // Ideas from the niche strategy, filled with the Business's own services and cities.
+            // Offered only to someone who can add keywords; saving one is the ordinary create POST.
+            // The existing rank location, per scope: lets "Add keyword" and "Start tracking" be one click.
+            'rankDefaults' => $this->rankDefaults($business, $activeLocations),
+            'suggestions' => Auth::user()->can('manage_seo')
+                ? $this->suggester->suggest($business, $activeLocations, $keywords, $active->count())
+                : [],
         ]);
+    }
+
+    /**
+     * @param  Collection<int, BusinessLocation>  $locations
+     * @return array{business: array{code: int, label: string}|null, locations: array<string, array{code: int, label: string}|null>}
+     */
+    private function rankDefaults(Business $business, $locations): array
+    {
+        $found = $this->rankTargets->defaultLocations($business, $locations->pluck('id')->map(fn ($id) => (int) $id)->all());
+
+        return [
+            'business' => $this->locationPayload($found['business']),
+            'locations' => $locations->mapWithKeys(fn (BusinessLocation $l) => [
+                $l->uid => $this->locationPayload($found['locations'][(int) $l->id] ?? null),
+            ])->all(),
+        ];
+    }
+
+    /** @return array{code: int, label: string}|null */
+    private function locationPayload(?\App\Models\SeoRankLocation $location): ?array
+    {
+        return $location === null ? null : [
+            'code' => (int) $location->location_code,
+            'label' => \App\Library\Seo\Rank\SeoRankLocationCatalog::label($location->location_name),
+        ];
     }
 
     public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
@@ -92,9 +152,32 @@ class SeoKeywordsController extends CustomerBaseController
         $location = $this->resolveLocation($actorId, $business, $input['location_uid'] ?? null);
 
         try {
-            $this->keywords->create($actorId, $business, (string) $input['phrase'], $location);
+            $keyword = $this->keywords->create($actorId, $business, (string) $input['phrase'], $location);
         } catch (SeoKeywordException $e) {
             return $this->refused($workspaceUid, $businessUid, $e);
+        }
+
+        if (! empty($input['track_rank'])) {
+            // No location chosen: fall back to the Business's existing rank location (the keyword's own
+            // Location first). The page asks for one only when there is none.
+            $input['search_location_code'] ??= $this->rankTargets->defaultLocation($business, $location?->id)?->location_code;
+
+            // Tracking commits paid checks to the CLIENT's allowance, so it is
+            // never started while viewing as them (ViewAsProhibitedActions closes
+            // the rank routes; this closes the same door from the add-keyword form).
+            if ($this->viewingAsClient($request)) {
+                return $this->done($workspaceUid, $businessUid, 'Keyword added. Rank tracking was not started: it uses your client\'s paid checks, which cannot be started while you are viewing their account.');
+            }
+
+            return $this->done($workspaceUid, $businessUid, $this->trackNewKeyword($actorId, $business, $keyword->uid, $input['search_location_code'] ?? null));
+        }
+
+        // Allowance full: the form disables the checkbox, so say plainly that the
+        // keyword was saved WITHOUT rank tracking and why.
+        $plan = $this->rankEntitlement->planFor($business);
+
+        if ($plan !== null && $this->rankTargets->slotsUsed($business) >= $plan->trackedTargets) {
+            return $this->done($workspaceUid, $businessUid, "Keyword saved. Rank tracking off. {$plan->trackedTargets} of {$plan->trackedTargets} rank-tracked keywords are in use.");
         }
 
         return $this->done($workspaceUid, $businessUid, 'Keyword added.');
@@ -138,7 +221,10 @@ class SeoKeywordsController extends CustomerBaseController
             return $this->refused($workspaceUid, $businessUid, $e);
         }
 
-        return $this->done($workspaceUid, $businessUid, 'Keyword archived.');
+        // Archiving frees the keyword's rank slot: its tracking is stopped (history kept).
+        $stopped = $this->rankTargets->stopForKeyword($actorId, $business, $keyword);
+
+        return $this->done($workspaceUid, $businessUid, $stopped > 0 ? 'Keyword archived. Rank tracking for it was stopped and its slot is free.' : 'Keyword archived.');
     }
 
     public function reactivate(string $workspaceUid, string $businessUid, string $keywordUid): RedirectResponse
@@ -157,7 +243,11 @@ class SeoKeywordsController extends CustomerBaseController
             return $this->refused($workspaceUid, $businessUid, $e);
         }
 
-        return $this->done($workspaceUid, $businessUid, 'Keyword reactivated.');
+        // Coming back from the archive never silently resumes paid checks: any tracking that
+        // survived (e.g. archived before this rule existed) is stopped; start it again on purpose.
+        $stopped = $this->rankTargets->stopForKeyword($actorId, $business, $keyword);
+
+        return $this->done($workspaceUid, $businessUid, $stopped > 0 ? 'Keyword reactivated. Rank tracking stays off until you start it again.' : 'Keyword reactivated.');
     }
 
     /**
@@ -172,6 +262,8 @@ class SeoKeywordsController extends CustomerBaseController
     {
         return $request->validate([
             'phrase' => ['required', 'string', 'max:' . SeoKeywordManager::MAX_PHRASE_LENGTH],
+            'track_rank' => ['nullable', 'boolean'],
+            'search_location_code' => ['nullable', 'integer', 'min:1'],
             'location_uid' => ['nullable', 'string', 'max:64'],
         ]);
     }
@@ -192,6 +284,37 @@ class SeoKeywordsController extends CustomerBaseController
         abort_if($location === null, 404);
 
         return $location;
+    }
+
+    /**
+     * The keyword is ALREADY saved as an SEO keyword (it needs no paid slot). If
+     * the rank-tracking allowance is full, or the location is not usable, it
+     * simply stays untracked and the owner is told why.
+     */
+    private function trackNewKeyword(int $actorId, Business $business, string $keywordUid, mixed $locationCode): string
+    {
+        if (! is_int($locationCode) && ! (is_string($locationCode) && ctype_digit($locationCode))) {
+            return 'Keyword saved. Rank tracking off. Choose a search location from the list to track its rank.';
+        }
+
+        try {
+            $target = $this->rankTargets->track($actorId, $business, $keywordUid, (int) $locationCode);
+        } catch (SeoRankException $e) {
+            return 'Keyword saved. Rank tracking off. ' . $e->customerMessage();
+        }
+
+        ScheduleSeoRankChecks::dispatch($target->id);
+
+        // What happens next depends on the real state (provider, budget, what we
+        // can match against), so the sentence is chosen from it — never assumed.
+        return 'Keyword added and rank tracking started. ' . $this->firstCheckNotice->forBusiness($business);
+    }
+
+    private function viewingAsClient(Request $request): bool
+    {
+        $ctx = $request->attributes->get('customerContext');
+
+        return $ctx instanceof CustomerContext && $ctx->isViewingAsClient();
     }
 
     private function done(string $workspaceUid, string $businessUid, string $message): RedirectResponse

@@ -7,6 +7,7 @@
 
     $stored          the Business's saved values when editing one (kept
                      selectable even if a canonical list lacks them)
+    $colClass        grid column class for each select (default col-md-4)
     $suggestDefaults on a brand-new Business only: preselect the browser's
                      timezone, and fill in the currency when the chosen
                      country has exactly one — never over a currency the
@@ -16,6 +17,7 @@
     $localeOptions = app(\App\Library\Business\BusinessLocaleOptions::class);
     $stored = $stored ?? [];
     $suggestDefaults = (bool) ($suggestDefaults ?? false);
+    $colClass = $colClass ?? 'col-md-4';
 
     $countryOptions = ['' => 'Choose a country'] + \App\Library\Business\BusinessLocaleOptions::withStoredValue($localeOptions->countries(), $stored['country_code'] ?? null);
     $timezoneOptions = ['' => 'Choose a timezone'] + \App\Library\Business\BusinessLocaleOptions::withStoredValue($localeOptions->timezones(), $stored['timezone'] ?? null);
@@ -23,13 +25,13 @@
 @endphp
 
 <div class="row" data-business-locale @if ($suggestDefaults) data-suggest-defaults data-country-currency="{{ json_encode($localeOptions->defaultCurrencyByCountry()) }}" @endif>
-    <div class="col-md-4">
+    <div class="{{ $colClass }}">
         <x-select name="country_code" label="Country" :options="$countryOptions" :selected="old('country_code', $stored['country_code'] ?? null)" data-locale-field="country" required />
     </div>
-    <div class="col-md-4">
+    <div class="{{ $colClass }}">
         <x-select name="timezone" label="Timezone" :options="$timezoneOptions" :selected="old('timezone', $stored['timezone'] ?? null)" data-locale-field="timezone" required />
     </div>
-    <div class="col-md-4">
+    <div class="{{ $colClass }}">
         <x-select name="currency_code" label="Currency" :options="$currencyOptions" :selected="old('currency_code', $stored['currency_code'] ?? null)" data-locale-field="currency" required />
     </div>
 </div>
@@ -91,7 +93,12 @@
 
                 if (timezone.value === '') {
                     try {
-                        choose(timezone, Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+                        // A browser that reports plain UTC usually does not know the real
+                        // zone; leave the choice to the customer rather than save a wrong one.
+                        var detected = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+                        if (detected !== 'UTC' && detected.indexOf('Etc/') !== 0) {
+                            choose(timezone, detected);
+                        }
                     } catch (error) {
                         // No usable browser timezone: the customer chooses one.
                     }

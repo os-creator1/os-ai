@@ -19,6 +19,7 @@ use App\Library\BusinessEmail\BusinessEmailLocationScope;
 use App\Library\BusinessEmail\BusinessEmailOAuthConfig;
 use App\Library\BusinessEmail\BusinessEmailOAuthStateSigner;
 use App\Library\BusinessEmail\BusinessEmailSender;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Models\Business;
 use App\Models\BusinessEmailMessage;
 use App\Models\Contacts;
@@ -64,22 +65,24 @@ class BusinessEmailController extends CustomerBaseController
         private readonly BusinessEmailSender $sender,
         private readonly BusinessEmailContactResolver $contacts,
         private readonly BusinessEmailLocationScope $locations,
+        private readonly WorkspaceManagementAuthority $authority,
     ) {
     }
 
     public function show(string $workspaceUid, string $businessUid): View
     {
-        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
+        [$workspace, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
 
-        // Either email permission may view the page. Throwing the same
-        // exception authorize() throws keeps a missing permission a 401, like
-        // every other permission-gated customer action.
-        if (! Gate::any(['manage_business_email', 'chat_box'])) {
+        // The Workspace owner, or either email permission, may view the page.
+        // Throwing the same exception authorize() throws keeps a missing
+        // permission a 401, like every other permission-gated customer action.
+        $canManage = $this->authority->mayManage($workspace, 'manage_business_email');
+
+        if (! $canManage && ! Gate::allows('chat_box')) {
             throw new AuthorizationException();
         }
 
         $account = $this->accounts->findForBusiness($business);
-        $canManage = Gate::allows('manage_business_email');
         $canSend = Gate::allows('chat_box') && Gate::allows('view_contact') && $account?->isActive() === true;
 
         // Location ACL (LocationAccessGuard, taken ONCE): the actor's reach
@@ -116,8 +119,8 @@ class BusinessEmailController extends CustomerBaseController
     /** CSRF-protected POST: it mutates connection state and the nonce. */
     public function connect(string $workspaceUid, string $businessUid, string $provider): RedirectResponse
     {
-        $this->authorize('manage_business_email');
-        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
+        [$workspace, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
+        $this->authorizeManage($workspace);
 
         $providerType = BusinessEmailProviderType::tryFrom($provider);
         abort_if($providerType === null, 404);
@@ -178,11 +181,11 @@ class BusinessEmailController extends CustomerBaseController
         }
 
         // Aborts 404 unless THIS user may use THIS Business right now.
-        [, $business] = $this->resolveBusinessTenancy((string) $workspace->uid, (string) $business->uid, true);
+        [$workspace, $business] = $this->resolveBusinessTenancy((string) $workspace->uid, (string) $business->uid, true);
 
         // 404 (not 401): this route has no tenant parameters, so a
         // permission-shaped answer would disclose that the Business exists.
-        if (Gate::denies('manage_business_email')) {
+        if (! $this->authority->mayManage($workspace, 'manage_business_email')) {
             abort(404);
         }
 
@@ -229,8 +232,8 @@ class BusinessEmailController extends CustomerBaseController
 
     public function disconnect(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_business_email');
-        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
+        [$workspace, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
+        $this->authorizeManage($workspace);
 
         $account = $this->accounts->findForBusiness($business);
 
@@ -297,6 +300,14 @@ class BusinessEmailController extends CustomerBaseController
             BusinessEmailMessageStatus::Unconfirmed => $this->back($workspaceUid, $businessUid, 'error', 'We could not confirm whether this email was sent. Check your sent mail before trying again.'),
             default => $this->back($workspaceUid, $businessUid, 'success', 'This email is already being sent.'),
         };
+    }
+
+    /** Same 401 a missing permission has always been on the tenant-addressed routes. */
+    private function authorizeManage(Workspace $workspace): void
+    {
+        if (! $this->authority->mayManage($workspace, 'manage_business_email')) {
+            throw new AuthorizationException();
+        }
     }
 
     private function back(string $workspaceUid, string $businessUid, string $status, string $message): RedirectResponse

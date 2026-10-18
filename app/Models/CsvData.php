@@ -21,4 +21,24 @@ class CsvData extends Model
             'ref_id',
             'ref_type',
     ];
+
+    /**
+     * A CSV upload is a transient wizard step belonging to the user who made it.
+     * It is never shared with team members, sub-accounts or other businesses, so
+     * the only authorised consumer is that same authenticated user.
+     */
+    public static function findOwnedBy(mixed $id, mixed $userId, ?string $refType = null): ?self
+    {
+        if (! is_scalar($id) || ! is_scalar($userId) || (string) $id === '' || (int) $userId <= 0) {
+            return null;
+        }
+
+        $query = static::query()->whereKey($id)->where('user_id', (int) $userId);
+
+        if ($refType !== null) {
+            $query->where('ref_type', $refType);
+        }
+
+        return $query->first();
+    }
 }

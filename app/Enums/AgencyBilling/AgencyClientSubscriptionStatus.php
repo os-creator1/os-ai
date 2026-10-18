@@ -31,6 +31,26 @@ enum AgencyClientSubscriptionStatus: string
     case Unpaid = 'unpaid';
     case Paused = 'paused';
 
+    /**
+     * The state in the words a customer reads — never the raw value ("past_due",
+     * "incomplete_expired") on any page.
+     */
+    public function label(): string
+    {
+        return match ($this) {
+            self::Offered => 'Offered — waiting for the client',
+            self::Pending => 'Awaiting payment',
+            self::Incomplete => 'Payment incomplete',
+            self::IncompleteExpired => 'Expired',
+            self::Trialing => 'Trial',
+            self::Active => 'Active',
+            self::PastDue => 'Payment overdue',
+            self::Canceled => 'Cancelled',
+            self::Unpaid => 'Unpaid',
+            self::Paused => 'Paused',
+        };
+    }
+
     /** The client is entitled to use the product on the Agency's dime. */
     public function grantsAccess(): bool
     {

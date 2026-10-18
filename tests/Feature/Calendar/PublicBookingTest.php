@@ -54,7 +54,7 @@ class PublicBookingTest extends TestCase
     {
         return [
             'date' => '2027-03-01', 'time' => $time,
-            'first_name' => 'Ada', 'last_name' => 'Lovelace', 'phone' => $phone,
+            'first_name' => 'Ada', 'last_name' => 'Lovelace', 'email' => 'ada@example.test', 'phone' => $phone,
         ];
     }
 

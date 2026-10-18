@@ -2,6 +2,10 @@
 
 @section('title', $user->displayName())
 
+@section('page-style')
+    <link rel="stylesheet" href="{{ asset('css/settings-redesign.css') }}?v={{ is_file(public_path('css/settings-redesign.css')) ? filemtime(public_path('css/settings-redesign.css')) : 1 }}">
+@endsection
+
 @section('vendor-style')
     {{-- Page Css files --}}
 
@@ -17,13 +21,31 @@
 @endsection
 
 @section('content')
+    @php
+        // Which tab opens: ?tab=, the tab a controller redirected with, or the tab that owns a validation error.
+        $activeTab = request()->input('tab') ?: old('tab');
+        if (! $activeTab) {
+            $activeTab = match (true) {
+                $errors->hasAny(['current_password', 'password', 'password_confirmation']) => 'security',
+                $errors->hasAny(['phone', 'company', 'website', 'address', 'city', 'state', 'postcode', 'country', 'financial_address', 'financial_city', 'financial_postcode', 'tax_number']) => 'information',
+                default => 'account',
+            };
+        }
+    @endphp
     <!-- users edit start -->
-    <section class="users-edit">
+    <section class="users-edit sr-page sr-page--narrow">
 
-        <ul class="nav nav-pills mb-2" role="tablist">
+        <div class="sr-head">
+            <div class="sr-head__main">
+                <h1 class="sr-title">Your account</h1>
+                <p class="sr-lede">These settings are yours and apply in every Business you can open.</p>
+            </div>
+        </div>
+
+        <ul class="nav sr-tabs" role="tablist">
 
             <li class="nav-item">
-                <a class="nav-link @if ((old('tab') == 'account' || old('tab') == null) && request()->input('tab') == null) active @endif"
+                <a class="nav-link {{ $activeTab === 'account' ? 'active' : '' }}"
                    id="account-tab" data-bs-toggle="tab" href="#account" aria-controls="account" role="tab"
                    aria-selected="true">
                     <x-ds-icon name="user" /> {{__('locale.labels.account')}}
@@ -31,24 +53,15 @@
             </li>
 
             <li class="nav-item">
-                <a class="nav-link {{ old('tab') == 'security' ? 'active':null }}" id="security-tab"
+                <a class="nav-link {{ $activeTab === 'security' ? 'active' : '' }}" id="security-tab"
                    data-bs-toggle="tab" href="#security" aria-controls="security" role="tab" aria-selected="true">
                     <x-ds-icon name="lock" /> {{__('locale.labels.security')}}
                 </a>
             </li>
 
-            <li class="nav-item">
-                <a class="nav-link {{ request()->input('tab') == 'notification' ? 'active':null }}"
-                   id="notification-tab" data-bs-toggle="tab" href="#notification" aria-controls="notification"
-                   role="tab" aria-selected="false">
-                    <x-ds-icon name="bell" /> {{__('locale.labels.notifications')}}
-                </a>
-            </li>
-
-
             @if(config('app.two_factor'))
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'two_factor' ? 'active':null }}" id="two-factor-tab"
+                    <a class="nav-link {{ $activeTab === 'two_factor' ? 'active' : '' }}" id="two-factor-tab"
                        data-bs-toggle="tab" href="#two-factor" aria-controls="two-factor" role="tab"
                        aria-selected="false">
                         <x-ds-icon name="log-in" /> {{__('locale.labels.two_factor_authentication')}}
@@ -58,7 +71,7 @@
 
             @if($user->active_portal == 'customer')
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'information' ? 'active':null }}" id="information-tab"
+                    <a class="nav-link {{ $activeTab === 'information' ? 'active' : '' }}" id="information-tab"
                        data-bs-toggle="tab" href="#information" aria-controls="information" role="tab"
                        aria-selected="false">
                         <x-ds-icon name="info" />{{__('locale.labels.information')}}
@@ -78,7 +91,7 @@
                 && $user->customer->activeSubscription()?->plan?->is_dlt)
                 {{--Entity ID--}}
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'dlt_entity_id' ? 'active':null }}"
+                    <a class="nav-link {{ $activeTab === 'dlt_entity_id' ? 'active' : '' }}"
                        id="dlt_entity_id-tab" data-bs-toggle="tab" href="#dlt_entity_id"
                        aria-controls="dlt_entity_id" role="tab" aria-selected="false">
                         <x-ds-icon name="key" class="font-medium-3 me-50" />
@@ -87,7 +100,7 @@
                 </li>
 
                 <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'dlt_telemarketer_id' ? 'active':null }}"
+                    <a class="nav-link {{ $activeTab === 'dlt_telemarketer_id' ? 'active' : '' }}"
                        id="dlt_telemarketer_id-tab" data-bs-toggle="tab" href="#dlt_telemarketer_id"
                        aria-controls="dlt_telemarketer_id" role="tab" aria-selected="false">
                         <x-ds-icon name="headphones" class="font-medium-3 me-50" />
@@ -101,30 +114,24 @@
 
         <div class="tab-content">
 
-            <div class="tab-pane @if ((old('tab') == 'account' || old('tab') == null) && request()->input('tab') == null) active @endif"
+            <div class="tab-pane {{ $activeTab === 'account' ? 'active' : '' }}"
                  id="account" aria-labelledby="account-tab" role="tabpanel">
                 <!-- users edit account form start -->
                 @include('auth.profile._accounts')
                 <!-- users edit account form ends -->
             </div>
 
-            <div class="tab-pane {{ old('tab') == 'security' ? 'active':null }}" id="security"
+            <div class="tab-pane {{ $activeTab === 'security' ? 'active' : '' }}" id="security"
                  aria-labelledby="security-tab" role="tabpanel">
                 <!-- users edit Info form start -->
                 @include('auth.profile._security')
                 <!-- users edit Info form ends -->
             </div>
 
-            <div class="tab-pane {{ request()->input('tab') == 'notification' ? 'active':null }}" id="notification"
-                 aria-labelledby="notification-tab" role="tabpanel">
-                <!-- users edit Info form start -->
-                @include('auth.profile._notifications')
-                <!-- users edit Info form ends -->
-            </div>
 
 
             @if($user->active_portal == 'customer')
-                <div class="tab-pane {{ old('tab') == 'information' ? 'active':null }}" id="information"
+                <div class="tab-pane {{ $activeTab === 'information' ? 'active' : '' }}" id="information"
                      aria-labelledby="information-tab" role="tabpanel">
                     <!-- users edit Info form start -->
                     @include('auth.profile._information')
@@ -135,7 +142,7 @@
 
 
             @if(config('app.two_factor'))
-                <div class="tab-pane {{ old('tab') == 'two_factor' ? 'active':null }}" id="two-factor"
+                <div class="tab-pane {{ $activeTab === 'two_factor' ? 'active' : '' }}" id="two-factor"
                      aria-labelledby="two-factor-tab" role="tabpanel">
                     @include('auth.profile._two_factor_authentication')
                 </div>
@@ -146,12 +153,12 @@
             @if(config('app.trai_dlt') == 1
                 && isset($user->customer)
                 && $user->customer->activeSubscription()?->plan?->is_dlt)
-                <div class="tab-pane {{ old('tab') == 'dlt_entity_id' ? 'active':null }}"
+                <div class="tab-pane {{ $activeTab === 'dlt_entity_id' ? 'active' : '' }}"
                      id="dlt_entity_id" aria-labelledby="dlt_entity_id-tab" role="tabpanel">
                     @include('auth.profile._dlt_entity_id')
                 </div>
 
-                <div class="tab-pane {{ old('tab') == 'dlt_telemarketer_id' ? 'active':null }}"
+                <div class="tab-pane {{ $activeTab === 'dlt_telemarketer_id' ? 'active' : '' }}"
                      id="dlt_telemarketer_id" aria-labelledby="dlt_telemarketer_id-tab" role="tabpanel">
                     @include('auth.profile._dlt_telemarketer_id')
                 </div>
@@ -222,7 +229,6 @@
                         newestOnTop: true,
                         rtl: isRtl
                     });
-                    dataListView.draw(false);
                 } else if (data.status === 'error') {
                     toastr['error'](data.message, '{{ __('locale.labels.opps') }}!', {
                         closeButton: true,
@@ -231,7 +237,6 @@
                         newestOnTop: true,
                         rtl: isRtl
                     });
-                    dataListView.draw(false);
                 } else {
                     toastr['warning']("{{__('locale.exceptions.something_went_wrong')}}", '{{ __('locale.labels.warning') }}!', {
                         closeButton: true,
@@ -247,313 +252,6 @@
                 feather.replace();
               }, 100); // slight delay to ensure DOM update completes
             }
-
-            // init table dom
-            let Table = $("table");
-
-            // init list view datatable
-            let dataListView = $('.datatables-basic').DataTable({
-
-                "processing": true,
-                "serverSide": true,
-                "ajax": {
-                    "url": "{{ route('user.account.notifications') }}",
-                    "dataType": "json",
-                    "type": "POST",
-                    "data": {_token: "{{csrf_token()}}"}
-                },
-                "columns": [
-                    {"data": 'responsive_id', orderable: false, searchable: false},
-                    {"data": "uid"},
-                    {"data": "uid"},
-                    {"data": "notification_type"},
-                    {"data": "message"},
-                    {"data": "mark_read", orderable: false, searchable: false},
-                    {"data": "action", orderable: false, searchable: false}
-                ],
-
-                searchDelay: 1500,
-                columnDefs: [
-                    {
-                        // For Checkboxes
-                        targets: 1,
-                        orderable: false,
-                        responsivePriority: 3,
-                        render: function (data) {
-                            return (
-                                '<div class="form-check"> <input class="form-check-input dt-checkboxes" type="checkbox" value="" id="' +
-                                data +
-                                '" /><label class="form-check-label" for="' +
-                                data +
-                                '"></label></div>'
-                            );
-                        },
-                        checkboxes: {
-                            selectAllRender:
-                                '<div class="form-check"> <input class="form-check-input" type="checkbox" value="" id="checkboxSelectAll" /><label class="form-check-label" for="checkboxSelectAll"></label></div>',
-                            selectRow: true
-                        }
-                    },
-                    {
-                        targets: 2,
-                        visible: false
-                    },
-                    {
-                        targets: 0,
-                        visible: false
-                    },
-                    {
-                        // Actions
-                        targets: -1,
-                        title: '{{ __('locale.labels.actions') }}',
-                        orderable: false,
-                        render: function (data, type, full) {
-                            return (
-                                '<span class="action-delete text-danger pe-1 cursor-pointer" data-id=' + full['uid'] + '>' +
-                                feather.icons['trash'].toSvg({class: 'font-medium-4'}) +
-                                '</span>'
-                            );
-                        }
-                    }
-                ],
-                dom: '<"d-flex justify-content-between align-items-center mx-0 row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>t<"d-flex justify-content-between mx-0 row"<"col-sm-12 col-md-6"i><"col-sm-12 col-md-6"p>>',
-
-                language: {
-                    paginate: {
-                        // remove previous & next text from pagination
-                        previous: '&nbsp;',
-                        next: '&nbsp;'
-                    },
-                    sLengthMenu: "_MENU_",
-                    sZeroRecords: "{{ __('locale.datatables.no_results') }}",
-                    sSearch: "{{ __('locale.datatables.search') }}",
-                    sProcessing: "{{ __('locale.datatables.processing') }}",
-                    sInfo: "{{ __('locale.datatables.showing_entries', ['start' => '_START_', 'end' => '_END_', 'total' => '_TOTAL_']) }}"
-                },
-                responsive: false,
-                aLengthMenu: [[10, 20, 50, 100], [10, 20, 50, 100]],
-                select: {
-                    style: "multi"
-                },
-                order: [[2, "desc"]],
-                displayLength: 10,
-            });
-
-            // On Delete
-            Table.delegate(".action-delete", "click", function (e) {
-                e.stopPropagation();
-                let id = $(this).data('id');
-                Swal.fire({
-                    title: "{{ __('locale.labels.are_you_sure') }}",
-                    text: "{{ __('locale.labels.able_to_revert') }}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "{{ __('locale.labels.delete_it') }}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        $.ajax({
-                            url: "{{ url('account/notifications/')}}" + '/' + id + '/delete',
-                            type: "POST",
-                            data: {
-                                _token: "{{csrf_token()}}"
-                            },
-                            success: function (data) {
-                                showResponseMessage(data);
-                            },
-                            error: function (reject) {
-                                if (reject.status === 422) {
-                                    let errors = reject.responseJSON.errors;
-                                    $.each(errors, function (key, value) {
-                                        toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    });
-                                } else {
-                                    toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                        positionClass: 'toast-top-right',
-                                        containerId: 'toast-top-right',
-                                        progressBar: true,
-                                        closeButton: true,
-                                        newestOnTop: true
-                                    });
-                                }
-                            }
-                        })
-                    }
-                })
-            });
-
-            //Bulk Read
-            $(".bulk-read").on('click', function (e) {
-
-                e.preventDefault();
-
-                Swal.fire({
-                    title: "{{__('locale.labels.are_you_sure')}}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "Yes! Mark read",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        let notification_ids = [];
-                        let rows_selected = dataListView.column(1).checkboxes.selected();
-
-                        $.each(rows_selected, function (index, rowId) {
-                            notification_ids.push(rowId)
-                        });
-
-                        if (notification_ids.length > 0) {
-
-                            $.ajax({
-                                url: "{{ route('user.account.notifications.batch_action') }}",
-                                type: "POST",
-                                data: {
-                                    _token: "{{csrf_token()}}",
-                                    action: 'read',
-                                    ids: notification_ids
-                                },
-                                success: function (data) {
-                                    showResponseMessage(data);
-                                },
-                                error: function (reject) {
-                                    if (reject.status === 422) {
-                                        let errors = reject.responseJSON.errors;
-                                        $.each(errors, function (key, value) {
-                                            toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                                closeButton: true,
-                                                positionClass: 'toast-top-right',
-                                                progressBar: true,
-                                                newestOnTop: true,
-                                                rtl: isRtl
-                                            });
-                                        });
-                                    } else {
-                                        toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    }
-                                }
-                            })
-                        } else {
-                            toastr['warning']("{{ __('locale.labels.at_least_one_data') }}", "{{ __('locale.labels.attention') }}", {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
-                        }
-                    }
-                })
-            });
-
-            //Bulk Delete
-            $(".bulk-delete").on('click', function (e) {
-
-                e.preventDefault();
-
-                Swal.fire({
-                    title: "{{__('locale.labels.are_you_sure')}}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "{{__('locale.labels.delete_selected')}}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        let notification_ids = [];
-                        let rows_selected = dataListView.column(1).checkboxes.selected();
-
-                        $.each(rows_selected, function (index, rowId) {
-                            notification_ids.push(rowId)
-                        });
-
-                        if (notification_ids.length > 0) {
-
-                            $.ajax({
-                                url: "{{ route('user.account.notifications.batch_action') }}",
-                                type: "POST",
-                                data: {
-                                    _token: "{{csrf_token()}}",
-                                    action: 'destroy',
-                                    ids: notification_ids
-                                },
-                                success: function (data) {
-                                    showResponseMessage(data);
-                                },
-                                error: function (reject) {
-                                    if (reject.status === 422) {
-                                        let errors = reject.responseJSON.errors;
-                                        $.each(errors, function (key, value) {
-                                            toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                                closeButton: true,
-                                                positionClass: 'toast-top-right',
-                                                progressBar: true,
-                                                newestOnTop: true,
-                                                rtl: isRtl
-                                            });
-                                        });
-                                    } else {
-                                        toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    }
-                                }
-                            })
-                        } else {
-                            toastr['warning']("{{ __('locale.labels.at_least_one_data') }}", "{{ __('locale.labels.attention') }}", {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
-                        }
-
-                    }
-                })
-            });
-
-
-            Table.delegate(".get_status", "click", function () {
-                let notification_id = $(this).data('id');
-                $.ajax({
-                    url: "{{ url('account/notifications/')}}" + '/' + notification_id + '/active',
-                    type: "POST",
-                    data: {
-                        _token: "{{csrf_token()}}"
-                    },
-                    success: function (data) {
-                        showResponseMessage(data);
-                    }
-                });
-            });
-
 
             // On Remove Avatar
             $('#remove-avatar').on("click", function (e) {

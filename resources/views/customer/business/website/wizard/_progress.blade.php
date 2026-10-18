@@ -14,7 +14,7 @@
 --}}
 <div class="mb-4">
     @isset($backStepKey)
-        <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.back', [$workspaceUid, $businessUid, $currentStepKey]) }}" class="d-inline">
+        <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.back', [$workspaceUid, $businessUid, $currentStepKey]) }}" class="d-inline" data-wizard-back>
             @csrf
             <button type="submit" class="btn btn-link p-0 d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
                 <x-ds-icon name="arrow-left" size="16" aria-hidden="true" />
@@ -25,5 +25,9 @@
     <div class="progress" style="height: 4px;">
         <div class="progress-bar" role="progressbar" style="width: {{ $progress['total'] > 0 ? min(100, round($progress['current'] / $progress['total'] * 100)) : 0 }}%"></div>
     </div>
-    <p class="text-caption mt-1 mb-0">Step {{ $progress['current'] }} of {{ $progress['total'] }}</p>
+    <div class="d-flex justify-content-between align-items-baseline">
+        <p class="text-caption mt-1 mb-0">Step {{ $progress['current'] }} of {{ $progress['total'] }}</p>
+        {{-- Saved / Saving / Couldn't save: updated by the wizard script; polite so it never steals focus. --}}
+        <p class="text-caption mt-1 mb-0" role="status" aria-live="polite" data-save-status></p>
+    </div>
 </div>

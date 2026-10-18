@@ -1,0 +1,131 @@
+PASS  design photo_booth_conversion chosen  — 200
+PASS  business name prefilled
+PASS  base prefilled from the primary location
+PASS  ten suggested areas
+PASS  three booth cards from three preset taps  — 3
+PASS  preset descriptions are prefilled
+PASS  chips show chosen state
+PASS  three event cards
+PASS  packages can be linked to a booth
+PASS  three packages entered
+PASS  two backdrops, each with its own photo
+PASS  exactly one homepage cover is chosen
+PASS  About starts complete
+PASS  form preview lists the fields
+PASS  six FAQ cards are filled in
+PASS  no FAQ answer is empty
+PASS  every step so far was in-page
+PASS  review lists the missing photo
+PASS  review shows counts
+PASS  a draft website was generated (no AI)  — http://127.0.0.1:8012/workspaces/6f28f844-af9b-4a2b-8132-38dbf4febabf/businesses/6ace711f72fbf/website/preview
+PASS  Studio checklist names the missing booth photo
+PASS  publishing is refused while the photo is missing
+PASS  editing answers finished on the review step  — http://127.0.0.1:8012/workspaces/6f28f844-af9b-4a2b-8132-38dbf4febabf/businesses/6ace711f72fbf/website/build/review
+PASS  Studio health warns that the inquiry site has no privacy notice link yet
+PASS  the privacy link is saved in the Studio look card
+PASS  after adding the photo the website publishes
+PASS  the Studio links to the published public site  — http://127.0.0.1:8012/sites/5f9a68d2-3d35-4d7c-be25-61a8b36a9691
+PASS  the public site is live (no draft banner)
+PASS  the site has several pages  — 11
+PASS  home (desktop): no broken or empty images
+PASS  home (desktop): no horizontal scroll
+PASS  home (desktop): text/button contrast
+PASS  home (desktop): no empty section
+PASS  services (desktop): no broken or empty images
+PASS  services (desktop): no horizontal scroll
+PASS  services (desktop): text/button contrast
+PASS  services (desktop): no empty section
+PASS  service-open-air-photo-booth (desktop): no broken or empty images
+PASS  service-open-air-photo-booth (desktop): no horizontal scroll
+PASS  service-open-air-photo-booth (desktop): text/button contrast
+PASS  service-open-air-photo-booth (desktop): no empty section
+PASS  service-mirror-photo-booth (desktop): no broken or empty images
+PASS  service-mirror-photo-booth (desktop): no horizontal scroll
+PASS  service-mirror-photo-booth (desktop): text/button contrast
+PASS  service-mirror-photo-booth (desktop): no empty section
+PASS  service-360-photo-booth (desktop): no broken or empty images
+PASS  service-360-photo-booth (desktop): no horizontal scroll
+PASS  service-360-photo-booth (desktop): text/button contrast
+PASS  service-360-photo-booth (desktop): no empty section
+PASS  packages (desktop): no broken or empty images
+PASS  packages (desktop): no horizontal scroll
+PASS  packages (desktop): text/button contrast
+PASS  packages (desktop): no empty section
+PASS  gallery (desktop): no broken or empty images
+PASS  gallery (desktop): no horizontal scroll
+PASS  gallery (desktop): text/button contrast
+PASS  gallery (desktop): no empty section
+PASS  backdrops (desktop): no broken or empty images
+PASS  backdrops (desktop): no horizontal scroll
+PASS  backdrops (desktop): text/button contrast
+PASS  backdrops (desktop): no empty section
+PASS  photo-booth-about (desktop): no broken or empty images
+PASS  photo-booth-about (desktop): no horizontal scroll
+PASS  photo-booth-about (desktop): text/button contrast
+PASS  photo-booth-about (desktop): no empty section
+PASS  photo-booth-contact (desktop): no broken or empty images
+PASS  photo-booth-contact (desktop): no horizontal scroll
+PASS  contact (desktop): privacy link sits with the quote form
+PASS  photo-booth-contact (desktop): text/button contrast
+PASS  photo-booth-contact (desktop): no empty section
+PASS  photo-booth-faq (desktop): no broken or empty images
+PASS  photo-booth-faq (desktop): no horizontal scroll
+PASS  photo-booth-faq (desktop): text/button contrast
+PASS  photo-booth-faq (desktop): no empty section
+PASS  home (mobile): no broken or empty images
+PASS  home (mobile): no horizontal scroll
+PASS  home (mobile): text/button contrast
+PASS  home (mobile): no empty section
+PASS  services (mobile): no broken or empty images
+PASS  services (mobile): no horizontal scroll
+PASS  services (mobile): text/button contrast
+PASS  services (mobile): no empty section
+PASS  service-open-air-photo-booth (mobile): no broken or empty images
+PASS  service-open-air-photo-booth (mobile): no horizontal scroll
+PASS  service-open-air-photo-booth (mobile): text/button contrast
+PASS  service-open-air-photo-booth (mobile): no empty section
+PASS  service-mirror-photo-booth (mobile): no broken or empty images
+PASS  service-mirror-photo-booth (mobile): no horizontal scroll
+PASS  service-mirror-photo-booth (mobile): text/button contrast
+PASS  service-mirror-photo-booth (mobile): no empty section
+PASS  service-360-photo-booth (mobile): no broken or empty images
+PASS  service-360-photo-booth (mobile): no horizontal scroll
+PASS  service-360-photo-booth (mobile): text/button contrast
+PASS  service-360-photo-booth (mobile): no empty section
+PASS  packages (mobile): no broken or empty images
+PASS  packages (mobile): no horizontal scroll
+PASS  packages (mobile): text/button contrast
+PASS  packages (mobile): no empty section
+PASS  gallery (mobile): no broken or empty images
+PASS  gallery (mobile): no horizontal scroll
+PASS  gallery (mobile): text/button contrast
+PASS  gallery (mobile): no empty section
+PASS  backdrops (mobile): no broken or empty images
+PASS  backdrops (mobile): no horizontal scroll
+PASS  backdrops (mobile): text/button contrast
+PASS  backdrops (mobile): no empty section
+PASS  photo-booth-about (mobile): no broken or empty images
+PASS  photo-booth-about (mobile): no horizontal scroll
+PASS  photo-booth-about (mobile): text/button contrast
+PASS  photo-booth-about (mobile): no empty section
+PASS  photo-booth-contact (mobile): no broken or empty images
+PASS  photo-booth-contact (mobile): no horizontal scroll
+PASS  contact (mobile): privacy link sits with the quote form
+PASS  photo-booth-contact (mobile): text/button contrast
+PASS  photo-booth-contact (mobile): no empty section
+PASS  photo-booth-faq (mobile): no broken or empty images
+PASS  photo-booth-faq (mobile): no horizontal scroll
+PASS  photo-booth-faq (mobile): text/button contrast
+PASS  photo-booth-faq (mobile): no empty section
+PASS  booth cards are links  — 3
+PASS  no informational card carries an arrow or other link badge  — 0
+PASS  package cards are not booth links
+PASS  keyboard focus on a booth link shows a focus ring on its card  — solid
+PASS  Enter opens that booth's own page  — OPEN-AIR PHOTO BOOTH
+PASS  the owner's privacy link is in the footer, pointing at their address
+PASS  the terms link is in the footer too
+PASS  hero headline states the service and place, not just the brand  — BOOK A PHOTO BOOTH IN IRVINE
+PASS  no broken internal links across every page
+PASS  captured every page at both widths  — 22
+
+ALL CHECKS PASSED

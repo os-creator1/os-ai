@@ -144,8 +144,14 @@ class NicheBlueprintController extends AdminBaseController
             fn (NicheBlueprintVersion $version) => $version->state === NicheBlueprintVersionState::Published
         );
 
+        $workspace = app(\App\Library\NicheBlueprint\Workspace\BlueprintWorkspaceService::class);
+
         return view('admin.niche-blueprints.show', [
             'blueprint' => $blueprint,
+            'configStatus' => $workspace->configurationStatus($blueprint),
+            'businessesUsing' => $workspace->businessesUsing($blueprint),
+            'businessRows' => $workspace->businessRows($blueprint, app(\App\Library\NicheBlueprint\Workspace\BlueprintUpdateDetector::class)),
+            'definitionsByType' => $workspace->definitions(),
             'draft' => $draft,
             'published' => $published,
             'registeredComponentTypes' => $this->adapters->registeredComponentTypes(),
@@ -424,7 +430,7 @@ class NicheBlueprintController extends AdminBaseController
     private function breadcrumbs(array $trailing = []): array
     {
         return [
-            ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => route('admin.niche-blueprints.index'), 'name' => 'Niche Blueprints'],
             ...$trailing,
         ];

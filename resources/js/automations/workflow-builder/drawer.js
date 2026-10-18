@@ -9,8 +9,9 @@
 // date fields) comes only from the `catalogs` this Business's page was handed —
 // never another Business's row.
 import { NODE_LABELS, NODE_ICONS, STEP_CATALOG, TRIGGER_TYPES, offsetLabel, triggerTypeInfo } from './constants.js'
-import { GROUP_SUBJECTS, REPLIED_SUBJECT, isDateSubject, needsOperand, operatorLabel, subjectOperators } from './conditions.js'
+import { BUSINESS_FIELD_PREFIX, FACT_SUBJECTS, GROUP_SUBJECTS, REPLIED_SUBJECT, factSubjectAvailable, isDateSubject, isNumberSubject, needsOperand, operatorLabel, optionSubject, subjectOperators } from './conditions.js'
 import { el, icon } from './dom.js'
+import { ACTION_TYPES, populateAction, readAction } from './drawer-actions.js'
 
 function fillSelect(select, options, valueKey, labelKey, placeholder) {
     select.innerHTML = ''
@@ -69,7 +70,8 @@ function attachCounter(field, counterEl, max) {
     sync()
 }
 
-export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, onDelete, onClose }) {
+export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, locationScope, capabilities, currency, triggerType, onSave, onDelete, onClose }) {
+    const data = { locationScope, capabilities: capabilities || {}, currency: currency || '', triggerType }
     const iconEl = drawerEl.querySelector('[data-role="wf-drawer-icon"]')
     const eyebrowEl = drawerEl.querySelector('[data-role="wf-drawer-eyebrow"]')
     const titleEl = drawerEl.querySelector('[data-role="wf-drawer-title"]')
@@ -106,6 +108,7 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         }
 
         populate(node)
+        scopeMergeFieldGroups(options.triggerType)
         showErrors(errorMessages || [])
 
         deleteButton.hidden = node.type === 'trigger' || readOnly
@@ -157,6 +160,20 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         messages.forEach((message) => errorsEl.appendChild(el('p', 'mb-0', message)))
     }
 
+    // The merge-field picker offers Opportunity / Appointment fields only when
+    // this workflow's trigger can actually supply them (the same rule the server
+    // applies at run time), so a trigger change here is reflected at once.
+    function scopeMergeFieldGroups(triggerType) {
+        const trigger = String(triggerType || '')
+        const family = trigger.startsWith('opportunity_') ? 'opportunity' : (trigger.startsWith('appointment_') ? 'appointment' : '')
+
+        formEl.querySelectorAll('[data-merge-requires]').forEach((group) => {
+            group.hidden = group.dataset.mergeRequires !== family
+        })
+
+        formEl.dispatchEvent(new CustomEvent('merge-fields:rescan'))
+    }
+
     function populate(node) {
         if (node.type === 'trigger') {
             populateTrigger(node)
@@ -168,6 +185,13 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             populateTagAction(node)
         } else if (node.type === 'wait') {
             populateWait(node)
+        } else if (ACTION_TYPES.includes(node.type)) {
+            populateAction(node.type, formEl, node, {
+                catalogs,
+                capabilities: data.capabilities,
+                currency: data.currency,
+                triggerType: data.triggerType,
+            })
         } else {
             populateGeneric(node)
         }
@@ -233,7 +257,24 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         const select = formEl.querySelector('[data-role="wf-writable-field-select"]')
         fillFieldSelect(select, catalogs.writableFields, catalogs.contactGroups, 'Choose a field')
 
-        select.value = node.config.field_id != null ? String(node.config.field_id) : ''
+        // The Business's own custom fields — the canonical values Forms, the Contact page and
+        // merge fields read. Value "cf:<id>"; a per-list field keeps its plain id.
+        const businessFields = (catalogs.customFields || []).filter((field) => !field.archived)
+
+        if (businessFields.length > 0) {
+            const optgroup = el('optgroup')
+            optgroup.label = 'Business custom fields'
+            businessFields.forEach((field) => {
+                const opt = el('option', null, field.label)
+                opt.value = 'cf:' + String(field.id)
+                optgroup.appendChild(opt)
+            })
+            select.appendChild(optgroup)
+        }
+
+        select.value = node.config.custom_field_id != null
+            ? 'cf:' + String(node.config.custom_field_id)
+            : (node.config.field_id != null ? String(node.config.field_id) : '')
         formEl.querySelector('[data-field="value"]').value = node.config.value != null ? node.config.value : ''
     }
 
@@ -328,9 +369,89 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         confirmNote.hidden = true
         populateStageFilters(node.config)
         populateTagAndFormFilters(node.config)
+        populateLocationScope(node.config)
         syncVisibility()
     }
 
+    /**
+     * "Where it applies": the whole business, ONE of THIS Business's Locations, or a
+     * chosen list of them. A run is never multi-location — each is pinned to the one
+     * Location of the fact that started it — this only decides which facts are
+     * admitted. Options are the Locations THIS actor reaches (already ACL-filtered by
+     * the server); an archived Location stays visible, marked, only where the workflow
+     * already names it, so the validator's message makes sense.
+     */
+    function populateLocationScope(config) {
+        const modeInputs = formEl.querySelectorAll('input[name="wf-scope-mode"]')
+        const select = formEl.querySelector('[data-role="wf-location-scope-select"]')
+        const list = formEl.querySelector('[data-role="wf-location-scope-list"]')
+        const oneWrap = formEl.querySelector('[data-role="wf-scope-one-fields"]')
+        const selectedWrap = formEl.querySelector('[data-role="wf-scope-selected-fields"]')
+        const businessInput = formEl.querySelector('input[name="wf-scope-mode"][value="business"]')
+        const businessNote = formEl.querySelector('[data-role="wf-scope-business-note"]')
+        const noLocations = formEl.querySelector('[data-role="wf-scope-no-locations"]')
+
+        const chosenOne = config.business_location_id != null ? String(config.business_location_id) : ''
+        const chosenMany = Array.isArray(config.business_location_ids) ? config.business_location_ids.map(String) : []
+        const rows = (catalogs.locations || [])
+            .filter((row) => row.active || String(row.id) === chosenOne || chosenMany.includes(String(row.id)))
+            .map((row) => ({ id: row.id, label: `${row.name || 'Unnamed location'}${row.active ? '' : ' (archived)'}` }))
+
+        // The mode: an explicit one, else what the pre-mode document means.
+        let mode = config.scope_mode
+        if (!['business', 'one', 'selected'].includes(mode)) {
+            mode = chosenOne !== '' ? 'one' : 'business'
+        }
+
+        // Only an actor who reaches every Location may choose "Whole business": it runs
+        // for all of them. Everyone else chooses their own, and the server refuses the
+        // rest at save and publish.
+        const businessWide = !data || !data.locationScope || data.locationScope.businessWide !== false
+
+        if (!businessWide) {
+            businessInput.disabled = true
+            businessNote.hidden = false
+
+            if (mode === 'business') {
+                mode = 'one'
+            }
+        }
+
+        fillSelect(select, rows, 'id', 'label', 'Choose a location')
+        select.value = chosenOne
+
+        list.innerHTML = ''
+        rows.forEach((row) => {
+            const label = el('label', 'form-check')
+            const input = el('input', 'form-check-input')
+            input.type = 'checkbox'
+            input.value = String(row.id)
+            input.dataset.role = 'wf-scope-location'
+            input.checked = chosenMany.includes(String(row.id))
+            label.appendChild(input)
+            label.appendChild(el('span', 'form-check-label ms-1', row.label))
+            list.appendChild(label)
+        })
+
+        noLocations.hidden = rows.length > 0
+
+        modeInputs.forEach((input) => {
+            input.checked = input.value === mode
+        })
+
+        function sync() {
+            const current = formEl.querySelector('input[name="wf-scope-mode"]:checked')
+            const value = current ? current.value : 'business'
+            oneWrap.hidden = value !== 'one'
+            selectedWrap.hidden = value !== 'selected'
+            formEl.querySelectorAll('[data-role="wf-scope-choices"] .wf-choice').forEach((choice) => {
+                choice.classList.toggle('is-checked', choice.querySelector('input').checked)
+            })
+        }
+
+        modeInputs.forEach((input) => input.addEventListener('change', sync))
+        sync()
+    }
     /**
      * Tag triggers may narrow to one tag, and "Form submitted" to one form — each
      * optional ("any"). Options are this Business's own catalog only; an archived
@@ -351,9 +472,28 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         tagSelect.value = selectedTag
         noTags.hidden = tags.length > 0
 
-        fillSelect(formSelect, forms.map((row) => ({ id: row.id, label: row.name })), 'id', 'label', 'Any form')
-        formSelect.value = selectedForm
-        noForms.hidden = forms.length > 0
+        // "Form submitted" may narrow to any one form; "Questionnaire submitted" only
+        // to a questionnaire (two or more pages). The list follows the chosen trigger.
+        function fillFormFilter() {
+            const checked = formEl.querySelector('input[name="wf-trigger-type"]:checked')
+            const questionnaires = checked && checked.value === 'questionnaire_submitted'
+            const rows = questionnaires ? forms.filter((row) => (row.pages || 1) >= 2) : forms
+            const previous = formSelect.value || selectedForm
+
+            fillSelect(formSelect, rows.map((row) => ({ id: row.id, label: row.name })), 'id', 'label', questionnaires ? 'Any questionnaire' : 'Any form')
+            formSelect.value = [...formSelect.options].some((opt) => opt.value === previous) ? previous : ''
+            noForms.hidden = rows.length > 0
+        }
+
+        fillFormFilter()
+        formEl.querySelectorAll('input[name="wf-trigger-type"]').forEach((input) => input.addEventListener('change', fillFormFilter))
+
+        // Document and payment triggers may narrow to one kind of document.
+        const kindSelect = formEl.querySelector('[data-role="wf-document-kind-select"]')
+
+        if (kindSelect) {
+            kindSelect.value = config.document_kind || ''
+        }
     }
 
     /** "Add tag" / "Remove tag": one Business tag. Archived ones are hidden unless already chosen. */
@@ -473,9 +613,31 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             const operandGroupSelect = row.querySelector('[data-role="wf-condition-operand-group"]')
             const help = row.querySelector('[data-role="wf-condition-help"]')
 
+            // Business-wide Custom Fields, by stable key. An archived one is
+            // offered only while this very condition already uses it.
+            ;(catalogs.customFields || []).forEach((field) => {
+                const value = `${BUSINESS_FIELD_PREFIX}${field.key}`
+
+                if (field.archived && condition.subject !== value) {
+                    return
+                }
+
+                const opt = el('option', null, field.archived ? `${field.label} (archived)` : field.label)
+                opt.value = value
+                customGroup.appendChild(opt)
+            })
+
+            // Legacy contact-group fields stay readable for workflows that
+            // already use one, but are no longer offered for new conditions.
             catalogs.writableFields.forEach((field) => {
+                const value = `contact.custom_field:${field.id}`
+
+                if (condition.subject !== value) {
+                    return
+                }
+
                 const opt = el('option', null, field.label)
-                opt.value = `contact.custom_field:${field.id}`
+                opt.value = value
                 customGroup.appendChild(opt)
             })
 
@@ -496,14 +658,63 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 tagGroup.remove()
             }
 
-            fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null)
+            // The deal, document, payment and appointment behind the journey — offered
+            // only where the workflow's trigger gives them something to read (a stored
+            // one stays visible so the validator's message makes sense).
+            const factGroup = row.querySelector('[data-role="wf-condition-fact-group"]')
+            const currentTrigger = typeof data.triggerType === 'function' ? data.triggerType() : data.triggerType
+
+            ;[...factGroup.querySelectorAll('option')].forEach((opt) => {
+                if (!factSubjectAvailable(opt.value, currentTrigger) && condition.subject !== opt.value) {
+                    opt.remove()
+                }
+            })
+
+            if (factGroup.children.length === 0) {
+                factGroup.remove()
+            }
+
+            /** The choices an operand is picked from, for the subjects whose operand is a choice. */
+            function operandChoices(subject) {
+                if (GROUP_SUBJECTS.includes(subject)) {
+                    return (catalogs.contactGroups || []).map((group) => ({ value: group.id, label: group.name }))
+                }
+
+                // A dropdown / multi-select Custom Field: its own options, by stable id.
+                const customField = optionSubject(subject, catalogs)
+
+                if (customField) {
+                    return (customField.options || []).map((option) => ({ value: option.id, label: option.label }))
+                }
+
+                const meta = FACT_SUBJECTS[subject]
+
+                if (!meta) {
+                    return null
+                }
+
+                if (meta.kind === 'reference') {
+                    // A stage, named with its pipeline so two pipelines' "Booked" differ.
+                    const pipelines = catalogs.crmPipelines || []
+
+                    return (catalogs.crmStages || [])
+                        .filter((stage) => !stage.archived)
+                        .map((stage) => {
+                            const pipeline = pipelines.find((candidate) => String(candidate.id) === String(stage.pipeline_id))
+
+                            return { value: stage.id, label: pipeline ? `${pipeline.name} — ${stage.name}` : stage.name }
+                        })
+                }
+
+                return meta.kind === 'choice' ? Object.entries(meta.values).map(([value, label]) => ({ value, label })) : null
+            }
 
             function syncOperators() {
                 const subject = subjectSelect.value
                 const previous = operatorSelect.value
                 operatorSelect.innerHTML = ''
                 subjectOperators(subject, catalogs).forEach((op) => {
-                    const opt = el('option', null, operatorLabel(subject, op))
+                    const opt = el('option', null, operatorLabel(subject, op, catalogs))
                     opt.value = op
                     operatorSelect.appendChild(opt)
                 })
@@ -518,11 +729,21 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             function syncOperand() {
                 const subject = subjectSelect.value
                 const takesValue = needsOperand(operatorSelect.value)
-                const isGroup = GROUP_SUBJECTS.includes(subject)
+                const choices = operandChoices(subject)
+                const isChoice = choices !== null
 
-                operandWrap.hidden = !takesValue || isGroup
-                operandGroupWrap.hidden = !takesValue || !isGroup
-                operandInput.type = isDateSubject(subject, catalogs) ? 'date' : 'text'
+                if (isChoice) {
+                    const previous = operandGroupSelect.value
+                    fillSelect(operandGroupSelect, choices, 'value', 'label', null)
+
+                    if ([...operandGroupSelect.options].some((opt) => opt.value === previous)) {
+                        operandGroupSelect.value = previous
+                    }
+                }
+
+                operandWrap.hidden = !takesValue || isChoice
+                operandGroupWrap.hidden = !takesValue || !isChoice
+                operandInput.type = isDateSubject(subject, catalogs) ? 'date' : (isNumberSubject(subject, catalogs) ? 'number' : 'text')
             }
 
             subjectSelect.addEventListener('change', () => {
@@ -554,7 +775,7 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 : operatorSelect.options[0].value
             syncOperand()
 
-            if (GROUP_SUBJECTS.includes(subjectSelect.value)) {
+            if (operandChoices(subjectSelect.value) !== null) {
                 operandGroupSelect.value = condition.operand != null ? String(condition.operand) : ''
             } else {
                 operandInput.value = condition.operand != null ? condition.operand : ''
@@ -625,9 +846,12 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         } else if (triggerType === 'contact_tag_added' || triggerType === 'contact_tag_removed') {
             const tagValue = formEl.querySelector('[data-role="wf-tag-filter-select"]').value
             config.tag_id = tagValue ? Number(tagValue) : null
-        } else if (triggerType === 'form_submitted') {
+        } else if (triggerType === 'form_submitted' || triggerType === 'questionnaire_submitted') {
             const formValue = formEl.querySelector('[data-role="wf-form-filter-select"]').value
             config.form_id = formValue ? Number(formValue) : null
+        } else if (['document_sent', 'document_signed', 'payment_succeeded', 'payment_failed'].includes(triggerType)) {
+            const kind = formEl.querySelector('[data-role="wf-document-kind-select"]').value
+            config.document_kind = kind || null
         } else if (triggerType === 'opportunity_stage_changed') {
             ;[
                 ['pipeline_id', 'wf-crm-pipeline-select'],
@@ -637,6 +861,18 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 const value = formEl.querySelector(`[data-role="${role}"]`).value
                 config[key] = value ? Number(value) : null
             })
+        }
+
+        // Location scope applies to every trigger: the whole business, one location,
+        // or a chosen list. Exactly the keys of the chosen mode are sent.
+        const scopeMode = formEl.querySelector('input[name="wf-scope-mode"]:checked').value
+        config.scope_mode = scopeMode
+
+        if (scopeMode === 'one') {
+            const scopeValue = formEl.querySelector('[data-role="wf-location-scope-select"]').value
+            config.business_location_id = scopeValue ? Number(scopeValue) : null
+        } else if (scopeMode === 'selected') {
+            config.business_location_ids = [...formEl.querySelectorAll('input[data-role="wf-scope-location"]:checked')].map((input) => Number(input.value))
         }
 
         return config
@@ -651,7 +887,11 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             const condition = { subject, operator }
 
             if (needsOperand(operator)) {
-                condition.operand = GROUP_SUBJECTS.includes(subject)
+                // A subject whose operand is a choice (a group, a stage, a status) reads
+                // its select; every other reads the text box.
+                const operandWrapper = row.querySelector('[data-role="wf-condition-operand-group-wrapper"]')
+
+                condition.operand = operandWrapper && !operandWrapper.hidden
                     ? row.querySelector('[data-role="wf-condition-operand-group"]').value
                     : row.querySelector('[data-role="wf-condition-operand"]').value
             }
@@ -665,9 +905,15 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
     function readUpdateContactField() {
         const fieldValue = formEl.querySelector('[data-role="wf-writable-field-select"]').value
 
+        const value = formEl.querySelector('[data-field="value"]').value
+
+        if (fieldValue.indexOf('cf:') === 0) {
+            return { custom_field_id: Number(fieldValue.slice(3)), value }
+        }
+
         return {
             field_id: fieldValue ? Number(fieldValue) : null,
-            value: formEl.querySelector('[data-field="value"]').value,
+            value,
         }
     }
 
@@ -696,6 +942,8 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             config = readWait()
         } else if (currentNode.type === 'end') {
             config = {}
+        } else if (ACTION_TYPES.includes(currentNode.type)) {
+            config = readAction(currentNode.type, formEl)
         } else {
             config = readGeneric()
         }

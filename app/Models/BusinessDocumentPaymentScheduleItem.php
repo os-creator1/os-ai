@@ -44,6 +44,10 @@ class BusinessDocumentPaymentScheduleItem extends Model
         'due_at' => 'datetime',
         'paid_at' => 'datetime',
         'reminder_last_sent_at' => 'datetime',
+        'payment_request_claimed_at' => 'datetime',
+        'payment_request_sent_at' => 'datetime',
+        'payment_request_failed_at' => 'datetime',
+        'payment_request_attempts' => 'integer',
     ];
 
     public function generateUid(): void

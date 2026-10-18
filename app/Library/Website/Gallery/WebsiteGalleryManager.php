@@ -124,6 +124,8 @@ final class WebsiteGalleryManager
                 if (is_file($fullPath)) {
                     @unlink($fullPath);
                 }
+
+                app(\App\Library\Website\Media\ImageVariants::class)->delete($orphaned->path);
             }
 
             throw $e;

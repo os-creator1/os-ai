@@ -142,7 +142,7 @@ class DashboardHeadlinesTest extends TestCase
             $this->assertSame($source($previous), $headlines[$key]->comparison->previous, "{$key}: previous");
         }
 
-        $this->assertSame(self::KEYS, array_keys($headlines), 'Home carries exactly the canonical figures, in KPI-priority order.');
+        $this->assertSame(['new_contacts', 'new_conversations', 'appointments_booked', 'messages_received'], array_keys($headlines), 'Home carries exactly the canonical figures, in KPI-priority order.');
         $this->assertSame([4, 6], [$headlines['new_contacts']->comparison->current, $headlines['new_contacts']->comparison->previous]);
         $this->assertSame([2, 7], [$headlines['new_conversations']->comparison->current, $headlines['new_conversations']->comparison->previous]);
         $this->assertSame([5, 3], [$headlines['messages_received']->comparison->current, $headlines['messages_received']->comparison->previous]);
@@ -262,9 +262,13 @@ class DashboardHeadlinesTest extends TestCase
 
             foreach (self::KEYS as $key) {
                 $headline = $headlines[$key];
+                $tone = ['up' => 'up', 'down' => 'down', 'unchanged' => 'same'][$name];
                 $this->assertSame($trend, $headline->comparison->trend, "{$name}: {$key} trend");
                 $this->assertSame($headline->comparison->current - $headline->comparison->previous, $headline->comparison->absoluteDelta, "{$name}: {$key} delta");
-                $this->assertMatchesRegularExpression('/data-headline="' . $key . '"[^>]*data-trend="' . $trend->value . '"/', $html, "{$name}: {$key} rendered trend");
+                // Home shows the three final cards; a received-message count is a band figure, not a card.
+                if (! in_array($key, ['messages_received', 'new_conversations'], true)) {
+                    $this->assertMatchesRegularExpression('/data-headline="' . $key . '".*?data-tone="' . $tone . '"/s', $html, "{$name}: {$key} rendered trend");
+                }
             }
         }
     }
@@ -290,10 +294,12 @@ class DashboardHeadlinesTest extends TestCase
 
         $main = $this->mainText($this->home()->assertOk()->getContent());
 
-        $this->assertStringContainsString('Up from 0 in the previous 10 days.', $main);
-        $this->assertStringContainsString('No change: 0 in this period and in the previous 10 days.', $main);
+        // The card shows the plain difference from nothing (▲ 2), and an observed zero in both periods as "Same": no ratio exists to show.
+        $band = $this->between($this->home()->getContent(), 'data-band="headlines"', '</section>');
+        $this->assertMatchesRegularExpression('/data-headline="new_contacts".*?▲ 2/s', $band);
+        // (Conversations are a band figure now; Home's third card is the current waiting count, which has no period comparison.)
         $this->assertDoesNotMatchRegularExpression('/\b(INF|NAN)\b|∞|Infinity/i', $main);
-        $this->assertStringNotContainsString('(100.0%) from 0', $main);
+        $this->assertStringNotContainsString('%', $band);
     }
 
     // =================================================================

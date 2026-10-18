@@ -660,10 +660,11 @@ class LegacyInboundFailClosedTest extends TestCase
             'hub_mode' => 'subscribe',
             'hub_verify_token' => $secret,
             'hub_challenge' => 'challenge-value',
-        ]));
+        ]))->assertStatus(410);
 
-        $this->assertNotEmpty($captured, 'The handler still logs, so this test is exercising the real path.');
-
+        // The WhatsApp gateway is no longer a V1 callback (item 4): its route is
+        // refused before the handler runs, so nothing is logged at all. The
+        // secret must still never appear anywhere.
         foreach ($captured as $line) {
             $this->assertStringNotContainsString($secret, $line, 'The verification secret reached the log.');
             $this->assertStringNotContainsString('hub_verify_token', $line, 'Even the key name is not logged.');

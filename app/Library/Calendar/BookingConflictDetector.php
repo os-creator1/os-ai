@@ -49,10 +49,18 @@ class BookingConflictDetector
         int $staffUserId,
         CarbonInterface $startAt,
         CarbonInterface $endAt,
-        ?int $ignoreAppointmentId = null
+        ?int $ignoreAppointmentId = null,
+        int $bufferBeforeMinutes = 0,
+        int $bufferAfterMinutes = 0
     ): bool {
+        // Buffers widen the interval the NEW booking occupies; the appointment
+        // itself keeps its real start and end. Every busy source is asked about
+        // that occupied interval.
+        $occupiedStart = $startAt->copy()->subMinutes($bufferBeforeMinutes);
+        $occupiedEnd = $endAt->copy()->addMinutes($bufferAfterMinutes);
+
         foreach ($this->busySources() as $source) {
-            if ($source($staffUserId, $startAt, $endAt, $ignoreAppointmentId)) {
+            if ($source($staffUserId, $occupiedStart, $occupiedEnd, $ignoreAppointmentId)) {
                 return true;
             }
         }
@@ -120,14 +128,17 @@ class BookingConflictDetector
         CarbonInterface $endAt,
         ?int $ignoreAppointmentId
     ): bool {
+        // An existing appointment occupies its own interval widened by ITS
+        // Booking Type's buffers, so a neighbour's buffer protects it too.
         $query = Appointment::query()
-            ->where('staff_user_id', $staffUserId)
-            ->where('status', AppointmentStatus::Scheduled->value)
-            ->where('start_at', '<', $endAt)
-            ->where('end_at', '>', $startAt);
+            ->leftJoin('booking_types', 'booking_types.id', '=', 'appointments.booking_type_id')
+            ->where('appointments.staff_user_id', $staffUserId)
+            ->where('appointments.status', AppointmentStatus::Scheduled->value)
+            ->whereRaw('DATE_SUB(appointments.start_at, INTERVAL COALESCE(booking_types.buffer_before_minutes, 0) MINUTE) < ?', [$endAt->copy()->utc()->toDateTimeString()])
+            ->whereRaw('DATE_ADD(appointments.end_at, INTERVAL COALESCE(booking_types.buffer_after_minutes, 0) MINUTE) > ?', [$startAt->copy()->utc()->toDateTimeString()]);
 
         if ($ignoreAppointmentId !== null) {
-            $query->where('id', '!=', $ignoreAppointmentId);
+            $query->where('appointments.id', '!=', $ignoreAppointmentId);
         }
 
         return $query->exists();

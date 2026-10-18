@@ -28,16 +28,15 @@
                     <h5 class="mt-1" data-role="forms-answers-page">{{ $page['title'] ?: 'Page '.($loop->iteration) }}</h5>
                 @endif
                 <dl class="row" data-role="forms-answers">
-                    @foreach ($submission->version->fieldsOnPage($page['key']) as $field)
-                        @php($value = $submission->values[$field['key']] ?? null)
+                    {{-- Headings, paragraphs, dividers and spacers collected nothing, so they have no answer to show. --}}
+                    @foreach (array_filter($submission->version->fieldsOnPage($page['key']), fn ($f) => \App\Enums\Forms\FormFieldType::from($f['type'])->isInput()) as $field)
+                        @php($text = \App\Library\Forms\FormAnswerPresenter::display($field, $submission->values[$field['key']] ?? null))
                         <dt class="col-sm-4">{{ $field['label'] }}</dt>
-                        <dd class="col-sm-8">
-                            @if ($field['type'] === 'checkbox')
-                                {{ $value ? 'Yes' : 'No' }}
-                            @elseif ($value === null || $value === '')
+                        <dd class="col-sm-8" data-answer="{{ $field['key'] }}">
+                            @if ($text === '')
                                 <span class="text-muted">—</span>
                             @else
-                                {!! nl2br(e((string) $value)) !!}
+                                {!! nl2br(e($text)) !!}
                             @endif
                         </dd>
                     @endforeach
@@ -57,7 +56,7 @@
                 <p class="mb-1" data-role="forms-opportunity">Opportunity: {{ $submission->opportunity->title }}</p>
             @endif
 
-            <a href="{{ route('customer.workspaces.businesses.forms.submissions.index', $scope) }}">Back to responses</a>
+            <a href="{{ route('customer.workspaces.businesses.forms.submissions.index', $scope) }}?form={{ $submission->form?->uid }}" data-role="forms-back-to-responses">Back to responses</a>
         </div>
     </div>
 @endsection

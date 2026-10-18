@@ -58,6 +58,7 @@ interface PlatformStripeGateway
         string $customerEmail,
         ?int $trialDays,
         ?string $existingCustomerId = null,
+        ?CheckoutOptions $options = null,
     ): CheckoutSessionResult;
 
     /**
@@ -99,6 +100,20 @@ interface PlatformStripeGateway
      * @throws PlatformBillingException
      */
     public function setCancelAtPeriodEnd(string $providerSubscriptionId, bool $cancelAtPeriodEnd): PlatformSubscriptionSnapshot;
+
+    /**
+     * Terminate the subscription NOW (no further invoice, no proration refund).
+     * Only the Platform Owner's account-closure lifecycle uses this; a
+     * customer's own cancellation is always {@see setCancelAtPeriodEnd()}.
+     *
+     * `$idempotencyKey` is derived from the closure and subscription, so a
+     * retry after an uncertain outcome reuses it. Cancelling a subscription the
+     * provider already reports as ended is the caller's concern (it reads the
+     * authoritative state first).
+     *
+     * @throws PlatformBillingException
+     */
+    public function cancelSubscriptionNow(string $providerSubscriptionId, string $idempotencyKey): PlatformSubscriptionSnapshot;
 
     /**
      * §7 — retire an OPEN Checkout Session so it can never be paid.
@@ -150,6 +165,82 @@ interface PlatformStripeGateway
      * @throws PlatformBillingException
      */
     public function createBillingPortalSession(string $providerCustomerId, string $returnUrl, ?string $flow = null): string;
+
+    /**
+     * Find-or-create the Stripe PRODUCT that platform Prices for one plan hang
+     * off, so negotiated Prices group under the plan in the Stripe dashboard
+     * rather than each spawning an orphan product.
+     *
+     * `$existingProductId` is returned unchanged when it is still retrievable
+     * and active; otherwise a product is created under `$idempotencyKey`.
+     *
+     * @throws PlatformBillingException
+     */
+    public function ensureProduct(string $name, ?string $existingProductId, string $idempotencyKey): string;
+
+    /**
+     * Create ONE immutable recurring Price on the platform's own account.
+     *
+     * A Stripe Price's amount and recurrence can never be edited, which is the
+     * property negotiated pricing relies on: an agreed price is a Price that
+     * can only ever mean what it meant when it was created. The caller reuses
+     * an existing equal Price (see PlatformPriceProvisioner) rather than
+     * minting a duplicate, and verifies what comes back.
+     *
+     * @param  array<string, string>  $metadata  never personal data
+     *
+     * @throws PlatformBillingException
+     */
+    public function createRecurringPrice(
+        string $productId,
+        int $unitAmountMinor,
+        string $currencyCode,
+        string $interval,
+        int $intervalCount,
+        string $nickname,
+        array $metadata,
+        string $idempotencyKey,
+    ): ProviderPriceSnapshot;
+
+    /**
+     * Put an exact, time-bounded Price sequence on an EXISTING subscription
+     * through a Subscription Schedule, with no proration and no extra charge.
+     *
+     * The first phase begins at the subscription's current phase (any running
+     * trial is preserved); every non-final phase ends at its `endsAt` (the last one a
+     * single billing period after it starts); the schedule then releases,
+     * leaving the subscription on that final Price. If the subscription is already under a
+     * schedule the caller releases it first.
+     *
+     * @param  array<int, SchedulePhase>  $phases  at least two
+     *
+     * @throws PlatformBillingException
+     */
+    public function applyPriceSchedule(string $providerSubscriptionId, array $phases, string $idempotencyKey): PlatformSubscriptionSnapshot;
+
+    /**
+     * Whether the schedule attached to this subscription is the one the
+     * `$idempotencyKey` push created (the push whose response may have been
+     * lost). Only call it when a schedule IS attached.
+     *
+     * @return string|null the proven schedule id, or null when the provider
+     *                     DEFINITIVELY says the attached schedule is not that
+     *                     push's (or the proof window has passed)
+     *
+     * @throws PlatformBillingException (PROVIDER_FAILED) when the answer is
+     *         inconclusive — a transient API or network failure. Never read as
+     *         "not ours".
+     */
+    public function proveOwnSchedule(string $providerSubscriptionId, string $idempotencyKey): ?string;
+
+    /**
+     * Release a subscription from its schedule, leaving it on whatever Price it
+     * is on right now. Releasing an already released/completed schedule is not
+     * an error.
+     *
+     * @throws PlatformBillingException
+     */
+    public function releaseSchedule(string $providerScheduleId): void;
 
     /**
      * §12 step 1 — verify the lane-A webhook signature over the EXACT RAW

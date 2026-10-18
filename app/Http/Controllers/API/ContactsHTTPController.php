@@ -37,6 +37,7 @@
     class ContactsHTTPController extends Controller
     {
         use ApiResponser;
+        use \App\Http\Controllers\API\Concerns\AuthorizesOwnedContactGroup;
 
         /**
          * @var ContactsRepository $contactGroups
@@ -119,7 +120,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -130,6 +131,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedGroupOrAbort($group_id, $user);
 
             if ($locked = $this->lockedResponseForBusiness($group_id->business_id)) {
                 return $locked;
@@ -199,7 +202,7 @@
             }
 
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -210,6 +213,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedContactOrAbort($group_id, $uid, $user);
 
             if ($user->tokenCan('view_contact')) {
 
@@ -256,7 +261,7 @@
             }
 
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -267,6 +272,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedContactOrAbort($group_id, $uid, $user);
 
             // PR #302 correction 4 — $uid is bound purely by its own uid,
             // independent of $group_id; nothing above this line has proven
@@ -352,7 +359,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -363,6 +370,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedContactOrAbort($group_id, $uid, $user);
 
             // contactDestroy() below re-queries by group_id itself, so a
             // mismatched pair was never actually deletable -- but this
@@ -406,7 +415,7 @@
             }
 
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -417,6 +426,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedGroupOrAbort($group_id, $user);
 
             $data = Contacts::where('group_id', $group_id->id)->select('uid', 'phone', 'first_name', 'last_name')->paginate(25);
 
@@ -449,7 +460,7 @@
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
             }
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -487,7 +498,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -547,7 +558,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
             if ( ! $user) {
                 return response()->json([
                     'status'  => 'error',
@@ -558,6 +569,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedGroupOrAbort($group_id, $user);
 
             $data = ContactGroups::select('uid', 'name')->find($group_id->id);
 
@@ -585,7 +598,7 @@
             }
 
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
 
             if ( ! $user) {
                 return response()->json([
@@ -598,6 +611,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedGroupOrAbort($contact, $user);
 
             if ($locked = $this->lockedResponseForBusiness($contact->business_id)) {
                 return $locked;
@@ -647,7 +662,7 @@
                 ]);
             }
 
-            $user = User::where('api_token', $request->input('api_token'))->first();
+            $user = User::findByApiToken($request->input('api_token'));
 
             if ( ! $user) {
                 return response()->json([
@@ -660,6 +675,8 @@
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
             }
+
+            $this->ownedGroupOrAbort($contact, $user);
 
             if ($locked = $this->lockedResponseForBusiness($contact->business_id)) {
                 return $locked;

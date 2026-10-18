@@ -10,4 +10,6 @@ enum OpportunityWorkerKey: string
     case Sales = 'sales';
     case Reputation = 'reputation';
     case Website = 'website';
+    /** Growth Center: Google/Meta Ads facts (its own run, so an Ads failure never blocks another worker). */
+    case Ads = 'ads';
 }

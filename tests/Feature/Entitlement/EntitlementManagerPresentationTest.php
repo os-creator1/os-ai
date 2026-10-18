@@ -297,7 +297,22 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertArrayHasKey(PlatformFeature::SeoBasicVisibility->value, $result);
         $this->assertArrayHasKey(PlatformFeature::SeoModule->value, $result);
 
-        $this->assertCount(12, $result);
+        // SEO Keyword Rank Tracking V1: SeoRankTracking is Available and Business-scoped
+        // (packaged Core+Growth+Agency), so it joins this map too.
+        $this->assertArrayHasKey(PlatformFeature::SeoRankTracking->value, $result);
+
+        // Google Ads Module V1: AdsBasicVisibility (Core+) and GoogleAdsModule
+        // (Growth+) both flipped Planned -> Available. Both are Business-scoped
+        // and packaged into the Agency fixture tier, so both join this map.
+        $this->assertArrayHasKey(PlatformFeature::AdsBasicVisibility->value, $result);
+        $this->assertArrayHasKey(PlatformFeature::GoogleAdsModule->value, $result);
+
+        // Meta Ads V1 (contract 24 §8, M10): the neutral AdsModule and the legacy
+        // MetaAdsModule synonym both flipped to Available and are packaged too.
+        $this->assertArrayHasKey(PlatformFeature::AdsModule->value, $result);
+        $this->assertArrayHasKey(PlatformFeature::MetaAdsModule->value, $result);
+
+        $this->assertCount(17, $result);
     }
 
     /**

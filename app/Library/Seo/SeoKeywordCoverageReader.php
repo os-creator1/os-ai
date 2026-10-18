@@ -18,8 +18,17 @@ use App\Models\SeoKeyword;
  * MATCHING. Both sides are normalized by SeoPhraseNormalizer (the one
  * normalization), then the phrase must appear as WHOLE WORDS: "art" is not
  * found inside "party", but "best bakery" is found in "the best bakery, in
- * town". A Location-attributed keyword is checked against the whole site:
- * Website has no Location pages yet (Contract 18 G-1).
+ * town".
+ *
+ * HIDDEN PAGES DO NOT COVER A KEYWORD. A page the owner marked hidden from
+ * search can never be found for the phrase, so a phrase that appears only on
+ * such pages is reported as OnlyOnHiddenPages, not Covered, and the per-place
+ * counts describe the pages search engines can actually list.
+ *
+ * A Location-attributed keyword is checked against the whole published site.
+ * Website now generates service-area pages, but the published snapshot records
+ * no page-to-Location link, and guessing one from a slug or from page text
+ * would be inference presented as fact (Contract 18 G-1).
  */
 final class SeoKeywordCoverageReader
 {
@@ -45,6 +54,7 @@ final class SeoKeywordCoverageReader
         foreach ($content->pages as $page) {
             $surfaces = $page->textSurfaces();
             $pages[] = [
+                'hidden' => $page->noindex,
                 'title' => SeoPhraseNormalizer::normalize($surfaces['title']),
                 'description' => SeoPhraseNormalizer::normalize($surfaces['meta_description']),
                 'body' => SeoPhraseNormalizer::normalize($surfaces['body']),
@@ -54,20 +64,31 @@ final class SeoKeywordCoverageReader
         foreach ($keywords as $keyword) {
             $pattern = $this->wholeWordPattern((string) $keyword->phrase_normalized);
             $title = $description = $body = 0;
+            $onHiddenPage = false;
 
             foreach ($pages as $surfaces) {
-                $title += $this->found($pattern, $surfaces['title']) ? 1 : 0;
-                $description += $this->found($pattern, $surfaces['description']) ? 1 : 0;
-                $body += $this->found($pattern, $surfaces['body']) ? 1 : 0;
+                $inTitle = $this->found($pattern, $surfaces['title']);
+                $inDescription = $this->found($pattern, $surfaces['description']);
+                $inBody = $this->found($pattern, $surfaces['body']);
+
+                if ($surfaces['hidden']) {
+                    $onHiddenPage = $onHiddenPage || $inTitle || $inDescription || $inBody;
+
+                    continue;
+                }
+
+                $title += $inTitle ? 1 : 0;
+                $description += $inDescription ? 1 : 0;
+                $body += $inBody ? 1 : 0;
             }
 
-            $results[(int) $keyword->id] = new SeoKeywordCoverageResult(
-                ($title + $description + $body) > 0 ? SeoKeywordCoverageStatus::Covered : SeoKeywordCoverageStatus::NotCovered,
-                count($pages),
-                $title,
-                $description,
-                $body,
-            );
+            $status = match (true) {
+                ($title + $description + $body) > 0 => SeoKeywordCoverageStatus::Covered,
+                $onHiddenPage => SeoKeywordCoverageStatus::OnlyOnHiddenPages,
+                default => SeoKeywordCoverageStatus::NotCovered,
+            };
+
+            $results[(int) $keyword->id] = new SeoKeywordCoverageResult($status, count($pages), $title, $description, $body);
         }
 
         return $results;

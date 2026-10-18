@@ -32,6 +32,15 @@ trait CreatesPlatformSubscriptions
         $this->stripe->baselineTransactionLevel = DB::transactionLevel();
         $this->app->instance(PlatformStripeGateway::class, $this->stripe);
 
+        // The legacy lane-A suites exercise catalog trials, which are inert in
+        // production (config/platform_billing.php). New-behaviour tests state
+        // the setting they need explicitly.
+        config(['platform_billing.allow_public_trials' => true]);
+
+        // Private Offers are off in production by default; their suites turn
+        // them on, and PrivateOffersFeatureFlagTest pins the off behaviour.
+        config(['platform_billing.private_offers_enabled' => true]);
+
         return $this->stripe;
     }
 
@@ -48,7 +57,8 @@ trait CreatesPlatformSubscriptions
         $catalog->forceFill([
             'price' => $price,
             'currency_id' => $this->fixtureCurrencyId(),
-            'billing_cycle' => 'monthly',
+            // Every platform plan bills EXACTLY every 28 days.
+            'billing_cycle' => 'every_28_days',
             'is_active' => true,
             'available_for_signup' => true,
             'trial_enabled' => $trialDays !== null,
@@ -63,8 +73,8 @@ trait CreatesPlatformSubscriptions
         $this->stripe->definePrice($priceId, [
             'currency' => 'USD',
             'unit_amount' => \App\Library\Money\StripeMinorUnits::toMinor($price, 'USD'),
-            'interval' => 'month',
-            'interval_count' => 1,
+            'interval' => 'day',
+            'interval_count' => 28,
             'livemode' => false,
         ]);
 
@@ -211,5 +221,40 @@ trait CreatesPlatformSubscriptions
         );
 
         return $this->postPlatformWebhook($body, $headers);
+    }
+
+    /**
+     * Walk the guest signup the way a browser does: PLAN → ACCOUNT →
+     * BUSINESS → PAYMENT. Stops at (and returns) the first step the server
+     * refuses, i.e. whose redirect is not the next step.
+     *
+     * @param  array<string, string>  $form
+     * @param  int  $steps  1 = plan only … 4 = through the payment commit
+     */
+    protected function walk(array $form, int $steps = 4): \Illuminate\Testing\TestResponse
+    {
+        $plan = [
+            ['register.plan.select', ['tier' => $form['tier']], 'register.account'],
+            ['register.account.store', \Illuminate\Support\Arr::only($form, ['first_name', 'last_name', 'email', 'password', 'password_confirmation', 'locale']), 'register.business'],
+            ['register.business.store', \Illuminate\Support\Arr::only($form, ['business_name', 'industry', 'country_code', 'timezone']), 'register.payment'],
+        ];
+
+        $response = null;
+
+        foreach (array_slice($plan, 0, min($steps, 3)) as [$route, $data, $next]) {
+            $response = $this->post(route($route), $data);
+
+            if ($response->headers->get('Location') !== route($next)) {
+                return $response;
+            }
+        }
+
+        return $steps >= 4 ? $this->post(route('register.payment.start')) : $response;
+    }
+
+    /** @param array<string, string> $form */
+    protected function signUp(array $form): \Illuminate\Testing\TestResponse
+    {
+        return $this->walk($form);
     }
 }

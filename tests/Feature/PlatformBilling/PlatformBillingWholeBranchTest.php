@@ -65,8 +65,8 @@ class PlatformBillingWholeBranchTest extends TestCase
         $this->stripe->definePrice($newPriceId, [
             'currency' => 'USD',
             'unit_amount' => StripeMinorUnits::toMinor($price, 'USD'),
-            'interval' => 'month',
-            'interval_count' => 1,
+            'interval' => 'day',
+            'interval_count' => 28,
             'livemode' => false,
         ]);
 

@@ -12,6 +12,7 @@ use App\Library\Crm\CrmBoardFilters;
 use App\Library\Crm\CrmMoney;
 use App\Library\Crm\CrmOpportunityService;
 use App\Library\Crm\Exceptions\CrmRuleException;
+use App\Library\Crm\Exceptions\CrmStageConflictException;
 use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
 use App\Models\CrmOpportunity;
@@ -69,7 +70,7 @@ class CrmOpportunitiesController extends CustomerBaseController
             'pipelines' => $pipelines,
             'pipeline' => $pipeline,
             'filters' => $filters,
-            'board' => $this->board->board($business, $pipeline, $filters),
+            'board' => $this->board->board($business, $pipeline, $filters, (int) Auth::id()),
         ]);
     }
 
@@ -86,14 +87,14 @@ class CrmOpportunitiesController extends CustomerBaseController
 
         $pipeline = $pipelines->firstWhere('uid', (string) $request->query('pipeline', old('pipeline'))) ?? $pipelines->first();
         $contactUid = (string) $request->query('contact', (string) old('contact'));
-        $contact = $contactUid !== '' ? $this->contacts->findForBusiness($business, $contactUid) : null;
+        $contact = $contactUid !== '' ? $this->contacts->findForBusiness($business, $contactUid, (int) Auth::id()) : null;
 
         return view('customer.crm.create', [
             'pipelines' => $pipelines,
             'pipeline' => $pipeline,
             'stages' => $pipeline->activeStages()->get(),
             'startingStage' => $this->opportunities->startingStage($pipeline),
-            'contact' => $contact === null ? null : ($this->contacts->summaries($business, [(int) $contact->id])[(int) $contact->id] ?? null),
+            'contact' => $contact === null ? null : ($this->contacts->summaries($business, [(int) $contact->id], (int) Auth::id())[(int) $contact->id] ?? null),
         ]);
     }
 
@@ -113,7 +114,9 @@ class CrmOpportunitiesController extends CustomerBaseController
         ]);
 
         $pipeline = $this->pipeline($business, $data['pipeline']);
-        $contact = $this->contacts->findForBusiness($business, $data['contact']);
+        // A Contact at a Location the actor cannot reach is, for them, simply not a
+        // contact of this Business: the same answer as an unknown uid.
+        $contact = $this->contacts->findForBusiness($business, $data['contact'], (int) Auth::id());
 
         if ($contact === null) {
             return back()->withInput()->withErrors(['contact' => 'Choose a contact of this Business.']);
@@ -145,7 +148,7 @@ class CrmOpportunitiesController extends CustomerBaseController
             'pipeline' => $pipeline,
             'stage' => CrmPipelineStage::query()->where('business_id', $business->id)->find($opportunity->stage_id) ?? abort(404),
             'stages' => $pipeline->activeStages()->get(),
-            'contact' => $opportunity->contact_id === null ? null : ($this->contacts->summaries($business, [(int) $opportunity->contact_id])[(int) $opportunity->contact_id] ?? null),
+            'contact' => $opportunity->contact_id === null ? null : ($this->contacts->summaries($business, [(int) $opportunity->contact_id], (int) Auth::id())[(int) $opportunity->contact_id] ?? null),
             'history' => $opportunity->history()->with('actor:id,first_name,last_name')->limit(100)->get(),
         ]);
     }
@@ -174,23 +177,75 @@ class CrmOpportunitiesController extends CustomerBaseController
         $this->authorize(self::MANAGE_PERMISSION);
         $opportunity = $this->opportunity($business, $opportunityUid);
 
-        $data = $request->validate(['stage' => ['required', 'string', 'max:64']]);
+        $data = $request->validate([
+            'stage' => ['required', 'string', 'max:64'],
+            'from_stage' => ['nullable', 'string', 'max:64'],
+        ]);
         $pipeline = CrmPipeline::query()->forBusiness($business)->find($opportunity->pipeline_id) ?? abort(404);
         $stage = $this->stage($pipeline, $data['stage']);
+        // The stage the board last saw the card in. Looked up inside the same
+        // pipeline, so a forged uid is the same 404 as a forged target.
+        $expectedFrom = empty($data['from_stage']) ? null : $this->stage($pipeline, $data['from_stage']);
 
         try {
-            $moved = $this->opportunities->moveToStage($opportunity, $stage, (int) Auth::id());
+            $moved = $this->opportunities->moveToStage($opportunity, $stage, (int) Auth::id(), $expectedFrom);
+        } catch (CrmStageConflictException $exception) {
+            if (! $request->expectsJson()) {
+                return back()->with(['status' => 'error', 'message' => $exception->getMessage()]);
+            }
+
+            $current = CrmPipelineStage::query()->where('pipeline_id', $pipeline->id)->find($exception->currentStageId);
+
+            return response()->json([
+                'ok' => false,
+                'code' => 'stage_conflict',
+                'message' => $exception->getMessage(),
+                'opportunity_uid' => (string) $opportunity->uid,
+                'stage_uid' => $current?->uid,
+            ], 409);
         } catch (CrmRuleException $exception) {
             return $request->expectsJson()
-                ? response()->json(['message' => $exception->getMessage()], 422)
+                ? response()->json(['ok' => false, 'message' => $exception->getMessage()], 422)
                 : back()->with(['status' => 'error', 'message' => $exception->getMessage()]);
         }
 
         if ($request->expectsJson()) {
-            return response()->json(['moved' => $moved, 'stage' => ['uid' => $stage->uid, 'name' => $stage->name]]);
+            return response()->json($this->moveReceipt($business, $pipeline, $opportunity, $stage, $expectedFrom, $moved, CrmBoardFilters::fromRequest($request)));
         }
 
         return back()->with(['status' => 'success', 'message' => $moved ? 'Moved to ' . $stage->name . '.' : 'Already in ' . $stage->name . '.']);
+    }
+
+    /**
+     * The compact answer to a board move: no HTML, just the confirmed stage and
+     * the canonical header totals (under the board's own filters, passed on the
+     * query string) of the two columns involved, so the browser can correct two
+     * numbers instead of re-rendering a board.
+     *
+     * @return array<string, mixed>
+     */
+    private function moveReceipt(Business $business, CrmPipeline $pipeline, CrmOpportunity $opportunity, CrmPipelineStage $to, ?CrmPipelineStage $from, bool $moved, CrmBoardFilters $filters): array
+    {
+        $stageIds = array_values(array_unique(array_filter([(int) $to->id, $from === null ? null : (int) $from->id])));
+        $totals = $this->board->stageTotals($business, $pipeline, $filters, $stageIds, (int) Auth::id());
+        $stages = CrmPipelineStage::query()->whereIn('id', $stageIds)->get()->keyBy('id');
+
+        $describe = fn (CrmPipelineStage $stage): array => [
+            'stage_uid' => (string) $stage->uid,
+            'count' => $totals[$stage->id]['count'],
+            'value_minor' => $totals[$stage->id]['value_minor'],
+            'label' => CrmBoard::totalLabel($totals[$stage->id]['count'], $totals[$stage->id]['value_minor'], $business->currency_code),
+        ];
+
+        return [
+            'ok' => true,
+            'moved' => $moved,
+            'opportunity_uid' => (string) $opportunity->uid,
+            'stage_uid' => (string) $to->uid,
+            'stage' => ['uid' => (string) $to->uid, 'name' => $to->name],
+            'source_totals' => $from !== null && ! $from->is($to) ? $describe($stages[$from->id]) : null,
+            'target_totals' => $describe($stages[$to->id]),
+        ];
     }
 
     public function won(string $workspaceUid, string $businessUid, string $opportunityUid): RedirectResponse
@@ -246,7 +301,7 @@ class CrmOpportunitiesController extends CustomerBaseController
             'results' => array_map(fn (array $contact) => [
                 'id' => $contact['uid'],
                 'text' => $contact['name'] !== null ? $contact['name'] . ' · ' . $contact['phone'] : $contact['phone'],
-            ], $this->contacts->search($business, $search, 20)),
+            ], $this->contacts->search($business, $search, 20, (int) Auth::id())),
         ]);
     }
 

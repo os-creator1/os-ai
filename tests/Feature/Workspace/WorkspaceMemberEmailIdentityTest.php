@@ -44,7 +44,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $this->assertStringContainsString('name="member_email"', $form);
         $this->assertStringContainsString('type="email"', $form);
         $this->assertStringContainsString('>Email address</label>', $form);
-        $this->assertStringContainsString('They need an existing Business OS account before you can add them.', $form);
+        $this->assertStringContainsString('They need an existing MotionGrove account first.', $form);
         $this->assertStringNotContainsString('user_uid', $form);
         $this->assertStringNotContainsStringIgnoringCase('User UID', $form);
         $this->assertStringNotContainsString($customer->user->uid, $form, 'No opaque user uid is rendered in the form.');

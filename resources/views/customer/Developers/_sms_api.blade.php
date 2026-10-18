@@ -552,7 +552,7 @@ curl -X GET "{{ route('api.sms.index') }}?start_date=2025-05-01 08:00:00&end_dat
             {
                 "uid": "683831eda796e",
                 "to": "8801721970168",
-                "from": "Codeglen",
+                "from": "MotionGrove",
                 "message": "test message",
                 "sms_type": "plain",
                 "direction": "api",

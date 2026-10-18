@@ -110,16 +110,29 @@ class WizardFormStructureTest extends TestCase
         $html = $this->get(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'gallery']))->getContent();
         $xpath = $this->dom($html);
 
+        // Continue now sits BELOW the content being edited (after the upload
+        // controls), outside the answer form, tied to it by the HTML5 `form=`
+        // attribute — never nested, never floating above the media controls.
         $continueButtons = $xpath->query("//button[contains(text(), 'Continue')]");
         $this->assertGreaterThan(0, $continueButtons->length);
-        $continueAction = $this->ancestorFormAction($continueButtons->item(0));
-        $this->assertStringContainsString('/answers', (string) $continueAction, 'Continue must submit to the autosave/answers endpoint.');
+        $formId = $continueButtons->item(0)->getAttribute('form');
+        $this->assertNotSame('', $formId, 'Continue must be associated with the answer form by id.');
+        $answerForm = $xpath->query("//form[@id='" . $formId . "']");
+        $this->assertSame(1, $answerForm->length);
+        $this->assertStringContainsString('/answers', $answerForm->item(0)->getAttribute('action'), 'Continue must submit to the autosave/answers endpoint.');
 
-        $removeButtons = $xpath->query("//form[contains(@action, '/gallery/')]//button[contains(text(), 'Remove')]");
+        // A gallery photo's controls are script-driven plain buttons/inputs:
+        // they never submit the answer form and never add fields to it.
+        $removeButtons = $xpath->query("//button[@data-gallery-action='remove']");
         $this->assertGreaterThan(0, $removeButtons->length, 'Precondition: at least one gallery remove button must render.');
-        $removeAction = $this->ancestorFormAction($removeButtons->item(0));
-        $this->assertStringContainsString('/gallery/', (string) $removeAction);
-        $this->assertStringNotContainsString('/answers', (string) $removeAction, 'A gallery photo action must never be the same form as Continue.');
+        $this->assertSame('button', $removeButtons->item(0)->getAttribute('type'), 'A gallery photo action must never be a submit button.');
+        $this->assertSame(0, $xpath->query("//*[@data-gallery-card]//*[@name]")->length, 'Photo controls add no named fields to the answer form.');
+
+        $this->assertGreaterThan(
+            strpos($html, 'data-gallery-card'),
+            strpos($html, 'data-wizard-actions'),
+            'Continue/Skip come after the photo controls.'
+        );
     }
 
     public function test_improve_with_ai_button_is_associated_with_the_answer_form_via_the_form_attribute_not_nesting(): void

@@ -38,9 +38,23 @@ final class PageToasts
         'error' => 'error',
     ];
 
+    /**
+     * The older per-module flash keys (Outreach, Agency client funding, the
+     * Workspace/Team pages and others flash `flash_success` / `flash_error`
+     * and never rendered them, so a customer saw nothing after Pause AI,
+     * Save script, a refused top-up and the like). Shown as toasts too —
+     * unless the page already renders that exact message itself.
+     */
+    private const LEGACY_FLASH_VARIANTS = [
+        'flash_success' => 'success',
+        'flash_info' => 'info',
+        'flash_warning' => 'warning',
+        'flash_error' => 'error',
+    ];
+
     private const FLASH_SHOWN_INLINE = ['data-role="flash-message"', 'data-role="auth-flash"'];
 
-    private const FIELD_ERRORS_SHOWN_INLINE = '/\bclass="[^"]*\bis-invalid\b|\baria-invalid="true"|data-role="validation-summary"/';
+    private const FIELD_ERRORS_SHOWN_INLINE = '/\bclass="[^"]*\bis-invalid\b|\baria-invalid="true"|data-role="(?:validation-summary|catalog-errors|forms-errors)"/';
 
     /** Sections that hold scripts and styles, not what the customer reads. */
     private const NON_CONTENT_SECTIONS = ['title', 'page-script', 'vendor-script', 'page-style', 'vendor-style'];
@@ -67,10 +81,12 @@ final class PageToasts
             $toasts[] = self::toast(self::VARIANTS[$status], $message, is_string($title) ? $title : null);
         }
 
-        // Carried over from the former Toastr renderer, same condition.
-        if ($session->get('check_subscription') && $user !== null && CustomerShellComposer::isCustomerPortal($user)
-            && $user->customer !== null && $user->customer->activeSubscription() === null) {
-            $toasts[] = self::toast('warning', __('locale.customer.no_active_subscription'));
+        foreach (self::LEGACY_FLASH_VARIANTS as $key => $variant) {
+            $legacy = $session->get($key);
+
+            if (is_string($legacy) && trim($legacy) !== '' && ! self::messageShownInline($content, $legacy)) {
+                $toasts[] = self::toast($variant, $legacy);
+            }
         }
 
         if ($errors !== null && $errors->any() && preg_match(self::FIELD_ERRORS_SHOWN_INLINE, $content) !== 1) {
@@ -78,6 +94,20 @@ final class PageToasts
         }
 
         return array_values(array_filter($toasts, fn (array $toast): bool => $toast['message'] !== ''));
+    }
+
+    /**
+     * Whether the page already says this exact message — as a text node of its own (Blade escapes it) or as a
+     * quoted string inside a script — so a toast would only repeat it. A bare substring is not enough: a short
+     * message ("Saved.") also occurs inside labels and help text, and silence is worse than an occasional repeat.
+     */
+    private static function messageShownInline(string $content, string $message): bool
+    {
+        $escaped = preg_quote(e($message), '/');
+        $raw = preg_quote($message, '/');
+
+        return preg_match('/>\s*(?:' . $escaped . '|' . $raw . ')\s*</u', $content) === 1
+            || preg_match('/(["\'])(?:' . $escaped . '|' . $raw . ')\1/u', $content) === 1;
     }
 
     private static function flashShownInline(string $content): bool

@@ -4,6 +4,7 @@ namespace Tests\Feature\Messaging;
 
 use App\Http\Controllers\Customer\DLRController;
 use App\Models\Reports;
+use App\Models\SendingServer;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -130,7 +131,27 @@ class LegacyDlrRouteCompatibilityTest extends TestCase
             'sms_count' => 1,
         ]);
 
-        $this->post(route($routeName), $payload);
+        if ($routeName !== 'dlr.twilio') {
+            // V1 release-risk closure item 4: only Twilio's signed DLR is a
+            // supported V1 callback. Every other legacy gateway's callback is
+            // refused before its handler runs, so the report is untouched.
+            $this->post(route($routeName), $payload)->assertStatus(410);
+
+            $fresh = $report->fresh();
+            $this->assertSame('Enroute', $fresh->customer_status, "[{$routeName}] is disabled and must change nothing.");
+            $this->assertSame('Enroute|' . $providerMessageId, (string) $fresh->status);
+
+            return;
+        }
+
+        SendingServer::create([
+            'name' => 'Twilio DLR ' . uniqid(), 'user_id' => $owner->user_id,
+            'settings' => SendingServer::TYPE_TWILIO, 'status' => true, 'two_way' => true, 'plain' => true,
+            'account_sid' => 'ACtest', 'auth_token' => 'authtest',
+        ]);
+        $signature = (new \Twilio\Security\RequestValidator('authtest'))->computeSignature(route($routeName), $payload);
+
+        $this->call('POST', route($routeName), $payload, [], [], ['HTTP_X_TWILIO_SIGNATURE' => $signature]);
 
         $fresh = $report->fresh();
 

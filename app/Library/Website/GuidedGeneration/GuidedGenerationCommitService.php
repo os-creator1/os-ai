@@ -63,6 +63,7 @@ final class GuidedGenerationCommitService
         private readonly MediaBindingService $mediaBinding,
         private readonly WebsiteDraftPageService $pages,
         private readonly WebsitePageStrategy $pageStrategy,
+        private readonly PhotoBoothBlueprint $blueprintWriter,
     ) {
     }
 
@@ -76,10 +77,13 @@ final class GuidedGenerationCommitService
      *         in isolation) — never used by either real HTTP controller.
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  the owner's optional custom-section questionnaire answer (Website Builder redesign) — see WebsitePageStrategy::buildPlan()
      * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers, appended verbatim to the FAQ page's section — never sent to AI to rewrite (independent-review correction round 2)
+     * @param  ?array<string, mixed>  $blueprint  the guided builder's context (tone, booking action, pricing style, …): when given, the
+     *         pages are written by PhotoBoothBlueprint — complete default copy from the owner's confirmed facts, no AI call — and
+     *         then bound, validated and committed exactly like AI output. Null keeps the AI-written path.
      */
-    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $fenceToken, $customSection, $customerFaq);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas, $blueprint);
     }
 
     /**
@@ -95,9 +99,9 @@ final class GuidedGenerationCommitService
     /**
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection
      */
-    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $fenceToken, $customSection, $customerFaq);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas, $blueprint);
     }
 
     /**
@@ -123,12 +127,12 @@ final class GuidedGenerationCommitService
             ]);
     }
 
-    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
-        $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection);
+        $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection, $catalogItemUids, $serviceAreas);
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
         $facts = $this->client->canonicalFacts($business);
-        $materialBase = $this->materialIdempotencyBase($template, $mode, $plan, $facts, $callerIdempotencyKey);
+        $materialBase = $this->materialIdempotencyBase($template, $mode, $plan, $facts, $callerIdempotencyKey, $blueprint);
 
         // §8.4/Blocker 6 — serializes every attempt for this ONE website
         // so two genuinely concurrent identical submissions never both
@@ -139,13 +143,21 @@ final class GuidedGenerationCommitService
         // lease (a second real HTTP request never reaches this method at
         // all while a lease is held), but is kept as defense in depth for
         // any direct caller that bypasses the coordinator.
-        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $fenceToken, $customSection, $customerFaq) {
+        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $fenceToken, $customSection, $customerFaq, $blueprint) {
             $existing = WebsiteGuidedGenerationAttempt::where('website_id', $website->id)
                 ->where('idempotency_key', 'like', $materialBase . ':%')
                 ->whereIn('status', [WebsiteGuidedGenerationAttempt::STATUS_PENDING, WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED])
                 ->orderByDesc('id')
                 ->first();
-            if ($existing !== null) {
+            // A SUCCEEDED attempt only stands in for a new request while its
+            // pages still exist: if every page was since deleted, converging
+            // on it would report success and build nothing (an empty site
+            // the owner could never regenerate). A PENDING one always
+            // converges — it is genuinely in flight.
+            $stale = $existing !== null
+                && $existing->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED
+                && ! $website->pages()->exists();
+            if ($existing !== null && ! $stale) {
                 return $existing;
             }
 
@@ -195,18 +207,136 @@ final class GuidedGenerationCommitService
                 }
             }
 
-            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $fenceToken, $customSection, $customerFaq);
+            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $fenceToken, $customSection, $customerFaq, $blueprint);
         });
     }
 
-    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    /**
+     * AI copy may describe the business, but it may never invent social proof or prices:
+     *  - a `testimonials` section carries ONLY the owner's own confirmed testimonials (verbatim),
+     *    or is dropped when there are none — an AI-written review is a fabricated review;
+     *  - a service card's `price_label` survives only when that exact label is already in the
+     *    facts the plan was built from (a catalog or service price), otherwise it is removed.
+     *
+     * @param  array<int, array<string, mixed>>  $pages  the validated, media-bound pages
+     * @param  array<int, array<string, mixed>>  $plan
+     * @return array<int, array<string, mixed>>
+     */
+    private function groundInventedFacts(array $pages, Business $business, array $plan): array
+    {
+        $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $confirmed = $profile !== null
+            && in_array(\App\Enums\Business\BusinessKnowledgeProfileFieldKey::Testimonials->value, app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->completenessCheck($business)->presentFieldKeys, true);
+        $real = $confirmed ? array_slice(array_values((array) $profile->testimonials), 0, 10) : [];
+
+        $knownPrices = [];
+        array_walk_recursive($plan, function ($value, $key) use (&$knownPrices) {
+            if ($key === 'price_label' && is_string($value) && trim($value) !== '') {
+                $knownPrices[trim($value)] = true;
+            }
+        });
+
+        foreach ($pages as $pageIndex => $page) {
+            $sections = [];
+
+            foreach ((array) ($page['sections'] ?? []) as $section) {
+                if (($section['type'] ?? null) === 'testimonials') {
+                    if ($real === []) {
+                        continue;
+                    }
+
+                    $section['data']['items'] = $real;
+                }
+
+                if (($section['type'] ?? null) === 'services') {
+                    foreach ((array) ($section['data']['items'] ?? []) as $itemIndex => $item) {
+                        $label = trim((string) ($item['price_label'] ?? ''));
+
+                        if ($label !== '' && empty($item['catalog_item_uid']) && ! isset($knownPrices[$label])) {
+                            $section['data']['items'][$itemIndex]['price_label'] = null;
+                        }
+                    }
+                }
+
+                $sections[] = $this->withoutInventedLinks($section, $business);
+            }
+
+            $pages[$pageIndex]['sections'] = $sections;
+        }
+
+        return $pages;
+    }
+
+    /**
+     * A button the AI wrote may only lead somewhere the business really is: a page of this site ("/slug"),
+     * its own phone (tel:), its own email (mailto:) or its own website's host. An invented domain or phone
+     * number would break the site's NAP coherence, so such a button is dropped (the site CTA takes over).
+     *
+     * @param  array<string, mixed>  $section
+     * @return array<string, mixed>
+     */
+    private function withoutInventedLinks(array $section, Business $business): array
+    {
+        $data = (array) ($section['data'] ?? []);
+
+        foreach (['primary_cta', 'secondary_cta'] as $key) {
+            if (isset($data[$key]) && is_array($data[$key]) && ! $this->linkIsReal((string) ($data[$key]['url'] ?? ''), $business)) {
+                unset($data[$key]);
+            }
+        }
+
+        if (isset($data['buttons']) && is_array($data['buttons'])) {
+            $data['buttons'] = array_values(array_filter($data['buttons'], fn ($button) => is_array($button) && $this->linkIsReal((string) ($button['url'] ?? ''), $business)));
+        }
+
+        $section['data'] = $data;
+
+        return $section;
+    }
+
+    private function linkIsReal(string $url, Business $business): bool
+    {
+        $url = trim($url);
+
+        if ($url === '' || $url === '#') {
+            return false;
+        }
+
+        if (str_starts_with($url, '/')) {
+            return ! str_starts_with($url, '//');
+        }
+
+        $digits = fn (?string $value) => substr((string) preg_replace('/\D+/', '', (string) $value), -10);
+
+        if (stripos($url, 'tel:') === 0) {
+            return $digits($business->phone) !== '' && $digits(substr($url, 4)) === $digits($business->phone);
+        }
+
+        if (stripos($url, 'mailto:') === 0) {
+            return trim((string) $business->email) !== '' && strcasecmp(trim(substr($url, 7)), trim((string) $business->email)) === 0;
+        }
+
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        $own = strtolower((string) parse_url((string) $business->website_url, PHP_URL_HOST));
+
+        return $host !== '' && $own !== '' && preg_replace('/^www\./', '', $host) === preg_replace('/^www\./', '', $own);
+    }
+
+    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
         $prohibitedClaims = BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
 
-        // AI provider calls stay OUTSIDE any database transaction
-        // (Blocker 5) — the only writes below happen after this
-        // returns.
-        [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key);
+        if ($blueprint !== null) {
+            // The guided builder: complete default copy from the owner's confirmed facts. No AI call, so no budget
+            // and nothing that can be unavailable; the same binding, validation and atomic commit follow.
+            $aiPages = $this->blueprintWriter->pages($business, $website, $plan, $blueprint);
+            $retryCount = 0;
+        } else {
+            // AI provider calls stay OUTSIDE any database transaction
+            // (Blocker 5) — the only writes below happen after this
+            // returns.
+            [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key);
+        }
 
         if ($fenceToken !== null && ! Website::where('id', $website->id)->where('generation_lease_token', $fenceToken)->exists()) {
             // Independent-review correction round 4 (item 1) — the AI
@@ -230,7 +360,9 @@ final class GuidedGenerationCommitService
                 'retry_count' => $retryCount,
                 'failure_reason' => $this->client->lastCallWasBudgetExhausted()
                     ? 'The included AI generation budget is used up for this period.'
-                    : 'Generation did not produce a valid page batch.',
+                    : ($this->client->lastCallWasUnavailable()
+                        ? "Website generation isn't available in this environment right now. Your answers are saved — try again once it is."
+                        : 'Generation did not produce a valid page batch.'),
                 'completed_at' => now(),
             ]);
 
@@ -245,6 +377,7 @@ final class GuidedGenerationCommitService
             // exception left as a stuck `pending` row or a bare 500.
             $merged = $this->mergePlanWithContent($plan, $aiPages);
             $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq);
+            $bound['pages'] = $this->groundInventedFacts($bound['pages'], $business, $plan);
 
             DB::transaction(function () use ($website, $template, $bound, $attempt, $retryCount, $fenceToken) {
                 // Blocker 4 — real rebuild semantics: lock the Website
@@ -265,9 +398,19 @@ final class GuidedGenerationCommitService
                     throw new \RuntimeException('This generation was superseded before it could commit.');
                 }
 
+                // A rebuild must not undo the owner's indexing choices: once the owner has
+                // let search engines find their pages, the rebuilt pages stay open, and a
+                // page the owner hid on purpose stays hidden (matched by its address). A
+                // first generation, or a site never released, stays hidden until reviewed.
+                $previous = $locked->pages()->get(['slug', 'is_home', 'noindex', 'noindex_explicit']);
+                $ownerOpened = $locked->indexing_released_at !== null;
+                $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_explicit)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
+
                 $locked->pages()->delete();
 
                 foreach ($bound['pages'] as $page) {
+                    $hiddenByOwner = in_array($page['is_home'] ? '' : (string) $page['slug'], $ownerHidden, true);
+
                     $this->pages->createPage($locked, [
                         'title' => $page['title'],
                         'slug' => $page['slug'],
@@ -275,12 +418,15 @@ final class GuidedGenerationCommitService
                         'sections' => $page['sections'],
                         'seo_title' => $page['seo_title'] ?? null,
                         'meta_description' => $page['meta_description'] ?? null,
-                        'noindex' => true,
+                        'noindex' => $hiddenByOwner || ! $ownerOpened,
+                        'noindex_explicit' => $hiddenByOwner,
                     ]);
                 }
 
                 $locked->update([
-                    'theme' => $template->theme,
+                    // The template's own tokens, plus the owner's brand colour,
+                    // logo and hero image (never lost to a rebuild).
+                    'theme' => array_merge($template->theme, \App\Library\Website\Design\WebsiteLookService::ownerTokens($locked->theme)),
                     'template_key' => $template->key,
                     // Independent-review correction round 3 (item 11) —
                     // the one place real Website page content actually
@@ -381,6 +527,7 @@ final class GuidedGenerationCommitService
                 'is_home' => $planPage['is_home'],
                 'slug' => $planPage['slug'],
                 'title' => $content['title'] ?? $planPage['title'],
+                'entity' => $planPage['entity'] ?? null,
                 'seo_title' => $content['seo_title'] ?? null,
                 'meta_description' => $content['meta_description'] ?? null,
                 'sections' => $content['sections'] ?? [],
@@ -398,9 +545,9 @@ final class GuidedGenerationCommitService
      * submissions that happen to share identical facts — e.g. two
      * different rebuild form renders) but is never trusted alone.
      */
-    private function materialIdempotencyBase(WebsiteTemplate $template, string $mode, array $plan, array $facts, string $callerIdempotencyKey): string
+    private function materialIdempotencyBase(WebsiteTemplate $template, string $mode, array $plan, array $facts, string $callerIdempotencyKey, ?array $blueprint = null): string
     {
-        $material = json_encode([
+        $material = json_encode(($blueprint !== null ? ['blueprint' => $blueprint] : []) + [
             'template_key' => $template->key,
             'manifest_version' => $template->manifest_version,
             'mode' => $mode,

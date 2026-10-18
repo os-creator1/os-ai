@@ -25,4 +25,19 @@ enum AiModelRoute: string
      * `routine`/`compaction`.
      */
     case WebsiteGeneration = 'website_generation';
+
+    /**
+     * Content Autopilot — the stronger route used ONLY for the article draft and meaningful rewrites. Small steps
+     * (outline help, classification, the soft-finding judge) use `routine`. Like `website_generation`, no downgrade
+     * path targets it: an unaffordable request is refused, never silently written by a weaker model.
+     */
+    case ContentWriter = 'content_writer';
+
+    /**
+     * Ask MotionGrove's own bounded envelope: a system prompt, the authorised tool catalogue, a short conversation
+     * and a few tool results do not fit `routine`'s 4,000-token input ceiling. Same inexpensive model and prices;
+     * only the ceilings differ. No downgrade path targets it: an unaffordable request is refused, never run on a
+     * different model.
+     */
+    case Assistant = 'assistant';
 }

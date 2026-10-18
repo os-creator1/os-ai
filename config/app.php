@@ -41,7 +41,7 @@
         |
         */
 
-        'keyword'       => env('APP_KEYWORD', 'business operations, automation, ai business os, workspace, crm, messaging'),
+        'keyword'       => env('APP_KEYWORD', 'business operations, automation, workspace, crm, messaging'),
 
 
         /*
@@ -318,6 +318,12 @@
 
         'admin_path' => env('ADMIN_PATH', 'admin'),
 
+        // The inherited legacy messaging gateway surfaces (sending servers, sender IDs,
+        // SMS plans/reports, legacy customers/subscriptions/invoices, blacklists).
+        // The routes stay registered; the Platform Owner sidebar hides them unless
+        // this is switched on.
+        'legacy_messaging_menu' => (bool) env('LEGACY_MESSAGING_MENU', false),
+
         /*
         |--------------------------------------------------------------------------
         | Application Site Editor
@@ -353,15 +359,6 @@
         */
 
         'read_only' => env('READ_ONLY', false),
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | purchase code from envato marketplace for verify real product
-        |--------------------------------------------------------------------------
-        */
-
-        'purchase_key' => env('PURCHASE_CODE', ''),
 
 
         /*
@@ -495,7 +492,7 @@
         | Maintenance Mode
         |--------------------------------------------------------------------------
         */
-        'maintenance_secret_path' => env('MAINTENANCE_SECRET_PATH', 'codeglen'),
+        'maintenance_secret_path' => env('MAINTENANCE_SECRET_PATH'),
 
 
         /*
@@ -551,8 +548,8 @@
             App\Providers\EventServiceProvider::class,
             App\Providers\RouteServiceProvider::class,
             App\Providers\MenuServiceProvider::class,
-            kashem\licenseChecker\licenseCheckerServiceProvider::class,
             App\Providers\JobServiceProvider::class,
+            App\Providers\AssistantServiceProvider::class,
         ],
 
         /*

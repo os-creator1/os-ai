@@ -148,57 +148,112 @@
          */
         public function findOrCreateSocial($provider, $data): User
         {
-            // Email can be not provided, so set default provider email.
-            $user_email = $data->getEmail() ?: $data->getId() . '@' . $provider . '.com';
+            $providerId = trim((string) $data->getId());
+            $email      = strtolower(trim((string) $data->getEmail()));
 
-            // Get user with this email or create new one.
-            /** @var User $user */
-            $user = $this->users->query()->whereEmail($user_email)->first();
-
-            if ( ! $user) {
-                // Registration is not enabled
-                if ( ! config('account.can_register')) {
-                    throw new GeneralException(__('locale.exceptions.registration_disabled'));
-                }
-
-                $last_name = null;
-
-                if ($data->getName()) {
-                    $first_name = $data->getName();
-                    $last_name  = $data->getNickname();
-                } else {
-                    $first_name = $data->getNickname();
-                }
-
-                $user = $this->users->store([
-                    'first_name'    => $first_name,
-                    'last_name'     => $last_name,
-                    'email'         => $user_email,
-                    'status'        => true,
-                    'phone'         => null,
-                    'is_customer'   => true,
-                    'active_portal' => 'customer',
-                ], true);
-
-            }
-            if ($user) {
-                $user->provider    = $provider;
-                $user->provider_id = $data->getId();
-                $user->image       = $data->getAvatar();
-                $user->save();
+            if ($providerId === '') {
+                throw new GeneralException(__('locale.auth.failed'));
             }
 
-            Notifications::create([
-                'user_id'           => 1,
-                'notification_for'  => 'admin',
-                'notification_type' => 'user',
-                'message'           => $user->displayName() . ' Registered',
-            ]);
+            // 1. A returning user is recognised by the provider identity they linked earlier - never by e-mail alone.
+            $linked = $this->users->query()->where('provider', $provider)->where('provider_id', $providerId)->first();
+            if ($linked) {
+                $this->assertSocialLoginAllowed($linked);
 
-            Auth::login($user, true);
+                return $linked;
+            }
+
+            // 2. Everything else needs an address the provider has vouched for: we never trust, link or create on an
+            //    unverified one, and never fabricate "<id>@<provider>.com".
+            if ($email === '' || ! $this->socialEmailIsVerified($provider, $data)) {
+                throw new GeneralException(__('locale.auth.failed'));
+            }
+
+            $existing = $this->users->query()->whereEmail($email)->first();
+
+            if ($existing) {
+                $this->assertSocialLoginAllowed($existing);
+
+                // Linking by e-mail is only safe for a verified, unlinked, non-2FA account. An unverified account may have
+                // been pre-registered by someone else with their own password; one linked to another identity belongs to it.
+                if ($existing->email_verified_at === null || $existing->provider || $existing->provider_id || ($existing->two_factor && config('app.two_factor'))) {
+                    throw new GeneralException(__('locale.auth.failed'));
+                }
+
+                $existing->provider    = $provider;
+                $existing->provider_id = $providerId;
+                $existing->save();
+
+                return $existing;
+            }
+
+            if ( ! config('account.can_register')) {
+                throw new GeneralException(__('locale.exceptions.registration_disabled'));
+            }
+
+            $last_name = null;
+
+            if ($data->getName()) {
+                $first_name = $data->getName();
+                $last_name  = $data->getNickname();
+            } else {
+                $first_name = $data->getNickname();
+            }
+
+            $user = $this->users->store([
+                'first_name'    => $first_name,
+                'last_name'     => $last_name,
+                'email'         => $email,
+                'status'        => true,
+                'phone'         => null,
+                'is_customer'   => true,
+                'active_portal' => 'customer',
+            ], true);
+
+            $user->provider          = $provider;
+            $user->provider_id       = $providerId;
+            $user->image             = $data->getAvatar();
+            $user->email_verified_at = Carbon::now();   // the provider vouched for this address
+            $user->save();
+
+            if (User::query()->whereKey(1)->exists()) {   // the notification inbox owner; without it the FK would 500 the sign-up
+                Notifications::create([
+                    'user_id'           => 1,
+                    'notification_for'  => 'admin',
+                    'notification_type' => 'user',
+                    'message'           => $user->displayName() . ' Registered',
+                ]);
+            }
 
             return $user;
+        }
 
+        /** Administrators and disabled accounts never sign in through a social provider. */
+        private function assertSocialLoginAllowed(User $user): void
+        {
+            if ($user->is_admin || ! $user->status) {
+                throw new GeneralException(__('locale.auth.failed'));
+            }
+        }
+
+        /**
+         * Did the provider itself assert that the e-mail is verified? Google says so in the profile; GitHub's Socialite
+         * driver only returns a verified address. Facebook and Twitter give no such assertion, so they can only sign in
+         * identities that are already linked.
+         */
+        private function socialEmailIsVerified(string $provider, $data): bool
+        {
+            if ( ! in_array($provider, (array) config('account.social_verified_email_providers', ['google', 'github']), true)) {
+                return false;
+            }
+
+            $raw = is_array($data->user ?? null) ? $data->user : [];
+
+            if ($provider === 'google') {
+                return filter_var($raw['email_verified'] ?? $raw['verified_email'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            }
+
+            return true;
         }
 
         public function hasPermission(Authenticatable $user, $name): bool
@@ -2309,6 +2364,16 @@ POSTXML;
             }
 
             $authenticatedUser = auth()->user();
+
+            // Off unless an operator opts in (config/account.php): the child would otherwise act as the owner.
+            if ( ! config('account.allow_parent_switch')) {
+                throw new GeneralException(__('locale.customer.impersonation_not_allowed'));
+            }
+
+            // Only the sub-account's own, active parent - never an inactive account, never an administrator.
+            if ($authenticatedUser->parent_id === null || ! $customer->status || ! $authenticatedUser->status) {
+                throw new GeneralException(__('locale.customer.impersonation_not_allowed'));
+            }
 
             // Ensure only parent or owner can impersonate
             if ($authenticatedUser->parent_id !== $customer->id) {

@@ -13,13 +13,13 @@ Add to your deployment's `.env` (already present as commented-out-by-default ent
 
 | Variable | Default (if unset) | Effect |
 |---|---|---|
-| `BUSINESS_ONBOARDING_ENABLED` | `false` | Master switch. When `false`, the entire onboarding wizard, analysis job, and dashboard redirect middleware behave as if the feature does not exist. Existing customer routes and the registration flow are unaffected. |
+| `BUSINESS_ONBOARDING_ENABLED` | `true` | Master switch (default changed from `false` when V1 signup was wired to onboarding: its journey ends in first-run onboarding, so an unset variable must not strand a paid customer on a Draft Business). When `false`, the entire onboarding wizard, analysis job, and dashboard redirect middleware behave as if the feature does not exist. Existing customer routes and the registration flow are unaffected. |
 | `BUSINESS_ONBOARDING_REQUIRE_NEW_CUSTOMERS` | `false` | Only consulted when `BUSINESS_ONBOARDING_ENABLED=true`. When `true`, new registrations get a required (`is_required=true`) onboarding row and are redirected to complete it before reaching the dashboard. Never affects customers who registered before this was turned on. |
 | `BUSINESS_ONBOARDING_ANALYSIS_QUEUE` | `default` | The named queue `BuildInitialBusinessSnapshot` is pushed to. `default` matches this application's own `QUEUE_CONNECTION` baseline queue, so no worker/Horizon configuration change is required unless you choose a different name. |
 
 These are read exactly once, inside `config/business.php`, via `env()` — no other file in the Business Core feature calls `env()` directly. This is what makes the feature `config:cache` safe (see §5).
 
-**Both boolean flags default to `false`.** Deploying this code with no `.env` changes at all reproduces the exact pre-Business-Core behavior for every existing customer and for new registrations.
+**`BUSINESS_ONBOARDING_REQUIRE_NEW_CUSTOMERS` defaults to `false`; `BUSINESS_ONBOARDING_ENABLED` defaults to `true`.** The wizard being reachable changes nothing for any customer without an onboarding row (the redirect middleware continues immediately when none exists), and `REQUIRE_NEW_CUSTOMERS` only governs the legacy `AccountRepository::register()` path — V1 signup starts its own required onboarding row at payment confirmation. Before V1 signup, both flags defaulted to `false`. Deploying this code with no `.env` changes at all reproduces the exact pre-Business-Core behavior for every existing customer and for new registrations.
 
 ---
 

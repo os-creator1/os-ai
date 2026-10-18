@@ -19,6 +19,7 @@ use App\Http\Requests\Admin\ResumeBusinessWalletBillingRequest;
 use App\Http\Requests\Admin\RetryFundingAttemptAsAdministratorRequest;
 use App\Http\Requests\Admin\SetPlatformFeatureUsageSafetyLimitRequest;
 use App\Http\Requests\Admin\SuspendBusinessWalletBillingRequest;
+use App\Library\Usage\PaymentProviderConfigurationStatus;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
@@ -191,10 +192,12 @@ class UsageBillingController extends AdminBaseController
     public function safetyLimits(): View
     {
         return view('admin.usage-billing.safety-limits.index', [
+            'paymentProviderStatus' => PaymentProviderConfigurationStatus::label(),
+            'providerReadiness' => array_values(array_filter(app(\App\Library\PlatformOwner\PlatformProviderReadiness::class)->all(), fn ($p) => $p['key'] === 'stripe')),
             'safetyLimits' => $this->safetyLimitRepository->all(),
             'history' => $this->limitTransitionRepository->recentPlatformSafetyLimitHistory(),
             'breadcrumbs' => [
-                ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+                ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['name' => 'Usage Billing Safety Limits'],
             ],
         ]);
@@ -290,7 +293,7 @@ class UsageBillingController extends AdminBaseController
     private function breadcrumbs(Business $business): array
     {
         return [
-            ['link' => url(config('app.admin_path') . '/dashboard'), 'name' => __('locale.menu.Dashboard')],
+            ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
             ['link' => route('admin.businesses.index'), 'name' => 'Businesses'],
             ['link' => route('admin.businesses.show', $business), 'name' => $business->name],
             ['name' => 'Usage Billing'],

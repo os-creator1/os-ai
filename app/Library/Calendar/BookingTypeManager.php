@@ -4,6 +4,7 @@ namespace App\Library\Calendar;
 
 use App\Models\BookingType;
 use App\Models\BusinessLocation;
+use App\Models\StaffAvailabilityRule;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -62,7 +63,68 @@ class BookingTypeManager
             'color' => $attributes['color'] ?? null,
             'is_active' => (bool) ($attributes['is_active'] ?? true),
             'created_by_user_id' => $actorUserId,
-        ]);
+        ] + $this->schedulingAttributes($attributes));
+    }
+
+    /**
+     * Only the scheduling settings the caller actually submitted: an omitted
+     * key keeps the stored value (or the column default on create), so a
+     * caller that predates these settings never silently resets them.
+     *
+     * @return array<string, int|string|null>
+     */
+    private function schedulingAttributes(array $attributes): array
+    {
+        $out = [];
+        foreach (['booking_window_days', 'minimum_notice_minutes', 'buffer_before_minutes', 'buffer_after_minutes', 'slot_interval_minutes'] as $key) {
+            if (array_key_exists($key, $attributes) && $attributes[$key] !== null && $attributes[$key] !== '') {
+                $out[$key] = (int) $attributes[$key];
+            }
+        }
+        if (array_key_exists('meeting_instructions', $attributes)) {
+            $text = trim((string) $attributes['meeting_instructions']);
+            $out['meeting_instructions'] = $text === '' ? null : $text;
+        }
+        // Customer notifications (Booking Notifications V1): same rule, only submitted keys change.
+        foreach (['notify_email', 'notify_sms'] as $key) {
+            if (array_key_exists($key, $attributes) && $attributes[$key] !== null) {
+                $out[$key] = (bool) $attributes[$key];
+            }
+        }
+        if (array_key_exists('reminder_offsets', $attributes) && is_array($attributes['reminder_offsets'])) {
+            // Only offsets the editor offers; distinct, largest first, at most MAX_REMINDERS.
+            $offsets = array_values(array_unique(array_filter(
+                array_map('intval', $attributes['reminder_offsets']),
+                static fn (int $m): bool => array_key_exists($m, BookingType::REMINDER_OFFSET_OPTIONS),
+            )));
+            rsort($offsets);
+            $out['reminder_offsets'] = array_slice($offsets, 0, BookingType::MAX_REMINDERS);
+        }
+
+        // Calendar Notifications V2: steps with their own timing, channels and wording.
+        if (array_key_exists('reminder_steps', $attributes)) {
+            $steps = $attributes['reminder_steps'];
+            $out['reminder_steps'] = is_array($steps) ? array_values($steps) : null;
+
+            if (is_array($steps)) {
+                // Keep the legacy column in step for anything that still reads it.
+                $offsets = array_values(array_unique(array_map(
+                    static fn (array $s): int => (int) $s['offset_minutes'],
+                    array_filter($steps, static fn (array $s): bool => ($s['enabled'] ?? true) && (($s['email'] ?? false) || ($s['sms'] ?? false))),
+                )));
+                rsort($offsets);
+                $out['reminder_offsets'] = $offsets;
+            }
+        }
+
+        foreach (['confirmation_email_subject', 'confirmation_email_body', 'confirmation_sms_body'] as $key) {
+            if (array_key_exists($key, $attributes)) {
+                $text = trim((string) $attributes[$key]);
+                $out[$key] = $text === '' ? null : $text;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -80,7 +142,7 @@ class BookingTypeManager
                 'description' => $attributes['description'] ?? null,
                 'duration_minutes' => (int) $attributes['duration_minutes'],
                 'color' => $attributes['color'] ?? null,
-            ]);
+            ] + $this->schedulingAttributes($attributes));
 
             if (array_key_exists('is_active', $attributes)) {
                 $locked->is_active = (bool) $attributes['is_active'];
@@ -186,5 +248,44 @@ class BookingTypeManager
                 'eligible' => $location !== null && $this->locations->isEligible((int) $user->id, $location),
             ])
             ->all();
+    }
+
+    /**
+     * Would a guest holding this Booking Type's public link actually reach a
+     * working page? The public route refuses (404, by design and without
+     * saying why) a type that is inactive or has nobody currently eligible; this
+     * is the same question asked for the Business owner, with the reason, so
+     * the list never offers a link that leads nowhere. Presentation only: the
+     * public page still re-runs every check itself.
+     *
+     * @return array{ready: bool, reason: ?string}
+     */
+    public function publicBookingReadiness(BookingType $bookingType): array
+    {
+        if (! $bookingType->isActive()) {
+            return ['ready' => false, 'reason' => 'Inactive. Activate it to accept bookings.'];
+        }
+
+        if (($problem = $bookingType->schedulingProblem()) !== null) {
+            return ['ready' => false, 'reason' => 'Invalid scheduling settings. '.$problem];
+        }
+
+        $eligibleIds = collect($this->configuredStaffWithEligibility($bookingType))
+            ->where('eligible', true)
+            ->pluck('user.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+        if ($eligibleIds === []) {
+            return ['ready' => false, 'reason' => 'No one is assigned. Tick at least one person under Team and save.'];
+        }
+
+        $hasHours = StaffAvailabilityRule::query()
+            ->where('business_location_id', $bookingType->business_location_id)
+            ->whereIn('staff_user_id', $eligibleIds)
+            ->exists();
+
+        return $hasHours
+            ? ['ready' => true, 'reason' => null]
+            : ['ready' => false, 'reason' => 'No working hours are set for the assigned staff, so no times can be offered.'];
     }
 }

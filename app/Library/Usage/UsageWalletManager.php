@@ -752,6 +752,8 @@ class UsageWalletManager
         // period, strictly after the (already rolled-back or committed)
         // transaction, never from inside it.
         if ($spendingLimitAlertReason !== null) {
+            \App\Events\Usage\BusinessSpendingLimitReached::dispatch((int) $business->id, (string) $spendingLimitAlertReason);
+
             $this->notifyBillingContact((int) $business->id, new SpendingLimitReachedNotification(
                 $business->name,
                 $spendingLimitAlertReason,

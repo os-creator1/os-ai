@@ -5,11 +5,15 @@ namespace App\Http\Controllers\Customer\Business;
 use App\Enums\Automation\Workflow\WorkflowStatus;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesAutomationWorkflows;
+use App\Http\Controllers\Customer\Business\Concerns\WorkflowFeatureQueryScope;
 use App\Http\Controllers\Customer\CustomerBaseController;
+
+use App\Library\Merge\MergeFieldRegistry;
 use App\Http\Requests\Automations\Workflow\StoreWorkflowRequest;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
 use App\Library\Automation\Workflow\WorkflowCompiler;
 use App\Library\Automation\Workflow\WorkflowDraftService;
+use App\Library\Automation\Workflow\WorkflowLocationAuthority;
 use App\Library\Automation\Workflow\WorkflowReferenceCatalogLoader;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
@@ -46,6 +50,8 @@ class AutomationWorkflowsController extends CustomerBaseController
         private readonly WorkflowCompiler $compiler,
         private readonly WorkflowReferenceCatalogLoader $catalogs,
         private readonly WorkflowLifecycle $lifecycle,
+        private readonly WorkflowLocationAuthority $locationAuthority,
+        private readonly \App\Library\Automation\Workflow\WorkflowCapabilities $capabilities,
     ) {
     }
 
@@ -62,13 +68,61 @@ class AutomationWorkflowsController extends CustomerBaseController
             // §18 "One query with withCount / latest-run subselect; paginated":
             // whether each row has an open draft is a subselect on the page
             // query itself, not a second query and never one per row.
-            $page = AutomationWorkflow::query()
-                ->where('business_id', (int) $business->id)
+            $visible = AutomationWorkflow::query()->where('business_id', (int) $business->id);
+
+            // Only the workflows this actor may operate (their Location reach), in
+            // the page query itself. Their reach is shared authority, not feature SQL.
+            WorkflowFeatureQueryScope::shared(
+                fn () => $this->locationAuthority->restrictListing($visible, (int) Auth::id(), $business),
+            );
+
+            $filter = $this->requestedFilter();
+            $term = trim((string) request()->query('q', ''));
+            $like = '%' . addcslashes(mb_substr($term, 0, 100), '%_\\') . '%';
+
+            // ONE grouped statement answers both questions the page needs: how many
+            // workflows exist per state (the summary, banner and filter chips count the
+            // WHOLE visible set, so they stay true while a filter or search narrows the
+            // list), and how many of them match the search (the list's own total, so
+            // pagination needs no second count).
+            [$counts, $matching] = $this->statusCounts($visible, $term === '' ? null : $like);
+
+            $filtered = clone $visible;
+
+            if ($filter !== null) {
+                $filtered->where('automation_workflows.status', $filter->value);
+            }
+
+            if ($term !== '') {
+                $filtered->where('automation_workflows.name', 'like', $like);
+            }
+
+            $total = $filter !== null ? $matching[$filter->value] : array_sum($matching);
+            $currentPage = max(1, \Illuminate\Pagination\LengthAwarePaginator::resolveCurrentPage());
+
+            $rows = $total === 0 ? collect() : $filtered
                 ->withExists(['versions as has_open_draft' => fn ($query) => $query
                     ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)])
+                // Where each LIVE version applies, as a subselect on the page query
+                // (no second query, never one per row): the Location it is bound
+                // to, or null for the whole business.
+                ->addSelect(\Illuminate\Support\Facades\DB::raw(
+                    "(SELECT CASE sv.scope_mode
+                        WHEN 'one' THEN (SELECT COALESCE(NULLIF(sl.name, ''), 'Unnamed location') FROM business_locations sl WHERE sl.id = sv.business_location_id)
+                        WHEN 'selected' THEN (SELECT GROUP_CONCAT(COALESCE(NULLIF(sl.name, ''), 'Unnamed location') ORDER BY sl.name, sl.id SEPARATOR ', ')
+                            FROM automation_workflow_version_locations vl JOIN business_locations sl ON sl.id = vl.business_location_id WHERE vl.version_id = sv.id)
+                        ELSE NULL END
+                      FROM automation_workflow_versions sv WHERE sv.id = automation_workflows.published_version_id LIMIT 1) AS scope_location_name",
+                ))
                 ->orderByDesc('updated_at')
                 ->orderByDesc('id')
-                ->paginate(self::PAGE_SIZE);
+                ->forPage($currentPage, self::PAGE_SIZE)
+                ->get();
+
+            $page = new \Illuminate\Pagination\LengthAwarePaginator($rows, $total, self::PAGE_SIZE, $currentPage, [
+                'path' => \Illuminate\Pagination\LengthAwarePaginator::resolveCurrentPath(),
+                'query' => request()->query(),
+            ]);
 
             if (! request()->wantsJson()) {
                 return view('customer.Automations.Workflows.index', [
@@ -76,6 +130,11 @@ class AutomationWorkflowsController extends CustomerBaseController
                     'businessUid' => $businessUid,
                     'basePath' => $this->basePath($workspaceUid, $businessUid),
                     'workflows' => $page,
+                    'counts' => $counts,
+                    'activeFilter' => $filter?->value,
+                    'searchTerm' => $term,
+                    'issueCounts' => $this->publishIssueCounts($business, $page->items()),
+                    'timezone' => (string) ($business->timezone ?: config('app.timezone', 'UTC')),
                 ]);
             }
 
@@ -100,17 +159,47 @@ class AutomationWorkflowsController extends CustomerBaseController
      * through to `GET /{workflowUid}` with uid "new" and 404. It is registered
      * before the wildcard for the same reason.
      */
-    public function create(string $workspaceUid, string $businessUid): mixed
-    {
-        return $this->respond(function () use ($workspaceUid, $businessUid): mixed {
-            $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+    public function create(
+        string $workspaceUid,
+        string $businessUid,
+        \App\Library\Navigation\CustomerShellComposer $shell,
+        \App\Library\Navigation\CustomerMenuBuilder $menu,
+    ): mixed {
+        return $this->respond(function () use ($workspaceUid, $businessUid, $shell, $menu): mixed {
+            [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
             return view('customer.Automations.Workflows.chooser', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
                 'basePath' => $this->basePath($workspaceUid, $businessUid),
+                // A recipe the account cannot run is shown disabled, with the reason.
+                'capabilities' => $this->capabilities->forBusiness($business),
+                // Where a missing capability can be fixed — only destinations the
+                // permission-aware Settings hub already offers this person.
+                'setupLinks' => $this->setupLinks($shell, $menu),
             ]);
         });
+    }
+
+    /** @return array<string, string> capability => URL, for the ones this user may open */
+    private function setupLinks(
+        \App\Library\Navigation\CustomerShellComposer $shell,
+        \App\Library\Navigation\CustomerMenuBuilder $menu,
+    ): array {
+        $user = Auth::user();
+        $context = $shell->currentContext($user);
+        $byKey = ['text-messaging' => 'sms', 'email' => 'email', 'payments' => 'payments'];
+        $links = [];
+
+        foreach ($menu->settingsSections($context, $user, $shell->currentMenuEntitlements($context)) as $section) {
+            foreach ($section['items'] as $item) {
+                if (isset($byKey[$item->key]) && $item->url !== null) {
+                    $links[$byKey[$item->key]] = $item->url;
+                }
+            }
+        }
+
+        return $links;
     }
 
     /** 201 with `{workflow, redirect}` — the two keys V2-D's chooser reads. */
@@ -169,6 +258,12 @@ class AutomationWorkflowsController extends CustomerBaseController
             // both live in the catalog itself (#290), not here.
             $catalog = $this->catalogs->forBusiness($business);
 
+            // The actor's Location reach, read ONCE (the Business's own Locations are
+            // already in the catalog, so "Whole business" costs no further read).
+            $reach = WorkflowFeatureQueryScope::shared(
+                fn (): array => $this->locationAuthority->reachableIds((int) Auth::id(), $business),
+            );
+
             return view('customer.Automations.Workflows.builder', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
@@ -187,8 +282,53 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'crmStages' => $catalog->stages(),
                 'tags' => $catalog->tags(),
                 'forms' => $catalog->forms(),
+                // Business-wide Custom Fields for If/Else conditions (by stable key),
+                // and the canonical merge-field picker. Opportunity / Appointment
+                // groups are deferred: the builder reveals them only when the
+                // workflow's trigger supplies those facts.
+                'customFields' => $this->customFieldCatalog($catalog),
+                'mergeFieldPicker' => app(MergeFieldRegistry::class)->picker(
+                    $business,
+                    [MergeFieldRegistry::GROUP_CONTACT, MergeFieldRegistry::GROUP_CUSTOM, MergeFieldRegistry::GROUP_BUSINESS, MergeFieldRegistry::GROUP_LOCATION],
+                    [MergeFieldRegistry::GROUP_OPPORTUNITY, MergeFieldRegistry::GROUP_APPOINTMENT],
+                    $catalog->customFields(),
+                ),
+                // The resources the link and document actions point at — the same read.
+                // A booking type belongs to one Location, so only the ones THIS actor's
+                // reach covers are offered (the server refuses the rest at save).
+                'bookingTypes' => array_values(array_filter(
+                    $catalog->bookingTypes(),
+                    fn (array $type): bool => in_array((int) $type['location_id'], $reach, true),
+                )),
+                'catalogItems' => $catalog->catalogItems(),
+                // What the account can actually use (entitlements, a texting number, a
+                // mailbox, a Stripe account), so the builder offers only what will run.
+                'capabilities' => $this->capabilities->forBusiness($business),
+                'currency' => (string) $business->currency_code,
+                // The scope picker — Locations of THIS Business, from the same read,
+                // narrowed to the ones THIS actor may bind to (the platform Location
+                // ACL), and whether they may also choose "Whole business" (only an
+                // actor who reaches every Location). The server re-checks both at
+                // save and publish; this only stops the UI offering what it would refuse.
+                'locations' => $this->locationAuthority->pickerLocations($reach, $catalog->locations()),
+                'locationScope' => ['businessWide' => $this->locationAuthority->coversAll($reach, array_column($catalog->locations(), 'id'))],
             ]);
         });
+    }
+
+    /**
+     * The Business's Custom Fields as the builder's condition picker needs them:
+     * stable key, label, type family and (for dropdowns) option ids and labels.
+     * Read from the ONE Business catalog statement the page already runs, so the
+     * Builder's feature-owned query budget (§18) is unchanged.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function customFieldCatalog($catalog): array
+    {
+        return array_map(fn (array $row): array => $row + [
+            'family' => \App\Enums\CustomFields\CustomFieldType::from($row['type'])->conditionFamily(),
+        ], $catalog->customFields());
     }
 
     /**
@@ -271,6 +411,84 @@ class AutomationWorkflowsController extends CustomerBaseController
     }
 
     /**
+     * Workflows by lifecycle state over everything this actor may see (not one page),
+     * and, in the same statement, how many of each state match the name search.
+     *
+     * @return array{0: array<string, int>, 1: array<string, int>}
+     *         [counts keyed by every WorkflowStatus value plus `total`, matches keyed by status value]
+     */
+    private function statusCounts(\Illuminate\Database\Eloquent\Builder $visible, ?string $like): array
+    {
+        $rows = (clone $visible)
+            ->reorder()
+            ->selectRaw(
+                'automation_workflows.status as status, COUNT(*) as aggregate, SUM(' . ($like === null ? '1' : 'automation_workflows.name LIKE ?') . ') as matching',
+                $like === null ? [] : [$like],
+            )
+            ->groupBy('automation_workflows.status')
+            ->get()
+            ->keyBy('status');
+
+        $counts = [];
+        $matching = [];
+
+        foreach (WorkflowStatus::cases() as $status) {
+            $counts[$status->value] = (int) ($rows[$status->value]->aggregate ?? 0);
+            $matching[$status->value] = (int) ($rows[$status->value]->matching ?? 0);
+        }
+
+        $counts['total'] = array_sum($counts);
+
+        return [$counts, $matching];
+    }
+
+    /** The `?status=` filter, only when it names a real lifecycle state. */
+    private function requestedFilter(): ?WorkflowStatus
+    {
+        return WorkflowStatus::tryFrom((string) request()->query('status', ''));
+    }
+
+    /**
+     * How many things stop each never-published draft from publishing, from the same
+     * WorkflowCompiler::validate() that publish and the builder use — never
+     * recalculated in the view. One read for the page's drafts, one catalog for all.
+     *
+     * @param array<int, AutomationWorkflow> $workflows
+     * @return array<int, int> workflow id => issue count (only where it is above zero)
+     */
+    private function publishIssueCounts(\App\Models\Business $business, array $workflows): array
+    {
+        $draftIds = [];
+
+        foreach ($workflows as $workflow) {
+            if ($workflow->status === WorkflowStatus::Draft) {
+                $draftIds[] = (int) $workflow->id;
+            }
+        }
+
+        if ($draftIds === []) {
+            return [];
+        }
+
+        $catalog = $this->catalogs->forBusiness($business);
+        $issues = [];
+
+        AutomationWorkflowVersion::query()
+            ->whereIn('workflow_id', $draftIds)
+            ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)
+            ->get()
+            ->each(function (AutomationWorkflowVersion $draft) use ($catalog, &$issues): void {
+                $count = array_sum(array_map('count', $this->compiler->validate($draft, $catalog)));
+
+                if ($count > 0) {
+                    $issues[(int) $draft->workflow_id] = $count;
+                }
+            });
+
+        return $issues;
+    }
+
+    /**
      * @param bool|null $hasDraft already known for a whole page, so a list never
      *                            asks per row; null for a single workflow
      *
@@ -284,6 +502,9 @@ class AutomationWorkflowsController extends CustomerBaseController
             'status' => $workflow->status->value,
             'status_label' => $workflow->status->label(),
             'has_published_version' => $workflow->published_version_id !== null,
+            // Null = the whole business (or not selected by this query); otherwise the
+            // Location's name, or the selected Locations' names joined.
+            'scope_location_name' => $workflow->getAttribute('scope_location_name'),
             'has_draft' => $hasDraft ?? $workflow->draftVersion() !== null,
             'archived_at' => $workflow->archived_at?->toIso8601String(),
             'updated_at' => $workflow->updated_at?->toIso8601String(),
@@ -305,6 +526,9 @@ class AutomationWorkflowsController extends CustomerBaseController
             'enrollment_policy' => $version->enrollment_policy?->value,
             'enrollment_policy_source' => $version->enrollment_policy_source?->value,
             'failure_policy' => $version->failure_policy?->value,
+            'business_location_id' => $version->scope()->singleId(),
+            'scope_mode' => $version->scope()->mode(),
+            'business_location_ids' => $version->scope()->ids(),
             'published_at' => $version->published_at?->toIso8601String(),
         ];
     }

@@ -65,6 +65,7 @@
     "pusher/pusher-php-server": "^7.0",
     "rap2hpoutre/fast-excel": "^5.0",
     "razorpay/razorpay": "^2.8.3",
+    "resend/resend-php": "^1.16",
     "selcom/selcom-apigw-client": "^1.0",
     "sendpulse/rest-api": "^1.0",
     "spatie/laravel-html": "^3.2",
@@ -112,8 +113,7 @@
     "psr-4": {
       "App\\": "app/",
       "Database\\Factories\\": "database/factories/",
-      "Database\\Seeders\\": "database/seeders/",
-      "kashem\\licenseChecker\\": "packages/kashem/licenseChecker/src"
+      "Database\\Seeders\\": "database/seeders/"
     },
     "files": [
       "app/Helpers/Helper.php",
@@ -122,7 +122,6 @@
   },
   "autoload-dev": {
     "psr-4": {
-      "kashem\\licenseChecker\\": "packages/kashem/licenseChecker/src",
       "Tests\\": "tests/"
     }
   },
