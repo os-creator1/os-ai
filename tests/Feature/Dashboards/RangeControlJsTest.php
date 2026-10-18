@@ -20,13 +20,15 @@ class RangeControlJsTest extends TestCase
             $this->markTestSkipped('node is not installed on this machine.');
         }
 
-        $run = new Process(['node', '--test', 'tests/Js/range-control.test.js'], base_path(), null, null, 60);
+        // An explicit TAP reporter: the default reporter's summary format differs between Node versions (`ℹ tests 9` vs `# tests 9`).
+        $run = new Process(['node', '--test', '--test-reporter=tap', 'tests/Js/range-control.test.js'], base_path(), null, null, 60);
         $run->run();
         $output = $run->getOutput() . $run->getErrorOutput();
 
         $this->assertTrue($run->isSuccessful(), $output);
-        $this->assertMatchesRegularExpression('/^ℹ tests ([1-9]\d*)$/m', $output, 'a zero-test success is a failure');
-        $this->assertMatchesRegularExpression('/^ℹ fail 0$/m', $output);
+        $this->assertMatchesRegularExpression('/^# tests ([1-9]\d*)\s*$/m', $output, 'a zero-test success is a failure');
+        $this->assertMatchesRegularExpression('/^# fail 0\s*$/m', $output);
+        $this->assertDoesNotMatchRegularExpression('/^not ok /m', $output);
     }
 
     public function test_the_control_script_is_loaded_from_the_shared_file_and_never_edits_state_on_a_preset_press(): void
