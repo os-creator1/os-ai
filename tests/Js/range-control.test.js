@@ -7,16 +7,37 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { isCustom, sync, excludeCustomForSubmit } = require('../../public/js/analytics/range-control.js');
 
-/** A fake Home range form: just enough DOM for the control's own logic. `custom` is the state the server rendered. */
-function fakeForm(custom, values = { start: '2026-10-01', end: '2026-10-10' }) {
-  const attrs = { 'data-segmented': '1', 'data-custom': custom ? '1' : '0' };
-  const fields = Object.entries(values).map(([name, value]) => ({ name, value, disabled: !custom, required: custom }));
-  const dates = [{ hidden: !custom }, { hidden: !custom }];
-  const toggle = { attrs: { 'aria-pressed': custom ? 'true' : 'false' }, setAttribute(k, v) { this.attrs[k] = v; }, classList: { toggle() {} } };
-  const lists = { '[data-custom-field]': fields, '[data-role="custom-dates"]': dates };
+const PRESETS = ['last_7_days', 'this_month', 'last_30_days'];
+
+function fakeButton(value, active) {
+  const classes = new Set(active ? ['is-active'] : []);
 
   return {
-    fields, dates, toggle,
+    value,
+    attrs: { 'aria-pressed': active ? 'true' : 'false' },
+    classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)), contains: (name) => classes.has(name) },
+    setAttribute(k, v) { this.attrs[k] = v; },
+  };
+}
+
+/**
+ * A fake Home range form: just enough DOM for the control's own logic. `custom` is whether the Custom fields are open and `preset` is
+ * the period the server rendered as displayed ('custom' when a custom range is shown), exactly as the Blade partial renders them.
+ */
+function fakeForm(custom, preset = 'this_month', values = { start: '2026-10-01', end: '2026-10-10' }) {
+  const attrs = { 'data-segmented': '1', 'data-custom': custom ? '1' : '0', 'data-preset': preset };
+  const fields = Object.entries(values).map(([name, value]) => ({ name, value, disabled: !custom, required: custom }));
+  const dates = [{ hidden: !custom }, { hidden: !custom }];
+  const presets = PRESETS.map((value) => fakeButton(value, preset === value));
+  const toggle = fakeButton('', preset === 'custom');
+  const lists = {
+    '[data-custom-field]': fields,
+    '[data-role="custom-dates"]': dates,
+    '[data-role="range-segments"] button[type="submit"][value]': presets,
+  };
+
+  return {
+    fields, dates, presets, toggle,
     getAttribute: (k) => (k in attrs ? attrs[k] : null),
     setAttribute: (k, v) => { attrs[k] = v; },
     querySelectorAll: (selector) => lists[selector] || [],
@@ -24,6 +45,16 @@ function fakeForm(custom, values = { start: '2026-10-01', end: '2026-10-10' }) {
     /** What a native GET submission (or async-region's FormData) would send for the date fields right now. */
     submitted: () => fields.filter((f) => !f.disabled).map((f) => f.name + '=' + f.value),
     validationErrors: () => fields.filter((f) => f.required && !f.disabled && f.value === '').map((f) => f.name),
+    /** Every segment that looks selected: the styled class AND aria-pressed must agree. */
+    active: () => {
+      const byClass = [...presets.map((p) => [p.value, p]), ['custom', toggle]].filter(([, b]) => b.classList.contains('is-active')).map(([k]) => k);
+      const byAria = [...presets.map((p) => [p.value, p]), ['custom', toggle]].filter(([, b]) => b.attrs['aria-pressed'] === 'true').map(([k]) => k);
+      assert.deepEqual(byClass, byAria, 'is-active and aria-pressed never disagree');
+
+      return byClass;
+    },
+    /** The Custom toggle press, as the control's click handler does it. */
+    toggleCustom() { attrs['data-custom'] = isCustom(this) ? '0' : '1'; sync(this); },
   };
 }
 
@@ -38,15 +69,16 @@ function pressPreset(form) {
 }
 
 test('a preset press while Custom is open keeps the date fields out of the request', () => {
-  const form = fakeForm(true);
+  const form = fakeForm(true, 'custom');
   const { sent, errors } = pressPreset(form);
 
   assert.deepEqual(sent, [], 'no start/end rides along with a preset');
   assert.deepEqual(errors, [], 'closed-for-the-request fields cannot block the preset');
 });
 
-test('a FAILED preset update leaves Custom exactly as it was: open, enabled, required, pressed', () => {
-  const form = fakeForm(true);
+test('a FAILED preset update leaves Custom exactly as it was: open, enabled, required, and the only selected segment', () => {
+  const form = fakeForm(true, 'custom');
+  sync(form);
 
   pressPreset(form); // the request fails: async-region keeps this form and its Custom results
 
@@ -54,35 +86,37 @@ test('a FAILED preset update leaves Custom exactly as it was: open, enabled, req
   assert.equal(form.getAttribute('data-custom'), '1');
   assert.deepEqual(form.dates.map((d) => d.hidden), [false, false], 'the date fields are still visible');
   assert.deepEqual(form.fields.map((f) => [f.disabled, f.required]), [[false, true], [false, true]], 'enabled and required again');
-  assert.equal(form.toggle.attrs['aria-pressed'], 'true');
+  assert.deepEqual(form.active(), ['custom'], 'the selection did not move to the failed preset');
   assert.deepEqual(form.submitted(), ['start=2026-10-01', 'end=2026-10-10'], 'Apply still carries the custom dates');
 });
 
-test('a SUCCESSFUL preset update closes Custom: the server renders a closed form and sync agrees', () => {
-  pressPreset(fakeForm(true));
-  const fresh = fakeForm(false); // the swapped-in form for ?range=last_30_days
+test('a SUCCESSFUL preset update closes Custom: the server renders a closed form that selects the new preset', () => {
+  pressPreset(fakeForm(true, 'custom'));
+  const fresh = fakeForm(false, 'last_30_days'); // the swapped-in form for ?range=last_30_days
 
   sync(fresh);
 
   assert.equal(isCustom(fresh), false);
   assert.deepEqual(fresh.dates.map((d) => d.hidden), [true, true]);
   assert.deepEqual(fresh.fields.map((f) => [f.disabled, f.required]), [[true, false], [true, false]]);
-  assert.equal(fresh.toggle.attrs['aria-pressed'], 'false');
+  assert.deepEqual(fresh.active(), ['last_30_days'], 'exactly the new preset is selected');
   assert.deepEqual(fresh.submitted(), [], 'a preset URL carries no custom dates');
 });
 
 test('a preset press with Custom closed changes nothing', () => {
-  const form = fakeForm(false);
+  const form = fakeForm(false, 'this_month');
+  sync(form);
 
   const { sent } = pressPreset(form);
 
   assert.deepEqual(sent, []);
   assert.deepEqual(form.fields.map((f) => [f.disabled, f.required]), [[true, false], [true, false]]);
   assert.equal(isCustom(form), false);
+  assert.deepEqual(form.active(), ['this_month']);
 });
 
 test('empty Custom is still blocked and valid Custom still submits both dates', () => {
-  const empty = fakeForm(true, { start: '', end: '' });
+  const empty = fakeForm(true, 'this_month', { start: '', end: '' });
   sync(empty);
   assert.deepEqual(empty.validationErrors(), ['start', 'end'], 'Apply cannot submit an empty custom range');
 
@@ -104,4 +138,41 @@ test('opening Custom enables and requires the fields; closing disables them', ()
   sync(form);
   assert.deepEqual(form.fields.map((f) => [f.disabled, f.required]), [[true, false], [true, false]]);
   assert.deepEqual(form.dates.map((d) => d.hidden), [true, true]);
+});
+
+test('exactly one segment is selected in every state', () => {
+  const form = fakeForm(false, 'this_month');
+  sync(form);
+  assert.deepEqual(form.active(), ['this_month']);
+
+  form.toggleCustom(); // open Custom: Custom becomes the selection, the preset lets go
+  assert.deepEqual(form.active(), ['custom']);
+  assert.equal(form.toggle.classList.contains('is-active'), true, 'the styled class, not just aria-pressed');
+
+  form.toggleCustom(); // close without applying: the displayed preset is selected again
+  assert.deepEqual(form.active(), ['this_month']);
+  assert.equal(form.toggle.classList.contains('is-active'), false);
+});
+
+test('a server-rendered Custom range keeps Custom selected, and closing its fields cannot select a preset that is not displayed', () => {
+  const form = fakeForm(true, 'custom');
+  sync(form);
+  assert.deepEqual(form.active(), ['custom']);
+
+  form.toggleCustom(); // fields close, but the page still shows the custom range
+  assert.deepEqual(form.active(), ['custom']);
+  assert.deepEqual(form.dates.map((d) => d.hidden), [true, true]);
+
+  form.toggleCustom();
+  assert.deepEqual(form.active(), ['custom']);
+});
+
+test('a stale highlight is cleared: a form rendered with the wrong class converges to the single displayed selection', () => {
+  const form = fakeForm(false, 'last_7_days');
+  form.toggle.classList.toggle('is-active', true); // e.g. restored markup that still highlights Custom
+  form.toggle.setAttribute('aria-pressed', 'true');
+
+  sync(form);
+
+  assert.deepEqual(form.active(), ['last_7_days']);
 });

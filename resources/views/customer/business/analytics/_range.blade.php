@@ -33,7 +33,7 @@
 {{-- data-custom is the ONE source of truth for whether the Custom date fields are open (server-rendered from the range being shown, flipped only by the Custom
      toggle). The hidden preset select is a no-JavaScript/legacy control, never consulted to decide it, and in the segmented variant it carries no name so it
      can never add a second `range` parameter beside the pressed preset button. --}}
-<form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" data-custom="{{ $isCustom ? '1' : '0' }}" @if($segmented) data-segmented="1" @endif @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
+<form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" data-custom="{{ $isCustom ? '1' : '0' }}" data-preset="{{ $range->preset }}" @if($segmented) data-segmented="1" @endif @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
     <div class="{{ $segmented ? 'visually-hidden' : 'col-md-3 col-sm-6' }}">
         <label class="form-label" for="range">Date range</label>
         <select id="range" @unless($segmented) name="range" @endunless class="form-select" data-role="range-preset" @if($segmented) inert @endif>

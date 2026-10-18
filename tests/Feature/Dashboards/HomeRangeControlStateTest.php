@@ -46,6 +46,7 @@ class HomeRangeControlStateTest extends TestCase
 
         $this->assertStringContainsString('data-segmented="1"', $form);
         $this->assertStringContainsString('data-custom="0"', $form);
+        $this->assertStringContainsString('data-preset="this_month"', $form, 'The displayed period is rendered for the control to restore.');
 
         // The hidden select must not be a successful control: it would add a second `range` beside the pressed preset button.
         $this->assertSame(1, preg_match('#<select[^>]*data-role="range-preset"[^>]*>#', $form, $select));
@@ -63,6 +64,7 @@ class HomeRangeControlStateTest extends TestCase
         $form = $this->form(['range' => 'custom', 'start' => '2026-09-01', 'end' => '2026-09-05']);
 
         $this->assertStringContainsString('data-custom="1"', $form);
+        $this->assertStringContainsString('data-preset="custom"', $form);
         $this->assertDoesNotMatchRegularExpression('#data-role="custom-dates"[^>]*\shidden[\s>]#', $form);
         $this->assertMatchesRegularExpression('#class="is-active"[^>]*data-role="range-custom-toggle"#', $form);
         $this->assertStringContainsString('value="2026-09-01"', $form);

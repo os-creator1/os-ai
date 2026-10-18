@@ -52,14 +52,27 @@
 
     if (isSegmented(form)) {
       form.querySelectorAll('[data-custom-field]').forEach(function (input) { input.disabled = !custom; input.required = custom; });
-
-      var toggle = form.querySelector('[data-role="range-custom-toggle"]');
-
-      if (toggle) {
-        toggle.setAttribute('aria-pressed', custom ? 'true' : 'false');
-        toggle.classList.toggle('is-open', custom);
-      }
+      syncSelection(form, custom);
     }
+  }
+
+  /**
+   * Exactly ONE segment looks selected (the styled class is `is-active`, mirrored by aria-pressed): Custom while its fields are open,
+   * otherwise the period the page is actually displaying (data-preset, rendered by the server; `custom` when a custom range is shown).
+   */
+  function syncSelection(form, custom) {
+    var selected = custom ? 'custom' : (form.getAttribute('data-preset') || '');
+
+    function mark(button, on) {
+      button.classList.toggle('is-active', on);
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+
+    form.querySelectorAll('[data-role="range-segments"] button[type="submit"][value]').forEach(function (button) { mark(button, button.value === selected); });
+
+    var toggle = form.querySelector('[data-role="range-custom-toggle"]');
+
+    if (toggle) { mark(toggle, selected === 'custom'); }
   }
 
   /**
