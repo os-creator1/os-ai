@@ -1026,6 +1026,11 @@
         | never something done "as" a client.
         |----------------------------------------------------------------------
         */
+        // The Agency's OWN operating workspace (CRM, Calendar, Automations, SEO, Ads):
+        // owner-only, asserted inside AgencyOperationsManager. Prohibited under View As.
+        Route::post('{workspaceUid}/agency/operations', 'Agency\AgencyOperationsController@enable')
+            ->middleware('throttle:30,1')->name('agency.operations.enable');
+
         Route::get('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@show')
             ->name('agency.white-label.show');
         Route::post('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@update')
@@ -2394,6 +2399,9 @@
             | Workspace\AgencyProspectingChannelController.
             |----------------------------------------------------------------
             */
+            Route::get('/phone-messaging', 'Workspace\AgencyProspectingChannelController@phoneMessaging')->name('phone-messaging');
+            Route::post('/phone-messaging/sender', 'Workspace\AgencyProspectingChannelController@setSender')->name('phone-messaging.sender');
+
             Route::prefix('channels')->name('channels.')->group(function () {
                 Route::get('/', 'Workspace\AgencyProspectingChannelController@channels')->name('index');
                 Route::get('/connect/{provider}', 'Workspace\AgencyProspectingChannelController@connect')->name('connect');
@@ -2402,6 +2410,7 @@
                 Route::match(['put', 'patch'], '/{channel}', 'Workspace\AgencyProspectingChannelController@update')->name('update');
                 Route::post('/{channel}/enable', 'Workspace\AgencyProspectingChannelController@enable')->name('enable');
                 Route::post('/{channel}/disable', 'Workspace\AgencyProspectingChannelController@disable')->name('disable');
+                Route::post('/{channel}/disconnect', 'Workspace\AgencyProspectingChannelController@disconnect')->name('disconnect');
             });
         });
     });

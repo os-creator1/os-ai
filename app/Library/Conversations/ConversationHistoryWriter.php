@@ -224,15 +224,17 @@ final class ConversationHistoryWriter
         ?string $sendUid = null,
         ?int $conversationBoxId = null,
     ): ?ChatBoxMessage {
-        $operationId = DB::table(ManagedMessageDispatcher::TABLE)
+        $operation = DB::table(ManagedMessageDispatcher::TABLE)
             ->where('business_id', (int) $business->id)
             ->where('operation_key', $operationKey)
             ->where('direction', 'outbound')
-            ->value('id');
+            ->first(['id', 'transport_mode', 'sender_number']);
 
-        if ($operationId === null) {
+        if ($operation === null) {
             return null;
         }
+
+        $operationId = $operation->id;
 
         $recorded = $this->recordedFor((int) $operationId);
 
@@ -240,8 +242,16 @@ final class ConversationHistoryWriter
             return $recorded;
         }
 
-        $identity = $this->identities->resolveForBusiness($business);
-        $number = $identity !== null ? $this->identities->resolvePrimaryNumber($identity) : null;
+        // The number that actually sent this message. A BYO operation carries its
+        // own (the agency's chosen sender at send time), so history stays on that
+        // sender however the default is changed afterwards; a managed operation
+        // resolves the Business's primary managed number, as it always has.
+        if ($operation->transport_mode === 'byo') {
+            $number = $operation->sender_number !== null && $operation->sender_number !== '' ? (string) $operation->sender_number : null;
+        } else {
+            $identity = $this->identities->resolveForBusiness($business);
+            $number = $identity !== null ? (string) $this->identities->resolvePrimaryNumber($identity)->phone_number : null;
+        }
 
         if ($number === null) {
             return null;
@@ -537,7 +547,7 @@ final class ConversationHistoryWriter
      */
     private function resolveConversationForWrite(
         Business $business,
-        BusinessMessagingNumber $number,
+        string $number,
         string $contactNumber,
         ?int $conversationBoxId,
     ): ?ChatBox {
@@ -548,7 +558,7 @@ final class ConversationHistoryWriter
                 ->first();
         }
 
-        return $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
+        return $this->conversationFor($business, $number, $contactNumber);
     }
 
     private function recordedFor(int $operationId): ?ChatBoxMessage

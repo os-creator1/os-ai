@@ -257,11 +257,14 @@
 
             if ($managedTransport) {
                 $identity = app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class)->resolveForBusiness($business);
+                $byoChannel = \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business);
 
                 try {
-                    $managedFromNumber = $identity !== null
+                    $managedFromNumber = $byoChannel !== null
+                        ? (string) $byoChannel->sender_number
+                        : ($identity !== null
                         ? app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class)->resolvePrimaryNumber($identity)->phone_number
-                        : null;
+                        : null);
                 } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
                     $managedFromNumber = null;
                 }
@@ -537,6 +540,9 @@
 
             try {
                 $data = $this->campaigns->quickSend($campaign, $input, true);
+            } catch (\App\Library\Messaging\Exceptions\ByoSenderNotReadyException $e) {
+                // The agency's own Telnyx sender is chosen but unusable: say exactly that.
+                return $back(ConversationSendFailureReason::forByoCode($e->reasonCode)->customerMessage());
             } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
                 // Zero provider calls (Slice 3 §4.5) — the identity resolves
                 // but no usable primary number/destination does, or the
@@ -1258,6 +1264,17 @@
 
             try {
                 $data = $this->campaigns->quickSend($campaign, $input, true);
+            } catch (\App\Library\Messaging\Exceptions\ByoSenderNotReadyException $e) {
+                $byoReason = ConversationSendFailureReason::forByoCode($e->reasonCode);
+
+                if ($managed) {
+                    $this->recordManagedSendFailure($box, $input, $sendUid, $byoReason);
+                }
+
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => $byoReason->customerMessage(),
+                ]);
             } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
                 // Zero provider calls (Slice 3 §4.5) — a Class A refusal
                 // before any commitment (item 1), always safe to offer a
@@ -1334,6 +1351,7 @@
                 $reason = $dispatcherRejected
                     ? ConversationSendFailureReason::fromProviderErrorCategory(
                         isset($payload->error_category) ? \App\Enums\Messaging\ProviderErrorCategory::tryFrom((string) $payload->error_category) : null,
+                        \App\Library\AgencyOutreach\AgencyByoSender::channelForConversation($business, (int) $box->id) !== null,
                     )
                     : $this->classifyEarlyRefusal((string) $payload->message);
 

@@ -2,6 +2,7 @@
 
 namespace App\Library\Messaging;
 
+use App\Library\AgencyOutreach\AgencyByoSender;
 use App\Library\Messaging\DTO\LocationSendContext;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Models\Business;
@@ -45,7 +46,7 @@ class BusinessSmsSendingPath
 
         // 1. Managed sending identity, when one is active. quickSend() detects
         //    this itself and delegates; it must NOT be handed a legacy server.
-        if ($this->identities->resolveForBusiness($business) !== null) {
+        if ($this->identities->resolveForBusiness($business) !== null || AgencyByoSender::selectedChannel($business) !== null) {
             return ['originator' => $originator, 'sending_server' => null];
         }
 
@@ -92,6 +93,14 @@ class BusinessSmsSendingPath
         // 1. Managed sending identity, when one is active. quickSend() detects this
         //    itself and delegates; it must NOT be handed a legacy server. The number
         //    is proven for the Location here, before anything is sent.
+        // The agency's own Telnyx sender has no Location assignment, like any BYO
+        // sender: it cannot be shown to belong to one Location of several.
+        if (AgencyByoSender::selectedChannel($business) !== null) {
+            return $context->scopeBound && count($this->identities->activeLocationIds($business)) > 1
+                ? 'location_sender_unavailable'
+                : ['originator' => $originator, 'sending_server' => null];
+        }
+
         $identity = $this->identities->resolveForBusiness($business);
 
         if ($identity !== null) {
@@ -138,6 +147,13 @@ class BusinessSmsSendingPath
      */
     private function originator(Business $business): ?string
     {
+        // An explicitly chosen own-Telnyx sender is THE originator.
+        $byo = AgencyByoSender::selectedChannel($business);
+
+        if ($byo !== null) {
+            return (string) $byo->sender_number;
+        }
+
         $senderId = Senderid::query()
             ->where('business_id', (int) $business->id)
             ->where('status', Senderid::STATUS_ACTIVE)

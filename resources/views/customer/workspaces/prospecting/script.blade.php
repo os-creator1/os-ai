@@ -12,6 +12,9 @@
 
     @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'script'])
 
+    <p class="text-caption mb-2">Which number these texts come from is set in
+        <a href="{{ route('customer.workspaces.prospecting.phone-messaging', $workspaceUid) }}">Phone &amp; Messaging</a>.</p>
+
     @foreach((array) session('outreach_warnings', []) as $warning)
         <x-alert variant="warning" data-role="script-warning">{{ $warning }}</x-alert>
     @endforeach

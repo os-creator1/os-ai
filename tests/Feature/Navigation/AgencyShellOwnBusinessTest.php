@@ -214,10 +214,12 @@ class AgencyShellOwnBusinessTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        $this->assertNotContains('own-business', $keys, 'There is no own Business to operate yet.');
-        $this->assertNotContains('conversations', $keys);
-        $this->assertContains('accounts', $keys, 'Clients stays primary.');
-        $this->assertSame('Home', $this->labelOf($html, 'home'));
+        $this->assertContains('own-business', $keys, 'Outreach (workspace-level) still belongs under "Your agency".');
+        $this->assertContains('prospecting', $keys);
+        $this->assertNotContains('conversations', $keys, 'There is no own Business to operate yet.');
+        $this->assertNotContains('business-settings', $keys);
+        $this->assertContains('accounts', $keys, 'Clients stays available.');
+        $this->assertSame('Agency Home', $this->labelOf($html, 'home'));
     }
 
     private function labelOf(string $html, string $key): string

@@ -130,7 +130,7 @@ final class ManagedSendStateMachine
     private static function projectRejected(object $operation): ManagedSendProjection
     {
         $reason = $operation->error_category !== null
-            ? ConversationSendFailureReason::fromProviderErrorCategory(ProviderErrorCategory::tryFrom((string) $operation->error_category))
+            ? ConversationSendFailureReason::fromProviderErrorCategory(ProviderErrorCategory::tryFrom((string) $operation->error_category), ($operation->transport_mode ?? null) === 'byo')
             : ConversationSendFailureReason::SendFailed;
 
         return new ManagedSendProjection($reason->bubbleStatus(), $reason->value);
