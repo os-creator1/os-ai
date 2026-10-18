@@ -102,6 +102,22 @@
         if (resumeBtn) { resumeBtn.hidden = open || !resumeBtn.getAttribute('data-has-conversation'); }
         if (narrow.matches) { document.body.style.overflow = open ? 'hidden' : ''; }
         if (open) { window.scrollTo(0, 0); scrollToEnd(true); } else { window.scrollTo(0, savedScroll); }
+        if (open) { window.requestAnimationFrame(ensureVisible); }
+    }
+
+    // A presentation state must never leave the screen empty: if the open conversation is not actually on screen (a layout rule hid it,
+    // or it has no height), go back to Home instead of leaving a blank page.
+    function ensureVisible() {
+        if (panel.hidden) { return; }
+        var box = section.getBoundingClientRect();
+        var shown = box.width > 40 && box.height > 40 && window.getComputedStyle(section).display !== 'none';
+        if (!shown) {
+            panel.hidden = true;
+            section.classList.remove('is-conversation-open');
+            root.classList.remove('is-chat-open');
+            if (narrow.matches) { document.body.style.overflow = ''; }
+            if (typeof console !== 'undefined' && console.warn) { console.warn('Ask MotionGrove could not be shown; returned to Home.'); }
+        }
     }
 
     function transition(open, done) {
