@@ -86,6 +86,12 @@ trait CreatesDashboardFixtures
 
         if ($this->tenantsFinishSetup()) {
             $this->completeCalendarSetup($tenant[1]);
+
+            // An established Business: it was collecting data long before any period a test compares, so a comparison is real
+            // (a Business created inside the previous period would, truthfully, show "First month"). Young-Business tests set
+            // their own created_at.
+            \Illuminate\Support\Facades\DB::table('businesses')->where('id', $tenant[1]->id)->update(['created_at' => '2025-01-01 00:00:00']);
+            $tenant[1]->refresh();
         }
 
         return $tenant;
@@ -720,8 +726,9 @@ trait CreatesDashboardFixtures
     /** mainText() without the Ask MotionGrove section: its chip labels are controls, not claims. */
     protected function mainTextWithoutAsk(string $html): string
     {
-        // The Ask card and the quiet-time next steps are prompts ("Create a booking type"), not figures or claims.
-        return $this->mainText((string) preg_replace('#<section[^>]*data-band="(?:ask|quiet_steps)".*?</section>#s', '', $html));
+        // The Ask card, the suggestions ("Track revenue by connecting payments") and the growth cards' own labels ("Bookings") are prompts and
+        // names of real figures, not claims about them.
+        return $this->mainText((string) preg_replace('#<section[^>]*data-band="(?:ask|suggested|headlines)".*?</section>#s', '', $html));
     }
 
     /** The HTML inside the page's <main>. */

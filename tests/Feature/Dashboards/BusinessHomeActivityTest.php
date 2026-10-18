@@ -364,7 +364,8 @@ class BusinessHomeActivityTest extends TestCase
         // The whole Business Home, activity band included, stays inside the
         // contract's ceiling for this state.
         $product = $this->matching($sql, '/\b(reports|contacts|contact_groups|automation_executions|campaigns|chat_boxes|chat_box_messages|business_home_visits|businesses|business_usage_wallets|websites|business_google_connections|opportunities)\b/');
-        $this->assertLessThanOrEqual(25, count($product), 'Business Home product-data ceiling: ' . count($product));
+        // 25 -> 26: the contacts card's actor-scoped statement (both periods in one), so its figure equals the contact list it opens.
+        $this->assertLessThanOrEqual(26, count($product), 'Business Home product-data ceiling: ' . count($product));
     }
 
     // -----------------------------------------------------------------

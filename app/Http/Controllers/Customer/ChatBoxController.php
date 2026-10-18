@@ -183,6 +183,17 @@
 
             app(\App\Library\Crm\CrmLocationScope::class)->restrict($pinnedQuery, $business, (int) Auth::id(), 'chat_boxes.location_id');
 
+            // Narrowed from Home (waiting / a created range), pinned threads obey the same filters as the main list.
+            $scope = request();
+
+            if ($scope->query('filter') === 'waiting') {
+                $pinnedQuery->whereIn('chat_boxes.id', app(\App\Library\Conversations\BusinessConversationReadModel::class)->awaitingReplyBoxQuery($business, (int) Auth::id()));
+            }
+
+            if (($created = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($scope, $business)) !== null) {
+                $pinnedQuery->where('chat_boxes.created_at', '>=', $created->startUtc)->where('chat_boxes.created_at', '<', $created->endUtc);
+            }
+
             $pinnedChats = $pinnedQuery
                 ->with('latestMessage')
                 ->orderBy('updated_at', 'desc')
@@ -194,6 +205,7 @@
                 'pageConfigs'     => $pageConfigs,
                 'templates'       => $templates,
                 'pinnedChats'     => $pinnedChats,
+                'homeScopeRange'  => $created,
                 'displayNames'    => ChatBox::displayNamesFor($business, $pinnedChats),
                 'workspaceUid'    => $workspaceUid,
                 'businessUid'     => $businessUid,
@@ -1553,6 +1565,10 @@
                 case 'unread':
                     $query->where('notification', '!=', 0);
                     break;
+                case 'waiting':
+                    // Exactly the conversations Home counts as waiting for a reply (customer wrote last, past the grace period).
+                    $query->whereIn('chat_boxes.id', app(\App\Library\Conversations\BusinessConversationReadModel::class)->awaitingReplyBoxQuery($business, (int) Auth::id()));
+                    break;
                 case 'read':
                     // A conversation that was never marked unread holds NULL,
                     // not 0 (the column has no default) — it is read too.
@@ -1561,6 +1577,11 @@
                         $q->where('notification', 0)->orWhereNull('notification');
                     });
                     break;
+            }
+
+            // The period a Home card links to: conversations STARTED in that Business-local range (the card's own bounds).
+            if (($created = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($request, $business)) !== null) {
+                $query->where('created_at', '>=', $created->startUtc)->where('created_at', '<', $created->endUtc);
             }
 
             // Every tab is newest-activity-first, not only "Recents": without
@@ -1597,7 +1618,7 @@
                 'chat_box'        => $chat_box,
                 'displayNames'    => ChatBox::displayNamesFor($business, $chat_box->getCollection()),
                 'showEmptyState'  => (int) $page <= 1,
-                'emptyReason'     => $search !== '' ? 'search' : ($filter === 'unread' || $filter === 'read' ? 'filtered' : null),
+                'emptyReason'     => $search !== '' ? 'search' : ($filter === 'unread' || $filter === 'read' || $filter === 'waiting' || $created !== null ? 'filtered' : null),
             ])->render();
         }
 

@@ -115,7 +115,14 @@
                  address bar in step. The form sits outside the list on purpose: what
                  someone is typing is never replaced while the results change. Without
                  JavaScript both are an ordinary GET to the same URL. --}}
+            @if(($added ?? null) !== null)
+                <p class="px-1 pt-1 mb-0 text-caption" data-role="period-scope">Added {{ $added->startLocal->format('M j') }} – {{ $added->endLocal->format('M j') }} · <a href="{{ $listUrl }}">Show all contacts</a></p>
+            @endif
             <form method="GET" action="{{ $listUrl }}" role="search" class="cx-toolbar" data-role="contacts-search" data-async-form="contacts-list">
+                @if(($added ?? null) !== null)
+                    <input type="hidden" name="created_from" value="{{ $added->startLocal->format('Y-m-d') }}">
+                    <input type="hidden" name="created_to" value="{{ $added->endLocal->format('Y-m-d') }}">
+                @endif
                 <div class="contacts-filters">
                     <div class="cx-search">
                         <x-ds-icon name="search" size="15" aria-hidden="true" />

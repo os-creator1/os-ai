@@ -1438,7 +1438,19 @@
 
       $(document).ready(function() {
         let page = 1;
-        let filter = "recents";  // Default filter
+        // A Home card can open this list already narrowed: the inbox's own "waiting for a reply" filter and/or the Business-local
+        // days a figure covers. Only those exact shapes are read; anything else leaves the ordinary list.
+        const homeScope = new URLSearchParams(window.location.search);
+        const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+        const createdFrom = isDay(homeScope.get("created_from")) && isDay(homeScope.get("created_to")) ? homeScope.get("created_from") : "";
+        const createdTo = createdFrom ? homeScope.get("created_to") : "";
+        // The tab the URL names (Home opens "waiting"); anything else is the ordinary default. The pinned rows and the scope banner are
+        // rendered by the server from this same URL, so a tab change while "waiting" is active reloads with the new tab instead of
+        // leaving waiting-filtered pinned rows and a "waiting" banner beside a different list.
+        const knownTabs = ["recents", "unread", "read", "all", "waiting"];
+        let filter = knownTabs.indexOf(homeScope.get("filter")) !== -1 ? homeScope.get("filter") : "recents";  // Default filter
+        $(".tab-button").removeClass("btn-primary").addClass("btn-outline-primary");
+        $(".tab-button").filter(function () { return $(this).data("filter") === filter; }).removeClass("btn-outline-primary").addClass("btn-primary");
         let search = "";     // Default search value
 
         // Function to load chat users
@@ -1452,7 +1464,9 @@
               _token: "{{ csrf_token() }}",
               page: page,
               filter: filter,
-              search: search
+              search: search,
+              created_from: createdFrom,
+              created_to: createdTo
             },
             beforeSend: function() {
               $("#loader").show();  // Show the loader before the request
@@ -1511,6 +1525,15 @@
           // Change the color of the clicked button to primary and reset others
           $(".tab-button").removeClass("btn-primary").addClass("btn-outline-primary");
           $(this).removeClass("btn-outline-primary").addClass("btn-primary");
+
+          // Leaving the "waiting" view: the server-rendered pinned rows and banner must follow, so reload on the chosen tab
+          // (an explicit created-date range in the URL is kept).
+          if (filter === "waiting") {
+            const next = new URL(window.location.href);
+            next.searchParams.set("filter", $(this).data("filter"));
+            window.location.assign(next.toString());
+            return;
+          }
 
           // Get filter value and reset page
           page = 1;

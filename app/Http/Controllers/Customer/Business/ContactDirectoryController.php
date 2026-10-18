@@ -82,8 +82,11 @@ class ContactDirectoryController extends CustomerBaseController
 
         $group = $groups->firstWhere('uid', (string) $request->query('group', ''));
 
+        $added = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($request, $business);
+
         return view('customer.people.index', [
-            'contacts' => $this->directory->page($business, $search, (int) Auth::id(), $group?->id),
+            'added' => $added,
+            'contacts' => $this->directory->page($business, $search, (int) Auth::id(), $group?->id, $added),
             'search' => $search,
             'groups' => $groups,
             'selectedGroup' => $group,

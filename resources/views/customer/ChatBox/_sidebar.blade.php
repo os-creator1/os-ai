@@ -37,6 +37,26 @@
         </div>
     </div>
 
+    @php
+        $scopeWaiting = request()->query('filter') === 'waiting';
+        // The SAME accepted range the list queries use, decided once by the controller (HomeDestinationRange): malformed, reversed and
+        // overlong ranges are not accepted, so they claim nothing.
+        $scopeRange = $homeScopeRange ?? null;
+        $scopeDays = $scopeRange !== null;
+    @endphp
+    @if($scopeWaiting || $scopeDays)
+        <p class="px-1 py-50 mb-0 text-caption" data-role="home-scope">
+            @php
+                $scopeParts = array_values(array_filter([
+                    $scopeWaiting ? 'customers waiting for a reply' : null,
+                    $scopeDays ? 'conversations started ' . $scopeRange->startLocal->format('M j') . ' – ' . $scopeRange->endLocal->format('M j') : null,
+                ]));
+            @endphp
+            Showing {{ implode(', ', $scopeParts) }}
+            · <a href="{{ url()->current() }}">Show all</a>
+        </p>
+    @endif
+
     <!-- Sidebar Users start -->
     <div id="users-list" class="chat-user-list-wrapper list-group">
 

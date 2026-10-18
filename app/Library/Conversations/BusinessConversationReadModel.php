@@ -44,13 +44,20 @@ final class BusinessConversationReadModel
      * the contract's `$startUtc`/`$endUtc` names hold only where that
      * timezone is UTC. Recorded for Dashboard Slice 4.
      */
-    public function startedCount(Business $business, CarbonImmutable $startUtc, CarbonImmutable $endUtc): int
+    public function startedCount(Business $business, CarbonImmutable $startUtc, CarbonImmutable $endUtc, ?array $reachableLocationIds = null): int
     {
-        return ChatBox::query()
+        $query = ChatBox::query()
             ->where('business_id', $business->id)
             ->where('created_at', '>=', $startUtc)
-            ->where('created_at', '<', $endUtc)
-            ->count();
+            ->where('created_at', '<', $endUtc);
+
+        // When the actor's reach is given, the inbox's own Location rule applies, so the figure equals what the list a card opens will
+        // show. Without it the count is Business-wide, as before.
+        if ($reachableLocationIds !== null) {
+            app(\App\Library\Crm\CrmLocationScope::class)->restrictToIds($query, $reachableLocationIds, 'chat_boxes.location_id');
+        }
+
+        return $query->count();
     }
 
     /**
@@ -221,6 +228,34 @@ final class BusinessConversationReadModel
             ->where('last.direction', self::DIRECTION_INCOMING)
             ->where('last.created_at', '<', $graceCutoff)
             ->count();
+    }
+
+    /** Whether this Business has EVER had a conversation (any age): one existence check, for telling established from new. */
+    public function hasAnyConversation(Business $business): bool
+    {
+        return DB::table('chat_boxes')->where('business_id', $business->id)->exists();
+    }
+
+    /**
+     * The conversations awaitingReplyCount() counts (same predicate, same Location rule), as a sub-select of their ids, so the inbox
+     * can constrain its own paginated query with it: every matching conversation is reachable, none is cut off by a cap.
+     */
+    public function awaitingReplyBoxQuery(Business $business, int $actorUserId, ?CarbonInterface $now = null): \Illuminate\Database\Query\Builder
+    {
+        $now = CarbonImmutable::parse($now ?? CarbonImmutable::now());
+        $graceCutoff = $now->subMinutes($this->graceMinutes());
+        $scanFloor = $now->subDays($this->scanDays());
+
+        $latest = DB::table('chat_box_messages as m')
+            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
+            ->groupBy('m.box_id')
+            ->selectRaw('MAX(m.id) as last_message_id');
+
+        return DB::table('chat_box_messages as last')
+            ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
+            ->where('last.direction', self::DIRECTION_INCOMING)
+            ->where('last.created_at', '<', $graceCutoff)
+            ->select('last.box_id');
     }
 
     /**
