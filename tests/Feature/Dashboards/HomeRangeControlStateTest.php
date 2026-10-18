@@ -95,10 +95,12 @@ class HomeRangeControlStateTest extends TestCase
     {
         $this->established();
         $html = $this->get(route('user.home'))->assertOk()->getContent();
+        $script = (string) file_get_contents(public_path('js/analytics/range-control.js'));
 
-        $this->assertStringContainsString("form.getAttribute('data-custom') === '1'", $html, 'Visibility follows data-custom for the segmented control.');
-        $this->assertStringContainsString('input.disabled = !custom; input.required = custom;', $html, 'Closed fields add nothing to a URL; open ones are required.');
-        $this->assertStringContainsString("window.addEventListener('pageshow'", $html, 'A page restored from history re-syncs from the rendered state.');
+        $this->assertStringContainsString('js/analytics/range-control.js', $html, 'The shared control script is loaded by the partial.');
+        $this->assertStringContainsString("form.getAttribute('data-custom') === '1'", $script, 'Visibility follows data-custom for the segmented control.');
+        $this->assertStringContainsString('input.disabled = !custom; input.required = custom;', $script, 'Closed fields add nothing to a URL; open ones are required.');
+        $this->assertStringContainsString("win.addEventListener('pageshow'", $script, 'A page restored from history re-syncs from the rendered state.');
     }
 
     public function test_the_full_size_results_control_is_unchanged(): void
