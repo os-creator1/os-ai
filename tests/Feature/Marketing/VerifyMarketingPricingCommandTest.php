@@ -63,6 +63,26 @@ class VerifyMarketingPricingCommandTest extends TestCase
         $this->artisan('marketing:verify-pricing')->expectsOutputToContain('catalog price is unset')->assertExitCode(1);
     }
 
+    public function test_it_flags_a_plan_comparison_claim_the_catalog_packaging_contradicts(): void
+    {
+        $this->priceCatalog();
+        $core = WorkspacePlanCatalog::query()->where('tier', 'core')->value('id');
+        DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $core)->where('feature_key', 'website_generation')->delete();
+
+        $this->artisan('marketing:verify-pricing')
+            ->expectsOutputToContain('Plan comparison does not match the catalog packaging')
+            ->assertExitCode(1);
+    }
+
+    public function test_the_shipped_comparison_matches_the_shipped_packaging(): void
+    {
+        $this->priceCatalog();
+
+        $this->artisan('marketing:verify-pricing')
+            ->expectsOutputToContain('Plan comparison matches the catalog feature packaging.')
+            ->assertExitCode(0);
+    }
+
     public function test_it_changes_nothing(): void
     {
         $this->priceCatalog();

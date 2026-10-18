@@ -196,3 +196,12 @@ body.mg-pricing .tick .ic{width:12px;height:12px;stroke-width:2.6}
   .mg-bar .btn{padding:0 14px}
 }
 @media (max-width:360px){.mg-logo{height:20px !important}.mg-gs{padding:0 10px;font-size:13px}.mg-bar{gap:6px !important}.mg-bar > div:last-child{gap:6px !important}}
+
+/* Homepage commitment on phones: compact panel (the icon tile is dropped) */
+@media (max-width:960px){
+  .com-box{padding:24px 20px !important;gap:20px !important;border-radius:18px !important}
+  .com-box > div:first-child{gap:16px !important}
+  .com-box > div:first-child > span[aria-hidden]{display:none !important}
+  .com-box > div:last-child{gap:10px !important}
+  .com-box > div:last-child > div{padding:16px 18px !important;border-radius:14px !important;gap:6px !important}
+}

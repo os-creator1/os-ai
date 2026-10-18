@@ -25,10 +25,12 @@ editor can later replace that one file with database rows (change `MarketingSite
 
 ## Hosts and the two shared URLs
 
-Today `getmotiongrove.com` is the platform host (`APP_URL`), and the repository contains no
-separate `app.` host configuration. The marketing site answers on every platform host unless
-`MARKETING_HOSTS` is set. Custom customer domains are unaffected: `ResolveCustomDomainWebsite`
-runs first and only ever serves that customer's own website.
+`APP_URL` is the platform host: `getmotiongrove.com` in production and `staging.getmotiongrove.com` on staging.
+No separate `app.` host exists anywhere in this repository (only `notify.getmotiongrove.com` for mail), so none is assumed.
+With `MARKETING_HOSTS` blank the site answers on the `APP_URL` host **only**: not on `www.`, not on other
+subdomains `TrustHosts` admits, and not on a customer domain that is not yet Active. List extra hosts explicitly
+(for example `getmotiongrove.com,www.getmotiongrove.com`). Active custom customer domains are unaffected:
+`ResolveCustomDomainWebsite` runs first and only ever serves that customer's own website.
 
 Two marketing URLs already belonged to the application, and the router silently replaces a
 second route on the same URI, so neither is simply re-registered:
@@ -56,7 +58,8 @@ $197 offer, the private 28-day trial, sales-call checkout links and any trial wo
 public, and a test fails if they appear. "Choose a plan" buttons go to the application's own
 catalog-validated signup (`/register?plan=core|growth|agency`), or to `MARKETING_CHECKOUT_<TIER>_URL`.
 The site does not change Stripe, entitlements, registration eligibility or backend pricing.
-`php artisan marketing:verify-pricing` (read-only) compares the website prices with `workspace_plan_catalog`.
+`php artisan marketing:verify-pricing` (read-only) compares the website prices with `workspace_plan_catalog` and the
+plan-comparison table with `workspace_plan_features`. Run it against each environment before launch.
 
 ## Placeholders, unconfirmed terms and unverified features
 

@@ -60,6 +60,8 @@ class MarketingController extends Controller
 
     private function page(string $page): View
     {
+        abort_unless($this->site->servesRequest(request()), 404);
+
         return view('marketing.pages.'.$page, [
             'mg' => $this->site,
             'page' => $page,

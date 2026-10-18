@@ -24,9 +24,9 @@
 return [
     'enabled' => (bool) env('MARKETING_SITE_ENABLED', true),
 
-    // Hostnames the marketing routes answer on. Blank = every platform host
-    // (today getmotiongrove.com is the platform host, APP_URL). Set this when a
-    // separate app host is introduced, e.g. "getmotiongrove.com,www.getmotiongrove.com".
+    // Hostnames the marketing routes answer on. Blank = the platform host only (the APP_URL host:
+    // getmotiongrove.com in production, staging.getmotiongrove.com on staging). Add others explicitly,
+    // e.g. "getmotiongrove.com,www.getmotiongrove.com". No separate app host exists in this repository.
     'hosts' => array_values(array_filter(array_map('trim', explode(',', (string) env('MARKETING_HOSTS', ''))))),
 
     // Labelled placeholders ("[Customer name]", "[Video ID]") render only while this is on.
@@ -119,15 +119,18 @@ return [
             'name' => 'Core', 'price' => 97, 'cycle' => 'every_28_days', 'featured' => false,
             'tagline' => 'Organize and follow up on every lead.',
             'tagline_pricing' => 'CRM and the everyday business tools.',
-            'tagline_mobile' => 'CRM, calendar, forms, automations',
+            'tagline_mobile' => 'CRM, calendar, forms, automations, website',
             'cta' => 'Choose Core',
+            // Packaging follows workspace_plan_features: website generation and the basic AI assistant are in every plan.
             'features' => [
                 'CRM, contacts & pipelines', 'Conversations', 'Calendar & bookings',
                 'Forms & lead capture', 'Automations & follow-ups',
+                'AI website generation & hosting', 'Ask MotionGrove AI assistant',
             ],
             'features_pricing' => [
                 'CRM, contacts & pipelines', 'Conversations inbox', 'Calendar & bookings',
                 'Forms & lead capture', 'Automations & follow-ups',
+                'AI website generation & hosting', 'Ask MotionGrove AI assistant',
             ],
         ],
         'growth' => [
@@ -135,17 +138,17 @@ return [
             'badge' => 'Most popular',
             'tagline' => 'Get found, get leads, get booked.',
             'tagline_pricing' => 'Your complete growth system.',
-            'tagline_mobile' => 'Core plus website, SEO, ads visibility if you run ads, AI assistant and guided onboarding.',
+            'tagline_mobile' => 'Core plus SEO tools, ads performance if you run ads, and guided onboarding.',
             'cta' => 'Choose Growth',
             'features_lead' => 'Everything in Core, plus:',
             'features' => [
-                'SEO tools & recommendations', 'AI website generation & hosting',
-                'Google & Meta ads visibility, if you run ads', 'Ask MotionGrove AI assistant',
+                'SEO tools & recommendations',
+                'Google & Meta ads performance, if you run ads',
                 'Guided onboarding & assistance',
             ],
             'features_pricing' => [
-                'AI website generation & hosting', 'SEO tools & recommendations',
-                'Google & Meta ads visibility', 'Ask MotionGrove AI assistant',
+                'SEO tools & recommendations',
+                'Google & Meta ads performance',
                 'Guided onboarding & assistance',
             ],
         ],
@@ -172,16 +175,34 @@ return [
             ['Automations & follow-ups', [true, true, true]],
         ]],
         ['group' => 'Grow', 'rows' => [
-            ['AI website generation & hosting', [false, true, true]],
+            ['AI website generation & hosting', [true, true, true]],
+            ['Ask MotionGrove AI assistant', [true, true, true], 'Some AI features are billed by usage.'],
+            ['SEO visibility & rank tracking', [true, true, true]],
             ['SEO tools & recommendations', [false, true, true]],
-            ['Google & Meta ads visibility', [false, true, true], 'See ad results next to your leads. Ad spend is paid to Google or Meta directly.'],
-            ['Ask MotionGrove AI assistant', [false, true, true], 'Some AI features are billed by usage.'],
+            ['Google & Meta ads performance', [false, true, true], 'See ad results next to your leads. Ad spend is paid to Google or Meta directly.'],
             ['Guided onboarding & assistance', ['confirm', true, true]],
         ]],
         ['group' => 'Agencies', 'rows' => [
             ['Multi-account management', [false, false, true]],
             ['White-label branding', [false, false, true]],
         ]],
+    ],
+
+    // Comparison rows that map to a catalog feature key; `marketing:verify-pricing` checks them against
+    // workspace_plan_features so the table cannot claim a tier gets (or lacks) something it does not.
+    'plan_feature_keys' => [
+        'CRM, contacts & pipelines' => 'crm',
+        'Conversations (text, email, chat)' => 'conversations',
+        'Calendar & bookings' => 'calendar',
+        'Forms & surveys' => 'forms',
+        'Automations & follow-ups' => 'automations',
+        'AI website generation & hosting' => 'website_generation',
+        'Ask MotionGrove AI assistant' => 'ai_coo_basic',
+        'SEO visibility & rank tracking' => 'seo_basic_visibility',
+        'SEO tools & recommendations' => 'seo_module',
+        'Google & Meta ads performance' => 'ads_module',
+        'Multi-account management' => 'agency_package_capabilities',
+        'White-label branding' => 'white_label',
     ],
 
     'usage_charges' => [
@@ -460,7 +481,7 @@ return [
         'home' => [
             ['q' => 'Will MotionGrove help me get more customers?', 'a' => 'That’s what it’s built for. Your website and SEO work to bring in inquiries — and ads too, if you choose to run them — and every inquiry gets a fast follow-up. We can’t guarantee results — they depend on your market, your offer and your reviews — but you’ll always see what’s working and what to do next.'],
             ['q' => 'Is MotionGrove difficult to set up?', 'a' => 'No. You answer guided questions about your business, and we walk you through connecting your calendar, phone number and other tools. Eligible plans include setup help from a real person.', 'mobile' => ['Is it difficult to set up?', 'No. Guided questions, plus setup help from a real person on eligible plans.']],
-            ['q' => 'Can I use MotionGrove with my existing website?', 'a' => 'Yes. You can keep your current site and use MotionGrove for your CRM, follow-ups and bookings, or build a new website with MotionGrove on the Growth plan.'],
+            ['q' => 'Can I use MotionGrove with my existing website?', 'a' => 'Yes. You can keep your current site and use MotionGrove for your CRM, follow-ups and bookings, or build a new website with MotionGrove.'],
             ['q' => 'Does MotionGrove replace my CRM?', 'a' => 'For most small businesses, yes. Contacts, pipelines, conversations and history live in one place, connected to your website, calendar and marketing.'],
             ['q' => 'Can MotionGrove help automate customer follow-ups?', 'a' => 'Yes. Workflows can reply to new inquiries, send reminders, chase unsigned proposals and request payment — by text or email, in your own words.'],
             ['q' => 'Do you help with setup?', 'a' => 'Yes. Eligible plans include guided setup of your website, CRM, calendar and core workflows, plus ongoing support when you need it.'],

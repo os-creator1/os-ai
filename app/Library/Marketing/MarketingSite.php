@@ -64,9 +64,15 @@ final class MarketingSite
             return false;
         }
 
+        // Blank MARKETING_HOSTS means the platform host only (the APP_URL host). TrustHosts also admits every
+        // subdomain of APP_URL, and a customer domain that is not yet Active reaches routing unmatched, so
+        // "any host" would publish the marketing site where it was never intended.
         $hosts = (array) config('marketing.hosts', []);
+        if ($hosts === []) {
+            $hosts = [(string) parse_url((string) config('app.url'), PHP_URL_HOST)];
+        }
 
-        return $hosts === [] || in_array(strtolower($request->getHost()), array_map('strtolower', $hosts), true);
+        return in_array(strtolower($request->getHost()), array_map('strtolower', $hosts), true);
     }
 
     /** Public asset under public/marketing, cache-busted by file time. */

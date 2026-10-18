@@ -392,6 +392,36 @@ class MarketingWebsiteTest extends TestCase
         $this->get('/')->assertRedirect('login');
     }
 
+    public function test_blank_hosts_mean_the_platform_host_only_and_other_hosts_get_no_marketing_page(): void
+    {
+        $site = $this->app->make(MarketingSite::class);
+        config(['app.url' => 'https://getmotiongrove.com']);
+        $platform = 'getmotiongrove.com';
+
+        $this->assertTrue($site->servesRequest(\Illuminate\Http\Request::create('http://'.$platform.'/')));
+        // A not-yet-Active customer domain, a stray subdomain of APP_URL and www all fall outside.
+        foreach (['customer-site.example.test', 'app.'.$platform, 'www.'.$platform] as $host) {
+            $this->assertFalse($site->servesRequest(\Illuminate\Http\Request::create('http://'.$host.'/')), $host);
+        }
+
+        config(['marketing.hosts' => ['www.'.$platform]]);
+        $this->assertTrue($site->servesRequest(\Illuminate\Http\Request::create('http://www.'.$platform.'/product')));
+        $this->assertFalse($site->servesRequest(\Illuminate\Http\Request::create('http://'.$platform.'/product')));
+
+        config(['marketing.enabled' => false]);
+        $this->assertFalse($site->servesRequest(\Illuminate\Http\Request::create('http://www.'.$platform.'/')));
+    }
+
+    public function test_the_plan_comparison_follows_the_catalog_packaging(): void
+    {
+        $text = $this->text('/pricing');
+        $this->assertStringContainsString('AI website generation & hosting', $text);
+
+        $plans = config('marketing.plans');
+        $this->assertContains('AI website generation & hosting', $plans['core']['features']);
+        $this->assertNotContains('AI website generation & hosting', $plans['growth']['features']);
+    }
+
     public function test_the_site_answers_only_on_its_configured_hosts(): void
     {
         $platform = parse_url(config('app.url'), PHP_URL_HOST);
