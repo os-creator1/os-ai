@@ -62,7 +62,7 @@ class ByoMessageDispatcher
         // must be this Business's own agency's, and the Business that agency's
         // own sole Business.
         if ((int) $channel->workspace_id !== (int) $business->workspace_id
-            || AgencyByoSender::selectedChannel($business)?->id !== $channel->id) {
+            || ! AgencyByoSender::isOwnBusiness($business)) {
             throw new ByoSenderNotReadyException('not_owned', 'That sender does not belong to this agency.');
         }
 

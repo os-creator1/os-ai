@@ -30,22 +30,56 @@ final class AgencyByoSender
             return null;
         }
 
-        $workspace = Workspace::query()->find((int) $business->workspace_id);
-
-        if ($workspace === null) {
-            return null;
-        }
-
-        $own = AgencyOutreachBusinessResolver::forWorkspace($workspace);
-
-        if ($own === null || (int) $own->id !== (int) $business->id) {
+        if (! self::isOwnBusiness($business)) {
             return null;
         }
 
         return AgencyProspectingChannel::query()
-            ->where('workspace_id', (int) $workspace->id)
+            ->where('workspace_id', (int) $business->workspace_id)
             ->where('provider', SendingServer::TYPE_TELNYX)
             ->where('is_default_sender', true)
+            ->with('sendingServer')
+            ->orderBy('id')
+            ->first();
+    }
+
+    /** The Business is its Agency Workspace's own single Business — never a client's. */
+    public static function isOwnBusiness(Business $business): bool
+    {
+        if ($business->workspace_id === null) {
+            return false;
+        }
+
+        $workspace = Workspace::query()->find((int) $business->workspace_id);
+        $own = $workspace !== null ? AgencyOutreachBusinessResolver::forWorkspace($workspace) : null;
+
+        return $own !== null && (int) $own->id === (int) $business->id;
+    }
+
+    /**
+     * The agency channel an EXISTING conversation was sent from, if it was one of the
+     * agency's own Telnyx numbers — so a retry of a failed bubble keeps the transport it
+     * started on, whatever the default sender is now. Null means "not a BYO thread".
+     */
+    public static function channelForConversation(Business $business, int $conversationBoxId): ?AgencyProspectingChannel
+    {
+        if (! self::isOwnBusiness($business)) {
+            return null;
+        }
+
+        $from = \App\Models\ChatBox::query()
+            ->where('id', $conversationBoxId)
+            ->where('business_id', (int) $business->id)
+            ->value('from');
+
+        if ($from === null) {
+            return null;
+        }
+
+        return AgencyProspectingChannel::query()
+            ->where('workspace_id', (int) $business->workspace_id)
+            ->where('provider', SendingServer::TYPE_TELNYX)
+            ->where('sender_number', preg_replace('/\D/', '', (string) $from))
             ->with('sendingServer')
             ->orderBy('id')
             ->first();

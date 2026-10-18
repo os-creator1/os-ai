@@ -143,7 +143,11 @@ class ManagedDispatchDelegate
         // Automations and campaigns all reach it with no separate engine. Chosen
         // and unusable means refused (ByoSenderNotReadyException), never a quiet
         // switch to the platform-paid managed path or a legacy gateway.
-        $byoChannel = \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business);
+        // A retry of an existing bubble keeps the transport its conversation started on
+        // (found from the conversation's own number), not whatever is the default now.
+        $byoChannel = $conversationBoxId !== null
+            ? \App\Library\AgencyOutreach\AgencyByoSender::channelForConversation($business, $conversationBoxId)
+            : \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business);
 
         if ($byoChannel !== null) {
             if ($operationKey === null || $operationKey === '') {

@@ -219,6 +219,30 @@ class AgencyByoTelnyxMessagingTest extends TestCase
         $this->assertSame($channel->sender_number, $boxes[0]->from, 'Number ownership did not move.');
     }
 
+    public function test_a_retry_keeps_the_transport_its_conversation_started_on_whatever_the_default_is_now(): void
+    {
+        [, $business, $workspace] = $this->agency('Snap', '14155550123');
+        $channel = $this->byoChannel($workspace, ['sender' => '12025552000', 'default' => true]);
+
+        ManagedDispatchDelegate::attempt((int) $business->id, '12025551000', 'first', 'rt-1', [], '1', 'plain', 'manual', 'uid-1');
+        $byoBox = ChatBox::query()->where('business_id', $business->id)->sole();
+
+        // Default flips to the managed number; a retry in the BYO thread still goes via BYO.
+        $channel->forceFill(['is_default_sender' => false])->save();
+        ManagedDispatchDelegate::attempt((int) $business->id, '12025551000', 'retry', 'rt-2', [], '1', 'plain', 'manual', 'uid-1', (int) $byoBox->id, true);
+
+        $this->assertSame('byo', DB::table('business_messaging_operations')->where('operation_key', 'rt-2')->value('transport_mode'));
+        $this->assertCount(0, $this->fakeAdapter->sentRequests, 'Never the platform-paid number for a BYO thread.');
+
+        // And the reverse: a managed thread is retried on managed even though BYO is now the default.
+        ManagedDispatchDelegate::attempt((int) $business->id, '12025557777', 'managed first', 'rt-3', [], '1', 'plain', 'manual', 'uid-2');
+        $managedBox = ChatBox::query()->where('business_id', $business->id)->where('to', '12025557777')->sole();
+        $channel->forceFill(['is_default_sender' => true])->save();
+        ManagedDispatchDelegate::attempt((int) $business->id, '12025557777', 'managed retry', 'rt-4', [], '1', 'plain', 'manual', 'uid-2', (int) $managedBox->id, true);
+
+        $this->assertSame('managed', DB::table('business_messaging_operations')->where('operation_key', 'rt-4')->value('transport_mode'));
+    }
+
     // ------------------------------------------------------------------ Automations
 
     public function test_automations_resolve_the_byo_number_and_the_core_send_goes_through_the_byo_dispatcher(): void
