@@ -30,10 +30,13 @@
     $timezoneNote = 'Days follow ' . ($businessName ? $businessName . "'s" : "this Business's") . ' local time (' . $range->timezone . ').';
 @endphp
 
-<form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
+{{-- data-custom is the ONE source of truth for whether the Custom date fields are open (server-rendered from the range being shown, flipped only by the Custom
+     toggle). The hidden preset select is a no-JavaScript/legacy control, never consulted to decide it, and in the segmented variant it carries no name so it
+     can never add a second `range` parameter beside the pressed preset button. --}}
+<form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" data-custom="{{ $isCustom ? '1' : '0' }}" @if($segmented) data-segmented="1" @endif @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
     <div class="{{ $segmented ? 'visually-hidden' : 'col-md-3 col-sm-6' }}">
         <label class="form-label" for="range">Date range</label>
-        <select id="range" name="range" class="form-select" data-role="range-preset" @if($segmented) inert @endif>
+        <select id="range" @unless($segmented) name="range" @endunless class="form-select" data-role="range-preset" @if($segmented) inert @endif>
             @foreach(AnalyticsDateRange::SELECTABLE_PRESETS as $value)
                 <option value="{{ $value }}" @selected($range->preset === $value)>{{ $presetLabels[$value] }}</option>
             @endforeach
@@ -51,11 +54,11 @@
     @endif
     <div class="col-md-3 col-sm-6" data-role="custom-dates" @unless($isCustom) hidden @endunless>
         <label class="form-label" for="start">From</label>
-        <input type="date" id="start" name="start" class="form-control" value="{{ old('start', $isCustom ? $range->startLocal->format('Y-m-d') : '') }}">
+        <input type="date" id="start" name="start" class="form-control" data-custom-field value="{{ old('start', $isCustom ? $range->startLocal->format('Y-m-d') : '') }}">
     </div>
     <div class="col-md-3 col-sm-6" data-role="custom-dates" @unless($isCustom) hidden @endunless>
         <label class="form-label" for="end">To</label>
-        <input type="date" id="end" name="end" class="form-control" value="{{ old('end', $isCustom ? $range->endLocal->format('Y-m-d') : '') }}">
+        <input type="date" id="end" name="end" class="form-control" data-custom-field value="{{ old('end', $isCustom ? $range->endLocal->format('Y-m-d') : '') }}">
     </div>
     <div class="col-md-3 col-sm-6" @if($segmented) data-role="custom-dates" @unless($isCustom) hidden @endunless @endif>
         @if($segmented)
@@ -88,11 +91,24 @@
         if (window.__analyticsRangeCustomDates) { return; }
         window.__analyticsRangeCustomDates = true;
 
+        // Whether the Custom fields are open. The segmented control keeps this in the form's own data-custom (server-rendered, flipped by the
+        // Custom toggle); the full-size control still follows its select. Closed fields are also disabled, so they add nothing to a preset's URL,
+        // and open ones are required, so Apply can never submit an empty custom range.
+        function isCustom(form) {
+            if (form.getAttribute('data-segmented') === '1') { return form.getAttribute('data-custom') === '1'; }
+            var preset = form.querySelector('[data-role="range-preset"]');
+            return !!preset && preset.value === 'custom';
+        }
+
         function sync(form) {
-            var preset = form && form.querySelector('[data-role="range-preset"]');
-            if (!preset) { return; }
-            var custom = preset.value === 'custom';
+            if (!form) { return; }
+            var custom = isCustom(form);
             form.querySelectorAll('[data-role="custom-dates"]').forEach(function (el) { el.hidden = !custom; });
+            if (form.getAttribute('data-segmented') === '1') {
+                form.querySelectorAll('[data-custom-field]').forEach(function (input) { input.disabled = !custom; input.required = custom; });
+                var toggle = form.querySelector('[data-role="range-custom-toggle"]');
+                if (toggle) { toggle.setAttribute('aria-pressed', custom ? 'true' : 'false'); toggle.classList.toggle('is-open', custom); }
+            }
         }
 
         function syncAll(root) {
@@ -105,13 +121,21 @@
             }
         });
         document.addEventListener('click', function (event) {
+            // Choosing a preset closes Custom for that request: its (possibly open) date fields are disabled, so they add nothing to the URL.
+            var preset = event.target && event.target.closest ? event.target.closest('[data-role="range-segments"] button[type="submit"][value]') : null;
+            if (preset && preset.value !== 'custom') {
+                var owner = preset.form || preset.closest('form');
+                if (owner && owner.getAttribute('data-segmented') === '1') { owner.setAttribute('data-custom', '0'); sync(owner); }
+            }
+
             var toggle = event.target && event.target.closest ? event.target.closest('[data-role="range-custom-toggle"]') : null;
             if (!toggle) { return; }
             var form = toggle.form || toggle.closest('form');
-            var open = form.querySelector('[data-role="custom-dates"]').hidden;
-            form.querySelectorAll('[data-role="custom-dates"]').forEach(function (el) { el.hidden = !open; });
-            toggle.setAttribute('aria-pressed', open ? 'true' : 'false');
+            form.setAttribute('data-custom', isCustom(form) ? '0' : '1');
+            sync(form);
         });
+        // A page restored from history (back/forward, bfcache) shows exactly what the server rendered for its URL, plus any deliberate toggle.
+        window.addEventListener('pageshow', function () { syncAll(document); });
         document.addEventListener('async-region:updated', function (event) { syncAll(event.target); });
         syncAll(document);
     })();

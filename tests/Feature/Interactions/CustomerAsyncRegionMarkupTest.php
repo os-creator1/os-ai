@@ -77,7 +77,9 @@ class CustomerAsyncRegionMarkupTest extends TestCase
         $form = $this->onlyElement($xpath, './/form[@data-async-form="business-performance"]', $band);
         $this->assertSame('get', strtolower($form->getAttribute('method')), 'An ordinary GET: the no-JavaScript fallback.');
         $this->assertSame(route('user.home'), $form->getAttribute('action'));
-        $this->assertSame(1, $xpath->query('.//select[@name="range"]', $form)->length);
+        // The select is a no-name, hidden state mirror (it must never add a second `range`); the pressed preset button carries the parameter.
+        $this->assertSame(1, $xpath->query('.//select[@data-role="range-preset"][not(@name)]', $form)->length);
+        $this->assertSame(0, $xpath->query('.//select[@name="range"]', $form)->length, 'No second range parameter.');
         $this->assertSame(1, $xpath->query('.//button[@type="submit"][@value="custom"]', $form)->length, 'One Apply, for a custom range.');
         $this->assertSame(3, $xpath->query('.//*[@data-role="range-segments"]//button[@type="submit"]', $form)->length, 'A preset is one press: 7 days, This month, 30 days.');
 
@@ -114,7 +116,7 @@ class CustomerAsyncRegionMarkupTest extends TestCase
         $this->assertStringContainsString('Last month', $caption);
         $this->assertStringContainsString('Aug 1', $caption);
 
-        $selected = $this->onlyElement($xpath, './/select[@name="range"]/option[@selected]', $band);
+        $selected = $this->onlyElement($xpath, './/select[@data-role="range-preset"]/option[@selected]', $band);
         $this->assertSame(AnalyticsDateRange::PRESET_LAST_MONTH, $selected->getAttribute('value'));
 
         $series = $this->onlyElement($xpath, './/*[@data-role="home-chart"]', $band)->getAttribute('data-series-url');
@@ -139,7 +141,7 @@ class CustomerAsyncRegionMarkupTest extends TestCase
             $this->assertSame($page, $form->getAttribute('action'));
             $this->assertSame(
                 AnalyticsDateRange::PRESET_LAST_7_DAYS,
-                $this->onlyElement($xpath, './/select[@name="range"]/option[@selected]', $form)->getAttribute('value')
+                $this->onlyElement($xpath, './/select[@data-role="range-preset"]/option[@selected]', $form)->getAttribute('value')
             );
         }
 

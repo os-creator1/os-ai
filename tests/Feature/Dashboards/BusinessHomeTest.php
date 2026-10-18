@@ -348,7 +348,8 @@ class BusinessHomeTest extends TestCase
         $this->assertNotContains('automation_runs', $this->headlineKeys($html));
         $this->assertNotContains(AttentionType::AutomationFailing->value, $this->attentionTypes($html));
         $this->assertNotContains(AttentionType::GoogleConnectionLost->value, $this->attentionTypes($html));
-        $this->assertStringNotContainsString('disabled', $this->mainHtml($html), 'Absent, never disabled.');
+        // Markup only: the range control's script legitimately mentions the word while it syncs its own date fields.
+        $this->assertStringNotContainsString('disabled', (string) preg_replace('#<script\b.*?</script>#si', '', $this->mainHtml($html)), 'Absent, never disabled.');
         $this->assertStringNotContainsString('data-state="locked"', $html, 'The dashboard is not an upsell wall.');
     }
 
@@ -974,7 +975,8 @@ class BusinessHomeTest extends TestCase
     /** @return array<int, string> */
     private function formFieldNames(string $html): array
     {
-        preg_match_all('/<(?:input|select)[^>]*name="([^"]+)"/', $this->mainHtml($html), $matches);
+        // Buttons count: the pressed preset button (name=range) is what carries the period.
+        preg_match_all('/<(?:input|select|button)[^>]*name="([^"]+)"/', $this->mainHtml($html), $matches);
 
         return $matches[1];
     }
