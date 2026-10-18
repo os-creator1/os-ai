@@ -1026,6 +1026,11 @@
         | never something done "as" a client.
         |----------------------------------------------------------------------
         */
+        // The Agency's OWN operating workspace (CRM, Calendar, Automations, SEO, Ads):
+        // owner-only, asserted inside AgencyOperationsManager. Prohibited under View As.
+        Route::post('{workspaceUid}/agency/operations', 'Agency\AgencyOperationsController@enable')
+            ->middleware('throttle:30,1')->name('agency.operations.enable');
+
         Route::get('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@show')
             ->name('agency.white-label.show');
         Route::post('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@update')
