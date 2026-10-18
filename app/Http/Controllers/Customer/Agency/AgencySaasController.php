@@ -134,7 +134,7 @@ class AgencySaasController extends Controller
         $agencyWorkspace = $this->authorizedAgency($workspaceUid);
 
         $data = $request->validate([
-            'country' => ['required', 'string', 'size:2'],
+            'country' => ['required', 'string', 'regex:/\A[A-Za-z]{2}\z/'],
             'email' => ['nullable', 'email', 'max:255'],
         ]);
 

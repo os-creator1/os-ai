@@ -104,6 +104,37 @@ class AgencyStripeOwnAccountTest extends TestCase
             ->assertSee('Ready to take payments');
     }
 
+    public function test_country_is_not_prefilled_and_must_be_chosen_explicitly(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->get(route('customer.workspaces.agency.saas.stripe', [$uid]))
+            ->assertOk()
+            ->assertDontSee('value="US"', false);
+
+        foreach (['', 'L', 'LTU', '1T'] as $bad) {
+            $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), ['country' => $bad])
+                ->assertSessionHasErrors('country');
+        }
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+    }
+
+    public function test_a_lithuanian_agency_is_created_with_its_own_country_not_us(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), ['country' => 'lt'])
+            ->assertRedirect();
+
+        $this->assertNotNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+        $this->assertSame('LT', $this->agencyStripe->callsOf('createAccount')[0]['args']['country'] ?? null);
+        $this->assertSame('LT', \App\Library\AgencyBilling\StripeApiAgencyGateway::accountCreateParams('LT', null, 'x')['country']);
+    }
+
     public function test_the_same_state_cannot_be_replayed(): void
     {
         $fixture = $this->agencyWithClient();

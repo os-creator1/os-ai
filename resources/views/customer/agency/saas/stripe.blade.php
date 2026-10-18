@@ -29,8 +29,8 @@
                     <form method="POST" action="{{ route('customer.workspaces.agency.saas.stripe.connect', [$agencyWorkspace->uid]) }}"
                           data-role="agency-stripe-connect">
                         @csrf
-                        <label>{{ __('Country') }}
-                            <input type="text" name="country" maxlength="2" value="US" required>
+                        <label>{{ __('Country where your business is legally established (2-letter code, e.g. LT, GB, US)') }}
+                            <input type="text" name="country" maxlength="2" minlength="2" pattern="[A-Za-z]{2}" autocomplete="off" value="{{ old('country') }}" required>
                         </label>
                         <label>{{ __('Billing email (optional)') }}
                             <input type="email" name="email">
