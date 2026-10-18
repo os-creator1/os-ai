@@ -205,7 +205,9 @@
              * Version 3.7
              */
 
-            Route::get('pricing', 'AccountController@pricing')->name('account.pricing');
+            // Guests get the public MotionGrove pricing page (resources/views/marketing); a signed-in customer
+            // reaches this page exactly as before. The middleware runs ahead of `auth` (Kernel::$middlewarePriority).
+            Route::get('pricing', 'AccountController@pricing')->middleware(\App\Http\Middleware\ServeMarketingPricingToGuests::class)->name('account.pricing');
             Route::post('pricing', 'AccountController@searchPricing');
             Route::post('pricing/view', 'AccountController@viewPricing')->name('account.pricing-view');
 
