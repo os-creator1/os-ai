@@ -16,6 +16,9 @@
 --}}
 @extends('layouts/contentLayoutMaster')
 
+{{-- The frame renders the one "Content" heading itself; the per-tab title only feeds the browser <title>. --}}
+@section('page-heading', 'own')
+
 @section('page-style')
     @include('partials.section-router._styles')
     @include('partials.cx._styles')

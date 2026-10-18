@@ -78,6 +78,51 @@ class ContentHttpTest extends TestCase
         $this->assertSame(0, $this->fake->callCount(), 'no AI call on any Content page');
     }
 
+    public function test_every_content_tab_shows_one_page_title(): void
+    {
+        $t = $this->owner();
+
+        foreach (['plan', 'articles.index', 'opportunities'] as $name) {
+            $html = $this->get($this->url($t, $name))->assertOk()->getContent();
+
+            $this->assertSame(0, substr_count($html, 'content-header-title'), "{$name}: the shell must not print a second title");
+            $this->assertSame(1, preg_match_all('#<h4 class="mb-25">Content</h4>#', $html), "{$name}: exactly one Content heading");
+            $this->assertStringContainsString('<title>', $html);
+        }
+    }
+
+    public function test_the_content_plan_lists_pages_with_real_topics_and_progress(): void
+    {
+        $t = $this->owner();
+
+        $html = $this->get($this->url($t, 'plan'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Your pages', $html);
+        $this->assertMatchesRegularExpression('/\d+ of \d+ supported/', $html);
+        $this->assertStringContainsString('data-role="cluster"', $html);
+        $this->assertStringContainsString('data-role="plan-topic"', $html);
+        $this->assertStringNotContainsString('Needs a quick review', $html, 'no review banner without a real article to review');
+        $this->assertSame(0, $this->fake->callCount());
+    }
+
+    public function test_opportunities_filter_by_supported_page_with_accurate_counts(): void
+    {
+        $t = $this->owner();
+
+        $all = $this->get($this->url($t, 'opportunities'))->assertOk()->getContent();
+        $this->assertSame(1, preg_match('#data-filter="all"[^>]*>All <span>(\d+)</span>#', $all, $m));
+        $total = (int) $m[1];
+        $this->assertSame($total, substr_count($all, 'data-role="create-ai-draft"'));
+
+        preg_match_all('#data-filter="([^"]+)"[^>]*>[^<]*<span>(\d+)</span>#', $all, $filters, PREG_SET_ORDER);
+        $pageFilters = array_values(array_filter($filters, fn ($f) => $f[1] !== 'all'));
+        $this->assertNotEmpty($pageFilters);
+
+        $filtered = $this->get($this->url($t, 'opportunities', ['page' => $pageFilters[0][1]]))->assertOk()->getContent();
+        $this->assertSame((int) $pageFilters[0][2], substr_count($filtered, 'data-role="create-ai-draft"'));
+        $this->assertStringContainsString('is-active" href', $filtered);
+    }
+
     public function test_an_empty_articles_page_recommends_topics_instead_of_saying_no_records(): void
     {
         $t = $this->owner();
@@ -98,7 +143,7 @@ class ContentHttpTest extends TestCase
 
         $html = $this->get($this->url($t, 'opportunities'))->assertOk()->getContent();
 
-        foreach (['Search intent', 'Target topic', 'Supports', 'Why it matters', 'Not covered', 'Create AI draft', 'Write it myself'] as $needle) {
+        foreach (['Cost &amp; pricing', 'Supports', 'AI draft', 'Write myself', 'AI drafts use your real packages and prices, and are never published without you.', 'data-role="opportunity-filters"'] as $needle) {
             $this->assertStringContainsString($needle, $html);
         }
 
