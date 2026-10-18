@@ -277,6 +277,11 @@ class AgencyProspectingChannelController extends CustomerBaseController
             'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'] ?? $provider,
             'fields' => self::ALLOWED_PROVIDERS[$provider]['credential_fields'] ?? [],
             'webhookUrl' => $this->webhookUrl($channel),
+            // The older AI Prospecting agent's own endpoint, unchanged: still valid for a channel
+            // that runs those campaigns. Telnyx channels otherwise use the Conversations URL above.
+            'legacyWebhookUrl' => $channel->provider === SendingServer::TYPE_TELNYX
+                ? route('prospecting.webhooks.telnyx', [$channel->uid, AgencyProspectingWebhookToken::forChannel($channel->uid)])
+                : null,
         ]);
     }
 

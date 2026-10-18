@@ -483,4 +483,22 @@ class AgencyByoTelnyxSetupTest extends TestCase
         $channel->forceFill(['status' => AgencyProspectingChannel::STATUS_DISABLED])->save();
         $this->assertTrue($hint->needed($agency['workspace']), 'A chosen but unusable BYO sender still needs attention.');
     }
+
+    public function test_the_older_ai_prospecting_sender_still_works_with_a_sealed_key_and_keeps_its_webhook(): void
+    {
+        $agency = $this->outreachAgency('Alpha');
+        $channel = $this->byoChannel($agency['workspace'], ['key' => 'SEALED-PLAIN-CHECK']);
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        Http::fake(['api.telnyx.com/v2/messages' => Http::response(['data' => ['id' => 'm1', 'to' => [['status' => 'queued']]]])]);
+
+        $result = (new \App\Library\AgencyProspecting\ProviderAgencyProspectingMessageSender())->send($channel, '12025552000', '12025551000', 'hi');
+
+        $this->assertTrue($result->success);
+        Http::assertSent(fn ($request) => $request->header('Authorization')[0] === 'Bearer SEALED-PLAIN-CHECK');
+
+        // Its own inbound route is unchanged (token-gated, same 404 for a bad token).
+        $token = \App\Library\AgencyProspecting\AgencyProspectingWebhookToken::forChannel($channel->uid);
+        $this->post(route('prospecting.webhooks.telnyx', [$channel->uid, 'wrong']), [])->assertStatus(404);
+        $this->assertNotSame(404, $this->post(route('prospecting.webhooks.telnyx', [$channel->uid, $token]), [])->getStatusCode());
+    }
 }

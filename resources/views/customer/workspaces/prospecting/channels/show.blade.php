@@ -40,6 +40,9 @@
                     <dd class="col-sm-8"><code>{{ $webhookUrl }}</code>
                         @if($channel->provider === \App\Models\SendingServer::TYPE_TELNYX)
                             <div class="text-caption">Set this as the webhook URL of your Telnyx messaging profile. Events are accepted only if they are signed with your webhook public key.</div>
+                            @if(! empty($legacyWebhookUrl))
+                                <div class="text-caption mt-50">Only if this number also runs the older AI Prospecting agent, use <code>{{ $legacyWebhookUrl }}</code> instead.</div>
+                            @endif
                         @endif
                     </dd>
 
