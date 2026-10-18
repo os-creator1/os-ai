@@ -165,6 +165,25 @@ try {
         },
         // A caller holding a STALE model: active and a wrong duration in memory,
         // whatever the row says now. The engine must never trust either.
+        'demo-contact' => static function () use ($engine, $app, $argv): string {
+            // /book-demo: the engine plus DemoBookingContactResolver, email identity when the phone is blank.
+            $type = App\Models\BookingType::query()->findOrFail((int) $argv[3]);
+            $location = App\Models\BusinessLocation::query()->findOrFail((int) $argv[4]);
+            $business = App\Models\Business::query()->findOrFail((int) $location->business_id);
+            $resolver = $app->make(App\Library\Calendar\DemoBooking\DemoBookingContactResolver::class);
+            $contactId = null;
+            $appointment = $engine->bookWithRoundRobinContactResolver(
+                $type,
+                Illuminate\Support\Carbon::parse($argv[7]),
+                static function () use ($resolver, $location, $business, $argv, &$contactId): int {
+                    return $contactId = $resolver->resolve($location, $business, [
+                        'first_name' => 'Ada', 'last_name' => 'Lovelace', 'email' => $argv[5],
+                        'business_name' => 'Analytical Engines', 'website' => null, 'phone' => $argv[6],
+                    ]);
+                }
+            );
+            return 'contact_id=' . $contactId . ' appointment_id=' . $appointment->id;
+        },
         'book-stale' => static function () use ($engine, $argv): string {
             $bookingType = App\Models\BookingType::query()->findOrFail((int) $argv[3]);
             $bookingType->setRawAttributes(array_merge($bookingType->getAttributes(), [

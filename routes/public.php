@@ -16,6 +16,29 @@
         ->whereUuid('bookingTypeUuid')->name('public.booking.confirmed');
 
     /*
+    | MotionGrove "Book a Demo" — a fixed, stable address for the marketing site
+    | that adapts the same public booking engine to one designated internal
+    | Booking Type (config demo_booking.*). Same limits as /book/{uuid}; every
+    | route 404s unless a Booking Type is designated and Turnstile is configured.
+    */
+    Route::get('book-demo', 'Customer\DemoBookingController@page')
+        ->middleware('attribution.capture')->name('demo.booking.show');
+    Route::get('book-demo/dates', 'Customer\DemoBookingController@demoDates')
+        ->middleware('throttle:60,1')->name('demo.booking.dates');
+    Route::get('book-demo/slots', 'Customer\DemoBookingController@demoSlots')
+        ->middleware('throttle:60,1')->name('demo.booking.slots');
+    Route::post('book-demo', 'Customer\DemoBookingController@submit')
+        ->middleware('throttle:10,1')->name('demo.booking.store');
+    Route::get('book-demo/confirmed', 'Customer\DemoBookingController@demoConfirmed')
+        ->name('demo.booking.confirmed');
+    // Guest cancel / reschedule: authority is the signed, expiring link (checked in the controller, which
+    // ignores only the browsing `date`), retired when the appointment moves. Same limits as the booking write.
+    Route::get('book-demo/manage/{appointmentUid}', 'Customer\DemoBookingManageController@manage')
+        ->middleware('throttle:60,1')->name('demo.booking.manage');
+    Route::post('book-demo/manage/{appointmentUid}', 'Customer\DemoBookingManageController@act')
+        ->middleware('throttle:10,1')->name('demo.booking.manage.act');
+
+    /*
     | Forms V1 — a form's own public link. {deploymentUid} is the persisted
     | FormDeployment uid: the deterministic evidence of WHICH Location a
     | submission belongs to. Every action re-runs the full authority stack and

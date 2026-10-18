@@ -272,6 +272,8 @@
             state.submitting = false;
             els.submit.disabled = false;
             if (r.status === 201) { state.available = {}; showConfirmation(r.data.booking); return; }
+            // A Turnstile token is single-use: a refused attempt needs a fresh one.
+            if (window.turnstile) { try { window.turnstile.reset(); } catch (e) { /* widget not mounted */ } }
             if (r.status === 409) {
                 // The slot went while the guest typed: refresh the day and send them back to pick another.
                 state.available = {};

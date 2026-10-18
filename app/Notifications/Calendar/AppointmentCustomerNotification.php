@@ -16,8 +16,8 @@ use Illuminate\Notifications\Notification;
  *
  * The From ADDRESS is the platform's; the From display NAME is the Business, so
  * the guest sees who the message is from. No Reply-To is set, because a Business
- * has no canonical customer-facing email in the product yet. There are no
- * reschedule / cancel links: no customer-facing action for them exists.
+ * has no canonical customer-facing email in the product yet. The only reschedule / cancel
+ * link is the signed one a /book-demo appointment carries (Details::$manageUrl).
  *
  * Deliberately NOT ShouldQueue: SendAppointmentNotification already provides the
  * queueing and the once-only claim, exactly as DocumentIssuedNotification is sent
@@ -56,10 +56,11 @@ class AppointmentCustomerNotification extends Notification
                 }
             }
 
-            return $mail
-                ->viewData(['brand' => $d->brand, 'icon' => 'calendar'])
-                ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d))
-                ->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
+            $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar'])
+                ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+            $this->addManageLine($mail);
+
+            return $mail->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
         }
 
         $mail = (new BrandedMailMessage)
@@ -80,9 +81,20 @@ class AppointmentCustomerNotification extends Notification
             $details['Details'] = $d->instructions;
         }
 
-        return $mail
-            ->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => $details])
-            ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d))
-            ->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
+        $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => $details])
+            ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+        $this->addManageLine($mail);
+
+        return $mail->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
+    }
+
+    /** Below the action button: the signed guest link, only for the /book-demo Booking Type. */
+    private function addManageLine(MailMessage $mail): void
+    {
+        if ($this->details->manageUrl !== null) {
+            $mail->line(new \Illuminate\Support\HtmlString(
+                'Need a different time? <a href="'.e($this->details->manageUrl).'">Reschedule or cancel your appointment</a>.'
+            ));
+        }
     }
 }

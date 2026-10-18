@@ -68,7 +68,7 @@
                 </select>
             </div>
 
-            <form method="get" action="{{ route('public.booking.show', [$type->public_booking_uuid]) }}" class="pb-fallback-only pb-field" style="margin-top:14px">
+            <form method="get" action="{{ $demo['showUrl'] ?? route('public.booking.show', [$type->public_booking_uuid]) }}" class="pb-fallback-only pb-field" style="margin-top:14px">
                 <label for="pb-date-fallback">Date</label>
                 <input id="pb-date-fallback" type="date" name="date" value="{{ $day?->toDateString() }}" required>
                 <button type="submit" class="pb-btn is-ghost" style="margin-top:10px">Show times</button>
@@ -86,7 +86,7 @@
                 @endif
                 <p class="pb-alert" id="pb-alert" role="alert" hidden></p>
 
-                <form method="post" id="pb-form" action="{{ route('public.booking.store', [$type->public_booking_uuid]) }}" novalidate>
+                <form method="post" id="pb-form" action="{{ $demo['storeUrl'] ?? route('public.booking.store', [$type->public_booking_uuid]) }}" novalidate>
                     @csrf
                     <input type="hidden" name="date" value="{{ $day?->toDateString() }}">
                     <input type="hidden" name="visitor_timezone" value="{{ $timezone }}">
@@ -95,7 +95,20 @@
                         <div class="pb-field"><label for="last-name">Last name</label><input id="last-name" type="text" name="last_name" value="{{ old('last_name') }}" autocomplete="family-name" required><p class="pb-err" data-err="last_name" hidden></p></div>
                     </div>
                     <div class="pb-field"><label for="email">Email</label><input id="email" type="email" name="email" value="{{ old('email') }}" autocomplete="email" inputmode="email" required><p class="pb-err" data-err="email" hidden></p></div>
+                    @if (isset($demo))
+                        <div class="pb-field"><label for="business-name">Business name</label><input id="business-name" type="text" name="business_name" value="{{ old('business_name') }}" autocomplete="organization" required><p class="pb-err" data-err="business_name" hidden></p></div>
+                        <div class="pb-field"><label for="website">Website <span style="font-weight:400">(optional)</span></label><input id="website" type="text" name="website" value="{{ old('website') }}" autocomplete="url" inputmode="url" placeholder="example.com"><p class="pb-err" data-err="website" hidden></p></div>
+                        <div class="pb-field"><label for="phone">Phone <span style="font-weight:400">(optional)</span></label><input id="phone" type="tel" name="phone" value="{{ old('phone') }}" autocomplete="tel" inputmode="tel"><p class="pb-err" data-err="phone" hidden></p></div>
+                        {{-- Honeypot: invisible to people, irresistible to form-filling bots. --}}
+                        <div aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden"><label for="demo-hp">Leave this field empty</label><input id="demo-hp" type="text" name="{{ $demo['honeypot'] }}" value="" tabindex="-1" autocomplete="off"></div>
+                        @if ($demo['turnstileSiteKey'])
+                            <div class="cf-turnstile" data-sitekey="{{ $demo['turnstileSiteKey'] }}" style="margin:6px 0 12px"></div>
+                        @endif
+                        <p class="pb-err" data-err="turnstile" hidden></p>
+                        @error('turnstile')<p class="pb-alert" role="alert">{{ $message }}</p>@enderror
+                    @else
                     <div class="pb-field"><label for="phone">Phone</label><input id="phone" type="tel" name="phone" value="{{ old('phone') }}" autocomplete="tel" inputmode="tel" required><p class="pb-err" data-err="phone" hidden></p></div>
+                    @endif
                     @if ($offerSmsConsent)
                         <div class="pb-field"><label for="sms-consent" style="font-weight:400"><input id="sms-consent" type="checkbox" name="sms_consent" value="1" @checked(old('sms_consent')) style="width:auto;margin-right:8px">Text me the confirmation and reminders for this appointment. Message and data rates may apply. This is only for this booking and is not marketing consent.</label></div>
                     @endif
@@ -120,6 +133,9 @@
         </section>
     </div>
 </main>
+@if (isset($demo) && $demo['turnstileSiteKey'])
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+@endif
 @include('public.booking._scheduler-script')
 </body>
 </html>
