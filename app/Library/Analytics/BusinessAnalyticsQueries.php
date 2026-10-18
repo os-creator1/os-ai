@@ -175,16 +175,30 @@ class BusinessAnalyticsQueries
      */
     public function newContactsForActor(Business $business, array $reachableLocationIds, array $windows): array
     {
+        if ($windows === []) {
+            return [];
+        }
+
         $selects = [];
         $bindings = [];
+        $earliest = null;
+        $latest = null;
 
         foreach (array_values($windows) as $i => [$start, $end]) {
             $selects[] = "SUM(CASE WHEN created_at >= ? AND created_at < ? THEN 1 ELSE 0 END) AS w{$i}";
             $bindings[] = $this->ts($start);
             $bindings[] = $this->ts($end);
+            $earliest = $earliest === null || $start->getTimestamp() < $earliest->getTimestamp() ? $start : $earliest;
+            $latest = $latest === null || $end->getTimestamp() > $latest->getTimestamp() ? $end : $latest;
         }
 
-        $query = DB::table('contacts')->where('business_id', $business->id)->selectRaw(implode(', ', $selects), $bindings);
+        // The windows live only inside the CASE expressions, so bound the scan itself: earliest start up to the latest exclusive end,
+        // never every contact the Business ever had.
+        $query = DB::table('contacts')
+            ->where('business_id', $business->id)
+            ->where('created_at', '>=', $this->ts($earliest))
+            ->where('created_at', '<', $this->ts($latest))
+            ->selectRaw(implode(', ', $selects), $bindings);
         app(\App\Library\Crm\CrmLocationScope::class)->restrictToIds($query, $reachableLocationIds, 'contacts.location_id');
         $row = $query->first();
 

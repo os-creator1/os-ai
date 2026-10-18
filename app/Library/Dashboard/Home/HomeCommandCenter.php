@@ -210,7 +210,9 @@ final class HomeCommandCenter
             'handling' => $this->handling($bands, $growth),
             'completedWork' => $this->completedWork($bands),
             // null = the status read failed: UNKNOWN, never "not published".
-            'websitePublished' => $status === null || ! $status->known ? null : $status->websiteStatus === 'published',
+            // Whether the Business HAS a usable website by the setup policy's own rule (published, or an external site that is configured):
+            // true / false, or null when the status could not be read (unknown, never "missing").
+            'websitePublished' => $status === null || ! $status->known ? null : $this->websiteUsable($business, $status),
             'actions' => $actions,
             'ask' => [
                 // Contextual chips: setup help while launching, performance and optimisation once running. Each is the
@@ -523,6 +525,19 @@ final class HomeCommandCenter
      * @param  array<string, mixed>|null  $growth
      * @return array<int, array<string, mixed>>
      */
+    /** The website source: the stored choice, or "hosted" for a Business that already owns a site. */
+    private function websiteMode(Business $business, BusinessStatusRow $status): ?string
+    {
+        return ((string) $business->getRawOriginal('website_mode')) ?: ($status->websiteStatus !== null ? 'hosted' : null);
+    }
+
+    /** The one rule for "this Business has a website": a published hosted site, or an external site with a configured address or a completed audit. */
+    private function websiteUsable(Business $business, BusinessStatusRow $status): bool
+    {
+        return $status->websiteStatus === 'published'
+            || ($this->websiteMode($business, $status) === 'external' && ($status->hasCompletedExternalAudit || filled($business->website_url)));
+    }
+
     /**
      * Genuinely completed work, in the order RecentWorkReader already gives it, selected BEFORE any cap: "What MotionGrove is handling" is a
      * capped mix of approvals, progress and completions, so a few pending items must never push real completed work out of Done for you.
@@ -627,7 +642,7 @@ final class HomeCommandCenter
         ];
 
         // The website source: the stored choice, or "hosted" for a Business that already owns a site.
-        $websiteMode = ((string) $business->getRawOriginal('website_mode')) ?: ($status->websiteStatus !== null ? 'hosted' : null);
+        $websiteMode = $this->websiteMode($business, $status);
 
         if ($status->readinessPolicy !== HomeSetupJourney::POLICY_SEO_FIRST) {
             // An established Business that predates the SEO-first policy keeps its original Home-stage rules.
@@ -648,8 +663,7 @@ final class HomeCommandCenter
         $formsCapable = $entitlements->allows('forms');
         $calendarCapable = $entitlements->allows('calendar');
 
-        $websiteUsable = $status->websiteStatus === 'published'
-            || ($websiteMode === 'external' && ($status->hasCompletedExternalAudit || filled($business->website_url)));
+        $websiteUsable = $this->websiteUsable($business, $status);
         $formReady = ($formsCapable && $status->hasLiveForm)
             || ($websiteCapable && $status->websiteStatus === 'published' && $status->hasActiveWebsiteForm);
 

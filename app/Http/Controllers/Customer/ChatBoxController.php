@@ -205,6 +205,7 @@
                 'pageConfigs'     => $pageConfigs,
                 'templates'       => $templates,
                 'pinnedChats'     => $pinnedChats,
+                'homeScopeRange'  => $created,
                 'displayNames'    => ChatBox::displayNamesFor($business, $pinnedChats),
                 'workspaceUid'    => $workspaceUid,
                 'businessUid'     => $businessUid,

@@ -39,15 +39,20 @@
 
     @php
         $scopeWaiting = request()->query('filter') === 'waiting';
-        $scopeFrom = request()->query('created_from');
-        $scopeTo = request()->query('created_to');
-        $scopeDays = is_string($scopeFrom) && is_string($scopeTo) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $scopeFrom) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $scopeTo)
-            && checkdate((int) substr($scopeFrom, 5, 2), (int) substr($scopeFrom, 8, 2), (int) substr($scopeFrom, 0, 4))
-            && checkdate((int) substr($scopeTo, 5, 2), (int) substr($scopeTo, 8, 2), (int) substr($scopeTo, 0, 4));
+        // The SAME accepted range the list queries use, decided once by the controller (HomeDestinationRange): malformed, reversed and
+        // overlong ranges are not accepted, so they claim nothing.
+        $scopeRange = $homeScopeRange ?? null;
+        $scopeDays = $scopeRange !== null;
     @endphp
     @if($scopeWaiting || $scopeDays)
         <p class="px-1 py-50 mb-0 text-caption" data-role="home-scope">
-            Showing {{ $scopeWaiting ? 'customers waiting for a reply' : 'conversations started ' . \Carbon\Carbon::parse($scopeFrom)->format('M j') . ' – ' . \Carbon\Carbon::parse($scopeTo)->format('M j') }}
+            @php
+                $scopeParts = array_values(array_filter([
+                    $scopeWaiting ? 'customers waiting for a reply' : null,
+                    $scopeDays ? 'conversations started ' . $scopeRange->startLocal->format('M j') . ' – ' . $scopeRange->endLocal->format('M j') : null,
+                ]));
+            @endphp
+            Showing {{ implode(', ', $scopeParts) }}
             · <a href="{{ url()->current() }}">Show all</a>
         </p>
     @endif
