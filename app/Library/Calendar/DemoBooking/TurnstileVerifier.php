@@ -41,7 +41,11 @@ class TurnstileVerifier
         return $this->isConfigured() || $this->bypassActive();
     }
 
-    public function verify(?string $token, ?string $ip): bool
+    /**
+     * @param  ?string  $expectedHostname  the host the widget was rendered on (the request host); Cloudflare reports
+     *                                     the hostname it issued the token for, and a token minted for any other site is refused.
+     */
+    public function verify(?string $token, ?string $ip, ?string $expectedHostname = null): bool
     {
         if ($this->bypassActive()) {
             return true;
@@ -60,11 +64,30 @@ class TurnstileVerifier
                 'remoteip' => $ip,
             ]));
 
-            return $response->ok() && $response->json('success') === true;
+            if (! $response->ok() || $response->json('success') !== true) {
+                return false;
+            }
+
+            // Tokens are single-use and expire after five minutes: Cloudflare itself answers a replayed token with
+            // `timeout-or-duplicate`, so success here also proves this token was not spent before.
+            $allowed = $this->allowedHostnames($expectedHostname);
+
+            return $allowed === [] || in_array(strtolower((string) $response->json('hostname')), $allowed, true);
         } catch (Throwable $exception) {
             report($exception);
 
             return false;
         }
+    }
+
+    /** @return list<string> */
+    private function allowedHostnames(?string $requestHost): array
+    {
+        $configured = array_filter(array_map(
+            fn ($host) => strtolower(trim((string) $host)),
+            explode(',', (string) config('demo_booking.turnstile.allowed_hostnames'))
+        ));
+
+        return array_values($configured !== [] ? $configured : array_filter([strtolower(trim((string) $requestHost))]));
     }
 }

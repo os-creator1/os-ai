@@ -51,7 +51,7 @@ class DemoBookingTest extends TestCase
             'demo_booking.turnstile.secret_key' => 'secret-key-private',
             'demo_booking.turnstile.bypass' => false,
         ]);
-        $this->verdict = fn () => Http::response(['success' => true]);
+        $this->verdict = fn () => Http::response(['success' => true, 'hostname' => 'localhost']);
         Http::fake(['challenges.cloudflare.com/*' => fn () => ($this->verdict)()]);
     }
 
@@ -255,6 +255,51 @@ class DemoBookingTest extends TestCase
         $this->book(['first_name' => ''])->assertStatus(429);
     }
 
+    public function test_a_token_issued_for_another_hostname_is_refused(): void
+    {
+        $this->verdict = fn () => Http::response(['success' => true, 'hostname' => 'evil.example']);
+        $this->book()->assertSessionHasErrors('turnstile');
+
+        $this->verdict = fn () => Http::response(['success' => true]); // no hostname reported at all
+        $this->book()->assertSessionHasErrors('turnstile');
+        $this->assertDatabaseCount('appointments', 0);
+
+        config(['demo_booking.turnstile.allowed_hostnames' => 'app.example, Localhost']);
+        $this->verdict = fn () => Http::response(['success' => true, 'hostname' => 'localhost']);
+        $this->book()->assertRedirect();
+    }
+
+    public function test_a_phoneless_booking_matches_an_earlier_contact_with_the_same_email_and_raises_the_new_contact_automations(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $this->book(['time' => '10:00'])->assertRedirect(); // with a phone
+        $this->book(['time' => '11:00', 'phone' => '', 'email' => 'ADA@example.test'])->assertRedirect();
+        $this->assertSame(1, Contacts::query()->count());
+        $this->assertSame(2, Appointment::query()->where('contact_id', Contacts::query()->value('id'))->count());
+
+        \Illuminate\Support\Facades\Queue::fake(); // reset, then a brand-new phone-less lead
+        $this->book(['time' => '12:00', 'phone' => '', 'email' => 'grace@example.test'])->assertRedirect();
+        $this->assertSame(2, Contacts::query()->count());
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\AutomationJob::class);
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Automation\Workflow\EnrollWorkflowContact::class);
+    }
+
+    public function test_the_confirmation_page_and_guest_links_do_not_depend_on_the_bot_check_configuration(): void
+    {
+        $appointment = $this->bookedAppointmentForLinks();
+        config(['demo_booking.turnstile.secret_key' => null]);
+        $this->get(route('demo.booking.confirmed'))->assertOk();
+        $this->get(DemoBookingManageLinks::urlFor($appointment))->assertOk()
+            ->assertHeader('Cache-Control', 'no-store, private');
+    }
+
+    private function bookedAppointmentForLinks(): Appointment
+    {
+        $this->book()->assertRedirect();
+
+        return Appointment::query()->latest('id')->firstOrFail();
+    }
+
     // ---- inherited protections, proven through the demo routes -----------------------------
 
     public function test_a_taken_slot_is_refused_and_leaves_one_appointment(): void
@@ -444,5 +489,15 @@ class DemoBookingTest extends TestCase
         $this->get($url)->assertNotFound();
         $this->post($url, ['action' => 'cancel'])->assertNotFound();
         $this->assertSame(AppointmentStatus::Scheduled, $foreignAppointment->fresh()->status);
+    }
+
+    public function test_a_guest_cancel_after_staff_already_resolved_the_appointment_is_a_clean_404(): void
+    {
+        $appointment = $this->bookedAppointment();
+        $url = DemoBookingManageLinks::urlFor($appointment);
+        $appointment->forceFill(['status' => AppointmentStatus::Completed])->save();
+
+        $this->post($url, ['action' => 'cancel'])->assertNotFound();
+        $this->assertSame(AppointmentStatus::Completed, $appointment->fresh()->status);
     }
 }

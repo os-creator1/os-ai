@@ -39,7 +39,8 @@ class ProvisionDemoBookingCommand extends Command
         {--owner-email= : Existing customer login that will own and host the internal Workspace}
         {--timezone= : IANA timezone of the internal Business (availability is interpreted in it)}
         {--duration=30 : Demo length in minutes (only used when the Booking Type is created)}
-        {--confirm-database= : The exact connected database name (see --inspect)}';
+        {--confirm-database= : The exact connected database name (see --inspect)}
+        {--production : Required, in addition, when APP_ENV=production: this creates real internal records}';
 
     protected $description = 'Inspect or provision the internal MotionGrove Business that receives /book-demo bookings';
 
@@ -59,6 +60,12 @@ class ProvisionDemoBookingCommand extends Command
 
         if ($this->option('confirm-database') !== $database) {
             $this->error("Refusing: --confirm-database must equal the connected database [{$database}].");
+
+            return self::FAILURE;
+        }
+
+        if (app()->environment('production') && ! $this->option('production')) {
+            $this->error('APP_ENV is production. Re-run with --production to confirm you intend to create the internal Business here.');
 
             return self::FAILURE;
         }
@@ -93,11 +100,14 @@ class ProvisionDemoBookingCommand extends Command
         }
         $workspace ??= $workspaces->createWorkspace((int) $owner->id, self::NAME);
 
-        $business = Business::query()->where('workspace_id', $workspace->id)->where('name', self::NAME)->first()
-            ?? $businesses->createForCustomerInWorkspace($customer, $workspace, [
+        $business = Business::query()->where('workspace_id', $workspace->id)->where('name', self::NAME)->first();
+        if ($business === null) {
+            // Activated only when WE create it: an operator who later deactivated it is never silently reversed.
+            $business = $businesses->createForCustomerInWorkspace($customer, $workspace, [
                 'name' => self::NAME, 'industry' => 'other', 'country_code' => 'US', 'timezone' => $timezone, 'currency_code' => 'USD',
             ]);
-        $business->forceFill(['status' => BusinessStatus::Active->value, 'activated_at' => $business->activated_at ?? now()])->save();
+            $business->forceFill(['status' => BusinessStatus::Active->value, 'activated_at' => now()])->save();
+        }
 
         $location = BusinessLocation::query()->where('business_id', $business->id)->orderBy('id')->first()
             ?? $locations->upsertPrimaryLocation($business, ['name' => 'Online demo', 'service_mode' => 'online', 'country_code' => 'US']);
@@ -109,8 +119,9 @@ class ProvisionDemoBookingCommand extends Command
             );
         }
 
-        $type = BookingType::query()->where('business_location_id', $location->id)->where('name', self::TYPE_NAME)->first()
-            ?? $types->create($location, [
+        $type = BookingType::query()->where('business_location_id', $location->id)->where('name', self::TYPE_NAME)->first();
+        if ($type === null) {
+            $type = $types->create($location, [
                 'name' => self::TYPE_NAME,
                 'description' => 'A walkthrough of MotionGrove for your business.',
                 'duration_minutes' => $duration,
@@ -118,7 +129,9 @@ class ProvisionDemoBookingCommand extends Command
                 'minimum_notice_minutes' => 240,
                 'slot_interval_minutes' => 30,
             ], (int) $owner->id);
-        $types->syncStaff($type, [(int) $owner->id]);
+            // Hosts are set once; a re-run never overwrites hosts the operator has since changed.
+            $types->syncStaff($type, [(int) $owner->id]);
+        }
 
         $this->info('Internal demo Business is ready.');
         $this->line('  Workspace     : '.$workspace->uid);

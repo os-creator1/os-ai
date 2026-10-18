@@ -35,10 +35,10 @@ php artisan demo-booking:provision --owner-email=you@example.com \
     --timezone=America/New_York --confirm-database=<connected db name>
 ```
 
-`--inspect` changes nothing. The provisioning run reuses an existing
+`--inspect` changes nothing. When `APP_ENV=production` the run also needs `--production`. The provisioning run reuses an existing
 `MotionGrove Internal` Workspace/Business/Location/`MotionGrove Demo` Booking Type
 and creates only what is missing; it refuses a Workspace of that name owned by
-someone else. It assigns a complimentary plan (no billing) so the Calendar
+someone else. A re-run never re-activates a deactivated Business or overwrites the demo type's hosts. It assigns a complimentary plan (no billing) so the Calendar
 entitlement is allowed, and prints the value for `DEMO_BOOKING_TYPE_UUID`.
 
 It sets **no working hours**. The host adds weekly availability, time off and
@@ -53,6 +53,7 @@ availability exists `/book-demo` offers no times.
 | `DEMO_BOOKING_TYPE_UUID` | `public_booking_uuid` of the demo Booking Type. Unset or invalid: every `/book-demo` route is a 404. |
 | `TURNSTILE_SITE_KEY` | Cloudflare Turnstile **site** key. Public; rendered in the page. |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile **secret** key. Server only; never rendered or logged. |
+| `TURNSTILE_ALLOWED_HOSTNAMES` | Optional, comma-separated. Hostnames Cloudflare may report for a token. Blank: the request host must match. |
 
 Turnstile setup: Cloudflare dashboard -> Turnstile -> add a widget for the
 marketing/app hostname (managed mode) -> copy the site and secret keys into the
@@ -67,15 +68,16 @@ deliberately not in `.env.example`.
 
 1. Route throttles: 10 requests/minute on the booking write and on guest changes, 60/minute on the read endpoints.
 2. A honeypot field (`demo_hp`): a filled value writes nothing and verifies nothing.
-3. Cloudflare Turnstile, verified server-side with the secret key and the client IP; anything but `success: true` (including a network failure) refuses the booking.
+3. Cloudflare Turnstile, verified server-side with the secret key and the client IP; anything but `success: true` (including a network failure) refuses the booking, and so does a token issued for a different hostname. Cloudflare rejects a replayed or expired token itself (`timeout-or-duplicate`); the widget is reset after every refused attempt.
 4. Server-side validation, then availability re-verified under the engine's locks at confirmation.
 
 ## Contacts
 
 With a phone number the Contact is found or created by the engine's own
 Location-local phone identity. Without one, identity is the lower-cased email
-(serialised on the same lock table under an `e:` key), and the Contact is stored
-with an empty phone, so it can never be texted. An existing Contact is only ever
+(serialised on the same lock table under an `e:` key): any Contact of the Location
+with that email is reused, otherwise a Contact with an empty phone is created (it
+can never be texted) and the usual new-Contact automations are raised. An existing Contact is only ever
 filled in where blank; an anonymous submission never overwrites existing data.
 Business name and website are stored as custom fields on the internal Business's
 contact group.
@@ -99,3 +101,5 @@ is server-rendered, in the Business timezone.
 
 - The confirmation page for an honeypot hit shows the generic page with no details.
 - The demo page offers no SMS consent: demo notifications are email only.
+- Guests get no email when they cancel or reschedule (the Calendar's notifications are confirmation and reminders only); reminders follow the new time automatically.
+- `DEMO_BOOKING_TYPE_UUID` is trusted deployer configuration: point it only at the internal Business's Booking Type.

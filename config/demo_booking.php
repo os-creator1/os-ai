@@ -20,6 +20,8 @@ return [
     'turnstile' => [
         'site_key' => env('TURNSTILE_SITE_KEY'),
         'secret_key' => env('TURNSTILE_SECRET_KEY'),
+        // Optional comma-separated hostnames Cloudflare may report. Blank: the request host must match.
+        'allowed_hostnames' => env('TURNSTILE_ALLOWED_HOSTNAMES'),
         'verify_url' => 'https://challenges.cloudflare.com/turnstile/v0/siteverify',
         // Honoured ONLY when the app environment is local or testing.
         'bypass' => (bool) env('DEMO_BOOKING_TURNSTILE_BYPASS', false),

@@ -2,6 +2,9 @@
 
 namespace App\Library\Calendar\DemoBooking;
 
+use App\Enums\Automation\Workflow\ContactCreationSource;
+use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
+use App\Jobs\AutomationJob;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\ContactGroups;
@@ -74,11 +77,12 @@ class DemoBookingContactResolver
         DB::table('booking_contact_identity_locks')->insertOrIgnore($key + ['created_at' => now(), 'updated_at' => now()]);
         DB::table('booking_contact_identity_locks')->where($key)->lockForUpdate()->firstOrFail();
 
+        // ANY Contact of this Location carrying the email, whatever its phone: a person who booked once with a
+        // number and once without is one lead, not two. Oldest wins, as in the engine's own phone identity.
         $emailField = $group->getFieldByTag('EMAIL');
         $existing = Contacts::query()
             ->where('business_id', (int) $location->business_id)
             ->where('location_id', $location->id)
-            ->where('phone', '')
             ->whereIn('id', ContactsCustomField::query()
                 ->where('field_id', $emailField->id)->where('value', $fields['EMAIL'])->select('contact_id'))
             ->orderBy('id')->first();
@@ -95,6 +99,10 @@ class DemoBookingContactResolver
         $contact->status = Contacts::STATUS_SUBSCRIBE;
         $contact->save();
         $contact->updateFields(array_filter($fields, fn ($value) => $value !== null && $value !== ''));
+
+        // The same follow-ups the engine's phone path raises for a newly created Contact.
+        dispatch(AutomationJob::forContactCreated((int) $contact->id))->afterCommit();
+        dispatch(EnrollWorkflowContact::forContactCreated((int) $contact->id, ContactCreationSource::Other))->afterCommit();
         $group->updateCache();
 
         return $contact;

@@ -109,7 +109,7 @@ class DemoBookingController extends PublicBookingController
         }
 
         // Token verification is server-side only. It comes after cheap validation so a bad form never spends a verification.
-        if (! $turnstile->verify($request->input('cf-turnstile-response'), $request->ip())) {
+        if (! $turnstile->verify($request->input('cf-turnstile-response'), $request->ip(), $request->getHost())) {
             $message = 'We could not verify that you are human. Please try again.';
 
             return $wantsJson
@@ -167,9 +167,10 @@ class DemoBookingController extends PublicBookingController
         return redirect()->route('demo.booking.confirmed');
     }
 
-    public function demoConfirmed(TurnstileVerifier $turnstile): View
+    public function demoConfirmed(): View
     {
-        return $this->confirmed($this->designatedUuid($turnstile));
+        // Read-only: it must keep working after a guest changes a booking, whatever the bot-check state.
+        return $this->confirmed($this->designatedUuid());
     }
 
     /**

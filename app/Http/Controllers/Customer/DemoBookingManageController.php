@@ -27,7 +27,7 @@ use Illuminate\View\View;
  */
 class DemoBookingManageController extends DemoBookingController
 {
-    public function manage(Request $request, string $appointmentUid): View
+    public function manage(Request $request, string $appointmentUid): \Illuminate\Http\Response
     {
         [$appointment, $type, $location, $business] = $this->manageable($request, $appointmentUid);
         $timezone = $this->timezoneFor($business);
@@ -45,7 +45,7 @@ class DemoBookingManageController extends DemoBookingController
         }
         [$first, $last] = $this->slots->window($timezone, $type);
 
-        return view('public.booking.manage', [
+        return $this->noStore(view('public.booking.manage', [
             'type' => $type,
             'brand' => $this->brand($type, $business, $location, []),
             'timezone' => $timezone,
@@ -58,10 +58,10 @@ class DemoBookingManageController extends DemoBookingController
             'baseUrl' => $request->url(),
             'signed' => $request->only(['expires', 'rc', 'signature']),
             'done' => null,
-        ]);
+        ]));
     }
 
-    public function act(Request $request, string $appointmentUid): RedirectResponse|View
+    public function act(Request $request, string $appointmentUid): RedirectResponse|\Illuminate\Http\Response
     {
         [$appointment, $type, $location, $business] = $this->manageable($request, $appointmentUid);
         $action = $request->input('action');
@@ -77,11 +77,15 @@ class DemoBookingManageController extends DemoBookingController
             [$appointment] = $this->manageable($request, $appointmentUid);
 
             if ($action === 'cancel') {
-                $this->booking->cancel($appointment, null, 'Cancelled by guest');
+                try {
+                    $this->booking->cancel($appointment, null, 'Cancelled by guest');
+                } catch (BookingRefusedException) {
+                    abort(404); // resolved by someone else between the check and the write
+                }
 
-                return view('public.booking.manage', [
+                return $this->noStore(view('public.booking.manage', [
                     'type' => $type, 'brand' => $this->brand($type, $business, $location, []), 'done' => 'cancelled',
-                ]);
+                ]));
             }
 
             $timezone = $this->timezoneFor($business);
@@ -134,5 +138,11 @@ class DemoBookingManageController extends DemoBookingController
         );
 
         return [$appointment, $type, $location, $business];
+    }
+
+    /** A page about one guest's appointment is never stored by a browser cache or a shared one. */
+    private function noStore(View $view): \Illuminate\Http\Response
+    {
+        return response($view)->header('Cache-Control', 'no-store, private');
     }
 }

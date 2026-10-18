@@ -106,7 +106,7 @@ class ProvisionDemoBookingCommandTest extends TestCase
             'demo_booking.booking_type_uuid' => $type->public_booking_uuid,
             'demo_booking.turnstile.site_key' => 'site', 'demo_booking.turnstile.secret_key' => 'secret',
         ]);
-        Http::fake(['challenges.cloudflare.com/*' => Http::response(['success' => true])]);
+        Http::fake(['challenges.cloudflare.com/*' => Http::response(['success' => true, 'hostname' => 'localhost'])]);
 
         // No hardcoded schedule: until the host sets availability, no times are offered.
         $this->getJson('/book-demo/slots?date=2027-03-01')->assertOk()->assertJsonPath('slots', []);
@@ -129,5 +129,30 @@ class ProvisionDemoBookingCommandTest extends TestCase
         $this->assertSame(1, Contacts::query()->count());
         $this->assertSame((int) $business->id, (int) Contacts::query()->sole()->business_id);
         $this->assertSame('2027-03-01 14:00:00', Carbon::parse($appointment->start_at)->utc()->toDateTimeString());
+    }
+
+    public function test_a_rerun_never_reactivates_the_business_or_overwrites_the_hosts(): void
+    {
+        $this->provision()->assertExitCode(0);
+        $business = Business::query()->where('name', Command::NAME)->firstOrFail();
+        $type = BookingType::query()->where('name', Command::TYPE_NAME)->firstOrFail();
+        $colleague = $this->createCustomer()->user;
+        $type->staff()->sync([$this->host->id, $colleague->id]);
+        DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Inactive->value]);
+
+        $this->provision()->assertExitCode(0);
+
+        $this->assertSame(\App\Enums\Business\BusinessStatus::Inactive, $business->fresh()->status);
+        $this->assertEqualsCanonicalizing([$this->host->id, $colleague->id], $type->fresh()->staff()->pluck('users.id')->all());
+    }
+
+    public function test_production_needs_an_explicit_flag(): void
+    {
+        $this->app['env'] = 'production';
+        $this->provision()->assertExitCode(1);
+        $this->assertSame(0, Workspace::query()->where('name', Command::NAME)->count());
+
+        $this->provision(['--production' => true])->assertExitCode(0);
+        $this->assertSame(1, Workspace::query()->where('name', Command::NAME)->count());
     }
 }
