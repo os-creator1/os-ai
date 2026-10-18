@@ -296,7 +296,8 @@ class BusinessHomeActivityTest extends TestCase
         $this->assertSame([], $activity['items']);
 
         $main = $this->mainText($this->home()->assertOk()->getContent());
-        $this->assertStringContainsString('No new activity since your last visit', $main);
+        // The final Home leads with the plain line when there is nothing new (the approved design); the sentence is only for real news.
+        $this->assertStringContainsString("Here's what's happening with your business.", $main);
         $this->assertDoesNotMatchRegularExpression('/\b0 (new contacts|new conversations|messages received)\b/', $main, 'A zero is never rendered as an item.');
     }
 
