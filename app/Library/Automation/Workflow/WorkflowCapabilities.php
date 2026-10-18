@@ -171,7 +171,8 @@ class WorkflowCapabilities
     /** A managed identity, or an active BYO channel — the two paths the SMS dispatcher can resolve. */
     private function hasTextingPath(Business $business): bool
     {
-        if ($this->messaging->resolveForBusiness($business) !== null) {
+        if ($this->messaging->resolveForBusiness($business) !== null
+            || \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business) !== null) {
             return true;
         }
 

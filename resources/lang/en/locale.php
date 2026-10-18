@@ -1895,6 +1895,8 @@
                 'insufficient_balance'  => 'Messaging balance is too low.',
                 'messaging_not_ready'   => 'Text messaging is not ready yet.',
                 'messaging_unavailable' => 'Messaging is temporarily unavailable.',
+                'byo_credentials_rejected' => 'Telnyx rejected your access key. Reconnect your Telnyx account in Phone & Messaging.',
+                'byo_sender_not_ready'  => 'Your own Telnyx number is not ready to send (turned off, disconnected or not verified). Open Phone & Messaging to fix it.',
                 'delivery_failed'       => 'Message could not be delivered.',
                 'send_failed'           => 'This message could not be sent.',
                 // Correction round 4, item 1 — the provider's own outcome

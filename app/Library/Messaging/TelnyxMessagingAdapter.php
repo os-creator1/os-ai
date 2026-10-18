@@ -74,6 +74,17 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
 
     public function send(OutboundMessageRequest $request): OutboundMessageResult
     {
+        return self::sendWithKey($this->apiKey, $request);
+    }
+
+    /**
+     * The one Telnyx send implementation, parameterised by the API key so the
+     * platform adapter (its own key) and an Agency's BYO dispatch (that
+     * agency's key) share identical payload, timeout and error handling. It
+     * never reads config: the caller decides whose key is used.
+     */
+    public static function sendWithKey(string $apiKey, OutboundMessageRequest $request): OutboundMessageResult
+    {
         $payload = [
             'from' => $request->fromNumber,
             'to' => $request->toNumber,
@@ -86,7 +97,7 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
         }
 
         try {
-            $response = Http::withToken($this->apiKey)
+            $response = Http::withToken($apiKey)
                 ->timeout(self::TIMEOUT_SECONDS)
                 ->acceptJson()
                 ->asJson()
@@ -113,6 +124,18 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
 
     public function verifyInboundSignature(string $rawBody, array $headers): bool
     {
+        return self::verifySignatureWithKey($this->webhookPublicKey, $rawBody, $headers);
+    }
+
+    /**
+     * The one Ed25519 verification, parameterised by the public key: the
+     * platform key for managed traffic, an Agency's own key for its BYO
+     * channel. Identical timestamp-age and length checks for both.
+     *
+     * @param array<string, mixed> $headers
+     */
+    public static function verifySignatureWithKey(string $webhookPublicKey, string $rawBody, array $headers): bool
+    {
         $signature = self::header($headers, self::SIGNATURE_HEADER);
         $timestamp = self::header($headers, self::TIMESTAMP_HEADER);
 
@@ -125,7 +148,7 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
         }
 
         $signatureBytes = base64_decode($signature, true);
-        $publicKeyBytes = base64_decode($this->webhookPublicKey, true);
+        $publicKeyBytes = base64_decode($webhookPublicKey, true);
 
         if ($signatureBytes === false || $publicKeyBytes === false) {
             return false;
@@ -148,6 +171,11 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
     }
 
     public function parseInboundWebhook(string $rawBody): InboundWebhookEvent
+    {
+        return self::parseWebhookBody($rawBody);
+    }
+
+    public static function parseWebhookBody(string $rawBody): InboundWebhookEvent
     {
         $decoded = json_decode($rawBody, true);
 
@@ -200,7 +228,7 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
         );
     }
 
-    private static function categorizeStatus(int $status): ProviderErrorCategory
+    public static function categorizeStatus(int $status): ProviderErrorCategory
     {
         return match (true) {
             $status === 401, $status === 403 => ProviderErrorCategory::Configuration,

@@ -39,6 +39,8 @@ final class ViewAsProhibitedActions
         'customer.workspaces.ownership.transfer',
         'customer.workspaces.businesses.store',
         'customer.workspaces.businesses.reassign',
+        // choosing which of the Agency's own numbers (and so whose Telnyx account) sends its texts
+        'customer.workspaces.prospecting.phone-messaging.sender',
         // phone / keyword resources
         'customer.numbers.release',
         'customer.keywords.release',
@@ -100,6 +102,8 @@ final class ViewAsProhibitedActions
         // something a View As session (which is "the client") may read or
         // change. Both the page and the save are refused outright.
         'customer.workspaces.agency.white-label.',
+        // The Agency's own operating workspace is set up by the Agency, never as "the client".
+        'customer.workspaces.agency.operations.',
         'customer.workspaces.members.',
         'customer.workspaces.additional-business-slots.',
         'customer.workspaces.businesses.locations.allocations.',

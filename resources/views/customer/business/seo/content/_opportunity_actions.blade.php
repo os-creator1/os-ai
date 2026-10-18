@@ -2,10 +2,11 @@
     The actions for one opportunity. "Create AI draft" is a POST form that the OWNER submits — nothing here
     ever calls the AI on render. An opportunity that already has an article links to it instead.
 
-    Expects: $opp (opportunity array), $workspaceUid, $businessUid. Optional: $small (bool).
+    Expects: $opp (opportunity array), $workspaceUid, $businessUid. Optional: $small (bool), $short (bool: the short "AI draft" / "Write myself" labels of the Opportunities list).
 --}}
 @php
     $small = $small ?? false;
+    $short = $short ?? false;
     $btn = $small ? 'btn-sm' : '';
     $route = fn (string $name, array $extra = []) => route('customer.workspaces.businesses.seo.content.' . $name, array_merge([$workspaceUid, $businessUid], $extra));
 @endphp
@@ -19,12 +20,12 @@
             <form method="POST" action="{{ $route('opportunities.draft') }}" data-role="opportunity-ai-form">
                 @csrf
                 <input type="hidden" name="key" value="{{ $opp['key'] }}">
-                <button class="btn {{ $btn }} btn-primary" type="submit" data-role="create-ai-draft">Create AI draft</button>
+                <button class="btn {{ $btn }} btn-primary" type="submit" data-role="create-ai-draft">@if($short)<x-ds-icon name="sparkles" size="14" aria-hidden="true" /> AI draft @else Create AI draft @endif</button>
             </form>
             <form method="POST" action="{{ $route('opportunities.start') }}" data-role="opportunity-start-form">
                 @csrf
                 <input type="hidden" name="key" value="{{ $opp['key'] }}">
-                <button class="btn {{ $btn }} btn-outline-secondary" type="submit" data-role="write-myself">Write it myself</button>
+                <button class="btn {{ $btn }} btn-outline-secondary" type="submit" data-role="write-myself">{{ $short ? 'Write myself' : 'Write it myself' }}</button>
             </form>
         @endcan
     @endif

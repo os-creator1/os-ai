@@ -3197,6 +3197,15 @@
                 return false;
             }
 
+            // The agency's chosen own-Telnyx sender, for that agency's own Business
+            // only (selectedChannel() proves both), compared on digits.
+            $byo = \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel(\App\Models\Business::query()->find($businessId));
+
+            if ($byo !== null
+                && preg_replace('/\D/', '', $number) === preg_replace('/\D/', '', (string) $byo->sender_number)) {
+                return true;
+            }
+
             return \App\Models\BusinessMessagingNumber::query()
                 ->where('phone_number', $number)
                 ->where('status', \App\Enums\Messaging\BusinessMessagingNumberStatus::Active->value)

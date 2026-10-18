@@ -96,6 +96,7 @@ class AgencyProspectingRuntimeTest extends TestCase
     {
         [$owner, $workspace] = $this->agencyWorkspace();
         $this->authenticateAsCustomer($owner);
+        $this->fakeTelnyxVerification();
 
         $this->post(route('customer.workspaces.prospecting.channels.connect', [$workspace->uid, 'Telnyx']), [
             'sender_number' => '+12025552000',
@@ -2532,5 +2533,98 @@ class AgencyProspectingRuntimeTest extends TestCase
 
         $this->withSession(['permissions' => collect(['access_backend'])]);
         $this->actingAs($user);
+    }
+
+    // -----------------------------------------------------------------
+    // BYO Telnyx credential verification + Phone & Messaging hub.
+    // -----------------------------------------------------------------
+
+    private function fakeTelnyxVerification(int $profileStatus = 200, array $numbers = [['id' => 'num_1']]): void
+    {
+        \Illuminate\Support\Facades\Http::fake([
+            'api.telnyx.com/v2/messaging_profiles/*' => \Illuminate\Support\Facades\Http::response(['data' => ['id' => 'profile_test']], $profileStatus),
+            'api.telnyx.com/v2/phone_numbers*' => \Illuminate\Support\Facades\Http::response(['data' => $numbers], 200),
+        ]);
+    }
+
+    private function postTelnyx(Workspace $workspace): \Illuminate\Testing\TestResponse
+    {
+        return $this->post(route('customer.workspaces.prospecting.channels.connect', [$workspace->uid, 'Telnyx']), [
+            'sender_number' => '+12025552000',
+            'api_key' => 'key_test',
+            'c1' => 'profile_test',
+        ]);
+    }
+
+    public function test_telnyx_connect_is_refused_and_nothing_stored_when_key_is_invalid(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+        $this->fakeTelnyxVerification(401);
+
+        $this->postTelnyx($workspace)->assertSessionHasErrors('api_key');
+
+        $this->assertSame(0, AgencyProspectingChannel::where('workspace_id', $workspace->id)->count());
+    }
+
+    public function test_telnyx_connect_is_refused_when_number_is_not_in_the_account(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+        $this->fakeTelnyxVerification(200, []);
+
+        $this->postTelnyx($workspace)->assertSessionHasErrors('api_key');
+
+        $this->assertSame(0, AgencyProspectingChannel::where('workspace_id', $workspace->id)->count());
+    }
+
+    public function test_telnyx_verification_only_issues_get_requests(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+        $this->fakeTelnyxVerification();
+
+        $this->postTelnyx($workspace)->assertSessionHas('flash_success');
+
+        \Illuminate\Support\Facades\Http::assertSent(fn ($request) => $request->method() === 'GET');
+        \Illuminate\Support\Facades\Http::assertNotSent(fn ($request) => $request->method() !== 'GET');
+    }
+
+    public function test_enable_reverifies_a_telnyx_channel_and_refuses_when_revoked(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+        $channel = $this->createChannel($workspace, SendingServer::TYPE_TELNYX, ['api_key' => 'k', 'c1' => 'p']);
+        $channel->update(['status' => AgencyProspectingChannel::STATUS_DISABLED]);
+        $this->fakeTelnyxVerification(403);
+
+        $this->post(route('customer.workspaces.prospecting.channels.enable', [$workspace->uid, $channel->uid]))
+            ->assertSessionHas('flash_error');
+
+        $this->assertSame(AgencyProspectingChannel::STATUS_DISABLED, $channel->fresh()->status);
+    }
+
+    public function test_phone_messaging_hub_lists_only_this_workspaces_channels_and_no_secrets(): void
+    {
+        [$owner, $workspaceA] = $this->agencyWorkspace();
+        [, $workspaceB] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+        $channelA = $this->createChannel($workspaceA, SendingServer::TYPE_TELNYX, ['api_key' => 'secret-key-a', 'c1' => 'p']);
+        $channelB = $this->createChannel($workspaceB, SendingServer::TYPE_TELNYX, ['api_key' => 'secret-key-b', 'c1' => 'p']);
+
+        $response = $this->get(route('customer.workspaces.prospecting.phone-messaging', $workspaceA->uid))->assertOk();
+
+        $response->assertSee('Option A')->assertSee('Option B');
+        $response->assertDontSee('secret-key-a')->assertDontSee('secret-key-b');
+        $response->assertSee($channelA->sender_number)->assertDontSee($channelB->sender_number);
+    }
+
+    public function test_phone_messaging_hub_is_denied_for_foreign_workspace(): void
+    {
+        [$owner] = $this->agencyWorkspace();
+        [, $workspaceB] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+
+        $this->get(route('customer.workspaces.prospecting.phone-messaging', $workspaceB->uid))->assertStatus(404);
     }
 }

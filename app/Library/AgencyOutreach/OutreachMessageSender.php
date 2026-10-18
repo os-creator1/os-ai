@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
+use App\Library\Messaging\Exceptions\ByoSenderNotReadyException;
 use App\Library\Messaging\Exceptions\MessagingCampaignAssignmentNotConfirmedException;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
@@ -83,13 +84,27 @@ final class OutreachMessageSender
         }
 
         try {
-            $identity = $this->identities->resolveForBusiness($business);
+            // The agency's chosen own-Telnyx sender, when it has chosen one: usable or
+            // refused with the exact reason — never the platform-paid managed number.
+            $byo = AgencyByoSender::selectedChannel($business);
 
-            if ($identity === null) {
-                return OutreachSendResult::blocked('messaging_not_ready');
+            if ($byo !== null) {
+                $readiness = AgencyByoSender::sendReadiness($byo);
+
+                if (! $readiness['ok']) {
+                    return OutreachSendResult::blocked('byo_' . $readiness['code']);
+                }
+
+                $senderNumber = (string) $byo->sender_number;
+            } else {
+                $identity = $this->identities->resolveForBusiness($business);
+
+                if ($identity === null) {
+                    return OutreachSendResult::blocked('messaging_not_ready');
+                }
+
+                $senderNumber = $this->identities->resolvePrimaryNumber($identity)->phone_number;
             }
-
-            $senderNumber = $this->identities->resolvePrimaryNumber($identity)->phone_number;
 
             $campaign = new Campaigns();
             $campaign->business_id = (int) $business->id;
@@ -107,8 +122,10 @@ final class OutreachMessageSender
                 'recipient' => $phone['recipient'],
                 'region_code' => $phone['region_code'],
                 'managed_operation_key' => $operationKey,
-                'require_managed' => true,
+                'require_managed' => $byo === null,
             ])->getData();
+        } catch (ByoSenderNotReadyException $e) {
+            return OutreachSendResult::blocked('byo_' . $e->reasonCode);
         } catch (MessagingInsufficientFundsException) {
             return OutreachSendResult::paused('insufficient_balance');
         } catch (MessagingIdentityConflictException) {
