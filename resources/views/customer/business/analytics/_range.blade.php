@@ -43,8 +43,12 @@
         </select>
     </div>
     @if($segmented)
-        {{-- Without JavaScript the Custom toggle cannot reveal anything, so the date fields and Apply are simply shown: an ordinary GET form. --}}
-        <noscript><style>[data-role="custom-dates"][hidden] { display: block !important; } [data-role="range-custom-toggle"] { display: none !important; }</style></noscript>
+        {{-- Without JavaScript the Custom toggle cannot reveal anything, so the date fields and Apply are simply shown: an ordinary GET form.
+             THE RULES ARE GUARDED by `html:not([data-js])`. A page that loads with JavaScript never applies a <noscript> (its contents are inert text),
+             but an async-region swap parses the response with DOMParser, which has scripting disabled, so the <noscript> arrives as a live <style>
+             element; unguarded, it showed the date fields and hid the Custom toggle after every in-place update. range-control.js sets
+             `data-js` on <html> (and drops swapped-in <noscript>s), so with JavaScript these rules can never match. --}}
+        <noscript><style>html:not([data-js]) [data-role="custom-dates"][hidden] { display: block !important; } html:not([data-js]) [data-role="range-custom-toggle"] { display: none !important; }</style></noscript>
         <div class="home-segmented" role="group" aria-label="Date range" data-role="range-segments">
             @foreach($segmentPresets as $value => $label)
                 <button type="submit" name="range" value="{{ $value }}" class="{{ $range->preset === $value ? 'is-active' : '' }}" aria-pressed="{{ $range->preset === $value ? 'true' : 'false' }}">{{ $label }}</button>

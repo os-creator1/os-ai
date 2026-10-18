@@ -105,6 +105,28 @@ class HomeRangeControlStateTest extends TestCase
         $this->assertStringContainsString("win.addEventListener('pageshow'", $script, 'A page restored from history re-syncs from the rendered state.');
     }
 
+    public function test_the_no_javascript_fallback_css_can_never_match_when_javascript_runs(): void
+    {
+        $this->established();
+        $html = $this->get(route('user.home'))->assertOk()->getContent();
+
+        // An async-region swap parses the response with DOMParser (scripting disabled), so a <noscript><style> arrives as a LIVE style element.
+        // Unguarded, it showed the date fields and hid the Custom toggle after every in-place update. Every rule must be guarded.
+        $this->assertSame(1, preg_match('#<noscript><style>(.*?)</style></noscript>#s', $html, $m));
+        $rules = array_filter(array_map('trim', explode('}', $m[1])));
+        $this->assertCount(2, $rules);
+        foreach ($rules as $rule) {
+            $this->assertStringStartsWith('html:not([data-js])', $rule, 'Each fallback rule applies only while JavaScript has not run.');
+        }
+
+        // ...and the script that runs with JavaScript marks the page, so those guarded rules cannot match.
+        $script = (string) file_get_contents(public_path('js/analytics/range-control.js'));
+        $this->assertStringContainsString("setAttribute('data-js', '1')", $script);
+        $this->assertStringContainsString("querySelectorAll('noscript')", $script);
+
+        // The script is served with a version query so a deployment cannot leave a stale copy cached.
+        $this->assertMatchesRegularExpression('#js/analytics/range-control\.js\?v=\d+#', $html);
+    }
     public function test_the_full_size_results_control_is_unchanged(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Results Venue', 'Results Account');

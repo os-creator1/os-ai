@@ -94,6 +94,9 @@
   }
 
   function bind(document, win) {
+    // Marks the page as running JavaScript: the markup's no-JavaScript fallback rules are guarded by html:not([data-js]).
+    if (document.documentElement) { document.documentElement.setAttribute('data-js', '1'); }
+
     function syncAll(root) {
       (root || document).querySelectorAll('[data-role="analytics-range"]').forEach(sync);
     }
@@ -129,7 +132,14 @@
 
     // A page restored from history shows exactly what the server rendered for its URL, plus any deliberate toggle.
     win.addEventListener('pageshow', function () { syncAll(document); });
-    document.addEventListener('async-region:updated', function (event) { syncAll(event.target); });
+    document.addEventListener('async-region:updated', function (event) {
+      // The swapped-in region was parsed with scripting disabled, so its <noscript> content is live DOM (a real <style>): drop it.
+      if (event.target && event.target.querySelectorAll) {
+        event.target.querySelectorAll('noscript').forEach(function (node) { node.remove(); });
+      }
+
+      syncAll(event.target);
+    });
     syncAll(document);
   }
 
