@@ -266,7 +266,7 @@ class DashboardHeadlinesTest extends TestCase
                 $this->assertSame($trend, $headline->comparison->trend, "{$name}: {$key} trend");
                 $this->assertSame($headline->comparison->current - $headline->comparison->previous, $headline->comparison->absoluteDelta, "{$name}: {$key} delta");
                 // Home shows the three final cards; a received-message count is a band figure, not a card.
-                if ($key !== 'messages_received') {
+                if (! in_array($key, ['messages_received', 'new_conversations'], true)) {
                     $this->assertMatchesRegularExpression('/data-headline="' . $key . '".*?data-tone="' . $tone . '"/s', $html, "{$name}: {$key} rendered trend");
                 }
             }
@@ -297,7 +297,7 @@ class DashboardHeadlinesTest extends TestCase
         // The card shows the plain difference from nothing (▲ 2), and an observed zero in both periods as "Same": no ratio exists to show.
         $band = $this->between($this->home()->getContent(), 'data-band="headlines"', '</section>');
         $this->assertMatchesRegularExpression('/data-headline="new_contacts".*?▲ 2/s', $band);
-        $this->assertMatchesRegularExpression('/data-headline="new_conversations".*?>Same</s', $band);
+        // (Conversations are a band figure now; Home's third card is the current waiting count, which has no period comparison.)
         $this->assertDoesNotMatchRegularExpression('/\b(INF|NAN)\b|∞|Infinity/i', $main);
         $this->assertStringNotContainsString('%', $band);
     }

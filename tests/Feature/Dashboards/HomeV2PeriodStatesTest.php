@@ -49,12 +49,18 @@ class HomeV2PeriodStatesTest extends TestCase
 
         $html = $this->home(['range' => 'custom', 'start' => '2026-09-15', 'end' => '2026-09-25']);
 
-        foreach (['bookings', 'contacts', 'conversations'] as $key) {
+        foreach (['bookings', 'contacts'] as $key) {
             $card = $this->card($html, $key);
             $this->assertStringContainsString('data-role="headline-figure">—<', $card, "{$key}: a dash, not a zero");
             $this->assertStringContainsString('This period has not started', $card);
             $this->assertStringNotContainsString('data-role="kpi-badge"', $card, "{$key}: no comparison");
         }
+
+        // Waiting for reply is a current state, not a period figure: it is still the real number now, with no period comparison.
+        $waiting = $this->card($html, 'waiting');
+        $this->assertStringContainsString('data-role="headline-figure">0<', $waiting);
+        $this->assertStringNotContainsString('▲', $waiting);
+        $this->assertStringNotContainsString('▼', $waiting);
 
         $this->assertStringContainsString('this period has not started yet', $html);
         $this->assertStringContainsString('data-role="home-chart-future"', $html);

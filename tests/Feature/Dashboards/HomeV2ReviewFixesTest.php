@@ -158,7 +158,7 @@ class HomeV2ReviewFixesTest extends TestCase
 
         $html = $this->get(route('user.home', ['range' => 'last_month']))->assertOk()->getContent();
 
-        foreach (['contacts', 'conversations', 'bookings'] as $key) {
+        foreach (['contacts', 'bookings'] as $key) {
             $card = $this->kpiHtml($html, $key);
             $this->assertStringContainsString('data-role="headline-figure">—<', $card, "{$key}: August was before the Business existed.");
             $this->assertStringNotContainsString('data-tone=', $card, "{$key}: no comparison for an unobserved period.");

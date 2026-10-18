@@ -21,9 +21,9 @@
     $greetingName = $home['greeting']['name'];
     // The supporting line stays short: the visit summary when there is one worth saying, otherwise the plain line.
     $briefing = $home['briefing'];
-    $subline = ($briefing['unavailable'] || $briefing['firstVisit'] ?? false)
+    $subline = ($briefing['unavailable'] || ($briefing['firstVisit'] ?? false) || ($briefing['quiet'] ?? false))
         ? "Here's what's happening with your business."
-        : ($briefing['quiet'] ? \Illuminate\Support\Str::before($briefing['text'], ' New contacts and completed work') : $briefing['text']);
+        : $briefing['text'];
 @endphp
 
 <div data-role="command-center" data-home-state="{{ $home['state'] }}" data-home-layout="{{ $v2['layout'] }}" data-home-status="{{ $home['status']['key'] }}" class="home-command hv2">

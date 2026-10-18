@@ -209,6 +209,9 @@ final class HomeCommandCenter
             ],
             'handling' => $this->handling($bands, $growth),
             'completedWork' => $this->completedWork($bands),
+            // The CURRENT number of customers waiting for a reply (the Conversations band's own actor-scoped figure, including zero);
+            // null when that band is not available to this actor or could not be read.
+            'waitingCount' => $this->waitingCount($bands),
             // null = the status read failed: UNKNOWN, never "not published".
             // Whether the Business HAS a usable website by the setup policy's own rule (published, or an external site that is configured):
             // true / false, or null when the status could not be read (unknown, never "missing").
@@ -263,6 +266,23 @@ final class HomeCommandCenter
      * @param  array<string, mixed>  $bands
      * @return array{value: int, caption: string}|null
      */
+    private function waitingCount(array $bands): ?int
+    {
+        $band = $bands[DashboardSnapshot::BAND_CONVERSATIONS] ?? null;
+
+        if (! is_array($band)) {
+            return null;
+        }
+
+        foreach ($band['items'] ?? [] as $item) {
+            if ($item['key'] === 'awaiting_reply') {
+                return (int) preg_replace('/\D/', '', (string) $item['figure']);
+            }
+        }
+
+        return null;
+    }
+
     private function waitingMetric(array $bands): ?array
     {
         $band = $bands[DashboardSnapshot::BAND_CONVERSATIONS] ?? null;

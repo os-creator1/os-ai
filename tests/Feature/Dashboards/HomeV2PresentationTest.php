@@ -98,4 +98,51 @@ class HomeV2PresentationTest extends TestCase
         $this->assertLessThanOrEqual(3, $items);
         $this->assertSame($items, substr_count($html, 'class="hv2-suggest__icon"'));
     }
+    private function waitingCard(string $html): string
+    {
+        preg_match('#<(a|div)\b[^>]*data-role="kpi" data-kpi="waiting".*?</\1>#s', $html, $m);
+
+        return $m[0] ?? '';
+    }
+
+    public function test_the_third_card_is_the_real_waiting_count_with_honest_states(): void
+    {
+        [$owner, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Waiting Venue', 'Waiting Account');
+        $this->authenticateAs($owner);
+
+        // None waiting: a real zero, calm.
+        $none = $this->waitingCard($this->home());
+        $this->assertStringContainsString('data-role="headline-figure">0<', $none);
+        $this->assertStringContainsString('All replied', $none);
+
+        // Two customers wrote last and are waiting: the figure, "Need reply", and the inbox's own waiting list.
+        $old = \Carbon\CarbonImmutable::now()->subHours(2)->setTimezone((string) config('app.timezone', 'UTC'))->format('Y-m-d H:i:s');
+        $this->conversationWith($business, [['incoming', $old]]);
+        $this->conversationWith($business, [['incoming', $old]]);
+        \Illuminate\Support\Facades\Cache::flush();
+        $two = $this->waitingCard($this->home());
+        $this->assertStringContainsString('data-role="headline-figure">2<', $two);
+        $this->assertStringContainsString('Need reply', $two);
+        $this->assertStringContainsString('filter=waiting', html_entity_decode($two));
+        $this->assertStringNotContainsString('▲', $two, 'A current state has no period comparison.');
+
+        // An unreadable source is unavailable, never zero.
+        \Illuminate\Support\Facades\DB::listen(function ($query) {
+            if (str_contains($query->sql, 'chat_box_messages')) {
+                throw new \RuntimeException('inbox store unavailable');
+            }
+        });
+        \Illuminate\Support\Facades\Cache::flush();
+        $failed = $this->waitingCard($this->home());
+        $this->assertStringContainsString('data-role="headline-figure">—<', $failed);
+        $this->assertStringContainsString('Unavailable', $failed);
+    }
+
+    public function test_a_quiet_visit_leads_with_the_plain_greeting_line(): void
+    {
+        [$owner] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Greeting', 'Quiet Greeting Account');
+        $this->authenticateAs($owner);
+
+        $this->assertStringContainsString('Here&#039;s what&#039;s happening with your business.', $this->home());
+    }
 }

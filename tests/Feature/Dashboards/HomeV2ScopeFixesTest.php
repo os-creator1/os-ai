@@ -83,7 +83,7 @@ class HomeV2ScopeFixesTest extends TestCase
         $this->authenticateAs($owner);
         $ownerHtml = $this->get(route('user.home'))->assertOk()->getContent();
         $this->assertSame('6', $this->figure($ownerHtml, 'contacts'));
-        $this->assertSame('4', $this->figure($ownerHtml, 'conversations'));
+        $this->assertSame('4', $this->figure($ownerHtml, 'waiting'), 'Customers waiting for a reply (each box has an unanswered incoming message).');
 
         $staff = $this->createCustomer();
         $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
@@ -93,7 +93,7 @@ class HomeV2ScopeFixesTest extends TestCase
 
         $html = $this->get(route('user.home'))->assertOk()->getContent();
         $this->assertSame('3', $this->figure($html, 'contacts'), '2 at the reachable site plus the Business-wide one: not the 3 at the hidden site.');
-        $this->assertSame('2', $this->figure($html, 'conversations'));
+        $this->assertSame('2', $this->figure($html, 'waiting'));
         // The previous period is scoped too: 1 visible contact before, so 3 is an increase of 2 (not a drop from 5).
         $this->assertStringContainsString('▲ 2', $this->kpiCard($html, 'contacts'));
 

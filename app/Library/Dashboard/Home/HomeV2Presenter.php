@@ -50,7 +50,7 @@ final class HomeV2Presenter
     public function compose(array $home, ?array $headlines, array $failed, array $facts, ?array $booking, ?CarbonImmutable $earliestBookingType, ?array $billing): array
     {
         $headlinesFailed = in_array('headlines', $failed, true);
-        $kpis = $headlines === null ? [] : $this->kpis($headlines, $facts, $booking, $earliestBookingType, $home['actions']);
+        $kpis = $headlines === null ? [] : $this->kpis($headlines, $facts, $booking, $earliestBookingType, $home['actions'], $home['waitingCount'] ?? null, in_array('conversations', $failed, true));
         $welcome = $this->welcome($home, $facts, $booking);
         $active = $this->hasMeaningfulActivity($headlines);
         $needsYou = $this->needsYou($home, $billing) + ['recommendations' => $this->recommendations($home)];
@@ -195,7 +195,7 @@ final class HomeV2Presenter
      * @param  array<string, array<string, mixed>|null>  $actions
      * @return array<int, array<string, mixed>>
      */
-    private function kpis(array $headlines, array $facts, ?array $booking, ?CarbonImmutable $earliestBookingType, array $actions): array
+    private function kpis(array $headlines, array $facts, ?array $booking, ?CarbonImmutable $earliestBookingType, array $actions, ?int $waiting, bool $waitingFailed): array
     {
         /** @var AnalyticsDateRange $range */
         $range = $headlines['range'];
@@ -231,11 +231,20 @@ final class HomeV2Presenter
             $cards[] = $this->card('contacts', 'New contacts', $items['new_contacts'], $currentObserved, $observed, $updating, $range, '', $periodState, $this->rangeUrl($actions['contacts-list']['fullUrl'] ?? null, $from, $to));
         }
 
-        // 3 · New conversations
-        if (isset($items['new_conversations'])) {
-            $observed = $createdAt !== null && $createdAt <= $previous->startUtc;
-            $currentObserved = $createdAt === null || $createdAt < $range->endUtc;
-            $cards[] = $this->card('conversations', 'New conversations', $items['new_conversations'], $currentObserved, $observed, false, $range, '', $periodState, $this->rangeUrl($actions['follow-ups']['fullUrl'] ?? null, $from, $to));
+        // 3 · Waiting for reply: a CURRENT state (how many customers wrote last and are waiting), not a period figure, so it has no
+        // comparison and no period handling. Its list is the inbox's own waiting view. Failed read = unavailable, never zero.
+        $followUrl = $actions['follow-ups']['fullUrl'] ?? null;
+        $waitingUrl = $followUrl === null ? null : $followUrl . (str_contains($followUrl, '?') ? '&' : '?') . 'filter=waiting';
+
+        if ($waiting !== null) {
+            $cards[] = [
+                'key' => 'waiting', 'label' => 'Waiting for reply', 'value' => number_format($waiting), 'note' => null, 'url' => $waitingUrl,
+                'badge' => $waiting > 0
+                    ? ['tone' => 'attention', 'text' => 'Need reply', 'sr' => $waiting . ' customers are waiting for a reply']
+                    : ['tone' => 'same', 'text' => 'All replied', 'sr' => 'No customer is waiting for a reply'],
+            ];
+        } elseif ($waitingFailed) {
+            $cards[] = ['key' => 'waiting', 'label' => 'Waiting for reply', 'value' => '—', 'note' => 'Unavailable right now', 'badge' => null, 'url' => $waitingUrl];
         }
 
         return $cards;
@@ -371,7 +380,7 @@ final class HomeV2Presenter
             }
 
             $seen[$signature] = true;
-            $rows[] = ['text' => $row['text'], 'at' => $row['at'], 'url' => $row['url']];
+            $rows[] = ['key' => $row['key'], 'text' => $row['text'], 'at' => $row['at'], 'url' => $row['url']];
 
             if (count($rows) === self::MAX_DONE) {
                 break;

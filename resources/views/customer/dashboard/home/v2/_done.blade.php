@@ -18,11 +18,16 @@
         @else
             <ul class="hv2-done" data-role="handling-items">
                 @foreach($done['rows'] as $row)
-                    <li data-role="recent-work-item">
-                        <span class="hv2-done__mark" aria-hidden="true">✓</span>
+                    @php
+                        // Many website versions are one outcome on Home: the site is live, with when the latest version went out.
+                        $isSite = ($row['key'] ?? '') === 'website_version_published';
+                        $title = $isSite ? 'Your website is live' : $row['text'];
+                    @endphp
+                    <li data-role="recent-work-item"@if($isSite) data-outcome="website-live"@endif>
+                        <span class="hv2-done__mark{{ $isSite ? ' hv2-done__mark--icon' : '' }}" aria-hidden="true">{{ $isSite ? '🌐' : '✓' }}</span>
                         <span>
-                            @if($row['url'] !== null)<a href="{{ $row['url'] }}" data-role="recent-work-link">{{ $row['text'] }}</a>@else<span data-role="recent-work-text">{{ $row['text'] }}</span>@endif
-                            @if($row['at'] !== null)<time class="hv2-muted" datetime="{{ $row['at']->toIso8601String() }}">{{ $row['at']->format('M j') }}</time>@endif
+                            @if($row['url'] !== null)<a href="{{ $row['url'] }}" data-role="recent-work-link">{{ $title }}</a>@else<span data-role="recent-work-text">{{ $title }}</span>@endif
+                            @if($row['at'] !== null)<time class="hv2-muted" datetime="{{ $row['at']->toIso8601String() }}">{{ $isSite ? 'Latest version published · ' : '' }}{{ $row['at']->format('M j') }}</time>@endif
                         </span>
                     </li>
                 @endforeach

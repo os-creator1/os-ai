@@ -227,9 +227,9 @@ class BusinessHomePerformanceTest extends TestCase
         $this->assertSame(['3', '2', '0', '6'], array_map(fn ($headline) => $headline->figure, $band['items']));
 
         $html = $this->home()->assertOk()->getContent();
-        // Home shows the three cards the final design names (bookings, new contacts, new conversations); received messages stay a band figure.
-        $this->assertSame(['appointments_booked', 'new_contacts', 'new_conversations'], $this->headlineKeys($html));
-        $this->assertSame(['0', '3', '2'], array_map(fn ($key) => preg_match('/data-headline="' . $key . '".*?data-role="headline-figure">([^<]+)</s', $html, $m) ? $m[1] : null, $this->headlineKeys($html)));
+        // Home shows the three cards the final design names (bookings, new contacts, waiting for reply); the rest stay band figures.
+        $this->assertSame(['appointments_booked', 'new_contacts', 'awaiting_reply'], $this->headlineKeys($html));
+        $this->assertSame(['0', '3', '0'], array_map(fn ($key) => preg_match('/data-headline="' . $key . '".*?data-role="headline-figure">([^<]+)</s', $html, $m) ? $m[1] : null, $this->headlineKeys($html)));
 
         foreach (['messages_sent', 'provider_accepted', 'confirmed_failed', 'automation_runs'] as $absent) {
             $this->assertNotContains($absent, $this->headlineKeys($html), "{$absent} is not a Business performance figure.");
