@@ -499,14 +499,20 @@ final class CustomerMenuBuilder
         if ($own !== null) {
             $scoped = [$agency->uid, $own->uid];
 
-            $items[] = MenuItem::header('own-business', 'Business');
+            // Agency-owned operations (the agency's own leads, calendar, automations, SEO and Ads) —
+            // kept visibly apart from the managed customer accounts under the "Agency" heading below.
+            $items[] = MenuItem::header('own-business', 'Your agency workspace');
             // Results (and the Growth advisor) open from Business Home, which stays lit while the owner is on them —
             // exactly as in the plain Business frame; without these prefixes nothing in the sidebar was current there.
             $items[] = $inBusinessFrame
                 ? $this->item($user, 'home', 'Business Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.growth.', 'customer.workspaces.businesses.analytics.', 'customer.analytics.'])
                 : $this->frameMove($user, 'business-home', 'Business Home', 'home', 'customer.context.business.switch', ['workspace' => $agency->uid, 'business' => $own->uid]);
 
-            $items = array_merge($items, $this->businessModuleItems($user, $scoped, $current));
+            // In this shell "Contacts" holds the AGENCY's own leads and customer contacts, never a client's.
+            $items = array_merge($items, array_map(
+                fn (?MenuItem $item) => $item?->key === 'contacts' ? $this->relabel($item, 'Contacts & CRM') : $item,
+                $this->businessModuleItems($user, $scoped, $current),
+            ));
             $items[] = $this->businessSettingsItem($context, $user, $scoped, $current, 'Business settings', 'business-settings');
 
             $items[] = MenuItem::header('agency', 'Agency');
@@ -516,6 +522,15 @@ final class CustomerMenuBuilder
         $items[] = $inBusinessFrame
             ? $this->frameMove($user, 'agency-home', $homeLabel, 'home', 'customer.context.account.switch', ['workspace' => $agency->uid])
             : $this->item($user, 'home', $homeLabel, 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
+
+        // No own operating workspace yet (an Agency skips Business onboarding by design): the OWNER can turn it on
+        // in one step. A POST the server re-authorizes (AgencyOperationsManager); never offered to anyone else.
+        if ($own === null && $agency->isOwner && Route::has('customer.workspaces.agency.operations.enable') && Gate::forUser($user)->any(['access_backend'])) {
+            $items[] = new MenuItem('agency-operations-setup', 'Set up agency workspace', null, 'power', false, [], false, [
+                'url' => route('customer.workspaces.agency.operations.enable', [$agency->uid]),
+                'fields' => [],
+            ]);
+        }
 
         $items[] = $this->item($user, 'accounts', 'Clients', 'briefcase', ['access_backend'], 'customer.workspaces.clients.index', [$agency->uid], $current, [
             'customer.workspaces.clients.', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
@@ -566,6 +581,11 @@ final class CustomerMenuBuilder
      *
      * @param  array<string, string>  $fields
      */
+    private function relabel(MenuItem $item, string $label): MenuItem
+    {
+        return new MenuItem($item->key, $label, $item->url, $item->icon, $item->active, $item->children, $item->header, $item->post);
+    }
+
     private function frameMove(User $user, string $key, string $label, string $icon, string $routeName, array $fields): ?MenuItem
     {
         if (! Route::has($routeName) || ! Gate::forUser($user)->any(['access_backend'])) {
