@@ -28,6 +28,7 @@ class AgencyProspectingChannel extends Model
         'webhook_verified_at',
         'disconnected_at',
         'last_error_code',
+        'sms_capability_confirmed_at',
     ];
 
     protected $casts = [
@@ -36,7 +37,18 @@ class AgencyProspectingChannel extends Model
         'credentials_verified_at' => 'datetime',
         'webhook_verified_at' => 'datetime',
         'disconnected_at' => 'datetime',
+        'sms_capability_confirmed_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        // The database-enforced "one live owner per number" key (see the migration): the digits
+        // of the sender number while the channel is live, NULL once it is disconnected.
+        static::saving(function (self $channel): void {
+            $digits = preg_replace('/\\D/', '', (string) $channel->sender_number);
+            $channel->sender_key = $channel->status === self::STATUS_DISCONNECTED || $digits === '' ? null : $digits;
+        });
+    }
 
     protected $hidden = ['webhook_public_key'];
 

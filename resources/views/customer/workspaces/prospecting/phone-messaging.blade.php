@@ -55,6 +55,14 @@
                                 <span class="text-caption">Set the webhook URL on the Manage page in your Telnyx messaging profile.</span>
                             @endif
                         </div>
+                        <div class="mt-50">
+                            @if($channel->sms_capability_confirmed_at)
+                                <x-badge variant="success">Text messaging confirmed by Telnyx</x-badge>
+                            @else
+                                <x-badge variant="neutral">Text messaging not confirmed</x-badge>
+                                <span class="text-caption">Telnyx did not report this number's text-messaging status. Check in Telnyx that it can send texts.</span>
+                            @endif
+                        </div>
                         <div class="d-flex flex-wrap gap-1 mt-1">
                             @if(! $channel->is_default_sender)
                                 <form method="post" action="{{ route('customer.workspaces.prospecting.phone-messaging.sender', $workspaceUid) }}">
@@ -76,6 +84,7 @@
                 @empty
                     <p class="mb-1">No Telnyx account connected.</p>
                 @endforelse
+                <p class="text-caption mb-1">Carrier registration is not checked here. In the US, texting prospects normally needs your 10DLC brand and campaign (or a verified toll-free number) approved in Telnyx. If Telnyx declines a message, it shows as a failed send — nothing is charged by MotionGrove.</p>
                 <x-button variant="primary" size="sm" :href="route('customer.workspaces.prospecting.channels.connect', [$workspaceUid, 'Telnyx'])">Connect a Telnyx number</x-button>
             </x-card>
         </div>

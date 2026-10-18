@@ -176,6 +176,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
         [$errors, $credentials] = $this->validateCredentials($provider, $request->all(), false);
 
         $webhookKey = null;
+        $smsConfirmed = false;
 
         if ($provider === SendingServer::TYPE_TELNYX) {
             $webhookKey = $credentials['webhook_public_key'] ?? null;
@@ -201,6 +202,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
 
             // Stored sealed (App\Library\Security\SealedSecret); never shown again.
             $credentials['api_key'] = SealedSecret::seal($credentials['api_key']);
+            $smsConfirmed = $check['sms_confirmed'];
         }
 
         $ownerCustomerExists = Customer::where('user_id', $workspace->owner_user_id)->exists();
@@ -225,7 +227,8 @@ class AgencyProspectingChannelController extends CustomerBaseController
         // authenticated actor who performed this action (the owner, or an
         // active Workspace Admin) — never silently conflated with the
         // provider-owner identity.
-        $channel = DB::transaction(function () use ($input, $workspace, $provider, $senderNumber, $webhookKey): AgencyProspectingChannel {
+        try {
+            $channel = DB::transaction(function () use ($input, $workspace, $provider, $senderNumber, $webhookKey, $smsConfirmed): AgencyProspectingChannel {
             $sendingServer = $this->sendingServers->store($input);
 
             return AgencyProspectingChannel::create([
@@ -237,8 +240,15 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 'created_by_user_id' => Auth::id(),
                 'webhook_public_key' => $webhookKey !== null ? SealedSecret::seal($webhookKey) : null,
                 'credentials_verified_at' => $provider === SendingServer::TYPE_TELNYX ? now() : null,
+                'sms_capability_confirmed_at' => $smsConfirmed ? now() : null,
             ]);
-        });
+            });
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            // Another agency connected this number first (the database key is the arbiter);
+            // the transaction rolled back, so no credential is left behind.
+            return redirect()->route('customer.workspaces.prospecting.channels.connect', [$workspaceUid, $provider])
+                ->withErrors(['sender_number' => 'This number is already connected to an account. Use a number you own that is not in use elsewhere.']);
+        }
 
         // Connected is not the same as ready: say what is still missing.
         $message = self::ALLOWED_PROVIDERS[$provider]['label'] . ' account connected.';
@@ -313,6 +323,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
 
         $server = $channel->sendingServer;
         $verifiedNow = false;
+        $smsConfirmed = false;
 
         if ($provider === SendingServer::TYPE_TELNYX && $server !== null && ! empty($credentials)) {
             $check = $this->telnyxVerifier->verify(
@@ -332,9 +343,11 @@ class AgencyProspectingChannelController extends CustomerBaseController
             }
 
             $verifiedNow = true;
+            $smsConfirmed = $check['sms_confirmed'];
         }
 
-        DB::transaction(function () use ($credentials, $server, $channel, $webhookKey, $verifiedNow, $reconnecting): void {
+        try {
+            DB::transaction(function () use ($credentials, $server, $channel, $webhookKey, $verifiedNow, $reconnecting, $smsConfirmed): void {
             if (! empty($credentials) && $server !== null) {
                 $this->sendingServers->update($server, $credentials);
             }
@@ -349,6 +362,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
             if ($verifiedNow) {
                 $attributes['credentials_verified_at'] = now();
                 $attributes['last_error_code'] = null;
+                $attributes['sms_capability_confirmed_at'] = $smsConfirmed ? now() : null;
             }
 
             if ($reconnecting && $verifiedNow) {
@@ -361,7 +375,10 @@ class AgencyProspectingChannelController extends CustomerBaseController
             if ($attributes !== []) {
                 $channel->forceFill($attributes)->save();
             }
-        });
+            });
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            return $back(['sender_number' => 'This number is now connected to another account, so it cannot be reconnected here.']);
+        }
 
         return redirect()->route('customer.workspaces.prospecting.channels.show', [$workspaceUid, $channel->uid])->with([
             'flash_success' => 'Channel updated.',
@@ -393,7 +410,11 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 return $this->channelsError($workspaceUid, 'Channel was not enabled: ' . $check['message']);
             }
 
-            $channel->forceFill(['credentials_verified_at' => now(), 'last_error_code' => null]);
+            $channel->forceFill([
+                'credentials_verified_at' => now(),
+                'last_error_code' => null,
+                'sms_capability_confirmed_at' => $check['sms_confirmed'] ? now() : null,
+            ]);
         }
 
         $channel->forceFill(['status' => AgencyProspectingChannel::STATUS_ACTIVE])->save();
@@ -506,10 +527,14 @@ class AgencyProspectingChannelController extends CustomerBaseController
             return $back('flash_error', $check['message']);
         }
 
-        DB::transaction(function () use ($workspace, $channel): void {
+        DB::transaction(function () use ($workspace, $channel, $check): void {
             AgencyProspectingChannel::where('workspace_id', $workspace->id)->lockForUpdate()->get();
             AgencyProspectingChannel::where('workspace_id', $workspace->id)->update(['is_default_sender' => false]);
-            $channel->forceFill(['is_default_sender' => true, 'last_error_code' => null])->save();
+            $channel->forceFill([
+                'is_default_sender' => true,
+                'last_error_code' => null,
+                'sms_capability_confirmed_at' => $check['sms_confirmed'] ? now() : null,
+            ])->save();
         });
 
         return $back('flash_success', 'Messages will now be sent from ' . $channel->sender_number . ' through your own Telnyx account.');

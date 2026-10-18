@@ -20,7 +20,7 @@ final class TelnyxCredentialVerifier
     private const BASE = 'https://api.telnyx.com/v2';
 
     /**
-     * @return array{ok: bool, reason: ?string, message: ?string}
+     * @return array{ok: bool, reason: ?string, message: ?string, sms_confirmed: bool}
      */
     public function verify(string $apiKey, string $messagingProfileId, string $senderDigits): array
     {
@@ -57,16 +57,56 @@ final class TelnyxCredentialVerifier
             if (is_string($status) && strtolower($status) !== 'active') {
                 return $this->fail('number_not_active', 'That number is not active in your Telnyx account yet.');
             }
+
+            $smsConfirmed = false;
+            $numberId = $numbers->json('data.0.id');
+
+            if (is_string($numberId) && $numberId !== '') {
+                // The number's own messaging settings (GET /phone_numbers/{id}/messaging). Each field
+                // is used only when Telnyx actually returned it: a missing field is "not confirmed",
+                // never a guessed pass or fail.
+                $settings = Http::withToken($apiKey)->timeout(15)
+                    ->get(self::BASE . '/phone_numbers/' . rawurlencode($numberId) . '/messaging');
+
+                $data = $settings->successful() ? $settings->json('data') : null;
+
+                if (is_array($data)) {
+                    if (array_key_exists('messaging_profile_id', $data)) {
+                        $assigned = $data['messaging_profile_id'];
+
+                        if (! is_string($assigned) || $assigned === '') {
+                            return $this->fail('number_no_profile', 'That number is not assigned to a Messaging profile in Telnyx. Assign it to the profile you entered.');
+                        }
+
+                        if ($assigned !== $messagingProfileId) {
+                            return $this->fail('number_other_profile', 'That number is assigned to a different Messaging profile in Telnyx than the one you entered.');
+                        }
+                    }
+
+                    $features = $data['features'] ?? null;
+
+                    if (is_array($features) && array_key_exists('sms', $features)) {
+                        $sms = $features['sms'];
+                        $enabled = is_array($sms) ? in_array(true, array_map('boolval', $sms), true) : (bool) $sms;
+
+                        if (! $enabled) {
+                            return $this->fail('number_not_sms_enabled', 'Telnyx reports that number cannot send text messages. Use an SMS-enabled number.');
+                        }
+
+                        $smsConfirmed = true;
+                    }
+                }
+            }
         } catch (Throwable) {
             return $this->fail('provider_unavailable', 'Telnyx could not be reached right now. Try again in a few minutes.');
         }
 
-        return ['ok' => true, 'reason' => null, 'message' => null];
+        return ['ok' => true, 'reason' => null, 'message' => null, 'sms_confirmed' => $smsConfirmed];
     }
 
-    /** @return array{ok: bool, reason: string, message: string} */
+    /** @return array{ok: bool, reason: string, message: string, sms_confirmed: bool} */
     private function fail(string $reason, string $message): array
     {
-        return ['ok' => false, 'reason' => $reason, 'message' => $message];
+        return ['ok' => false, 'reason' => $reason, 'message' => $message, 'sms_confirmed' => false];
     }
 }

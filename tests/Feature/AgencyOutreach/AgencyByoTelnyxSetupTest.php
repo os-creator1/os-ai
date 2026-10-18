@@ -326,4 +326,161 @@ class AgencyByoTelnyxSetupTest extends TestCase
         // Reachable from Outreach itself.
         $this->get($this->outreachRoute('overview', $agency['workspace']))->assertOk()->assertSee('Phone &amp; Messaging', false);
     }
+
+    // ------------------------------------------------------------------ number eligibility
+
+    private function fakeTelnyxNumber(?array $messagingSettings, int $settingsStatus = 200): void
+    {
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        Http::fake([
+            'api.telnyx.com/v2/messaging_profiles/*' => Http::response(['data' => ['id' => 'profile-1']]),
+            'api.telnyx.com/v2/phone_numbers/*/messaging' => Http::response(['data' => $messagingSettings], $settingsStatus),
+            'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['id' => 'num-1', 'status' => 'active']]]),
+        ]);
+    }
+
+    public function test_sms_capability_is_confirmed_only_when_telnyx_says_so_and_never_guessed(): void
+    {
+        $agency = $this->outreachAgency('Alpha');
+        $this->authenticateAs($agency['customer']);
+        $verifier = app(\App\Library\AgencyProspecting\TelnyxCredentialVerifier::class);
+
+        $this->fakeTelnyxNumber(['messaging_profile_id' => 'profile-1', 'features' => ['sms' => ['domestic_two_way' => true, 'international_inbound' => false]]]);
+        $this->assertSame(['ok' => true, 'sms' => true], ['ok' => $verifier->verify('k', 'profile-1', '12025552000')['ok'], 'sms' => $verifier->verify('k', 'profile-1', '12025552000')['sms_confirmed']]);
+
+        // Telnyx returns nothing about features: connected, but explicitly NOT confirmed.
+        $this->fakeTelnyxNumber(['messaging_profile_id' => 'profile-1']);
+        $result = $verifier->verify('k', 'profile-1', '12025552000');
+        $this->assertTrue($result['ok']);
+        $this->assertFalse($result['sms_confirmed']);
+
+        // The settings endpoint itself unavailable: still not confirmed, not refused.
+        $this->fakeTelnyxNumber(null, 500);
+        $result = $verifier->verify('k', 'profile-1', '12025552000');
+        $this->assertTrue($result['ok']);
+        $this->assertFalse($result['sms_confirmed']);
+
+        $refusals = [
+            'sms off' => [['messaging_profile_id' => 'profile-1', 'features' => ['sms' => null]], 'number_not_sms_enabled'],
+            'all flags false' => [['messaging_profile_id' => 'profile-1', 'features' => ['sms' => ['domestic_two_way' => false]]], 'number_not_sms_enabled'],
+            'no profile' => [['messaging_profile_id' => null, 'features' => ['sms' => ['domestic_two_way' => true]]], 'number_no_profile'],
+            'other profile' => [['messaging_profile_id' => 'someone-elses', 'features' => ['sms' => ['domestic_two_way' => true]]], 'number_other_profile'],
+        ];
+
+        foreach ($refusals as $name => [$settings, $reason]) {
+            $this->fakeTelnyxNumber($settings);
+            $this->assertSame($reason, $verifier->verify('k', 'profile-1', '12025552000')['reason'], $name);
+        }
+    }
+
+    public function test_connecting_records_whether_sms_was_confirmed_and_the_page_never_claims_registration_is_verified(): void
+    {
+        $agency = $this->outreachAgency('Alpha');
+        $this->authenticateAs($agency['customer']);
+
+        $this->fakeTelnyxNumber(['messaging_profile_id' => 'profile-1']);
+        $this->connectTelnyx($agency)->assertSessionHasNoErrors();
+        $channel = AgencyProspectingChannel::where('workspace_id', $agency['workspace']->id)->sole();
+        $this->assertNull($channel->sms_capability_confirmed_at);
+
+        $page = $this->get(route('customer.workspaces.prospecting.phone-messaging', $agency['workspace']->uid))->assertOk();
+        $page->assertSee('Text messaging not confirmed')->assertSee('Carrier registration is not checked here')->assertDontSee('Text messaging confirmed by Telnyx');
+
+        $this->fakeTelnyxNumber(['messaging_profile_id' => 'profile-1', 'features' => ['sms' => ['domestic_two_way' => true]]]);
+        $this->post(route('customer.workspaces.prospecting.channels.enable', [$agency['workspace']->uid, $channel->uid]));
+        $this->assertNotNull($channel->fresh()->sms_capability_confirmed_at);
+        $this->get(route('customer.workspaces.prospecting.phone-messaging', $agency['workspace']->uid))->assertSee('Text messaging confirmed by Telnyx');
+    }
+
+    // ------------------------------------------------------------------ one live owner per number
+
+    public function test_the_database_allows_one_live_owner_per_number_and_frees_it_on_disconnect(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $b = $this->outreachAgency('Beta');
+        $first = $this->byoChannel($a['workspace'], ['sender' => '12025552000']);
+
+        try {
+            $this->byoChannel($b['workspace'], ['sender' => '12025552000']);
+            $this->fail('A second live owner of the same number must be impossible.');
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            $this->addToAssertionCount(1);
+        }
+
+        // Formatting differences do not make it a different number.
+        try {
+            $this->byoChannel($b['workspace'], ['sender' => '+1 (202) 555-2000']);
+            $this->fail('Formatting must not bypass the key.');
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            $this->addToAssertionCount(1);
+        }
+
+        $first->forceFill(['status' => AgencyProspectingChannel::STATUS_DISCONNECTED])->save();
+        $this->assertNull($first->fresh()->sender_key);
+        $second = $this->byoChannel($b['workspace'], ['sender' => '12025552000']);
+        $this->assertSame('12025552000', $second->sender_key);
+    }
+
+    public function test_the_connect_form_survives_a_lost_race_for_the_same_number_without_leaving_credentials(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $b = $this->outreachAgency('Beta');
+        $this->authenticateAs($a['customer']);
+        $this->fakeTelnyxNumber(['messaging_profile_id' => 'profile-1']);
+
+        // Another agency claims the number AFTER this request passed its friendly pre-check:
+        // the pre-check is bypassed by claiming it from inside the verification call.
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        Http::fake([
+            'api.telnyx.com/v2/messaging_profiles/*' => function () use ($b) {
+                $this->byoChannel($b['workspace'], ['sender' => '12025552000']);
+
+                return Http::response(['data' => ['id' => 'profile-1']]);
+            },
+            'api.telnyx.com/v2/phone_numbers/*/messaging' => Http::response(['data' => []]),
+            'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['id' => 'n', 'status' => 'active']]]),
+        ]);
+
+        $this->connectTelnyx($a)->assertSessionHasErrors('sender_number');
+
+        $this->assertSame(0, AgencyProspectingChannel::where('workspace_id', $a['workspace']->id)->count());
+        $this->assertSame(1, SendingServer::where('settings', SendingServer::TYPE_TELNYX)->count(), 'Only the winner has a server; the loser left none behind.');
+    }
+
+    // ------------------------------------------------------------------ Conversations readiness wording
+
+    public function test_conversations_say_exactly_why_the_agencys_own_sender_cannot_send(): void
+    {
+        $rejected = \App\Library\Conversations\ConversationSendFailureReason::forByoCode('invalid_api_key');
+        $other = \App\Library\Conversations\ConversationSendFailureReason::forByoCode('channel_disabled');
+
+        $this->assertSame(\App\Library\Conversations\ConversationSendFailureReason::ByoCredentialsRejected, $rejected);
+        $this->assertStringContainsString('Reconnect your Telnyx account', $rejected->customerMessage());
+        $this->assertSame(\App\Library\Conversations\ConversationSendFailureReason::ByoSenderNotReady, $other);
+        $this->assertStringContainsString('Phone & Messaging', $other->customerMessage());
+        $this->assertTrue($rejected->isRetryable(), 'Nothing was sent, so a retry after fixing it is safe.');
+
+        // A provider authentication rejection is the agency's key on a BYO operation, never a platform outage.
+        $projection = \App\Library\Conversations\ManagedSendStateMachine::projectOperation((object) [
+            'status' => 'rejected', 'error_category' => 'configuration', 'transport_mode' => 'byo',
+        ]);
+        $this->assertSame('byo_credentials_rejected', $projection->failureReason);
+        $managed = \App\Library\Conversations\ManagedSendStateMachine::projectOperation((object) [
+            'status' => 'rejected', 'error_category' => 'configuration', 'transport_mode' => 'managed',
+        ]);
+        $this->assertSame('messaging_unavailable', $managed->failureReason);
+    }
+
+    public function test_the_outreach_phone_hint_follows_the_chosen_sender(): void
+    {
+        $agency = $this->outreachAgency('Alpha', ['number' => false, 'registration' => null]);
+        $hint = app(\App\Library\AgencyOutreach\PhoneSetupHint::class);
+        $this->assertTrue($hint->needed($agency['workspace']), 'Nothing configured yet.');
+
+        $channel = $this->byoChannel($agency['workspace'], ['default' => true]);
+        $this->assertFalse($hint->needed($agency['workspace']), 'A working chosen BYO sender satisfies it.');
+
+        $channel->forceFill(['status' => AgencyProspectingChannel::STATUS_DISABLED])->save();
+        $this->assertTrue($hint->needed($agency['workspace']), 'A chosen but unusable BYO sender still needs attention.');
+    }
 }
