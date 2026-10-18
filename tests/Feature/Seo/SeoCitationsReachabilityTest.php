@@ -41,6 +41,9 @@ class SeoCitationsReachabilityTest extends TestCase
         $citations = $this->get($this->citationsUrl($workspace, $business))->assertOk()->getContent();
         $this->assertStringContainsString('Essential listings', $citations);
         $this->assertStringContainsString('data-directory="apple_business"', $citations);
+        // The page renders its own "Citations" heading: the shell must not print the "SEO — Citations" title above it.
+        $this->assertStringNotContainsString('content-header-title', $citations);
+        $this->assertStringContainsString('<h4 class="mb-25">Citations</h4>', $citations);
 
         $this->get($this->reviewsUrl($workspace, $business))->assertOk();
     }

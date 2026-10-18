@@ -27,6 +27,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'SEO — Citations')
+@section('page-heading', 'own')
 
 @section('page-style')
     @include('customer.business.seo._citations_styles')

@@ -21,6 +21,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'SEO — Website check')
+@section('page-heading', 'own')
 
 @php
     use App\Library\Seo\SeoAuditPage;
