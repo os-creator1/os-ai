@@ -30,10 +30,13 @@
     $timezoneNote = 'Days follow ' . ($businessName ? $businessName . "'s" : "this Business's") . ' local time (' . $range->timezone . ').';
 @endphp
 
-<form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
+{{-- data-custom is the ONE source of truth for whether the Custom date fields are open (server-rendered from the range being shown, flipped only by the Custom
+     toggle). The hidden preset select is a no-JavaScript/legacy control, never consulted to decide it, and in the segmented variant it carries no name so it
+     can never add a second `range` parameter beside the pressed preset button. --}}
+<form method="get" action="{{ $formAction }}" class="{{ $segmented ? 'home-range-form' : 'row g-1 align-items-end' }}" data-role="analytics-range" data-custom="{{ $isCustom ? '1' : '0' }}" data-preset="{{ $range->preset }}" @if($segmented) data-segmented="1" @endif @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
     <div class="{{ $segmented ? 'visually-hidden' : 'col-md-3 col-sm-6' }}">
         <label class="form-label" for="range">Date range</label>
-        <select id="range" name="range" class="form-select" data-role="range-preset" @if($segmented) inert @endif>
+        <select id="range" @unless($segmented) name="range" @endunless class="form-select" data-role="range-preset" @if($segmented) inert @endif>
             @foreach(AnalyticsDateRange::SELECTABLE_PRESETS as $value)
                 <option value="{{ $value }}" @selected($range->preset === $value)>{{ $presetLabels[$value] }}</option>
             @endforeach
@@ -51,11 +54,11 @@
     @endif
     <div class="col-md-3 col-sm-6" data-role="custom-dates" @unless($isCustom) hidden @endunless>
         <label class="form-label" for="start">From</label>
-        <input type="date" id="start" name="start" class="form-control" value="{{ old('start', $isCustom ? $range->startLocal->format('Y-m-d') : '') }}">
+        <input type="date" id="start" name="start" class="form-control" data-custom-field value="{{ old('start', $isCustom ? $range->startLocal->format('Y-m-d') : '') }}">
     </div>
     <div class="col-md-3 col-sm-6" data-role="custom-dates" @unless($isCustom) hidden @endunless>
         <label class="form-label" for="end">To</label>
-        <input type="date" id="end" name="end" class="form-control" value="{{ old('end', $isCustom ? $range->endLocal->format('Y-m-d') : '') }}">
+        <input type="date" id="end" name="end" class="form-control" data-custom-field value="{{ old('end', $isCustom ? $range->endLocal->format('Y-m-d') : '') }}">
     </div>
     <div class="col-md-3 col-sm-6" @if($segmented) data-role="custom-dates" @unless($isCustom) hidden @endunless @endif>
         @if($segmented)
@@ -80,39 +83,5 @@
     </div>
 </form>
 
-<script>
-    (function () {
-        // Bound once per page, by delegation, so it keeps working for a range
-        // control swapped in by an in-place update (whose own copy of this
-        // script does not run) and for every range control on the page.
-        if (window.__analyticsRangeCustomDates) { return; }
-        window.__analyticsRangeCustomDates = true;
-
-        function sync(form) {
-            var preset = form && form.querySelector('[data-role="range-preset"]');
-            if (!preset) { return; }
-            var custom = preset.value === 'custom';
-            form.querySelectorAll('[data-role="custom-dates"]').forEach(function (el) { el.hidden = !custom; });
-        }
-
-        function syncAll(root) {
-            (root || document).querySelectorAll('[data-role="analytics-range"]').forEach(sync);
-        }
-
-        document.addEventListener('change', function (event) {
-            if (event.target && event.target.matches && event.target.matches('[data-role="range-preset"]')) {
-                sync(event.target.form);
-            }
-        });
-        document.addEventListener('click', function (event) {
-            var toggle = event.target && event.target.closest ? event.target.closest('[data-role="range-custom-toggle"]') : null;
-            if (!toggle) { return; }
-            var form = toggle.form || toggle.closest('form');
-            var open = form.querySelector('[data-role="custom-dates"]').hidden;
-            form.querySelectorAll('[data-role="custom-dates"]').forEach(function (el) { el.hidden = !open; });
-            toggle.setAttribute('aria-pressed', open ? 'true' : 'false');
-        });
-        document.addEventListener('async-region:updated', function (event) { syncAll(event.target); });
-        syncAll(document);
-    })();
-</script>
+{{-- Bound once per page, by delegation (see the file's header): a preset press never edits the Custom state, so a failed update leaves the control telling the truth. --}}
+<script src="{{ asset('js/analytics/range-control.js') }}?v={{ @filemtime(public_path('js/analytics/range-control.js')) }}" defer></script>
