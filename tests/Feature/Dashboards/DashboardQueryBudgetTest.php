@@ -97,7 +97,11 @@ class DashboardQueryBudgetTest extends TestCase
     //
     // 30 -> 31: the actor's reachable Location ids, read ONCE and handed to the contacts and conversations cards so their figures equal the
     // lists they open (CrmLocationScope::reachableIds). One bounded read, flat in rows, contacts, conversations and messages.
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 31;
+    //
+    // 31 -> 32: ONE existence read, "does this Business have a Location the actor cannot reach" (CrmLocationScope::hasUnreachableLocation).
+    // The daily chart is a Business-wide series, so it is withheld from such an actor; without this read the chart could show records their
+    // cards do not count. Flat in rows, contacts, conversations and messages.
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 32;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
@@ -182,7 +186,7 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(self::BUSINESS_HOME_ANALYTICS, $cost['analytics']);
         $this->assertSame(self::BUSINESS_HOME_CONVERSATIONS, $cost['conversations']);
 
-        $this->assertLessThanOrEqual(32, $cost['dashboard'], 'Contract §16 ceiling (18) plus the fourteen bounded Home V2 reads documented above.');
+        $this->assertLessThanOrEqual(33, $cost['dashboard'], 'Contract §16 ceiling (18) plus the fifteen bounded Home V2 reads documented above.');
         $this->assertLessThanOrEqual(9, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read, plus the import-running check and the actor-scoped contacts statement.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
         $this->assertLessThanOrEqual(46, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling (31) plus the fifteen Home V2 reads.');

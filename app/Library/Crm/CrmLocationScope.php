@@ -69,6 +69,20 @@ final class CrmLocationScope
         return $this->guard->accessibleLocationIdsForBusiness($actorUserId, $business);
     }
 
+    /**
+     * Whether this Business has a Location (in any state) the actor can NOT reach: one existence read. A Business-wide figure or series
+     * would then include records the actor may not see.
+     *
+     * @param  array<int, int>  $reachable
+     */
+    public function hasUnreachableLocation(Business $business, array $reachable): bool
+    {
+        return \Illuminate\Support\Facades\DB::table('business_locations')
+            ->where('business_id', $business->id)
+            ->when($reachable !== [], fn ($q) => $q->whereNotIn('id', $reachable))
+            ->exists();
+    }
+
     /** restrict() with the reach already in hand. */
     public function restrictToIds(EloquentBuilder|QueryBuilder $query, array $reachable, string $column = 'location_id'): void
     {

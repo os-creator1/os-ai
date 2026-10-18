@@ -141,4 +141,39 @@ class HomeV2ScopeFixesTest extends TestCase
         $this->assertStringContainsString('window.location.assign(next.toString())', $waiting);
         $this->assertStringContainsString('knownTabs', $waiting);
     }
+    // ── 3 · the chart shows only a population the actor may see ────────
+
+    public function test_the_chart_is_withheld_from_a_location_restricted_actor_and_kept_for_full_access(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Chart Scope', 'Chart Scope Account');
+        $first = BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
+        $second = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Hidden site', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        for ($i = 0; $i < 3; $i++) {
+            $this->contactAt($business, (int) $second->id, '2026-09-03 12:00:00'); // data only the hidden Location holds
+        }
+        $this->contactAt($business, (int) $first->id, '2026-09-04 12:00:00');
+
+        $this->authenticateAs($owner);
+        $full = $this->get(route('user.home'))->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="home-chart"', $full);
+        $this->assertStringContainsString('data-series-url=', $full, 'Full Location access keeps the chart.');
+
+        $restricted = $this->createCustomer();
+        $membership = $this->member($workspace, $restricted->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(\App\Repositories\Contracts\WorkspaceMembershipLocationRepository::class)->assign($membership, $first);
+        $this->authenticateAs($restricted->fresh(), ['view_reports', 'access_backend', 'view_contact']);
+
+        $html = $this->get(route('user.home'))->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-series-url=', $html, 'No Business-wide series is handed to an actor who cannot see every Location.');
+        $this->assertStringNotContainsString('data-role="home-chart"', $html);
+        $this->assertStringContainsString('data-role="home-chart-restricted"', $html);
+        $this->assertSame('1', $this->figure($html, 'contacts'), 'Their card counts only their Location.');
+
+        // A staff member granted EVERY Location (explicitly) is unrestricted and keeps the chart.
+        $all = $this->createCustomer();
+        $this->member($workspace, $all->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->authenticateAs($all->fresh(), ['view_reports', 'access_backend', 'view_contact']);
+        $this->assertStringContainsString('data-series-url=', $this->get(route('user.home'))->assertOk()->getContent());
+    }
 }

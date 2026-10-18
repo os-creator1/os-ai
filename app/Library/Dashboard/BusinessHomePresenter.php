@@ -913,6 +913,9 @@ final class BusinessHomePresenter
             'formAction' => route('user.home'),
             // B5's own series endpoint, for the very range shown above. The
             // browser fetches it after the page; Home loads no series itself.
+            // The series is Business-wide (Results' own). For an actor who cannot reach every Location it would include records they may not
+            // see, so Home withholds the chart from them rather than show a population different from its cards.
+            'locationRestricted' => app(\App\Library\Crm\CrmLocationScope::class)->hasUnreachableLocation($business, $reach),
             'seriesUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.series', array_merge($scoped, $rangeParameters), ['view_reports']),
             'resultsUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.overview', array_merge($scoped, $rangeParameters), ['view_reports']),
         ];

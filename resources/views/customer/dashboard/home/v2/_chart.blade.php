@@ -4,6 +4,12 @@
     (it would add nothing the cards do not already say) — just one line. A failed read says so; it is never drawn as zeros.
     The series covers contacts only, so there is no Leads/Bookings switch: a bookings series does not exist yet.
 --}}
+@if($chart['restricted'] ?? false)
+    {{-- The daily series covers the whole business; this actor sees only some Locations, so no chart (their cards above are scoped). --}}
+    <div class="hv2-chart" data-role="home-chart-restricted">
+        <p class="hv2-chart__empty mb-0">The daily chart covers your whole business, so it is not shown for your locations.@if($chart['resultsUrl']) <a href="{{ $chart['resultsUrl'] }}" data-role="results-link">See all analytics</a>@endif</p>
+    </div>
+@else
 <div class="hv2-chart" data-role="home-chart" data-series-url="{{ $chart['seriesUrl'] }}" data-too-early="{{ $chart['tooEarly'] ? '1' : '0' }}" data-days="{{ $chart['days'] }}">
     <div class="hv2-chart__head">
         <p class="hv2-chart__title mb-0"><strong>New contacts per day</strong> <span class="hv2-muted" data-role="chart-total"></span></p>
@@ -19,3 +25,4 @@
         <p class="hv2-chart__foot mb-0"><a href="{{ $chart['resultsUrl'] }}" data-role="results-link">See all analytics</a></p>
     @endif
 </div>
+@endif

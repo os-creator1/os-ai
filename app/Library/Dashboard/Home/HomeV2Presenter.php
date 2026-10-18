@@ -300,7 +300,14 @@ final class HomeV2Presenter
         $first = $createdAt !== null && $createdAt > $range->startUtc ? $createdAt->setTimezone($range->startLocal->getTimezone()) : $range->startLocal;
         $observedDays = max(0, (int) $first->startOfDay()->diffInDays($range->endLocal->startOfDay()) + 1);
 
+        // A Location-restricted actor (or one whose reach could not be determined) gets no chart: the series is Business-wide, and a
+        // chart of a different population than the cards beside it would be wrong or unauthorized data.
+        if (($headlines['locationRestricted'] ?? true) !== false) {
+            return ['restricted' => true, 'seriesUrl' => null, 'resultsUrl' => $headlines['resultsUrl'] ?? null, 'days' => $range->days(), 'observedDays' => $observedDays, 'tooEarly' => false];
+        }
+
         return [
+            'restricted' => false,
             'seriesUrl' => $headlines['seriesUrl'] ?? null,
             'resultsUrl' => $headlines['resultsUrl'] ?? null,
             'days' => $range->days(),
