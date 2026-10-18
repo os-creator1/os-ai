@@ -48,8 +48,8 @@
         <div class="hv2-kpis" data-role="kpis" style="--hv2-kpis: {{ max(1, count($growth['kpis'])) }}">
             @foreach($growth['kpis'] as $kpi)
                 @php $tag = $kpi['url'] === null ? 'div' : 'a'; @endphp
-                <{{ $tag }} class="hv2-kpi" @if($kpi['url'] !== null) href="{{ $kpi['url'] }}" @endif data-role="kpi" data-kpi="{{ $kpi['key'] }}"
-                    data-headline="{{ ['bookings' => 'appointments_booked', 'contacts' => 'new_contacts', 'conversations' => 'new_conversations'][$kpi['key']] }}">
+                <{{ $tag }} class="hv2-kpi {{ $loop->first ? 'hv2-kpi--lead' : '' }}" @if($kpi['url'] !== null) href="{{ $kpi['url'] }}" @endif data-role="kpi" data-kpi="{{ $kpi['key'] }}"
+                    data-headline="{{ ['bookings' => 'appointments_booked', 'contacts' => 'new_contacts', 'waiting' => 'awaiting_reply'][$kpi['key']] }}">
                     <span class="hv2-kpi__label">{{ $kpi['label'] }}@if($kpi['url'] !== null)<span class="hv2-kpi__arrow" aria-hidden="true">↗</span>@endif</span>
                     <span class="hv2-kpi__value" data-role="headline-figure">{{ $kpi['value'] }}</span>
                     @if($kpi['badge'] !== null)

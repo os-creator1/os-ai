@@ -29,7 +29,7 @@
             <span class="hv2-tile" aria-hidden="true" data-role="needs-count">{{ $needs['tile'] }}</span>
             <div class="hv2-needs__text">
                 <h3 class="hv2-needs__title" data-role="next-best-move-headline">{{ $needs['headline'] }}</h3>
-                @if(($needs['severityWord'] ?? null) !== null)<span class="hv2-sev" data-role="next-best-move-severity">{{ $needs['severityWord'] }}</span>@endif
+                @if(($needs['severityWord'] ?? null) !== null)<span class="hv2-sev visually-hidden" data-role="next-best-move-severity">{{ $needs['severityWord'] }}</span>@endif
                 @if($needs['sub'])<p class="hv2-muted mb-0" data-role="needs-sub">{{ $needs['sub'] }}</p>@endif
             </div>
             <div class="hv2-needs__actions">

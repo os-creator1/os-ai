@@ -306,7 +306,7 @@ class BusinessHomeTest extends TestCase
         $this->assertStringNotContainsString('USD 5.00', $main, 'No wallet figure renders on Home at all (H-1 §5).');
 
         // Business B's activity never reaches A's three cards: each shows A's own figure (the Business exists, so a zero is a real zero).
-        foreach (['new_contacts', 'new_conversations'] as $headline) {
+        foreach (['new_contacts', 'awaiting_reply'] as $headline) {
             $this->assertSame('0', $this->headlineFigure($html, $headline), "{$headline} must count only the selected Business.");
         }
     }
@@ -325,7 +325,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertContains('inbox', $this->quickActionKeys($html));
-        $this->assertContains('new_conversations', $this->headlineKeys($html));
+        $this->assertContains('awaiting_reply', $this->headlineKeys($html));
         $this->assertNotContains('automation_runs', $this->headlineKeys($html), 'Automation runs are not a Business performance figure (H-3 §2.5).');
         // C-2: ONE move renders, so the two entitled items are proven in turn —
         // the lost connection leads, and failing automations lead once Google

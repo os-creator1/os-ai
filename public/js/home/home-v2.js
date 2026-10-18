@@ -38,14 +38,15 @@
 
                 var total = values.reduce(function (sum, n) { return sum + (Number(n) || 0); }, 0);
                 if (total === 0) {
-                    // An empty chart adds nothing the cards do not already say.
-                    say(plot, 'No new contacts in this period yet.');
+                    // An empty chart adds nothing the cards do not already say; a business under a week old is told when a trend will appear.
+                    say(plot, box.getAttribute('data-too-early') === '1' ? 'Your trend will appear after your first week.' : 'No new contacts in this period yet.');
                     return;
                 }
 
                 var max = Math.max.apply(null, values.map(Number));
                 plot.textContent = '';
                 plot.className = 'hv2-chart__plot';
+
                 values.forEach(function (n, i) {
                     var bar = el('span', 'hv2-chart__bar' + (Number(n) === 0 ? ' is-zero' : ''));
                     bar.style.height = Math.max(6, Math.round(Number(n) / max * 100)) + '%';
@@ -61,11 +62,14 @@
                     plot.parentNode.insertBefore(axis, plot.nextSibling);
                 }
                 axis.textContent = '';
-                var mid = Math.floor((chart.labels.length - 1) / 2);
-                [0, mid, chart.labels.length - 1].forEach(function (i, k, all) {
-                    if (k > 0 && all[k - 1] === i) { return; }
-                    axis.appendChild(el('span', null, chart.labels[i]));
-                });
+                // Up to ~9 evenly spaced date labels, the first and last always included.
+                var count = chart.labels.length;
+                var step = Math.max(1, Math.ceil(count / 9));
+                var picks = [];
+                for (var p = 0; p < count; p += step) { picks.push(p); }
+                if (picks[picks.length - 1] !== count - 1 && count - 1 - picks[picks.length - 1] >= Math.ceil(step / 2)) { picks.push(count - 1); }
+                // One slot per day, so each label sits under its own bar; only the picked days carry text.
+                for (var d = 0; d < count; d++) { axis.appendChild(el('span', null, picks.indexOf(d) !== -1 ? chart.labels[d] : '')); }
 
                 var label = box.querySelector('[data-role="chart-total"]');
                 if (label) { label.textContent = '· ' + total + ' in ' + box.getAttribute('data-days') + ' days'; }

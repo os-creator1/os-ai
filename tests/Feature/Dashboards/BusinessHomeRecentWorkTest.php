@@ -305,7 +305,7 @@ class BusinessHomeRecentWorkTest extends TestCase
         $this->authenticateAs($customer, array_values(array_diff($this->allCustomerPermissions(), ['website', 'view_google_business_profile'])));
         $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'handling');
 
-        $this->assertStringContainsString('Website version 3 published', $band, 'The event happened either way.');
+        $this->assertStringContainsString('Your website is live', $band, 'The event happened either way (many versions are one concise outcome on Home).');
         $this->assertStringContainsString('Google connected', $band);
         $this->assertSame(2, substr_count($band, 'data-role="recent-work-text"'));
         $this->assertStringNotContainsString('data-role="recent-work-link"', $band);
@@ -358,7 +358,7 @@ class BusinessHomeRecentWorkTest extends TestCase
 
         $band = $this->bandText($this->home()->assertOk()->getContent(), 'handling');
 
-        $this->assertStringContainsString('Website version 1 published', $band);
+        $this->assertStringContainsString('Your website is live', $band);
         $this->assertDoesNotMatchRegularExpression('/\b(balance|payment|invoice|top.?up|prospect|campaign|outreach)\b/i', $band);
     }
 
