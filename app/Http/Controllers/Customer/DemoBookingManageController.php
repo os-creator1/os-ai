@@ -110,7 +110,7 @@ class DemoBookingManageController extends DemoBookingController
         // The old link is dead (the reschedule count moved); the confirmation page needs no authority.
         $moved = Appointment::query()->findOrFail($appointment->id);
         $request->session()->flash('booking_confirmation', $this->summary($type, $business, $location, $moved->start_at->copy(), $timezone)
-            + ['notice' => 'Your appointment was moved. A new confirmation and reminders are on their way.']);
+            + ['notice' => 'Your appointment was moved. Your reminders now follow the new time.']);
 
         return redirect()->route('demo.booking.confirmed');
     }
