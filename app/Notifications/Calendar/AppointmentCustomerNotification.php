@@ -56,8 +56,8 @@ class AppointmentCustomerNotification extends Notification
                 }
             }
 
-            $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar'])
-                ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+            $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar']);
+            $this->addCalendarActions($mail);
             $this->addManageLine($mail);
 
             return $mail->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
@@ -81,14 +81,37 @@ class AppointmentCustomerNotification extends Notification
             $details['Details'] = $d->instructions;
         }
 
-        $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => $details])
-            ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+        $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => $details]);
+        $this->addCalendarActions($mail);
         $this->addManageLine($mail);
 
         return $mail->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
     }
 
     /** Below the action button: the signed guest link, only for the /book-demo Booking Type. */
+    /**
+     * The primary button. For an appointment with a real Zoom meeting it is "Join Zoom meeting" (with the plain link as a
+     * fallback and Google Calendar as a text link); otherwise it is exactly what it always was.
+     */
+    private function addCalendarActions(MailMessage $mail): void
+    {
+        $d = $this->details;
+
+        if ($d->joinUrl !== null) {
+            $mail->action('Join Zoom meeting', $d->joinUrl)
+                ->line(new \Illuminate\Support\HtmlString('Or copy this link into your browser: <a href="'.e($d->joinUrl).'">'.e($d->joinUrl).'</a>'))
+                ->line(new \Illuminate\Support\HtmlString('<a href="'.e(AppointmentCalendarLinks::googleUrl($d)).'">Add to Google Calendar</a>'));
+
+            return;
+        }
+
+        if ($d->zoomPending) {
+            $mail->line('Your Zoom link is still being prepared. We will email it to you as soon as it is ready, before the meeting.');
+        }
+
+        $mail->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+    }
+
     private function addManageLine(MailMessage $mail): void
     {
         if ($this->details->manageUrl !== null) {

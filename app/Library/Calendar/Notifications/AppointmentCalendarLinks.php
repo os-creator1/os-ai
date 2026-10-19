@@ -17,7 +17,9 @@ final class AppointmentCalendarLinks
             . '&text=' . rawurlencode($details->title())
             . '&dates=' . self::compact($details->startUtc) . '/' . self::compact($details->endUtc);
 
-        if ($details->where !== null) {
+        if ($details->joinUrl !== null) {
+            $url .= '&location=' . rawurlencode($details->joinUrl);
+        } elseif ($details->where !== null) {
             $url .= '&location=' . rawurlencode($details->where);
         }
 
@@ -45,12 +47,19 @@ final class AppointmentCalendarLinks
             'SUMMARY:' . self::escape($details->title()),
         ];
 
-        if ($details->where !== null) {
+        if ($details->joinUrl !== null) {
+            $lines[] = 'LOCATION:' . self::escape($details->joinUrl);
+        } elseif ($details->where !== null) {
             $lines[] = 'LOCATION:' . self::escape($details->where);
         }
 
-        if ($details->instructions !== null) {
-            $lines[] = 'DESCRIPTION:' . self::escape($details->instructions);
+        $description = array_filter([
+            $details->instructions,
+            $details->joinUrl !== null ? 'Join Zoom meeting: ' . $details->joinUrl : null,
+        ]);
+
+        if ($description !== []) {
+            $lines[] = 'DESCRIPTION:' . self::escape(implode("\n\n", $description));
         }
 
         $lines[] = 'END:VEVENT';

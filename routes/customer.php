@@ -553,6 +553,9 @@
     | registered redirect_uri is still a distinct, fixed, literal URL.
     |
     */
+    // Zoom OAuth: ONE fixed redirect URL registered in the Zoom app. The signed `state` carries the Business and user.
+    Route::get('zoom/oauth/callback', 'Business\ZoomIntegrationController@callback')->middleware('throttle:20,1')->name('zoom.oauth.callback');
+
     Route::get('calendar-connection', 'ExternalCalendarConnectionController@show')->name('calendar-connection.show');
     Route::post('calendar-connection/connect/{provider}', 'ExternalCalendarConnectionController@connect')
         ->whereIn('provider', ['google', 'outlook'])
@@ -1986,6 +1989,7 @@
             Route::get('/appointments/{appointmentUid}', 'Business\CalendarController@showAppointment')->name('appointments.show');
             Route::post('/appointments/{appointmentUid}/reschedule', 'Business\CalendarController@reschedule')->name('appointments.reschedule');
             Route::post('/appointments/{appointmentUid}/cancel', 'Business\CalendarController@cancel')->name('appointments.cancel');
+            Route::post('/appointments/{appointmentUid}/zoom-retry', 'Business\CalendarController@zoomRetry')->name('appointments.zoom-retry');
             Route::post('/appointments/{appointmentUid}/complete', 'Business\CalendarController@complete')->name('appointments.complete');
             Route::post('/appointments/{appointmentUid}/no-show', 'Business\CalendarController@noShow')->name('appointments.no-show');
         });
@@ -1994,6 +1998,12 @@
         // (no Location in the path): it lists ONLY the Locations the actor may
         // reach and, when that is exactly one, redirects straight to it.
         Route::get('{workspaceUid}/businesses/{businessUid}/calendar', 'Business\CalendarController@index')->name('businesses.calendar.index');
+
+        // Native Zoom meetings (docs/product/ZOOM-MEETINGS.md): Calendar → Settings → Integrations → Zoom. Business-scoped,
+        // so every Business (Growth, an Agency's own, each managed client) has its own independent connections.
+        Route::get('{workspaceUid}/businesses/{businessUid}/calendar/integrations/zoom', 'Business\ZoomIntegrationController@show')->name('businesses.calendar.integrations.zoom.show');
+        Route::post('{workspaceUid}/businesses/{businessUid}/calendar/integrations/zoom/connect', 'Business\ZoomIntegrationController@connect')->middleware('throttle:10,1')->name('businesses.calendar.integrations.zoom.connect');
+        Route::post('{workspaceUid}/businesses/{businessUid}/calendar/integrations/zoom/{connectionId}/disconnect', 'Business\ZoomIntegrationController@disconnect')->whereNumber('connectionId')->name('businesses.calendar.integrations.zoom.disconnect');
         // Home's Bookings card: the appointments BOOKED (created) in a period, across the Locations the actor may reach.
         Route::get('{workspaceUid}/businesses/{businessUid}/calendar/bookings', 'Business\CalendarController@bookings')->name('businesses.calendar.bookings');
 

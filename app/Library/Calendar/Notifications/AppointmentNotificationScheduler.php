@@ -199,6 +199,70 @@ class AppointmentNotificationScheduler
             ]);
     }
 
+    /**
+     * The Zoom meeting is ready and in step with the appointment: release everything held for it, and tell a guest who was
+     * told "your link will follow" that it is now here (one extra confirmation, once per meeting).
+     */
+    public function onZoomReady(int $appointmentId): void
+    {
+        $appointment = Appointment::query()->find($appointmentId);
+
+        if ($appointment === null || $appointment->status !== AppointmentStatus::Scheduled) {
+            return;
+        }
+
+        $now = Carbon::now('UTC');
+        $meetingKey = 'confirmation:zoom:' . $appointment->zoom_meeting_id;
+
+        $fallbacks = AppointmentNotification::query()
+            ->where('appointment_id', $appointmentId)
+            ->where('kind', AppointmentNotification::KIND_CONFIRMATION)
+            ->where('channel', AppointmentNotification::CHANNEL_EMAIL)
+            ->where('occurrence_key', 'confirmation')
+            ->where('status', AppointmentNotification::STATUS_SENT)
+            ->where('reason', 'zoom_link_pending')
+            ->get();
+
+        foreach ($fallbacks as $row) {
+            $this->insertOnce([
+                'business_id' => (int) $row->business_id,
+                'business_location_id' => (int) $row->business_location_id,
+                'appointment_id' => (int) $row->appointment_id,
+                'contact_id' => $row->contact_id === null ? null : (int) $row->contact_id,
+                'channel' => $row->channel,
+                'recipient_email' => $row->recipient_email,
+                'recipient_phone' => $row->recipient_phone,
+                'sms_consent_at' => null,
+                'kind' => AppointmentNotification::KIND_CONFIRMATION,
+                'occurrence_key' => $meetingKey,
+                'offset_minutes' => null,
+                'appointment_start_at' => $appointment->start_at,
+                'scheduled_for' => $now,
+            ], $now);
+        }
+
+        $this->releaseHeld($appointmentId);
+    }
+
+    /** Provisioning gave up: release the held confirmation so the guest is told honestly (the sender sends the "link will follow" variant). */
+    public function onZoomFailed(int $appointmentId): void
+    {
+        $this->releaseHeld($appointmentId);
+    }
+
+    private function releaseHeld(int $appointmentId): void
+    {
+        $ids = AppointmentNotification::query()
+            ->where('appointment_id', $appointmentId)
+            ->where('status', AppointmentNotification::STATUS_PENDING)
+            ->where('scheduled_for', '<=', Carbon::now('UTC'))
+            ->pluck('id');
+
+        foreach ($ids as $id) {
+            $this->dispatch((int) $id);
+        }
+    }
+
     public function dispatch(int $notificationId): void
     {
         // Mark first so the sweep does not also dispatch it; the sender's own

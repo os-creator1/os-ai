@@ -11,6 +11,7 @@ use App\Models\AppointmentNotification;
 use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\Contacts;
+use App\Library\Calendar\Zoom\ZoomLinkGate;
 use App\Models\User;
 use App\Notifications\Calendar\AppointmentCustomerNotification;
 use App\Repositories\Contracts\CampaignRepository;
@@ -124,10 +125,36 @@ class AppointmentNotificationSender
             return [AppointmentNotification::STATUS_SKIPPED, 'business_inactive'];
         }
 
-        $details = AppointmentNotificationDetails::for($appointment);
+        // Zoom: never send a confirmation or reminder that promises a video link which does not exist (yet).
+        $zoomState = ZoomLinkGate::state($appointment);
+        $zoomFallback = false;
+
+        if ($zoomState === ZoomLinkGate::PENDING) {
+            // The meeting is still being created (or moved). Put the row back; it is released the moment Zoom is ready.
+            return [AppointmentNotification::STATUS_PENDING, 'zoom_pending'];
+        }
+
+        if ($zoomState === ZoomLinkGate::FAILED) {
+            if ($isReminder || $row->occurrence_key !== 'confirmation') {
+                return [AppointmentNotification::STATUS_SKIPPED, 'zoom_unavailable'];
+            }
+
+            // Provisioning gave up: say plainly that the link will follow, never imply it is in this email.
+            $zoomFallback = true;
+        }
+
+        $details = AppointmentNotificationDetails::for($appointment, $zoomFallback);
 
         if ($details === null) {
             return [AppointmentNotification::STATUS_SKIPPED, 'details_unavailable'];
+        }
+
+        if ($zoomFallback) {
+            [$status] = $row->channel === AppointmentNotification::CHANNEL_EMAIL
+                ? $this->sendEmail($row, $details, $isReminder)
+                : $this->sendSms($row, $business, $details, $isReminder);
+
+            return [$status, $status === AppointmentNotification::STATUS_SENT ? 'zoom_link_pending' : null];
         }
 
         return $row->channel === AppointmentNotification::CHANNEL_EMAIL
@@ -293,6 +320,12 @@ class AppointmentNotificationSender
             $parts[] = mb_strimwidth(preg_replace('/\s+/', ' ', $d->instructions) ?? '', 0, 140, '...');
         }
 
+        if ($d->joinUrl !== null) {
+            $parts[] = 'Join Zoom: ' . $d->joinUrl;
+        } elseif ($d->zoomPending) {
+            $parts[] = 'Your Zoom link will follow.';
+        }
+
         $parts[] = 'Reply STOP to opt out.';
 
         return implode(' ', $parts);
@@ -311,6 +344,8 @@ class AppointmentNotificationSender
             ->update([
                 'status' => $status,
                 'reason' => $reason,
+                // A held row is re-queued by the sweep only after the normal delay; Zoom readiness releases it at once.
+                'dispatched_at' => $status === AppointmentNotification::STATUS_PENDING ? $now : $row->dispatched_at,
                 'sent_at' => $status === AppointmentNotification::STATUS_SENT ? $now : null,
                 'updated_at' => $now,
             ]);

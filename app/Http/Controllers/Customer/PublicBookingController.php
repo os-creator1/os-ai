@@ -296,7 +296,10 @@ class PublicBookingController extends Controller
             $workspace, $business, PlatformFeature::Calendar->value, (int) $business->customer_id
         )->allowed, 404);
         abort_unless($type->isActive() && (int) $type->business_location_id === (int) $location->id, 404);
-        abort_if($this->eligibleStaffIds($type, $location) === [], 404);
+        $eligibleStaff = $this->eligibleStaffIds($type, $location);
+        abort_if($eligibleStaff === [], 404);
+        // A Zoom booking type whose host has not connected Zoom would produce appointments without a video link: closed like any other unready state.
+        abort_if(\App\Library\Calendar\Zoom\ZoomHostResolver::readinessProblem($type, $eligibleStaff) !== null, 404);
         // Settings that cannot produce slots fail closed like every other refusal.
         abort_if($type->schedulingProblem() !== null, 404);
         $this->timezoneFor($business);

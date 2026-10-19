@@ -256,7 +256,14 @@ class CalendarController extends Controller
             'staff' => ['required', 'string'],
             'date' => ['required', 'date_format:Y-m-d'],
             'time' => ['required', 'date_format:H:i'],
+            // Optional per-appointment meeting location; blank = the booking type's default.
+            'meeting_location_type' => ['nullable', 'string', \Illuminate\Validation\Rule::in(\App\Library\Calendar\Zoom\ZoomHostResolver::TYPES)],
+            'meeting_location_custom' => ['nullable', 'string', 'max:500', 'required_if:meeting_location_type,custom'],
         ]);
+        $meetingLocation = ($validated['meeting_location_type'] ?? null) === null ? null : [
+            'type' => $validated['meeting_location_type'],
+            'custom' => $validated['meeting_location_custom'] ?? null,
+        ];
 
         // Existence and reach: a Booking Type of another Location, an inactive
         // one, or a Contact this Location may not book are all indistinguishable
@@ -271,8 +278,8 @@ class CalendarController extends Controller
 
         try {
             $appointment = $validated['staff'] === 'auto'
-                ? $this->booking->bookWithRoundRobin($bookingType, (int) $contact->id, $startAt, $actorId)
-                : $this->booking->book($bookingType, $this->staffId($validated['staff']), (int) $contact->id, $startAt, $actorId);
+                ? $this->booking->bookWithRoundRobin($bookingType, (int) $contact->id, $startAt, $actorId, null, $meetingLocation)
+                : $this->booking->book($bookingType, $this->staffId($validated['staff']), (int) $contact->id, $startAt, $actorId, null, $meetingLocation);
         } catch (BookingRefusedException $refusal) {
             return $this->refused($refusal)->withInput();
         }
@@ -335,6 +342,23 @@ class CalendarController extends Controller
 
         return $this->backToAppointment($workspaceUid, $businessUid, $locationUid, $appointmentUid)
             ->with('flash_success', 'Appointment rescheduled.');
+    }
+
+    /** A safe, idempotent retry of a failed or stuck Zoom meeting. Re-queues the same reconcile job; it never creates a second meeting. */
+    public function zoomRetry(string $workspaceUid, string $businessUid, string $locationUid, string $appointmentUid): RedirectResponse
+    {
+        [, , $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
+        $appointment = $this->appointment($location, $appointmentUid);
+
+        if (app(\App\Library\Calendar\Zoom\ZoomMeetingService::class)->resetForRetry((int) $appointment->id)) {
+            \App\Jobs\Calendar\SyncZoomMeeting::dispatch((int) $appointment->id);
+
+            return $this->backToAppointment($workspaceUid, $businessUid, $locationUid, $appointmentUid)
+                ->with('flash_success', 'Retrying the Zoom meeting. The link appears here as soon as it is ready.');
+        }
+
+        return $this->backToAppointment($workspaceUid, $businessUid, $locationUid, $appointmentUid)
+            ->with('flash_error', 'There is nothing to retry for this appointment.');
     }
 
     public function cancel(Request $request, string $workspaceUid, string $businessUid, string $locationUid, string $appointmentUid): RedirectResponse
@@ -467,6 +491,8 @@ class CalendarController extends Controller
                 => 'No eligible staff member is free at that time.',
             $refusal instanceof InvalidAppointmentTransitionException
                 => 'This appointment has already changed — it may have been cancelled, completed or marked no-show. Reload to see its current state.',
+            $refusal instanceof \App\Exceptions\Calendar\ZoomHostUnavailableException
+                => 'This appointment is set to Zoom, but its host has not connected Zoom. Connect Zoom in Calendar → Settings → Integrations → Zoom, or choose another meeting location.',
             $refusal instanceof StaffBookingLockUnavailableException
                 => 'The booking could not be completed just now. Nothing was changed; please try again.',
             default => 'The booking could not be completed. Nothing was changed.',
