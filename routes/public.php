@@ -27,6 +27,8 @@
         ->middleware('throttle:60,1')->name('demo.booking.dates');
     Route::get('book-demo/slots', 'Customer\DemoBookingController@demoSlots')
         ->middleware('throttle:60,1')->name('demo.booking.slots');
+    Route::post('book-demo/details', 'Customer\DemoBookingController@details')
+        ->middleware('throttle:30,1')->name('demo.booking.details');
     Route::post('book-demo', 'Customer\DemoBookingController@submit')
         ->middleware('throttle:10,1')->name('demo.booking.store');
     Route::get('book-demo/confirmed', 'Customer\DemoBookingController@demoConfirmed')

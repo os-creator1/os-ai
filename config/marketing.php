@@ -238,6 +238,10 @@ return [
             'title' => 'Customer stories — MotionGrove',
             'description' => 'Business owners talking, in their own words, about how they run things today.',
         ],
+        'book-demo' => [
+            'title' => 'Book a demo — MotionGrove',
+            'description' => 'A relaxed call with a real person. See how MotionGrove would fit your business, with no pressure to buy.',
+        ],
         'pricing' => [
             'title' => 'Pricing — MotionGrove',
             'description' => 'Core $97, Growth $297 and Agency $497, billed every 28 days. Messaging, calls, some AI features and ad spend are billed separately.',

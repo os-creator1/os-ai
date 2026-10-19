@@ -772,6 +772,15 @@
                         'access'     => 'access backend',
                         'admin_only' => true,
                     ],
+                    [
+                        'url'        => url(config('app.admin_path') . '/platform-owner/marketing/demo-form'),
+                        'slug'       => config('app.admin_path') . '/platform-owner/marketing/demo-form',
+                        'name'       => 'Demo Form',
+                        'i18n'       => 'Demo Form',
+                        'icon'       => 'edit-3',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                    ],
                     ['navheader' => 'Governance', 'admin_only' => true],
                     [
                         'url'        => url(config('app.admin_path') . '/platform-owner/audit'),

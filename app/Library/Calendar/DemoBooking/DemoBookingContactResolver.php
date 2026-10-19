@@ -43,7 +43,9 @@ class DemoBookingContactResolver
     }
 
     /**
-     * @param  array{first_name: string, last_name: string, email: string, business_name: string, website?: ?string, phone?: ?string}  $data
+     * `crm_extra` carries the owner-configured answers worth keeping on the Contact: a CRM field tag, its label and the value.
+     *
+     * @param  array{first_name: string, last_name?: ?string, email: string, business_name: string, website?: ?string, phone?: ?string, crm_extra?: array<int, array{tag: string, label: string, value: string}>}  $data
      */
     public function resolve(BusinessLocation $location, Business $business, array $data): int
     {
@@ -51,11 +53,12 @@ class DemoBookingContactResolver
             ?? $this->contacts->store([
                 'name' => 'Contacts', 'business_id' => $business->id, 'user_id' => $business->customer_id,
             ]);
-        $this->ensureFields($group);
+        $extras = (array) ($data['crm_extra'] ?? []);
+        $this->ensureFields($group, $extras);
 
         $fields = [
             'FIRST_NAME' => $data['first_name'],
-            'LAST_NAME' => $data['last_name'],
+            'LAST_NAME' => (string) ($data['last_name'] ?? ''),
             'EMAIL' => $data['email'],
             'BUSINESS_NAME' => $data['business_name'],
             'WEBSITE' => $data['website'] ?? null,
@@ -66,7 +69,7 @@ class DemoBookingContactResolver
             ? $this->contacts->findOrCreateForBooking($location, $group, $phone, $fields)
             : $this->byEmail($location, $group, $fields);
 
-        $this->fillBlank($contact->fresh(), $group, $fields);
+        $this->fillBlank($contact->fresh(), $group, $fields + array_column($extras, 'value', 'tag'));
 
         return (int) $contact->id;
     }
@@ -126,10 +129,11 @@ class DemoBookingContactResolver
     }
 
     /** The group row is locked first (we are inside the booking transaction) so racing bookings cannot both add a field. */
-    private function ensureFields(ContactGroups $group): void
+    private function ensureFields(ContactGroups $group, array $extras = []): void
     {
         $locked = ContactGroups::query()->whereKey($group->id)->lockForUpdate()->firstOrFail();
-        foreach (self::FIELDS as $tag => $label) {
+        $wanted = self::FIELDS + array_column($extras, 'label', 'tag');
+        foreach ($wanted as $tag => $label) {
             if ($locked->getFieldByTag($tag) === null) {
                 $locked->contactGroupFields()->create([
                     'contact_group_id' => $locked->id, 'type' => 'text', 'label' => $label,
