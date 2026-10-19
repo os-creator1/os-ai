@@ -247,4 +247,33 @@ class ZoomCreationRecoveryTest extends TestCase
         $this->assertSame(1, $with, 'exactly one email carries the link');
         $this->assertSame(1, AppointmentNotification::query()->where('kind', 'confirmation')->where('channel', 'email')->where('status', 'sent')->count());
     }
+
+    public function test_cancelling_before_the_link_exists_sends_no_stale_confirmation(): void
+    {
+        $a = $this->pending();
+        $this->deliverDue();                       // held: no link yet
+        $this->engine()->cancel($a, (int) $this->host->id, 'changed mind');
+        $this->sync($a);
+        $this->deliverDue();
+
+        Notification::assertNothingSent();
+        $this->assertSame(0, AppointmentNotification::query()->where('appointment_id', $a->id)->where('status', 'sent')->count());
+    }
+
+    public function test_a_reschedule_before_the_zoom_time_is_updated_never_sends_the_link_for_the_old_time(): void
+    {
+        $this->pending();
+        $a = Appointment::query()->latest('id')->first();
+        $this->sync($a);                           // ready at the original time
+        Notification::fake();
+        $new = Carbon::parse('2027-03-15 10:00:00', 'America/New_York')->utc();
+        $this->engine()->reschedule($a->fresh(), $new);   // listener queue is faked: Zoom not yet PATCHed
+
+        $this->assertSame(\App\Library\Calendar\Zoom\ZoomLinkGate::PENDING, \App\Library\Calendar\Zoom\ZoomLinkGate::state($a->fresh()));
+        $this->deliverDue();
+        Notification::assertNothingSent();
+
+        $this->sync($a);                           // the PATCH lands: now the link may go out
+        $this->assertSame(\App\Library\Calendar\Zoom\ZoomLinkGate::READY, \App\Library\Calendar\Zoom\ZoomLinkGate::state($a->fresh()));
+    }
 }
