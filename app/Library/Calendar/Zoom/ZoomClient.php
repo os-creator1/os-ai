@@ -83,30 +83,45 @@ class ZoomClient
 
     /**
      * Recovery lookup for a create whose response was lost. Zoom's create call has no idempotency key, so the only way to learn
-     * whether it succeeded is to list the host's upcoming scheduled meetings (needs meeting:read:list_meetings) and match ours:
-     * by the per-appointment agenda marker, else by identical topic and start. Bounded to a few pages.
+     * whether it succeeded is to list the host's upcoming scheduled meetings (scope meeting:read:list_meetings).
      *
-     * @param  array{topic: string, start_utc: \DateTimeInterface, agenda: string}  $meeting
-     * @return ?array{id: string, join_url: string} null when the host has no such meeting
+     * IDENTITY IS NEVER INFERRED FROM A GENERIC TITLE OR TIME. A meeting is ours only when it carries the appointment's unique
+     * reference (`ref`, in the topic) or its unique `agenda` marker. The list response may omit `agenda`, so a listed meeting
+     * at our start time whose list entry does not prove identity is verified with GET /meetings/{id} (scope
+     * meeting:read:meeting) and adopted only if that full record carries the marker. Start time only narrows candidates.
+     *
+     * @param  array{start_utc: \DateTimeInterface, agenda: string, ref: string}  $meeting
+     * @return ?array{id: string, join_url: string} null when the host provably has no such meeting
+     *
+     * @throws ZoomApiException permanent `create_ambiguous` when more than one meeting proves to be ours;
+     *                          a failed lookup/verification propagates (the caller holds, never guesses)
      */
     public function findScheduledMeeting(string $accessToken, array $meeting): ?array
     {
         $start = \Illuminate\Support\Carbon::instance($meeting['start_utc'])->utc();
-        $topic = mb_substr($meeting['topic'], 0, 200);
         $agenda = mb_substr((string) $meeting['agenda'], 0, 1000);
+        $ref = (string) $meeting['ref'];
         $pageToken = null;
+        $proven = [];
+        $toVerify = [];
 
-        for ($page = 0; $page < 5; $page++) {
+        for ($page = 0; $page < 10; $page++) {
             $body = $this->check($this->api($accessToken)->get('/users/me/meetings', array_filter([
                 'type' => 'scheduled', 'page_size' => 300, 'next_page_token' => $pageToken,
             ])))->json() ?? [];
 
             foreach ((array) ($body['meetings'] ?? []) as $m) {
-                $sameStart = isset($m['start_time']) && \Illuminate\Support\Carbon::parse($m['start_time'])->utc()->equalTo($start);
-                $isOurs = (($m['agenda'] ?? null) === $agenda) || (($m['topic'] ?? null) === $topic && $sameStart);
+                if (! isset($m['id'])) {
+                    continue;
+                }
 
-                if ($isOurs && isset($m['id']) && ZoomJoinUrl::valid($m['join_url'] ?? null)) {
-                    return ['id' => (string) $m['id'], 'join_url' => (string) $m['join_url']];
+                $id = (string) $m['id'];
+
+                if ($ref !== '' && str_contains((string) ($m['topic'] ?? ''), $ref) || (($m['agenda'] ?? null) === $agenda)) {
+                    $proven[$id] = $m['join_url'] ?? null;
+                } elseif (! isset($m['agenda']) && isset($m['start_time']) && \Illuminate\Support\Carbon::parse($m['start_time'])->utc()->equalTo($start)) {
+                    // The list did not say whose it is. Same start time only makes it a candidate to verify.
+                    $toVerify[$id] = true;
                 }
             }
 
@@ -115,9 +130,42 @@ class ZoomClient
             if (blank($pageToken)) {
                 break;
             }
+
+            if ($page === 9) {
+                // Never searched the whole list: absence is not proven.
+                throw new ZoomApiException('permanent', 'create_unverifiable');
+            }
         }
 
-        return null;
+        foreach (array_slice(array_keys($toVerify), 0, 20) as $id) {
+            $detail = $this->check($this->api($accessToken)->get('/meetings/'.rawurlencode((string) $id)))->json() ?? [];
+
+            if (($detail['agenda'] ?? null) === $agenda || ($ref !== '' && str_contains((string) ($detail['topic'] ?? ''), $ref))) {
+                $proven[(string) $id] = $detail['join_url'] ?? null;
+            }
+        }
+
+        if (count($toVerify) > 20) {
+            throw new ZoomApiException('permanent', 'create_unverifiable');
+        }
+
+        if (count($proven) > 1) {
+            throw new ZoomApiException('permanent', 'create_ambiguous');
+        }
+
+        if ($proven === []) {
+            return null;
+        }
+
+        $id = (string) array_key_first($proven);
+        $url = $proven[$id];
+
+        if (! ZoomJoinUrl::valid($url)) {
+            // Ours, but without a usable participant link: fail safe rather than create a second meeting.
+            throw new ZoomApiException('permanent', 'create_unverifiable');
+        }
+
+        return ['id' => $id, 'join_url' => (string) $url];
     }
 
     /** @param  array{topic?: string, start_utc: \DateTimeInterface, duration: int, timezone: string}  $changes */
