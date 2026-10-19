@@ -6,6 +6,7 @@ use App\Library\Calendar\DemoBooking\Form\DemoFormDefaults;
 use App\Library\Calendar\DemoBooking\Form\DemoFormRepository;
 use App\Library\Calendar\DemoBooking\Form\DemoFormSchema;
 use App\Events\Calendar\AppointmentScheduled;
+use App\Models\AppConfig;
 use App\Models\Appointment;
 use App\Models\AppointmentNotification;
 use App\Models\Contacts;
@@ -29,6 +30,25 @@ class DemoFormTest extends TestCase
     use RefreshDatabase;
 
     private $type;
+
+    /**
+     * Both fixture traits declare this identical environment fixture (customer-shell config rows), so PHP cannot
+     * compose them without a rule. The class's own method resolves it and keeps the setup both need.
+     */
+    protected function ensureRequiredAppConfigRowsExist(): void
+    {
+        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])->pluck('setting')->all();
+
+        if (! in_array('license', $existing, true)) {
+            AppConfig::create(['setting' => 'license', 'value' => 'test-license-key']);
+        }
+        if (! in_array('custom_script', $existing, true)) {
+            AppConfig::create(['setting' => 'custom_script', 'value' => '']);
+        }
+        if (! in_array('customer_permissions', $existing, true)) {
+            AppConfig::create(collect((new AppConfig())->defaultSettings())->firstWhere('setting', 'customer_permissions'));
+        }
+    }
 
     protected function setUp(): void
     {
