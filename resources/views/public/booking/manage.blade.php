@@ -27,6 +27,11 @@
                     <dt>Time zone</dt><dd>{{ str_replace('_', ' ', $current['timezone']) }}</dd>
                 </dl></div>
 
+                @if (! empty($joinUrl))
+                    <p style="margin-top:14px"><a class="pb-btn" href="{{ $joinUrl }}" rel="noopener" data-role="join-zoom">Join Zoom meeting</a></p>
+                    <p style="margin:6px 0 0;color:var(--pb-muted);font-size:13px;word-break:break-all">Or copy this link: {{ $joinUrl }}</p>
+                @endif
+
                 @if ($errors->any())<p class="pb-alert" role="alert">{{ $errors->first() }}</p>@endif
 
                 <h2 class="pb-heading" style="margin-top:22px">Reschedule</h2>

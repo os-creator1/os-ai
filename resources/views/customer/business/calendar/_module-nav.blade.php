@@ -80,6 +80,15 @@
                 <x-ds-icon name="clock" size="15" aria-hidden="true" />
                 Staff availability
             </a>
+            @if (app(\App\Library\Calendar\Zoom\ZoomConnectionManager::class)->isEnabledFor($business))
+                <a href="{{ route('customer.workspaces.businesses.calendar.integrations.zoom.show', [$workspace->uid, $business->uid]) }}"
+                   class="calendar-subnav-link {{ $active === 'zoom' ? 'is-active' : '' }}"
+                   data-calendar-nav data-calendar-key="zoom"
+                   @if ($active === 'zoom') aria-current="page" @endif>
+                    <x-ds-icon name="video" size="15" aria-hidden="true" />
+                    Zoom
+                </a>
+            @endif
         </nav>
     @endif
 </div>

@@ -98,6 +98,24 @@
                     </select>
                 </div>
 
+                @php($zoomAvailable = app(\App\Library\Calendar\Zoom\ZoomConnectionManager::class)->isEnabledFor($business))
+                <div class="form-group" data-section="meeting-location">
+                    <label for="meeting_location_type">Meeting location</label>
+                    <select id="meeting_location_type" name="meeting_location_type" class="form-control">
+                        <option value="" @selected(! old('meeting_location_type'))>Booking type default</option>
+                        @if ($zoomAvailable)
+                            <option value="zoom" @selected(old('meeting_location_type') === 'zoom')>Zoom meeting</option>
+                        @endif
+                        <option value="in_person" @selected(old('meeting_location_type') === 'in_person')>In person</option>
+                        <option value="phone" @selected(old('meeting_location_type') === 'phone')>Phone call</option>
+                        <option value="custom" @selected(old('meeting_location_type') === 'custom')>Custom meeting link or location</option>
+                    </select>
+                    <input type="text" name="meeting_location_custom" class="form-control mt-1" maxlength="500" placeholder="A meeting link or an address (for a custom location)" value="{{ old('meeting_location_custom') }}">
+                    @if ($zoomAvailable)
+                        <small class="cx-hint">Zoom creates a unique meeting for this appointment automatically. The host must have connected Zoom.</small>
+                    @endif
+                </div>
+
                 <div class="form-row">
                     <div class="form-group col-md-6">
                         <label for="date">Date</label>

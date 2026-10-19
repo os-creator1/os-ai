@@ -50,6 +50,8 @@ class DemoBookingManageController extends DemoBookingController
             'brand' => $this->brand($type, $business, $location, []),
             'timezone' => $timezone,
             'current' => $this->summary($type, $business, $location, $appointment->start_at->copy(), $timezone),
+            // The participant join link only (never the host link), and only while the meeting is ready and at the current time.
+            'joinUrl' => \App\Library\Calendar\Zoom\ZoomLinkGate::joinUrl($appointment),
             'date' => is_string($date) ? $date : null,
             'slots' => $slots,
             'min' => $first,

@@ -50,6 +50,17 @@ One shared integration for every MotionGrove calendar. It is not specific to `/b
 * Cancel and reschedule send no new customer email today (existing calendar behaviour, unchanged here). The reminder
   schedule follows the new time and the `.ics` `SEQUENCE` updates a calendar entry.
 
+## Where it appears in the product
+
+* **Calendar → Zoom** (sub-navigation, shown only where Zoom is configured and the plan allows it): connect or reconnect your Zoom account,
+  see the connected account and status, disconnect, and see every host connected in this Business.
+* **Booking type → Meeting location**: default / Zoom meeting / In person / Phone call / Custom link or location, plus the Zoom host
+  (the person who gets each booking, or one shared host of this Business).
+* **New appointment → Meeting location**: override the booking type for a single appointment.
+* **Appointment details**: Meeting row with a **Join Zoom** button (authorized staff only; participant link), a clear failure message with
+  **Retry Zoom**, or "creating the Zoom meeting…".
+* **Guest manage page** (`/book-demo/manage/...`): the participant join link only.
+
 ## Eligibility
 
 A Business is eligible when its Workspace holds an **active Growth or Agency** plan (this covers Growth Businesses, an Agency's

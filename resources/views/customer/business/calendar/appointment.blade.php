@@ -140,6 +140,32 @@
                             <span class="mg-appt-row__icon" aria-hidden="true"><x-ds-icon name="map-pin" size="16" /></span>
                             <div class="mg-appt-row__body"><dt>Location</dt><dd>{{ $location->name ?: 'This location' }}</dd></div>
                         </div>
+                        @if ($appointment->meeting_location_type)
+                            @php
+                                $zoomState = \App\Library\Calendar\Zoom\ZoomLinkGate::state($appointment);
+                                $zoomJoin = \App\Library\Calendar\Zoom\ZoomLinkGate::joinUrl($appointment);
+                                $meetingLabel = ['zoom' => 'Zoom meeting', 'in_person' => 'In person', 'phone' => 'Phone call', 'custom' => $appointment->meeting_location_custom ?: 'Custom location'][$appointment->meeting_location_type] ?? null;
+                            @endphp
+                            <div class="mg-appt-row" data-role="appointment-meeting-location">
+                                <span class="mg-appt-row__icon" aria-hidden="true"><x-ds-icon name="video" size="16" /></span>
+                                <div class="mg-appt-row__body"><dt>Meeting</dt><dd>
+                                    {{ $meetingLabel }}
+                                    @if ($appointment->meeting_location_type === 'zoom')
+                                        @if ($zoomJoin && $appointment->status === \App\Enums\Calendar\AppointmentStatus::Scheduled)
+                                            <div class="mt-50"><x-button variant="primary" size="sm" :href="$zoomJoin" target="_blank" rel="noopener" data-role="join-zoom">Join Zoom</x-button></div>
+                                        @elseif ($zoomState === 'failed' && $appointment->status === \App\Enums\Calendar\AppointmentStatus::Scheduled)
+                                            <div class="text-danger" data-role="zoom-failed">The Zoom meeting could not be created. If the host's Zoom was disconnected, reconnect it in Zoom settings first.</div>
+                                            <form method="POST" class="mt-50" action="{{ route('customer.workspaces.businesses.calendar.appointments.zoom-retry', array_merge($scope, [$appointment->uid])) }}">
+                                                @csrf
+                                                <x-button type="submit" variant="secondary" size="sm" data-role="retry-zoom">Retry Zoom</x-button>
+                                            </form>
+                                        @elseif ($zoomState === 'pending' && $appointment->status === \App\Enums\Calendar\AppointmentStatus::Scheduled)
+                                            <div class="text-caption" data-role="zoom-pending">Creating the Zoom meeting… the join button appears here when it is ready.</div>
+                                        @endif
+                                    @endif
+                                </dd></div>
+                            </div>
+                        @endif
                         <div class="mg-appt-row">
                             <span class="mg-appt-row__icon" aria-hidden="true"><x-ds-icon name="user-round" size="16" /></span>
                             <div class="mg-appt-row__body"><dt>Staff</dt><dd>{{ $appointment->staff ? $staffName($appointment->staff) : '—' }}</dd></div>
