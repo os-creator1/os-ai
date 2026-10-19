@@ -205,3 +205,6 @@ body.mg-pricing .tick .ic{width:12px;height:12px;stroke-width:2.6}
   .com-box > div:last-child{gap:10px !important}
   .com-box > div:last-child > div{padding:16px 18px !important;border-radius:14px !important;gap:6px !important}
 }
+
+/* YouTube Shorts are portrait: show the whole frame, never crop it (the tile keeps the approved 16:9 layout) */
+.vid .thumb.thumb-short{object-fit:contain}

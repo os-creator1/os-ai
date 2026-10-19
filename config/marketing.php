@@ -252,6 +252,7 @@ return [
     'copy' => [
         'example_tag' => 'Example workspace · sample data',
         'jazmin_disclaimer_home' => 'Stories marked “Jazmin Media client” describe results from Jazmin Media’s agency services before MotionGrove, not results produced by the MotionGrove software.',
+        'unspecified_disclaimer' => 'These stories are told by the clients themselves. Some describe work from before MotionGrove, including Jazmin Media’s agency services; none is evidence of results produced by the MotionGrove software.',
         'jazmin_disclaimer_customers' => 'Stories marked “Jazmin Media client” describe results from Jazmin Media’s agency services before MotionGrove existed. They are not evidence of results produced by the MotionGrove software.',
         'footer_blurb' => 'More bookings. Less busywork. Get found, get leads, get booked — with real people behind it.',
         'usage_note' => 'Messaging, calls, some AI features and ad spend are billed separately.',
@@ -518,17 +519,17 @@ return [
     /*
     |--------------------------------------------------------------------------
     | Testimonials (CMS-ready shape — see HANDOFF.md)
-    |   context: 'motiongrove' | 'jazmin_media'
+    |   context: 'motiongrove' | 'jazmin_media' | null (origin not confirmed)
     | Every value that is not supplied yet is null. Do not invent any of it.
     | The five slots and their order follow the approved design; slot 4 is the
     | historical Jazmin Media client slot.
     |--------------------------------------------------------------------------
     */
     'testimonials' => [
-        ['id' => 'story-1', 'youtubeId' => null, 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => 'motiongrove', 'featured' => true, 'order' => 1, 'visible' => true],
-        ['id' => 'story-2', 'youtubeId' => null, 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => 'motiongrove', 'featured' => false, 'order' => 2, 'visible' => true],
-        ['id' => 'story-3', 'youtubeId' => null, 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => 'motiongrove', 'featured' => false, 'order' => 3, 'visible' => true],
-        ['id' => 'story-4', 'youtubeId' => null, 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => 'jazmin_media', 'featured' => false, 'order' => 4, 'visible' => true],
-        ['id' => 'story-5', 'youtubeId' => null, 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => 'motiongrove', 'featured' => false, 'order' => 5, 'visible' => true],
+        ['id' => 'story-1', 'youtubeId' => 'QBjC92lyUBc', 'format' => 'standard', 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => null, 'featured' => true, 'order' => 1, 'visible' => true],
+        ['id' => 'story-2', 'youtubeId' => 'KytVA5-R2DM', 'format' => 'standard', 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => null, 'featured' => false, 'order' => 2, 'visible' => true],
+        ['id' => 'story-3', 'youtubeId' => 'l7L4vXSwYMk', 'format' => 'standard', 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => null, 'featured' => false, 'order' => 3, 'visible' => true],
+        ['id' => 'story-4', 'youtubeId' => 'h-YIMbpoTxw', 'format' => 'standard', 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => null, 'featured' => false, 'order' => 4, 'visible' => true],
+        ['id' => 'story-5', 'youtubeId' => 'YrB0XJeqz1s', 'format' => 'short', 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => null, 'featured' => false, 'order' => 5, 'visible' => true],
     ],
 ];

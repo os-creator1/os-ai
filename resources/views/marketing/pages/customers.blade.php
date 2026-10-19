@@ -36,11 +36,13 @@
 <div class="wrap" style="display: flex; flex-direction: column; gap: 28px" data-filter-root>
 <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px">
 <h2 id="all-h" class="h2" style="font-size: 30px">All stories</h2>
+@if ($t['hasConfirmedContext'])
 <div role="group" aria-label="Filter stories" style="display: flex; flex-wrap: wrap; gap: 8px">
 @foreach ([['all', 'All'], ['motiongrove', 'MotionGrove customers'], ['jazmin_media', 'Jazmin Media clients']] as $i => [$key, $label])
 <button type="button" class="pill" data-filter="{{ $key }}" aria-pressed="{{ $i === 0 ? 'true' : 'false' }}" style="height: 42px; padding: 0 16px; font-size: 14.5px">{{ $label }}</button>
 @endforeach
 </div>
+@endif
 </div>
 <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 28px">
 @foreach ($t['all'] as $s)
@@ -55,6 +57,9 @@
 </div>
 @if ($t['hasJazmin'])
 <p style="margin: 0; font-size: 13.5px; color: #5E5652; line-height: 1.55; max-width: 820px; padding: 16px 18px; border-radius: 14px; background: #EFEBE7">{{ $mg->get('copy.jazmin_disclaimer_customers') }}</p>
+@endif
+@if ($t['hasUnspecified'])
+<p style="margin: 0; font-size: 13.5px; color: #5E5652; line-height: 1.55; max-width: 820px; padding: 16px 18px; border-radius: 14px; background: #EFEBE7">{{ $mg->get('copy.unspecified_disclaimer') }}</p>
 @endif
 @if ($youtube)
 <p style="margin: 0; font-size: 14px; color: #5E5652">More on our YouTube channel: <a href="{{ $youtube }}" rel="noopener" target="_blank" style="text-decoration: underline">{{ $youtube }}</a></p>

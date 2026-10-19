@@ -29,6 +29,15 @@ class MarketingWebsiteTest extends TestCase
         ]);
     }
 
+    /** Five empty slots: the state before any video was supplied. */
+    private function useBlankStories(): void
+    {
+        config(['marketing.testimonials' => array_map(
+            fn ($n) => ['id' => 'story-'.$n, 'youtubeId' => null, 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => $n === 4 ? 'jazmin_media' : 'motiongrove', 'featured' => $n === 1, 'order' => $n, 'visible' => true],
+            range(1, 5)
+        )]);
+    }
+
     private function html(string $path): string
     {
         $response = $this->get($path);
@@ -253,6 +262,7 @@ class MarketingWebsiteTest extends TestCase
 
     public function test_production_never_shows_bracketed_placeholders_and_hides_the_empty_story_section(): void
     {
+        $this->useBlankStories();
         foreach (self::PAGES as $path) {
             $text = $this->text($path);
             $this->assertDoesNotMatchRegularExpression('/\[(Customer|Business|Category|City|VIDEO_ID|Setup specialist|Photo|Short quote)/', $text, $path);
@@ -265,6 +275,7 @@ class MarketingWebsiteTest extends TestCase
 
     public function test_placeholders_are_clearly_labelled_and_the_video_buttons_are_inert(): void
     {
+        $this->useBlankStories();
         config(['marketing.show_placeholders' => true]);
 
         $html = $this->html('/');
@@ -279,6 +290,7 @@ class MarketingWebsiteTest extends TestCase
 
     public function test_a_real_video_is_click_to_load_with_a_real_thumbnail_and_a_plain_link_fallback(): void
     {
+        $this->useBlankStories();
         $stories = config('marketing.testimonials');
         $stories[0] = array_merge($stories[0], [
             'youtubeId' => 'dQw4w9WgXcQ', 'customerName' => 'Alex Rivera', 'businessName' => 'Rivera Events',
@@ -310,6 +322,7 @@ class MarketingWebsiteTest extends TestCase
 
     public function test_the_jazmin_disclaimer_renders_whenever_a_jazmin_story_is_visible(): void
     {
+        $this->useBlankStories();
         $stories = config('marketing.testimonials');
         foreach ($stories as $i => $s) {
             $stories[$i] = array_merge($s, ['youtubeId' => 'abcdefghi'.str_pad((string) $i, 2, '0', STR_PAD_LEFT), 'customerName' => 'Person '.$i]);
@@ -322,6 +335,79 @@ class MarketingWebsiteTest extends TestCase
         $stories[3]['visible'] = false;
         config(['marketing.testimonials' => $stories]);
         $this->assertStringNotContainsString('Stories marked “Jazmin Media client”', $this->html('/'));
+    }
+
+    // ------------------------------------------------- the five shipped channel videos
+
+    private const CHANNEL_VIDEOS = ['QBjC92lyUBc', 'KytVA5-R2DM', 'l7L4vXSwYMk', 'h-YIMbpoTxw', 'YrB0XJeqz1s'];
+
+    public function test_the_five_channel_videos_are_shipped_in_order_with_the_first_featured(): void
+    {
+        $stories = config('marketing.testimonials');
+
+        $this->assertSame(self::CHANNEL_VIDEOS, array_column($stories, 'youtubeId'));
+        $this->assertSame([true, false, false, false, false], array_column($stories, 'featured'));
+        $this->assertSame(['standard', 'standard', 'standard', 'standard', 'short'], array_column($stories, 'format'));
+
+        $site = $this->app->make(MarketingSite::class)->testimonials();
+        $this->assertSame('QBjC92lyUBc', $site['featured']['youtubeId']);
+        $this->assertCount(4, $site['supporting']);
+        $this->assertCount(5, $site['all']);
+    }
+
+    public function test_the_videos_show_without_a_customer_name_and_nothing_is_invented(): void
+    {
+        $html = $this->html('/');
+        $text = $this->text('/');
+
+        foreach (self::CHANNEL_VIDEOS as $id) {
+            $this->assertStringContainsString('https://i.ytimg.com/vi/'.$id.'/hqdefault.jpg', $html);
+            $this->assertStringContainsString('data-video="https://www.youtube-nocookie.com/embed/'.$id.'?autoplay=1"', $html);
+        }
+        $this->assertStringContainsString('Client story 1', $text);
+        $this->assertStringContainsString('Client story 5', $text);
+        $this->assertStringNotContainsString('<iframe', $html, 'click-to-load: no player until the visitor clicks');
+        $this->assertStringContainsString('loading="lazy"', $html, 'thumbnails load lazily');
+        $this->assertDoesNotMatchRegularExpression('/\[(Customer|Business|Category|City|VIDEO_ID)/', $text);
+        $this->assertStringNotContainsString('“', strip_tags(substr($html, (int) strpos($html, 'id="vid-h"'), 6000)) . '', 'no quotation marks: no quote is invented');
+    }
+
+    public function test_unconfirmed_stories_claim_neither_origin_and_carry_the_neutral_disclaimer(): void
+    {
+        foreach (['/', '/customers'] as $path) {
+            $text = $this->text($path);
+
+            $this->assertStringNotContainsString('MotionGrove customer', $text, $path);
+            $this->assertStringNotContainsString('Jazmin Media client', $text, $path);
+            $this->assertStringContainsString('none is evidence of results produced by the MotionGrove software', $text, $path);
+        }
+
+        // With no confirmed origin there is nothing to filter by.
+        $this->assertStringNotContainsString('data-filter="jazmin_media"', $this->html('/customers'));
+    }
+
+    public function test_the_short_is_linked_as_a_short_and_its_thumbnail_is_never_cropped(): void
+    {
+        $html = $this->html('/customers');
+
+        $this->assertStringContainsString('https://www.youtube.com/shorts/YrB0XJeqz1s', $html);
+        $this->assertStringContainsString('https://www.youtube.com/watch?v=QBjC92lyUBc', $html);
+        $this->assertSame(1, substr_count($html, 'thumb thumb-short"'), 'only the Short gets the uncropped thumbnail');
+        $this->assertStringContainsString('.vid .thumb.thumb-short{object-fit:contain}', file_get_contents(public_path('marketing/css/marketing.css')));
+    }
+
+    public function test_a_confirmed_story_still_shows_its_origin_tag_and_filter(): void
+    {
+        $stories = config('marketing.testimonials');
+        $stories[1]['context'] = 'jazmin_media';
+        $stories[2]['context'] = 'motiongrove';
+        config(['marketing.testimonials' => $stories]);
+
+        $html = $this->html('/customers');
+        $this->assertStringContainsString('data-filter="jazmin_media"', $html);
+        $this->assertStringContainsString('Jazmin Media client', $html);
+        $this->assertStringContainsString('MotionGrove customer', $html);
+        $this->assertStringContainsString('Stories marked “Jazmin Media client”', $html);
     }
 
     // ----------------------------------------------------------------- content rules
