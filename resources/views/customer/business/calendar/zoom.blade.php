@@ -32,7 +32,7 @@
 
         @if (! $eligible)
             <x-alert variant="neutral" class="mb-2" role="status" data-role="zoom-not-eligible">
-                Zoom meetings are available on Growth and Agency plans. Your current plan does not include them.
+                Zoom meetings are available on Growth and Agency plans, and for clients managed by an Agency. Your current plan does not include them.
             </x-alert>
         @elseif (! $configured)
             <x-alert variant="neutral" class="mb-2" role="status" data-role="zoom-not-configured">
