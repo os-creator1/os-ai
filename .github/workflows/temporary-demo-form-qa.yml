@@ -3,11 +3,10 @@
 name: Temporary Demo Form QA (PR 495)
 
 on:
+  # Temporary manual-lane runner: rerun QA for each pushed correction on this branch.
   push:
     branches:
       - claude/book-demo-design
-    paths:
-      - .github/workflows/temporary-demo-form-qa.yml
 
 permissions:
   contents: read
