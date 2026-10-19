@@ -46,10 +46,15 @@ One shared integration for every MotionGrove calendar. It is not specific to `/b
 * Zoom's create call has no idempotency key, so a lost response cannot be made exactly-once by the client. We make it safe
   instead: before the call the appointment records `zoom_create_started_at` and takes a database lease
   (`zoom_create_lease_until`, 120 s, so a crashed worker just expires). Any later attempt while the outcome is unknown first
-  LISTS the host's scheduled meetings (`GET /users/me/meetings?type=scheduled`, scope `meeting:read:list_meetings`), adopts
-  ours (matched by the per-appointment agenda `MotionGrove appointment <uid>`, else identical topic and start) and only
-  creates when none exists. If the list cannot be read (scope missing) the booking is held as `create_unverifiable`, never
-  re-created blindly. A cancel during an uncertain create finds and deletes the meeting Zoom made.
+  LISTS the host's scheduled meetings (`GET /users/me/meetings?type=scheduled`, scope `meeting:read:list_meetings`). Identity is
+  never inferred from a generic title or time: every meeting we create carries the appointment's unique reference
+  `[MG-<appointment uid>]` at the end of its topic and `MotionGrove appointment <uid>` as its agenda. A listed meeting is ours
+  only if its topic or agenda carries that reference. Because the List response may omit `agenda` (the field list could not be
+  confirmed from Zoom's documentation from this environment), a listed meeting at our start time whose entry does not prove
+  identity is verified with `GET /meetings/{id}` (scope `meeting:read:meeting`) and adopted only if the full record carries the
+  reference. Exactly one proven meeting is adopted; none means create; more than one (`create_ambiguous`), an unreadable or
+  unverifiable list/record, or more than 10 pages / 20 unverified candidates (`create_unverifiable`) holds the booking and
+  never links a possibly wrong Zoom link. Guests see the reference in the Zoom topic.
   Provider-side limits we cannot remove: the list could in theory lag behind a create that just succeeded (a second meeting
   could then be made; it is never shared, because only the saved meeting's link is emailed, and a lost save race deletes the
   extra), and the list only covers upcoming scheduled meetings. Existing connections need the new list scope on the Zoom app;
@@ -102,7 +107,7 @@ The integration is inert until all three are set and the redirect is `https`.
    *Development* and *Production* credential pairs. Use the matching pair for the environment (staging may use Development).
 3. **Redirect URL for OAuth** and **OAuth allow list**: `https://<platform host>/zoom/oauth/callback`, exactly, for each environment
    (for example `https://staging.getmotiongrove.com/zoom/oauth/callback`). Avoid loopback/dev URLs in the production entry.
-4. **Scopes** (granular): `meeting:write:meeting`, `meeting:update:meeting`, `meeting:delete:meeting`, `meeting:read:list_meetings` (creation recovery), and optionally
+4. **Scopes** (granular): `meeting:write:meeting`, `meeting:update:meeting`, `meeting:delete:meeting`, `meeting:read:list_meetings` and `meeting:read:meeting` (creation recovery; granular names to confirm in the Marketplace scope picker), and optionally
    `user:read:user` (only to show which Zoom account is connected).
 5. **Activation**: Development credentials authorize only the app owner's own Zoom account (and, for beta, members of that account).
    To let other customers' Zoom accounts connect (Growth and Agency customers), the app must be submitted and approved via the
@@ -129,8 +134,7 @@ Use a Development-credential app and your own Zoom account on staging, with `ZOO
    email has the button, the plain URL and the `.ics` link; the meeting appears in your Zoom account with agenda
    `MotionGrove appointment <uid>` and the right time and duration.
 3. **Basic account**: repeat step 2 with a Zoom Basic (free) host. Record whether `POST /users/me/meetings` succeeds, and the 40-minute cap.
-4. **List recovery**: `GET /users/me/meetings?type=scheduled` with the connected token returns the new meeting *with its `agenda`*
-   (confirms the lookup works and the scope is granted). Then simulate a lost response (block the response, or set
+4. **List recovery**: `GET /users/me/meetings?type=scheduled` with the connected token returns the new meeting *and note whether each list entry includes `agenda`; `GET /meetings/{id}` must return `agenda` (confirms both scopes are granted and the verification works). Then simulate a lost response (block the response, or set
    `zoom_create_started_at` on a fresh pending appointment): the next run must adopt the existing meeting, not create another.
 5. **Reschedule**: move the appointment; the same meeting (same link) shows the new time. **Cancel**: the meeting disappears from Zoom.
 6. **Token expiry/rotation**: wait more than an hour (or set `access_expires_at` in the past): the next sync must refresh and

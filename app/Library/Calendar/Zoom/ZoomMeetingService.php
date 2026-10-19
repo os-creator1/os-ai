@@ -145,7 +145,7 @@ class ZoomMeetingService
                 try {
                     $found = $this->zoom->findScheduledMeeting($token, $payload);
                 } catch (ZoomApiException $e) {
-                    if ($e->retryable() || $e->kind === 'auth') {
+                    if ($e->retryable() || $e->kind === 'auth' || in_array($e->errorCode, ['create_ambiguous', 'create_unverifiable'], true)) {
                         throw $e;
                     }
 
@@ -339,7 +339,7 @@ class ZoomMeetingService
         ]);
     }
 
-    /** @return array{topic: string, start_utc: Carbon, duration: int, timezone: string, agenda: string} */
+    /** @return array{topic: string, ref: string, start_utc: Carbon, duration: int, timezone: string, agenda: string} */
     private function payload(Appointment $appointment, Carbon $start, int $duration): array
     {
         $type = BookingType::query()->find($appointment->booking_type_id);
@@ -352,8 +352,13 @@ class ZoomMeetingService
             $zone = 'UTC';
         }
 
+        // The appointment's unique reference rides in the topic AND the agenda: it is how a lost create is recognised later.
+        $ref = '[MG-'.$appointment->uid.']';
+        $base = trim(($type->name ?? 'Meeting').' with '.($business->name ?? ''));
+
         return [
-            'topic' => trim(($type->name ?? 'Meeting').' with '.($business->name ?? '')),
+            'topic' => mb_substr($base, 0, 200 - mb_strlen($ref) - 1).' '.$ref,
+            'ref' => $ref,
             'start_utc' => $start,
             'duration' => $duration,
             'timezone' => $zone,

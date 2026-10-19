@@ -25,9 +25,9 @@ return [
     'api_base' => 'https://api.zoom.us/v2',
 
     // Granular scopes the Zoom app must have (Zoom Marketplace > the app > Scopes). They are configured on the
-    // app, not requested per authorization. `meeting:read:list_meetings` lets us recover a create whose response was lost (without it such a booking is held, never
+    // app, not requested per authorization. `meeting:read:list_meetings` + `meeting:read:meeting` (verify identity via GET /meetings/{id}) let us recover a create whose response was lost (without it such a booking is held, never
     // duplicated). `user:read:user` is optional: it only lets us show which account connected.
-    'scopes' => ['meeting:write:meeting', 'meeting:update:meeting', 'meeting:delete:meeting', 'meeting:read:list_meetings', 'user:read:user'],
+    'scopes' => ['meeting:write:meeting', 'meeting:update:meeting', 'meeting:delete:meeting', 'meeting:read:list_meetings', 'meeting:read:meeting', 'user:read:user'],
 
     'http_timeout_seconds' => 15,
 
