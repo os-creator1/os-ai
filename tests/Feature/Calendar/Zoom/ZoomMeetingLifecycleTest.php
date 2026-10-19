@@ -280,8 +280,9 @@ class ZoomMeetingLifecycleTest extends TestCase
     {
         Queue::fake();
         $appointment = $this->bookZoom($this->host);
-        $this->fakeZoom(['https://api.zoom.us/v2/users/me/meetings' => Http::sequence()
-            ->push('', 503)->push('', 503)->push(['id' => 81234567890, 'join_url' => self::JOIN_URL, 'start_url' => self::START_URL], 201)]);
+        $creates = Http::sequence()->push('', 503)->push('', 503)->push(['id' => 81234567890, 'join_url' => self::JOIN_URL, 'start_url' => self::START_URL], 201);
+        $this->fakeZoom(['https://api.zoom.us/v2/users/me/meetings*' => fn ($request) => $request->method() === 'GET'
+            ? Http::response(['meetings' => []]) : $creates->__invoke($request)]);
 
         $job = new SyncZoomMeeting($appointment->id);
         $released = [];
@@ -298,6 +299,7 @@ class ZoomMeetingLifecycleTest extends TestCase
         $job->handle(app(ZoomMeetingService::class));
         $this->assertSame('ready', $appointment->fresh()->zoom_status);
         $this->assertSame(3, $this->zoomCalls('POST', '/users/me/meetings'), 'one successful create after two failed attempts');
+        $this->assertSame(2, $this->zoomCalls('GET', '/users/me/meetings'), 'each retry after an uncertain 5xx looks for the meeting first');
         $this->assertSame(1, Appointment::query()->whereNotNull('zoom_meeting_id')->count());
     }
 

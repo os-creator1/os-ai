@@ -58,6 +58,8 @@ class Appointment extends Model
         'resolved_at' => 'datetime',
         'zoom_synced_start_at' => 'datetime',
         'zoom_attempts' => 'integer',
+        'zoom_create_started_at' => 'datetime',
+        'zoom_create_lease_until' => 'datetime',
     ];
 
     /**

@@ -114,12 +114,100 @@ class ZoomMeetingService
         return $moved;
     }
 
+    private const LEASE_SECONDS = 120;
+
+    /**
+     * Create the meeting once, recoverably.
+     *
+     * Zoom's create call has no idempotency key, so a lost response (timeout, 5xx, unusable body) leaves the outcome UNKNOWN.
+     * Durable state on the appointment makes that safe:
+     *   - zoom_create_lease_until: a database lease (not a cache lock) so only one worker creates at a time, across processes;
+     *     a crashed worker's lease just expires;
+     *   - zoom_create_started_at: set before the call and kept until the outcome is known. While it is set, the next attempt
+     *     first LISTS the host's scheduled meetings and adopts ours instead of creating another. If the list cannot be read,
+     *     we hold (never blindly re-create).
+     * Unavoidable limit: Zoom may list a just-created meeting late; see docs/product/ZOOM-MEETINGS.md.
+     */
     private function createMeeting(Appointment $appointment, ZoomConnection $host, string $token, Carbon $start, int $duration): void
     {
-        $meeting = $this->zoom->createMeeting($token, $this->payload($appointment, $start, $duration));
+        $claim = $this->claimCreate((int) $appointment->id);
 
-        // Save the meeting id only if nobody else did. Losing the race means a duplicate exists: remove OUR copy.
-        $saved = Appointment::query()->whereKey($appointment->id)->whereNull('zoom_meeting_id')->update([
+        if ($claim === null) {
+            throw new ZoomApiException('transient', 'locked');
+        }
+
+        [$mine, $uncertain] = $claim;
+        $payload = $this->payload($appointment, $start, $duration);
+        $outcomeKnown = false;
+
+        try {
+            if ($uncertain) {
+                try {
+                    $found = $this->zoom->findScheduledMeeting($token, $payload);
+                } catch (ZoomApiException $e) {
+                    if ($e->retryable() || $e->kind === 'auth') {
+                        throw $e;
+                    }
+
+                    // Cannot read the list (scope missing/denied): the earlier outcome is unverifiable. Hold; do not re-create.
+                    throw new ZoomApiException('permanent', 'create_unverifiable');
+                }
+
+                if ($found !== null) {
+                    $this->saveCreated($appointment, $host, $token, $found, $start, $duration, $mine);
+                    $outcomeKnown = true;
+
+                    return;
+                }
+            }
+
+            try {
+                $meeting = $this->zoom->createMeeting($token, $payload);
+            } catch (ZoomApiException $e) {
+                // Zoom answered with a definite "no": nothing was created. A 5xx or an unusable 2xx may have created one.
+                $outcomeKnown = in_array($e->kind, ['auth', 'permanent', 'rate_limited', 'not_found'], true)
+                    && $e->errorCode !== 'invalid_meeting_response';
+
+                throw $e;
+            }
+
+            $this->saveCreated($appointment, $host, $token, $meeting, $start, $duration, $mine);
+            $outcomeKnown = true;
+        } finally {
+            Appointment::query()->whereKey($appointment->id)->where('zoom_create_token', $mine)->update(array_filter([
+                'zoom_create_lease_until' => null,
+                'zoom_create_started_at' => $outcomeKnown ? null : false,
+            ], fn ($v) => $v !== false));
+        }
+    }
+
+    /**
+     * Take the create lease. Returns [token, outcomeUncertain] or null when a live worker holds it.
+     *
+     * @return ?array{0: string, 1: bool}
+     */
+    private function claimCreate(int $appointmentId): ?array
+    {
+        $before = Appointment::query()->whereKey($appointmentId)->first(['zoom_create_started_at']);
+        $uncertain = $before !== null && $before->zoom_create_started_at !== null;
+        $token = (string) \Illuminate\Support\Str::uuid();
+
+        $claimed = Appointment::query()->whereKey($appointmentId)->whereNull('zoom_meeting_id')
+            ->where(fn ($q) => $q->whereNull('zoom_create_lease_until')->orWhere('zoom_create_lease_until', '<', now()))
+            ->update(array_filter([
+                'zoom_create_token' => $token,
+                'zoom_create_lease_until' => now()->addSeconds(self::LEASE_SECONDS),
+                'zoom_create_started_at' => $uncertain ? false : now(),
+            ], fn ($v) => $v !== false));
+
+        // A worker that died mid-create left started_at set (its lease expired): the outcome is unknown, so we reconcile first.
+        return $claimed === 1 ? [$token, $uncertain] : null;
+    }
+
+    /** Save the meeting id only if we still hold the create claim; otherwise a duplicate exists: remove OUR copy. */
+    private function saveCreated(Appointment $appointment, ZoomConnection $host, string $token, array $meeting, Carbon $start, int $duration, string $mine): void
+    {
+        $saved = Appointment::query()->whereKey($appointment->id)->whereNull('zoom_meeting_id')->where('zoom_create_token', $mine)->update([
             'zoom_connection_id' => $host->id,
             'zoom_meeting_id' => $meeting['id'],
             'zoom_join_url' => $meeting['join_url'],
@@ -127,6 +215,7 @@ class ZoomMeetingService
             'zoom_synced_duration' => $duration,
             'zoom_status' => 'ready',
             'zoom_last_error' => null,
+            'zoom_create_started_at' => null,
             'updated_at' => now(),
         ]);
 
@@ -142,7 +231,7 @@ class ZoomMeetingService
     private function cancelMeeting(Appointment $appointment): void
     {
         if (blank($appointment->zoom_meeting_id)) {
-            Appointment::query()->whereKey($appointment->id)->update(['zoom_status' => 'cancelled']);
+            $this->cancelUncertainCreate($appointment);
 
             return;
         }
@@ -160,6 +249,39 @@ class ZoomMeetingService
             $this->zoom->deleteMeeting($this->connections->accessToken($host), (string) $appointment->zoom_meeting_id);
             Appointment::query()->whereKey($appointment->id)->update(['zoom_status' => 'cancelled', 'zoom_last_error' => null, 'updated_at' => now()]);
         }, $appointment);
+    }
+
+    /**
+     * Cancelled while a create may have reached Zoom: find and delete that meeting so no orphan stays on the host's calendar.
+     * Waits (retry) while a live worker still owns the create; it will see the cancellation on its next pass.
+     */
+    private function cancelUncertainCreate(Appointment $appointment): void
+    {
+        $row = Appointment::query()->find($appointment->id);
+
+        if ($row !== null && $row->zoom_create_lease_until !== null && $row->zoom_create_lease_until->isFuture()) {
+            throw new ZoomApiException('transient', 'locked');
+        }
+
+        if ($row !== null && $row->zoom_create_started_at !== null) {
+            $host = ZoomHostResolver::hostForAppointment($row);
+
+            if ($host !== null && $host->isActive()) {
+                $this->call(function () use ($row, $host): void {
+                    $token = $this->connections->accessToken($host);
+                    $start = $row->start_at->copy()->utc();
+                    $found = $this->zoom->findScheduledMeeting($token, $this->payload($row, $start, 1));
+
+                    if ($found !== null) {
+                        $this->zoom->deleteMeeting($token, $found['id']);
+                    }
+                }, $row);
+            }
+        }
+
+        Appointment::query()->whereKey($appointment->id)->update([
+            'zoom_status' => 'cancelled', 'zoom_create_started_at' => null, 'zoom_create_lease_until' => null, 'updated_at' => now(),
+        ]);
     }
 
     /** Translate transport errors; record the outcome on the appointment so it is never silent. */
