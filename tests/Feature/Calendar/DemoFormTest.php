@@ -5,14 +5,18 @@ namespace Tests\Feature\Calendar;
 use App\Library\Calendar\DemoBooking\Form\DemoFormDefaults;
 use App\Library\Calendar\DemoBooking\Form\DemoFormRepository;
 use App\Library\Calendar\DemoBooking\Form\DemoFormSchema;
+use App\Events\Calendar\AppointmentScheduled;
 use App\Models\Appointment;
+use App\Models\AppointmentNotification;
 use App\Models\Contacts;
 use App\Models\ContactsCustomField;
 use App\Models\DemoBookingResponse;
 use App\Models\DemoFormVersion;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Notification;
 use Tests\Feature\Calendar\Concerns\CreatesCalendarHttpFixtures;
 use Tests\Feature\PlatformOwner\Concerns\PlatformOwnerFixtures;
 use Tests\TestCase;
@@ -198,6 +202,63 @@ class DemoFormTest extends TestCase
             ->mapWithKeys(fn ($row) => [$row->field->tag => $row->value]);
         $this->assertSame('Home services', $crm['DEMO_INDUSTRY']);
         $this->assertSame('A podcast', $crm['DEMO_CUSTOM_AB12CD34']);
+    }
+
+    public function test_a_failed_answer_save_rolls_the_whole_booking_back(): void
+    {
+        Notification::fake();
+        Event::fake([AppointmentScheduled::class]);
+        $contactsBefore = Contacts::query()->count();
+        DemoBookingResponse::creating(static function (): void {
+            throw new \RuntimeException('forced answer-storage failure');
+        });
+
+        $this->postJson(route('demo.booking.store'), $this->payload(), ['X-Requested-With' => 'XMLHttpRequest'])->assertStatus(500)
+            ->assertJsonMissing(['status' => 'confirmed']);
+
+        $this->assertDatabaseCount('appointments', 0);
+        $this->assertDatabaseCount('demo_booking_responses', 0);
+        $this->assertSame($contactsBefore, Contacts::query()->count(), 'the Contact created for the booking rolled back too');
+        $this->assertSame(0, AppointmentNotification::query()->count());
+        Event::assertNotDispatched(AppointmentScheduled::class);
+        Notification::assertNothingSent();
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'zoom'));
+
+        // The slot is still free: the same request succeeds once storage works again.
+        DemoBookingResponse::flushEventListeners();
+        $this->postJson(route('demo.booking.store'), $this->payload(), ['X-Requested-With' => 'XMLHttpRequest'])->assertCreated();
+        $this->assertDatabaseCount('appointments', 1);
+        $this->assertDatabaseCount('demo_booking_responses', 1);
+    }
+
+    public function test_a_failed_crm_mirror_never_loses_the_booking_or_its_answers(): void
+    {
+        $this->publish($this->withExtra([]));
+        ContactsCustomField::creating(static function ($row): void {
+            if ((string) $row->value === 'A podcast') {
+                throw new \RuntimeException('forced CRM mirror failure');
+            }
+        });
+
+        $this->postJson(route('demo.booking.store'), $this->payload(['custom_ab12cd34' => 'A podcast']), ['X-Requested-With' => 'XMLHttpRequest'])->assertCreated();
+
+        $this->assertDatabaseCount('appointments', 1);
+        $this->assertSame('A podcast', collect(DemoBookingResponse::query()->sole()->answers)->firstWhere('key', 'custom_ab12cd34')['display']);
+        ContactsCustomField::flushEventListeners();
+    }
+
+    public function test_the_answers_commit_with_the_booking_and_other_booking_types_are_unaffected(): void
+    {
+        $this->post(route('demo.booking.store'), $this->payload())->assertRedirect(route('demo.booking.confirmed'));
+
+        $this->assertSame(Appointment::query()->sole()->id, DemoBookingResponse::query()->sole()->appointment_id);
+        $this->assertCount(8, DemoBookingResponse::query()->sole()->answers, 'the complete canonical snapshot');
+
+        // The generic public booking page and write are not given a demo form.
+        $other = $this->bookingType(null, ['name' => 'Another service']);
+        $other->staff()->attach($this->bookableStaff()->id);
+        $this->get(route('public.booking.show', [$other->public_booking_uuid]))->assertOk()
+            ->assertDontSee('name="industry"', false)->assertDontSee('Tell us a little about you');
     }
 
     public function test_changing_the_form_does_not_alter_answers_already_saved(): void

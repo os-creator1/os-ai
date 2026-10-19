@@ -43,9 +43,7 @@ class DemoBookingContactResolver
     }
 
     /**
-     * `crm_extra` carries the owner-configured answers worth keeping on the Contact: a CRM field tag, its label and the value.
-     *
-     * @param  array{first_name: string, last_name?: ?string, email: string, business_name: string, website?: ?string, phone?: ?string, crm_extra?: array<int, array{tag: string, label: string, value: string}>}  $data
+     * @param  array{first_name: string, last_name?: ?string, email: string, business_name: string, website?: ?string, phone?: ?string}  $data
      */
     public function resolve(BusinessLocation $location, Business $business, array $data): int
     {
@@ -53,8 +51,7 @@ class DemoBookingContactResolver
             ?? $this->contacts->store([
                 'name' => 'Contacts', 'business_id' => $business->id, 'user_id' => $business->customer_id,
             ]);
-        $extras = (array) ($data['crm_extra'] ?? []);
-        $this->ensureFields($group, $extras);
+        $this->ensureFields($group);
 
         $fields = [
             'FIRST_NAME' => $data['first_name'],
@@ -69,9 +66,30 @@ class DemoBookingContactResolver
             ? $this->contacts->findOrCreateForBooking($location, $group, $phone, $fields)
             : $this->byEmail($location, $group, $fields);
 
-        $this->fillBlank($contact->fresh(), $group, $fields + array_column($extras, 'value', 'tag'));
+        $this->fillBlank($contact->fresh(), $group, $fields);
 
         return (int) $contact->id;
+    }
+
+    /**
+     * AFTER the booking has committed: copy the owner-configured answers onto the Contact as CRM fields (filled only
+     * where blank). The canonical answers are already stored with the appointment, so this is a secondary, repeatable
+     * copy and a failure here never touches the booking.
+     *
+     * @param  array<int, array{tag: string, label: string, value: string}>  $extras
+     */
+    public function mirrorAnswers(BusinessLocation $location, Business $business, int $contactId, array $extras): void
+    {
+        if ($extras === []) {
+            return;
+        }
+        DB::transaction(function () use ($location, $business, $contactId, $extras): void {
+            $group = ContactGroups::query()->where('business_id', $business->id)->orderBy('id')->firstOrFail();
+            $this->ensureFields($group, array_column($extras, 'label', 'tag'));
+            $contact = Contacts::query()
+                ->where('business_id', $business->id)->where('location_id', $location->id)->findOrFail($contactId);
+            $this->fillBlank($contact, $group->fresh(), array_column($extras, 'value', 'tag'));
+        });
     }
 
     private function byEmail(BusinessLocation $location, ContactGroups $group, array $fields): Contacts
@@ -129,11 +147,10 @@ class DemoBookingContactResolver
     }
 
     /** The group row is locked first (we are inside the booking transaction) so racing bookings cannot both add a field. */
-    private function ensureFields(ContactGroups $group, array $extras = []): void
+    private function ensureFields(ContactGroups $group, array $labels = self::FIELDS): void
     {
         $locked = ContactGroups::query()->whereKey($group->id)->lockForUpdate()->firstOrFail();
-        $wanted = self::FIELDS + array_column($extras, 'label', 'tag');
-        foreach ($wanted as $tag => $label) {
+        foreach ($labels as $tag => $label) {
             if ($locked->getFieldByTag($tag) === null) {
                 $locked->contactGroupFields()->create([
                     'contact_group_id' => $locked->id, 'type' => 'text', 'label' => $label,

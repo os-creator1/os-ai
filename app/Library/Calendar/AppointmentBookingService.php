@@ -168,7 +168,14 @@ class AppointmentBookingService
      * write a Contact; a refusal rolls it back with the Appointment and cursor.
      * Existing authenticated callers continue through bookWithRoundRobin().
      *
+     * `$afterInsert`, when given, runs in the SAME transaction right after the
+     * Appointment row exists. Anything it writes commits with the booking, and
+     * if it throws the Appointment, Contact and cursor roll back and nothing is
+     * dispatched. It may run again if the transaction is retried, so it must
+     * only write rows that belong to the Appointment it is handed.
+     *
      * @param callable(): int $resolveContactId
+     * @param (callable(Appointment): void)|null $afterInsert
      */
     public function bookWithRoundRobinContactResolver(
         BookingType $bookingType,
@@ -176,7 +183,8 @@ class AppointmentBookingService
         callable $resolveContactId,
         ?int $createdByUserId = null,
         ?int $crmOpportunityId = null,
-        ?array $meetingLocation = null
+        ?array $meetingLocation = null,
+        ?callable $afterInsert = null
     ): Appointment {
         $location = $this->locationFor($bookingType);
         $endAt = $this->endFor($bookingType, $startAt);
@@ -204,7 +212,7 @@ class AppointmentBookingService
         $meetingLocation = \App\Library\Calendar\Zoom\ZoomHostResolver::assertPoolBookable($bookingType, $pool, $meetingLocation);
 
         $appointment = DB::transaction(function () use (
-            $bookingType, $location, $pool, $resolveContactId, $startAt, $createdByUserId, $crmOpportunityId, $meetingLocation
+            $bookingType, $location, $pool, $resolveContactId, $startAt, $createdByUserId, $crmOpportunityId, $meetingLocation, $afterInsert
         ): Appointment {
             // Tier 0 first (the Booking Type row, re-derived under a shared
             // lock), then tier 1, held for the whole assignment.
@@ -256,6 +264,10 @@ class AppointmentBookingService
                         'last_assigned_at' => now(),
                         'updated_at' => now(),
                     ]);
+
+                if ($afterInsert !== null) {
+                    $afterInsert($appointment);
+                }
 
                 return $appointment;
             }
