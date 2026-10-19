@@ -55,6 +55,9 @@
 @if ($t['hasJazmin'])
 <p style="margin: 0; font-size: 13px; color: #6B625E; line-height: 1.5; max-width: 820px">{{ $mg->get('copy.jazmin_disclaimer_home') }}</p>
 @endif
+@if ($t['hasUnspecified'])
+<p style="margin: 0; font-size: 13px; color: #6B625E; line-height: 1.5; max-width: 820px">{{ $mg->get('copy.unspecified_disclaimer') }}</p>
+@endif
 </div>
 </section>
 @endif

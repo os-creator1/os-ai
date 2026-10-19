@@ -251,7 +251,8 @@ final class MarketingSite
     /**
      * Renderable testimonial slots, ordered.
      *
-     * A slot is real when it has a valid YouTube ID and a customer name. Anything else is a
+     * A slot is real when it has a valid YouTube ID. Name, business, quote and context are optional; a real slot
+     * without them shows neutral wording ("Client story N"), never an invented name. Anything else is a
      * placeholder, shown (clearly labelled) only while placeholders are enabled and hidden otherwise.
      *
      * @return array{featured: ?array, supporting: list<array>, all: list<array>, hasJazmin: bool, isEmpty: bool}
@@ -267,15 +268,17 @@ final class MarketingSite
             }
 
             $id = $this->youtubeId($t['youtubeId'] ?? null);
-            $real = $id !== null && filled($t['customerName'] ?? null);
+            $real = $id !== null;
 
             if (! $real && ! $showPlaceholders) {
                 continue;
             }
 
             $n = (int) ($t['order'] ?? $i + 1);
-            $jazmin = ($t['context'] ?? 'motiongrove') === 'jazmin_media';
-            $name = $real ? $t['customerName'] : '[Customer name '.$n.']';
+            // context: 'motiongrove', 'jazmin_media', or null when it has not been confirmed which it is.
+            $context = in_array($t['context'] ?? null, ['motiongrove', 'jazmin_media'], true) ? $t['context'] : null;
+            $short = ($t['format'] ?? 'standard') === 'short';
+            $name = ! $real ? '[Customer name '.$n.']' : (filled($t['customerName'] ?? null) ? $t['customerName'] : 'Client story '.$n);
 
             $slots[] = [
                 'id' => $t['id'] ?? 'story-'.$n,
@@ -283,15 +286,20 @@ final class MarketingSite
                 'placeholder' => ! $real,
                 'youtubeId' => $real ? $id : null,
                 'thumb' => $real ? 'https://i.ytimg.com/vi/'.$id.'/hqdefault.jpg' : null,
-                'watchUrl' => $real ? 'https://www.youtube.com/watch?v='.$id : null,
+                'watchUrl' => $real ? ($short ? 'https://www.youtube.com/shorts/' : 'https://www.youtube.com/watch?v=').$id : null,
+                'short' => $short,
                 'embedUrl' => $real ? 'https://www.youtube-nocookie.com/embed/'.$id.'?autoplay=1' : null,
                 'customerName' => $name,
                 'businessName' => $real ? ($t['businessName'] ?? null) : '[Business]',
                 'category' => $real ? ($t['category'] ?? null) : '[Category]',
                 'location' => $real ? ($t['location'] ?? null) : '[City]',
                 'quote' => $real ? ($t['quote'] ?? null) : '[Short quote, in the customer’s own words.]',
-                'context' => $jazmin ? 'jazmin_media' : 'motiongrove',
-                'tag' => $jazmin ? 'Jazmin Media client' : 'MotionGrove customer',
+                'context' => $context ?? 'unspecified',
+                'tag' => match ($context) {
+                    'jazmin_media' => 'Jazmin Media client',
+                    'motiongrove' => 'MotionGrove customer',
+                    default => null,
+                },
                 'featured' => (bool) ($t['featured'] ?? false),
                 'label' => $real ? null : 'VIDEO_ID_'.$n,
             ];
@@ -315,6 +323,9 @@ final class MarketingSite
             'supporting' => $supporting,
             'all' => $slots,
             'hasJazmin' => (bool) array_filter($slots, fn ($s) => $s['context'] === 'jazmin_media'),
+            // Real stories whose origin is not confirmed: they must not read as MotionGrove software results.
+            'hasUnspecified' => (bool) array_filter($slots, fn ($s) => $s['context'] === 'unspecified' && ! $s['placeholder']),
+            'hasConfirmedContext' => (bool) array_filter($slots, fn ($s) => $s['context'] !== 'unspecified'),
             'isEmpty' => $slots === [],
         ];
     }
