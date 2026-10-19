@@ -193,6 +193,7 @@ class EventServiceProvider extends ServiceProvider
         ],
         AppointmentScheduled::class => [
             EnrollFromAppointmentEvent::class,
+            \App\Listeners\Calendar\SyncZoomMeetingOnAppointmentEvents::class . '@handleScheduled',
         ],
         // Booking Notifications V1 — the Calendar's built-in confirmation/reminder
         // ledger follows cancels and reschedules. Beside the Automations listener,
@@ -200,10 +201,12 @@ class EventServiceProvider extends ServiceProvider
         AppointmentCancelled::class => [
             EnrollFromAppointmentEvent::class,
             KeepAppointmentNotificationsInStep::class . '@handleCancelled',
+            \App\Listeners\Calendar\SyncZoomMeetingOnAppointmentEvents::class . '@handleCancelled',
         ],
         AppointmentRescheduled::class => [
             EnrollFromAppointmentEvent::class,
             KeepAppointmentNotificationsInStep::class . '@handleRescheduled',
+            \App\Listeners\Calendar\SyncZoomMeetingOnAppointmentEvents::class . '@handleRescheduled',
         ],
         // Unified Business Home §9.3 (AI-3) — cached COO insights stop being
         // shown when their facts stop holding. Invalidation queues nothing;

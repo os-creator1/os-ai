@@ -81,9 +81,9 @@ class BookingTypesController extends Controller
 
     public function store(Request $request, string $workspaceUid, string $businessUid, string $locationUid): RedirectResponse|\Illuminate\Http\JsonResponse
     {
-        [, , $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
+        [, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
 
-        $bookingType = $this->bookingTypes->create($location, $this->validated($request), (int) Auth::id());
+        $bookingType = $this->bookingTypes->create($location, $this->withinBusiness($this->validated($request), $business), (int) Auth::id());
 
         $editUrl = route('customer.workspaces.businesses.calendar.booking-types.edit', [
             $workspaceUid, $businessUid, $locationUid, $bookingType->uid,
@@ -116,10 +116,10 @@ class BookingTypesController extends Controller
 
     public function update(Request $request, string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): RedirectResponse
     {
-        [, , $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
+        [, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
         $bookingType = $this->bookingType($location, $bookingTypeUid);
 
-        $this->bookingTypes->update($bookingType, $this->validated($request));
+        $this->bookingTypes->update($bookingType, $this->withinBusiness($this->validated($request), $business));
 
         return $this->backToEdit($workspaceUid, $businessUid, $locationUid, $bookingTypeUid)
             ->with('flash_success', 'Booking type updated.');
@@ -202,6 +202,27 @@ class BookingTypesController extends Controller
         return $this->bookingTypes->findForLocation($location, $bookingTypeUid) ?? abort(404);
     }
 
+    /**
+     * A shared Zoom host may only be a connection of THIS Business. Anything else is dropped (never trusted from the form),
+     * and Zoom cannot be chosen where this Business may not use it, so no plan check can be bypassed by posting a field.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function withinBusiness(array $data, Business $business): array
+    {
+        if (($data['meeting_location_type'] ?? null) === 'zoom') {
+            abort_unless(app(\App\Library\Calendar\Zoom\ZoomEligibility::class)->allows($business), 403);
+        }
+
+        if (isset($data['zoom_host_connection_id'])) {
+            $owned = \App\Models\ZoomConnection::query()->where('business_id', $business->id)->whereKey((int) $data['zoom_host_connection_id'])->exists();
+            $data['zoom_host_connection_id'] = $owned ? (int) $data['zoom_host_connection_id'] : null;
+        }
+
+        return $data;
+    }
+
     /** @return array<string, mixed> */
     private function validated(Request $request): array
     {
@@ -210,6 +231,10 @@ class BookingTypesController extends Controller
             'description' => ['nullable', 'string'],
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:1440'],
             'meeting_instructions' => ['nullable', 'string', 'max:2000'],
+            // Meeting location: blank = the type's behaviour before this setting existed.
+            'meeting_location_type' => ['nullable', 'string', Rule::in(\App\Library\Calendar\Zoom\ZoomHostResolver::TYPES)],
+            'meeting_location_custom' => ['nullable', 'string', 'max:500', 'required_if:meeting_location_type,custom'],
+            'zoom_host_connection_id' => ['nullable', 'integer'],
             'booking_window_days' => ['sometimes', 'integer', 'min:1', 'max:365'],
             'minimum_notice_minutes' => ['sometimes', 'integer', 'min:0', 'max:43200'],
             'buffer_before_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
