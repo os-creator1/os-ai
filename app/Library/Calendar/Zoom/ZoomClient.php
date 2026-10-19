@@ -81,6 +81,45 @@ class ZoomClient
         return ['id' => (string) $body['id'], 'join_url' => (string) $body['join_url']];
     }
 
+    /**
+     * Recovery lookup for a create whose response was lost. Zoom's create call has no idempotency key, so the only way to learn
+     * whether it succeeded is to list the host's upcoming scheduled meetings (needs meeting:read:list_meetings) and match ours:
+     * by the per-appointment agenda marker, else by identical topic and start. Bounded to a few pages.
+     *
+     * @param  array{topic: string, start_utc: \DateTimeInterface, agenda: string}  $meeting
+     * @return ?array{id: string, join_url: string} null when the host has no such meeting
+     */
+    public function findScheduledMeeting(string $accessToken, array $meeting): ?array
+    {
+        $start = \Illuminate\Support\Carbon::instance($meeting['start_utc'])->utc();
+        $topic = mb_substr($meeting['topic'], 0, 200);
+        $agenda = mb_substr((string) $meeting['agenda'], 0, 1000);
+        $pageToken = null;
+
+        for ($page = 0; $page < 5; $page++) {
+            $body = $this->check($this->api($accessToken)->get('/users/me/meetings', array_filter([
+                'type' => 'scheduled', 'page_size' => 300, 'next_page_token' => $pageToken,
+            ])))->json() ?? [];
+
+            foreach ((array) ($body['meetings'] ?? []) as $m) {
+                $sameStart = isset($m['start_time']) && \Illuminate\Support\Carbon::parse($m['start_time'])->utc()->equalTo($start);
+                $isOurs = (($m['agenda'] ?? null) === $agenda) || (($m['topic'] ?? null) === $topic && $sameStart);
+
+                if ($isOurs && isset($m['id']) && ZoomJoinUrl::valid($m['join_url'] ?? null)) {
+                    return ['id' => (string) $m['id'], 'join_url' => (string) $m['join_url']];
+                }
+            }
+
+            $pageToken = $body['next_page_token'] ?? null;
+
+            if (blank($pageToken)) {
+                break;
+            }
+        }
+
+        return null;
+    }
+
     /** @param  array{topic?: string, start_utc: \DateTimeInterface, duration: int, timezone: string}  $changes */
     public function updateMeeting(string $accessToken, string $meetingId, array $changes): void
     {

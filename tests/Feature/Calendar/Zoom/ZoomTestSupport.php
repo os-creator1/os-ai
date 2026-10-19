@@ -70,6 +70,7 @@ trait ZoomTestSupport
             'https://api.zoom.us/v2/users/me/meetings' => Http::response([
                 'id' => 81234567890, 'join_url' => self::JOIN_URL, 'start_url' => self::START_URL,
             ], 201),
+            'https://api.zoom.us/v2/users/me/meetings?*' => Http::response(['meetings' => []]),
             'https://api.zoom.us/v2/users/me' => Http::response(['id' => 'zu1', 'email' => 'host@zoom.example', 'first_name' => 'Hal', 'last_name' => 'Host']),
             'https://api.zoom.us/v2/meetings/*' => Http::response('', 204),
             'https://zoom.us/oauth/token' => Http::response(['access_token' => 'access-token-NEW', 'refresh_token' => 'refresh-token-NEW', 'expires_in' => 3600]),
