@@ -186,6 +186,10 @@ final class SiteContentBuilder
 
         foreach (array_values($value) as $i => $row) {
             if ($field['shape'] === 'assoc') {
+                if ($path === 'industries') {
+                    $row['jobs'] = self::parseJobs((string) ($row['jobs'] ?? ''));
+                }
+
                 $out[] = $row;
 
                 continue;
@@ -210,6 +214,25 @@ final class SiteContentBuilder
         }
 
         return $out;
+    }
+
+    /** "Title :: Detail" lines → the [title, detail] pairs the Solutions page lists. At most 8, each bounded. */
+    public static function parseJobs(string $text): array
+    {
+        $jobs = [];
+
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
+            $line = trim($line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            [$title, $detail] = array_pad(array_map('trim', explode('::', $line, 2)), 2, '');
+            $jobs[] = [mb_substr($title, 0, 80), mb_substr($detail, 0, 200)];
+        }
+
+        return array_slice($jobs, 0, 8);
     }
 
     /** @param list<mixed> $industries */

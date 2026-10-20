@@ -214,7 +214,7 @@ final class SiteSchema
                 self::text('page_copy.solutions.title', 'Page headline', 120),
                 self::area('page_copy.solutions.lead', 'Introduction', 300),
                 self::text('page_copy.solutions.note', 'Note under the industry picker', 160),
-                self::rows('industries', 'Industries (rename, describe, reorder)', [['name', 'Industry name'], ['head', 'Headline'], ['body', 'Description']], 8, 'assoc', 500),
+                self::rows('industries', 'Industries (rename, describe, reorder)', [['name', 'Industry name'], ['head', 'Headline'], ['body', 'Description'], ['jobs', 'Benefits / use cases — one per line as: Title :: Detail']], 8, 'assoc', 900),
                 self::text('page_copy.solutions.cta.title', 'Closing call to action heading', 120),
                 self::area('page_copy.solutions.cta.lead', 'Closing call to action text', 220),
             ]],

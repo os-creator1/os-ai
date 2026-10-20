@@ -174,6 +174,11 @@ final class SiteEditorPresenter
             return array_values(array_map(function ($row) use ($field) {
                 $row = (array) $row;
 
+                // Benefits are edited as text lines, "Title :: Detail".
+                if (isset($row['jobs']) && is_array($row['jobs'])) {
+                    $row['jobs'] = implode("\n", array_map(fn ($job) => trim((string) ($job[0] ?? '')).' :: '.trim((string) ($job[1] ?? '')), array_filter($row['jobs'], fn ($job) => empty($job['unverified']))));
+                }
+
                 return collect($field['columns'])->mapWithKeys(fn ($c) => [$c[0] => $row[$c[0]] ?? ''])->all();
             }, $value));
         }

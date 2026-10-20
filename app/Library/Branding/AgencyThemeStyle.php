@@ -89,6 +89,31 @@ final class AgencyThemeStyle
         return '<style id="agency-theme-overrides">:root{'.$css.'}</style>';
     }
 
+    /**
+     * The palette generated from the Agency's colours, for the Branding tab: exactly the values `block()` applies.
+     *
+     * @return list<array{label: string, hex: string, note: ?string}>
+     */
+    public function palette(string $primary, ?string $secondary): array
+    {
+        $variants = $this->colours->deriveVariants($primary);
+        $buttonText = $this->colours->foregroundOn($primary);
+        $link = $this->readableOnWhite($primary);
+        $out = [
+            ['label' => 'Primary (buttons, active items)', 'hex' => $primary, 'note' => 'Button text: '.$buttonText],
+            ['label' => 'Hover', 'hex' => $variants['hover'], 'note' => null],
+            ['label' => 'Pressed', 'hex' => $variants['active'], 'note' => null],
+            ['label' => 'Soft background', 'hex' => $variants['soft_bg'], 'note' => null],
+            ['label' => 'Links', 'hex' => $link, 'note' => $link === $primary ? null : 'Darkened so links stay readable on white'],
+        ];
+
+        if ($secondary !== null) {
+            $out[] = ['label' => 'Accent', 'hex' => $secondary, 'note' => null];
+        }
+
+        return $out;
+    }
+
     /** Darken a colour until it is readable as text on white, so a pale brand never makes links invisible. */
     private function readableOnWhite(string $hex): string
     {

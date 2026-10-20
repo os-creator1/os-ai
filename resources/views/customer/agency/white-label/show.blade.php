@@ -226,6 +226,19 @@
             </div>
 
             <div class="col-12 col-xl-5">
+                @if ($palette !== [])
+                    <x-card title="Generated palette" class="mb-2" data-role="white-label-palette">
+                        <ul class="list-unstyled mb-0">
+                            @foreach ($palette as $swatch)
+                                <li class="d-flex align-items-center gap-1 mb-1">
+                                    <span aria-hidden="true" style="display:inline-block;width:1.5rem;height:1.5rem;border-radius:4px;border:1px solid #d1d5db;background:{{ $swatch['hex'] }}"></span>
+                                    <span><strong>{{ $swatch['label'] }}</strong> <code>{{ $swatch['hex'] }}</code>@if ($swatch['note']) <span class="text-caption">· {{ $swatch['note'] }}</span>@endif</span>
+                                </li>
+                            @endforeach
+                        </ul>
+                        <p class="text-caption mb-0 mt-1">Applied to every screen your clients use. Errors, warnings and success messages keep their standard colours.</p>
+                    </x-card>
+                @endif
                 <x-card title="Live preview" class="mb-2" data-role="white-label-preview">
                     <div id="wl-pv" style="--pv-primary:{{ $pv['primary'] }};--pv-secondary:{{ $pv['secondary'] }};">
                         <div class="small text-muted mb-1">Browser tab</div>

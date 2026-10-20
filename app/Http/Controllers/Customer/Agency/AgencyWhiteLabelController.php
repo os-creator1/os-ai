@@ -69,6 +69,7 @@ class AgencyWhiteLabelController extends Controller
         return view('customer.agency.white-label.show', [
             'tab' => $tab,
             'editor' => $editor,
+            'palette' => $setting?->accent_color !== null ? app(\App\Library\Branding\AgencyThemeStyle::class)->palette($setting->accent_color, $setting->secondary_color) : [],
             'domainInstructions' => $setting?->app_domain !== null ? $this->appDomains->dnsInstructions($setting) : null,
             'landing' => $this->landingStatus($agency, $setting),
             'agencyWorkspace' => $agency,
