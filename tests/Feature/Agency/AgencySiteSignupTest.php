@@ -631,14 +631,156 @@ class AgencySiteSignupTest extends TestCase
         $this->assertNotContains($first, $this->agencyStripe->payableSessionIds());
     }
 
-    public function test_a_completed_old_session_is_never_replaced(): void
+    /** The row's commercial terms: [plan id, price, tier granted]. */
+    private function terms(Workspace $client): array
     {
-        [$live, $other, $first] = $this->switchSetup();
-        $this->agencyStripe->completeCheckout($first);
+        $row = AgencyClientSubscription::query()->sole();
+
+        return [(int) $row->agency_saas_plan_id, (float) $row->price_snapshot, $this->tierOf($client)];
+    }
+
+    public function test_a_completed_cheaper_checkout_is_reconciled_against_its_own_plan_not_the_one_just_requested(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();   // first: $49 Growth ("Studio"); other: $99 Core
+        $client = $this->clientOf('dana@harbor.example');
+        $this->agencyStripe->completeCheckout($first);     // the customer pays the CHEAPER session
 
         $this->post($this->signupUrl($live, $other->uid), $this->form())->assertSessionHasErrors();
 
         $this->assertSame([], $this->agencyStripe->payableSessionIds());
-        $this->assertSame(1, count($this->agencyStripe->callsOf('createSubscriptionCheckout')));
+        $this->assertCount(1, $this->agencyStripe->callsOf('createSubscriptionCheckout'), 'no second session was opened');
+        // What they paid for is what they are on: $49 Growth, active — never the $99 plan.
+        $row = AgencyClientSubscription::query()->sole();
+        $this->assertSame((int) $live['plan']->id, (int) $row->agency_saas_plan_id);
+        $this->assertSame(49.0, (float) $row->price_snapshot);
+        $this->assertSame(AgencyClientSubscriptionStatus::Active, $row->status);
+        $this->assertSame(WorkspacePlanTier::Growth, $this->tierOf($client));
+    }
+
+    public function test_an_old_checkout_paid_at_the_last_moment_during_the_switch_keeps_its_own_terms(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $client = $this->clientOf('dana@harbor.example');
+
+        // The customer pays the old session between our read of it and our expire call.
+        $this->agencyStripe->interleaveOnce('expireCheckoutSession', function (array $args, $gateway) use ($first): void {
+            $gateway->completeCheckout($first);
+        });
+
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertSessionHasErrors();
+
+        $row = AgencyClientSubscription::query()->sole();
+        $this->assertSame((int) $live['plan']->id, (int) $row->agency_saas_plan_id);
+        $this->assertSame(49.0, (float) $row->price_snapshot);
+        $this->assertCount(1, $this->agencyStripe->callsOf('createSubscriptionCheckout'));
+        $this->assertSame([], $this->agencyStripe->payableSessionIds());
+
+        // The Stripe return then finalizes it against the plan it was opened for.
+        $this->actingAs(User::query()->where('email', 'dana@harbor.example')->sole())->get(route('customer.workspaces.agency-plan.return', $client->uid));
+        $this->assertSame(WorkspacePlanTier::Growth, $this->tierOf($client));
+        $this->assertSame(49.0, (float) $row->refresh()->price_snapshot);
+    }
+
+    public function test_a_failed_expiry_leaves_the_tracked_terms_untouched(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $before = AgencyClientSubscription::query()->sole()->only(['agency_saas_plan_id', 'price_snapshot', 'checkout_attempt_uid', 'provider_checkout_session_id', 'checkout_attempt_price_id']);
+
+        $this->agencyStripe->hooks['expireCheckoutSession'] = function (): void {
+            throw \App\Exceptions\AgencyBilling\AgencyBillingException::because(\App\Exceptions\AgencyBilling\AgencyBillingException::PROVIDER_FAILED);
+        };
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertSessionHasErrors();
+
+        $this->assertSame($before, AgencyClientSubscription::query()->sole()->only(array_keys($before)));
+        $this->assertSame([$first], $this->agencyStripe->payableSessionIds());
+    }
+
+    public function test_a_successful_replacement_changes_terms_only_after_the_old_session_is_dead_and_charges_the_new_price(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $client = $this->clientOf('dana@harbor.example');
+        $seen = [];
+        // At the instant of the expire call the tracked terms must still be the OLD plan.
+        $this->agencyStripe->interleaveOnce('expireCheckoutSession', function () use (&$seen): void {
+            $seen = AgencyClientSubscription::query()->sole()->only(['agency_saas_plan_id', 'price_snapshot']);
+        });
+
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertRedirect();
+
+        $this->assertSame((int) $live['plan']->id, (int) $seen['agency_saas_plan_id']);
+        $this->assertSame(49.0, (float) $seen['price_snapshot']);
+        $row = AgencyClientSubscription::query()->sole();
+        $this->assertSame((int) $other->id, (int) $row->agency_saas_plan_id);
+        $this->assertSame(99.0, (float) $row->price_snapshot);
+        $this->assertSame($other->provider_price_id, $this->agencyStripe->sessions[(string) $row->provider_checkout_session_id]['price']);
+        $this->assertSame([(string) $row->provider_checkout_session_id], $this->agencyStripe->payableSessionIds());
+    }
+
+    public function test_two_simultaneous_plan_switches_end_with_one_payable_session_for_the_tracked_plan(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $service = app(\App\Library\AgencySite\AgencySiteSignupService::class);
+        $ok = fn ($c) => route('customer.workspaces.agency-plan.return', [$c->uid]);
+        $inner = null;
+
+        // A second tab makes the same switch while the first is expiring the old session.
+        $this->agencyStripe->interleaveOnce('expireCheckoutSession', function () use ($service, $live, $other, $ok, &$inner): void {
+            $inner = $service->start($live['site'], $other, $this->form(), null, $ok, 'https://x.test/cancel');
+        });
+        $outer = $service->start($live['site'], $other, $this->form(), null, $ok, 'https://x.test/cancel');
+
+        $this->assertSame($inner['checkout']->sessionId, $outer['checkout']->sessionId);
+        $row = AgencyClientSubscription::query()->sole();
+        $this->assertSame((int) $other->id, (int) $row->agency_saas_plan_id);
+        $this->assertSame([(string) $row->provider_checkout_session_id], $this->agencyStripe->payableSessionIds());
+    }
+
+    public function test_a_request_holding_old_terms_cannot_open_a_session_for_the_old_plan_after_the_switch(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $service = app(\App\Library\AgencySite\AgencySiteSignupService::class);
+        $ok = fn ($c) => route('customer.workspaces.agency-plan.return', [$c->uid]);
+
+        // A stale tab for the ORIGINAL plan lands while the switch is mid-flight.
+        $this->agencyStripe->interleaveOnce('expireCheckoutSession', function () use ($service, $live, $ok): void {
+            try {
+                $service->start($live['site'], $live['plan'], $this->form(), null, $ok, 'https://x.test/cancel');
+            } catch (\App\Exceptions\AgencyBilling\AgencyBillingException) {
+                // refused or contended: both are fine, a second payable session is not
+            }
+        });
+        try {
+            $service->start($live['site'], $other, $this->form(), null, $ok, 'https://x.test/cancel');
+        } catch (\App\Exceptions\AgencyBilling\AgencyBillingException) {
+        }
+
+        $row = AgencyClientSubscription::query()->sole();
+        $payable = $this->agencyStripe->payableSessionIds();
+        $this->assertLessThanOrEqual(1, count($payable));
+
+        foreach ($payable as $id) {
+            $this->assertSame($row->plan?->provider_price_id ?? \App\Models\AgencySaasPlan::find($row->agency_saas_plan_id)->provider_price_id, $this->agencyStripe->sessions[$id]['price'], 'a payable session always matches the tracked plan');
+        }
+    }
+
+    public function test_the_finalizer_refuses_a_purchase_whose_price_is_not_the_one_offered(): void
+    {
+        $live = $this->liveAgency();
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        $client = $this->clientOf('dana@harbor.example');
+        $row = AgencyClientSubscription::query()->sole();
+
+        $result = app(\App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer::class)->apply($row, new \App\Library\AgencyBilling\AgencySubscriptionSnapshot(
+            'sub_wrong', 'cus_x', (string) $row->connected_account_id, AgencyClientSubscriptionStatus::Active, 'price_not_the_offered_one',
+        ));
+
+        $this->assertSame(\App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer::PRICE_MISMATCH, $result);
+        $this->assertNull($row->refresh()->provider_subscription_id);
+        $this->assertNull($this->tierOf($client), 'no entitlement for a purchase that is not the offered one');
+
+        // Wrong account is still refused first.
+        $this->assertSame(\App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer::ACCOUNT_MISMATCH, app(\App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer::class)->apply($row, new \App\Library\AgencyBilling\AgencySubscriptionSnapshot(
+            'sub_wrong', 'cus_x', 'acct_other', AgencyClientSubscriptionStatus::Active, (string) $row->checkout_attempt_price_id,
+        )));
     }
 }

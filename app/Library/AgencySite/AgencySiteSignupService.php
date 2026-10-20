@@ -106,6 +106,10 @@ final class AgencySiteSignupService
             throw ValidationException::withMessages(['email' => 'This account already has an active subscription. Sign in to manage it.']);
         }
 
+        // A different plan than the one a still-open Checkout is for: retire that session first, so the tracked terms
+        // never name a plan other than the one a payable session was opened for.
+        $this->subscriptions->retireCheckoutForReplacement($client, $plan);
+
         $this->subscriptions->offer((int) $agency->owner_user_id, $agency, $client, $plan);
 
         $checkout = $this->subscriptions->startCheckout((int) $user->id, $client, (string) $user->email, $successUrl($client), $cancelUrl);

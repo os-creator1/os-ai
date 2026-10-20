@@ -107,8 +107,7 @@ class AgencySiteController extends Controller
         }
 
         return $this->guard(function () use ($agency, $data) {
-            $type = $this->booking->create((int) Auth::id(), $agency, $data);
-            $site = $this->sites->save((int) Auth::id(), $agency, ['x.booking_type_uid' => $type->public_booking_uuid], 8);
+            [, $site] = $this->sites->createAndSelectBookingType((int) Auth::id(), $agency, $data);
 
             return $this->state($agency, $site);
         });

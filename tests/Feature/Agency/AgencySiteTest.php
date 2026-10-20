@@ -692,4 +692,143 @@ class AgencySiteTest extends TestCase
 
         $this->assertSame($before, $this->ownerRules($agency, $owner)->toArray(), 'the owner\'s schedule is untouched');
     }
+
+    // ------------------------------------------------------- publishing validates the committed draft
+
+    public function test_publishing_is_refused_when_another_session_has_since_broken_the_draft(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $this->openEditor($agency, $owner);
+        $uuid = $this->bookableType($agency, $owner)->public_booking_uuid;
+        $this->save($agency, ['x.goal' => 'both', 'x.booking_type_uid' => $uuid, 'links.privacy' => 'https://northwind.example/privacy', 'links.terms' => 'https://northwind.example/terms']);
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        $this->assertSame('pass', collect($this->sites()->checklist($agency, AgencySite::query()->sole()))->firstWhere('key', 'conversion')['status']);
+
+        // Session B removes the legal links after session A's editor last looked.
+        $this->save($agency, ['links.privacy' => null])->assertOk();
+
+        $this->postJson($this->url('publish', $agency))->assertStatus(422)->assertJsonPath('ok', false);
+        $this->assertFalse(AgencySite::query()->sole()->isLive());
+        $this->assertSame(0, \App\Models\AgencySiteRevision::query()->count());
+
+        // Invalid conversion settings are caught the same way.
+        $this->save($agency, ['links.privacy' => 'https://northwind.example/privacy', 'x.goal' => 'book_call', 'x.booking_type_uid' => null])->assertOk();
+        $this->postJson($this->url('publish', $agency))->assertStatus(422);
+        $this->assertSame(0, \App\Models\AgencySiteRevision::query()->count());
+    }
+
+    public function test_what_is_published_is_exactly_the_draft_that_passed_validation_even_if_a_write_lands_during_publication(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $this->openEditor($agency, $owner);
+        $uuid = $this->bookableType($agency, $owner)->public_booking_uuid;
+        $this->save($agency, ['x.goal' => 'book_call', 'x.booking_type_uid' => $uuid, 'copy.home.hero.title' => 'Validated headline.'])->assertOk();
+
+        // A write that slips in at the worst moment: after validation, before the revision is stored.
+        $armed = true;
+        \App\Models\AgencySiteRevision::creating(function () use (&$armed): void {
+            if ($armed) {
+                $armed = false;
+                $site = AgencySite::query()->sole();
+                $config = $site->config;
+                $config['values']['x.booking_type_uid'] = null;
+                \Illuminate\Support\Facades\DB::table('agency_sites')->where('id', $site->id)->update(['config' => json_encode($config)]);
+            }
+        });
+
+        $this->sites()->publish((int) $owner->user_id, $agency);
+        $armed = false;
+
+        $revision = \App\Models\AgencySiteRevision::query()->sole();
+        $this->assertSame($uuid, $revision->config['values']['x.booking_type_uid'], 'the published revision is the validated draft');
+        $this->assertSame('Validated headline.', $revision->config['values']['copy.home.hero.title']);
+    }
+
+    public function test_publishing_with_no_site_is_blocked_not_crashed(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->authenticateAs($owner);
+        $this->postJson($this->url('publish', $agency))->assertStatus(422);
+    }
+
+    // ------------------------------------------------------- inline booking type: authorized and atomic
+
+    private function bookingTypeCount(): int
+    {
+        return BookingType::query()->count();
+    }
+
+    public function test_inline_booking_type_creation_needs_white_label_and_changes_nothing_without_it(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $this->openEditor($agency, $owner);
+        $before = [$this->bookingTypeCount(), \App\Models\StaffAvailabilityRule::query()->count()];
+
+        app(\App\Library\Entitlement\EntitlementManager::class)->changePlanStatus($agency->fresh(), \App\Enums\Entitlement\WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Test suspension.');
+
+        try {
+            $this->sites()->createAndSelectBookingType((int) $owner->user_id, $agency->fresh(), ['name' => 'Blocked', 'duration_minutes' => 30, 'default_hours' => true]);
+            $this->fail('creation must be refused');
+        } catch (\App\Exceptions\Branding\AgencyWhiteLabelException|\Illuminate\Validation\ValidationException) {
+            $this->assertTrue(true);
+        }
+
+        $this->assertSame($before, [$this->bookingTypeCount(), \App\Models\StaffAvailabilityRule::query()->count()]);
+        $this->assertArrayNotHasKey('x.booking_type_uid', AgencySiteManager::values(AgencySite::query()->sole()));
+    }
+
+    public function test_a_failed_selection_rolls_back_the_booking_type_staff_and_seeded_hours(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $this->openEditor($agency, $owner);
+        $kept = $this->bookableType($agency, $owner, 'Existing call');
+        $rulesBefore = \App\Models\StaffAvailabilityRule::query()->orderBy('id')->get(['day_of_week', 'start_time', 'end_time'])->toArray();
+        $typesBefore = $this->bookingTypeCount();
+        $staffBefore = \Illuminate\Support\Facades\DB::table((new BookingType())->staff()->getTable())->count();
+
+        $armed = true;
+        AgencySite::saving(function () use (&$armed): void {
+            if ($armed) {
+                throw new \RuntimeException('site save failed');
+            }
+        });
+
+        try {
+            $this->sites()->createAndSelectBookingType((int) $owner->user_id, $agency, ['name' => 'New call', 'duration_minutes' => 45, 'default_hours' => true]);
+            $this->fail('the failure must surface');
+        } catch (\RuntimeException) {
+            $this->assertTrue(true);
+        } finally {
+            $armed = false;
+        }
+
+        $this->assertSame($typesBefore, $this->bookingTypeCount());
+        $this->assertSame($staffBefore, \Illuminate\Support\Facades\DB::table((new BookingType())->staff()->getTable())->count());
+        $this->assertSame($rulesBefore, \App\Models\StaffAvailabilityRule::query()->orderBy('id')->get(['day_of_week', 'start_time', 'end_time'])->toArray());
+        $this->assertTrue(BookingType::query()->whereKey($kept->id)->exists(), 'existing booking types are untouched');
+    }
+
+    public function test_submitting_the_inline_form_twice_creates_one_booking_type_and_keeps_existing_ones(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $this->openEditor($agency, $owner);
+        $existing = $this->bookableType($agency, $owner, 'Existing call');
+        $rules = \App\Models\StaffAvailabilityRule::query()->count();
+        $payload = ['name' => 'Discovery call', 'duration_minutes' => 20, 'meeting_location_type' => 'phone', 'default_hours' => 1];
+
+        $first = $this->postJson($this->url('booking-type', $agency), $payload)->assertOk();
+        $second = $this->postJson($this->url('booking-type', $agency), $payload)->assertOk();
+
+        $this->assertSame(1, BookingType::query()->where('name', 'Discovery call')->count());
+        $this->assertSame($first->json('booking.url'), $second->json('booking.url'));
+        $this->assertSame(2, $this->bookingTypeCount());
+        $this->assertTrue(BookingType::query()->whereKey($existing->id)->exists());
+        $this->assertSame($rules, \App\Models\StaffAvailabilityRule::query()->count(), 'hours already existed, so none were added');
+    }
 }

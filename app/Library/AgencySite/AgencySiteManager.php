@@ -189,19 +189,20 @@ final class AgencySiteManager
      */
     public function publish(int $actorUserId, Workspace $agency): AgencySite
     {
-        $site = $this->find($agency) ?? throw new SitePublishBlockedException([['key' => 'no_site', 'label' => 'No website yet', 'detail' => 'Start by answering the first screen.', 'step' => 1]]);
-
-        $blockers = array_values(array_filter($this->checklist($agency, $site), fn ($item) => $item['status'] === 'fail'));
-
-        if ($blockers !== []) {
-            throw new SitePublishBlockedException($blockers);
-        }
-
+        // Validation happens INSIDE the transaction, against the draft as it is at this instant: every save takes the same
+        // workspace lock, so nothing can change the draft between the checklist and the revision that is written.
         return DB::transaction(function () use ($actorUserId, $agency): AgencySite {
             $locked = Workspace::query()->whereKey($agency->id)->lockForUpdate()->firstOrFail();
             $this->whiteLabel->assertCanManage($locked, $actorUserId);
 
-            $site = AgencySite::query()->where('agency_workspace_id', $locked->id)->lockForUpdate()->firstOrFail();
+            $site = AgencySite::query()->where('agency_workspace_id', $locked->id)->lockForUpdate()->first()
+                ?? throw new SitePublishBlockedException([['key' => 'no_site', 'label' => 'No website yet', 'detail' => 'Start by answering the first screen.', 'step' => 1]]);
+
+            $blockers = array_values(array_filter($this->checklist($locked, $site), fn ($item) => $item['status'] === 'fail'));
+
+            if ($blockers !== []) {
+                throw new SitePublishBlockedException($blockers);
+            }
 
             $revision = new AgencySiteRevision([
                 'agency_site_id' => $site->id,
@@ -215,6 +216,39 @@ final class AgencySiteManager
             $site->forceFill(['status' => AgencySite::PUBLISHED, 'published_revision_id' => $revision->id, 'published_at' => now(), 'updated_by_user_id' => $actorUserId])->save();
 
             return $site;
+        });
+    }
+
+    /**
+     * Create a booking type from the editor and select it as ONE atomic step. Authority (owner, eligibility, White
+     * Label and Calendar entitlement) is proven before anything is written; if any later step fails, the booking
+     * type, its staff, any seeded hours and the selection all roll back together. Submitting the same form twice
+     * selects the type already created instead of making a second.
+     *
+     * @return array{0: \App\Models\BookingType, 1: AgencySite}
+     */
+    public function createAndSelectBookingType(int $actorUserId, Workspace $agency, array $attributes): array
+    {
+        return DB::transaction(function () use ($actorUserId, $agency, $attributes): array {
+            $locked = Workspace::query()->whereKey($agency->id)->lockForUpdate()->firstOrFail();
+            $this->whiteLabel->assertCanManage($locked, $actorUserId);
+
+            if (! $this->booking->calendarEntitled($locked)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['name' => 'Calendar is not included in your plan.']);
+            }
+
+            $name = trim((string) ($attributes['name'] ?? ''));
+            $duration = (int) ($attributes['duration_minutes'] ?? 0);
+
+            $existing = collect($this->booking->options($locked))->first(fn ($o) => mb_strtolower($o['name']) === mb_strtolower($name) && (int) $o['duration'] === $duration);
+
+            $type = $existing !== null
+                ? \App\Models\BookingType::query()->where('public_booking_uuid', $existing['uuid'])->firstOrFail()
+                : $this->booking->create($actorUserId, $locked, $attributes);
+
+            $site = $this->save($actorUserId, $locked, ['x.booking_type_uid' => $type->public_booking_uuid], 8);
+
+            return [$type, $site];
         });
     }
 
