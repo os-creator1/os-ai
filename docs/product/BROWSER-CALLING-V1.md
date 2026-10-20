@@ -103,6 +103,16 @@ that predates a recorded unanswered end corrects it to completed).
 * A user registered for the incoming number's account who starts a call from a different account scope re-registers
   their browser, so their incoming presence for the first account drops during the call.
 
+## Release blockers (do not activate for customers until all are closed)
+
+1. **Provider-enforced restriction is unconfirmed.** Outbound authorization rests on Telnyx refusing PSTN calls from a
+   credential connection that has no outbound voice profile. MotionGrove verifies the *configuration* (and fails closed),
+   but only a live test proves Telnyx enforces it. Until item 1 of the checklist below passes, treat the architecture as
+   not proven secure.
+2. Live verification of every item in the checklist below.
+3. A cancelled call, or one the browser reported ended, can never bridge (tested); a rejected provider answer closes the
+   call. These are MotionGrove-side guarantees and do not replace blocker 1.
+
 ## Not verified with a real Telnyx account (live checklist)
 
 1. A Credential Connection without an outbound voice profile really cannot originate calls from a JWT-authenticated
