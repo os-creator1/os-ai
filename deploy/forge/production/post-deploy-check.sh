@@ -28,7 +28,10 @@ case "$BASE" in
 esac
 
 check "GET /login (readiness probe)"           200 "$(code "$BASE/login")"
-check "GET / redirects to /login"               302 "$(code "$BASE/")"
+# On the platform host a guest gets the public marketing homepage (200); only a signed-in user is redirected into the app.
+check "GET / serves the marketing homepage"     200 "$(code "$BASE/")"
+home="$(curl -sS --max-time 20 "$BASE/" || true)"
+if printf '%s' "$home" | grep -q '<h1' && printf '%s' "$home" | grep -q 'href="[^"]*/pricing"'; then echo "ok    GET / is the marketing homepage (h1 and pricing link present)"; else echo "FAIL  GET / does not look like the marketing homepage"; fail=$((fail + 1)); fi
 check "http:// redirects to https://"           301 "$(code "http://${BASE#https://}/login")"
 check "unknown site uuid is a 404, not a 500"   404 "$(code "$BASE/sites/00000000-0000-4000-8000-000000000000")"
 

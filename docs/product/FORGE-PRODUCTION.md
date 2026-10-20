@@ -31,7 +31,7 @@ quick-deploy and any push-to-deploy webhook stay **off**, and no GitHub Action o
 | `release-build.sh` | Same build as staging (guards, `composer --no-dev`, shared uploads, caches, `migrate --force`), with production guards. |
 | `preflight.sh` | Read-only guard set. Runs inside every deploy and can be run by hand against `.env` **before** deploying. |
 | `install-production.sh` | The one-time, guarded first installation (section 7). Never run by a deploy. |
-| `post-deploy-check.sh` | Read-only HTTP readiness check; understands deliberately **closed** registration. |
+| `post-deploy-check.sh` | Read-only HTTP readiness check; understands deliberately **closed** registration. A guest's `GET /` is the marketing homepage and must answer **200** (it is not a redirect to `/login`). |
 | `validate-scripts.sh` | Offline test harness with negative safety cases (section 10). No network, no database. |
 
 `deploy/forge/verify-uploads.sh` (staging's, unmodified) is generic and is reused: pass the production site root.
@@ -53,6 +53,7 @@ quick-deploy and any push-to-deploy webhook stay **off**, and no GitHub Action o
   - `live`: `STRIPE_KEY` = `pk_live_…`, `STRIPE_SECRET` = `sk_live_…` or `rk_live_…`, `STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET` and
     `STRIPE_WEBHOOK_SECRET` = `whsec_…`; any `*_test_` key in any `STRIPE_*` variable is refused.
   - `test` (a dry run on the production host): keys empty or `pk_test_`/`sk_test_`/`rk_test_`; any `*_live_` key in any `STRIPE_*` variable is refused.
+  - A first deploy and dry run may use `STRIPE_MODE=test` with test keys. **Live Stripe (`STRIPE_MODE=live`, live keys and live webhooks) is required before accepting any real paid subscription.**
 - No `public/robots.txt` in the release.
 
 ## 2. One-time setup (human, in this order)
@@ -203,7 +204,7 @@ Upgrades are deploys only. Never run the installer again on production.
 
 All of this is read-only, or happens in Stripe **test mode**; nothing here can create a real charge.
 
-1. **Prices.** In the Stripe dashboard (live), create the recurring prices for Core and Growth (product, amount, currency, interval). The trial length is a
+1. **Prices.** In the Stripe dashboard (live), create the recurring prices for Core ($97), Growth ($297) and Agency ($497), each every 28 days (product, amount, currency, interval). The trial length is a
    per-plan setting in the app (Platform Owner -> Platform plans -> trial days), sent to Stripe as `trial_period_days` at Checkout; it is **not** part of the Price.
    Record the `price_…` IDs. Saving a Price ID in Platform plans verifies amount, currency and interval against Stripe, so that screen is itself the price check.
 2. **Webhooks (live mode).** Register four endpoints and put each signing secret in its own variable:

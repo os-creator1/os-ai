@@ -172,6 +172,36 @@ expect_refuse "install: refuses when already installed (marker)" "already instal
 rm -f "$FS/storage/app/.platform-installed"
 expect_refuse "install: environment guards run (fake site root is not production)" "environment guards failed" run_ins --check-only
 [ ! -s "$TMP/stub2.log" ] && ok "install refusals never invoked php/artisan" || nok "install invoked php: $(cat "$TMP/stub2.log")"
+
+echo "== post-deploy-check.sh (fake curl; no network)"
+PDC="$HERE/deploy/forge/production/post-deploy-check.sh"
+mkdir -p "$TMP/fakecurl"
+cat > "$TMP/fakecurl/curl" <<'STUB'
+#!/usr/bin/env bash
+# Answers like the production host, steered by FAKE_* variables. Prints the status for -w calls, else the body.
+url="${@: -1}"; path="/${url#*://*/}"; [ "$path" = "/${url}" ] && path="/"
+method=GET; want_code=0
+for a in "$@"; do [ "$a" = "POST" ] && method=POST; [ "$a" = "-w" ] && want_code=1; done
+code=404; body="Not Found"
+case "$url" in http://*) code=301 ;; *)
+  case "$method:$path" in
+    GET:/login) code=200 ;;
+    GET:/) code="${FAKE_HOME_CODE:-200}"; body='<html><body><h1>More bookings.</h1><a href="https://getmotiongrove.com/pricing">Pricing</a></body></html>' ;;
+    GET:/register) code=200; body='<main data-role="signup-closed">Closed</main>' ;;
+    POST:/register/account) code=419 ;;
+    GET:/robots.txt) code=200; body=$'User-agent: *\nDisallow:' ;;
+    POST:/stripe/webhook/*) code="${FAKE_WEBHOOK_CODE:-400}" ;;
+    GET:/this-route-does-not-exist-*) body="${FAKE_404_BODY:-Not Found}" ;;
+  esac ;;
+esac
+if [ "$want_code" = 1 ]; then printf '%s' "$code"; else printf '%s' "$body"; fi
+STUB
+chmod +x "$TMP/fakecurl/curl"
+run_pdc() { PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed; }
+expect_pass   "readiness: marketing homepage answering 200 passes every check" run_pdc
+expect_refuse "readiness: a redirect on GET / is no longer accepted" "GET / serves the marketing homepage" env FAKE_HOME_CODE=302 PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_refuse "readiness: an accepted unsigned webhook still fails" "unsigned POST /stripe/webhook" env FAKE_WEBHOOK_CODE=200 PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_refuse "readiness: debug output on a 404 still fails" "leaks debug output" env FAKE_404_BODY="Whoops! Stack trace" PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
 echo
 echo "validated: $pass passed, $failn failed"
 exit "$failn"
