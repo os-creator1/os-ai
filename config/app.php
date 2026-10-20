@@ -77,13 +77,14 @@
         |--------------------------------------------------------------------------
         |
         | This is the optional dark-background logo variant of your application.
-        | Falls back to the full, light-background logo, then to a neutral mark,
-        | if not configured. Deliberately not named APP_LOGO_DARK -- see the
+        | Defaults to the bundled MotionGrove white-lettering logo; set APP_DARK_LOGO
+        | to an empty value to fall back to the full, light-background logo, then to
+        | a neutral mark. Deliberately not named APP_LOGO_DARK -- see the
         | APP_COMPACT_LOGO note above; the same substring-collision risk
         | applies identically here.
         |
         */
-        'logo_dark'     => env('APP_DARK_LOGO', null),
+        'logo_dark'     => env('APP_DARK_LOGO', 'images/branding/motiongrove-logo-for-dark-backgrounds-fits-800x200.png'),
 
 
         /*

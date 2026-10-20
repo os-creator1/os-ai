@@ -18,7 +18,7 @@
                 <li class="nav-item me-auto">
                     <a class="navbar-brand" href="{{route('user.home')}}">
                         <div class="brand-logo">
-                            <x-branding-logo variant="full" background="light" />
+                            <x-branding-logo variant="full" background="light" adaptive />
                         </div>
                     </a>
                 </li>
@@ -27,7 +27,7 @@
                 <li class="nav-item me-auto">
                     <a class="navbar-brand" href="{{ $customerShell ? route('user.home') : (auth()->user()->is_admin && auth()->user()->active_portal == 'admin' ? route('admin.platform-owner.overview') : \App\Helpers\Helper::adminHomeUrl()) }}">
                         <div class="brand-logo">
-                            <x-branding-logo variant="full" background="light" />
+                            <x-branding-logo variant="full" background="light" adaptive />
                         </div>
                     </a>
                 </li>

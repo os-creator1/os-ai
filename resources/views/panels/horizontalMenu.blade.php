@@ -47,7 +47,7 @@
             <ul class="nav navbar-nav flex-row">
                 <li class="nav-item me-auto">
                     <a class="navbar-brand" href="{{route('login')}}">
-                        <span class="brand-logo"><x-branding-logo variant="full" background="light" /></span>
+                        <span class="brand-logo"><x-branding-logo variant="full" background="light" adaptive /></span>
                     </a>
                 </li>
                 <li class="nav-item nav-toggle">
