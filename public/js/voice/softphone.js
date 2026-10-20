@@ -357,7 +357,13 @@
       if (!from || !to) { throw new Error("fallback"); }
       mergeHead(next);
       document.title = next.title;
-      document.body.className = next.body.className;
+      // Only the classes the SERVER put on <body> for the old/new page are swapped; classes the app's own
+      // scripts added at run time (menu open/collapsed, etc.) are left exactly as they are.
+      var oldClasses = (document.body.getAttribute("data-mg-page-classes") || "").split(/\s+/).filter(Boolean);
+      var newClasses = (next.body.getAttribute("data-mg-page-classes") || "").split(/\s+/).filter(Boolean);
+      oldClasses.forEach(function (c) { if (newClasses.indexOf(c) === -1) { document.body.classList.remove(c); } });
+      newClasses.forEach(function (c) { document.body.classList.add(c); });
+      document.body.setAttribute("data-mg-page-classes", newClasses.join(" "));
       ["data-col", "data-open", "data-menu"].forEach(function (a) { if (next.body.hasAttribute(a)) { document.body.setAttribute(a, next.body.getAttribute(a)); } });
       from.replaceWith(document.importNode(to, true));
       if (push) { window.history.pushState({ mgVoice: true }, "", r.url); }
@@ -365,6 +371,8 @@
       return runScripts(next);
     }).then(function () {
       if (window.feather) { try { window.feather.replace({ width: 14, height: 14 }); } catch (e) { /* cosmetic */ } }
+      // A phone's slide-in menu closes when a page loads; a swap must close it the same way (via the app's own overlay).
+      if (document.body.classList.contains("menu-open")) { var overlay = $(".sidenav-overlay"); if (overlay) { overlay.click(); } }
       document.dispatchEvent(new CustomEvent("mg:content-swapped"));
       refreshButtons();
     }).catch(function () {

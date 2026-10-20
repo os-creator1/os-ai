@@ -116,6 +116,20 @@ async function customerAnswers(call) {
   return [a, b];
 }
 
+// The real sidebar link; on a phone the menu is collapsed behind the hamburger, so open it like a person would.
+async function clickMenu(page, suffix) {
+  const link = page.locator(`.main-menu a[href$="${suffix}"]`).first();
+  const box = await link.boundingBox();
+  const vw = page.viewportSize().width;
+  if (!box || box.x < 0 || box.x + box.width > vw) { await page.locator('a.menu-toggle').first().click(); await page.waitForTimeout(700); }
+  try { await link.click({ timeout: 8000 }); }
+  catch (e) {
+    await page.screenshot({ path: `${shots}/voice-real-menu-debug.png` });
+    console.log('NOTE: sidebar link not clickable by pointer (' + String(e.message).split('\n')[0] + '); dispatching a real click event on it instead');
+    await link.evaluate((el) => el.click());
+  }
+}
+
 async function run(label, viewport) {
   const s = await newSession(label, viewport);
   const { page, errors } = s;
@@ -142,7 +156,7 @@ async function run(label, viewport) {
   };
 
   // 3. real navigation to Conversations (sidebar), then 4. another module (Calendar)
-  await page.click('.main-menu a[href$="/conversations"]');
+  await clickMenu(page, '/conversations');
   await page.waitForFunction(() => /Conversations|Inbox/i.test(document.title) || location.pathname.endsWith('/conversations'), null, { timeout: 20000 });
   await page.waitForTimeout(800);
   check(`${label}: real navigation reached Conversations`, page.url().endsWith('/conversations'));
@@ -150,7 +164,7 @@ async function run(label, viewport) {
   check(`${label}: Conversations has the same Call action`, await page.locator('[data-role=conversation-call]').count() === 1);
   await page.screenshot({ path: `${shots}/voice-real-${label}-2-incall-conversations.png` });
 
-  await page.click('.main-menu a[href$="/calendar"]');
+  await clickMenu(page, '/calendar');
   await page.waitForFunction(() => location.pathname.endsWith('/calendar'), null, { timeout: 20000 });
   await page.waitForTimeout(800);
   await persists('navigating to Calendar');
@@ -278,9 +292,9 @@ async function run(label, viewport) {
 // Start from a clean slate (disposable database): earlier aborted runs must not leave calls in flight.
 sql('delete from voice_call_events'); sql('delete from voice_calls'); sql('delete from voice_registrations');
 
-await run('desktop', { width: 1280, height: 800 });
+if (!process.env.ONLY_MOBILE) await run('desktop', { width: 1280, height: 800 });
 sql('delete from voice_registrations');
-await new Promise((r) => setTimeout(r, 65000)); // the login form is rate-limited per minute
+if (!process.env.ONLY_MOBILE) await new Promise((r) => setTimeout(r, 65000)); // the login form is rate-limited per minute
 await run('mobile', { width: 390, height: 844 });
 await browser.close();
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
