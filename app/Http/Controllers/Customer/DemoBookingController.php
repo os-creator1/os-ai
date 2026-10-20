@@ -254,8 +254,8 @@ class DemoBookingController extends PublicBookingController
     }
 
     /**
-     * The owner-configured answers mirrored onto the Contact as CRM fields. The system fields already map to the
-     * Contact's own fields, so only the additional ones are returned.
+     * The owner-configured answers mirrored onto the Contact as CRM fields. Only the fields mapped by the Contact resolver are excluded here. Protected Industry is still
+     * mirrored as DEMO_INDUSTRY, alongside other additional answers.
      *
      * @param  array<int, array{key: string, label: string, display: string}>  $answers
      * @return array<int, array{tag: string, label: string, value: string}>
@@ -264,7 +264,7 @@ class DemoBookingController extends PublicBookingController
     {
         $extras = [];
         foreach ($answers as $answer) {
-            if (! in_array($answer['key'], DemoFormDefaults::SYSTEM, true)) {
+            if (! in_array($answer['key'], DemoFormDefaults::CONTACT_MAPPED, true)) {
                 $extras[] = ['tag' => 'DEMO_'.strtoupper($answer['key']), 'label' => mb_substr($answer['label'], 0, 120), 'value' => $answer['display']];
             }
         }
