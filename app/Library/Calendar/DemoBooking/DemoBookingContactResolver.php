@@ -43,7 +43,7 @@ class DemoBookingContactResolver
     }
 
     /**
-     * @param  array{first_name: string, last_name?: ?string, email: string, business_name: string, website?: ?string, phone?: ?string}  $data
+     * @param  array{first_name: string, last_name?: ?string, email: string, business_name?: ?string, website?: ?string, phone?: ?string}  $data
      */
     public function resolve(BusinessLocation $location, Business $business, array $data): int
     {
@@ -57,7 +57,7 @@ class DemoBookingContactResolver
             'FIRST_NAME' => $data['first_name'],
             'LAST_NAME' => (string) ($data['last_name'] ?? ''),
             'EMAIL' => $data['email'],
-            'BUSINESS_NAME' => $data['business_name'],
+            'BUSINESS_NAME' => (string) ($data['business_name'] ?? ''),
             'WEBSITE' => $data['website'] ?? null,
         ];
         $phone = trim((string) ($data['phone'] ?? ''));

@@ -8,10 +8,10 @@
   'use strict';
 
   var card = document.getElementById('mgd-card');
-  var form = document.getElementById('mgd-form');
+  var form = document.getElementById('mgd-form'); // absent when the owner publishes a form with no questions
   var app = document.getElementById('pb-app');
   var book = document.getElementById('pb-form');
-  if (!card || !form || !app || !book) { return; }
+  if (!card || !app || !book) { return; }
 
   var schedule = document.getElementById('mgd-schedule');
   var alertBox = document.getElementById('mgd-alert');
@@ -23,10 +23,11 @@
   function setState(state) {
     card.setAttribute('data-state', state);
     schedule.hidden = state === 'form';
-    form.hidden = state !== 'form';
+    if (form) { form.hidden = state !== 'form'; }
   }
 
   function clearErrors() {
+    if (!alertBox) { return; }
     alertBox.hidden = true;
     [].forEach.call(card.querySelectorAll('[data-err]'), function (e) {
       if (e.closest('#pb-app')) { return; }
@@ -49,7 +50,7 @@
 
   // ---- step 1 -> 2 --------------------------------------------------------
 
-  form.addEventListener('submit', function (ev) {
+  if (form) { form.addEventListener('submit', function (ev) {
     ev.preventDefault();
     if (busy) { return; }
     busy = true; button.disabled = true; clearErrors();
@@ -73,17 +74,21 @@
       busy = false; button.disabled = false;
       showErrors({}, 'Something went wrong. Please try again.');
     });
-  });
+  }); }
 
-  document.getElementById('mgd-edit').addEventListener('click', function () {
-    setState('form');
-    var first = form.querySelector('input, select, textarea');
-    if (first) { first.focus(); }
-  });
+  var edit = document.getElementById('mgd-edit');
+  if (edit && form) {
+    edit.addEventListener('click', function () {
+      setState('form');
+      var first = form.querySelector('input, select, textarea');
+      if (first) { first.focus(); }
+    });
+  }
 
   // ---- carry the answers into the booking write ----------------------------
 
   book.addEventListener('formdata', function (ev) {
+    if (!form) { return; }
     new FormData(form).forEach(function (value, name) {
       if (name !== '_token') { ev.formData.append(name, value); }
     });
@@ -94,7 +99,13 @@
   app.addEventListener('pb:refused', function (ev) {
     var data = ev.detail && ev.detail.data || {};
     var errors = data.errors || {};
-    var own = Object.keys(errors).filter(function (k) { return !/^(date|time|turnstile|website)$/.test(k); });
+    var own = Object.keys(errors).filter(function (k) { return !/^(date|time|turnstile|website|attendee_first_name|attendee_email)$/.test(k); });
+    if (!form) {
+      // No questionnaire on this page, but the owner has since published one: ask for a reload.
+      var notice = document.getElementById('pb-alert');
+      if (data.form_changed && notice) { notice.textContent = 'We have updated this form. Please reload the page and try again.'; notice.hidden = false; }
+      return;
+    }
     if (data.form_changed) {
       try {
         var saved = {};
@@ -114,7 +125,7 @@
 
   // Restore answers saved before a reload, for the fields that still exist.
   try {
-    var raw = sessionStorage.getItem(KEY);
+    var raw = form ? sessionStorage.getItem(KEY) : null;
     if (raw) {
       sessionStorage.removeItem(KEY);
       var saved = JSON.parse(raw);
@@ -165,5 +176,20 @@
     }
   }, true);
 
-  setState('form');
+  // The attendee inputs are only a fallback: when the questionnaire already holds the person's first name or email
+  // (an optional question they did fill in), do not ask for it twice.
+  function syncAttendee() {
+    [].forEach.call(book.querySelectorAll('[data-attendee]'), function (wrap) {
+      var key = wrap.getAttribute('data-attendee');
+      var own = form && form.elements[key];
+      var held = !!(own && own.value && own.value.trim() !== '');
+      var input = wrap.querySelector('input');
+      wrap.hidden = held;
+      if (input) { input.required = !held; }
+    });
+  }
+  new MutationObserver(function () { if (app.getAttribute('data-step') === 'details') { syncAttendee(); } })
+    .observe(app, { attributes: true, attributeFilter: ['data-step'] });
+
+  setState(form ? 'form' : 'schedule');
 })();

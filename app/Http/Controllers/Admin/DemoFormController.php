@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Library\Calendar\DemoBooking\Form\DemoFormDefaults;
 use App\Library\Calendar\DemoBooking\Form\DemoFormRepository;
 use App\Library\Calendar\DemoBooking\Form\DemoFormSchema;
 use App\Library\Marketing\MarketingSite;
@@ -33,8 +32,6 @@ class DemoFormController extends AdminBaseController
         return view('admin.platform-owner.demo-form', [
             'fields' => old('fields') !== null ? (array) json_decode((string) old('fields'), true) : $this->forms->draft(),
             'hasDraft' => $this->forms->hasDraft(),
-            'alwaysVisible' => DemoFormDefaults::ALWAYS_VISIBLE,
-            'alwaysRequired' => DemoFormDefaults::ALWAYS_REQUIRED,
             'types' => [
                 'short_text' => 'Short text', 'long_text' => 'Long text', 'email' => 'Email', 'phone' => 'Phone',
                 'dropdown' => 'Dropdown', 'checkboxes' => 'Checkboxes', 'radio' => 'Radio selection',
