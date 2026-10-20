@@ -21,6 +21,7 @@
 </div>
 </section>
 
+@if ($mg->section('how.commitment'))
 @php($k = $c['commitment'])
 <section aria-labelledby="inc-h" style="padding: 112px 0; background: #EDE5DF">
 <div class="wrap" style="display: flex; flex-wrap: wrap; gap: 56px">
@@ -32,6 +33,7 @@
 </div>
 </div>
 </section>
+@endif
 
 @include('marketing.partials.cta-center', ['title' => $c['cta']['title'], 'lead' => $c['cta']['lead'], 'titleMax' => 720, 'leadMax' => 520])
 @endsection

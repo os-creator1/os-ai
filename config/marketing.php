@@ -536,4 +536,75 @@ return [
         ['id' => 'story-4', 'youtubeId' => 'h-YIMbpoTxw', 'format' => 'standard', 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => null, 'featured' => false, 'order' => 4, 'visible' => true],
         ['id' => 'story-5', 'youtubeId' => 'YrB0XJeqz1s', 'format' => 'short', 'customerName' => null, 'businessName' => null, 'category' => null, 'location' => null, 'quote' => null, 'context' => null, 'featured' => false, 'order' => 5, 'visible' => true],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product page features
+    |--------------------------------------------------------------------------
+    | One entry per feature block on /product (markup: resources/views/marketing/product).
+    | An Agency site overrides labels, copy, order and visibility; the capability each block
+    | describes is unchanged, and none of this grants or removes access to anything.
+    */
+    'product_feature_order' => ['website', 'crm', 'auto', 'book', 'seo', 'ai'],
+
+    'product_features' => [
+        'website' => [
+            'nav' => 'Website',
+            'chip' => 'Website · all plans',
+            'title' => 'A website that brings you inquiries.',
+            'lead' => 'Answer guided questions and MotionGrove builds a structured, mobile-ready site. Edit pages, photos and forms whenever you like.',
+            'bullets' => ['AI-assisted pages from your own answers', 'Hosting, SSL and your own domain', 'Service, package and photo pages', 'Forms that create contacts automatically'],
+            'unverified_bullets' => [],
+        ],
+        'crm' => [
+            'nav' => 'CRM & conversations',
+            'chip' => 'CRM & conversations · all plans',
+            'title' => 'Know where every customer stands.',
+            'lead' => 'Contacts, pipelines and conversations in one place — every text, email and note on the customer’s record.',
+            'bullets' => ['Pipelines that match how you sell', 'Text, email and web chat in one inbox', 'Custom fields for the details you track', 'Proposals, contracts and payments on the record'],
+            'unverified_bullets' => [],
+        ],
+        'auto' => [
+            'nav' => 'Automations',
+            'chip' => 'Automations · all plans',
+            'title' => 'The follow-ups happen without you.',
+            'lead' => 'Start from templates for the moments that matter, then adjust the timing and wording.',
+            'bullets' => ['Instant reply to new inquiries', 'Appointment reminders and confirmations', 'Proposal and payment chasers'],
+            'unverified_bullets' => ['Review requests after the event'],
+        ],
+        'book' => [
+            'nav' => 'Bookings',
+            'chip' => 'Bookings & calendar · all plans',
+            'title' => 'Booking that fits around your day.',
+            'lead' => 'Share booking links, set availability per service and location, and keep everyone reminded.',
+            'bullets' => ['Booking links and calendar sync', 'Services with durations and buffers', 'Reschedule and cancel flows for customers'],
+            'unverified_bullets' => [],
+        ],
+        'seo' => [
+            'nav' => 'SEO & ads',
+            'chip' => 'SEO & ads · Growth plan',
+            'title' => 'See what brings customers in.',
+            'lead' => 'Track search visibility, get clear recommendations, and see Google and Meta ad results next to the leads they created. If nothing has changed yet, it says so.',
+            'bullets' => ['Keyword tracking and visibility reports', 'Plain-language SEO recommendations', 'Google Ads and Meta Ads performance in one view', 'Cost per lead and per booking, from your own data'],
+            'unverified_bullets' => [],
+        ],
+        'ai' => [
+            'nav' => 'AI assistant',
+            'chip' => 'AI assistant · all plans',
+            'title' => 'Advice based on your own business.',
+            'lead' => 'Ask MotionGrove anything about your leads, bookings or marketing. It explains what’s happening and suggests a next step you can act on.',
+            'bullets' => [],
+            'unverified_bullets' => [],
+        ],
+    ],
+
+    // Cards under "Also included": [title, text, dark?].
+    'product_more' => [
+        ['Forms & surveys', 'Lead capture and intake forms that feed your CRM.', false],
+        ['Payments & contracts', 'Proposals to sign and online payments through your own Stripe account.', false],
+        ['Reporting', 'A home dashboard that shows what needs you and what’s working.', false],
+        ['Multiple locations', 'Separate addresses, services and availability under one business.', false],
+        ['Team access', 'Invite staff with the right permissions.', false],
+        ['Agency & white-label', 'Manage client businesses under your own brand on the Agency plan.', true],
+    ],
 ];

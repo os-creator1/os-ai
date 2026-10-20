@@ -238,7 +238,12 @@ class MarketingSite
         $plans = [];
 
         foreach ((array) $this->cfg('plans') as $key => $plan) {
-            $plans[$key] = $plan + ['key' => $key, 'url' => $this->planUrl($key)];
+            $plans[$key] = $plan + [
+                'key' => $key,
+                'url' => $this->planUrl($key),
+                'price_label' => isset($plan['price']) ? '$'.$plan['price'] : null,
+                'cycle_label' => '/ 28 days',
+            ];
         }
 
         return $plans;
@@ -270,6 +275,63 @@ class MarketingSite
         }
 
         return $out;
+    }
+
+    // ----------------------------------------------------- Product page
+
+    /** @return array{nav: string, chip: string, title: string, lead: string, bullets: list<string>} */
+    public function feature(string $key): array
+    {
+        $f = (array) $this->cfg('product_features.'.$key, []);
+        $bullets = (array) ($f['bullets'] ?? []);
+
+        if ((bool) $this->cfg('show_unverified_features')) {
+            $bullets = array_merge($bullets, (array) ($f['unverified_bullets'] ?? []));
+        }
+
+        return [
+            'nav' => (string) ($f['nav'] ?? $key),
+            'chip' => (string) ($f['chip'] ?? ''),
+            'title' => (string) ($f['title'] ?? ''),
+            'lead' => (string) ($f['lead'] ?? ''),
+            'bullets' => array_values(array_map('strval', $bullets)),
+        ];
+    }
+
+    /** Product feature blocks to render, in order. Only keys that have a view are ever returned. */
+    public function productFeatureOrder(): array
+    {
+        $known = array_keys((array) $this->cfg('product_features', []));
+
+        return array_values(array_filter(
+            (array) $this->cfg('product_feature_order', $known),
+            fn ($key) => in_array($key, $known, true) && $this->section('product.'.$key),
+        ));
+    }
+
+    /** @return list<array{0: string, 1: string}> anchor, label for the "jump to" chips. */
+    public function productJump(): array
+    {
+        $jump = array_map(fn (string $key) => [$key, $this->feature($key)['nav']], $this->productFeatureOrder());
+
+        if ($this->productMore() !== []) {
+            $jump[] = ['more', 'More'];
+        }
+
+        return $jump;
+    }
+
+    /** @return list<array{0: string, 1: string, 2: bool}> the "Also included" cards. */
+    public function productMore(): array
+    {
+        if (! $this->section('product.more')) {
+            return [];
+        }
+
+        return array_values(array_map(
+            fn ($card) => [(string) $card[0], (string) $card[1], (bool) ($card[2] ?? false)],
+            (array) $this->cfg('product_more', []),
+        ));
     }
 
     /** Industries with unverified feature rows removed. */

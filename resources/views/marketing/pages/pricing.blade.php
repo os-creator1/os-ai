@@ -48,7 +48,7 @@
 </tr>
 @endforeach
 @endforeach
-<tr><th scope="row" style="font-weight: 500">Plan price</th>@foreach ($plans as $plan)<td style="font-weight: 700;{{ $plan['featured'] ? ' background: #FBF9F7' : '' }}">${{ $plan['price'] }}</td>@endforeach</tr>
+<tr><th scope="row" style="font-weight: 500">Plan price</th>@foreach ($plans as $plan)<td style="font-weight: 700;{{ $plan['featured'] ? ' background: #FBF9F7' : '' }}">{{ $plan['price_label'] ?? 'Contact us' }}</td>@endforeach</tr>
 <tr><th scope="row" style="font-weight: 500"></th>@foreach ($plans as $plan)<td{!! $plan['featured'] ? ' style="background: #FBF9F7"' : '' !!}><a href="{{ $plan['url'] }}" class="btn {{ $plan['featured'] ? 'btn-p' : 'btn-s' }}" style="min-height: 44px">{{ $plan['cta'] }}</a></td>@endforeach</tr>
 </tbody>
 </table>
@@ -57,6 +57,7 @@
 </div>
 </section>
 
+@if ($mg->section('pricing.usage') && $mg->get('usage_charges'))
 <section id="usage" aria-labelledby="use-h" style="padding: 112px 0; background: #EDE5DF">
 <div class="wrap" style="display: flex; flex-wrap: wrap; gap: 56px">
 @php($u = $c['usage'])
@@ -68,6 +69,7 @@
 </div>
 </div>
 </section>
+@endif
 
 @if ($faqs)
 <section aria-labelledby="bfaq-h" style="padding: 112px 0">

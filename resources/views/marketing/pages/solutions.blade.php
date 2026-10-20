@@ -43,6 +43,7 @@
 </div>
 </section>
 
+@if ($mg->section('solutions.agency'))
 <section aria-labelledby="ag-h" style="padding: 112px 0; background: #181413; color: #FFFFFF">
 <div class="wrap" style="display: flex; flex-wrap: wrap; gap: 56px; align-items: center">
 <div style="flex: 1 1 440px; display: flex; flex-direction: column; gap: 18px"><span class="eyebrow" style="color: #E8A49C">{{ $ag['eyebrow'] }}</span><h2 id="ag-h" class="h2">{{ $ag['title'] }}</h2><p class="lead" style="color: #C9C0BA">{{ $ag['lead'] }}</p><div style="display: flex; flex-wrap: wrap; gap: 12px"><a href="{{ $mg->planUrl('agency') }}" class="btn btn-p">{{ $ag['primary'] }}</a>@if ($mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}" class="btn" style="border-color: rgba(255,255,255,.35); color: #FFFFFF">{{ $ag['secondary'] }}</a>@endif</div></div>
@@ -55,6 +56,7 @@
 </div>
 </div>
 </section>
+@endif
 
 @include('marketing.partials.cta-center', ['title' => $c['cta']['title'], 'lead' => $c['cta']['lead'], 'titleMax' => 760, 'leadMax' => 560])
 @endsection
