@@ -53,7 +53,8 @@
             var fields = @json(array_values($fields));
             var types = @json($types);
             var CHOICE = ['dropdown', 'checkboxes', 'radio'];
-            var LOCKED = ['first_name', 'email', 'business_name'];
+            var ALWAYS_VISIBLE = @json($alwaysVisible);
+            var ALWAYS_REQUIRED = @json($alwaysRequired);
             var root = document.getElementById('demo-fields');
             var out = document.getElementById('demo-fields-json');
 
@@ -96,11 +97,11 @@
             }
 
             function card(f, i) {
-                var system = !!f.system, locked = LOCKED.indexOf(f.key) !== -1;
+                var system = !!f.system, mustShow = ALWAYS_VISIBLE.indexOf(f.key) !== -1, mustAnswer = ALWAYS_REQUIRED.indexOf(f.key) !== -1;
                 var head = el('div', { class: 'd-flex align-items-center', style: 'gap:.5rem' }, [
                     el('strong', { class: 'flex-grow-1', text: f.label || '(untitled)' }),
                     el('span', { class: 'badge bg-light text-dark', text: types[f.type] || f.type }),
-                    system ? el('span', { class: 'badge bg-light-secondary', text: 'Required for booking' }) : el('span')
+                    system ? el('span', { class: 'badge bg-light-secondary', text: 'Always on the form' }) : el('span')
                 ]);
                 [['↑', -1], ['↓', 1]].forEach(function (b) {
                     var btn = el('button', { type: 'button', class: 'btn btn-sm btn-flat-secondary', 'aria-label': b[1] < 0 ? 'Move up' : 'Move down', text: b[0] });
@@ -108,7 +109,7 @@
                     head.appendChild(btn);
                 });
                 var del = el('button', { type: 'button', class: 'btn btn-sm btn-flat-danger', text: 'Remove' });
-                if (system) { del.disabled = true; del.title = 'This field is needed to book and cannot be removed.'; }
+                if (system) { del.disabled = true; del.title = 'This field always stays on the form and cannot be removed.'; }
                 del.addEventListener('click', function () { if (confirm('Remove "' + f.label + '"? Answers already collected stay on past appointments.')) { fields.splice(i, 1); render(); } });
                 head.appendChild(del);
 
@@ -131,8 +132,8 @@
                     body.appendChild(el('div', { class: 'mb-1' }, [el('label', { class: 'form-label', text: 'Options (one per line)' }), ta]));
                 }
                 var flags = el('div', {});
-                flags.appendChild(check('Required', f.required || locked, function (v) { f.required = v; }, locked));
-                flags.appendChild(check('Shown', f.visible !== false || locked, function (v) { f.visible = v; }, locked));
+                flags.appendChild(check('Required', f.required || mustAnswer, function (v) { f.required = v; }, mustAnswer));
+                flags.appendChild(check('Shown', f.visible !== false || mustShow, function (v) { f.visible = v; }, mustShow));
                 if (['long_text', 'checkboxes', 'radio'].indexOf(f.type) === -1) {
                     flags.appendChild(check('Half width', f.half, function (v) { f.half = v; }));
                 }

@@ -5,11 +5,19 @@ namespace App\Library\Calendar\DemoBooking\Form;
 /** The Book a Demo form exactly as the approved Claude Design ships it. Used until the Platform Owner publishes a change. */
 final class DemoFormDefaults
 {
-    /** Fields the booking, Contact and notifications depend on: never removable, type never changes. */
-    public const SYSTEM = ['first_name', 'last_name', 'email', 'phone', 'business_name'];
+    /**
+     * The single definition of what the Platform Owner cannot change. Everything else about a form is editable.
+     *
+     * SYSTEM:          cannot be removed and keep their built-in type (key and type are what booking, the Contact
+     *                  and the answer history rely on). Label, helper text, options and layout stay editable.
+     * ALWAYS_VISIBLE:  can never be hidden, whether or not an answer is required.
+     * ALWAYS_REQUIRED: must be answered. The others in SYSTEM keep their design default (optional) until edited.
+     */
+    public const SYSTEM = ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry'];
 
-    /** System fields that must always be shown and required. */
-    public const LOCKED = ['first_name', 'email', 'business_name'];
+    public const ALWAYS_VISIBLE = ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry'];
+
+    public const ALWAYS_REQUIRED = ['first_name', 'email', 'business_name'];
 
     /** @return array<int, array<string, mixed>> */
     public static function fields(): array

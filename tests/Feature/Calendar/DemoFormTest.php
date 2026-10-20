@@ -149,6 +149,140 @@ class DemoFormTest extends TestCase
         }
     }
 
+    private const PROTECTED = ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry'];
+
+    private function index(array $fields, string $key): int
+    {
+        return (int) array_search($key, array_column($fields, 'key'), true);
+    }
+
+    public function test_the_protected_fields_cannot_be_hidden_removed_or_retyped_by_a_crafted_request(): void
+    {
+        // Every protected field: hidden, optional where allowed, and given the wrong type.
+        $crafted = $this->fields();
+        foreach (self::PROTECTED as $key) {
+            $crafted[$this->index($crafted, $key)]['visible'] = false;
+            $crafted[$this->index($crafted, $key)]['type'] = 'long_text';
+            $crafted[$this->index($crafted, $key)]['system'] = false;
+        }
+        $normalized = collect(DemoFormSchema::normalize($crafted)['fields'])->keyBy('key');
+
+        foreach (self::PROTECTED as $key) {
+            $this->assertTrue($normalized[$key]['visible'], "{$key} stays visible");
+            $this->assertTrue($normalized[$key]['system']);
+        }
+        $this->assertSame(['short_text', 'short_text', 'email', 'phone', 'short_text', 'dropdown'],
+            array_map(fn ($k) => $normalized[$k]['type'], ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry']));
+
+        // Each one, removed on its own, is rejected.
+        foreach (self::PROTECTED as $key) {
+            $without = array_values(array_filter($this->fields(), fn ($f) => $f['key'] !== $key));
+            $this->assertNotEmpty(DemoFormSchema::normalize($without)['errors'], "{$key} cannot be removed");
+        }
+    }
+
+    public function test_required_and_optional_flags_follow_the_shared_rules(): void
+    {
+        $normalized = collect(DemoFormSchema::normalize($this->fields())['fields'])->keyBy('key');
+        foreach (DemoFormDefaults::ALWAYS_REQUIRED as $key) {
+            $this->assertTrue($normalized[$key]['required'], "{$key} must be answered");
+        }
+        foreach (['last_name', 'phone', 'industry'] as $key) {
+            $this->assertFalse($normalized[$key]['required'], "{$key} stays optional");
+        }
+
+        // Optional ones may be made required; the always-required ones cannot be made optional.
+        $fields = $this->fields();
+        $fields[$this->index($fields, 'industry')]['required'] = true;
+        $fields[$this->index($fields, 'email')]['required'] = false;
+        $fields[$this->index($fields, 'business_name')]['required'] = false;
+        $out = collect(DemoFormSchema::normalize($fields)['fields'])->keyBy('key');
+        $this->assertTrue($out['industry']['required']);
+        $this->assertTrue($out['email']['required']);
+        $this->assertTrue($out['business_name']['required']);
+    }
+
+    public function test_industry_options_can_be_renamed_added_removed_and_reordered_with_stable_values(): void
+    {
+        $fields = $this->fields();
+        $at = $this->index($fields, 'industry');
+        $before = collect($fields[$at]['options'])->pluck('value', 'label');
+        $fields[$at]['label'] = 'Your industry';
+        $fields[$at]['placeholder'] = 'Pick one';
+        $fields[$at]['help'] = 'Helps us prepare.';
+        $fields[$at]['options'] = [
+            ['value' => $before['Marketing agency'], 'label' => 'Agency'],          // renamed, moved first
+            ['value' => $before['Home services'], 'label' => 'Home services'],
+            ['value' => '', 'label' => 'Landscaping'],                                // added
+        ];                                                                          // the rest removed
+        $result = DemoFormSchema::normalize($fields);
+
+        $this->assertSame([], $result['errors']);
+        $industry = $result['fields'][$at];
+        $this->assertSame('industry', $industry['key']);
+        $this->assertSame('dropdown', $industry['type']);
+        $this->assertSame([$before['Marketing agency'], $before['Home services'], 'landscaping'], array_column($industry['options'], 'value'));
+        $this->assertSame('Your industry', $industry['label']);
+
+        $fields[$at]['options'] = [];
+        $this->assertNotEmpty(DemoFormSchema::normalize($fields)['errors'], 'a dropdown needs at least one option');
+    }
+
+    public function test_a_published_industry_customisation_renders_on_the_public_form(): void
+    {
+        $fields = $this->fields();
+        $at = $this->index($fields, 'industry');
+        $fields[$at]['label'] = 'Your industry';
+        $fields[$at]['required'] = true;
+        $fields[$at]['options'] = [['value' => 'agency', 'label' => 'Agency'], ['value' => 'landscaping', 'label' => 'Landscaping']];
+        $this->publish($fields);
+
+        $this->get('/book-demo')->assertOk()->assertSee('Your industry')->assertSee('name="industry"', false)
+            ->assertSee('<option value="landscaping">Landscaping</option>', false)->assertDontSee('Photo booth rentals');
+        $this->postJson(route('demo.booking.details'), ['first_name' => 'A', 'email' => 'a@example.test', 'business_name' => 'B'])
+            ->assertStatus(422)->assertJsonValidationErrors(['industry']);
+    }
+
+    public function test_versions_saved_before_the_protections_still_show_every_protected_field(): void
+    {
+        // An older published version where Phone was hidden and Industry removed.
+        $old = array_values(array_filter($this->fields(), fn ($f) => $f['key'] !== 'industry'));
+        $old[$this->index($old, 'phone')]['visible'] = false;
+        \App\Models\DemoFormVersion::query()->create(['status' => 'published', 'fields' => $old, 'published_at' => now()]);
+
+        $live = collect(app(DemoFormRepository::class)->published()['fields'])->keyBy('key');
+        foreach (self::PROTECTED as $key) {
+            $this->assertTrue($live[$key]['visible'], "{$key} is visible");
+        }
+        $this->get('/book-demo')->assertOk()->assertSee('name="phone"', false)->assertSee('name="industry"', false);
+    }
+
+    public function test_other_questions_can_still_be_added_removed_retyped_and_reordered(): void
+    {
+        $fields = $this->withExtra(['key' => 'team_size', 'type' => 'radio', 'label' => 'Team size', 'options' => [['value' => '', 'label' => 'Just me'], ['value' => '', 'label' => '2 to 10']]]);
+        $fields = array_values(array_filter($fields, fn ($f) => $f['key'] !== 'message'));   // optional field removed
+        $fields[$this->index($fields, 'help_with')]['type'] = 'dropdown';                    // retyped
+        $fields[$this->index($fields, 'help_with')]['visible'] = false;                      // hidden
+        array_unshift($fields, array_pop($fields));                                           // reordered to the top
+        $this->publish($fields);
+
+        $live = array_column(app(DemoFormRepository::class)->published()['fields'], 'key');
+        $this->assertSame('team_size', $live[0]);
+        $this->assertNotContains('message', $live);
+        $this->get('/book-demo')->assertOk()->assertSee('Team size')->assertSee('name="team_size"', false)
+            ->assertDontSee('What would you most like help with?')->assertDontSee('name="message"', false);
+    }
+
+    public function test_the_editor_rejects_a_crafted_request_that_removes_a_protected_field(): void
+    {
+        $this->actingAsPlatformOwner();
+        foreach (['industry', 'phone', 'business_name'] as $key) {
+            $without = array_values(array_filter($this->fields(), fn ($f) => $f['key'] !== $key));
+            $this->post(route('admin.platform-owner.demo-form.publish'), ['fields' => json_encode($without)])->assertSessionHasErrors('fields');
+        }
+        $this->assertDatabaseCount('demo_form_versions', 0);
+    }
+
     public function test_option_values_are_stable_and_independent_of_labels(): void
     {
         $fields = $this->withExtra(['key' => 'team_size', 'type' => 'radio', 'label' => 'Team size', 'options' => [['value' => '', 'label' => '1 to 5'], ['value' => '', 'label' => '1 to 5!'], ['value' => 'big', 'label' => 'Over 50']]]);
@@ -169,15 +303,15 @@ class DemoFormTest extends TestCase
             ->assertSee('<option value="friend">A friend</option>', false)->assertSee('class="f"', false);
     }
 
-    public function test_hidden_fields_are_not_rendered_or_accepted(): void
+    public function test_hidden_optional_fields_are_not_rendered_or_accepted(): void
     {
         $fields = $this->fields();
-        $phone = array_search('phone', array_column($fields, 'key'), true);
-        $fields[$phone]['visible'] = false;
+        $message = array_search('message', array_column($fields, 'key'), true);
+        $fields[$message]['visible'] = false;
         $this->publish($fields);
 
-        $this->get('/book-demo')->assertOk()->assertDontSee('name="phone"', false);
-        $this->postJson(route('demo.booking.details'), ['first_name' => 'A', 'email' => 'a@example.test', 'business_name' => 'B', 'phone' => 'garbage'])->assertOk();
+        $this->get('/book-demo')->assertOk()->assertDontSee('name="message"', false)->assertSee('name="phone"', false);
+        $this->postJson(route('demo.booking.details'), ['first_name' => 'A', 'email' => 'a@example.test', 'business_name' => 'B', 'message' => str_repeat('x', 5000)])->assertOk();
     }
 
     public function test_step_one_validates_against_the_published_form_without_booking_anything(): void
