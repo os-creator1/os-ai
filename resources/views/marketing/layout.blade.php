@@ -45,6 +45,7 @@
             ], $faqs),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) !!}</script>
     @endif
+@stack('head')
 </head>
 <body class="mg {{ $page === 'home' ? 'mg-home' : 'mg-inner mg-'.$page }}">
 <a class="skip" href="#main">Skip to content</a>

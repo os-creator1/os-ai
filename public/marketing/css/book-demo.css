@@ -1,0 +1,40 @@
+/*
+ * Book a demo page (/book-demo). Scoped to body.mg-book-demo / .mgd-card: the shared marketing and scheduler
+ * styles are not touched. Values come from design/Book-demo.dc.html.
+ */
+.mg-book-demo .f{display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:600}
+.mg-book-demo .f input,.mg-book-demo .f select,.mg-book-demo .f textarea{min-height:48px;padding:0 14px;border-radius:12px;border:1px solid #D6CFC8;background:#FFFFFF;font-size:15px;font-weight:400;color:#181413;font-family:inherit;width:100%}
+.mg-book-demo .f textarea{padding:12px 14px;min-height:100px;resize:vertical}
+.mg-book-demo .f input:focus,.mg-book-demo .f select:focus,.mg-book-demo .f textarea:focus{outline:none;border-color:#B4514A;box-shadow:0 0 0 3px rgba(180,81,74,.18)}
+.mg-book-demo .f-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.mg-book-demo .f-note{font-weight:400;color:#6B625E}
+.mg-book-demo .f-help{font-size:12.5px;font-weight:400;color:#6B625E;line-height:1.5}
+.mg-book-demo .f-err{font-size:13px;font-weight:500;color:#A51D24}
+.mg-book-demo .f-err[hidden]{display:none}
+.mg-book-demo .f-set{margin:0;padding:0;border:0;display:flex;flex-direction:column;gap:8px;min-width:0}
+.mg-book-demo .f-set legend{font-size:14px;font-weight:600;padding:0 0 8px}
+.mg-book-demo .opt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.mg-book-demo .opt{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid #E2DBD4;background:#FFFFFF;font-size:14.5px;font-weight:500;cursor:pointer}
+.mg-book-demo .opt input{width:18px;height:18px;accent-color:#B4514A;margin:0}
+.mg-book-demo .li{display:flex;gap:14px;align-items:flex-start}
+
+.mg-book-demo .mgd-card{flex:1 1 460px;min-width:0;background:#FFFFFF;border:1px solid #E7E1DB;border-radius:24px;padding:32px;box-shadow:0 30px 60px -36px rgba(24,20,19,.35)}
+.mg-book-demo .mgd-card[data-state="form"] #mgd-schedule{display:none}
+.mg-book-demo .mgd-card:not([data-state="form"]) #mgd-form{display:none}
+.mg-book-demo .mgd-alert{margin:0;padding:11px 14px;border-radius:10px;background:#FBEAEA;color:#A51D24;font-size:14px;line-height:1.5}
+.mg-book-demo .mgd-alert[hidden]{display:none}
+.mg-book-demo .mgd-thanks{display:flex;flex-direction:column;gap:16px;align-items:flex-start;margin:6px 0 24px}
+.mg-book-demo .mgd-thanks:focus{outline:none}
+.mg-book-demo .mgd-card[data-state="done"] .mgd-thanks,
+.mg-book-demo .mgd-card[data-state="done"] .mgd-edit{display:none}
+.mg-book-demo .mgd-edit{display:inline-flex;align-items:center;gap:4px;margin:0 0 18px -6px;padding:6px 10px 6px 6px;border:0;border-radius:8px;background:transparent;color:#8F3B35;font-size:14px;font-weight:600}
+.mg-book-demo .mgd-edit:hover{background:#F6E7E4}
+
+/* The real scheduler, in the design's palette. */
+.mg-book-demo .mgd-card .pb-app{--pb-accent:#B4514A;--pb-accent-hover:#9E443E;--pb-accent-soft:#F6E7E4;--pb-ink:#181413;--pb-muted:#5E5652;--pb-line:#E7E1DB;font-family:'Figtree',system-ui,sans-serif;color:#181413}
+.mg-book-demo .mgd-card .pb-btn{min-height:54px;border-radius:12px;font-size:16px;font-weight:600;font-family:inherit}
+.mg-book-demo .mgd-card .pb-slot,.mg-book-demo .mgd-card .pb-tz select{border-radius:12px;font-family:inherit}
+.mg-book-demo .mgd-card .pb-picked{border-radius:12px}
+.mg-book-demo .mgd-card .pb-summary{border-radius:16px}
+.mg-book-demo .mgd-card .pb-stage{flex-wrap:wrap}
+.mg-book-demo .mgd-card .pb-times{flex:1 1 200px}

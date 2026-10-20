@@ -52,6 +52,7 @@ final class MarketingSite
         // ServeMarketingPricingToGuests), so it has no `marketing.pricing` route of its own.
         return match ($page) {
             'pricing' => url('pricing'),
+            'book-demo' => route('demo.booking.show'),
             'home' => rtrim(route('marketing.home'), '/').'/',
             default => route('marketing.'.$page),
         };

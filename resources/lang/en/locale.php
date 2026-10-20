@@ -822,6 +822,7 @@
             'Website Templates'       => 'Website Templates',
             'Feature Management'      => 'Feature Management',
             'Platform Automations'    => 'Platform Automations',
+            'Demo Form'               => 'Demo Form',
             'Governance'              => 'Governance',
             'Roles'                   => 'Roles',
             'System / Advanced'       => 'System / Advanced',
