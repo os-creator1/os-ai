@@ -47,6 +47,13 @@
             <input type="hidden" name="date" value="">
             <input type="hidden" name="visitor_timezone" value="{{ $timezone }}">
             <input type="hidden" name="form_version" value="{{ $formVersion }}">
+            {{-- The booking's own essentials, asked only for what the questionnaire does not already collect. --}}
+            @if (! empty($attendeeNeeds['first_name']))
+            <label class="f" for="attendee-first-name" data-attendee="first_name" style="margin-bottom:14px">First name<input id="attendee-first-name" type="text" name="attendee_first_name" autocomplete="given-name" maxlength="120" required><span class="f-err" data-err="attendee_first_name" role="alert" hidden></span></label>
+            @endif
+            @if (! empty($attendeeNeeds['email']))
+            <label class="f" for="attendee-email" data-attendee="email" style="margin-bottom:16px">Email<input id="attendee-email" type="email" name="attendee_email" autocomplete="email" maxlength="190" required><span class="f-err" data-err="attendee_email" role="alert" hidden></span></label>
+            @endif
             {{-- Honeypot: invisible to people, irresistible to form-filling bots. --}}
             <div aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden"><label for="demo-hp">Leave this field empty</label><input id="demo-hp" type="text" name="{{ $demo['honeypot'] }}" value="" tabindex="-1" autocomplete="off"></div>
             {{-- Rendered by book-demo.js only when this step opens, so the token is always fresh. --}}

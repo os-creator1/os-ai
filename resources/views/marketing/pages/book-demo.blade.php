@@ -17,6 +17,8 @@
     $supportUrl = $mg->helpUrl();
     $contactUrl = $mg->link('support_email');
     $privacyUrl = $mg->link('privacy');
+    // An owner may publish a form with no questions: the page then goes straight to choosing a time.
+    $hasForm = count($formFields) > 0;
 @endphp
 <section style="padding: 88px 0 112px">
 <div class="wrap" style="display: flex; flex-wrap: wrap; gap: 64px; align-items: flex-start">
@@ -35,7 +37,8 @@
 </div>
 </div>
 
-<div class="mgd-card" id="mgd-card" data-state="form" data-intro-minutes="{{ $minutes }}">
+<div class="mgd-card" id="mgd-card" data-state="{{ $hasForm ? 'form' : 'schedule' }}" data-intro-minutes="{{ $minutes }}">
+@if ($hasForm)
 <form id="mgd-form" method="post" action="{{ $demo['detailsUrl'] }}" style="display: flex; flex-direction: column; gap: 18px" aria-labelledby="form-h">
 @csrf
 <h2 id="form-h" style="margin: 0; font-size: 22px; font-weight: 700">Tell us a little about you</h2>
@@ -44,12 +47,17 @@
 <button type="submit" class="btn btn-p" id="mgd-continue" style="min-height: 54px; font-size: 16px">Continue to choose a time</button>
 <p style="margin: 0; font-size: 12.5px; color: #6B625E; line-height: 1.5">We’ll only use your details to arrange this call.@if ($privacyUrl) See our <a href="{{ $privacyUrl }}" style="text-decoration: underline">Privacy Policy</a>.@endif</p>
 </form>
+@endif
 
-<div id="mgd-schedule" hidden>
+<div id="mgd-schedule" @if ($hasForm) hidden @endif>
+@if ($hasForm)
 <button type="button" class="mgd-edit" id="mgd-edit"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18"><path d="M12.5 4.5 7 10l5.5 5.5"/></svg>Edit my details</button>
+@endif
 <div class="mgd-thanks" id="mgd-thanks" role="status" tabindex="-1">
+@if ($hasForm)
 <span style="width: 56px; height: 56px; border-radius: 16px; background: #E4F0EA; color: #1F5E4A; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" aria-hidden="true" style="width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
-<h2 style="margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em">Thanks — now pick a time.</h2>
+@endif
+<h2 style="margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em">{{ $hasForm ? 'Thanks — now pick a time.' : 'Pick a time that suits you.' }}</h2>
 <p style="margin: 0; color: #4A4340; line-height: 1.6">Choose a time for your {{ $minutes }}-minute demo. Times are shown in <span id="pb-tz-label">{{ $timezone }}</span>.</p>
 </div>
 @include('marketing.book-demo._scheduler')

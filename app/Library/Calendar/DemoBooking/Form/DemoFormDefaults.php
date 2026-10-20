@@ -2,25 +2,16 @@
 
 namespace App\Library\Calendar\DemoBooking\Form;
 
-/** The Book a Demo form exactly as the approved Claude Design ships it. Used until the Platform Owner publishes a change. */
+/** The Book a Demo form exactly as the approved Claude Design ships it. Used only until the Platform Owner first publishes; after that, whatever they publish (even no questions) is the form. */
 final class DemoFormDefaults
 {
     /**
-     * The single definition of what the Platform Owner cannot change. Everything else about a form is editable.
-     *
-     * SYSTEM:          cannot be removed and keep their built-in type (key and type are what booking, the Contact
-     *                  and the answer history rely on). Label, helper text, options and layout stay editable.
-     * ALWAYS_VISIBLE:  can never be hidden, whether or not an answer is required.
-     * ALWAYS_REQUIRED: must be answered. The others in SYSTEM keep their design default (optional) until edited.
+     * The form is fully owner-editable: no field is protected, always visible or restored. This list only says which
+     * question keys, when the owner keeps them with a matching type, also fill the Contact (see DemoFormSchema::contactKeys);
+     * every other answer is mirrored to a CRM field. The booking's own essentials (first name, email) are collected
+     * separately when the questionnaire does not provide them.
      */
-    public const SYSTEM = ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry'];
-
-    /** Inputs mapped natively by the Contact resolver; other protected questions (e.g. Industry) still mirror to CRM fields. */
     public const CONTACT_MAPPED = ['first_name', 'last_name', 'email', 'phone', 'business_name'];
-
-    public const ALWAYS_VISIBLE = ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry'];
-
-    public const ALWAYS_REQUIRED = ['first_name', 'email', 'business_name'];
 
     /** @return array<int, array<string, mixed>> */
     public static function fields(): array
@@ -60,7 +51,6 @@ final class DemoFormDefaults
         return $extra + [
             'key' => $key, 'type' => $type, 'label' => $label, 'placeholder' => '', 'help' => '',
             'required' => false, 'visible' => true, 'half' => false, 'show_optional' => false, 'options' => [],
-            'system' => in_array($key, self::SYSTEM, true),
         ];
     }
 }

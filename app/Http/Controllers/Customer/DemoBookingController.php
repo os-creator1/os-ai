@@ -7,7 +7,6 @@ use App\Enums\GoogleAds\LeadAttributionSubjectType;
 use App\Exceptions\Calendar\BookingRefusedException;
 use App\Library\Calendar\DemoBooking\DemoBookingContactResolver;
 use App\Library\Calendar\DemoBooking\DemoAnswersNotSavedException;
-use App\Library\Calendar\DemoBooking\Form\DemoFormDefaults;
 use App\Library\Calendar\DemoBooking\Form\DemoFormRepository;
 use App\Library\Calendar\DemoBooking\Form\DemoFormSchema;
 use App\Library\Calendar\DemoBooking\TurnstileVerifier;
@@ -54,6 +53,7 @@ class DemoBookingController extends PublicBookingController
             'page' => 'book-demo',
             'meta' => $site->meta('book-demo'),
             'formFields' => DemoFormSchema::visible($form['fields']),
+            'attendeeNeeds' => DemoFormSchema::attendeeNeeds($form['fields']),
             'formVersion' => $form['id'] ?? 'default',
             'demo' => [
                 'showUrl' => route('demo.booking.show'),
@@ -118,12 +118,20 @@ class DemoBookingController extends PublicBookingController
         // against the current one; if that fails the page is told the form changed so they can review it.
         $form = $forms->published();
         $formVersion = $form['id'] ?? 'default';
-        $validator = Validator::make($request->all(), DemoFormSchema::rules($form['fields']) + [
+        $validator = Validator::make($request->all(), DemoFormSchema::rules($form['fields']) + DemoFormSchema::attendeeRules() + [
             'date' => ['required', 'date_format:Y-m-d'],
             'time' => ['required', 'date_format:H:i'],
             'website' => ['nullable', 'string', 'max:190'],
         ]);
-        $validator->after(function ($validator) use ($request, $type): void {
+        $validator->after(function ($validator) use ($request, $type, $form): void {
+            // First name and email are the booking's own essentials: from the questionnaire when it asks, else the attendee inputs.
+            $identity = DemoFormSchema::identity($form['fields'], $request->all());
+            if ($identity['first_name'] === '' && ! $validator->errors()->has('attendee_first_name')) {
+                $validator->errors()->add('attendee_first_name', 'Enter your first name.');
+            }
+            if ($identity['email'] === '' && ! $validator->errors()->has('attendee_email')) {
+                $validator->errors()->add('attendee_email', 'Enter your email address.');
+            }
             if (! $validator->errors()->has('website') && $this->normalizeWebsite($request->input('website')) === false) {
                 $validator->errors()->add('website', 'Enter a valid website address, or leave it blank.');
             }
@@ -133,7 +141,7 @@ class DemoBookingController extends PublicBookingController
         });
         if ($validator->fails()) {
             $changed = (string) $request->input('form_version') !== (string) $formVersion
-                && array_diff(array_keys($validator->errors()->toArray()), ['date', 'time', 'website']) !== [];
+                && array_diff(array_keys($validator->errors()->toArray()), ['date', 'time', 'website', 'attendee_first_name', 'attendee_email']) !== [];
 
             return $wantsJson
                 ? $this->json(['message' => $changed ? 'We have updated this form since you started. Please review your answers.' : 'Please check your details.',
@@ -152,6 +160,7 @@ class DemoBookingController extends PublicBookingController
 
         $data = $validator->validated();
         $data['website'] = $this->normalizeWebsite($data['website'] ?? null) ?: null;
+        $identity = DemoFormSchema::identity($form['fields'], $data);
         $answers = DemoFormSchema::snapshot($form['fields'], $data);
         $timezone = $this->timezoneFor($business);
         $start = $this->slots->instantFor($data['date'], $data['time'], $timezone);
@@ -163,7 +172,7 @@ class DemoBookingController extends PublicBookingController
             $appointment = $this->booking->bookWithRoundRobinContactResolver(
                 $type,
                 $start,
-                fn (): int => $contactResolver->resolve($location, $business, $data),
+                fn (): int => $contactResolver->resolve($location, $business, $identity + ['website' => $data['website']]),
                 // The canonical answers commit WITH the booking: a failure here rolls the whole booking back.
                 afterInsert: fn (Appointment $created) => $this->saveAnswers($created, $form['id'], $answers),
             );
@@ -183,7 +192,7 @@ class DemoBookingController extends PublicBookingController
         // After commit, never able to fail the booking. The CRM mirror is a secondary copy of answers that are
         // already safely stored with the appointment.
         try {
-            $contactResolver->mirrorAnswers($location, $business, (int) $appointment->contact_id, $this->crmExtras($answers));
+            $contactResolver->mirrorAnswers($location, $business, (int) $appointment->contact_id, $this->crmExtras($answers, DemoFormSchema::contactKeys($form['fields'])));
         } catch (\Throwable $exception) {
             report($exception);
         }
@@ -197,14 +206,14 @@ class DemoBookingController extends PublicBookingController
             $request,
         );
         try {
-            $this->notifications->recordPublicBooking($appointment, $type, (string) $data['email'], trim((string) ($data['phone'] ?? '')), false);
+            $this->notifications->recordPublicBooking($appointment, $type, $identity['email'], $identity['phone'], false);
         } catch (\Throwable $exception) {
             report($exception);
         }
 
         $visitorTimezone = $this->visitorTimezone($request, $timezone, 'visitor_timezone');
         $summary = $this->summary($type, $business, $location, $start, $visitorTimezone)
-            + ['notice' => $this->noticeLine($type, (string) $data['email'], false)];
+            + ['notice' => $this->noticeLine($type, $identity['email'], false)];
         if ($wantsJson) {
             return $this->json(['status' => 'confirmed', 'booking' => $summary], 201);
         }
@@ -254,17 +263,17 @@ class DemoBookingController extends PublicBookingController
     }
 
     /**
-     * The owner-configured answers mirrored onto the Contact as CRM fields. Only the fields mapped by the Contact resolver are excluded here. Protected Industry is still
-     * mirrored as DEMO_INDUSTRY, alongside other additional answers.
+     * The owner-configured answers mirrored onto the Contact as CRM fields. Only the questions that fill the Contact itself
+     * ($contactKeys) are excluded; every other answer, Industry included, is mirrored as a DEMO_* field.
      *
      * @param  array<int, array{key: string, label: string, display: string}>  $answers
      * @return array<int, array{tag: string, label: string, value: string}>
      */
-    private function crmExtras(array $answers): array
+    private function crmExtras(array $answers, array $contactKeys): array
     {
         $extras = [];
         foreach ($answers as $answer) {
-            if (! in_array($answer['key'], DemoFormDefaults::CONTACT_MAPPED, true)) {
+            if (! in_array($answer['key'], $contactKeys, true)) {
                 $extras[] = ['tag' => 'DEMO_'.strtoupper($answer['key']), 'label' => mb_substr($answer['label'], 0, 120), 'value' => $answer['display']];
             }
         }

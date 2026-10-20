@@ -97,6 +97,10 @@ Cancel and reschedule are `AppointmentBookingService::cancel` / `::reschedule`
 the new time or stop). The page works without JavaScript; the reschedule picker
 is server-rendered, in the Business timezone.
 
+## The demo form
+
+The Platform Owner can edit every question at `/admin/platform-owner/marketing/demo-form`, including removing all of them: no question is protected, always visible or restored, and a form with no questions can be saved and published. The design default is used only until the first publish. The booking's own essentials are a first name and an email address; when the published questions do not collect them (a visible, required question of the matching type keeps its own answer), the confirmation step shows small attendee inputs for just those. With no questions the page skips the questionnaire and opens the calendar directly. Contact fields (last name, phone, business name) are filled only from questions that exist, and every other answer is mirrored as a `DEMO_*` CRM field.
+
 ## Known limitations
 
 - The confirmation page for an honeypot hit shows the generic page with no details.
