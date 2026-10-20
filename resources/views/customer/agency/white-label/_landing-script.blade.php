@@ -9,7 +9,6 @@
     var stateEl = document.getElementById('wl-save-state');
     var iframe = document.getElementById('wl-preview');
     var timers = {};
-    var inFlight = 0;
 
     function setState(text, isError) { if (stateEl) { stateEl.textContent = text; stateEl.className = 'text-caption' + (isError ? ' text-danger' : ''); } }
 
@@ -58,15 +57,23 @@
         var publish = document.getElementById('wl-publish'); if (publish && typeof j.isLive !== 'undefined') { publish.textContent = j.isLive ? 'Update website' : 'Publish website'; }
     }
 
+    // One queue for every save: requests apply in the order they were made, what counts as "saved" is what was
+    // SUBMITTED, and every save resolves {ok, message} (never rejects). See public/js/agency-site-saver.js.
+    var saver = AgencySiteSaver.create({
+        send: function (body) { return post(urls.save, body).then(function (j) { return { status: j.httpStatus, body: j }; }); }
+    });
+
     function save(answers, opts) {
-        if (!canEdit) { return Promise.resolve(); }
-        inFlight++; setState('Saving…');
-        return post(urls.save, { answers: answers, step: step }).then(function (j) {
-            inFlight--;
-            if (j.ok) { markSaved(answers); setState('All changes saved'); applyState(j); refreshPreview(); if (opts && opts.after) { opts.after(j); } }
-            else { setState(j.message || 'Could not save', true); }
-            return j;
-        }).catch(function () { inFlight--; setState('Could not save — check your connection', true); });
+        if (!canEdit) { return Promise.resolve({ ok: true }); }
+        setState('Saving…');
+        return saver.save(answers, { step: step }).then(function (r) {
+            if (r.ok) {
+                if (saver.pending() === 0) { setState('All changes saved'); }
+                applyState(r.body); refreshPreview();
+                if (opts && opts.after) { opts.after(r.body); }
+            } else { setState(r.message || 'Could not save', true); }
+            return r;
+        });
     }
 
     // ---------- reading fields
@@ -84,18 +91,12 @@
         var input = el.querySelector('[data-input]'); return input ? cleaned(input.value) : null;
     }
     // Only answers the Agency actually changed are sent, so untouched fields keep following the defaults.
-    var saved = {};
-    function remember(scope) { scope.querySelectorAll('[data-field]').forEach(function (f) { saved[f.getAttribute('data-path')] = JSON.stringify(readField(f)); }); }
-    document.querySelectorAll('[data-field]').forEach(function (f) { saved[f.getAttribute('data-path')] = JSON.stringify(readField(f)); });
+    document.querySelectorAll('[data-field]').forEach(function (f) { saver.remember(f.getAttribute('data-path'), readField(f)); });
     function collectFields(scope) {
-        var out = {};
-        scope.querySelectorAll('[data-field]').forEach(function (f) {
-            var path = f.getAttribute('data-path'), value = readField(f);
-            if (saved[path] !== JSON.stringify(value)) { out[path] = value; }
-        });
-        return out;
+        var all = {};
+        scope.querySelectorAll('[data-field]').forEach(function (f) { all[f.getAttribute('data-path')] = readField(f); });
+        return saver.changed(all);
     }
-    function markSaved(answers) { Object.keys(answers).forEach(function (p) { var el = document.querySelector('[data-field][data-path="' + p + '"]'); if (el) { saved[p] = JSON.stringify(readField(el)); } }); }
 
     // ---------- generic list controls (strings / rows)
     function makeItem(list) {
@@ -131,9 +132,11 @@
     }
 
     // ---------- saving a scope
+    // Whole-list answers are sent only when they differ from what the server will hold.
+    function saveChanged(answers) { var c = saver.changed(answers); return Object.keys(c).length ? save(c) : Promise.resolve({ ok: true }); }
     function saveScope(scope) {
         var kind = scope.getAttribute('data-scope');
-        if (kind === 'fields') { var changed = collectFields(scope); return Object.keys(changed).length ? save(changed) : Promise.resolve(); }
+        if (kind === 'fields') { var changed = collectFields(scope); return Object.keys(changed).length ? save(changed) : Promise.resolve({ ok: true }); }
         if (kind === 'home') {
             var order = [], hidden = [], shown = [];
             scope.querySelectorAll(':scope > li').forEach(function (li) {
@@ -142,7 +145,7 @@
                 var on = li.querySelector('[data-toggle-visible]').checked, defHidden = li.getAttribute('data-default-hidden') === '1';
                 if (defHidden && on) { shown.push(key); } else if (!defHidden && !on) { hidden.push(key); }
             });
-            return save({ 'x.home_order': order, 'x.home_hidden': hidden, 'x.home_shown': shown });
+            return saveChanged({ 'x.home_order': order, 'x.home_hidden': hidden, 'x.home_shown': shown });
         }
         if (kind === 'product') {
             var porder = [], phidden = [], featured = null;
@@ -152,15 +155,15 @@
                 if (li.querySelector('[data-featured]').checked) { featured = key; }
             });
             var answers = collectFields(scope); answers['x.product_order'] = porder; answers['x.product_hidden'] = phidden; answers['x.featured_feature'] = featured;
-            return save(answers);
+            return saveChanged(answers);
         }
         if (kind === 'testimonials') {
-            return save({ 'x.testimonials': Array.prototype.map.call(scope.querySelectorAll('[data-testimonial]'), function (t) {
+            return saveChanged({ 'x.testimonials': Array.prototype.map.call(scope.querySelectorAll('[data-testimonial]'), function (t) {
                 var row = {}; t.querySelectorAll('[data-t]').forEach(function (i) { row[i.getAttribute('data-t')] = i.type === 'checkbox' ? i.checked : i.value; }); return row;
             }) });
         }
         if (kind === 'plans') {
-            return save({ 'x.plans': Array.prototype.map.call(scope.querySelectorAll('[data-plan]'), function (p) {
+            return saveChanged({ 'x.plans': Array.prototype.map.call(scope.querySelectorAll('[data-plan]'), function (p) {
                 return { uid: p.getAttribute('data-plan'), visible: p.querySelector('[data-plan-visible]').checked, featured: p.querySelector('[data-plan-featured]').checked,
                     badge: cleaned(p.querySelector('[data-plan-badge]').value), cta: cleaned(p.querySelector('[data-plan-cta]').value), tagline: cleaned(p.querySelector('[data-plan-tagline]').value),
                     features: p.querySelector('[data-plan-features]').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean) };
@@ -168,17 +171,32 @@
         }
         if (kind === 'pages-hidden') {
             var hid = []; scope.querySelectorAll('[data-page-toggle]').forEach(function (c) { if (!c.checked) { hid.push(c.getAttribute('data-page-toggle')); } });
-            return save({ 'x.pages_hidden': hid });
+            return saveChanged({ 'x.pages_hidden': hid });
         }
-        return Promise.resolve();
+        return Promise.resolve({ ok: true });
     }
     function scopeOf(el) { return el.closest('[data-scope]'); }
     function schedule(scope) {
         var id = scope.getAttribute('data-scope') + (scope.getAttribute('data-group') || '');
         clearTimeout(timers[id]); setState('Unsaved changes…');
-        timers[id] = setTimeout(function () { saveScope(scope); }, 700);
+        timers[id] = setTimeout(function () { delete timers[id]; saveScope(scope); }, 700);
     }
-    function flushAll() { Object.keys(timers).forEach(function (k) { clearTimeout(timers[k]); }); }
+    function flushAll() { Object.keys(timers).forEach(function (k) { clearTimeout(timers[k]); delete timers[k]; }); }
+
+    /**
+     * Save every pending edit NOW and report whether ALL of it was persisted: {ok, message}. Waits for the queue, so a
+     * result of ok means the server holds what is on screen. A failure leaves the edits in place and still unsaved.
+     */
+    function saveEverything() {
+        flushAll();
+        var scopes = []; document.querySelectorAll('[data-scope]').forEach(function (s) { if (s.getAttribute('data-scope') !== 'booking') { scopes.push(s); } });
+        return Promise.all(scopes.map(saveScope)).then(function (results) {
+            return saver.idle().then(function () {
+                var failed = results.filter(function (r) { return !r || r.ok !== true; })[0];
+                return failed ? { ok: false, message: failed.message || saver.lastFailure() || 'Could not save your changes.' } : { ok: true };
+            });
+        });
+    }
 
     root.addEventListener('input', function (ev) { var s = scopeOf(ev.target); if (s && canEdit && s.getAttribute('data-scope') !== 'booking') { schedule(s); } });
     root.addEventListener('change', function (ev) {
@@ -219,7 +237,11 @@
             document.querySelectorAll('[data-device]').forEach(function (b) { b.className = 'btn ' + (b === t ? 'btn-primary' : 'btn-outline-secondary'); }); return;
         }
         if (t.hasAttribute('data-mobile-tab')) { setPane(t.getAttribute('data-mobile-tab')); return; }
-        if (t.id === 'wl-save-draft') { flushAll(); setState('Saved'); document.querySelectorAll('[data-scope]').forEach(function (s) { saveScope(s); }); return; }
+        if (t.id === 'wl-save-draft') {
+            setState('Saving…');
+            saveEverything().then(function (r) { if (r.ok) { setState('Draft saved'); } else { setState('Not saved — ' + r.message + ' Your edits are still on this page.', true); } });
+            return;
+        }
         if (t.id === 'wl-publish') { publish(); return; }
         if (t.id === 'wl-unpublish') { if (confirm('Take your website offline?')) { post(urls.unpublish, {}).then(function (j) { if (j.ok) { applyState(j); setState('Website unpublished'); } else { setState(j.message, true); } }); } return; }
     });
@@ -270,20 +292,28 @@
     }
 
     // ---------- publish
+    function showPublishResult(ok, heading, items) {
+        var result = document.getElementById('wl-publish-result');
+        result.style.display = ''; result.textContent = ''; result.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger');
+        var h = document.createElement('strong'); h.textContent = heading; result.appendChild(h);
+        if (items && items.length) { var ul = document.createElement('ul'); ul.className = 'mb-0'; items.forEach(function (t) { var li = document.createElement('li'); li.textContent = t; ul.appendChild(li); }); result.appendChild(ul); }
+    }
     function publish() {
-        flushAll();
-        var result = document.getElementById('wl-publish-result'); result.style.display = 'none';
-        // Save anything pending first, then publish what is saved.
-        var pending = []; document.querySelectorAll('[data-scope]').forEach(function (s) { if (s.getAttribute('data-scope') !== 'booking') { pending.push(saveScope(s)); } });
-        Promise.all(pending).then(function () { return post(urls.publish, {}); }).then(function (j) {
-            result.style.display = ''; result.textContent = '';
-            if (j.ok) { result.className = 'alert alert-success'; result.textContent = 'Your website is published at ' + j.hostedUrl; applyState(j); setState('Published'); }
-            else {
-                result.className = 'alert alert-danger'; var h = document.createElement('strong'); h.textContent = j.message || 'Could not publish'; result.appendChild(h);
-                if (j.blockers) { var ul = document.createElement('ul'); ul.className = 'mb-0'; j.blockers.forEach(function (b) { var li = document.createElement('li'); li.textContent = b.label + ': ' + b.detail; ul.appendChild(li); }); result.appendChild(ul); go(10); }
+        document.getElementById('wl-publish-result').style.display = 'none';
+        setState('Saving…');
+        // Publish only what is provably saved: every pending save must succeed first.
+        saveEverything().then(function (saved) {
+            if (!saved.ok) {
+                setState('Not saved — nothing was published.', true);
+                showPublishResult(false, 'Not published: your latest edits could not be saved.', [saved.message, 'Your edits are still on this page. Fix the problem and try again.']);
+                return null;
             }
+            return post(urls.publish, {}).then(function (j) {
+                if (j.ok) { showPublishResult(true, 'Your website is published at ' + j.hostedUrl); applyState(j); setState('Published'); }
+                else { showPublishResult(false, j.message || 'Could not publish', (j.blockers || []).map(function (b) { return b.label + ': ' + b.detail; })); if (j.blockers) { go(10); } }
+            }, function () { showPublishResult(false, 'Could not publish', ['Could not reach the server.']); });
         });
     }
-    window.addEventListener('beforeunload', function (ev) { if (inFlight > 0) { ev.preventDefault(); ev.returnValue = ''; } });
+    window.addEventListener('beforeunload', function (ev) { if (saver.pending() > 0 || Object.keys(timers).length > 0) { ev.preventDefault(); ev.returnValue = ''; } });
 })();
 </script>

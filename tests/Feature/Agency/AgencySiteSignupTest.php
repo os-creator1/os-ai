@@ -352,4 +352,94 @@ class AgencySiteSignupTest extends TestCase
         $this->authenticateAs($live['owner']);
         $this->postJson(route('customer.workspaces.agency.site.publish', $live['agency']->uid))->assertStatus(422);
     }
+
+    // ------------------------------------------- verification mail timing (Codex P2)
+
+    public function test_verification_mail_is_sent_after_the_agency_relationship_exists_and_in_the_agencys_brand(): void
+    {
+        config(['account.verify_account' => true]);
+        $live = $this->liveAgency();
+        \Illuminate\Support\Facades\Notification::fake();
+
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+
+        $user = User::query()->where('email', 'dana@harbor.example')->sole();
+        \Illuminate\Support\Facades\Notification::assertSentToTimes($user, \App\Notifications\Auth\BrandedVerifyEmail::class, 1);
+
+        // At send time the committed relationship exists, so the message resolves the Agency brand (not the platform's).
+        \Illuminate\Support\Facades\Notification::assertSentTo($user, \App\Notifications\Auth\BrandedVerifyEmail::class, function ($notification) use ($user, $live) {
+            $mail = $notification->toMail($user);
+
+            $this->assertSame('Northwind Agency Digital', $mail->from[1]);
+            $this->assertStringContainsString('Northwind Agency Digital', (string) $mail->render());
+            $this->assertSame(1, AgencyClientWorkspaceRelationship::query()->where('agency_workspace_id', $live['agency']->id)->count());
+
+            return true;
+        });
+    }
+
+    public function test_the_brand_is_resolvable_at_the_moment_the_verification_mail_is_built_and_not_before(): void
+    {
+        config(['account.verify_account' => true]);
+        $live = $this->liveAgency();
+
+        // Capture the brand the mail resolver sees at the instant the notification is dispatched.
+        $seen = null;
+        \Illuminate\Support\Facades\Event::listen(\Illuminate\Notifications\Events\NotificationSending::class, function ($event) use (&$seen) {
+            $seen = app(\App\Library\Mail\MailBrandResolver::class)->forUser($event->notifiable)->kind;
+        });
+
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+
+        $this->assertSame('agency', $seen, 'the Agency relationship already exists when the mail goes out');
+    }
+
+    public function test_no_verification_mail_is_sent_for_a_provisioning_that_rolls_back(): void
+    {
+        config(['account.verify_account' => true]);
+        $live = $this->liveAgency();
+        \Illuminate\Support\Facades\Notification::fake();
+
+        $this->mock(\App\Library\Workspace\AgencyClientProvisioningManager::class)
+            ->shouldReceive('provisionClientWorkspace')->once()->andThrow(new \RuntimeException('provisioning failed'));
+
+        try {
+            app(\App\Library\AgencySite\AgencySiteSignupService::class)->start(
+                $live['site'], $live['plan'], ['first_name' => 'Dana', 'email' => 'dana@harbor.example', 'password' => 'correct-horse-9', 'business_name' => 'Harbor Lane Studio'],
+                null, fn ($w) => 'https://example.test/return', 'https://example.test/cancel',
+            );
+            $this->fail('provisioning should have failed');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('provisioning failed', $e->getMessage());
+        }
+
+        \Illuminate\Support\Facades\Notification::assertNothingSent();
+        $this->assertSame(0, User::query()->where('email', 'dana@harbor.example')->count(), 'the account rolled back with it');
+        $this->assertSame(0, AgencySiteSignup::query()->count());
+    }
+
+    public function test_a_retry_does_not_send_the_verification_mail_again(): void
+    {
+        config(['account.verify_account' => true]);
+        $live = $this->liveAgency();
+        \Illuminate\Support\Facades\Notification::fake();
+
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        auth()->logout();
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+
+        \Illuminate\Support\Facades\Notification::assertSentToTimes(User::query()->where('email', 'dana@harbor.example')->sole(), \App\Notifications\Auth\BrandedVerifyEmail::class, 1);
+    }
+
+    public function test_a_mail_failure_does_not_undo_a_committed_signup(): void
+    {
+        config(['account.verify_account' => true]);
+        $live = $this->liveAgency();
+        \Illuminate\Support\Facades\Event::listen(\Illuminate\Notifications\Events\NotificationSending::class, fn () => throw new \RuntimeException('mail down'));
+
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+
+        $this->assertSame(1, AgencySiteSignup::query()->count());
+        $this->assertNotNull(AgencyClientSubscription::query()->first());
+    }
 }

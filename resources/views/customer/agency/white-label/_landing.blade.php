@@ -306,4 +306,5 @@
         </div>
     </div>
 </div>
+<script src="{{ asset('js/agency-site-saver.js') }}"></script>
 @include('customer.agency.white-label._landing-script')

@@ -85,6 +85,7 @@ final class AgencySiteSignupService
 
             try {
                 [$signup, $user] = $this->provision($site, $plan, $agency, $input, $email, $businessName, $ip);
+                $this->sendVerification($user);
             } catch (QueryException $e) {
                 // Two simultaneous submits: the unique (Agency, email) row won for the other request.
                 $signup = AgencySiteSignup::query()->where('agency_workspace_id', $agency->id)->where('email', $email)->first();
@@ -114,6 +115,24 @@ final class AgencySiteSignupService
         return ['signup' => $signup, 'user' => $user, 'checkout' => $checkout];
     }
 
+    /**
+     * The verification mail goes out only after the provisioning transaction has COMMITTED, so the Agency relationship
+     * exists (the mail is branded from it) and a rolled-back signup never emails anyone. A mail failure must not undo or
+     * block a committed signup: the visitor can resend verification from their account.
+     */
+    private function sendVerification(User $user): void
+    {
+        if (! config('account.verify_account')) {
+            return;
+        }
+
+        try {
+            $user->sendEmailVerificationNotification();
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
     /** @return array{0: AgencySiteSignup, 1: User} */
     private function provision(AgencySite $site, AgencySaasPlan $plan, Workspace $agency, array $input, string $email, string $businessName, ?string $ip): array
     {
@@ -127,10 +146,6 @@ final class AgencySiteSignupService
                 'phone' => null,
                 'is_customer' => true,
             ]);
-
-            if (config('account.verify_account')) {
-                $user->sendEmailVerificationNotification();
-            }
 
             /** @var Customer $customer */
             $customer = Customer::query()->where('user_id', $user->id)->firstOrFail();

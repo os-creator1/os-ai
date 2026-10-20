@@ -48,6 +48,11 @@ renders the saved draft; Desktop/Mobile toggles the frame width; the current scr
 the place. Every section supports edit, show/hide (where hiding is allowed), reset to default and preview; home
 sections, product features, FAQ, industries, plans and testimonials reorder.
 
+* **Saving**: every autosave goes through one queue (`public/js/agency-site-saver.js`). What counts as saved is what
+  was submitted, requests are applied in order, and every save returns an explicit success or failure. **Save draft**
+  says "Draft saved" only after the server confirms, and **Publish** first saves every pending edit and is refused
+  (edits kept on screen, error shown) if any save fails. Tests: `node --test tests/Js/agency-site-saver.test.cjs` and
+  `AgencySiteEditorScriptTest` (real editor in Chromium against a simulated server).
 * **Starter copy** reuses the MotionGrove wording for what the *software* does and replaces everything only the Agency
   can promise (support, onboarding, price, billing cadence, results, customer stories). The two sections that exist
   to make such promises (Support & onboarding, Setup commitment) start hidden.
