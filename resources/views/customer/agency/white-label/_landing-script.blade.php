@@ -63,7 +63,7 @@
         inFlight++; setState('Saving…');
         return post(urls.save, { answers: answers, step: step }).then(function (j) {
             inFlight--;
-            if (j.ok) { setState('All changes saved'); applyState(j); refreshPreview(); if (opts && opts.after) { opts.after(j); } }
+            if (j.ok) { markSaved(answers); setState('All changes saved'); applyState(j); refreshPreview(); if (opts && opts.after) { opts.after(j); } }
             else { setState(j.message || 'Could not save', true); }
             return j;
         }).catch(function () { inFlight--; setState('Could not save — check your connection', true); });
@@ -83,11 +83,19 @@
         }
         var input = el.querySelector('[data-input]'); return input ? cleaned(input.value) : null;
     }
+    // Only answers the Agency actually changed are sent, so untouched fields keep following the defaults.
+    var saved = {};
+    function remember(scope) { scope.querySelectorAll('[data-field]').forEach(function (f) { saved[f.getAttribute('data-path')] = JSON.stringify(readField(f)); }); }
+    document.querySelectorAll('[data-field]').forEach(function (f) { saved[f.getAttribute('data-path')] = JSON.stringify(readField(f)); });
     function collectFields(scope) {
         var out = {};
-        scope.querySelectorAll('[data-field]').forEach(function (f) { out[f.getAttribute('data-path')] = readField(f); });
+        scope.querySelectorAll('[data-field]').forEach(function (f) {
+            var path = f.getAttribute('data-path'), value = readField(f);
+            if (saved[path] !== JSON.stringify(value)) { out[path] = value; }
+        });
         return out;
     }
+    function markSaved(answers) { Object.keys(answers).forEach(function (p) { var el = document.querySelector('[data-field][data-path="' + p + '"]'); if (el) { saved[p] = JSON.stringify(readField(el)); } }); }
 
     // ---------- generic list controls (strings / rows)
     function makeItem(list) {
@@ -125,12 +133,12 @@
     // ---------- saving a scope
     function saveScope(scope) {
         var kind = scope.getAttribute('data-scope');
-        if (kind === 'fields') { return save(collectFields(scope)); }
+        if (kind === 'fields') { var changed = collectFields(scope); return Object.keys(changed).length ? save(changed) : Promise.resolve(); }
         if (kind === 'home') {
             var order = [], hidden = [], shown = [];
             scope.querySelectorAll(':scope > li').forEach(function (li) {
-                var key = li.getAttribute('data-key'); if (li.getAttribute('data-hideable') !== '1') { return; }
-                order.push(key);
+                var key = li.getAttribute('data-key'); if (li.getAttribute('data-movable') === '1') { order.push(key); }
+                if (li.getAttribute('data-hideable') !== '1') { return; }
                 var on = li.querySelector('[data-toggle-visible]').checked, defHidden = li.getAttribute('data-default-hidden') === '1';
                 if (defHidden && on) { shown.push(key); } else if (!defHidden && !on) { hidden.push(key); }
             });

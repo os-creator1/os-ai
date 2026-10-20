@@ -329,4 +329,27 @@ class AgencySiteSignupTest extends TestCase
         $html = $this->get(route('customer.workspaces.clients.index', $live['agency']->uid))->assertOk()->getContent();
         $this->assertStringContainsString('Harbor Lane Studio', $html);
     }
+
+    public function test_disabling_a_plan_or_losing_stripe_removes_it_from_sale_without_touching_existing_customers(): void
+    {
+        $live = $this->liveAgency();
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        $client = $this->clientOf('dana@harbor.example');
+        $subscription = AgencyClientSubscription::query()->sole();
+        $this->agencyStripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+        $this->actingAs(User::query()->where('email', 'dana@harbor.example')->sole())->get(route('customer.workspaces.agency-plan.return', $client->uid));
+        $this->assertSame(WorkspacePlanTier::Growth, $this->tierOf($client));
+        auth()->logout();
+
+        // The Agency withdraws the plan: the public page stops selling it and signup closes; the paying customer keeps theirs.
+        $this->plans()->unpublish((int) $live['owner']->user_id, $live['plan']->refresh());
+        $this->get($this->signupUrl($live))->assertNotFound();
+        $this->assertStringNotContainsString('Studio', $this->get(route('agency.site.page', [$live['site']->public_id, 'pricing']))->getContent());
+        $this->assertSame(WorkspacePlanTier::Growth, $this->tierOf($client));
+        $this->assertSame(AgencyClientSubscriptionStatus::Active, $subscription->refresh()->status);
+
+        // And a republish is refused while the funnel has nothing to sell.
+        $this->authenticateAs($live['owner']);
+        $this->postJson(route('customer.workspaces.agency.site.publish', $live['agency']->uid))->assertStatus(422);
+    }
 }

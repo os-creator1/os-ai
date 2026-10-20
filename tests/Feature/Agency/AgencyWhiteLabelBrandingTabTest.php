@@ -269,8 +269,9 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
         $this->assertStringContainsString('Ownership verified', $html);
         $this->assertStringContainsString('data-role="domain-not-live"', $html);
 
-        // Verification is not activation: the host still resolves to no Agency brand.
-        $this->assertNull(app(\App\Library\Branding\AgencyBrandResolver::class)->resolve(\Illuminate\Http\Request::create('https://app.northwind.example/login')));
+        // Verification is not activation: the brand lookup knows the host, but the platform's trusted-host list does not.
+        $this->assertSame('Northwind Digital', app(\App\Library\Branding\AgencyBrandResolver::class)->resolve(\Illuminate\Http\Request::create('https://app.northwind.example/login'))?->displayName);
+        $this->assertStringNotContainsString('northwind', implode('|', array_map('strval', app(\App\Http\Middleware\TrustHosts::class)->hosts())));
     }
 
     public function test_invalid_reserved_and_duplicate_domains_are_refused(): void

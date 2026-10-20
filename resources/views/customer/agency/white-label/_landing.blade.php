@@ -76,7 +76,7 @@
                     <ul class="list-unstyled mb-0" data-scope="home" data-home-list>
                         @foreach ($e['homeSections'] as $section)
                             @php $g = $e['groups'][$section['key']] ?? null; @endphp
-                            <li class="border rounded mb-1" data-key="{{ $section['key'] }}" data-default-hidden="{{ in_array($section['key'], \App\Library\AgencySite\SiteSchema::HOME_HIDDEN_BY_DEFAULT, true) ? '1' : '0' }}" data-hideable="{{ $section['hideable'] ? '1' : '0' }}">
+                            <li class="border rounded mb-1" data-key="{{ $section['key'] }}" data-default-hidden="{{ in_array($section['key'], \App\Library\AgencySite\SiteSchema::HOME_HIDDEN_BY_DEFAULT, true) ? '1' : '0' }}" data-hideable="{{ $section['hideable'] ? '1' : '0' }}" data-movable="{{ $section['movable'] ? '1' : '0' }}">
                                 <div class="d-flex align-items-center gap-1 p-1">
                                     @if ($section['hideable'])
                                         <input type="checkbox" class="form-check-input mt-0" data-toggle-visible id="vis-{{ $section['key'] }}" @checked($section['visible']) @disabled(! $canEdit) aria-label="Show {{ $section['label'] }}">

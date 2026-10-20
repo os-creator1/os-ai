@@ -259,11 +259,15 @@ final class AgencyMarketingSite extends MarketingSite
 
     // ------------------------------------------------------------- helpers
 
+    /** A wordmark drawn from the name when no logo is uploaded; long names are compressed to fit a phone header. */
     private static function textLogo(string $name, string $color): string
     {
-        $text = htmlspecialchars(mb_substr($name, 0, 28), ENT_QUOTES | ENT_XML1);
-        $width = max(60, (int) (mb_strlen($name) * 17));
-        $svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '.$width.' 34" width="'.$width.'" height="34"><text x="0" y="25" font-family="Figtree,Arial,sans-serif" font-size="24" font-weight="800" fill="'.$color.'">'.$text.'</text></svg>';
+        $name = mb_substr($name, 0, 28);
+        $text = htmlspecialchars($name, ENT_QUOTES | ENT_XML1);
+        $natural = (int) (mb_strlen($name) * 14);
+        $width = max(60, min(180, $natural));
+        $fit = $natural > 180 ? ' textLength="'.($width - 2).'" lengthAdjust="spacingAndGlyphs"' : '';
+        $svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '.$width.' 34" width="'.$width.'" height="34"><text x="0" y="25"'.$fit.' font-family="Figtree,Arial,sans-serif" font-size="24" font-weight="800" fill="'.$color.'">'.$text.'</text></svg>';
 
         return 'data:image/svg+xml;base64,'.base64_encode($svg);
     }
