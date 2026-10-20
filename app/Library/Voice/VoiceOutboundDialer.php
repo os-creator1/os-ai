@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Server-mediated outgoing calls — the only way MotionGrove places a call.
@@ -39,6 +40,10 @@ final class VoiceOutboundDialer
     public const TEARDOWN_FAILED = 'failed';
     public const TEARDOWN_MAX_ATTEMPTS = 6;
     private const TEARDOWN_RETRY_SECONDS = 20;
+
+    /** A claim never dispatched this long ago was abandoned; a dispatch with no outcome this long ago is unresolved. */
+    public const ABANDONED_CLAIM_SECONDS = 90;
+    public const UNRESOLVED_DISPATCH_SECONDS = 180;
 
     public function __construct(
         private readonly VoiceProviderClient $provider,
@@ -196,10 +201,15 @@ final class VoiceOutboundDialer
             // The destination and caller ID are the ones recorded when the request was validated.
             $this->provider->transferToSip($creds['api_key'], (string) $call->provider_call_control_id, $call->to_number, $call->from_number);
         } catch (VoiceProviderException $e) {
-            Log::info('voice.bridge_failed', ['call' => $call->uid, 'reason' => $e->reason]);
+            // A 4xx is a definitive refusal. A timeout / transport error / 5xx is AMBIGUOUS: Telnyx may have
+            // accepted the transfer. Either way the call is closed and our leg torn down, but an ambiguous one is
+            // recorded as such, is never transferred a second time (bridge_requested_at stays set), and a customer
+            // leg that shows up late is hung up because teardown stays owed (see VoiceCallReconciler).
+            $ambiguous = $e->reason === 'provider_unavailable';
+            Log::info('voice.bridge_failed', ['call' => $call->uid, 'reason' => $e->reason, 'ambiguous' => $ambiguous]);
             $this->owe($call);
             $this->teardown($call);
-            $this->fail($call, 'bridge_failed');
+            $this->fail($call, $ambiguous ? 'bridge_uncertain' : 'bridge_failed');
 
             return;
         }
@@ -225,7 +235,7 @@ final class VoiceOutboundDialer
      * @return bool true when the provider legs are confirmed gone (or none exist); false when the hangup failed
      *              and is queued for retry. The call itself is canceled for the user either way.
      */
-    public function cancel(VoiceCall $call, VoiceNumber $number, Business $business): bool
+    public function cancel(VoiceCall $call, ?VoiceNumber $number = null, ?Business $business = null): bool
     {
         $row = DB::transaction(function () use ($call): ?VoiceCall {
             $row = VoiceCall::query()->whereKey($call->id)->lockForUpdate()->first();
@@ -274,69 +284,156 @@ final class VoiceOutboundDialer
     /**
      * Hang up every provider leg we know of for this call and record the outcome. Never silent: a failure is
      * logged, counted, stored (status `failed` + a stable reason) and retried by retryPendingTeardowns().
-     * A leg the provider no longer has counts as hung up.
+     * A leg the provider no longer has counts as hung up. Credentials come only from the call's OWN number and
+     * Business; a number that is gone, or that belongs to another Business, is "number_unavailable" — never a
+     * reason to borrow another tenant's key. No lock is held while Telnyx is contacted.
      */
     public function teardown(VoiceCall $call): bool
     {
         $row = VoiceCall::query()->whereKey($call->id)->first();
 
-        if ($row === null) {
+        // Idempotent: a teardown already confirmed is not repeated. Anything that makes a hangup owed again (a late
+        // customer leg, a re-cancel, a browser-ended hint) sets the status back to pending under the row lock first.
+        if ($row === null || $row->leg_teardown_status === self::TEARDOWN_DONE) {
             return true;
         }
 
-        $legs = array_values(array_unique(array_filter([$row->provider_call_control_id, $row->customer_call_control_id])));
+        $legs = $this->legsOf($row);
         $error = null;
 
-        if ($legs === []) {
-            $this->recordTeardown($row, null);
+        if ($legs !== []) {
+            try {
+                $number = VoiceNumber::query()->whereKey((int) $row->voice_number_id)->first();
+                $business = Business::query()->find((int) $row->business_id);
 
-            return true;
-        }
-
-        $number = VoiceNumber::query()->whereKey((int) $row->voice_number_id)->first();
-        $business = Business::query()->find((int) $row->business_id);
-
-        try {
-            if ($number === null || $business === null) {
-                throw new VoiceUnavailableException('voice_unavailable', 'Voice is unavailable.');
-            }
-
-            $apiKey = $this->credentials->forNumber($number, $business)['api_key'];
-
-            foreach ($legs as $leg) {
-                try {
-                    $this->provider->hangupCall($apiKey, (string) $leg);
-                } catch (VoiceProviderException $e) {
-                    $error ??= $e->reason;
+                if ($number === null || $business === null || (int) $number->business_id !== (int) $row->business_id) {
+                    throw new VoiceUnavailableException('number_unavailable', 'The calling number for this call is no longer available.');
                 }
+
+                $apiKey = $this->credentials->forNumber($number, $business)['api_key'];
+
+                foreach ($legs as $leg) {
+                    try {
+                        $this->provider->hangupCall($apiKey, (string) $leg);
+                    } catch (VoiceProviderException $e) {
+                        $error ??= $e->reason;
+                    } catch (Throwable $e) {
+                        $error ??= 'unexpected_error';
+                    }
+                }
+            } catch (VoiceUnavailableException $e) {
+                $error = $e->reason;
+            } catch (Throwable) {
+                // Only a safe, fixed reason is stored or logged — never the exception message.
+                $error = 'unexpected_error';
             }
-        } catch (VoiceUnavailableException $e) {
-            $error = $e->reason;
         }
 
-        $this->recordTeardown($row, $error);
-
-        return $error === null;
+        return $this->recordTeardown($row->id, $legs, $error);
     }
 
-    /** Re-attempt provider hangups that failed or were never made. Bounded; returns how many succeeded. */
+    /**
+     * Re-attempt provider hangups that failed or were never made. Bounded; returns how many succeeded.
+     * Each call is its own failure boundary: one bad row, credential or exception cannot starve the others.
+     */
     public function retryPendingTeardowns(int $limit = 50): int
     {
         $done = 0;
 
-        VoiceCall::query()
+        $calls = VoiceCall::query()
             ->whereIn('leg_teardown_status', [self::TEARDOWN_PENDING, self::TEARDOWN_FAILED])
             ->where('leg_teardown_attempts', '<', self::TEARDOWN_MAX_ATTEMPTS)
             ->where('created_at', '>', now()->subDay())
             ->where(fn ($q) => $q->whereNull('leg_teardown_at')->orWhere('leg_teardown_at', '<', now()->subSeconds(self::TEARDOWN_RETRY_SECONDS)))
             ->orderBy('id')
             ->limit($limit)
-            ->get()
-            ->each(function (VoiceCall $call) use (&$done): void {
+            ->get();
+
+        foreach ($calls as $call) {
+            try {
                 $done += $this->teardown($call) ? 1 : 0;
-            });
+            } catch (Throwable $e) {
+                $this->recordUnexpectedTeardownFailure($call, $e);
+            }
+        }
 
         return $done;
+    }
+
+    /**
+     * Close outgoing calls whose bridge was abandoned or never resolved, and tear their legs down.
+     *
+     *  - claimed, never dispatched, older than ABANDONED_CLAIM_SECONDS: the transfer was provably never sent
+     *    (the dispatch stamp precedes the request), so the call is closed `bridge_abandoned`.
+     *  - dispatched, no outcome and no customer leg reported after UNRESOLVED_DISPATCH_SECONDS: the transfer's
+     *    outcome is UNCERTAIN; the call is closed `bridge_unresolved`. A second transfer is NEVER sent — recovery
+     *    only requests hangups, and a customer leg that appears later is hung up by the reconciler.
+     *
+     * A call the customer answered, one whose customer leg is known, or one the user/provider already closed is
+     * never touched, however long it has lasted.
+     */
+    public function recoverAbandonedBridges(int $limit = 50): int
+    {
+        $recovered = 0;
+
+        $candidates = VoiceCall::query()
+            ->where('direction', VoiceCall::DIRECTION_OUTBOUND)
+            ->whereIn('status', [VoiceCallStatus::Initiating->value, VoiceCallStatus::Ringing->value])
+            ->whereNull('answered_at')
+            ->whereNull('customer_call_control_id')
+            ->whereNull('cancel_requested_at')
+            ->whereNotNull('bridge_requested_at')
+            ->where(fn ($q) => $q
+                ->where(fn ($r) => $r->whereNull('bridge_dispatched_at')->where('bridge_requested_at', '<', now()->subSeconds(self::ABANDONED_CLAIM_SECONDS)))
+                ->orWhere('bridge_dispatched_at', '<', now()->subSeconds(self::UNRESOLVED_DISPATCH_SECONDS)))
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+
+        foreach ($candidates as $candidate) {
+            try {
+                $closed = DB::transaction(function () use ($candidate): ?VoiceCall {
+                    $row = VoiceCall::query()->whereKey($candidate->id)->lockForUpdate()->first();
+
+                    // Re-check everything under the lock: the world may have moved since the scan.
+                    if ($row === null || $row->statusEnum()->isFinal() || $row->statusEnum() === VoiceCallStatus::Unconfirmed
+                        || $row->answered_at !== null || $row->customer_call_control_id !== null || $row->cancel_requested_at !== null
+                        || $row->bridge_requested_at === null) {
+                        return null;
+                    }
+
+                    $dispatched = $row->bridge_dispatched_at !== null;
+                    $stale = $dispatched
+                        ? $row->bridge_dispatched_at->lt(now()->subSeconds(self::UNRESOLVED_DISPATCH_SECONDS))
+                        : $row->bridge_requested_at->lt(now()->subSeconds(self::ABANDONED_CLAIM_SECONDS));
+
+                    if (! $stale) {
+                        return null;
+                    }
+
+                    $row->forceFill([
+                        'status' => VoiceCallStatus::Failed->value,
+                        'status_rank' => VoiceCallStatus::Failed->rank(),
+                        'hangup_cause' => $dispatched ? 'bridge_unresolved' : 'bridge_abandoned',
+                        'ended_at' => now(),
+                        'duration_seconds' => 0,
+                        'leg_teardown_status' => self::TEARDOWN_PENDING,
+                    ])->save();
+
+                    return $row;
+                });
+
+                if ($closed !== null) {
+                    $recovered++;
+                    Log::warning('voice.bridge_recovered', ['call' => $closed->uid, 'cause' => $closed->hangup_cause]);
+                    $this->teardown($closed);
+                }
+            } catch (Throwable $e) {
+                Log::error('voice.bridge_recovery_failed', ['call' => $candidate->uid, 'exception' => class_basename($e)]);
+            }
+        }
+
+        return $recovered;
     }
 
     private function owe(VoiceCall $call): void
@@ -345,23 +442,97 @@ final class VoiceOutboundDialer
             ->update(['leg_teardown_status' => self::TEARDOWN_PENDING]);
     }
 
-    private function recordTeardown(VoiceCall $call, ?string $error): void
+    /** @return list<string> */
+    private function legsOf(VoiceCall $call): array
     {
-        $attempted = $error !== null || $call->provider_call_control_id !== null || $call->customer_call_control_id !== null;
+        return array_values(array_unique(array_map('strval', array_filter([$call->provider_call_control_id, $call->customer_call_control_id]))));
+    }
 
-        VoiceCall::query()->whereKey($call->id)->update([
-            'leg_teardown_status' => $error === null ? self::TEARDOWN_DONE : self::TEARDOWN_FAILED,
-            'leg_teardown_error' => $error === null ? null : Str::limit($error, 48, ''),
-            'leg_teardown_at' => now(),
-            'leg_teardown_attempts' => DB::raw('leg_teardown_attempts + ' . ($attempted ? 1 : 0)),
-        ]);
+    /**
+     * Record the outcome of one teardown pass under the row lock, against the CURRENT row. Legs that were
+     * recorded after this pass read the list (a late customer leg) keep the teardown pending, so an older
+     * successful hangup can never erase a newer obligation. Returns true only when every known leg is confirmed.
+     *
+     * @param  list<string>  $attempted
+     */
+    private function recordTeardown(int $callId, array $attempted, ?string $error): bool
+    {
+        [$confirmed, $row, $exhaustedNow] = DB::transaction(function () use ($callId, $attempted, $error): array {
+            $row = VoiceCall::query()->whereKey($callId)->lockForUpdate()->first();
 
-        if ($error !== null) {
-            $attempts = (int) $call->leg_teardown_attempts + 1;
+            if ($row === null) {
+                return [true, null, false];
+            }
 
+            $missed = array_values(array_diff($this->legsOf($row), $attempted));
+            $attempts = (int) $row->leg_teardown_attempts + ($attempted !== [] ? 1 : 0);
+            $confirmed = $error === null && $missed === [];
+            $exhaustedNow = false;
+
+            $row->leg_teardown_at = now();
+            $row->leg_teardown_attempts = min(255, $attempts);
+
+            if ($confirmed) {
+                $row->leg_teardown_status = self::TEARDOWN_DONE;
+                $row->leg_teardown_error = null;
+                $row->leg_teardown_exhausted_at = null;
+            } elseif ($error === null) {
+                $row->leg_teardown_status = self::TEARDOWN_PENDING; // a newer leg is still owed
+            } else {
+                $row->leg_teardown_status = self::TEARDOWN_FAILED;
+                $row->leg_teardown_error = Str::limit($error, 48, '');
+
+                if ($attempts >= self::TEARDOWN_MAX_ATTEMPTS && $row->leg_teardown_exhausted_at === null) {
+                    $row->leg_teardown_exhausted_at = now();
+                    $exhaustedNow = true;
+                }
+            }
+
+            $row->save();
+
+            return [$confirmed, $row, $exhaustedNow];
+        });
+
+        if ($row !== null && $error !== null) {
             Log::warning('voice.leg_teardown_failed', [
-                'call' => $call->uid, 'reason' => $error, 'attempts' => $attempts, 'will_retry' => $attempts < self::TEARDOWN_MAX_ATTEMPTS,
+                'call' => $row->uid, 'reason' => $error, 'attempts' => (int) $row->leg_teardown_attempts,
+                'will_retry' => (int) $row->leg_teardown_attempts < self::TEARDOWN_MAX_ATTEMPTS,
             ]);
+        }
+
+        if ($exhaustedNow && $row !== null) {
+            // Emitted once per call (guarded by leg_teardown_exhausted_at under the row lock). Identifiers only.
+            Log::error('voice.leg_teardown_exhausted', [
+                'call' => $row->uid,
+                'call_id' => (int) $row->id,
+                'business_id' => (int) $row->business_id,
+                'voice_number_id' => $row->voice_number_id !== null ? (int) $row->voice_number_id : null,
+                'provider_call_session_id' => $row->provider_call_session_id,
+                'provider_call_control_id' => $row->provider_call_control_id,
+                'customer_call_control_id' => $row->customer_call_control_id,
+                'last_reason' => $row->leg_teardown_error,
+                'attempts' => (int) $row->leg_teardown_attempts,
+                'provider_leg_may_remain' => true,
+            ]);
+        }
+
+        return $confirmed;
+    }
+
+    /** The per-call safety net: something outside the provider/credential handling threw. Never claims success. */
+    private function recordUnexpectedTeardownFailure(VoiceCall $call, Throwable $e): void
+    {
+        Log::error('voice.leg_teardown_unexpected', ['call' => $call->uid, 'exception' => class_basename($e)]);
+
+        try {
+            VoiceCall::query()->whereKey($call->id)->update([
+                'leg_teardown_status' => self::TEARDOWN_FAILED,
+                'leg_teardown_error' => 'unexpected_error',
+                'leg_teardown_at' => now(),
+                'leg_teardown_attempts' => DB::raw('LEAST(leg_teardown_attempts + 1, 255)'),
+            ]);
+        } catch (Throwable) {
+            // Nothing more can be recorded; the next sweep sees the unchanged row and tries again.
         }
     }
 

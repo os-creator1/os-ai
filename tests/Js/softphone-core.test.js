@@ -415,3 +415,49 @@ test('plain-language causes', () => {
   assert.equal(friendlyCause('CALL_REJECTED'), 'The call was declined.');
   assert.equal(friendlyCause('NORMAL_CLEARING'), null);
 });
+
+/* ------------------------------------------------ provider hangup confirmation (correction round 3) */
+
+const cancelledCall = async (h) => {
+  const p = h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: '+12025550111' });
+  await h.tick(); h.clients[0].handlers.ready(); await p;
+  h.sp.hangup();
+  await h.tick();
+};
+const providerWatch = async (h) => { h.timers.filter((t) => t.ms === 3000 && t.live).forEach((t) => { t.live = false; t.fn(); }); await h.tick(); };
+
+test('cancel is shown at once as waiting for the provider, then as confirmed', async () => {
+  const h = harness();
+  h.responses['calls/call-1/cancel'] = { ok: true, json: { status: 'success', provider_hangup: 'pending', message: 'Canceled. Waiting for the phone provider to confirm the call has stopped.' } };
+  await cancelledCall(h);
+  assert.equal(h.sp.getState().call.endReason.code, 'canceled');
+  assert.equal(h.sp.getState().call.providerHangup, 'pending', 'canceled for the user, not yet confirmed by the provider');
+
+  h.responses['calls/call-1'] = { ok: true, json: { call_status: 'canceled', final: true, provider_hangup: 'confirmed' } };
+  await providerWatch(h);
+  assert.equal(h.sp.getState().call.providerHangup, 'confirmed');
+});
+
+test('a cancel the provider could not confirm is reported as needing attention, not as confirmed', async () => {
+  const h = harness();
+  h.responses['calls/call-1/cancel'] = { ok: true, json: { status: 'success', provider_hangup: 'attention', message: 'Canceled, but we could not confirm.' } };
+  await cancelledCall(h);
+  assert.equal(h.sp.getState().call.providerHangup, 'attention');
+  assert.equal(h.sp.getState().call.providerNote, 'Canceled, but we could not confirm.');
+});
+
+test('a failed cancel request never claims provider confirmation', async () => {
+  const h = harness();
+  h.responses['calls/call-1/cancel'] = { ok: false, json: null };
+  await cancelledCall(h);
+  assert.equal(h.sp.getState().call.providerHangup, 'pending');
+});
+
+test('the status poll carries a persisted unconfirmed termination through a refresh', async () => {
+  const h = harness();
+  const { client, leg } = await readyClient(h);
+  h.responses['calls/call-1'] = { ok: true, json: { call_status: 'canceled', final: true, provider_hangup: 'pending', message: 'Canceled. Waiting for the phone provider to confirm the call has stopped.' } };
+  await pollOnce(h);
+  assert.equal(h.sp.getState().call.endReason.code, 'canceled');
+  assert.equal(h.sp.getState().call.providerHangup, 'pending');
+});

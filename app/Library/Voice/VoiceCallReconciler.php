@@ -83,13 +83,17 @@ final class VoiceCallReconciler
                     $route = ['kind' => 'bridge', 'call' => $call];
                 }
 
-                // The customer leg of an outgoing call: remember it, and if the user already canceled (the
-                // transfer was in flight when they did) this late leg must not be left ringing.
+                // The customer leg of an outgoing call: remember it. If this call may no longer continue — the user
+                // canceled, the browser ended, or a bridge failed/was abandoned (teardown is owed; the transfer may
+                // still have been accepted) — the late leg must not be left ringing. A leg already recorded and
+                // already torn down is not torn down again (duplicate / reordered events stay idempotent).
                 if ($call->direction === VoiceCall::DIRECTION_OUTBOUND && in_array($type, ['call.initiated', 'call.answered'], true)
                     && ! $this->isOriginatingLeg($call, $payload) && $this->str($payload, 'call_control_id') !== null) {
+                    $isNewLeg = $call->customer_call_control_id === null;
                     $call->customer_call_control_id ??= $this->str($payload, 'call_control_id');
+                    $owed = $call->cancel_requested_at !== null || $call->client_reported_ended_at !== null || $call->leg_teardown_status !== null;
 
-                    if ($call->cancel_requested_at !== null || $call->client_reported_ended_at !== null) {
+                    if ($owed && ($isNewLeg || $call->leg_teardown_status !== VoiceOutboundDialer::TEARDOWN_DONE)) {
                         $call->leg_teardown_status = VoiceOutboundDialer::TEARDOWN_PENDING;
                         $route = ['kind' => 'teardown', 'call' => $call];
                     }

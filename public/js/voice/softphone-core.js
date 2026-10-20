@@ -23,6 +23,8 @@
   var RECOVERY_WAIT_MS = 15000;
   var STATUS_POLL_MS = 1500;
   var LEG_WAIT_MS = 25000;
+  var PROVIDER_WATCH_MS = 3000;
+  var PROVIDER_WATCH_MAX = 12;
 
   function friendlyCause(cause) {
     var c = String(cause || "").toLowerCase();
@@ -260,8 +262,8 @@
         if (!c || !c.callUid || c.phase === "ended" || c.direction !== "outbound") { stopStatusPolling(); return; }
         if (pendingLeg && deps.now() > pendingLeg.expiresAt && !rtcCall) {
           pendingLeg = null;
-          deps.api.post(deps.urls.cancel(c.callUid), {});
           fail("Your browser did not pick up the call in time. Check your microphone and connection, then try again.", "leg_timeout");
+          requestCancel(c.callUid);
           stopStatusPolling();
           return;
         }
@@ -277,6 +279,34 @@
       }, STATUS_POLL_MS);
     }
 
+    // Canceling is the user's decision and is final in the panel at once; whether the PHONE PROVIDER has confirmed the
+    // call stopped is a separate, honestly reported fact: pending (waiting) -> confirmed, or attention (could not confirm).
+    function requestCancel(uid) {
+      applyProviderHangup(uid, "pending", null);
+      return Promise.resolve(deps.api.post(deps.urls.cancel(uid), {})).then(function (res) {
+        var json = res && res.json ? res.json : {};
+        applyProviderHangup(uid, res && res.ok && json.provider_hangup ? json.provider_hangup : "pending", json.message || null);
+        watchProviderHangup(uid, 0);
+      }, function () { watchProviderHangup(uid, 0); });
+    }
+
+    function applyProviderHangup(uid, status, message) {
+      var c = state.call;
+      if (!c || c.callUid !== uid || !status) { return; }
+      setCall({ providerHangup: status, providerNote: message || null });
+    }
+
+    function watchProviderHangup(uid, attempt) {
+      var c = state.call;
+      if (!c || c.callUid !== uid || c.providerHangup !== "pending" || attempt >= PROVIDER_WATCH_MAX) { return; }
+      deps.setTimeout(function () {
+        Promise.resolve(deps.api.get(deps.urls.callStatus(uid))).then(function (res) {
+          if (res && res.ok && res.json && res.json.provider_hangup) { applyProviderHangup(uid, res.json.provider_hangup, res.json.message); }
+          watchProviderHangup(uid, attempt + 1);
+        }, function () { watchProviderHangup(uid, attempt + 1); });
+      }, PROVIDER_WATCH_MS);
+    }
+
     function stopStatusPolling() { if (statusTimer) { deps.clearInterval(statusTimer); statusTimer = null; } }
 
     function applyServerOutcome(json) {
@@ -286,7 +316,7 @@
       var failed = json.call_status === "failed" || json.call_status === "busy" || json.call_status === "no_answer" || json.call_status === "declined";
       stopStatusPolling();
       if (rtcCall) { weEnded = true; try { rtcCall.hangup(); } catch (e) { /* already gone */ } }
-      setCall({ phase: "ended", endReason: { code: json.call_status, message: map[json.call_status] || "The call ended.", failed: failed }, durationSeconds: c.answeredAt ? Math.max(0, Math.round((deps.now() - c.answeredAt) / 1000)) : 0, notice: null });
+      setCall({ phase: "ended", endReason: { code: json.call_status, message: map[json.call_status] || "The call ended.", failed: failed }, durationSeconds: c.answeredAt ? Math.max(0, Math.round((deps.now() - c.answeredAt) / 1000)) : 0, notice: null, providerHangup: json.provider_hangup || null, providerNote: json.message || null });
       rtcCall = null;
     }
 
@@ -433,9 +463,9 @@
         // Cancel before our own leg is up: the server hangs up its dialled leg.
         weEnded = true;
         pendingLeg = null;
-        deps.api.post(deps.urls.cancel(c.callUid), {});
         stopStatusPolling();
         setCall({ phase: "ended", endReason: { code: "canceled", message: "Call canceled." }, durationSeconds: 0 });
+        requestCancel(c.callUid);
         return;
       }
       decline();

@@ -205,7 +205,12 @@
     els.name.textContent = call.name || call.number || "Unknown caller";
     els.number.textContent = call.name ? (call.number || "") : "";
     els.from.textContent = call.from ? (call.direction === "inbound" ? "To " : "From ") + call.from : "";
-    els.msg.textContent = call.notice || (call.endReason ? call.endReason.message : "");
+    var providerLine = call.phase !== "ended" ? "" : ({
+      pending: "Waiting for the phone provider to confirm the call has stopped.",
+      attention: "We couldn't confirm the call has stopped. If it keeps ringing, contact support.",
+      confirmed: "The phone provider confirmed the call has stopped."
+    }[call.providerHangup] || "");
+    els.msg.textContent = (call.notice || (call.endReason ? call.endReason.message : "")) + (providerLine ? " " + providerLine : "");
     els.msg.classList.toggle("is-error", !!(call.endReason && call.endReason.failed));
 
     if (call.phase === "incoming") {

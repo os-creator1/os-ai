@@ -116,9 +116,61 @@ cannot bridge twice; an overtaking `call.answered` after a cancel cannot bridge;
 under the same lock and can never overwrite a cancel or a provider outcome. A browser `ended` before the bridge also owes
 a hangup of our leg.
 
-**What is not guaranteed.** A transfer already accepted by Telnyx may briefly ring the customer before the teardown lands,
-and if Telnyx is unreachable for all retries a leg can outlive the cancel until it times out on the provider side. The
+**What is not guaranteed.** Once a transfer has been dispatched, a canceled call may still briefly ring the customer
+before the teardown lands, and if Telnyx is unreachable for all retries a leg can outlive the cancel until it times
+out on the provider side. The
 race is proven with deterministic interleaving tests (`VoiceCancelBridgeRaceTest`), not with a live Telnyx account.
+
+### Recovery, ambiguity and exhausted teardown (correction round 3)
+
+`php artisan voice:retry-teardowns` runs every minute from `App\Console\Kernel::schedule()` with a **5-minute**
+overlap lock (a killed run cannot silence recovery for a day). Each run does two things:
+
+1. **Closes abandoned bridge setups.** Only outgoing calls that never reached the customer qualify
+   (not answered, no customer leg reported, not canceled/ended):
+   * *claimed but never dispatched for 90 s* → the transfer was provably never sent (the dispatch stamp precedes the
+     request) → closed `bridge_abandoned`, our leg hung up;
+   * *dispatched, no outcome and no customer leg for 180 s* → the outcome is **uncertain** → closed `bridge_unresolved`,
+     our leg hung up. **A second transfer is never sent**; recovery only requests hangups. Provider state is not
+     queried (the V1 client has no lookup), so this is a conservative teardown, not a reconciliation.
+
+   A call the customer answered, one with a known customer leg, or one that is simply long is **never** terminated
+   by this sweep. (If a customer answered but every webhook was lost for 3 minutes, such a call would be treated as
+   unresolved — a Telnyx-dependent corner, see below.)
+2. **Retries provider hangups** (`pending`/`failed`), at most 6 attempts, 20 s apart, within 24 h. Every call is its own
+   failure boundary: an unexpected exception on one call is recorded as `unexpected_error` (a fixed reason — never the
+   exception text) and the sweep carries on. A confirmed teardown is never repeated.
+
+**Teardown state is updated under the row lock against the current row.** A hangup pass only confirms the legs it
+actually read; a customer leg recorded meanwhile keeps the teardown `pending`. No lock is held during any Telnyx request.
+
+**Ambiguous transfers.** A 4xx from Telnyx is a definitive refusal (`bridge_failed`). A timeout, transport error or 5xx
+is **ambiguous** (`bridge_uncertain`): Telnyx may have accepted the transfer. The call is closed and our leg hung up,
+the transfer is not repeated, and a customer leg that appears later (`call.initiated`/`call.answered` on a
+non-originating leg) is hung up because teardown remains owed for the call. Replayed or reordered events are no-ops.
+
+**Credentials.** Teardown uses only the call's own number and Business (managed platform key, or that Agency channel's
+key). A number that was deleted, belongs to another Business, or whose account is disconnected is `number_unavailable` /
+`telnyx_disconnected` / `voice_disabled` — never a reason to use anyone else's credentials.
+
+**What "provider termination confirmed" means.** Telnyx accepted the hangup request for every leg MotionGrove knows of
+(or reported the leg gone, or sent its own `call.hangup` for our leg). It does not prove the customer's phone has
+stopped ringing and does not cover a leg MotionGrove never learned about.
+
+**Exhausted teardown.** After the last attempt the call stays `failed` with `leg_teardown_exhausted_at` set and one
+`voice.leg_teardown_exhausted` error log (call/session/control identifiers, `provider_leg_may_remain: true`; never keys,
+tokens or SIP passwords). Cancelling again re-opens a retry.
+
+**In the app.** Canceling is final for the user at once. The panel then shows one concise line: *waiting for the phone
+provider to confirm the call has stopped* (`pending`), *the provider confirmed* (`confirmed`) or *we couldn't confirm the
+call has stopped — contact support if it keeps ringing* (`attention`: retries exhausted, or the number/connection is
+unavailable). The same `provider_hangup` value is returned by the cancel and status endpoints, so a refresh does not
+show an uncertain termination as confirmed.
+
+**Still Telnyx-dependent (unverified without a live account):** that hanging up leg A ends a bridged or ringing customer
+leg; the order Telnyx applies a `hangup` against an in-flight `transfer`; the real `call.initiated`/`call.answered`
+payload shape of the customer leg; that a hangup of an already-ended leg returns 404/422 (all 422s are treated as
+"gone"); and whether a transfer that timed out client-side was in fact executed.
 
 ## In the app
 

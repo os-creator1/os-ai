@@ -6,7 +6,7 @@ use App\Library\Voice\VoiceOutboundDialer;
 use Illuminate\Console\Command;
 
 /**
- * Browser Calling — re-attempts provider hangups that failed (or were never made) after a cancel, a failed
+ * Browser Calling — closes abandoned bridge setups (never re-transfers) and re-attempts provider hangups that failed (or were never made) after a cancel, a failed
  * bridge or a browser-ended call. Bounded and idempotent: a leg Telnyx no longer has counts as hung up.
  */
 class RetryVoiceLegTeardowns extends Command
@@ -25,6 +25,7 @@ class RetryVoiceLegTeardowns extends Command
             return self::INVALID;
         }
 
+        $this->info('Abandoned bridges closed: ' . $dialer->recoverAbandonedBridges((int) $limit));
         $this->info('Provider legs confirmed hung up: ' . $dialer->retryPendingTeardowns((int) $limit));
 
         return self::SUCCESS;

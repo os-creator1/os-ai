@@ -180,6 +180,8 @@ class VoiceController extends Controller
                 'final' => $call->statusEnum()->isFinal(),
                 'answered_elapsed_ms' => $call->answered_at !== null ? max(0, (int) ($call->answered_at->diffInMilliseconds(now(), false))) : null,
                 'cause' => $call->hangup_cause,
+                'provider_hangup' => $call->providerHangupState(),
+                'message' => $this->hangupMessage($call->providerHangupState() ?? 'confirmed'),
             ]);
         });
     }
@@ -189,14 +191,22 @@ class VoiceController extends Controller
     {
         return $this->guard($workspaceUid, $businessUid, function (User $user, Workspace $workspace, Business $business) use ($callUid) {
             $call = $this->ownCall($user, $business, $callUid);
-            $number = VoiceNumber::query()->where('business_id', (int) $business->id)->whereKey((int) $call->voice_number_id)->first();
+            // The user's intent is always recorded. Cleanup uses ONLY the call's own number and Business; if that
+            // number is gone or disconnected the hangup is reported honestly as needing attention, never "confirmed".
+            $this->dialer->cancel($call);
+            $state = $call->fresh()->providerHangupState() ?? 'confirmed';
 
-            $providerHungUp = $number === null ? true : $this->dialer->cancel($call, $number, $business);
-
-            // The call is canceled for the user either way; `provider_hangup: pending` is the honest signal that
-            // Telnyx could not be reached yet and the hangup is being retried.
-            return response()->json(['status' => 'success', 'provider_hangup' => $providerHungUp ? 'confirmed' : 'pending']);
+            return response()->json(['status' => 'success', 'provider_hangup' => $state, 'message' => $this->hangupMessage($state)]);
         });
+    }
+
+    private function hangupMessage(string $state): ?string
+    {
+        return match ($state) {
+            'pending' => 'Canceled. Waiting for the phone provider to confirm the call has stopped.',
+            'attention' => "Canceled, but we couldn't confirm the call has stopped at the phone provider. We'll keep retrying; if the line keeps ringing, contact support.",
+            default => null,
+        };
     }
 
     public function clientEvent(Request $request, string $workspaceUid, string $businessUid, string $callUid): JsonResponse
