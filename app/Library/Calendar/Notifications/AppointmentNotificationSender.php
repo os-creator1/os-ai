@@ -102,11 +102,20 @@ class AppointmentNotificationSender
     {
         $appointment = Appointment::query()->find($row->appointment_id);
 
-        if ($appointment === null || $appointment->status !== AppointmentStatus::Scheduled) {
+        $isCancellation = $row->kind === AppointmentNotification::KIND_CANCELLATION;
+
+        // A cancellation notice is the one message that is only ever sent for a cancelled appointment.
+        if ($appointment === null || $appointment->status !== ($isCancellation ? AppointmentStatus::Cancelled : AppointmentStatus::Scheduled)) {
             return [AppointmentNotification::STATUS_CANCELLED, 'appointment_not_scheduled'];
         }
 
         $isReminder = $row->kind === AppointmentNotification::KIND_REMINDER;
+
+        // A reschedule notice for a start the appointment has since left is obsolete: only the latest move is announced.
+        if ($row->kind === AppointmentNotification::KIND_RESCHEDULED
+            && ! $appointment->start_at->copy()->utc()->equalTo($row->appointment_start_at)) {
+            return [AppointmentNotification::STATUS_CANCELLED, 'rescheduled'];
+        }
 
         if ($isReminder) {
             // Bound to a start the appointment no longer has: obsolete, never sent.
@@ -125,6 +134,15 @@ class AppointmentNotificationSender
             return [AppointmentNotification::STATUS_SKIPPED, 'business_inactive'];
         }
 
+        if ($isCancellation) {
+            // Nothing to join any more: the details carry no Zoom link and no manage link.
+            $details = AppointmentNotificationDetails::for($appointment, false, true);
+
+            return $details === null
+                ? [AppointmentNotification::STATUS_SKIPPED, 'details_unavailable']
+                : $this->sendEmail($row, $details, false);
+        }
+
         // Zoom: never send a confirmation or reminder that promises a video link which does not exist (yet).
         $zoomState = ZoomLinkGate::state($appointment);
         $zoomFallback = false;
@@ -135,7 +153,7 @@ class AppointmentNotificationSender
         }
 
         if ($zoomState === ZoomLinkGate::FAILED) {
-            if ($isReminder || $row->occurrence_key !== 'confirmation') {
+            if ($isReminder || ! in_array($row->kind, [AppointmentNotification::KIND_CONFIRMATION, AppointmentNotification::KIND_RESCHEDULED], true) || ($row->kind === AppointmentNotification::KIND_CONFIRMATION && $row->occurrence_key !== 'confirmation')) {
                 return [AppointmentNotification::STATUS_SKIPPED, 'zoom_unavailable'];
             }
 
@@ -172,7 +190,7 @@ class AppointmentNotificationSender
         }
 
         Notification::route('mail', $recipient)->notify(
-            new AppointmentCustomerNotification($details, $isReminder, $this->customEmail($row, $details, $isReminder)),
+            new AppointmentCustomerNotification($details, $isReminder, $this->customEmail($row, $details, $isReminder), $row->kind),
         );
 
         return [AppointmentNotification::STATUS_SENT, null];
@@ -254,6 +272,11 @@ class AppointmentNotificationSender
     /** The Booking Type's own text for this send, or null for the built-in wording. */
     private function customEmail(AppointmentNotification $row, AppointmentNotificationDetails $d, bool $isReminder): ?array
     {
+        // Change notices use the built-in wording: the Booking Type's templates are for confirmations and reminders.
+        if (in_array($row->kind, [AppointmentNotification::KIND_RESCHEDULED, AppointmentNotification::KIND_CANCELLATION], true)) {
+            return null;
+        }
+
         $kind = $isReminder ? 'reminder' : 'confirmation';
         $template = AppointmentNotificationContent::templateFor($this->typeOf($row), $kind, 'email', $row->offset_minutes);
 

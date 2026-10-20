@@ -47,7 +47,8 @@ final readonly class AppointmentNotificationDetails
     ) {
     }
 
-    public static function for(Appointment $appointment, bool $zoomPending = false): ?self
+    /** @param  bool  $closed  A cancelled appointment: no Zoom link and no manage link may be offered as usable. */
+    public static function for(Appointment $appointment, bool $zoomPending = false, bool $closed = false): ?self
     {
         $type = BookingType::query()->find($appointment->booking_type_id);
         $location = BusinessLocation::query()->find($appointment->business_location_id);
@@ -86,9 +87,9 @@ final readonly class AppointmentNotificationDetails
             endUtc: $end,
             sequence: (int) $appointment->reschedule_count,
             brand: app(MailBrandResolver::class)->forBusiness($business),
-            manageUrl: \App\Library\Calendar\DemoBooking\DemoBookingManageLinks::urlFor($appointment),
-            joinUrl: self::joinUrlFor($appointment),
-            zoomPending: $zoomPending && $appointment->meeting_location_type === 'zoom',
+            manageUrl: $closed ? null : \App\Library\Calendar\DemoBooking\DemoBookingManageLinks::urlFor($appointment),
+            joinUrl: $closed ? null : self::joinUrlFor($appointment),
+            zoomPending: ! $closed && $zoomPending && $appointment->meeting_location_type === 'zoom',
         );
     }
 
