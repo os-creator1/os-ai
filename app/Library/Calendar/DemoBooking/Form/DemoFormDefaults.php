@@ -15,6 +15,9 @@ final class DemoFormDefaults
      */
     public const SYSTEM = ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry'];
 
+    /** Inputs mapped natively by the Contact resolver; other protected questions (e.g. Industry) still mirror to CRM fields. */
+    public const CONTACT_MAPPED = ['first_name', 'last_name', 'email', 'phone', 'business_name'];
+
     public const ALWAYS_VISIBLE = ['first_name', 'last_name', 'email', 'phone', 'business_name', 'industry'];
 
     public const ALWAYS_REQUIRED = ['first_name', 'email', 'business_name'];
