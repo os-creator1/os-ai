@@ -15,6 +15,9 @@ class AppointmentNotification extends Model
 {
     public const KIND_CONFIRMATION = 'confirmation';
     public const KIND_REMINDER = 'reminder';
+    // Guest-facing change notices for the /book-demo Booking Type (email only), one per reschedule / cancellation.
+    public const KIND_RESCHEDULED = 'rescheduled';
+    public const KIND_CANCELLATION = 'cancellation';
 
     public const CHANNEL_EMAIL = 'email';
     public const CHANNEL_SMS = 'sms';

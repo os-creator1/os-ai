@@ -101,5 +101,5 @@ is server-rendered, in the Business timezone.
 
 - The confirmation page for an honeypot hit shows the generic page with no details.
 - The demo page offers no SMS consent: demo notifications are email only.
-- Guests get no email when they cancel or reschedule (the Calendar's notifications are confirmation and reminders only); reminders follow the new time automatically.
+- After a successful reschedule or cancellation the guest gets one email (a `rescheduled` / `cancellation` row in the Calendar's notification ledger, keyed per reschedule so a replay sends nothing). It goes to the address frozen on their confirmation, is email only, and only for this Booking Type. The reschedule email carries the new time and a fresh manage link; the cancellation email carries no Zoom link and no manage link. Reminders follow the new time, or stop on cancel.
 - `DEMO_BOOKING_TYPE_UUID` is trusted deployer configuration: point it only at the internal Business's Booking Type.

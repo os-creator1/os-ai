@@ -184,6 +184,9 @@ class AppointmentNotificationScheduler
                 }
             }
         });
+
+        // One notice per reschedule: the count is part of the key, so a replayed event collides on it and sends nothing.
+        $this->noticeGuest($appointment, AppointmentNotification::KIND_RESCHEDULED, 'rescheduled:' . (int) $appointment->reschedule_count);
     }
 
     /** The appointment was cancelled: nothing still pending is ever sent. */
@@ -197,6 +200,62 @@ class AppointmentNotificationScheduler
                 'reason' => 'appointment_cancelled',
                 'updated_at' => Carbon::now('UTC'),
             ]);
+
+        $appointment = Appointment::query()->find($appointmentId);
+
+        if ($appointment !== null && $appointment->status === AppointmentStatus::Cancelled) {
+            $this->noticeGuest($appointment, AppointmentNotification::KIND_CANCELLATION, 'cancellation');
+        }
+    }
+
+    /**
+     * The /book-demo guest's change notice (email only): to the address frozen on their booking confirmation, once per
+     * occurrence key. Other Booking Types and bookings that never had a confirmation email send nothing.
+     */
+    private function noticeGuest(Appointment $appointment, string $kind, string $key): void
+    {
+        if (! \App\Library\Calendar\DemoBooking\DemoBookingManageLinks::isDemo($appointment)) {
+            return;
+        }
+
+        $confirmation = AppointmentNotification::query()
+            ->where('appointment_id', $appointment->id)
+            ->where('channel', AppointmentNotification::CHANNEL_EMAIL)
+            ->where('kind', AppointmentNotification::KIND_CONFIRMATION)
+            ->where('occurrence_key', 'confirmation')
+            ->first();
+
+        if ($confirmation === null || blank($confirmation->recipient_email)) {
+            return;
+        }
+
+        $now = Carbon::now('UTC');
+
+        $this->insertOnce([
+            'business_id' => (int) $confirmation->business_id,
+            'business_location_id' => (int) $confirmation->business_location_id,
+            'appointment_id' => (int) $appointment->id,
+            'contact_id' => $confirmation->contact_id === null ? null : (int) $confirmation->contact_id,
+            'channel' => AppointmentNotification::CHANNEL_EMAIL,
+            'recipient_email' => $confirmation->recipient_email,
+            'recipient_phone' => null,
+            'sms_consent_at' => null,
+            'kind' => $kind,
+            'occurrence_key' => $key,
+            'offset_minutes' => null,
+            'appointment_start_at' => $appointment->start_at->copy()->utc(),
+            'scheduled_for' => $now,
+        ], $now);
+
+        $row = AppointmentNotification::query()
+            ->where('appointment_id', $appointment->id)
+            ->where('channel', AppointmentNotification::CHANNEL_EMAIL)
+            ->where('occurrence_key', $key)
+            ->first();
+
+        if ($row !== null && $row->status === AppointmentNotification::STATUS_PENDING) {
+            $this->dispatch((int) $row->id);
+        }
     }
 
     /**
@@ -216,9 +275,8 @@ class AppointmentNotificationScheduler
 
         $fallbacks = AppointmentNotification::query()
             ->where('appointment_id', $appointmentId)
-            ->where('kind', AppointmentNotification::KIND_CONFIRMATION)
+            ->whereIn('kind', [AppointmentNotification::KIND_CONFIRMATION, AppointmentNotification::KIND_RESCHEDULED])
             ->where('channel', AppointmentNotification::CHANNEL_EMAIL)
-            ->where('occurrence_key', 'confirmation')
             ->where('status', AppointmentNotification::STATUS_SENT)
             ->where('reason', 'zoom_link_pending')
             ->get();
