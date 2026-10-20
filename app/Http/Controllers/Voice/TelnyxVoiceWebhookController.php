@@ -80,9 +80,11 @@ class TelnyxVoiceWebhookController extends Controller
         if ($outcome['route'] !== null) {
             $route = $outcome['route'];
 
-            app()->terminating(static fn () => $route['kind'] === 'bridge'
-                ? $dialer->bridge($route['call'])
-                : $router->route($route['call'], $route['number'], $route['control_id']));
+            app()->terminating(static fn () => match ($route['kind']) {
+                'bridge' => $dialer->bridge($route['call']),
+                'teardown' => $dialer->teardown($route['call']),
+                default => $router->route($route['call'], $route['number'], $route['control_id']),
+            });
         }
 
         return response()->json(['status' => $outcome['result']], 200);

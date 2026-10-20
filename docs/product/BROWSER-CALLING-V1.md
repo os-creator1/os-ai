@@ -86,6 +86,40 @@ originating leg. Leg A answering only triggers the bridge. Outcomes come from `c
 late and out-of-order events are idempotent (unique provider event id; status ranks only move forward; a late answer
 that predates a recorded unanswered end corrects it to completed).
 
+## Cancellation guarantees (cancel vs. bridge)
+
+Cancel and the bridge are serialized on the call row (`SELECT … FOR UPDATE`), in three committed steps:
+
+1. **Bridge claim** — refused if the call is final, `unconfirmed`, browser-ended, already claimed or **cancel-requested**.
+2. **Dispatch gate** — re-checked under the lock after re-authorization; stamps `bridge_dispatched_at` only if no cancel
+   arrived meanwhile.
+3. **Cancel** — stamps `cancel_requested_at` and closes an unanswered call as `canceled` under the same lock.
+
+So exactly one interleaving happens:
+
+| Cancel commits… | Guarantee |
+|---|---|
+| before the dispatch gate | **No transfer is ever sent** (`bridge_dispatched_at` stays empty); our leg is hung up. |
+| after the gate, transfer in flight | The transfer cannot be recalled. The user sees `canceled` immediately; the bridge re-checks after the transfer returns and hangs up; the customer leg Telnyx reports late (`call.initiated`/`call.answered` on a non-originating leg) is recorded and hung up; the hangup of every known leg is retried until done. |
+| after the call was answered | Treated as End: the leg is hung up and the provider's hangup event decides the outcome. |
+| during the provider `dial` | The leg created by the dial is hung up as soon as its id is recorded. |
+
+**Provider hangups are never silently dropped.** Every attempt is recorded on the call: `leg_teardown_status`
+(`pending` → `done` / `failed`), `leg_teardown_attempts`, `leg_teardown_error` (a stable reason, never a raw provider
+body) and a `voice.leg_teardown_failed` warning log. The cancel response carries `provider_hangup: confirmed|pending`.
+`php artisan voice:retry-teardowns` (scheduled every minute) retries `pending`/`failed` calls (at most 6 attempts, 20 s
+apart, within 24 h); a leg Telnyx no longer has (404/422) or whose own `call.hangup` we receive counts as gone.
+An exhausted teardown stays `failed` and logged for manual reconciliation.
+
+**Duplicate and late events.** A replayed provider event id is ignored; a new event id for an already-claimed answer
+cannot bridge twice; an overtaking `call.answered` after a cancel cannot bridge; the browser's `ended` hint is applied
+under the same lock and can never overwrite a cancel or a provider outcome. A browser `ended` before the bridge also owes
+a hangup of our leg.
+
+**What is not guaranteed.** A transfer already accepted by Telnyx may briefly ring the customer before the teardown lands,
+and if Telnyx is unreachable for all retries a leg can outlive the cancel until it times out on the provider side. The
+race is proven with deterministic interleaving tests (`VoiceCancelBridgeRaceTest`), not with a live Telnyx account.
+
 ## In the app
 
 * **Call** button: contact page header and conversation header. One floating panel serves both. Authorized users
@@ -110,7 +144,8 @@ that predates a recorded unanswered end corrects it to completed).
    but only a live test proves Telnyx enforces it. Until item 1 of the checklist below passes, treat the architecture as
    not proven secure.
 2. Live verification of every item in the checklist below.
-3. A cancelled call, or one the browser reported ended, can never bridge (tested); a rejected provider answer closes the
+3. A cancelled call, or one the browser reported ended, can never bridge, and a cancel racing the bridge is coordinated
+   and its provider hangup retried (see *Cancellation guarantees*; tested); a rejected provider answer closes the
    call. These are MotionGrove-side guarantees and do not replace blocker 1.
 
 ## Not verified with a real Telnyx account (live checklist)

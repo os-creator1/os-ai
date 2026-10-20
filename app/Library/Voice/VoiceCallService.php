@@ -15,6 +15,7 @@ use App\Models\VoiceNumber;
 use App\Models\Workspace;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Ramsey\Uuid\Uuid;
 
@@ -144,29 +145,38 @@ final class VoiceCallService
      */
     public function recordClientEvent(VoiceCall $call, string $event, ?string $detail = null): VoiceCall
     {
-        $current = $call->statusEnum();
+        // Decided under the row lock against the CURRENT row, so a hint can never overwrite a cancel, a provider
+        // outcome or a bridge that was recorded a moment earlier.
+        return DB::transaction(function () use ($call, $event, $detail): VoiceCall {
+            $row = VoiceCall::query()->whereKey($call->id)->lockForUpdate()->first() ?? $call;
+            $current = $row->statusEnum();
 
-        if ($current->isFinal()) {
-            return $call;
-        }
+            if ($current->isFinal()) {
+                return $row;
+            }
 
-        if ($event === 'dial_failed' && $call->bridge_requested_at === null && $current === VoiceCallStatus::Initiating) {
-            $call->forceFill([
-                'status' => VoiceCallStatus::Failed->value,
-                'status_rank' => VoiceCallStatus::Failed->rank(),
-                'hangup_cause' => 'client_' . Str::limit(preg_replace('/[^a-z0-9_]/', '', strtolower((string) $detail)) ?: 'error', 40, ''),
-                'ended_at' => now(),
-                'duration_seconds' => 0,
-            ])->save();
-        } elseif ($event === 'ended' && $current->rank() < VoiceCallStatus::Unconfirmed->rank()) {
-            $call->forceFill([
-                'status' => VoiceCallStatus::Unconfirmed->value,
-                'status_rank' => VoiceCallStatus::Unconfirmed->rank(),
-                'client_reported_ended_at' => now(),
-            ])->save();
-        }
+            if ($event === 'dial_failed' && $row->bridge_requested_at === null && $current === VoiceCallStatus::Initiating) {
+                $row->forceFill([
+                    'status' => VoiceCallStatus::Failed->value,
+                    'status_rank' => VoiceCallStatus::Failed->rank(),
+                    'hangup_cause' => 'client_' . Str::limit(preg_replace('/[^a-z0-9_]/', '', strtolower((string) $detail)) ?: 'error', 40, ''),
+                    'ended_at' => now(),
+                    'duration_seconds' => 0,
+                ])->save();
+            } elseif ($event === 'ended' && $current->rank() < VoiceCallStatus::Unconfirmed->rank()) {
+                $row->forceFill([
+                    'status' => VoiceCallStatus::Unconfirmed->value,
+                    'status_rank' => VoiceCallStatus::Unconfirmed->rank(),
+                    'client_reported_ended_at' => $row->client_reported_ended_at ?? now(),
+                    // A browser that hung up before the bridge leaves the server-placed leg to us: it is owed a
+                    // hangup (retried by voice:retry-teardowns). After the bridge the browser's own hangup ended it.
+                    'leg_teardown_status' => $row->bridge_requested_at === null && $row->provider_call_control_id !== null && $row->leg_teardown_status !== 'done'
+                        ? 'pending' : $row->leg_teardown_status,
+                ])->save();
+            }
 
-        return $call;
+            return $row;
+        });
     }
 
     public function saveNote(VoiceCall $call, ?string $note): VoiceCall

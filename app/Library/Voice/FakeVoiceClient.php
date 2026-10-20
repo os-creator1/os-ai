@@ -22,6 +22,12 @@ final class FakeVoiceClient implements VoiceProviderClient
 
     public ?VoiceProviderException $failNext = null;
 
+    /** @var list<VoiceProviderException|null> consumed one per hangupCall; null = succeed */
+    public array $hangupOutcomes = [];
+
+    /** @var array<string, \Closure> one-shot hooks run at the START of a provider call, to interleave another actor deterministically */
+    public array $beforeCall = [];
+
     /**
      * Browser-verification mode (TELNYX_VOICE_DRIVER=fake): every unknown connection/application/number is
      * reported healthy and locked, and call ids are random, so a real app server can run against it. Never
@@ -83,6 +89,7 @@ final class FakeVoiceClient implements VoiceProviderClient
 
     public function dial(string $apiKey, string $appId, string $to, string $from, string $clientState, int $timeoutSeconds): array
     {
+        $this->interleave('dial');
         $this->record('dial', compact('apiKey', 'appId', 'to', 'from', 'clientState', 'timeoutSeconds'));
         $this->maybeFail();
         $this->sequence++;
@@ -93,11 +100,19 @@ final class FakeVoiceClient implements VoiceProviderClient
 
     public function hangupCall(string $apiKey, string $callControlId): void
     {
+        $this->interleave('hangupCall');
         $this->record('hangupCall', compact('apiKey', 'callControlId'));
+
+        $outcome = array_shift($this->hangupOutcomes);
+
+        if ($outcome !== null) {
+            throw $outcome;
+        }
     }
 
     public function transferToSip(string $apiKey, string $callControlId, string $sipUri, string $from): void
     {
+        $this->interleave('transferToSip');
         $this->record('transferToSip', compact('apiKey', 'callControlId', 'sipUri', 'from'));
         $this->maybeFail();
     }
@@ -112,6 +127,15 @@ final class FakeVoiceClient implements VoiceProviderClient
     public function callsTo(string $method): array
     {
         return array_values(array_map(fn ($c) => $c[1], array_filter($this->calls, fn ($c) => $c[0] === $method)));
+    }
+
+    private function interleave(string $method): void
+    {
+        if (isset($this->beforeCall[$method])) {
+            $hook = $this->beforeCall[$method];
+            unset($this->beforeCall[$method]);
+            $hook();
+        }
     }
 
     private function record(string $method, array $args): void

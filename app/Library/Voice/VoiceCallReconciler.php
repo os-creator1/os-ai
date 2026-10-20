@@ -79,8 +79,22 @@ final class VoiceCallReconciler
 
                 // Our own browser leg of an outgoing call was just answered: bridge it (once, re-authorized).
                 if ($type === 'call.answered' && $this->isOriginatingLeg($call, $payload) && $call->direction === VoiceCall::DIRECTION_OUTBOUND
-                    && ! $call->statusEnum()->isFinal()) {
+                    && ! $call->statusEnum()->isFinal() && $call->cancel_requested_at === null) {
                     $route = ['kind' => 'bridge', 'call' => $call];
+                }
+
+                // The customer leg of an outgoing call: remember it, and if the user already canceled (the
+                // transfer was in flight when they did) this late leg must not be left ringing.
+                if ($call->direction === VoiceCall::DIRECTION_OUTBOUND && in_array($type, ['call.initiated', 'call.answered'], true)
+                    && ! $this->isOriginatingLeg($call, $payload) && $this->str($payload, 'call_control_id') !== null) {
+                    $call->customer_call_control_id ??= $this->str($payload, 'call_control_id');
+
+                    if ($call->cancel_requested_at !== null || $call->client_reported_ended_at !== null) {
+                        $call->leg_teardown_status = VoiceOutboundDialer::TEARDOWN_PENDING;
+                        $route = ['kind' => 'teardown', 'call' => $call];
+                    }
+
+                    $call->save();
                 }
 
                 if ($created && $call->direction === VoiceCall::DIRECTION_INBOUND && $type === 'call.initiated'
@@ -243,6 +257,12 @@ final class VoiceCallReconciler
         }
 
         // call.hangup
+        // The provider itself confirms our leg is gone: any teardown we still owed for it is settled.
+        if ($this->isOriginatingLeg($call, $payload) && in_array($call->leg_teardown_status, [VoiceOutboundDialer::TEARDOWN_PENDING, VoiceOutboundDialer::TEARDOWN_FAILED], true)
+            && $call->customer_call_control_id === null) {
+            $call->forceFill(['leg_teardown_status' => VoiceOutboundDialer::TEARDOWN_DONE, 'leg_teardown_error' => null])->save();
+        }
+
         if ($current->isFinal() && $current !== VoiceCallStatus::Unconfirmed) {
             return false;
         }

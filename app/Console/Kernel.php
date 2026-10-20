@@ -100,6 +100,8 @@
             // Platform Owner account deletion: retry provider cancellations and
             // other prerequisites of unfinished closures. Idempotent and claim-guarded.
             $schedule->command('platform:advance-account-closures')->everyTenMinutes()->withoutOverlapping();
+            // Browser Calling: retry provider hangups owed after a cancel / failed bridge. Idempotent and bounded.
+            $schedule->command('voice:retry-teardowns')->everyMinute()->withoutOverlapping();
             // Customer Experience Slice 3 §4.2 — retention/disposal for the
             // bounded webhook rejection audit.
             $schedule->command('messaging:purge-webhook-rejections')->daily();

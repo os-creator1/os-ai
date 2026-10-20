@@ -191,11 +191,11 @@ class VoiceController extends Controller
             $call = $this->ownCall($user, $business, $callUid);
             $number = VoiceNumber::query()->where('business_id', (int) $business->id)->whereKey((int) $call->voice_number_id)->first();
 
-            if ($number !== null) {
-                $this->dialer->cancel($call, $number, $business);
-            }
+            $providerHungUp = $number === null ? true : $this->dialer->cancel($call, $number, $business);
 
-            return response()->json(['status' => 'success']);
+            // The call is canceled for the user either way; `provider_hangup: pending` is the honest signal that
+            // Telnyx could not be reached yet and the hangup is being retried.
+            return response()->json(['status' => 'success', 'provider_hangup' => $providerHungUp ? 'confirmed' : 'pending']);
         });
     }
 
