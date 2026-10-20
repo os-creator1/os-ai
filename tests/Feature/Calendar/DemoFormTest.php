@@ -341,10 +341,11 @@ class DemoFormTest extends TestCase
         $this->assertNotSame(200, $this->post(route('admin.platform-owner.demo-form.publish'), $publish)->getStatusCode());
         $this->assertDatabaseCount('demo_form_versions', 0);
 
-        // A platform administrator without the backend permission is refused (403) and writes nothing.
+        // A platform administrator without the backend permission is stopped by the admin route group's
+        // 'can:access backend' gate, which this application answers with HTTP 401, and writes nothing.
         $this->actingAsPlatformOwner(['view business']);
-        $this->get(route('admin.platform-owner.demo-form'))->assertForbidden();
-        $this->post(route('admin.platform-owner.demo-form.publish'), $publish)->assertForbidden();
+        $this->get(route('admin.platform-owner.demo-form'))->assertUnauthorized();
+        $this->post(route('admin.platform-owner.demo-form.publish'), $publish)->assertUnauthorized();
         $this->assertDatabaseCount('demo_form_versions', 0);
 
         $this->actingAsPlatformOwner();
