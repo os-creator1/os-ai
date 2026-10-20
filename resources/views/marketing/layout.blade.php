@@ -27,7 +27,7 @@
     <link rel="stylesheet" href="{{ $mg->asset('css/marketing.css') }}">
     <script>document.documentElement.className += ' js';</script>
     <script type="application/ld+json">{!! json_encode(array_filter([
-        '@context' => 'https://schema.org',
+        "\x40context" => 'https://schema.org',
         '@type' => 'Organization',
         'name' => $mg->brandName(),
         'url' => $mg->url('home'),
@@ -36,7 +36,7 @@
     ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) !!}</script>
     @if (! empty($faqs))
         <script type="application/ld+json">{!! json_encode([
-            '@context' => 'https://schema.org',
+            "\x40context" => 'https://schema.org',
             '@type' => 'FAQPage',
             'mainEntity' => array_map(fn ($f) => [
                 '@type' => 'Question',

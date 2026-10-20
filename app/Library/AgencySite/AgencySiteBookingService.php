@@ -37,7 +37,14 @@ final class AgencySiteBookingService
 
     public function calendarEntitled(Workspace $agency): bool
     {
-        return $this->entitlements->decideForWorkspace($agency, PlatformFeature::Calendar->value)->allowed;
+        $business = $this->business($agency);
+
+        if ($business === null) {
+            return false;
+        }
+
+        // The same question the calendar module itself asks before it opens a booking type.
+        return $this->entitlements->decide($agency, $business, PlatformFeature::Calendar->value, (int) $agency->owner_user_id)->allowed;
     }
 
     /** @return list<array{uuid: string, name: string, duration: int, location: string, active: bool, ready: bool, reason: ?string}> */
@@ -129,8 +136,12 @@ final class AgencySiteBookingService
     {
         $business = $this->business($agency);
 
-        if ($business === null || (int) $agency->owner_user_id !== $actorUserId) {
-            throw ValidationException::withMessages(['name' => 'Only the agency owner can create a booking type.']);
+        if ((int) $agency->owner_user_id !== $actorUserId) {
+            throw \App\Exceptions\Branding\AgencyWhiteLabelException::because(\App\Exceptions\Branding\AgencyWhiteLabelException::NOT_OWNER);
+        }
+
+        if ($business === null) {
+            throw ValidationException::withMessages(['name' => 'Your agency has no business set up yet, so there is no calendar to book into.']);
         }
 
         if (! $this->calendarEntitled($agency)) {

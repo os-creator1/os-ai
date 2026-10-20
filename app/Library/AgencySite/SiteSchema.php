@@ -182,7 +182,7 @@ final class SiteSchema
             'faq' => ['step' => 2, 'page' => 'home', 'label' => 'FAQ', 'fields' => [
                 self::text('copy.home.faq.eyebrow', 'Small label', 30),
                 self::text('copy.home.faq.title', 'Heading', 100),
-                self::rows('faqs.home', 'Questions and answers (add, edit, remove, reorder)', [['q', 'Question'], ['a', 'Answer']], 20, 'assoc', 800),
+                self::rows('faqs.home', 'Questions and answers (add, edit, remove, reorder)', [['q', 'Question'], ['a', 'Answer']], 20, 'assoc', 800) + ['clearable' => true],
             ]],
             'final_cta' => ['step' => 2, 'page' => 'home', 'label' => 'Final call to action', 'fields' => [
                 self::text('copy.home.final.title', 'Headline', 140),
@@ -246,7 +246,7 @@ final class SiteSchema
                 self::area('page_copy.pricing.lead', 'Introduction', 300),
                 self::text('page_copy.pricing.compare.title', 'Comparison table heading', 60),
                 self::text('page_copy.pricing.billing_faq', 'Billing questions heading', 60),
-                self::rows('faqs.pricing', 'Pricing FAQ', [['q', 'Question'], ['a', 'Answer']], 12, 'assoc', 800),
+                self::rows('faqs.pricing', 'Pricing FAQ', [['q', 'Question'], ['a', 'Answer']], 12, 'assoc', 800) + ['clearable' => true],
             ]],
             // ---------------------------------------------------------------- Screen 10
             'seo' => ['step' => 10, 'page' => 'home', 'label' => 'SEO & sharing', 'fields' => [

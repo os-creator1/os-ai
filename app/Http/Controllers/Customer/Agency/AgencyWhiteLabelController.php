@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Customer\Agency;
 use App\Exceptions\Branding\AgencyWhiteLabelException;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Customer\Agency\Concerns\AuthorizesAgencyWorkspace;
+use App\Library\AgencySite\AgencySiteManager;
+use App\Library\AgencySite\SiteEditorPresenter;
 use App\Library\Branding\AgencyAppDomainService;
 use App\Library\Branding\AgencyWhiteLabelManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
@@ -33,11 +36,15 @@ use Illuminate\Support\Facades\Auth;
  */
 class AgencyWhiteLabelController extends Controller
 {
+    use AuthorizesAgencyWorkspace;
+
     public function __construct(
         private readonly WorkspaceRepository $workspaces,
         private readonly AgencyClientRelationshipManager $relationships,
         private readonly AgencyWhiteLabelManager $whiteLabel,
         private readonly AgencyAppDomainService $appDomains,
+        private readonly AgencySiteManager $sites,
+        private readonly SiteEditorPresenter $editorPresenter,
     ) {
     }
 
@@ -45,9 +52,23 @@ class AgencyWhiteLabelController extends Controller
     {
         $agency = $this->authorizedAgency($workspaceUid);
         $setting = $this->whiteLabel->find($agency);
+        $tab = $request->query('tab') === 'landing' ? 'landing' : 'branding';
+        $editor = null;
+
+        if ($tab === 'landing') {
+            // The starter website is created on first use, by the owner only; everyone else just reads what exists.
+            $site = $this->sites->find($agency);
+
+            if ($site === null && $this->isOwner($agency) && $this->whiteLabel->isEntitled($agency)) {
+                $site = $this->sites->ensure((int) Auth::id(), $agency);
+            }
+
+            $editor = $site !== null ? $this->editorPresenter->present($agency, $site) : null;
+        }
 
         return view('customer.agency.white-label.show', [
-            'tab' => $request->query('tab') === 'landing' ? 'landing' : 'branding',
+            'tab' => $tab,
+            'editor' => $editor,
             'domainInstructions' => $setting?->app_domain !== null ? $this->appDomains->dnsInstructions($setting) : null,
             'landing' => $this->landingStatus($agency, $setting),
             'agencyWorkspace' => $agency,
@@ -190,28 +211,6 @@ class AgencyWhiteLabelController extends Controller
             'brandSaved' => $setting !== null,
             'domainVerified' => $setting?->app_domain_status === AgencyAppDomainService::STATUS_VERIFIED,
         ];
-    }
-
-    /**
-     * A real Agency Workspace the actor holds Agency authority over, that is
-     * currently an eligible Agency. 404 for every failure, the same
-     * non-disclosure the Clients and SaaS surfaces use.
-     */
-    private function authorizedAgency(string $workspaceUid): Workspace
-    {
-        $agency = $this->workspaces->findByUid($workspaceUid) ?? abort(404);
-
-        if (! $this->relationships->actorHasAgencyAuthority((int) Auth::id(), $agency)) {
-            abort(404);
-        }
-
-        try {
-            $this->relationships->assertAgencyWorkspaceHasManagementEligibility($agency);
-        } catch (AgencyWorkspaceNotEligibleException) {
-            abort(404);
-        }
-
-        return $agency;
     }
 
     private function isOwner(Workspace $agency): bool

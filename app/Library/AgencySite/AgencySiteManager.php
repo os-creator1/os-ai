@@ -91,7 +91,7 @@ final class AgencySiteManager
             $values = self::values($site);
 
             foreach ($clean as $path => $value) {
-                if ($value === null || $value === [] && $this->resetsOnEmpty($path)) {
+                if ($value === null || ($value === [] && $this->resetsOnEmpty($path))) {
                     unset($values[$path]);
                 } else {
                     $values[$path] = $value;
@@ -148,6 +148,10 @@ final class AgencySiteManager
     private function resetsOnEmpty(string $path): bool
     {
         // An empty list for a copy field means "back to the default"; for these, empty is a real answer.
+        if ((SiteSchema::fieldIndex()[$path]['clearable'] ?? false) === true) {
+            return false;
+        }
+
         return ! in_array($path, ['x.home_hidden', 'x.home_shown', 'x.product_hidden', 'x.pages_hidden', 'x.home_order', 'x.product_order', 'x.plans', 'x.testimonials'], true);
     }
 

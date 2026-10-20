@@ -94,6 +94,12 @@ final class SiteContentBuilder
             Arr::set($tree, $path, $this->shaped($tree, $path, $value));
         }
 
+        // The "why one platform" table compares software; a row about help from people is a promise only the Agency can make.
+        $tree['copy']['home']['comparison']['rows'] = array_values(array_filter(
+            (array) Arr::get($tree, 'copy.home.comparison.rows', []),
+            fn ($row) => ! in_array($row[0] ?? '', ['Setup & help'], true),
+        ));
+
         $tree['industries'] = $this->industriesWithJobs($tree['industries'] ?? []);
 
         // x.* — settings of the Agency site itself, kept apart from the copy.
@@ -240,6 +246,10 @@ final class SiteContentBuilder
 
         if (! $hasStories) {
             $hidden[] = 'videos';
+        }
+
+        if (array_key_exists('faqs.home', $answers) && $answers['faqs.home'] === []) {
+            $hidden[] = 'faq';
         }
 
         // A pricing section or comparison table with no plan in it is not a section.

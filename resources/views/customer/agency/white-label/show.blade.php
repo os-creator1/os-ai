@@ -49,7 +49,9 @@
             </x-card>
         @endif
 
-        @if ($tab === 'landing')
+        @if ($tab === 'landing' && $editor !== null)
+            @include('customer.agency.white-label._landing', ['editor' => $editor, 'canEdit' => $canEdit])
+        @elseif ($tab === 'landing')
             <x-card title="Landing page status" class="mb-2" data-role="landing-status">
                 <p class="mb-2">
                     <x-badge variant="neutral">Not published</x-badge>

@@ -1045,6 +1045,18 @@
         Route::delete('{workspaceUid}/agency/white-label/domain', 'Agency\AgencyWhiteLabelController@removeDomain')
             ->middleware('throttle:20,1')->name('agency.white-label.domain.remove');
 
+        // White Label -> Landing Page editor (draft preview + JSON saves). Its own family, listed beside
+        // `agency.white-label.` in ViewAsProhibitedActions.
+        Route::prefix('{workspaceUid}/agency/site')->name('agency.site.')->group(function () {
+            Route::get('preview/{page?}', 'Agency\AgencySiteController@preview')->name('preview');
+            Route::post('save', 'Agency\AgencySiteController@save')->middleware('throttle:120,1')->name('save');
+            Route::post('step', 'Agency\AgencySiteController@step')->middleware('throttle:120,1')->name('step');
+            Route::post('reset-group', 'Agency\AgencySiteController@resetGroup')->middleware('throttle:60,1')->name('reset-group');
+            Route::post('booking-type', 'Agency\AgencySiteController@createBookingType')->middleware('throttle:20,1')->name('booking-type');
+            Route::post('publish', 'Agency\AgencySiteController@publish')->middleware('throttle:20,1')->name('publish');
+            Route::post('unpublish', 'Agency\AgencySiteController@unpublish')->middleware('throttle:20,1')->name('unpublish');
+        });
+
         /*
         |----------------------------------------------------------------------
         | Lane C §C6/§C8 — the CLIENT's own agency-billing surface.
