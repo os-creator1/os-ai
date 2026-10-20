@@ -16,6 +16,10 @@ class BrandingPresenter
 {
     public const CACHE_KEY = 'platform_branding:resolved';
 
+    /** The bundled default light logo, and the white-lettering MotionGrove logo that pairs with it. */
+    public const DEFAULT_LIGHT_LOGO = 'images/branding/default-logo.svg';
+    public const DEFAULT_DARK_LOGO = 'images/branding/motiongrove-logo-for-dark-backgrounds-fits-800x200.png';
+
     /**
      * Customer Experience Slice 2 (contract §9.1): the authentication
      * surface has NO bundled illustration fallback any more. When the
@@ -51,6 +55,12 @@ class BrandingPresenter
 
         if (! empty($exact)) {
             return ['src' => $exact, 'alt' => $alt, 'isFallback' => false];
+        }
+
+        // The bundled default brand gets its bundled dark logo. An owner-configured light logo
+        // never does: another brand must not be replaced with the default one, so it is kept as is.
+        if ($background === 'dark' && $variant !== 'compact' && ($config['logo'] ?? null) === self::DEFAULT_LIGHT_LOGO) {
+            return ['src' => self::DEFAULT_DARK_LOGO, 'alt' => $alt, 'isFallback' => false];
         }
 
         if (! empty($config['logo'])) {

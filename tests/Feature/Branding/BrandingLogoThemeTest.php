@@ -31,9 +31,15 @@ class BrandingLogoThemeTest extends TestCase
         return Blade::render('<x-branding-logo ' . $attrs . ' class="w-100" />');
     }
 
+    private function set(?string $light, ?string $dark): void
+    {
+        Cache::forget(BrandingPresenter::CACHE_KEY);
+        config(['app.logo' => $light, 'app.logo_dark' => $dark, 'app.logo_compact' => null]);
+    }
+
     public function test_the_bundled_dark_logo_is_the_supplied_asset_with_its_transparency_and_proportions(): void
     {
-        $path = public_path(config('app.logo_dark'));
+        $path = public_path(BrandingPresenter::DEFAULT_DARK_LOGO);
 
         $this->assertFileExists($path);
         [$w, $h] = getimagesize($path);
@@ -41,39 +47,62 @@ class BrandingLogoThemeTest extends TestCase
         $this->assertSame(6, ord(file_get_contents($path, false, null, 25, 1)), 'RGBA, so the transparent background is preserved');
     }
 
-    public function test_adaptive_shell_logo_renders_light_then_dark_images(): void
+    public function test_default_branding_pairs_the_default_light_logo_with_the_bundled_dark_logo(): void
     {
-        config(['app.logo' => 'images/branding/light.png', 'app.logo_dark' => 'images/branding/dark.png']);
+        $this->set(BrandingPresenter::DEFAULT_LIGHT_LOGO, null);
 
         $html = $this->logo('variant="full" background="light" adaptive');
 
         $this->assertSame(2, substr_count($html, '<img'));
-        $this->assertMatchesRegularExpression('#<img src="[^"]*light\.png"[^>]*class="[^"]*mg-logo-light#', $html);
-        $this->assertMatchesRegularExpression('#<img src="[^"]*dark\.png" alt="" aria-hidden="true"[^>]*class="[^"]*mg-logo-dark#', $html);
+        $this->assertMatchesRegularExpression('#<img src="[^"]*default-logo\.svg"[^>]*class="[^"]*mg-logo-light#', $html);
+        $this->assertMatchesRegularExpression('#<img src="[^"]*motiongrove-logo-for-dark-backgrounds-fits-800x200\.png" alt="" aria-hidden="true"[^>]*class="[^"]*mg-logo-dark#', $html);
         $this->assertStringContainsString('w-100', $html, 'existing sizing classes reach both images');
     }
 
-    public function test_a_non_adaptive_logo_is_unchanged(): void
+    public function test_a_custom_light_logo_without_a_dark_one_is_kept_in_both_themes_and_never_replaced(): void
     {
-        config(['app.logo' => 'images/branding/light.png', 'app.logo_dark' => 'images/branding/dark.png']);
+        $this->set('images/logo/owner-brand.png', null);
 
-        foreach (['variant="full" background="light"', 'variant="full" background="dark"', 'variant="compact" background="light" adaptive'] as $attrs) {
-            $this->assertSame(1, substr_count($this->logo($attrs), '<img'), $attrs);
-        }
-        $this->assertStringNotContainsString('mg-logo-', $this->logo('variant="full" background="light"'));
+        $html = $this->logo('variant="full" background="light" adaptive');
+
+        $this->assertSame(1, substr_count($html, '<img'), 'one image, so both themes show the owner logo');
+        $this->assertStringContainsString('owner-brand.png', $html);
+        $this->assertStringNotContainsString('motiongrove-logo', $html);
+        $this->assertStringNotContainsString('mg-logo-', $html);
+
+        $presenter = new BrandingPresenter();
+        $this->assertSame('images/logo/owner-brand.png', $presenter->logo('full', 'dark')['src']);
     }
 
-    public function test_without_a_distinct_dark_logo_the_single_light_logo_is_kept(): void
+    public function test_custom_light_and_dark_logos_are_each_used_for_their_theme(): void
     {
-        foreach ([null, '', 'images/branding/light.png'] as $dark) {
-            Cache::forget(BrandingPresenter::CACHE_KEY);
-            config(['app.logo' => 'images/branding/light.png', 'app.logo_dark' => $dark]);
+        $this->set('images/logo/owner-light.png', 'images/logo/owner-dark.png');
 
-            $html = $this->logo('variant="full" background="light" adaptive');
+        $html = $this->logo('variant="full" background="light" adaptive');
 
-            $this->assertSame(1, substr_count($html, '<img'), var_export($dark, true));
-            $this->assertStringNotContainsString('mg-logo-', $html);
+        $this->assertSame(2, substr_count($html, '<img'));
+        $this->assertMatchesRegularExpression('#<img src="[^"]*owner-light\.png"[^>]*class="[^"]*mg-logo-light#', $html);
+        $this->assertMatchesRegularExpression('#<img src="[^"]*owner-dark\.png"[^>]*class="[^"]*mg-logo-dark#', $html);
+        $this->assertStringNotContainsString('motiongrove-logo', $html);
+    }
+
+    public function test_an_owner_dark_logo_beats_the_bundled_one_even_on_the_default_light_logo(): void
+    {
+        $this->set(BrandingPresenter::DEFAULT_LIGHT_LOGO, 'images/logo/owner-dark.png');
+
+        $this->assertSame('images/logo/owner-dark.png', (new BrandingPresenter())->logo('full', 'dark')['src']);
+    }
+
+    public function test_compact_and_non_adaptive_logos_are_unchanged(): void
+    {
+        $this->set(BrandingPresenter::DEFAULT_LIGHT_LOGO, null);
+
+        foreach (['variant="full" background="light"', 'variant="compact" background="light" adaptive'] as $attrs) {
+            $html = $this->logo($attrs);
+            $this->assertSame(1, substr_count($html, '<img'), $attrs);
+            $this->assertStringNotContainsString('mg-logo-', $html, $attrs);
         }
+        $this->assertSame('images/branding/default-logo.svg', (new BrandingPresenter())->logo('compact', 'dark')['src']);
     }
 
     public function test_the_theme_css_keys_off_the_appearance_class_only(): void
