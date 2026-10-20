@@ -66,6 +66,6 @@ class DemoFormRepository
     {
         $base = ['placeholder' => '', 'help' => '', 'required' => false, 'visible' => true, 'half' => false, 'show_optional' => false, 'options' => [], 'system' => false];
 
-        return array_map(static fn (array $f): array => $f + $base, $fields);
+        return DemoFormSchema::enforceProtected(array_map(static fn (array $f): array => $f + $base, $fields));
     }
 }

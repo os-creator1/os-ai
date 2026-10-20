@@ -82,14 +82,10 @@ final class DemoFormSchema
                 'options' => [],
                 'system' => $system,
             ];
-            if (in_array($key, DemoFormDefaults::LOCKED, true)) {
-                $field['required'] = true;
-                $field['visible'] = true;
-            }
             if (in_array($type, self::CHOICE_TYPES, true)) {
                 $field['options'] = self::options($raw['options'] ?? [], $label, $errors);
             }
-            $fields[] = $field;
+            $fields[] = self::protect($field);
         }
 
         foreach (DemoFormDefaults::SYSTEM as $required) {
@@ -102,6 +98,62 @@ final class DemoFormSchema
         }
 
         return ['fields' => $fields, 'errors' => array_values(array_unique($errors))];
+    }
+
+    /** Forces the always-visible and always-required rules onto one field. @param array<string, mixed> $field @return array<string, mixed> */
+    public static function protect(array $field): array
+    {
+        if (in_array($field['key'], DemoFormDefaults::ALWAYS_VISIBLE, true)) {
+            $field['visible'] = true;
+        }
+        if (in_array($field['key'], DemoFormDefaults::ALWAYS_REQUIRED, true)) {
+            $field['required'] = true;
+        }
+
+        return $field;
+    }
+
+    /**
+     * Makes any stored definition honour the protections, including versions saved before a protection existed:
+     * a missing system field is re-added in its design position, and type and visibility are forced.
+     *
+     * @param  array<int, array<string, mixed>>  $fields
+     * @return array<int, array<string, mixed>>
+     */
+    public static function enforceProtected(array $fields): array
+    {
+        $fields = array_values($fields);
+        $defaults = DemoFormDefaults::fields();
+        $have = array_column($fields, null, 'key');
+
+        foreach ($defaults as $i => $default) {
+            if (! $default['system']) {
+                continue;
+            }
+            if (! isset($have[$default['key']])) {
+                // Insert after the nearest earlier design field that is present, else at the top.
+                $at = 0;
+                for ($j = $i - 1; $j >= 0; $j--) {
+                    $found = array_search($defaults[$j]['key'], array_column($fields, 'key'), true);
+                    if ($found !== false) {
+                        $at = $found + 1;
+                        break;
+                    }
+                }
+                array_splice($fields, $at, 0, [$default]);
+            }
+        }
+
+        foreach ($fields as $i => $field) {
+            $default = array_values(array_filter($defaults, static fn (array $d): bool => $d['key'] === $field['key'] && $d['system']))[0] ?? null;
+            if ($default !== null) {
+                $field['type'] = $default['type'];
+                $field['system'] = true;
+            }
+            $fields[$i] = self::protect($field);
+        }
+
+        return $fields;
     }
 
     /** @return array<int, array{value: string, label: string}> */
