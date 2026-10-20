@@ -86,10 +86,38 @@ class MailBrandResolver
                 return MailBrand::platform();
             }
 
-            return MailBrand::agency((string) $setting->display_name, $setting->accent_color, self::agencyLogoUrl($setting->logo_path));
+            return MailBrand::agency((string) $setting->display_name, $setting->accent_color, self::agencyLogoUrl($setting->logo_path), $setting->support_email, $setting->support_url);
         } catch (Throwable) {
             return MailBrand::platform();
         }
+    }
+
+    /**
+     * The brand for mail addressed to a PERSON about their own account (password reset, email verification): the
+     * white-label brand of the Agency that manages a workspace this person OWNS, else the platform's. Keyed on the
+     * account being mailed, never on the request or the signed-in user, so one Agency's brand cannot reach another
+     * Agency's customers or a direct platform customer.
+     */
+    public function forUser(?object $user): MailBrand
+    {
+        $userId = (int) ($user->id ?? 0);
+
+        if ($userId <= 0) {
+            return MailBrand::platform();
+        }
+
+        try {
+            $agencyId = \App\Models\AgencyClientWorkspaceRelationship::query()
+                ->whereIn('client_workspace_id', Workspace::query()->where('owner_user_id', $userId)->select('id'))
+                ->where('status', \App\Enums\Workspace\AgencyClientRelationshipStatus::Active->value)
+                ->whereNull('terminated_at')
+                ->orderBy('id')
+                ->value('agency_workspace_id');
+        } catch (Throwable) {
+            $agencyId = null;
+        }
+
+        return $this->forAgencyWorkspace($agencyId === null ? null : (int) $agencyId);
     }
 
     private static function agencyLogoUrl(?string $path): ?string

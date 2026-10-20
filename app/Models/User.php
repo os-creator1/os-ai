@@ -54,6 +54,17 @@
         use HasApiTokens, Notifiable, TrackJobs;
 
 
+        /** White label: reset / verification mail goes out in the managing Agency's brand when there is one. */
+        public function sendPasswordResetNotification($token): void
+        {
+            $this->notify(new \App\Notifications\Auth\BrandedResetPassword($token));
+        }
+
+        public function sendEmailVerificationNotification(): void
+        {
+            $this->notify(new \App\Notifications\Auth\BrandedVerifyEmail());
+        }
+
         public const IMPORT_TEMP_DIR = 'app/tmp/import/';
         public const EXPORT_TEMP_DIR = 'app/tmp/export/';
 
