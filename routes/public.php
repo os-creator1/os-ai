@@ -175,6 +175,8 @@
     */
     Route::get('w/{publicId}', 'Public\AgencySiteController@home')->whereUuid('publicId')->name('agency.site.home');
     Route::get('w/{publicId}/css/marketing.css', 'Public\AgencySiteController@css')->whereUuid('publicId')->name('agency.site.css');
+    Route::get('w/{publicId}/login', 'Public\AgencySiteLoginController@show')
+        ->whereUuid('publicId')->middleware('throttle:60,1')->name('agency.site.login');
     Route::get('w/{publicId}/signup/{planUid}', 'Public\AgencySiteSignupController@show')
         ->whereUuid('publicId')->whereUuid('planUid')->name('agency.site.signup');
     Route::post('w/{publicId}/signup/{planUid}', 'Public\AgencySiteSignupController@store')

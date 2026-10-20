@@ -68,7 +68,7 @@ final class SiteContextFactory
             pricingMode: in_array($mode, ['both', 'subscriptions', 'book_call'], true) ? $mode : 'both',
             pageUrl: $pageUrl,
             signupUrl: fn (string $planUid) => route('agency.site.signup', [$publicId, $planUid]),
-            loginUrl: route('login'),
+            loginUrl: $preview ? route('login') : route('agency.site.login', $publicId),
             cssUrl: route('agency.site.css', $publicId).'?v='.substr(md5($primary.($brand?->secondary_color ?? '')), 0, 8),
             preview: $preview,
         );
