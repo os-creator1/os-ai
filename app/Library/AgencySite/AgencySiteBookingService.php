@@ -177,14 +177,13 @@ final class AgencySiteBookingService
 
         $this->types->syncStaff($type, [$actorUserId]);
 
-        if (! empty($attributes['default_hours'])) {
-            $week = [];
-
+        // Defaults are only ever ADDED, never applied over hours the owner already keeps. Their weekly schedule at this
+        // location is theirs (it also serves their other booking types), so it is seeded only when there is none.
+        if (! empty($attributes['default_hours'])
+            && $this->availability->rulesForLocation($location)->where('staff_user_id', $actorUserId)->isEmpty()) {
             foreach ([1, 2, 3, 4, 5] as $day) {
-                $week[$day] = [['start' => '09:00', 'end' => '17:00']];
+                $this->availability->createRule($agency, $business, $location, $actorUserId, $day, '09:00:00', '17:00:00', $actorUserId);
             }
-
-            $this->availability->replaceWeek($agency, $business, $location, $actorUserId, $week, $actorUserId);
         }
 
         return $type->refresh();

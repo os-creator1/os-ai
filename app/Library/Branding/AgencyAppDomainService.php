@@ -2,6 +2,8 @@
 
 namespace App\Library\Branding;
 
+use App\Library\Domains\DomainReservations;
+use App\Library\Domains\DomainUnavailableException;
 use App\Exceptions\Branding\AgencyWhiteLabelException;
 use App\Library\Website\Domains\DnsVerifier;
 use App\Models\AgencyWhiteLabelChange;
@@ -88,6 +90,17 @@ class AgencyAppDomainService
             }
 
             $before = $setting->app_domain;
+
+            // Re-pointing releases the old hostname and claims the new one in this same transaction.
+            $reservations = app(DomainReservations::class);
+            $reservations->release(DomainReservations::AGENCY_APP, (int) $setting->id);
+
+            try {
+                $reservations->claim($domain, DomainReservations::AGENCY_APP, (int) $setting->id);
+            } catch (DomainUnavailableException $e) {
+                throw AgencyWhiteLabelException::because($e->reason === DomainUnavailableException::PLATFORM ? AgencyWhiteLabelException::DOMAIN_RESERVED : AgencyWhiteLabelException::DOMAIN_TAKEN);
+            }
+
             $setting->forceFill([
                 'app_domain' => $domain,
                 'app_domain_token' => Str::random(40),
@@ -146,6 +159,7 @@ class AgencyAppDomainService
             }
 
             $before = $setting->app_domain;
+            app(DomainReservations::class)->release(DomainReservations::AGENCY_APP, (int) $setting->id);
             $setting->forceFill([
                 'app_domain' => null, 'app_domain_token' => null, 'app_domain_status' => self::STATUS_NONE,
                 'app_domain_verified_at' => null, 'app_domain_checked_at' => null,
@@ -188,17 +202,10 @@ class AgencyAppDomainService
     /** The platform's own hosts (and anything beneath them) can never be claimed. */
     private function assertNotReserved(string $domain): void
     {
-        $reserved = array_filter(array_merge(
-            [parse_url((string) config('app.url'), PHP_URL_HOST)],
-            (array) config('marketing.hosts', []),
-        ));
-
-        foreach ($reserved as $host) {
-            $host = strtolower((string) $host);
-
-            if ($domain === $host || str_ends_with($domain, '.' . $host) || str_ends_with($host, '.' . $domain)) {
-                throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::DOMAIN_RESERVED);
-            }
+        try {
+            app(DomainReservations::class)->assertNotPlatformHost($domain);
+        } catch (DomainUnavailableException) {
+            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::DOMAIN_RESERVED);
         }
     }
 }

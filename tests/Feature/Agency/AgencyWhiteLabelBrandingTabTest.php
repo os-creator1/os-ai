@@ -352,4 +352,182 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
         $this->assertSame(['secondary_color'], array_keys($last->changes));
         $this->assertSame(['#0f172a', '#112233'], $last->changes['secondary_color']);
     }
+
+    // ------------------------------------------------- one hostname, one owner (website domains + app domains)
+
+    private function publishedWebsiteOf(Workspace $workspace): \App\Models\Website
+    {
+        $business = \App\Models\Business::query()->where('workspace_id', $workspace->id)->firstOrFail();
+        $website = \App\Models\Website::create(['business_id' => $business->id, 'name' => 'Site', 'status' => \App\Enums\Website\WebsiteStatus::Draft]);
+        $website->published_revision_id = 1; // attach() only checks that the site has been published once
+
+        return $website;
+    }
+
+    private function attachWebsiteDomain(\App\Models\Website $website, string $domain): ?string
+    {
+        try {
+            app(\App\Library\Website\Domains\WebsiteDomainService::class)->attach($website, $domain);
+
+            return null;
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return $e->errors()['domain'][0];
+        }
+    }
+
+    private function attachAppDomain(Workspace $agency, Customer $owner, string $domain): ?string
+    {
+        try {
+            app(AgencyAppDomainService::class)->attach((int) $owner->user_id, $agency, $domain);
+
+            return null;
+        } catch (AgencyWhiteLabelException $e) {
+            return $e->reason;
+        }
+    }
+
+    public function test_a_hostname_cannot_be_claimed_by_a_website_domain_and_an_agency_app_domain_in_either_direction(): void
+    {
+        [$a, $ownerA] = $this->agency('Agency A');
+        [$b, $ownerB] = $this->agency('Agency B');
+        $this->saved($a, $ownerA);
+        $this->saved($b, $ownerB, ['display_name' => 'B']);
+        $siteA = $this->publishedWebsiteOf($a);
+        $siteB = $this->publishedWebsiteOf($b);
+
+        // Agency app domain first → a website cannot take it (any workspace).
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.first.example'));
+        $this->assertNotNull($this->attachWebsiteDomain($siteA, 'app.first.example'));
+        $this->assertNotNull($this->attachWebsiteDomain($siteB, 'app.first.example'));
+        $this->assertSame('domain_taken', $this->attachAppDomain($b, $ownerB, 'app.first.example'));
+
+        // Website domain first → no Agency may take it as an app domain, including the owner's own website's workspace.
+        $this->assertNull($this->attachWebsiteDomain($siteA, 'www.second.example'));
+        $this->assertSame('domain_taken', $this->attachAppDomain($b, $ownerB, 'www.second.example'));
+        $this->assertSame('domain_taken', $this->attachAppDomain($a, $ownerA, 'www.second.example'));
+        $this->assertNotNull($this->attachWebsiteDomain($siteB, 'www.second.example'));
+
+        // Each hostname has exactly one reservation and one owner row.
+        $this->assertSame(2, \Illuminate\Support\Facades\DB::table('domain_reservations')->count());
+        $this->assertSame(1, \App\Models\WebsiteDomain::query()->count());
+        $this->assertSame(1, AgencyWhiteLabelSetting::query()->whereNotNull('app_domain')->count());
+    }
+
+    public function test_the_reservation_itself_decides_a_simultaneous_claim(): void
+    {
+        [$a, $ownerA] = $this->agency('Agency A');
+        $this->saved($a, $ownerA);
+        $site = $this->publishedWebsiteOf($a);
+        $reservations = app(\App\Library\Domains\DomainReservations::class);
+
+        $one = $site->domains()->create(['domain' => 'race.example', 'is_primary' => true, 'status' => \App\Enums\Website\WebsiteDomainStatus::PendingVerification, 'verification_token' => 'a']);
+        $two = $site->domains()->create(['domain' => 'race-2.example', 'is_primary' => false, 'status' => \App\Enums\Website\WebsiteDomainStatus::PendingVerification, 'verification_token' => 'b']);
+
+        // Both requests passed their "is it free?" look-ups; only the first insert can win, whichever service it is.
+        $reservations->claim('race.example', \App\Library\Domains\DomainReservations::WEBSITE, (int) $one->id);
+
+        try {
+            $reservations->claim('race.example', \App\Library\Domains\DomainReservations::WEBSITE, (int) $two->id);
+            $this->fail('the second simultaneous claim must lose');
+        } catch (\App\Library\Domains\DomainUnavailableException $e) {
+            $this->assertSame('domain_taken', $e->reason);
+        }
+
+        $this->assertSame(1, \Illuminate\Support\Facades\DB::table('domain_reservations')->where('domain', 'race.example')->count());
+    }
+
+    public function test_released_hostnames_can_be_claimed_again(): void
+    {
+        [$a, $ownerA] = $this->agency('Agency A');
+        [$b, $ownerB] = $this->agency('Agency B');
+        $this->saved($a, $ownerA);
+        $this->saved($b, $ownerB, ['display_name' => 'B']);
+        $siteB = $this->publishedWebsiteOf($b);
+
+        // Removing an app domain frees it; re-pointing frees the OLD name.
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.one.example'));
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.two.example'));
+        $this->assertNull($this->attachWebsiteDomain($siteB, 'app.one.example'));
+        app(AgencyAppDomainService::class)->remove((int) $ownerA->user_id, $a);
+        $this->assertNull($this->attachWebsiteDomain($siteB, 'app.two.example'));
+
+        // Deleting a website domain frees it for an Agency.
+        \App\Models\WebsiteDomain::query()->where('domain', 'app.one.example')->firstOrFail()->delete();
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.one.example'));
+
+        // A reservation orphaned by a database cascade (no model event) never blocks the name for ever.
+        \Illuminate\Support\Facades\DB::table('website_domains')->where('domain', 'app.two.example')->delete();
+        $this->assertNull($this->attachAppDomain($b, $ownerB, 'app.two.example'));
+    }
+
+    public function test_platform_hostnames_cannot_be_claimed_as_website_domains_either(): void
+    {
+        [$a, $ownerA] = $this->agency('Agency A');
+        $this->saved($a, $ownerA);
+        $site = $this->publishedWebsiteOf($a);
+        $platform = (string) parse_url((string) config('app.url'), PHP_URL_HOST);
+
+        foreach ([$platform, 'login.'.$platform] as $host) {
+            $this->assertNotNull($this->attachWebsiteDomain($site, $host), $host);
+        }
+
+        $this->assertSame(0, \App\Models\WebsiteDomain::query()->count());
+        $this->assertSame(0, \Illuminate\Support\Facades\DB::table('domain_reservations')->count());
+    }
+
+    // ------------------------------------------------- the back-fill respects what already exists
+
+    private function migration(): object
+    {
+        return require base_path('database/migrations/2026_11_27_100000_create_domain_reservations_table.php');
+    }
+
+    public function test_the_backfill_reserves_every_existing_domain_for_its_current_owner_without_displacing_anyone(): void
+    {
+        [$a, $ownerA] = $this->agency('Agency A');
+        [$b, $ownerB] = $this->agency('Agency B');
+        $this->saved($a, $ownerA);
+        $this->saved($b, $ownerB, ['display_name' => 'B']);
+        $site = $this->publishedWebsiteOf($a);
+
+        // Records as they were BEFORE the reservation system: rows only, no reservations.
+        $web = $site->domains()->create(['domain' => 'WWW.Legacy.example', 'is_primary' => true, 'status' => \App\Enums\Website\WebsiteDomainStatus::PendingVerification, 'verification_token' => 't']);
+        $settingA = AgencyWhiteLabelSetting::query()->where('agency_workspace_id', $a->id)->firstOrFail();
+        $settingB = AgencyWhiteLabelSetting::query()->where('agency_workspace_id', $b->id)->firstOrFail();
+        $settingA->forceFill(['app_domain' => 'app.legacy.example'])->save();
+        // A legacy DUPLICATE: Agency B's app domain is already a website domain's name.
+        $settingB->forceFill(['app_domain' => 'www.legacy.example'])->save();
+        \Illuminate\Support\Facades\DB::table('domain_reservations')->delete();
+
+        \Illuminate\Support\Facades\Log::spy();
+        $this->migration()->backfill();
+        $this->migration()->backfill(); // idempotent: running it twice changes nothing
+
+        $rows = \Illuminate\Support\Facades\DB::table('domain_reservations')->orderBy('domain')->get(['domain', 'owner_type', 'owner_id'])->map(fn ($r) => (array) $r)->all();
+        $this->assertSame([
+            ['domain' => 'app.legacy.example', 'owner_type' => 'agency_app_domain', 'owner_id' => $settingA->id],
+            ['domain' => 'www.legacy.example', 'owner_type' => 'website_domain', 'owner_id' => $web->id],
+        ], $rows, 'the website domain keeps the name; the duplicate is not given or taken');
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('warning')->with(\Mockery::pattern('/already reserved/'), \Mockery::type('array'));
+
+        // Nobody's own record was touched, and the names are now protected from new claims.
+        $this->assertSame('www.legacy.example', $settingB->refresh()->app_domain);
+        $this->assertSame(1, \App\Models\WebsiteDomain::query()->count());
+        $this->assertSame('domain_taken', $this->attachAppDomain($b, $ownerB, 'app.legacy.example'));
+        $this->assertNotNull($this->attachWebsiteDomain($this->publishedWebsiteOf($b), 'app.legacy.example'));
+
+        // Uniqueness holds at the database for a second owner of an existing name.
+        try {
+            \Illuminate\Support\Facades\DB::table('domain_reservations')->insert(['domain' => 'app.legacy.example', 'owner_type' => 'website_domain', 'owner_id' => 999999, 'created_at' => now(), 'updated_at' => now()]);
+            $this->fail('the unique index must refuse a second owner');
+        } catch (\Illuminate\Database\QueryException) {
+            $this->assertTrue(true);
+        }
+
+        // Back-filled reservations are released like any other.
+        $web->delete();
+        $this->assertFalse(app(\App\Library\Domains\DomainReservations::class)->isReserved('www.legacy.example'));
+        app(AgencyAppDomainService::class)->remove((int) $ownerA->user_id, $a);
+        $this->assertFalse(app(\App\Library\Domains\DomainReservations::class)->isReserved('app.legacy.example'));
+    }
 }

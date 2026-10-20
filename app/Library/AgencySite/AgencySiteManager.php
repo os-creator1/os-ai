@@ -40,7 +40,7 @@ final class AgencySiteManager
     /** @return array<string, mixed> */
     public static function values(AgencySite $site): array
     {
-        return (array) ($site->config['values'] ?? []);
+        return SiteSchema::canonicalValues((array) ($site->config['values'] ?? []));
     }
 
     /**
@@ -59,7 +59,7 @@ final class AgencySiteManager
                 return $existing;
             }
 
-            $site = new AgencySite(['agency_workspace_id' => $locked->id, 'status' => AgencySite::DRAFT, 'config' => ['values' => ['x.goal' => 'both', 'x.pricing_mode' => 'both']], 'current_step' => 1]);
+            $site = new AgencySite(['agency_workspace_id' => $locked->id, 'status' => AgencySite::DRAFT, 'config' => ['values' => ['x.goal' => 'both']], 'current_step' => 1]);
             $site->generateUid();
             $site->updated_by_user_id = $actorUserId;
             $site->save();
@@ -78,6 +78,19 @@ final class AgencySiteManager
     public function save(int $actorUserId, Workspace $agency, array $answers, ?int $step = null): AgencySite
     {
         $clean = [];
+
+        // One authoritative conversion mode: `x.goal`. The retired `x.pricing_mode` is accepted as an alias, and a
+        // request that sets both to different things is refused rather than guessed at.
+        if (array_key_exists('x.pricing_mode', $answers)) {
+            $alias = SiteSchema::sanitize('x.goal', $answers['x.pricing_mode']);
+
+            if (array_key_exists('x.goal', $answers) && SiteSchema::sanitize('x.goal', $answers['x.goal']) !== $alias) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['x.goal' => 'The website goal and the pricing mode disagree. Choose one goal.']);
+            }
+
+            $answers['x.goal'] = $alias;
+            unset($answers['x.pricing_mode']);
+        }
 
         foreach ($answers as $path => $value) {
             $clean[(string) $path] = SiteSchema::sanitize((string) $path, $value);
@@ -157,7 +170,7 @@ final class AgencySiteManager
 
     private function ensureUnlocked(Workspace $locked, int $actorUserId): AgencySite
     {
-        $site = new AgencySite(['agency_workspace_id' => $locked->id, 'status' => AgencySite::DRAFT, 'config' => ['values' => ['x.goal' => 'both', 'x.pricing_mode' => 'both']], 'current_step' => 1]);
+        $site = new AgencySite(['agency_workspace_id' => $locked->id, 'status' => AgencySite::DRAFT, 'config' => ['values' => ['x.goal' => 'both']], 'current_step' => 1]);
         $site->generateUid();
         $site->updated_by_user_id = $actorUserId;
         $site->save();
@@ -281,6 +294,13 @@ final class AgencySiteManager
             $readiness = $this->booking->readiness($agency, $uuid);
             $add('booking', 'Booking type', $readiness['ready'] ? 'pass' : 'fail', $readiness['ready'] ? 'Visitors can book into your calendar.' : ($readiness['reason'] ?? 'Choose a booking type.'), 8);
         }
+
+        // The goal is only honoured if at least one way to convert actually works: a visitor must be able to buy or book.
+        $canBuy = in_array($goal, ['both', 'subscriptions'], true) && array_filter($context->plans, fn ($p) => $p['sellable']) !== [];
+        $canBook = in_array($goal, ['both', 'book_call'], true) && $this->booking->readiness($agency, $values['x.booking_type_uid'] ?? null)['ready'];
+        $add('conversion', 'A working way to convert', $canBuy || $canBook ? 'pass' : 'fail', $canBuy || $canBook
+            ? 'Visitors can '.implode(' and ', array_filter([$canBuy ? 'buy a plan online' : null, $canBook ? 'book a call' : null])).'.'
+            : 'With the goal "'.(SiteSchema::GOALS[$goal] ?? $goal).'", visitors have nothing that works: no buyable plan and no bookable calendar. Fix the plans or booking type, or change the goal.', 1);
 
         // CTAs always resolve somewhere that works.
         $broken = $this->brokenCtas($site, $values);

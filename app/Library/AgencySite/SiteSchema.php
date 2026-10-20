@@ -240,7 +240,6 @@ final class SiteSchema
             ]],
             // ---------------------------------------------------------------- Screen 7
             'pricing' => ['step' => 7, 'page' => 'pricing', 'label' => 'Pricing page', 'fields' => [
-                self::choice('x.pricing_mode', 'How should the pricing page work?', ['both' => 'Show subscriptions and booking', 'subscriptions' => 'Show prices and online checkout', 'book_call' => 'Hide prices, book a call']),
                 self::text('page_copy.pricing.eyebrow', 'Small label', 40),
                 self::text('page_copy.pricing.title', 'Page headline', 100),
                 self::area('page_copy.pricing.lead', 'Introduction', 300),
@@ -318,6 +317,29 @@ final class SiteSchema
      *
      * @throws ValidationException
      */
+    /**
+     * `x.goal` is the ONE conversion mode (subscriptions, book a call, or both). `x.pricing_mode` was a second,
+     * independent setting that could contradict it; it survives only as a legacy alias. A stored legacy value is what
+     * visitors were actually shown, so it wins; the alias is then dropped.
+     *
+     * @param  array<string, mixed>  $values
+     * @return array<string, mixed>
+     */
+    public static function canonicalValues(array $values): array
+    {
+        if (array_key_exists('x.pricing_mode', $values)) {
+            $legacy = (string) $values['x.pricing_mode'];
+
+            if (array_key_exists($legacy, self::GOALS)) {
+                $values['x.goal'] = $legacy;
+            }
+
+            unset($values['x.pricing_mode']);
+        }
+
+        return $values;
+    }
+
     public static function sanitize(string $path, mixed $value): mixed
     {
         $field = self::fieldIndex()[$path] ?? null;

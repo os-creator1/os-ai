@@ -580,4 +580,116 @@ class AgencySiteTest extends TestCase
     }
 
     private Workspace $agencyForRow;
+
+    // ------------------------------------------------------- one conversion mode
+
+    private function conversion(Workspace $agency, AgencySite $site): array
+    {
+        return collect($this->sites()->checklist($agency, $site->fresh()))->firstWhere('key', 'conversion');
+    }
+
+    public function test_the_goal_is_the_only_conversion_mode_and_the_legacy_pricing_mode_is_folded_into_it(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $site = $this->openEditor($agency, $owner);
+
+        // The retired alias is accepted, stored as the goal, and never stored itself.
+        $this->save($agency, ['x.pricing_mode' => 'book_call'])->assertOk();
+        $values = AgencySiteManager::values($site->fresh());
+        $this->assertSame('book_call', $values['x.goal']);
+        $this->assertArrayNotHasKey('x.pricing_mode', $values);
+        $this->assertArrayNotHasKey('x.pricing_mode', $site->fresh()->config['values']);
+
+        // Agreeing values are fine; contradicting ones are refused and change nothing.
+        $this->save($agency, ['x.goal' => 'subscriptions', 'x.pricing_mode' => 'subscriptions'])->assertOk();
+        $this->save($agency, ['x.goal' => 'both', 'x.pricing_mode' => 'book_call'])->assertStatus(422);
+        $this->assertSame('subscriptions', AgencySiteManager::values($site->fresh())['x.goal']);
+        $this->save($agency, ['x.pricing_mode' => 'nonsense'])->assertStatus(422);
+
+        // A draft stored before the change, with the two disagreeing, resolves to what visitors were shown.
+        $site->forceFill(['config' => ['values' => ['x.goal' => 'both', 'x.pricing_mode' => 'book_call']]])->save();
+        $context = app(\App\Library\AgencySite\SiteContextFactory::class)->make($site->fresh(), AgencySiteManager::values($site->fresh()));
+        $this->assertSame('book_call', $context->goal);
+        $this->assertSame($context->goal, $context->pricingMode);
+    }
+
+    public function test_the_checklist_catches_a_goal_with_no_working_way_to_convert(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $site = $this->openEditor($agency, $owner);
+        $links = ['links.privacy' => 'https://northwind.example/privacy', 'links.terms' => 'https://northwind.example/terms'];
+
+        // Unavailable: nothing sellable, nothing bookable — for every goal.
+        foreach (['subscriptions', 'book_call', 'both'] as $goal) {
+            $this->save($agency, ['x.goal' => $goal] + $links)->assertOk();
+            $this->assertSame('fail', $this->conversion($agency, $site)['status'], $goal);
+            $this->postJson($this->url('publish', $agency))->assertStatus(422);
+        }
+
+        // Booking only: a bookable calendar is enough, and plans are not asked for.
+        $uuid = $this->bookableType($agency, $owner)->public_booking_uuid;
+        $this->save($agency, ['x.goal' => 'book_call', 'x.booking_type_uid' => $uuid])->assertOk();
+        $this->assertSame('pass', $this->conversion($agency, $site)['status']);
+        $this->assertNull(collect($this->sites()->checklist($agency, $site->fresh()))->firstWhere('key', 'plans'));
+        $this->postJson($this->url('publish', $agency))->assertOk();
+
+        // Subscriptions only with nothing sellable fails even though a booking type exists.
+        $this->save($agency, ['x.goal' => 'subscriptions'])->assertOk();
+        $this->assertSame('fail', $this->conversion($agency, $site)['status']);
+
+        // …and passes once a plan can be bought online.
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        $this->assertSame('pass', $this->conversion($agency, $site)['status']);
+
+        // Both: working subscriptions and booking.
+        $this->save($agency, ['x.goal' => 'both'])->assertOk();
+        $this->assertSame('pass', $this->conversion($agency, $site)['status']);
+    }
+
+    // ------------------------------------------------------- calendar availability is never overwritten
+
+    private function ownerRules(Workspace $agency, Customer $owner): \Illuminate\Support\Collection
+    {
+        $location = \App\Models\Business::query()->where('workspace_id', $agency->id)->firstOrFail()->locations()->firstOrFail();
+
+        return \App\Models\StaffAvailabilityRule::query()->where('business_location_id', $location->id)->where('staff_user_id', $owner->user_id)->orderBy('id')->get(['day_of_week', 'start_time', 'end_time']);
+    }
+
+    public function test_creating_a_booking_type_seeds_default_hours_only_when_the_owner_has_none(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+
+        $this->bookableType($agency, $owner, 'First');
+        $seeded = $this->ownerRules($agency, $owner);
+        $this->assertCount(5, $seeded);
+
+        // A second booking type does not add a second copy.
+        $this->bookableType($agency, $owner, 'Second');
+        $this->assertCount(5, $this->ownerRules($agency, $owner));
+    }
+
+    public function test_existing_availability_survives_booking_type_creation_exactly(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner);
+        $business = \App\Models\Business::query()->where('workspace_id', $agency->id)->firstOrFail();
+        $location = $business->locations()->firstOrFail();
+        $availability = app(\App\Library\Calendar\StaffAvailabilityService::class);
+
+        // The owner already runs a split shift on Tuesday and a Saturday morning for their existing services.
+        $uid = (int) $owner->user_id;
+        $availability->createRule($agency, $business, $location, $uid, 2, '08:00:00', '12:00:00', $uid);
+        $availability->createRule($agency, $business, $location, $uid, 2, '14:00:00', '18:00:00', $uid);
+        $availability->createRule($agency, $business, $location, $uid, 6, '10:00:00', '12:00:00', $uid);
+        $before = $this->ownerRules($agency, $owner)->toArray();
+
+        $this->bookableType($agency, $owner, 'Intro call');
+        $this->bookableType($agency, $owner, 'Strategy call');
+
+        $this->assertSame($before, $this->ownerRules($agency, $owner)->toArray(), 'the owner\'s schedule is untouched');
+    }
 }

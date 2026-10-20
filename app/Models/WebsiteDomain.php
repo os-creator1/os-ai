@@ -18,6 +18,11 @@ use Illuminate\Support\Str;
  */
 class WebsiteDomain extends Model
 {
+    protected static function booted(): void
+    {
+        static::deleted(fn (self $domain) => app(\App\Library\Domains\DomainReservations::class)->release(\App\Library\Domains\DomainReservations::WEBSITE, (int) $domain->id));
+    }
+
     use HasUid;
 
     protected $fillable = [

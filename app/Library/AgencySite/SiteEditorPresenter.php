@@ -154,7 +154,6 @@ final class SiteEditorPresenter
         if (str_starts_with($path, 'x.')) {
             return match ($path) {
                 'x.goal' => 'both',
-                'x.pricing_mode' => 'both',
                 'x.industries' => (array) Arr::get($defaultTree, 'copy.home.trust.industries', []),
                 default => in_array($field['type'], ['strings', 'rows'], true) ? [] : (str_starts_with($path, 'x.cta.') ? 'pricing' : null),
             };

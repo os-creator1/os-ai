@@ -35,9 +35,9 @@ final class SiteContextFactory
 
         $name = trim((string) ($brand?->display_name ?: $agency->name));
         $primary = $brand?->accent_color ?: self::DEFAULT_PRIMARY;
+        $values = SiteSchema::canonicalValues($values);
         $goal = (string) ($values['x.goal'] ?? 'both');
         $goal = in_array($goal, array_keys(SiteSchema::GOALS), true) ? $goal : 'both';
-        $mode = (string) ($values['x.pricing_mode'] ?? match ($goal) { 'subscriptions' => 'subscriptions', 'book_call' => 'book_call', default => 'both' });
 
         $publicId = (string) $site->public_id;
         $preview = $previewWorkspaceUid !== null;
@@ -65,7 +65,7 @@ final class SiteContextFactory
             plans: $this->plans($agency, $values, $name),
             bookingUrl: $this->booking->publicUrl($agency, $values['x.booking_type_uid'] ?? null),
             goal: $goal,
-            pricingMode: in_array($mode, ['both', 'subscriptions', 'book_call'], true) ? $mode : 'both',
+            pricingMode: $goal,
             pageUrl: $pageUrl,
             signupUrl: fn (string $planUid) => route('agency.site.signup', [$publicId, $planUid]),
             loginUrl: $preview ? route('login') : route('agency.site.login', $publicId),

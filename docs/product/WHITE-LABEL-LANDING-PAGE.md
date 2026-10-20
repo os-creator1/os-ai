@@ -113,6 +113,20 @@ event ledger.
   only account mail (reset, verification) and Agency invitations carry the Agency's.
 * **Video upload** for testimonials: a YouTube link or ID is supported; other media is not.
 
+## Invariants worth knowing
+
+* **One conversion mode.** `x.goal` (subscriptions / book a call / both) is the only setting. The old
+  `x.pricing_mode` is accepted as an alias on save, never stored; a stored legacy value wins on read, because it is
+  what visitors were shown. The publish checklist has a `conversion` item that fails when nothing can be bought or booked.
+* **One payable Checkout per customer.** Re-offering identical terms is a no-op; a changed plan keeps the old session
+  id so the next checkout expires it at Stripe before opening the new one. Double submits, returning to signup and
+  simultaneous retries share one Stripe idempotency key. If the old session cannot be proven expired (expire refused and
+  a re-read still shows it open, or cannot be read) no new session is opened and the customer is asked to retry.
+* **Availability is only ever added.** Creating a booking type seeds Mon–Fri 09:00–17:00 only when the owner has no
+  availability at that location; existing weekly hours are never replaced.
+* **One hostname, one owner.** `domain_reservations` (unique `domain`) is claimed in the same transaction that creates a
+  website domain or sets an Agency app domain, and released on delete/remove/re-point. Platform hostnames are refused.
+
 ## Acceptance on staging
 
 1. As an Agency owner open **White label → Branding**; set a name, logo, favicon and colour; watch the preview update

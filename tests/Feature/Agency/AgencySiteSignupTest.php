@@ -477,4 +477,168 @@ class AgencySiteSignupTest extends TestCase
         $this->assertStringContainsString('agency-theme-overrides', $home);
         $this->get(route('customer.workspaces.agency.white-label.show', $live['agency']->uid))->assertNotFound();
     }
+
+    // ------------------------------------------------- one payable checkout per customer
+
+    public function test_double_submit_and_returning_to_signup_reuse_the_one_open_checkout_session(): void
+    {
+        $live = $this->liveAgency();
+
+        $first = $this->post($this->signupUrl($live), $this->form());
+        $first->assertRedirect();
+        auth()->logout();
+        $second = $this->post($this->signupUrl($live), $this->form());
+        auth()->logout();
+        $third = $this->post($this->signupUrl($live), $this->form());
+
+        $this->assertSame($first->headers->get('Location'), $second->headers->get('Location'));
+        $this->assertSame($first->headers->get('Location'), $third->headers->get('Location'));
+        $this->assertCount(1, $this->agencyStripe->payableSessionIds(), 'exactly one payable Checkout session');
+        $this->assertSame(1, AgencyClientSubscription::query()->count());
+        $this->assertSame([], $this->agencyStripe->callsOf('expireCheckoutSession'), 'nothing was expired: nothing was replaced');
+    }
+
+    public function test_a_simultaneous_retry_arriving_mid_creation_still_leaves_one_payable_session(): void
+    {
+        $live = $this->liveAgency();
+
+        $service = app(\App\Library\AgencySite\AgencySiteSignupService::class);
+        $inner = null;
+        // A second request lands while the first is talking to Stripe.
+        $this->agencyStripe->interleaveOnce('createSubscriptionCheckout', function () use ($service, $live, &$inner): void {
+            $inner = $service->start($live['site'], $live['plan'], $this->form(), null, fn ($c) => 'https://x.test/ok/'.$c->uid, 'https://x.test/cancel');
+        });
+
+        $outer = $service->start($live['site'], $live['plan'], $this->form(), null, fn ($c) => 'https://x.test/ok/'.$c->uid, 'https://x.test/cancel');
+
+        $this->assertNotNull($inner);
+        $this->assertSame($inner['checkout']->sessionId, $outer['checkout']->sessionId);
+        $this->assertCount(1, $this->agencyStripe->payableSessionIds());
+    }
+
+    public function test_an_expired_or_abandoned_session_is_replaced_and_the_old_one_stays_unpayable(): void
+    {
+        $live = $this->liveAgency();
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        $old = (string) AgencyClientSubscription::query()->sole()->provider_checkout_session_id;
+        $this->agencyStripe->sessions[$old]['status'] = 'expired';
+        auth()->logout();
+
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+
+        $new = (string) AgencyClientSubscription::query()->sole()->provider_checkout_session_id;
+        $this->assertNotSame($old, $new);
+        $this->assertSame([$new], $this->agencyStripe->payableSessionIds());
+    }
+
+    public function test_choosing_a_different_plan_expires_the_first_session_before_opening_the_second(): void
+    {
+        $live = $this->liveAgency();
+        $other = $this->publishedPlan($live['agency'], (int) $live['owner']->user_id, WorkspacePlanTier::Core, '99.00', null, 'Core Studio');
+
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        $first = (string) AgencyClientSubscription::query()->sole()->provider_checkout_session_id;
+        auth()->logout();
+
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertRedirect();
+
+        $subscription = AgencyClientSubscription::query()->sole();
+        $this->assertSame((int) $other->id, (int) $subscription->agency_saas_plan_id);
+        $this->assertSame('expired', $this->agencyStripe->sessions[$first]['status']);
+        $this->assertSame([(string) $subscription->provider_checkout_session_id], $this->agencyStripe->payableSessionIds());
+        $this->assertSame(1, AgencyClientSubscription::query()->count());
+        $this->assertSame(1, AgencySiteSignup::query()->count());
+
+        // Paying the NEW session activates the NEW plan only.
+        $user = User::query()->where('email', 'dana@harbor.example')->sole();
+        $client = $this->clientOf('dana@harbor.example');
+        $this->agencyStripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+        $this->actingAs($user)->get(route('customer.workspaces.agency-plan.return', $client->uid))->assertRedirect();
+        $this->assertSame(WorkspacePlanTier::Core, $this->tierOf($client));
+    }
+
+    // ------------------------------------------- a replacement never opens a second payable session unless the first is provably dead
+
+    /** Starts a signup on the first plan, then returns [live, otherPlan, firstSessionId] ready for a plan switch. */
+    private function switchSetup(): array
+    {
+        $live = $this->liveAgency();
+        $other = $this->publishedPlan($live['agency'], (int) $live['owner']->user_id, WorkspacePlanTier::Core, '99.00', null, 'Core Studio');
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        auth()->logout();
+
+        return [$live, $other, (string) AgencyClientSubscription::query()->sole()->provider_checkout_session_id];
+    }
+
+    public function test_when_the_old_session_cannot_be_expired_and_is_still_open_no_second_session_is_created(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $created = count($this->agencyStripe->callsOf('createSubscriptionCheckout'));
+
+        $this->agencyStripe->hooks['expireCheckoutSession'] = function (): void {
+            throw \App\Exceptions\AgencyBilling\AgencyBillingException::because(\App\Exceptions\AgencyBilling\AgencyBillingException::PROVIDER_FAILED);
+        };
+
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertSessionHasErrors();
+
+        $this->assertSame([$first], $this->agencyStripe->payableSessionIds(), 'only the original session is payable');
+        $this->assertCount($created, $this->agencyStripe->callsOf('createSubscriptionCheckout'), 'no new Checkout was even requested');
+        $this->assertSame($first, (string) AgencyClientSubscription::query()->sole()->provider_checkout_session_id, 'the attempt is kept');
+
+        // Once Stripe cooperates again the retry replaces it cleanly.
+        unset($this->agencyStripe->hooks['expireCheckoutSession']);
+        auth()->logout();
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertRedirect();
+        $this->assertSame([(string) AgencyClientSubscription::query()->sole()->provider_checkout_session_id], $this->agencyStripe->payableSessionIds());
+        $this->assertSame('expired', $this->agencyStripe->sessions[$first]['status']);
+    }
+
+    public function test_when_the_old_sessions_state_cannot_be_confirmed_nothing_new_is_opened(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $created = count($this->agencyStripe->callsOf('createSubscriptionCheckout'));
+        $reads = 0;
+
+        // The first read (deciding to replace) works; the expire fails; the confirming re-read fails too.
+        $this->agencyStripe->hooks['retrieveCheckoutSession'] = function () use (&$reads): void {
+            if (++$reads >= 2) {
+                throw \App\Exceptions\AgencyBilling\AgencyBillingException::because(\App\Exceptions\AgencyBilling\AgencyBillingException::PROVIDER_FAILED);
+            }
+        };
+        $this->agencyStripe->hooks['expireCheckoutSession'] = function (): void {
+            throw \App\Exceptions\AgencyBilling\AgencyBillingException::because(\App\Exceptions\AgencyBilling\AgencyBillingException::PROVIDER_FAILED);
+        };
+
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertSessionHasErrors();
+
+        $this->assertSame([$first], $this->agencyStripe->payableSessionIds());
+        $this->assertCount($created, $this->agencyStripe->callsOf('createSubscriptionCheckout'));
+    }
+
+    public function test_an_expire_that_lost_a_race_to_someone_else_expiring_it_is_fine(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+
+        // Another request expires it between our read and our expire call.
+        $this->agencyStripe->interleaveOnce('expireCheckoutSession', function (array $args, $gateway) use ($first): void {
+            $gateway->sessions[$first]['status'] = 'expired';
+        });
+        $this->agencyStripe->failWith = null;
+
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertRedirect();
+
+        $this->assertCount(1, $this->agencyStripe->payableSessionIds());
+        $this->assertNotContains($first, $this->agencyStripe->payableSessionIds());
+    }
+
+    public function test_a_completed_old_session_is_never_replaced(): void
+    {
+        [$live, $other, $first] = $this->switchSetup();
+        $this->agencyStripe->completeCheckout($first);
+
+        $this->post($this->signupUrl($live, $other->uid), $this->form())->assertSessionHasErrors();
+
+        $this->assertSame([], $this->agencyStripe->payableSessionIds());
+        $this->assertSame(1, count($this->agencyStripe->callsOf('createSubscriptionCheckout')));
+    }
 }
