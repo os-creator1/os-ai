@@ -93,52 +93,85 @@ class VoiceHistoryAndSetupTest extends TestCase
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business, ready: false);
-        $this->telnyx->numbers['+14155550199'] = ['owned' => true, 'status' => 'active', 'connection_id' => 'cc-app-1'];
-        $this->telnyx->connections['platform-conn-1'] = ['exists' => true, 'active' => true];
+        $this->telnyx->numbers['+14155550199'] = ['owned' => true, 'status' => 'active', 'connection_id' => 'platform-app-1'];
 
         $this->postJson($this->voiceUrl($workspace, $business, 'settings.numbers.verify', [$number->uid]))
-            ->assertOk()->assertJson(['ok' => true, 'code' => null]);
+            ->assertOk()->assertJson(['ok' => true, 'code' => null, 'inbound_ok' => true]);
 
-        $this->assertSame('ready', $number->fresh()->voice_status);
-        $this->assertNotNull($number->fresh()->voice_checked_at);
-        $this->assertSame(['inspectNumber', 'inspectCredentialConnection'], array_column($this->telnyx->calls, 0));
+        $fresh = $number->fresh();
+        $this->assertSame('ready', $fresh->voice_status);
+        $this->assertSame('ready', $fresh->inbound_status);
+        $this->assertNotNull($fresh->outbound_locked_at);
+        $this->assertSame(['inspectNumber', 'inspectCredentialConnection', 'inspectCallControlApp'], array_column($this->telnyx->calls, 0), 'Only read-only lookups.');
     }
 
-    public function test_verification_tells_the_exact_missing_piece(): void
+    public function test_verification_tells_the_exact_missing_piece_and_never_reports_ready_early(): void
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business, ready: false);
         $url = $this->voiceUrl($workspace, $business, 'settings.numbers.verify', [$number->uid]);
+        $good = $this->telnyx->connections['platform-conn-1'];
 
         $this->postJson($url)->assertJson(['ok' => false, 'code' => 'number_not_in_account']);
         $this->assertSame('misconfigured', $number->fresh()->voice_status);
 
         $this->telnyx->numbers['+14155550199'] = ['owned' => true, 'status' => 'active', 'connection_id' => null];
+        $this->telnyx->connections['platform-conn-1'] = ['exists' => false, 'active' => false, 'outbound_known' => false, 'outbound_profile_id' => null];
         $this->postJson($url)->assertJson(['ok' => false, 'code' => 'voice_connection_missing']);
 
-        $this->telnyx->connections['platform-conn-1'] = ['exists' => true, 'active' => true];
-        $this->postJson($url)->assertJson(['ok' => true])->assertJsonPath('notes.0', fn ($n) => str_contains($n, 'INCOMING calls'));
+        // The credential connection could dial the phone network directly: calling stays off.
+        $this->telnyx->connections['platform-conn-1'] = ['exists' => true, 'active' => true, 'outbound_known' => true, 'outbound_profile_id' => 'ovp-open'];
+        $this->postJson($url)->assertJson(['ok' => false, 'code' => 'direct_dialing_open']);
+
+        // Telnyx did not say either way: unconfirmed is NOT locked.
+        $this->telnyx->connections['platform-conn-1'] = ['exists' => true, 'active' => true, 'outbound_known' => false, 'outbound_profile_id' => null];
+        $this->postJson($url)->assertJson(['ok' => false, 'code' => 'outbound_unconfirmed']);
+        $this->assertNull($number->fresh()->outbound_locked_at);
+
+        $this->telnyx->connections['platform-conn-1'] = $good;
+        $saved = $this->telnyx->apps['platform-app-1'];
+
+        $this->telnyx->apps['platform-app-1'] = ['outbound_profile_id' => null] + $saved;
+        $this->postJson($url)->assertJson(['ok' => false, 'code' => 'call_control_app_no_outbound_profile']);
+
+        $this->telnyx->apps['platform-app-1'] = ['webhook_url' => 'https://elsewhere.example/hook'] + $saved;
+        $this->postJson($url)->assertJson(['ok' => false, 'code' => 'call_control_app_webhook_mismatch'])
+            ->assertJsonPath('message', fn ($m) => str_contains($m, route('voice.webhooks.telnyx_managed')));
+
+        // Outgoing fine, but the number is not on the application: incoming must NOT read as ready.
+        $this->telnyx->apps['platform-app-1'] = $saved;
+        $this->postJson($url)->assertJson(['ok' => true, 'inbound_ok' => false]);
+        $this->assertSame('ready', $number->fresh()->voice_status);
+        $this->assertSame('misconfigured', $number->fresh()->inbound_status);
     }
 
-    public function test_enabling_a_byo_number_needs_its_connection_and_never_returns_the_key(): void
+    public function test_enabling_a_byo_number_needs_both_telnyx_ids_and_never_returns_the_key(): void
     {
         [$agencyBusiness, $agencyWorkspace] = $this->signedInBusiness(WorkspacePlanTier::Agency, 'Agency Co');
         $channel = $this->byoChannel($agencyWorkspace, ['sender' => '12025550142', 'key' => 'agency-private-key']);
         $url = $this->voiceUrl($agencyWorkspace, $agencyBusiness, 'settings.numbers.save');
 
         $this->postJson($url, ['source' => 'byo', 'ref' => $channel->id])->assertStatus(422)->assertJson(['code' => 'voice_not_configured']);
+        $this->postJson($url, ['source' => 'byo', 'ref' => $channel->id, 'webrtc_connection_id' => 'agency-conn-9'])->assertStatus(422);
 
-        $response = $this->postJson($url, ['source' => 'byo', 'ref' => $channel->id, 'webrtc_connection_id' => 'agency-conn-9'])->assertOk();
+        $response = $this->postJson($url, ['source' => 'byo', 'ref' => $channel->id, 'webrtc_connection_id' => 'agency-conn-9', 'call_control_app_id' => 'agency-app-9'])->assertOk();
         $this->assertSame('unverified', $response->json('voice_status'));
         $this->assertStringNotContainsString('agency-private-key', $response->getContent());
 
         $row = VoiceNumber::firstOrFail();
-        $this->telnyx->numbers['+12025550142'] = ['owned' => true, 'status' => 'active', 'connection_id' => 'x'];
-        $this->telnyx->connections['agency-conn-9'] = ['exists' => true, 'active' => true];
-        $this->postJson($this->voiceUrl($agencyWorkspace, $agencyBusiness, 'settings.numbers.verify', [$row->uid]))->assertJson(['ok' => true]);
+        $this->telnyx->numbers['+12025550142'] = ['owned' => true, 'status' => 'active', 'connection_id' => 'agency-app-9'];
+        $this->telnyx->apps['agency-app-9'] = ['exists' => true, 'active' => true, 'outbound_known' => true, 'outbound_profile_id' => 'ovp-agency',
+            'webhook_url' => $this->app->make(\App\Library\Voice\VoiceSetupService::class)->webhookUrlFor($row, $agencyBusiness)];
+        $this->postJson($this->voiceUrl($agencyWorkspace, $agencyBusiness, 'settings.numbers.verify', [$row->uid]))->assertJson(['ok' => true, 'inbound_ok' => true]);
 
         $this->assertSame('agency-private-key', $this->telnyx->callsTo('inspectNumber')[0]['apiKey'], 'The agency\'s check runs on the agency\'s own account.');
         $this->assertSame('agency-conn-9', $this->telnyx->callsTo('inspectCredentialConnection')[0]['connectionId']);
+        $this->assertSame('agency-app-9', $this->telnyx->callsTo('inspectCallControlApp')[0]['appId']);
+
+        // Changing a Telnyx id invalidates the earlier check.
+        $this->postJson($url, ['source' => 'byo', 'ref' => $channel->id, 'webrtc_connection_id' => 'agency-conn-9', 'call_control_app_id' => 'other-app'])->assertOk();
+        $this->assertSame('unverified', $row->fresh()->voice_status);
+        $this->assertNull($row->fresh()->outbound_locked_at);
     }
 
     public function test_a_number_cannot_be_enabled_from_another_business_or_for_an_ineligible_user(): void

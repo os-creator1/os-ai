@@ -150,7 +150,7 @@ final class VoiceCallService
             return $call;
         }
 
-        if ($event === 'dial_failed' && $call->provider_call_session_id === null && $current === VoiceCallStatus::Initiating) {
+        if ($event === 'dial_failed' && $call->bridge_requested_at === null && $current === VoiceCallStatus::Initiating) {
             $call->forceFill([
                 'status' => VoiceCallStatus::Failed->value,
                 'status_rank' => VoiceCallStatus::Failed->rank(),
@@ -178,25 +178,30 @@ final class VoiceCallService
     }
 
     /**
-     * A call stuck without any provider evidence is closed honestly: it never reached Telnyx.
+     * Calls that can no longer be in flight stop blocking the user. An attempt whose browser leg was never
+     * answered within two minutes is closed as failed; one that has been "ringing" or "in progress" far longer
+     * than any real call without a provider hangup is marked unconfirmed (never guessed into "completed").
      */
     private function expireStaleInFlight(int $userId): void
     {
         VoiceCall::query()
             ->where('user_id', $userId)
             ->where('status', VoiceCallStatus::Initiating->value)
-            ->whereNull('provider_call_session_id')
             ->where('initiated_at', '<', now()->subSeconds(self::STALE_INITIATING_SECONDS))
             ->update([
                 'status' => VoiceCallStatus::Failed->value,
                 'status_rank' => VoiceCallStatus::Failed->rank(),
-                'hangup_cause' => 'never_reached_provider',
+                'hangup_cause' => 'never_connected',
                 'ended_at' => now(),
                 'duration_seconds' => 0,
             ]);
 
-        // A call the browser says ended, but that Telnyx never confirmed within the hour, stays Unconfirmed
-        // (never guessed into "completed"); nothing to change here.
+        VoiceCall::query()
+            ->where('user_id', $userId)
+            ->where(fn ($q) => $q
+                ->where(fn ($r) => $r->where('status', VoiceCallStatus::Ringing->value)->where('initiated_at', '<', now()->subMinutes(10)))
+                ->orWhere(fn ($r) => $r->where('status', VoiceCallStatus::Answered->value)->where('initiated_at', '<', now()->subHours(6))))
+            ->update(['status' => VoiceCallStatus::Unconfirmed->value, 'status_rank' => VoiceCallStatus::Unconfirmed->rank()]);
     }
 
     /** Resolve an incoming caller to a Contact of THIS Business, or null — never a guess across tenants. */

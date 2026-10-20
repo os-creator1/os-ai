@@ -51,10 +51,17 @@ trait BuildsVoiceFixtures
             'services.telnyx.voice_enabled' => true,
             'services.telnyx.api_key' => 'platform-key-never-leaks',
             'services.telnyx.voice_connection_id' => 'platform-conn-1',
+            'services.telnyx.voice_call_control_app_id' => 'platform-app-1',
+            'services.telnyx.voice_allowed_regions' => 'US,CA',
             'services.telnyx.webhook_public_key' => base64_encode(sodium_crypto_sign_publickey($keypair)),
         ]);
 
         $this->telnyx = new FakeVoiceClient();
+        // Telnyx facts that make browser calling safe: credential connections cannot dial (no outbound profile).
+        foreach (['platform-conn-1', 'agency-conn-9'] as $id) {
+            $this->telnyx->connections[$id] = ['exists' => true, 'active' => true, 'outbound_known' => true, 'outbound_profile_id' => null];
+        }
+        $this->telnyx->apps['platform-app-1'] = ['exists' => true, 'active' => true, 'webhook_url' => route('voice.webhooks.telnyx_managed'), 'outbound_known' => true, 'outbound_profile_id' => 'ovp-1'];
         $this->app->instance(VoiceProviderClient::class, $this->telnyx);
     }
 
@@ -93,14 +100,25 @@ trait BuildsVoiceFixtures
             'messaging_number_id' => $messaging->id,
             'phone_number' => $messaging->phone_number,
             'voice_status' => $ready ? VoiceNumber::STATUS_READY : VoiceNumber::STATUS_UNVERIFIED,
+            'outbound_locked_at' => $ready ? now() : null,
+            'inbound_status' => $ready ? 'ready' : 'unverified',
             'inbound_user_id' => $inboundUserId,
         ]);
+    }
+
+    /** The user's browser registers and heartbeats (what the page does before the server may ring it). */
+    protected function browserOnline($workspace, $business, VoiceNumber $number): void
+    {
+        $this->postJson($this->voiceUrl($workspace, $business, 'token'), ['number_uid' => $number->uid])->assertOk();
+        $this->postJson($this->voiceUrl($workspace, $business, 'heartbeat'), ['number_uid' => $number->uid])->assertOk();
     }
 
     /** The Agency's own Telnyx number, set up for voice against its own connection. */
     protected function byoVoiceNumber(Workspace $workspace, Business $business, string $sender = '12025550142', bool $ready = true, ?int $inboundUserId = null): VoiceNumber
     {
         $channel = $this->byoChannel($workspace, ['sender' => $sender, 'key' => 'agency-private-key']);
+        $this->telnyx->apps['agency-app-9'] = ['exists' => true, 'active' => true, 'outbound_known' => true, 'outbound_profile_id' => 'ovp-agency',
+            'webhook_url' => route('prospecting.webhooks.agency_telnyx_voice', [$channel->uid, \App\Library\AgencyProspecting\AgencyProspectingWebhookToken::forChannel($channel->uid)])];
 
         return VoiceNumber::create([
             'uid' => (string) Str::uuid(),
@@ -110,7 +128,10 @@ trait BuildsVoiceFixtures
             'agency_channel_id' => $channel->id,
             'phone_number' => '+' . $sender,
             'webrtc_connection_id' => 'agency-conn-9',
+            'call_control_app_id' => 'agency-app-9',
             'voice_status' => $ready ? VoiceNumber::STATUS_READY : VoiceNumber::STATUS_UNVERIFIED,
+            'outbound_locked_at' => $ready ? now() : null,
+            'inbound_status' => $ready ? 'ready' : 'unverified',
             'inbound_user_id' => $inboundUserId,
         ]);
     }

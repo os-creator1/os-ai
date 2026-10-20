@@ -36,7 +36,7 @@ final class VoiceCallReconciler
 
     /**
      * @param  array<string, mixed>  $body  the verified webhook JSON
-     * @return array{result: string, call: ?VoiceCall, route: ?array{call: VoiceCall, number: VoiceNumber, control_id: string}}
+     * @return array{result: string, call: ?VoiceCall, route: ?array{kind: string, call: VoiceCall, number?: VoiceNumber, control_id?: string}}
      */
     public function handle(array $body, ?AgencyProspectingChannel $channel): array
     {
@@ -77,10 +77,16 @@ final class VoiceCallReconciler
                 $call = VoiceCall::query()->whereKey($call->id)->lockForUpdate()->firstOrFail();
                 $applied = $this->apply($call, $type, $payload, $occurred) || $bound;
 
+                // Our own browser leg of an outgoing call was just answered: bridge it (once, re-authorized).
+                if ($type === 'call.answered' && $this->isOriginatingLeg($call, $payload) && $call->direction === VoiceCall::DIRECTION_OUTBOUND
+                    && ! $call->statusEnum()->isFinal()) {
+                    $route = ['kind' => 'bridge', 'call' => $call];
+                }
+
                 if ($created && $call->direction === VoiceCall::DIRECTION_INBOUND && $type === 'call.initiated'
                     && ! $call->statusEnum()->isFinal() && is_string($payload['call_control_id'] ?? null)) {
                     $number = VoiceNumber::query()->whereKey((int) $call->voice_number_id)->first();
-                    $route = $number !== null ? ['call' => $call, 'number' => $number, 'control_id' => $payload['call_control_id']] : null;
+                    $route = $number !== null ? ['kind' => 'inbound', 'call' => $call, 'number' => $number, 'control_id' => $payload['call_control_id']] : null;
                 }
 
                 $ledger->forceFill(['voice_call_id' => $call->id, 'applied' => $applied ? 'applied' : 'ignored'])->save();
@@ -122,7 +128,8 @@ final class VoiceCallReconciler
                 ->whereNull('provider_call_session_id')
                 ->first();
 
-            if ($call !== null && $this->inScope($call, $channel) && $this->destinationMatches($call, $payload)) {
+            // The leg MotionGrove itself dialled to the user's browser: signed event, our own intent id.
+            if ($call !== null && $this->inScope($call, $channel) && ($payload['direction'] ?? null) === 'outgoing') {
                 if ($session !== null) {
                     $call->forceFill([
                         'provider_call_session_id' => $session,
@@ -211,6 +218,13 @@ final class VoiceCallReconciler
         }
 
         if ($type === 'call.answered') {
+            // Outgoing: the first answer is OUR dial leg (the person's browser) — that is not the customer
+            // picking up. It only moves the call to "ringing the customer" while the bridge happens. The
+            // customer answering is a call.answered on any OTHER leg of the session.
+            if ($call->direction === VoiceCall::DIRECTION_OUTBOUND && $this->isOriginatingLeg($call, $payload)) {
+                return $this->advance($call, $current, VoiceCallStatus::Ringing, $occurred, []);
+            }
+
             // Answered AFTER we already recorded an unanswered end, but before that end happened: the
             // end arrived first. Correct it to Completed rather than leave a wrong outcome.
             if ($current->isFinal() && $current !== VoiceCallStatus::Completed && $call->answered_at === null
@@ -237,7 +251,10 @@ final class VoiceCallReconciler
         $source = $this->str($payload, 'hangup_source');
         $ended = $this->time($payload['end_time'] ?? null) ?? $occurred;
         $answeredAt = $call->answered_at;
-        $outcome = self::outcome($call->direction, $answeredAt !== null, $cause, $source);
+        // An outgoing call whose browser leg never got answered/bridged did not fail at the customer's end.
+        $outcome = $call->direction === VoiceCall::DIRECTION_OUTBOUND && $call->bridge_requested_at === null && $answeredAt === null
+            ? VoiceCallStatus::Failed
+            : self::outcome($call->direction, $answeredAt !== null, $cause, $source);
 
         $call->forceFill([
             'status' => $outcome->value,
@@ -311,11 +328,12 @@ final class VoiceCallReconciler
             : $number->source === VoiceNumber::SOURCE_BYO && (int) $number->agency_channel_id === (int) $channel->id;
     }
 
-    private function destinationMatches(VoiceCall $call, array $payload): bool
+    /** Is this event about the leg MotionGrove dialled (outgoing) or received (incoming) first? */
+    private function isOriginatingLeg(VoiceCall $call, array $payload): bool
     {
-        $to = E164Normalizer::normalize($this->str($payload, 'to'));
+        $control = $this->str($payload, 'call_control_id');
 
-        return $to !== null && $to === $call->to_number;
+        return $control !== null && $call->provider_call_control_id !== null && hash_equals((string) $call->provider_call_control_id, $control);
     }
 
     private function decodeClientState(mixed $raw): ?string

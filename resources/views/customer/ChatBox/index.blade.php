@@ -636,10 +636,16 @@
                     <div class="d-flex align-items-center">
 
                         {{-- Browser calling: same Call action as Contacts; the open conversation's uid is read from .chat_id when clicked. --}}
-                        @if (\App\Library\Voice\VoiceAvailability::mounted(request()))
-                        <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-50 me-1" data-role="conversation-call" data-mg-call data-conversation-input=".chat_id" aria-label="Call this contact" disabled>
-                            <x-ds-icon name="phone" size="16" aria-hidden="true" /><span class="d-none d-sm-inline">Call</span>
-                        </button>
+                        @if (\App\Library\Voice\VoiceAvailability::mayCall(request()))
+                            @if (\App\Library\Voice\VoiceAvailability::mounted(request()))
+                                <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-50 me-1" data-role="conversation-call" data-mg-call data-conversation-input=".chat_id" aria-label="Call this contact" disabled>
+                                    <x-ds-icon name="phone" size="16" aria-hidden="true" /><span class="d-none d-sm-inline">Call</span>
+                                </button>
+                            @else
+                                <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-50 me-1" data-role="conversation-call" data-calling-unavailable title="{{ \App\Library\Voice\VoiceAvailability::unavailableReason() }}" aria-label="Call this contact (unavailable)" disabled>
+                                    <x-ds-icon name="phone" size="16" aria-hidden="true" /><span class="d-none d-sm-inline">Call</span>
+                                </button>
+                            @endif
                         @endif
 
                         <x-tooltip text="{{ __('locale.labels.block') }}" placement="top" class="add-to-blacklist">

@@ -28,11 +28,29 @@ interface VoiceProviderClient
     public function inspectNumber(string $apiKey, string $e164): array;
 
     /**
-     * Read-only facts about a credential connection.
+     * Read-only facts about a credential connection. `outbound_known` is false when Telnyx did not return
+     * the outbound settings at all — which must be treated as "cannot confirm", never as "locked".
      *
-     * @return array{exists: bool, active: bool}
+     * @return array{exists: bool, active: bool, outbound_known: bool, outbound_profile_id: ?string}
      */
     public function inspectCredentialConnection(string $apiKey, string $connectionId): array;
+
+    /**
+     * Read-only facts about a Call Control application.
+     *
+     * @return array{exists: bool, active: bool, webhook_url: ?string, outbound_known: bool, outbound_profile_id: ?string}
+     */
+    public function inspectCallControlApp(string $apiKey, string $appId): array;
+
+    /**
+     * Place a call from MotionGrove's own Call Control application (POST /calls). Used to ring the user's
+     * browser identity; the PSTN leg is only ever created later by transfer to the VALIDATED destination.
+     *
+     * @return array{call_control_id: string, call_session_id: ?string, call_leg_id: ?string}
+     */
+    public function dial(string $apiKey, string $appId, string $to, string $from, string $clientState, int $timeoutSeconds): array;
+
+    public function hangupCall(string $apiKey, string $callControlId): void;
 
     /** Inbound routing: ring one SIP user (their browser) for a call this app controls. */
     public function transferToSip(string $apiKey, string $callControlId, string $sipUri, string $from): void;

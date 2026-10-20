@@ -251,6 +251,15 @@
             // platform's own Telnyx credential connection (WebRTC/SIP users) named here.
             'voice_enabled'       => env('TELNYX_VOICE_ENABLED', false),
             'voice_connection_id' => env('TELNYX_VOICE_CONNECTION_ID'),
+            // Outbound calls are placed by MotionGrove through this Call Control application (never by the
+            // browser). Its outbound voice profile is where Telnyx enforces destination/spend limits.
+            'voice_call_control_app_id' => env('TELNYX_VOICE_CALL_CONTROL_APP_ID'),
+            // ISO regions MotionGrove will dial at all (comma list). Premium-rate and shared-cost numbers are
+            // always refused. Default: US and Canada only.
+            'voice_allowed_regions' => env('TELNYX_VOICE_ALLOWED_REGIONS', 'US,CA'),
+            // 'telnyx' (default) or 'fake' (deterministic in-memory provider for browser verification only;
+            // ignored in production).
+            'voice_driver' => env('TELNYX_VOICE_DRIVER', 'telnyx'),
         ],
 
         /*

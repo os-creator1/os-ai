@@ -14,10 +14,22 @@ final class FakeVoiceClient implements VoiceProviderClient
     /** @var array<string, array{owned: bool, status: ?string, connection_id: ?string}> */
     public array $numbers = [];
 
-    /** @var array<string, array{exists: bool, active: bool}> */
+    /** @var array<string, array{exists: bool, active: bool, outbound_known: bool, outbound_profile_id: ?string}> */
     public array $connections = [];
 
+    /** @var array<string, array{exists: bool, active: bool, webhook_url: ?string, outbound_known: bool, outbound_profile_id: ?string}> */
+    public array $apps = [];
+
     public ?VoiceProviderException $failNext = null;
+
+    /**
+     * Browser-verification mode (TELNYX_VOICE_DRIVER=fake): every unknown connection/application/number is
+     * reported healthy and locked, and call ids are random, so a real app server can run against it. Never
+     * true in tests of the safety checks themselves, and never used in production.
+     */
+    public function __construct(public readonly bool $permissive = false)
+    {
+    }
 
     private int $sequence = 0;
 
@@ -27,7 +39,9 @@ final class FakeVoiceClient implements VoiceProviderClient
         $this->maybeFail();
         $this->sequence++;
 
-        return ['id' => 'cred-' . $this->sequence, 'sip_username' => 'gencred' . $this->sequence];
+        $id = $this->permissive ? bin2hex(random_bytes(4)) : (string) $this->sequence;
+
+        return ['id' => 'cred-' . $id, 'sip_username' => 'gencred' . $id];
     }
 
     public function mintToken(string $apiKey, string $credentialId): string
@@ -48,7 +62,7 @@ final class FakeVoiceClient implements VoiceProviderClient
         $this->record('inspectNumber', compact('apiKey', 'e164'));
         $this->maybeFail();
 
-        return $this->numbers[$e164] ?? ['owned' => false, 'status' => null, 'connection_id' => null];
+        return $this->numbers[$e164] ?? ($this->permissive ? ['owned' => true, 'status' => 'active', 'connection_id' => null] : ['owned' => false, 'status' => null, 'connection_id' => null]);
     }
 
     public function inspectCredentialConnection(string $apiKey, string $connectionId): array
@@ -56,7 +70,30 @@ final class FakeVoiceClient implements VoiceProviderClient
         $this->record('inspectCredentialConnection', compact('apiKey', 'connectionId'));
         $this->maybeFail();
 
-        return $this->connections[$connectionId] ?? ['exists' => false, 'active' => false];
+        return $this->connections[$connectionId] ?? ['exists' => $this->permissive, 'active' => $this->permissive, 'outbound_known' => $this->permissive, 'outbound_profile_id' => null];
+    }
+
+    public function inspectCallControlApp(string $apiKey, string $appId): array
+    {
+        $this->record('inspectCallControlApp', compact('apiKey', 'appId'));
+        $this->maybeFail();
+
+        return $this->apps[$appId] ?? ['exists' => false, 'active' => false, 'webhook_url' => null, 'outbound_known' => false, 'outbound_profile_id' => null];
+    }
+
+    public function dial(string $apiKey, string $appId, string $to, string $from, string $clientState, int $timeoutSeconds): array
+    {
+        $this->record('dial', compact('apiKey', 'appId', 'to', 'from', 'clientState', 'timeoutSeconds'));
+        $this->maybeFail();
+        $this->sequence++;
+        $id = $this->permissive ? bin2hex(random_bytes(6)) : (string) $this->sequence;
+
+        return ['call_control_id' => 'dial-cc-' . $id, 'call_session_id' => 'dial-sess-' . $id, 'call_leg_id' => 'dial-leg-' . $id];
+    }
+
+    public function hangupCall(string $apiKey, string $callControlId): void
+    {
+        $this->record('hangupCall', compact('apiKey', 'callControlId'));
     }
 
     public function transferToSip(string $apiKey, string $callControlId, string $sipUri, string $from): void

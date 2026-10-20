@@ -538,7 +538,9 @@
             // Browser calling: the one Telnyx voice client (tests bind a fake over this).
             $this->app->bind(
                 \App\Library\Voice\VoiceProviderClient::class,
-                \App\Library\Voice\TelnyxVoiceClient::class,
+                fn ($app) => config('services.telnyx.voice_driver') === 'fake' && ! $app->isProduction()
+                    ? new \App\Library\Voice\FakeVoiceClient(permissive: true)
+                    : $app->make(\App\Library\Voice\TelnyxVoiceClient::class),
             );
 
             // Conversations — the contact activity timeline. Its sources, in

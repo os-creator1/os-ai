@@ -104,7 +104,6 @@
         ["telnyx.ready", "telnyx.error", "telnyx.socket.error", "telnyx.socket.close", "telnyx.notification"].forEach(function (ev) { try { rtc.off(ev); } catch (e) { /* ignore */ } });
         try { rtc.disconnect(); } catch (e) { /* ignore */ }
       },
-      newCall: function (opts) { return wrap(rtc.newCall(opts)); }
     };
   }
 
@@ -430,6 +429,8 @@
       api: api,
       urls: {
         session: cfg.urls.session, options: cfg.urls.options, token: cfg.urls.token, heartbeat: cfg.urls.heartbeat, calls: cfg.urls.calls, lookup: cfg.urls.lookup,
+        callStatus: function (uid) { return cfg.urls.callBase + "/" + encodeURIComponent(uid); },
+        cancel: function (uid) { return cfg.urls.callBase + "/" + encodeURIComponent(uid) + "/cancel"; },
         clientEvent: function (uid) { return cfg.urls.callBase + "/" + encodeURIComponent(uid) + "/client-event"; },
         note: function (uid) { return cfg.urls.callBase + "/" + encodeURIComponent(uid) + "/note"; }
       },
@@ -455,11 +456,19 @@
       var b = e.target.closest && e.target.closest("[data-mg-call]");
       if (b) { e.preventDefault(); if (!b.disabled) { onCallClick(b); } return; }
       onLinkClick(e);
-    });
+    }, true); // capture: the app's own menu/link handlers must not be able to swallow the click first
     window.addEventListener("popstate", function () { if (core.inCall()) { swapTo(window.location.href, false); } });
     window.addEventListener("beforeunload", function (e) { if (core.inCall()) { e.preventDefault(); e.returnValue = ""; } });
     // Real unloads (reload, close, logout, workspace switch) clean up: hang up, release the lead, mark offline.
     window.addEventListener("pagehide", function () { core.shutdown(); });
+    // Logging out or switching Workspace/Business leaves nothing registered or ringing behind — before the
+    // request is sent, so the session is still valid for the "offline" signal.
+    document.addEventListener("submit", function (e) {
+      var action = (e.target && e.target.action) || "";
+      if (!/\/logout(\?|$)|\/context\//.test(action)) { return; }
+      if (core.inCall() && !window.confirm("You are on a call. Continuing will end it. Continue?")) { e.preventDefault(); e.stopPropagation(); return; }
+      core.shutdown();
+    }, true);
     document.addEventListener("click", function (e) {
       var a = e.target.closest && e.target.closest("a[href*='logout']");
       if (a) { core.shutdown(); }

@@ -32,19 +32,40 @@ class VoiceWebhookTest extends TestCase
     {
         [$business, $workspace, $user] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
         $uid = $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->json('call.uid');
 
         return [VoiceCall::where('uid', $uid)->firstOrFail(), $business, $workspace, $user, $number, $contact];
     }
 
-    private function outboundLeg(VoiceCall $call, string $session = 'sess-1', array $extra = []): array
+    /** An event about OUR leg: the dial MotionGrove placed to the user's browser identity. */
+    private function legA(VoiceCall $call, array $extra = []): array
     {
+        $call = $call->fresh();
+
         return array_merge([
-            'call_session_id' => $session, 'call_control_id' => 'ccid-' . $session, 'call_leg_id' => 'leg-' . $session,
-            'direction' => 'incoming', 'from' => 'sip:user@sip.telnyx.com', 'to' => $call->to_number,
+            'call_session_id' => $call->provider_call_session_id, 'call_control_id' => $call->provider_call_control_id, 'call_leg_id' => $call->provider_leg_id,
+            'direction' => 'outgoing', 'from' => $call->to_number, 'to' => 'sip:gencred1@sip.telnyx.com',
             'client_state' => base64_encode($call->uid),
         ], $extra);
+    }
+
+    /** An event about the CUSTOMER's leg, created by MotionGrove's bridge, on the same session. */
+    private function legB(VoiceCall $call, array $extra = []): array
+    {
+        $call = $call->fresh();
+
+        return array_merge([
+            'call_session_id' => $call->provider_call_session_id, 'call_control_id' => 'pstn-leg-' . $call->id, 'call_leg_id' => 'pstn-lg-' . $call->id,
+            'direction' => 'outgoing', 'from' => $call->from_number, 'to' => $call->to_number,
+        ], $extra);
+    }
+
+    /** Drives a call to the bridged state: our leg answered (so MotionGrove bridges), customer leg ringing. */
+    private function bridged(VoiceCall $call): void
+    {
+        $this->managedVoiceWebhook('a-' . $call->id, 'call.answered', $this->legA($call))->assertOk();
     }
 
     /* --------------------------------------------------------------- verification */
@@ -52,18 +73,19 @@ class VoiceWebhookTest extends TestCase
     public function test_unsigned_badly_signed_and_stale_events_change_nothing(): void
     {
         [$call] = $this->startedOutbound();
-        $payload = $this->outboundLeg($call);
+        $payload = $this->legA($call);
         $url = route('voice.webhooks.telnyx_managed');
-        $body = json_encode(['data' => ['id' => 'e1', 'event_type' => 'call.initiated', 'payload' => $payload]]);
+        $body = json_encode(['data' => ['id' => 'e1', 'event_type' => 'call.answered', 'payload' => $payload]]);
 
         $this->call('POST', $url, [], [], [], ['CONTENT_TYPE' => 'application/json'], $body)->assertStatus(403);
 
         $other = sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair());
-        $this->managedVoiceWebhook('e2', 'call.initiated', $payload, $other)->assertStatus(403);
-        $this->managedVoiceWebhook('e3', 'call.initiated', $payload, null, now()->subMinutes(30)->getTimestamp())->assertStatus(403);
+        $this->managedVoiceWebhook('e2', 'call.answered', $payload, $other)->assertStatus(403);
+        $this->managedVoiceWebhook('e3', 'call.answered', $payload, null, now()->subMinutes(30)->getTimestamp())->assertStatus(403);
 
         $this->assertSame(0, VoiceCallEvent::count());
-        $this->assertNull($call->fresh()->provider_call_session_id);
+        $this->assertSame('initiating', $call->fresh()->status);
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'), 'An unverified event can never cause a bridge.');
     }
 
     public function test_the_managed_webhook_is_inert_until_managed_voice_is_enabled(): void
@@ -71,8 +93,17 @@ class VoiceWebhookTest extends TestCase
         [$call] = $this->startedOutbound();
         config(['services.telnyx.voice_enabled' => false]);
 
-        $this->managedVoiceWebhook('e1', 'call.initiated', $this->outboundLeg($call))->assertOk()->assertJson(['status' => 'ignored']);
+        $this->managedVoiceWebhook('e1', 'call.answered', $this->legA($call))->assertOk()->assertJson(['status' => 'ignored']);
         $this->assertSame(0, VoiceCallEvent::count());
+    }
+
+    public function test_voice_webhooks_need_no_csrf_token_but_still_need_a_valid_signature(): void
+    {
+        [$call] = $this->startedOutbound();
+        $this->app['env'] = 'local'; // switch Laravel's CSRF check on
+
+        $this->managedVoiceWebhook('c1', 'call.answered', $this->legA($call))->assertOk();
+        $this->managedVoiceWebhook('c2', 'call.answered', $this->legA($call), sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair()))->assertStatus(403);
     }
 
     public function test_a_byo_webhook_needs_the_agencys_own_key_and_token_not_the_platforms(): void
@@ -91,43 +122,57 @@ class VoiceWebhookTest extends TestCase
         $this->assertSame(1, VoiceCall::count());
     }
 
-    /* -------------------------------------------------------- outgoing call lifecycle */
+    /* ----------------------------------------- server-mediated outgoing call: legs and bridge */
 
-    public function test_a_confirmed_outgoing_call_completes_with_the_real_duration(): void
+    public function test_our_browser_leg_answering_bridges_to_the_validated_destination_only_and_is_not_the_customer_answering(): void
     {
         [$call, $business, , $user] = $this->startedOutbound();
         $t0 = now();
 
-        $this->managedVoiceWebhook('e1', 'call.initiated', $this->outboundLeg($call) + ['_at' => $t0->toIso8601String()])->assertOk()->assertJson(['status' => 'applied']);
-        $this->assertSame('sess-1', $call->fresh()->provider_call_session_id);
-        $this->assertSame('initiating', $call->fresh()->status);
+        $this->managedVoiceWebhook('e1', 'call.initiated', $this->legA($call))->assertOk()->assertJson(['status' => 'ignored']);
+        $this->managedVoiceWebhook('e2', 'call.answered', $this->legA($call) + ['_at' => $t0->toIso8601String()])->assertOk()->assertJson(['status' => 'applied']);
 
-        $this->managedVoiceWebhook('e2', 'call.answered', $this->outboundLeg($call) + ['_at' => $t0->copy()->addSeconds(4)->toIso8601String()])->assertOk();
+        $transfer = $this->telnyx->callsTo('transferToSip');
+        $this->assertCount(1, $transfer);
+        $this->assertSame($call->provider_call_control_id, $transfer[0]['callControlId']);
+        $this->assertSame('+12025550111', $transfer[0]['sipUri'], 'the destination recorded when the request was validated');
+        $this->assertSame('+14155550199', $transfer[0]['from'], 'the approved caller ID');
+        $this->assertSame('platform-key-never-leaks', $transfer[0]['apiKey']);
+        $this->assertSame('ringing', $call->fresh()->status, 'only our own leg answered');
+        $this->assertNull($call->fresh()->answered_at);
+
+        $this->managedVoiceWebhook('e3', 'call.answered', $this->legB($call) + ['_at' => $t0->copy()->addSeconds(4)->toIso8601String()])->assertOk();
         $this->assertSame('answered', $call->fresh()->status);
+        $this->assertNotNull($call->fresh()->answered_at);
 
-        $this->managedVoiceWebhook('e3', 'call.hangup', $this->outboundLeg($call) + [
-            'hangup_cause' => 'normal_clearing', 'hangup_source' => 'callee',
-            'end_time' => $t0->copy()->addSeconds(94)->toIso8601String(), '_at' => $t0->copy()->addSeconds(94)->toIso8601String(),
-        ])->assertOk();
+        $this->managedVoiceWebhook('e4', 'call.hangup', $this->legB($call) + ['hangup_cause' => 'normal_clearing', 'hangup_source' => 'callee', 'end_time' => $t0->copy()->addSeconds(94)->toIso8601String(), '_at' => $t0->copy()->addSeconds(94)->toIso8601String()])->assertOk();
 
         $done = $call->fresh();
         $this->assertSame('completed', $done->status);
         $this->assertSame(90, $done->duration_seconds);
-        $this->assertNotNull($done->answered_at);
-        $this->assertNotNull($done->ended_at);
-        $this->assertSame('ccid-sess-1', $done->provider_call_control_id);
         $this->assertSame((int) $user->id, (int) $done->user_id);
         $this->assertSame((int) $business->id, (int) $done->business_id);
+    }
+
+    public function test_a_replayed_answer_bridges_only_once(): void
+    {
+        [$call] = $this->startedOutbound();
+
+        $this->managedVoiceWebhook('e2', 'call.answered', $this->legA($call))->assertOk();
+        $this->managedVoiceWebhook('e2', 'call.answered', $this->legA($call))->assertJson(['status' => 'duplicate']);
+        $this->managedVoiceWebhook('e2b', 'call.answered', $this->legA($call))->assertOk();
+
+        $this->assertCount(1, $this->telnyx->callsTo('transferToSip'));
     }
 
     public function test_the_browser_saying_ended_is_upgraded_not_trusted(): void
     {
         [$call, $business, $workspace] = $this->startedOutbound();
-        $this->managedVoiceWebhook('e1', 'call.initiated', $this->outboundLeg($call))->assertOk();
+        $this->bridged($call);
         $this->postJson($this->voiceUrl($workspace, $business, 'calls.start') . '/' . $call->uid . '/client-event', ['event' => 'ended'])->assertOk();
         $this->assertSame('unconfirmed', $call->fresh()->status);
 
-        $this->managedVoiceWebhook('e2', 'call.hangup', $this->outboundLeg($call) + ['hangup_cause' => 'user_busy'])->assertOk();
+        $this->managedVoiceWebhook('e5', 'call.hangup', $this->legB($call) + ['hangup_cause' => 'user_busy'])->assertOk();
 
         $this->assertSame('busy', $call->fresh()->status);
     }
@@ -136,8 +181,8 @@ class VoiceWebhookTest extends TestCase
     public function test_outgoing_outcomes_follow_the_provider_cause(string $cause, ?string $source, string $expected): void
     {
         [$call] = $this->startedOutbound();
-        $this->managedVoiceWebhook('e1', 'call.initiated', $this->outboundLeg($call))->assertOk();
-        $this->managedVoiceWebhook('e2', 'call.hangup', $this->outboundLeg($call) + array_filter(['hangup_cause' => $cause, 'hangup_source' => $source]))->assertOk();
+        $this->bridged($call);
+        $this->managedVoiceWebhook('e5', 'call.hangup', $this->legB($call) + array_filter(['hangup_cause' => $cause, 'hangup_source' => $source]))->assertOk();
 
         $this->assertSame($expected, $call->fresh()->status);
         $this->assertSame(0, $call->fresh()->duration_seconds);
@@ -155,65 +200,67 @@ class VoiceWebhookTest extends TestCase
         ];
     }
 
+    public function test_a_browser_that_never_answered_its_leg_is_a_failure_not_a_no_answer(): void
+    {
+        [$call] = $this->startedOutbound();
+
+        $this->managedVoiceWebhook('h1', 'call.hangup', $this->legA($call) + ['hangup_cause' => 'no_answer'])->assertOk();
+
+        $this->assertSame('failed', $call->fresh()->status);
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'));
+    }
+
     /* ----------------------------------------- 10. duplicates, replays, stale, out of order */
 
     public function test_a_repeated_event_creates_nothing_and_changes_nothing(): void
     {
         [$call] = $this->startedOutbound();
-        $leg = $this->outboundLeg($call);
 
-        $this->managedVoiceWebhook('same-id', 'call.initiated', $leg)->assertJson(['status' => 'applied']);
-        $this->managedVoiceWebhook('same-id', 'call.initiated', $leg)->assertOk()->assertJson(['status' => 'duplicate']);
-        $this->managedVoiceWebhook('ans-1', 'call.answered', $leg)->assertOk();
-        $this->managedVoiceWebhook('ans-1', 'call.answered', $leg)->assertJson(['status' => 'duplicate']);
+        $this->managedVoiceWebhook('ans-1', 'call.answered', $this->legB($call))->assertOk();
+        $this->managedVoiceWebhook('ans-1', 'call.answered', $this->legB($call))->assertOk()->assertJson(['status' => 'duplicate']);
 
         $this->assertSame(1, VoiceCall::count());
-        $this->assertSame(2, VoiceCallEvent::count());
+        $this->assertSame(1, VoiceCallEvent::count());
     }
 
     public function test_a_replay_of_the_final_event_with_a_new_id_does_not_change_the_outcome(): void
     {
         [$call] = $this->startedOutbound();
-        $leg = $this->outboundLeg($call);
-        $this->managedVoiceWebhook('e1', 'call.initiated', $leg)->assertOk();
-        $this->managedVoiceWebhook('e2', 'call.answered', $leg)->assertOk();
-        $this->managedVoiceWebhook('e3', 'call.hangup', $leg + ['hangup_cause' => 'normal_clearing'])->assertOk();
+        $this->bridged($call);
+        $this->managedVoiceWebhook('e2', 'call.answered', $this->legB($call))->assertOk();
+        $this->managedVoiceWebhook('e3', 'call.hangup', $this->legB($call) + ['hangup_cause' => 'normal_clearing'])->assertOk();
         $finished = $call->fresh();
 
-        $this->managedVoiceWebhook('e4', 'call.hangup', $leg + ['hangup_cause' => 'call_rejected', 'end_time' => now()->addHour()->toIso8601String()])->assertJson(['status' => 'ignored']);
+        $this->managedVoiceWebhook('e4', 'call.hangup', $this->legB($call) + ['hangup_cause' => 'call_rejected', 'end_time' => now()->addHour()->toIso8601String()])->assertJson(['status' => 'ignored']);
 
         $this->assertSame('completed', $call->fresh()->status);
         $this->assertSame($finished->duration_seconds, $call->fresh()->duration_seconds);
         $this->assertSame($finished->ended_at->toIso8601String(), $call->fresh()->ended_at->toIso8601String());
     }
 
-    public function test_a_late_ringing_or_initiated_event_never_reopens_a_finished_call(): void
+    public function test_a_late_answer_event_never_reopens_a_finished_call(): void
     {
         [$call] = $this->startedOutbound();
-        $leg = $this->outboundLeg($call);
-        $this->managedVoiceWebhook('e1', 'call.initiated', $leg)->assertOk();
-        $this->managedVoiceWebhook('e2', 'call.answered', $leg)->assertOk();
-        $this->managedVoiceWebhook('e3', 'call.hangup', $leg + ['hangup_cause' => 'normal_clearing'])->assertOk();
+        $this->bridged($call);
+        $this->managedVoiceWebhook('e2', 'call.answered', $this->legB($call))->assertOk();
+        $this->managedVoiceWebhook('e3', 'call.hangup', $this->legB($call) + ['hangup_cause' => 'normal_clearing'])->assertOk();
 
-        $this->managedVoiceWebhook('late-init', 'call.initiated', $leg, null)->assertJson(['status' => 'ignored']);
-        $this->managedVoiceWebhook('late-ans', 'call.answered', $leg)->assertJson(['status' => 'ignored']);
+        $this->managedVoiceWebhook('late-a', 'call.answered', $this->legA($call), null)->assertJson(['status' => 'ignored']);
+        $this->managedVoiceWebhook('late-b', 'call.answered', $this->legB($call))->assertJson(['status' => 'ignored']);
 
         $this->assertSame('completed', $call->fresh()->status);
     }
 
-    public function test_a_hangup_that_overtakes_the_answer_is_corrected_when_the_answer_arrives(): void
+    public function test_a_hangup_that_overtakes_the_customer_answer_is_corrected_when_the_answer_arrives(): void
     {
         [$call] = $this->startedOutbound();
-        $leg = $this->outboundLeg($call);
         $t0 = now();
-        $this->managedVoiceWebhook('e1', 'call.initiated', $leg)->assertOk();
+        $this->bridged($call);
 
-        // The hangup is processed first (no answered_at yet) …
-        $this->managedVoiceWebhook('e3', 'call.hangup', $leg + ['hangup_cause' => 'normal_clearing', 'hangup_source' => 'callee', 'end_time' => $t0->copy()->addSeconds(60)->toIso8601String(), '_at' => $t0->copy()->addSeconds(60)->toIso8601String()])->assertOk();
+        $this->managedVoiceWebhook('e3', 'call.hangup', $this->legB($call) + ['hangup_cause' => 'normal_clearing', 'hangup_source' => 'callee', 'end_time' => $t0->copy()->addSeconds(60)->toIso8601String(), '_at' => $t0->copy()->addSeconds(60)->toIso8601String()])->assertOk();
         $this->assertSame('failed', $call->fresh()->status);
 
-        // … then the earlier answer shows up.
-        $this->managedVoiceWebhook('e2', 'call.answered', $leg + ['_at' => $t0->copy()->addSeconds(10)->toIso8601String()])->assertOk()->assertJson(['status' => 'applied']);
+        $this->managedVoiceWebhook('e2', 'call.answered', $this->legB($call) + ['_at' => $t0->copy()->addSeconds(10)->toIso8601String()])->assertOk()->assertJson(['status' => 'applied']);
 
         $done = $call->fresh();
         $this->assertSame('completed', $done->status);
@@ -231,21 +278,73 @@ class VoiceWebhookTest extends TestCase
         $this->assertSame('unmatched', VoiceCallEvent::where('provider_event_id', 'x1')->value('applied'));
     }
 
-    public function test_a_call_to_a_different_destination_than_the_one_validated_is_not_attributed(): void
-    {
-        [$call] = $this->startedOutbound();
-
-        $this->managedVoiceWebhook('e1', 'call.initiated', $this->outboundLeg($call, 'sess-x', ['to' => '+12025559999']))->assertJson(['status' => 'unmatched']);
-
-        $this->assertNull($call->fresh()->provider_call_session_id);
-    }
-
     public function test_other_event_types_are_acknowledged_without_effect(): void
     {
         [$call] = $this->startedOutbound();
 
-        $this->managedVoiceWebhook('rec', 'call.recording.saved', $this->outboundLeg($call))->assertOk()->assertJson(['status' => 'ignored']);
+        $this->managedVoiceWebhook('rec', 'call.recording.saved', $this->legA($call))->assertOk()->assertJson(['status' => 'ignored']);
         $this->assertSame('initiating', $call->fresh()->status);
+    }
+
+    /* ------------------------------ 1. adversarial: authority is re-checked at the moment of bridging */
+
+    public function test_an_expired_permission_stops_the_bridge_and_hangs_up_our_leg(): void
+    {
+        [$call, $business, $workspace, $user] = $this->startedOutbound();
+        // Between "Call" and the browser answering, the user's access is removed.
+        \App\Models\Customer::query()->where('user_id', $user->id)->update(['permissions' => json_encode([])]);
+        \Illuminate\Support\Facades\DB::table('workspaces')->where('id', $workspace->id)->update(['owner_user_id' => \App\Models\User::query()->where('is_admin', true)->value('id')]);
+
+        $this->bridged($call);
+
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'), 'No bridge, so no call reaches the phone network.');
+        $this->assertCount(1, $this->telnyx->callsTo('hangupCall'));
+        $this->assertSame('failed', $call->fresh()->status);
+        $this->assertContains($call->fresh()->hangup_cause, ['authorization_revoked', 'number_no_longer_callable']);
+    }
+
+    public function test_a_number_that_stops_being_callable_before_the_bridge_is_not_used(): void
+    {
+        [$call, , , , $number] = $this->startedOutbound();
+        \App\Models\BusinessMessagingNumber::query()->whereKey($number->messaging_number_id)->update(['status' => \App\Enums\Messaging\BusinessMessagingNumberStatus::Suspended->value]);
+
+        $this->bridged($call);
+
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'));
+        $this->assertSame('number_no_longer_callable', $call->fresh()->hangup_cause);
+    }
+
+    public function test_a_destination_the_policy_no_longer_allows_is_not_bridged(): void
+    {
+        [$call] = $this->startedOutbound();
+        config(['services.telnyx.voice_allowed_regions' => 'GB']);
+
+        $this->bridged($call);
+
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'));
+        $this->assertSame('destination_not_allowed', $call->fresh()->hangup_cause);
+    }
+
+    public function test_an_answer_long_after_the_call_was_requested_is_not_bridged(): void
+    {
+        [$call] = $this->startedOutbound();
+        VoiceCall::query()->update(['initiated_at' => now()->subMinutes(5)]);
+
+        $this->bridged($call);
+
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'));
+        $this->assertSame('authorization_expired', $call->fresh()->hangup_cause);
+    }
+
+    public function test_a_provider_failure_while_bridging_closes_the_call_and_releases_our_leg(): void
+    {
+        [$call] = $this->startedOutbound();
+        $this->telnyx->failNext = new \App\Library\Voice\VoiceProviderException('transfer_failed', 'nope');
+
+        $this->bridged($call);
+
+        $this->assertSame('bridge_failed', $call->fresh()->hangup_cause);
+        $this->assertCount(1, $this->telnyx->callsTo('hangupCall'));
     }
 
     /* ------------------------------------------------------------------- inbound calls */

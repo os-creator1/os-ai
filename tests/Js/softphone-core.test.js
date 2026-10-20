@@ -28,6 +28,7 @@ function harness(opts = {}) {
     session: { ok: true, json: { inbound_number_uid: null } },
     token: { ok: true, json: { token: 'a.b.c', expires_at: null } },
     calls: { ok: true, json: { call: { uid: 'call-1', from: '+14155550199', to: '+12025550111', name: 'Maya Lopez', client_state: 'Y2FsbC0x' } } },
+    'calls/call-1': { ok: true, json: { call_status: 'initiating', final: false, answered_elapsed_ms: null } },
     lookup: { ok: true, json: { name: 'Maya Lopez', number: '+12025550111', call_uid: 'call-in-1' } },
   }, opts.responses || {});
   let leaderFree = opts.leaderFree !== false;
@@ -36,19 +37,20 @@ function harness(opts = {}) {
   const deps = {
     supported: opts.supported !== false,
     isSecure: opts.isSecure !== false,
-    urls: { session: '/session', options: '/options', token: '/token', heartbeat: '/heartbeat', calls: '/calls', lookup: '/lookup', clientEvent: (u) => `/calls/${u}/client-event`, note: (u) => `/calls/${u}/note` },
+    urls: { session: '/session', options: '/options', token: '/token', heartbeat: '/heartbeat', calls: '/calls', lookup: '/lookup', clientEvent: (u) => `/calls/${u}/client-event`, note: (u) => `/calls/${u}/note`, callStatus: (u) => `/calls/${u}`, cancel: (u) => `/calls/${u}/cancel` },
     api: {
       get(url) { return Promise.resolve(responses[url.split('?')[0].slice(1)] || { ok: true, json: {} }); },
       post(url, body) {
         posts.push([url, body]);
-        const key = url.startsWith('/calls/') ? null : url.slice(1);
+        const key = url.startsWith('/calls/') && !url.endsWith('/cancel') ? null : url.slice(1);
         return Promise.resolve((key && responses[key]) || { ok: true, json: { status: 'success' } });
       },
     },
     createClient(token, handlers) {
       const client = { token, handlers, connected: false, disconnected: false, newCalls: [],
         connect() { client.connected = true; }, disconnect() { client.disconnected = true; },
-        newCall(o) { const call = fakeCall({ opts: o }); client.newCalls.push(call); client.last = call; return call; } };
+        // Browser-originated dialing must never happen: any use of newCall fails the test.
+        newCall() { throw new Error('direct browser dialing is forbidden'); } };
       clients.push(client);
       return client;
     },
@@ -72,66 +74,116 @@ function harness(opts = {}) {
   const sp = createSoftphone(deps);
   const tick = async () => { for (let i = 0; i < 4; i += 1) { await new Promise((r) => setImmediate(r)); } };
   const advance = (ms) => { t += ms; };
-  return { sp, deps, clients, posts, timers, tick, advance, leaderLog, setLeaderFree(v) { leaderFree = v; } };
+  return { sp, deps, clients, posts, timers, tick, advance, leaderLog, responses, setLeaderFree(v) { leaderFree = v; } };
 }
 
 const ready = async (h) => { h.sp.init(); await h.tick(); };
+const pollOnce = async (h) => { h.timers.filter((t) => t.ms === 1500 && t.live).forEach((t) => t.fn()); await h.tick(); };
+
+// Start a call the way the page does, let the "server" ring our browser leg, and return the answered leg.
 const readyClient = async (h, uid = 'num-1') => {
-  const p = h.sp.startCall({ numberUid: uid, fromNumber: '+14155550199', toNumber: '+12025550111', name: 'Maya Lopez', contactUid: 'c1' });
+  const p = h.sp.startCall({ numberUid: uid, scope: 'managed', fromNumber: '+14155550199', toNumber: '+12025550111', name: 'Maya Lopez', contactUid: 'c1' });
   await h.tick();
   const client = h.clients[h.clients.length - 1];
   client.handlers.ready();
-  await p; // resolves once the polled wait sees "registered" and the SDK has been asked to dial
-  return { p, client };
+  await p; // registered first, THEN the server was asked to dial
+  const leg = fakeCall({ direction: 'inbound', state: 'ringing', remoteNumber: '+12025550111' });
+  client.handlers.callUpdate(leg);
+  client.last = leg;
+  return { p, client, leg };
 };
 
-test('a call dials through ONE client with the validated numbers and the intent id as clientState', async () => {
+// The customer picks up: the server says so, and only then does the call become "in call".
+const customerAnswers = async (h, client, leg, elapsedMs = 0) => {
+  leg.state = 'active'; client.handlers.callUpdate(leg);
+  h.responses['calls/call-1'] = { ok: true, json: { call_status: 'answered', final: false, answered_elapsed_ms: elapsedMs } };
+  await pollOnce(h);
+};
+
+test('the server places the call: the browser registers first, asks the server, then answers only the leg it rang', async () => {
   const h = harness();
-  const { p, client } = await readyClient(h);
-  await new Promise((r) => setTimeout(r, 300));
-  await p;
+  const { client, leg } = await readyClient(h);
   assert.equal(h.clients.length, 1);
-  assert.deepEqual(client.last.opts, { destinationNumber: '+12025550111', callerNumber: '+14155550199', clientState: 'Y2FsbC0x' });
+  assert.deepEqual(leg.log, ['answer'], 'the leg for THIS request is answered on the person\'s behalf');
+  const order = h.posts.map(([u]) => u);
+  assert.ok(order.indexOf('/token') < order.indexOf('/calls'), 'registered before the server dials');
+  assert.deepEqual(h.posts.find(([u]) => u === '/calls')[1].contact_uid, 'c1');
   assert.equal(h.sp.getState().call.phase, 'dialing');
+  leg.state = 'active'; client.handlers.callUpdate(leg);
+  assert.equal(h.sp.getState().call.phase, 'ringing', 'our leg being up is not the customer answering');
 });
 
-test('outgoing lifecycle: ringing, active with an accurate timer, mute, hold, end', async () => {
+test('a leg for a different number is NOT auto-answered: it is treated as a genuine incoming call', async () => {
   const h = harness();
-  const { p, client } = await readyClient(h);
-  const call = client.last;
+  const p = h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: '+12025550111' });
+  await h.tick(); h.clients[0].handlers.ready(); await p;
+  const stranger = fakeCall({ direction: 'inbound', state: 'ringing', remoteNumber: '+12025559999' });
+  h.clients[0].handlers.callUpdate(stranger);
+  assert.deepEqual(stranger.log, ['hangup'], 'turned away while a call is being placed, never auto-answered');
+});
 
-  call.state = 'ringing'; client.handlers.callUpdate(call);
-  assert.equal(h.sp.getState().call.phase, 'ringing');
-
-  call.state = 'active'; client.handlers.callUpdate(call);
-  const answeredAt = h.sp.getState().call.answeredAt;
+test('outgoing lifecycle: server-confirmed answer, accurate timer, mute, hold, end', async () => {
+  const h = harness();
+  const { client, leg } = await readyClient(h);
+  await customerAnswers(h, client, leg, 4000);
   assert.equal(h.sp.getState().call.phase, 'active');
+  const answeredAt = h.sp.getState().call.answeredAt;
+  assert.equal(h.deps.now() - answeredAt, 4000, 'the timer starts from the SERVER\'s answer time');
   h.advance(65000);
-  assert.equal(Math.floor((h.deps.now() - answeredAt) / 1000), 65);
+  assert.equal(Math.floor((h.deps.now() - answeredAt) / 1000), 69);
 
-  h.sp.toggleMute(); assert.equal(h.sp.getState().call.muted, true); assert.ok(call.log.includes('mute'));
-  h.sp.toggleMute(); assert.equal(h.sp.getState().call.muted, false); assert.ok(call.log.includes('unmute'));
+  h.sp.toggleMute(); assert.equal(h.sp.getState().call.muted, true); assert.ok(leg.log.includes('mute'));
+  h.sp.toggleMute(); assert.equal(h.sp.getState().call.muted, false); assert.ok(leg.log.includes('unmute'));
+  h.sp.toggleHold(); await h.tick(); assert.ok(leg.log.includes('hold'));
+  leg.state = 'held'; client.handlers.callUpdate(leg); assert.equal(h.sp.getState().call.held, true);
+  leg.state = 'active'; client.handlers.callUpdate(leg); assert.equal(h.sp.getState().call.held, false);
 
-  h.sp.toggleHold(); await h.tick(); assert.ok(call.log.includes('hold'));
-  call.state = 'held'; client.handlers.callUpdate(call); assert.equal(h.sp.getState().call.held, true);
-  call.state = 'active'; client.handlers.callUpdate(call); assert.equal(h.sp.getState().call.held, false);
-
-  h.sp.hangup(); assert.ok(call.log.includes('hangup'));
-  call.state = 'hangup'; client.handlers.callUpdate(call);
-  const s = h.sp.getState().call;
-  assert.equal(s.phase, 'ended'); assert.equal(s.endReason.code, 'completed'); assert.equal(s.durationSeconds, 65);
+  h.sp.hangup(); assert.ok(leg.log.includes('hangup'));
+  leg.state = 'hangup'; client.handlers.callUpdate(leg);
+  const c = h.sp.getState().call;
+  assert.equal(c.phase, 'ended'); assert.equal(c.endReason.code, 'completed'); assert.equal(c.durationSeconds, 69);
   assert.ok(h.posts.some(([u, b]) => u === '/calls/call-1/client-event' && b.event === 'ended'));
+});
+
+test('the server reporting a final outcome ends the call with a plain message (busy, no answer)', async () => {
+  const h = harness();
+  const { client, leg } = await readyClient(h);
+  leg.state = 'active'; client.handlers.callUpdate(leg);
+  h.responses['calls/call-1'] = { ok: true, json: { call_status: 'busy', final: true } };
+  await pollOnce(h);
+  assert.equal(h.sp.getState().call.phase, 'ended');
+  assert.equal(h.sp.getState().call.endReason.message, 'The number is busy.');
+  assert.ok(leg.log.includes('hangup'), 'our leg is released');
+});
+
+test('cancel before the browser leg is up asks the server to hang up its leg', async () => {
+  const h = harness();
+  const p = h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: '+12025550111' });
+  await h.tick(); h.clients[0].handlers.ready(); await p;
+  h.sp.hangup();
+  assert.ok(h.posts.some(([u]) => u === '/calls/call-1/cancel'));
+  assert.equal(h.sp.getState().call.endReason.code, 'canceled');
+});
+
+test('no ringing leg within the wait time fails honestly and cancels the server call', async () => {
+  const h = harness();
+  const p = h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: '+12025550111' });
+  await h.tick(); h.clients[0].handlers.ready(); await p;
+  h.advance(26000);
+  await pollOnce(h);
+  assert.equal(h.sp.getState().call.endReason.code, 'leg_timeout');
+  assert.ok(h.posts.some(([u]) => u === '/calls/call-1/cancel'));
 });
 
 test('a double click starts exactly one call', async () => {
   const h = harness();
-  const a = h.sp.startCall({ numberUid: 'n', fromNumber: 'f', toNumber: 't' });
-  const b = h.sp.startCall({ numberUid: 'n', fromNumber: 'f', toNumber: 't' });
+  const a = h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: 't' });
+  const b = h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: 't' });
   assert.equal((await b).code, 'call_in_progress');
   await h.tick();
-  assert.equal(h.posts.filter(([u]) => u === '/calls').length, 1);
   h.clients[0].handlers.ready();
   await a;
+  assert.equal(h.posts.filter(([u]) => u === '/calls').length, 1);
 });
 
 test('denied microphone: no call is created, and the message says how to fix it', async () => {
@@ -154,33 +206,21 @@ test('an unsupported or insecure browser says so instead of failing silently', a
   }
 });
 
-test('a server refusal (cross-tenant number, no voice, duplicate) is shown with the server message and nothing dials', async () => {
-  const h = harness({ responses: { calls: { ok: false, json: { code: 'number_not_allowed', message: 'That calling number is not available to you for this contact.' } } } });
-  const r = await h.sp.startCall({ numberUid: 'n', fromNumber: 'f', toNumber: 't' });
-  assert.equal(r.code, 'number_not_allowed');
-  assert.equal(h.sp.getState().call.endReason.failed, true);
-  assert.equal(h.clients.length, 0);
-});
-
-test('a provider rejection is reported with a plain message, and the browser tells the server', async () => {
-  const h = harness();
-  const { p, client } = await readyClient(h);
-  const call = client.last;
-  call.state = 'hangup'; call.cause = 'USER_BUSY';
-  client.handlers.callUpdate(call);
-  assert.equal(h.sp.getState().call.endReason.message, 'The number is busy.');
-});
-
-test('SDK refusing to dial is reported so the server can close the attempt', async () => {
-  const h = harness();
-  h.deps.createClient = (token, handlers) => { const c = { connect() {}, disconnect() {}, newCall() { throw new Error('boom'); } }; h.clients.push(c); c.handlers = handlers; return c; };
-  const sp = createSoftphone(h.deps);
-  const p = sp.startCall({ numberUid: 'n', fromNumber: 'f', toNumber: 't' });
-  await h.tick();
-  h.clients[0].handlers.ready();
+test('a server refusal (cross-tenant number, destination not allowed, duplicate) is shown with the server message and nothing rings', async () => {
+  const h = harness({ responses: { calls: { ok: false, json: { code: 'destination_not_allowed', message: 'Calls to this country are not enabled for your account.' } } } });
+  const p = h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: 't' });
+  await h.tick(); h.clients[0].handlers.ready();
   const r = await p;
-  assert.equal(r.code, 'sdk_error');
-  assert.ok(h.posts.some(([u, b]) => u === '/calls/call-1/client-event' && b.event === 'dial_failed'));
+  assert.equal(r.code, 'destination_not_allowed');
+  assert.equal(h.sp.getState().call.endReason.failed, true);
+  assert.equal(h.sp.getState().call.endReason.message, 'Calls to this country are not enabled for your account.');
+});
+
+test('a token failure before dialing means the server is never asked to place a call', async () => {
+  const h = harness({ responses: { token: { ok: false, json: { code: 'direct_dialing_open', message: 'Remove the outbound voice profile in Telnyx.' } } } });
+  const r = await h.sp.startCall({ numberUid: 'n', scope: 'managed', fromNumber: 'f', toNumber: 't' });
+  assert.equal(r.code, 'failed');
+  assert.equal(h.posts.filter(([u]) => u === '/calls').length, 0);
 });
 
 test('incoming call: shown with the looked-up name, never auto-answered; Answer and Decline work', async () => {
@@ -292,26 +332,24 @@ test('expired credentials rebuild the client with a NEW token; stale client even
 
 test('a dropped socket during a call keeps the call and says so; it is not torn down', async () => {
   const h = harness();
-  const { p, client } = await readyClient(h);
-  const call = client.last; call.state = 'active'; client.handlers.callUpdate(call);
-
+  const { client, leg } = await readyClient(h);
+  await customerAnswers(h, client, leg);
   client.handlers.socketClose();
   assert.equal(h.sp.getState().call.phase, 'active');
   assert.match(h.sp.getState().call.notice, /Connection lost/);
   assert.equal(client.disconnected, false);
-
-  call.state = 'recovering'; client.handlers.callUpdate(call);
+  leg.state = 'recovering'; client.handlers.callUpdate(leg);
   assert.match(h.sp.getState().call.notice, /Reconnecting/);
-  call.state = 'active'; client.handlers.callUpdate(call);
+  leg.state = 'active'; client.handlers.callUpdate(leg);
   assert.equal(h.sp.getState().call.notice, null);
 });
 
 test('a call that ends after a connection drop says the connection dropped', async () => {
   const h = harness();
-  const { p, client } = await readyClient(h);
-  const call = client.last; call.state = 'active'; client.handlers.callUpdate(call);
+  const { client, leg } = await readyClient(h);
+  await customerAnswers(h, client, leg);
   client.handlers.socketClose();
-  call.state = 'hangup'; client.handlers.callUpdate(call);
+  leg.state = 'hangup'; client.handlers.callUpdate(leg);
   assert.equal(h.sp.getState().call.endReason.code, 'connection_lost');
 });
 

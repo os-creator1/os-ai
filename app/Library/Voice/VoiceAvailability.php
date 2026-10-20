@@ -7,6 +7,7 @@ use App\Models\Business;
 use App\Models\VoiceNumber;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Whether the browser-calling panel (and the Call buttons that drive it) should be on a page at all:
@@ -16,16 +17,37 @@ use Illuminate\Support\Facades\Cache;
  */
 final class VoiceAvailability
 {
-    public static function mounted(Request $request): bool
+    /**
+     * Should this user SEE a Call action here at all? Only an authenticated user inside a Business route who
+     * holds the Conversations permission and is not "viewing as" a client. Whether the action is usable or
+     * disabled-with-a-reason is a separate question (mounted()).
+     */
+    public static function mayCall(Request $request): bool
     {
-        $workspaceUid = $request->route('workspaceUid');
-        $businessUid = $request->route('businessUid');
+        $user = $request->user();
 
-        if (! $request->user() || ! is_string($workspaceUid) || ! is_string($businessUid)) {
+        if (! $user || ! is_string($request->route('workspaceUid')) || ! is_string($request->route('businessUid'))) {
             return false;
         }
 
         if (app()->bound(CustomerContext::class) && app(CustomerContext::class)->viewAs !== null) {
+            return false;
+        }
+
+        return Gate::forUser($user)->allows('chat_box');
+    }
+
+    /** The reason shown beside a disabled Call action when no calling panel is mounted for this Business. */
+    public static function unavailableReason(): string
+    {
+        return 'Browser calling is not set up for this account yet. Ask an admin to enable a calling number in Voice settings.';
+    }
+
+    public static function mounted(Request $request): bool
+    {
+        $businessUid = $request->route('businessUid');
+
+        if (! self::mayCall($request)) {
             return false;
         }
 

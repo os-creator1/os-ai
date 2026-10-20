@@ -88,12 +88,81 @@ final class TelnyxVoiceClient implements VoiceProviderClient
         $response = $this->send($apiKey, 'get', '/credential_connections/' . rawurlencode($connectionId));
 
         if ($response->status() === 404) {
-            return ['exists' => false, 'active' => false];
+            return ['exists' => false, 'active' => false, 'outbound_known' => false, 'outbound_profile_id' => null];
         }
 
         $this->assertOk($response, 'connection_lookup_failed', 'Telnyx could not look up this voice connection.');
 
-        return ['exists' => true, 'active' => $response->json('data.active') !== false];
+        return ['exists' => true, 'active' => $response->json('data.active') !== false] + $this->outboundFacts($response);
+    }
+
+    public function inspectCallControlApp(string $apiKey, string $appId): array
+    {
+        $response = $this->send($apiKey, 'get', '/call_control_applications/' . rawurlencode($appId));
+
+        if ($response->status() === 404) {
+            return ['exists' => false, 'active' => false, 'webhook_url' => null, 'outbound_known' => false, 'outbound_profile_id' => null];
+        }
+
+        $this->assertOk($response, 'app_lookup_failed', 'Telnyx could not look up this Call Control application.');
+        $url = $response->json('data.webhook_event_url');
+
+        return [
+            'exists' => true,
+            'active' => $response->json('data.active') !== false,
+            'webhook_url' => is_string($url) && $url !== '' ? $url : null,
+        ] + $this->outboundFacts($response);
+    }
+
+    public function dial(string $apiKey, string $appId, string $to, string $from, string $clientState, int $timeoutSeconds): array
+    {
+        $response = $this->send($apiKey, 'post', '/calls', [
+            'connection_id' => $appId,
+            'to' => $to,
+            'from' => $from,
+            'client_state' => $clientState,
+            'timeout_secs' => $timeoutSeconds,
+        ]);
+
+        $this->assertOk($response, 'dial_failed', 'Telnyx could not start the call. Check the Call Control application and its outbound voice profile.');
+        $id = $response->json('data.call_control_id');
+
+        if (! is_string($id) || $id === '') {
+            throw new VoiceProviderException('dial_failed', 'Telnyx returned an unexpected answer when starting the call.');
+        }
+
+        $session = $response->json('data.call_session_id');
+        $leg = $response->json('data.call_leg_id');
+
+        return [
+            'call_control_id' => $id,
+            'call_session_id' => is_string($session) && $session !== '' ? $session : null,
+            'call_leg_id' => is_string($leg) && $leg !== '' ? $leg : null,
+        ];
+    }
+
+    public function hangupCall(string $apiKey, string $callControlId): void
+    {
+        $response = $this->send($apiKey, 'post', '/calls/' . rawurlencode($callControlId) . '/actions/hangup');
+
+        // Already gone (404/422) is the outcome we wanted.
+        if (! in_array($response->status(), [404, 422], true)) {
+            $this->assertOk($response, 'hangup_failed', 'Telnyx could not end the call.');
+        }
+    }
+
+    /** @return array{outbound_known: bool, outbound_profile_id: ?string} */
+    private function outboundFacts(Response $response): array
+    {
+        $outbound = $response->json('data.outbound');
+
+        if (! is_array($outbound) || ! array_key_exists('outbound_voice_profile_id', $outbound)) {
+            return ['outbound_known' => false, 'outbound_profile_id' => null];
+        }
+
+        $id = $outbound['outbound_voice_profile_id'];
+
+        return ['outbound_known' => true, 'outbound_profile_id' => is_string($id) && $id !== '' ? $id : null];
     }
 
     public function transferToSip(string $apiKey, string $callControlId, string $sipUri, string $from): void

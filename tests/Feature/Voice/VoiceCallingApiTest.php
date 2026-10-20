@@ -291,6 +291,147 @@ class VoiceCallingApiTest extends TestCase
         $this->assertSame(2, VoiceRegistration::query()->distinct()->count('telnyx_credential_id'));
     }
 
+    /* ---------------------------- 1. adversarial: a browser token must never be able to dial the network */
+
+    public function test_no_token_is_issued_while_the_credential_connection_could_dial_directly(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->telnyx->connections['platform-conn-1'] = ['exists' => true, 'active' => true, 'outbound_known' => true, 'outbound_profile_id' => 'ovp-open'];
+
+        $this->postJson($this->voiceUrl($workspace, $business, 'token'), ['number_uid' => $number->uid])
+            ->assertStatus(422)->assertJson(['code' => 'direct_dialing_open']);
+
+        $this->assertSame([], $this->telnyx->callsTo('createTelephonyCredential'), 'No SIP identity is created, so there is nothing to replay.');
+    }
+
+    public function test_an_unconfirmed_lockdown_fails_closed(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->telnyx->connections['platform-conn-1'] = ['exists' => true, 'active' => true, 'outbound_known' => false, 'outbound_profile_id' => null];
+
+        $this->postJson($this->voiceUrl($workspace, $business, 'token'), ['number_uid' => $number->uid])
+            ->assertStatus(422)->assertJson(['code' => 'outbound_unconfirmed']);
+    }
+
+    public function test_the_lockdown_is_rechecked_so_a_later_change_at_telnyx_stops_new_tokens(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->postJson($this->voiceUrl($workspace, $business, 'token'), ['number_uid' => $number->uid])->assertOk();
+
+        \Illuminate\Support\Facades\Cache::flush(); // the five-minute confirmation has lapsed
+        $this->telnyx->connections['platform-conn-1']['outbound_profile_id'] = 'ovp-added-later';
+
+        $this->postJson($this->voiceUrl($workspace, $business, 'token'), ['number_uid' => $number->uid])
+            ->assertStatus(422)->assertJson(['code' => 'direct_dialing_open']);
+    }
+
+    public function test_manipulated_destination_and_caller_id_in_the_request_are_ignored(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
+        $contact = $this->contactFor($business);
+
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact) + [
+            'to' => '+442071838750', 'to_number' => '+19005551234', 'from' => '+19998887777', 'from_number' => '+19998887777', 'destination' => '+442071838750',
+        ])->assertOk();
+
+        $dial = $this->telnyx->callsTo('dial')[0];
+        $this->assertSame('+12025550111', $dial['from'], 'the destination is the contact\'s stored number');
+        $this->assertSame('+12025550111', VoiceCall::firstOrFail()->to_number);
+        $this->assertSame('+14155550199', VoiceCall::firstOrFail()->from_number);
+    }
+
+    public function test_international_and_premium_rate_destinations_are_refused_before_anything_is_dialled(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
+
+        foreach (['442071838750' => 'destination_not_allowed', '19005551234' => 'destination_not_allowed'] as $phone => $code) {
+            $contact = $this->contactFor($business, $phone, 'Far', 'Away');
+            $this->getJson($this->voiceUrl($workspace, $business, 'options') . '?contact_uid=' . $contact->uid)
+                ->assertOk()->assertJson(['callable' => false, 'reason' => $code]);
+            $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))
+                ->assertStatus(422)->assertJson(['code' => $code]);
+        }
+
+        $this->assertSame([], $this->telnyx->callsTo('dial'));
+        $this->assertSame(0, VoiceCall::count());
+
+        config(['services.telnyx.voice_allowed_regions' => 'US,CA,GB']);
+        $uk = $this->contactFor($business, '442071838750', 'Allowed', 'Now');
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $uk))->assertOk();
+        $premium = $this->contactFor($business, '19005551234', 'Still', 'Blocked');
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $premium))->assertStatus(422);
+    }
+
+    public function test_a_browser_that_is_not_registered_cannot_be_rung_and_the_attempt_is_closed(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $contact = $this->contactFor($business);
+
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))
+            ->assertStatus(409)->assertJson(['code' => 'browser_not_registered']);
+
+        $this->assertSame('failed', VoiceCall::firstOrFail()->status);
+        $this->assertSame([], $this->telnyx->callsTo('dial'));
+    }
+
+    public function test_a_provider_failure_placing_the_call_is_actionable_and_closes_the_attempt(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
+        $contact = $this->contactFor($business);
+        $this->telnyx->failNext = new VoiceProviderException('dial_failed', 'Telnyx could not start the call. Check the Call Control application and its outbound voice profile.');
+
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))
+            ->assertStatus(502)->assertJson(['code' => 'dial_failed']);
+
+        $this->assertSame('dial_failed', VoiceCall::firstOrFail()->hangup_cause);
+    }
+
+    public function test_replaying_a_start_request_never_dials_twice_and_another_users_key_is_not_theirs(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
+        $contact = $this->contactFor($business);
+        $payload = $this->startPayload($number, $contact, null, 'replay-key-1');
+
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $payload)->assertOk();
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $payload)->assertOk()->assertJson(['duplicate' => true]);
+        VoiceCall::query()->update(['status' => 'completed', 'status_rank' => 4]);
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $payload)->assertOk()->assertJson(['duplicate' => true]);
+
+        $this->assertCount(1, $this->telnyx->callsTo('dial'));
+        $this->assertSame(1, VoiceCall::count());
+    }
+
+    public function test_cancel_and_status_work_only_for_the_users_own_call(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
+        $contact = $this->contactFor($business);
+        $uid = $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->json('call.uid');
+        $base = $this->voiceUrl($workspace, $business, 'calls.start');
+
+        $this->getJson("$base/$uid")->assertOk()->assertJson(['call_status' => 'initiating', 'final' => false]);
+        $this->postJson("$base/$uid/cancel")->assertOk();
+        $this->assertCount(1, $this->telnyx->callsTo('hangupCall'));
+
+        $this->actingAs($this->secondStaffUser($workspace, $business));
+        $this->getJson("$base/$uid")->assertStatus(404);
+        $this->postJson("$base/$uid/cancel")->assertStatus(404);
+        $this->assertCount(1, $this->telnyx->callsTo('hangupCall'));
+    }
+
     /* ---------------------------------------------- 8. credentials and token failures */
 
     public function test_a_token_failure_is_an_actionable_message_not_a_500(): void
@@ -335,6 +476,7 @@ class VoiceCallingApiTest extends TestCase
     {
         [$business, $workspace, $user] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
 
         $response = $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))
@@ -348,13 +490,20 @@ class VoiceCallingApiTest extends TestCase
         $this->assertSame((int) $contact->id, (int) $call->contact_id);
         $this->assertSame((int) $user->id, (int) $call->user_id);
         $this->assertSame((int) $business->id, (int) $call->business_id);
-        $this->assertSame([], $this->telnyx->callsTo('createTelephonyCredential'), 'Recording a call never talks to Telnyx.');
+        $dial = $this->telnyx->callsTo('dial');
+        $this->assertCount(1, $dial, 'MotionGrove places the call itself, once.');
+        $this->assertSame('platform-app-1', $dial[0]['appId']);
+        $this->assertStringStartsWith('sip:gencred', $dial[0]['to'], 'it rings the user\'s own browser identity first, never the customer');
+        $this->assertSame('+12025550111', $dial[0]['from'], 'the destination is shown as the caller on the browser leg');
+        $this->assertSame($call->uid, base64_decode($dial[0]['clientState']));
+        $this->assertStringStartsWith('dial-cc-', (string) $call->fresh()->provider_call_control_id);
     }
 
     public function test_a_call_from_a_conversation_uses_that_conversations_contact(): void
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
         $box = $this->conversationWith($business, '12025550111');
 
@@ -369,6 +518,7 @@ class VoiceCallingApiTest extends TestCase
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
         $payload = $this->startPayload($number, $contact, null, 'same-click-key');
 
@@ -384,6 +534,7 @@ class VoiceCallingApiTest extends TestCase
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
 
         $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->assertOk();
@@ -397,6 +548,7 @@ class VoiceCallingApiTest extends TestCase
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
         $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->assertOk();
         VoiceCall::query()->update(['initiated_at' => now()->subMinutes(5)]);
@@ -404,7 +556,7 @@ class VoiceCallingApiTest extends TestCase
         $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->assertOk();
 
         $this->assertSame(['failed', 'initiating'], VoiceCall::orderBy('id')->pluck('status')->all());
-        $this->assertSame('never_reached_provider', VoiceCall::orderBy('id')->first()->hangup_cause);
+        $this->assertSame('never_connected', VoiceCall::orderBy('id')->first()->hangup_cause);
     }
 
     /* ---------------------------------------------- browser hints are never the outcome */
@@ -413,6 +565,7 @@ class VoiceCallingApiTest extends TestCase
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
         $uid = $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->json('call.uid');
 
@@ -428,6 +581,7 @@ class VoiceCallingApiTest extends TestCase
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
         $uid = $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->json('call.uid');
 
@@ -442,6 +596,7 @@ class VoiceCallingApiTest extends TestCase
     {
         [$business, $workspace] = $this->signedInBusiness();
         $number = $this->managedVoiceNumber($business);
+        $this->browserOnline($workspace, $business, $number);
         $contact = $this->contactFor($business);
         $uid = $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), $this->startPayload($number, $contact))->json('call.uid');
 
@@ -504,7 +659,7 @@ class VoiceCallingApiTest extends TestCase
 
     /* -------------------------------------------- UI gate: the Call button and panel mount */
 
-    public function test_the_call_button_and_panel_are_present_only_where_calling_can_exist(): void
+    public function test_the_call_action_is_usable_when_ready_and_disabled_with_a_reason_when_not(): void
     {
         [$business, $workspace] = $this->signedInBusiness();
         $contact = $this->contactFor($business);
@@ -512,14 +667,35 @@ class VoiceCallingApiTest extends TestCase
 
         $enabled = $this->get($url)->assertOk()->getContent();
         $this->assertStringContainsString('data-role="contact-call"', $enabled);
-        $this->assertStringContainsString('id="mg-voice-root"', $enabled . 'id="mg-voice-root"'); // built client-side
+        $this->assertStringContainsString('data-mg-call', $enabled);
         $this->assertStringContainsString('MGSoftphone.boot', $enabled);
+        $this->assertStringNotContainsString('data-calling-unavailable', $enabled);
 
         config(['services.telnyx.voice_enabled' => false]);
         \Illuminate\Support\Facades\Cache::flush();
         $disabled = $this->get($url)->assertOk()->getContent();
-        $this->assertStringNotContainsString('data-role="contact-call"', $disabled);
+        $this->assertStringContainsString('data-role="contact-call"', $disabled, 'The action stays discoverable.');
+        $this->assertStringContainsString('data-calling-unavailable', $disabled);
+        $this->assertStringContainsString('data-role="contact-call-reason"', $disabled);
+        $this->assertStringContainsString('Browser calling is not set up for this account yet', $disabled);
+        $this->assertStringNotContainsString('data-mg-call', $disabled, 'A disabled action never opens a dialing flow.');
         $this->assertStringNotContainsString('MGSoftphone.boot', $disabled);
+    }
+
+    public function test_a_user_without_the_conversations_permission_sees_no_call_action_at_all(): void
+    {
+        [$business, $workspace] = $this->signedInBusiness();
+        $contact = $this->contactFor($business);
+        $defaults = json_decode((string) \App\Models\Customer::customerPermissions(), true);
+        $staff = $this->nonOwnerStaff($workspace, array_values(array_diff(array_merge($defaults, ['view_contact']), ['chat_box'])));
+        $staff->user->forceFill(['email_verified_at' => now()])->save();
+        $this->actingAs($staff->user);
+
+        $html = $this->get(route('customer.workspaces.businesses.people.show', [$workspace->uid, $business->uid, $contact->uid]))->getContent();
+
+        $this->assertStringNotContainsString('data-role="contact-call"', $html);
+        $this->assertStringNotContainsString('MGSoftphone.boot', $html);
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start'), ['number_uid' => 'x', 'contact_uid' => $contact->uid, 'idempotency_key' => 'abcdefgh'])->assertStatus(404);
     }
 
     public function test_the_conversation_header_has_the_same_call_action(): void

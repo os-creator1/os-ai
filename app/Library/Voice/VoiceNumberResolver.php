@@ -116,7 +116,7 @@ final class VoiceNumberResolver
         }
 
         if ($number->source === VoiceNumber::SOURCE_MANAGED) {
-            if (! (bool) config('services.telnyx.voice_enabled') || ! config('services.telnyx.voice_connection_id') || ! config('services.telnyx.api_key')) {
+            if (! (bool) config('services.telnyx.voice_enabled') || ! config('services.telnyx.voice_connection_id') || ! config('services.telnyx.voice_call_control_app_id') || ! config('services.telnyx.api_key')) {
                 return ['voice_disabled', 'Managed browser calling is not enabled on this platform yet.'];
             }
 
@@ -130,11 +130,15 @@ final class VoiceNumberResolver
                 return ['telnyx_disconnected', 'The Telnyx account for this number is disconnected. Reconnect it to place calls.'];
             }
 
-            if (trim((string) $number->webrtc_connection_id) === '') {
-                return ['voice_not_configured', 'This number has no voice connection ID yet. Add it in Voice settings.'];
+            if (trim((string) $number->webrtc_connection_id) === '' || trim((string) $number->call_control_app_id) === '') {
+                return ['voice_not_configured', 'This number needs both a voice connection ID and a Call Control application ID. Add them in Voice settings.'];
             }
         } else {
             return ['number_not_allowed', 'That calling number is not available.'];
+        }
+
+        if ($number->isReady() && $number->outbound_locked_at === null) {
+            return ['voice_unverified', 'Voice has not been checked for this number yet. Open Voice settings and run the check.'];
         }
 
         if (! $number->isReady()) {

@@ -7,6 +7,7 @@ use App\Library\AgencyProspecting\AgencyProspectingWebhookToken;
 use App\Library\Messaging\TelnyxMessagingAdapter;
 use App\Library\Voice\VoiceCallReconciler;
 use App\Library\Voice\VoiceInboundRouter;
+use App\Library\Voice\VoiceOutboundDialer;
 use App\Models\AgencyProspectingChannel;
 use App\Models\SendingServer;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +26,7 @@ use Illuminate\Http\Request;
  */
 class TelnyxVoiceWebhookController extends Controller
 {
-    public function managed(Request $request, VoiceCallReconciler $reconciler, VoiceInboundRouter $router): JsonResponse
+    public function managed(Request $request, VoiceCallReconciler $reconciler, VoiceInboundRouter $router, VoiceOutboundDialer $dialer): JsonResponse
     {
         $key = trim((string) config('services.telnyx.webhook_public_key'));
 
@@ -33,10 +34,10 @@ class TelnyxVoiceWebhookController extends Controller
             return response()->json(['status' => 'ignored'], 200);
         }
 
-        return $this->process($request, $key, null, $reconciler, $router);
+        return $this->process($request, $key, null, $reconciler, $router, $dialer);
     }
 
-    public function agency(Request $request, string $channelUid, string $token, VoiceCallReconciler $reconciler, VoiceInboundRouter $router): JsonResponse
+    public function agency(Request $request, string $channelUid, string $token, VoiceCallReconciler $reconciler, VoiceInboundRouter $router, VoiceOutboundDialer $dialer): JsonResponse
     {
         $channel = AgencyProspectingChannel::query()->where('uid', $channelUid)->first();
 
@@ -53,10 +54,10 @@ class TelnyxVoiceWebhookController extends Controller
             return response()->json(['status' => 'rejected'], 403);
         }
 
-        return $this->process($request, $key, $channel, $reconciler, $router);
+        return $this->process($request, $key, $channel, $reconciler, $router, $dialer);
     }
 
-    private function process(Request $request, string $publicKey, ?AgencyProspectingChannel $channel, VoiceCallReconciler $reconciler, VoiceInboundRouter $router): JsonResponse
+    private function process(Request $request, string $publicKey, ?AgencyProspectingChannel $channel, VoiceCallReconciler $reconciler, VoiceInboundRouter $router, VoiceOutboundDialer $dialer): JsonResponse
     {
         $raw = $request->getContent();
 
@@ -79,7 +80,9 @@ class TelnyxVoiceWebhookController extends Controller
         if ($outcome['route'] !== null) {
             $route = $outcome['route'];
 
-            app()->terminating(static fn () => $router->route($route['call'], $route['number'], $route['control_id']));
+            app()->terminating(static fn () => $route['kind'] === 'bridge'
+                ? $dialer->bridge($route['call'])
+                : $router->route($route['call'], $route['number'], $route['control_id']));
         }
 
         return response()->json(['status' => $outcome['result']], 200);

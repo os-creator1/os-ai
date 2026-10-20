@@ -19,12 +19,15 @@
         <p class="text-muted">Call customers from your browser, and receive calls for one assigned person. Turn voice on per number, then run the check.</p>
 
         <div class="alert alert-info" role="note">
-            <strong>Incoming calls</strong> ring the one person assigned to a number, only while MotionGrove is open in their browser.
-            For each number, point a Telnyx <em>Call Control application</em> webhook at:
+            <strong>How it works.</strong> MotionGrove places every outgoing call itself through a Telnyx <em>Call Control application</em>
+            and rings your browser first; the browser's own Telnyx login is <strong>not</strong> allowed to dial (its Credential Connection must have
+            no outbound voice profile — the check below verifies this). Incoming calls reach the same application and ring the one assigned person,
+            only while MotionGrove is open in their browser. In Telnyx, set the Call Control application's webhook URL to exactly:
             <div class="mt-50"><code data-role="managed-webhook">{{ $managedWebhookUrl }}</code> <span class="text-muted">(MotionGrove-managed numbers)</span></div>
             @foreach ($channelWebhooks as $channelId => $url)
                 <div class="mt-50"><code>{{ $url }}</code> <span class="text-muted">(your own Telnyx account, connection #{{ $channelId }})</span></div>
             @endforeach
+            <div class="mt-50">Then assign the number to that application (Voice settings of the number) and put an outbound voice profile on the application — that is where Telnyx limits countries and spend.</div>
         </div>
 
         @if (! $managedEnabled && collect($candidates)->contains(fn ($c) => $c['source'] === 'managed'))
@@ -40,19 +43,26 @@
                             <strong>{{ $c['phone_number'] }}</strong>
                             <span class="badge bg-light text-dark ms-50">{{ $c['source'] === 'byo' ? 'Your Telnyx account' : 'MotionGrove-managed' }}</span>
                         </div>
-                        <span data-role="voice-state" class="text-muted">
+                        <span data-role="voice-state" class="text-muted text-end">
                             @if ($voice === null) Not set up for calling
-                            @elseif ($voice->voice_status === 'ready') Ready for calling
-                            @elseif ($voice->voice_status === 'misconfigured') Needs attention: {{ $voice->voice_error_code }}
+                            @elseif ($voice->voice_status === 'ready') Outgoing: ready
+                            @elseif ($voice->voice_status === 'misconfigured') Outgoing needs attention: {{ $voice->voice_error_code }}
                             @else Not checked yet @endif
+                            @if ($voice && $voice->voice_status === 'ready')
+                                <br><span data-role="inbound-state">Incoming: {{ $voice->inbound_status === 'ready' ? 'ready' : 'not ready — assign the number to the Call Control application' }}</span>
+                            @endif
                         </span>
                     </div>
 
                     <form class="row g-1 mt-50" data-role="voice-form" data-source="{{ $c['source'] }}" data-ref="{{ $c['ref'] }}" @if ($voice) data-uid="{{ $voice->uid }}" @endif>
                         @if ($c['source'] === 'byo')
-                            <div class="col-md-6">
-                                <label class="form-label">Voice connection ID (Telnyx Credential Connection with WebRTC)</label>
+                            <div class="col-md-4">
+                                <label class="form-label">Credential Connection ID (browser login, no outbound profile)</label>
                                 <input class="form-control" name="webrtc_connection_id" maxlength="64" value="{{ $voice?->webrtc_connection_id }}" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Call Control application ID (places and receives calls)</label>
+                                <input class="form-control" name="call_control_app_id" maxlength="64" value="{{ $voice?->call_control_app_id }}" required>
                             </div>
                         @endif
                         <div class="col-md-4">
@@ -96,7 +106,7 @@
                 var out = form.querySelector('[data-role=voice-result]');
                 form.addEventListener('submit', function (e) {
                     e.preventDefault();
-                    var data = { source: form.dataset.source, ref: Number(form.dataset.ref), webrtc_connection_id: (form.elements.webrtc_connection_id || {}).value || null, inbound_user_id: form.elements.inbound_user_id.value ? Number(form.elements.inbound_user_id.value) : null };
+                    var data = { source: form.dataset.source, ref: Number(form.dataset.ref), webrtc_connection_id: (form.elements.webrtc_connection_id || {}).value || null, call_control_app_id: (form.elements.call_control_app_id || {}).value || null, inbound_user_id: form.elements.inbound_user_id.value ? Number(form.elements.inbound_user_id.value) : null };
                     out.textContent = 'Saving…';
                     post(saveUrl, data).then(function (r) { out.textContent = r.ok ? 'Saved. Now run the check.' : (r.json.message || 'Could not save.'); if (r.ok) { window.location.reload(); } });
                 });
@@ -105,7 +115,7 @@
                     verify.addEventListener('click', function () {
                         out.textContent = 'Checking with Telnyx…';
                         post(verifyBase.replace(/\/$/, '') + '/' + form.dataset.uid + '/verify', {}).then(function (r) {
-                            out.textContent = (r.json.message || '') + ' ' + ((r.json.notes || []).join(' '));
+                            out.textContent = (r.json.message || '') + ' ' + (r.json.ok ? (r.json.inbound_message || '') : '');
                         });
                     });
                 }

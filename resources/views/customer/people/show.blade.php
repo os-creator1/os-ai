@@ -104,8 +104,16 @@
                     <x-button variant="outline" size="sm" icon="pencil" data-role="contact-edit" :href="route('customer.workspaces.businesses.contact.edit', [$workspaceUid, $businessUid, $profile['group']['uid']]) . '?contact_id=' . urlencode($contactUid)">Edit details</x-button>
                 @endif
                 {{-- Browser calling: enabled only when this contact has a callable number AND an authorized, voice-ready caller ID; otherwise disabled with the reason (softphone.js). --}}
-                @if (\App\Library\Voice\VoiceAvailability::mounted(request()))
-                <x-button variant="outline" size="sm" icon="phone" data-role="contact-call" data-mg-call data-mg-show-reason :data-contact-uid="$contactUid" aria-label="Call {{ $displayName }}" disabled>Call</x-button>
+                @if (\App\Library\Voice\VoiceAvailability::mayCall(request()))
+                    @if (\App\Library\Voice\VoiceAvailability::mounted(request()))
+                        <x-button variant="outline" size="sm" icon="phone" data-role="contact-call" data-mg-call data-mg-show-reason :data-contact-uid="$contactUid" aria-label="Call {{ $displayName }}" disabled>Call</x-button>
+                    @else
+                        {{-- Calling is not set up for this Business: visible, disabled, and says why — never a dead dialing screen. --}}
+                        <span class="d-inline-flex flex-column">
+                            <x-button variant="outline" size="sm" icon="phone" data-role="contact-call" data-calling-unavailable :title="\App\Library\Voice\VoiceAvailability::unavailableReason()" aria-label="Call {{ $displayName }} (unavailable)" disabled>Call</x-button>
+                            <span class="text-caption" data-role="contact-call-reason">{{ \App\Library\Voice\VoiceAvailability::unavailableReason() }}</span>
+                        </span>
+                    @endif
                 @endif
                 @if ($actions['bookUrl'] !== null)
                     <x-button variant="outline" size="sm" icon="calendar" data-role="contact-book" :href="$actions['bookUrl']">Book appointment</x-button>

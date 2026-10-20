@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Library\Messaging\E164Normalizer;
 use App\Library\Voice\VoiceBusinessContext;
 use App\Library\Voice\VoiceCallService;
+use App\Library\Voice\VoiceDestinationPolicy;
+use App\Library\Voice\VoiceOutboundDialer;
 use App\Library\Voice\VoiceNumberResolver;
 use App\Library\Voice\VoiceProviderException;
 use App\Library\Voice\VoiceRegistrationService;
@@ -39,6 +41,8 @@ class VoiceController extends Controller
         private readonly VoiceCallService $calls,
         private readonly VoiceSetupService $setup,
         private readonly WorkspaceManagementAuthority $authority,
+        private readonly VoiceDestinationPolicy $policy,
+        private readonly VoiceOutboundDialer $dialer,
     ) {
     }
 
@@ -48,6 +52,10 @@ class VoiceController extends Controller
         return $this->guard($workspaceUid, $businessUid, function (User $user, Workspace $workspace, Business $business) use ($request, $workspaceUid, $businessUid) {
             $target = $this->calls->resolveTarget($user, $business, $request->query('contact_uid'), $request->query('conversation_uid'));
             $found = $this->numbers->callableFor($user, $business, $target['location_id']);
+
+            if (($refusal = $this->policy->refusal($target['number'])) !== null) {
+                $found = ['numbers' => [], 'reason' => $refusal[0], 'message' => $refusal[1]];
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -77,7 +85,7 @@ class VoiceController extends Controller
                 ->where('business_id', (int) $business->id)
                 ->where('inbound_user_id', (int) $user->id)
                 ->orderBy('id')->get()
-                ->first(fn (VoiceNumber $n) => $this->numbers->problem($n, $business) === null);
+                ->first(fn (VoiceNumber $n) => $this->numbers->problem($n, $business) === null && $n->inboundReady());
 
             return response()->json([
                 'status' => 'success',
@@ -131,9 +139,19 @@ class VoiceController extends Controller
             ]);
 
             $target = $this->calls->resolveTarget($user, $business, $data['contact_uid'] ?? null, $data['conversation_uid'] ?? null);
+
+            if (($refusal = $this->policy->refusal($target['number'])) !== null) {
+                throw new VoiceUnavailableException($refusal[0], $refusal[1]);
+            }
+
             $from = $this->numbers->authorize($user, $business, $data['number_uid'], $target['location_id']);
             $started = $this->calls->startOutbound($user, $workspace, $business, $from, $target, $data['idempotency_key']);
             $call = $started['call'];
+
+            // MotionGrove places the call itself (a retried request with the same key never dials twice).
+            if ($started['created']) {
+                $call = $this->dialer->dial($user, $business, $from, $call);
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -147,6 +165,37 @@ class VoiceController extends Controller
                     'client_state' => base64_encode($call->uid),
                 ],
             ]);
+        });
+    }
+
+    /** The authoritative-so-far state of the user's own call, for the panel (answered time is the server's). */
+    public function showCall(string $workspaceUid, string $businessUid, string $callUid): JsonResponse
+    {
+        return $this->guard($workspaceUid, $businessUid, function (User $user, Workspace $workspace, Business $business) use ($callUid) {
+            $call = $this->ownCall($user, $business, $callUid);
+
+            return response()->json([
+                'status' => 'success',
+                'call_status' => $call->status,
+                'final' => $call->statusEnum()->isFinal(),
+                'answered_elapsed_ms' => $call->answered_at !== null ? max(0, (int) ($call->answered_at->diffInMilliseconds(now(), false))) : null,
+                'cause' => $call->hangup_cause,
+            ]);
+        });
+    }
+
+    /** Hang up the server-placed leg of the user's own call (Cancel before the browser leg is up). */
+    public function cancelCall(string $workspaceUid, string $businessUid, string $callUid): JsonResponse
+    {
+        return $this->guard($workspaceUid, $businessUid, function (User $user, Workspace $workspace, Business $business) use ($callUid) {
+            $call = $this->ownCall($user, $business, $callUid);
+            $number = VoiceNumber::query()->where('business_id', (int) $business->id)->whereKey((int) $call->voice_number_id)->first();
+
+            if ($number !== null) {
+                $this->dialer->cancel($call, $number, $business);
+            }
+
+            return response()->json(['status' => 'success']);
         });
     }
 
@@ -219,7 +268,7 @@ class VoiceController extends Controller
             'businessUid' => $businessUid,
             'candidates' => $this->setup->candidates($business),
             'users' => $this->setup->eligibleUsers($workspace, $business),
-            'managedEnabled' => $managed && config('services.telnyx.voice_connection_id'),
+            'managedEnabled' => $managed && config('services.telnyx.voice_connection_id') && config('services.telnyx.voice_call_control_app_id'),
             'managedWebhookUrl' => url(route('voice.webhooks.telnyx_managed', [], false)),
             'channelWebhooks' => $this->channelWebhookUrls($business),
         ]);
@@ -235,9 +284,10 @@ class VoiceController extends Controller
                 'ref' => ['required', 'integer'],
                 'webrtc_connection_id' => ['nullable', 'string', 'max:64'],
                 'inbound_user_id' => ['nullable', 'integer'],
+                'call_control_app_id' => ['nullable', 'string', 'max:64'],
             ]);
 
-            $row = $this->setup->enable($workspace, $business, $data['source'], (int) $data['ref'], $data['webrtc_connection_id'] ?? null, isset($data['inbound_user_id']) ? (int) $data['inbound_user_id'] : null);
+            $row = $this->setup->enable($workspace, $business, $data['source'], (int) $data['ref'], $data['webrtc_connection_id'] ?? null, isset($data['inbound_user_id']) ? (int) $data['inbound_user_id'] : null, $data['call_control_app_id'] ?? null);
 
             return response()->json(['status' => 'success', 'uid' => $row->uid, 'voice_status' => $row->voice_status]);
         });

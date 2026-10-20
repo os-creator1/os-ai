@@ -19,11 +19,16 @@ class VoiceNumber extends Model
 
     protected $fillable = [
         'uid', 'business_id', 'workspace_id', 'source', 'messaging_number_id', 'agency_channel_id',
-        'phone_number', 'webrtc_connection_id', 'voice_status', 'voice_error_code', 'voice_checked_at',
-        'inbound_user_id',
+        'phone_number', 'webrtc_connection_id', 'call_control_app_id', 'voice_status', 'voice_error_code', 'voice_checked_at',
+        'outbound_locked_at', 'inbound_status', 'inbound_error_code', 'inbound_user_id',
     ];
 
-    protected $casts = ['voice_checked_at' => 'datetime'];
+    protected $casts = ['voice_checked_at' => 'datetime', 'outbound_locked_at' => 'datetime'];
+
+    public function inboundReady(): bool
+    {
+        return $this->isReady() && $this->inbound_status === 'ready';
+    }
 
     public function isReady(): bool
     {

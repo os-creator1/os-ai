@@ -21,6 +21,8 @@
   var RECONNECT_DELAYS = [1000, 3000, 8000, 20000];
   var TOKEN_REFRESH_SKEW_S = 120;
   var RECOVERY_WAIT_MS = 15000;
+  var STATUS_POLL_MS = 1500;
+  var LEG_WAIT_MS = 25000;
 
   function friendlyCause(cause) {
     var c = String(cause || "").toLowerCase();
@@ -50,6 +52,8 @@
     var refreshTimer = null;
     var reconnectAttempt = 0;
     var starting = false;
+    var pendingLeg = null;
+    var statusTimer = null;
     var disposed = false;
     var weEnded = false;
 
@@ -217,6 +221,8 @@
       }, function () { return { callable: false, message: "You appear to be offline.", numbers: [] }; });
     }
 
+    // MotionGrove places the call (server-mediated): the browser only registers, asks the server to dial, and
+    // then ANSWERS the one leg the server rings for that exact request. It never dials by itself.
     function startCall(req) {
       var problem = supportProblem();
       if (problem) { return Promise.resolve(fail(problem.message, problem.code)); }
@@ -224,27 +230,64 @@
       starting = true;
       var key = deps.uuid();
 
-      show({ phase: "dialing", direction: "outbound", number: req.toNumber, name: req.name, from: req.fromNumber, callUid: null });
+      show({ phase: "dialing", direction: "outbound", number: req.toNumber, name: req.name, from: req.fromNumber, callUid: null, serverLeg: true });
 
       return deps.checkMicrophone().then(function (mic) {
         if (!mic.ok) { return fail(mic.message, "mic_" + mic.code); }
-        return deps.api.post(deps.urls.calls, { number_uid: req.numberUid, contact_uid: req.contactUid || null, conversation_uid: req.conversationUid || null, idempotency_key: key })
-          .then(function (res) {
-            if (!res.ok) { return fail((res.json && res.json.message) || "The call could not be started.", (res.json && res.json.code) || "start_failed"); }
-            var info = res.json.call;
-            setCall({ callUid: info.uid, number: info.to, from: info.from, name: info.name || null });
-            return ensureClientFor(req.numberUid, req.scope).then(function (ready) {
-              if (!ready.ok) { reportClient("dial_failed", "not_registered"); return fail(ready.message, ready.code); }
-              try {
-                rtcCall = client.newCall({ destinationNumber: info.to, callerNumber: info.from, clientState: info.client_state });
-              } catch (e) {
-                reportClient("dial_failed", "sdk_error");
-                return fail("The call could not be started in this browser. Reload the page and try again.", "sdk_error");
-              }
+        // The browser identity must be registered BEFORE the server rings it.
+        return ensureClientFor(req.numberUid, req.scope).then(function (ready) {
+          if (!ready.ok) { return fail(ready.message, ready.code); }
+          return deps.api.post(deps.urls.calls, { number_uid: req.numberUid, contact_uid: req.contactUid || null, conversation_uid: req.conversationUid || null, idempotency_key: key })
+            .then(function (res) {
+              if (!res.ok) { return fail((res.json && res.json.message) || "The call could not be started.", (res.json && res.json.code) || "start_failed"); }
+              var info = res.json.call;
+              pendingLeg = { to: digits(info.to), expiresAt: deps.now() + LEG_WAIT_MS };
+              setCall({ callUid: info.uid, number: info.to, from: info.from, name: info.name || null });
+              startStatusPolling();
               return { ok: true };
-            });
-          }, function () { return fail("You appear to be offline. Check your connection and try again.", "network"); });
+            }, function () { return fail("You appear to be offline. Check your connection and try again.", "network"); });
+        });
       }).then(function (r) { starting = false; return r; }, function (e) { starting = false; throw e; });
+    }
+
+    function digits(n) { return String(n || "").replace(/\D/g, ""); }
+
+    // The server is the authority on when the CUSTOMER answered; the SDK's "active" only means our own leg's media is up.
+    function startStatusPolling() {
+      stopStatusPolling();
+      statusTimer = deps.setInterval(function () {
+        var c = state.call;
+        if (!c || !c.callUid || c.phase === "ended" || c.direction !== "outbound") { stopStatusPolling(); return; }
+        if (pendingLeg && deps.now() > pendingLeg.expiresAt && !rtcCall) {
+          pendingLeg = null;
+          deps.api.post(deps.urls.cancel(c.callUid), {});
+          fail("Your browser did not pick up the call in time. Check your microphone and connection, then try again.", "leg_timeout");
+          stopStatusPolling();
+          return;
+        }
+        deps.api.get(deps.urls.callStatus(c.callUid)).then(function (res) {
+          var cur = state.call;
+          if (!res.ok || !res.json || !cur || cur.callUid !== c.callUid || cur.phase === "ended") { return; }
+          if (res.json.call_status === "answered" && cur.phase !== "active") {
+            setCall({ phase: "active", answeredAt: deps.now() - (res.json.answered_elapsed_ms || 0), notice: null });
+          } else if (res.json.final) {
+            applyServerOutcome(res.json);
+          }
+        }, function () { /* a missed poll is harmless; the next one decides */ });
+      }, STATUS_POLL_MS);
+    }
+
+    function stopStatusPolling() { if (statusTimer) { deps.clearInterval(statusTimer); statusTimer = null; } }
+
+    function applyServerOutcome(json) {
+      var c = state.call;
+      if (!c || c.phase === "ended") { return; }
+      var map = { completed: "Call ended.", busy: "The number is busy.", no_answer: "Nobody answered.", declined: "The call was declined.", canceled: "Call canceled.", failed: "The call could not be completed.", missed: "The call ended." };
+      var failed = json.call_status === "failed" || json.call_status === "busy" || json.call_status === "no_answer" || json.call_status === "declined";
+      stopStatusPolling();
+      if (rtcCall) { weEnded = true; try { rtcCall.hangup(); } catch (e) { /* already gone */ } }
+      setCall({ phase: "ended", endReason: { code: json.call_status, message: map[json.call_status] || "The call ended.", failed: failed }, durationSeconds: c.answeredAt ? Math.max(0, Math.round((deps.now() - c.answeredAt) / 1000)) : 0, notice: null });
+      rtcCall = null;
     }
 
     // A call needs a connected client for the chosen number's account. Waits (bounded) for ready.
@@ -296,7 +339,17 @@
       if (inbound && call !== rtcCall) {
         var finished = s === "hangup" || s === "destroy" || s === "purge";
         if (finished) { return; }
-        // One call at a time in V1: a second incoming call while one is open or being placed is turned away.
+
+        // The ONE leg MotionGrove rings for the call this person just asked for: it carries the number they are
+        // calling, arrives while the request is pending, and is answered on their behalf (they pressed Call).
+        if (pendingLeg && !rtcCall && digits(call.remoteNumber) === pendingLeg.to && deps.now() <= pendingLeg.expiresAt) {
+          pendingLeg = null;
+          rtcCall = call;
+          try { call.answer(); } catch (e) { fail("The call could not be answered in this browser.", "sdk_error"); }
+          return;
+        }
+
+        // Anything else is a genuine incoming call. One call at a time in V1: a second one is turned away.
         if (rtcCall || inCall() || starting) { try { call.hangup(); } catch (e) { /* ignore */ } return; }
         rtcCall = call;
         show({ phase: "incoming", direction: "inbound", number: call.remoteNumber || null, name: null, from: null, callUid: null });
@@ -307,12 +360,13 @@
       if (call !== rtcCall) { return; }
 
       if (s === "active") {
-        if (state.call.phase !== "active") { setCall({ phase: "active", answeredAt: deps.now(), held: false, notice: null }); }
+        if (state.call.serverLeg) {
+          // Our own leg is up; the customer has not necessarily answered. Show ringing until the server says so.
+          setCall({ held: false, notice: null, phase: state.call.phase === "active" ? "active" : "ringing" });
+        } else if (state.call.phase !== "active") { setCall({ phase: "active", answeredAt: deps.now(), held: false, notice: null }); }
         else { setCall({ held: false, notice: null }); }
       } else if (s === "held") {
         setCall({ held: true });
-      } else if (s === "ringing" && state.call.direction === "outbound") {
-        setCall({ phase: "ringing" });
       } else if (s === "recovering") {
         setCall({ notice: "Reconnecting the call…" });
       } else if (s === "hangup" || s === "destroy" || s === "purge") {
@@ -322,6 +376,7 @@
 
     function onEnded(call) {
       if (!state.call || state.call.phase === "ended") { return; }
+      stopStatusPolling();
       var c = state.call;
       var reason;
       if (c.phase === "active") {
@@ -372,7 +427,19 @@
       deps.setTimeout(function () { if (state.call && state.call.phase !== "ended" && weEnded && rtcCall) { onEnded({}); } }, 3000);
     }
 
-    function hangup() { decline(); }
+    function hangup() {
+      var c = state.call;
+      if (!rtcCall && c && c.serverLeg && c.callUid && c.phase !== "ended") {
+        // Cancel before our own leg is up: the server hangs up its dialled leg.
+        weEnded = true;
+        pendingLeg = null;
+        deps.api.post(deps.urls.cancel(c.callUid), {});
+        stopStatusPolling();
+        setCall({ phase: "ended", endReason: { code: "canceled", message: "Call canceled." }, durationSeconds: 0 });
+        return;
+      }
+      decline();
+    }
 
     function toggleMute() {
       if (!rtcCall || !inCall()) { return; }
@@ -413,12 +480,15 @@
     function shutdown() {
       disposed = true;
       stopHeartbeat();
+      stopStatusPolling();
       deps.clearTimeout(reconnectTimer);
       deps.clearTimeout(recoveryTimer);
       reconnectTimer = null;
       recoveryTimer = null;
       if (rtcCall) { weEnded = true; try { rtcCall.hangup(); } catch (e) { /* ignore */ } }
       teardownClient();
+      rtcCall = null;
+      state.call = null; // the page is going away: nothing left to protect with a "leave this page?" prompt
       deps.leader.release();
       deps.beaconOffline();
       state.registration = "off";

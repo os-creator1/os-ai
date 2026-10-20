@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\User;
 use App\Models\VoiceNumber;
 use App\Models\VoiceRegistration;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 /**
@@ -26,6 +27,7 @@ final class VoiceRegistrationService
     public function issueToken(User $user, Business $business, VoiceNumber $number): array
     {
         $creds = $this->credentials->forNumber($number, $business);
+        $this->assertBrowserCannotDial($creds);
         $registration = $this->registrationFor($user, $business, $number, $creds);
 
         try {
@@ -42,6 +44,39 @@ final class VoiceRegistrationService
         }
 
         return ['token' => $token, 'expires_at' => self::jwtExpiry($token)];
+    }
+
+    /**
+     * THE enforcement point for outbound authorization. A browser that holds a token can ask the Telnyx SDK
+     * to dial anything its credential connection allows. So no token is issued unless Telnyx itself says the
+     * credential connection has NO outbound voice profile (it cannot reach the phone network), re-checked at
+     * most every five minutes. Anything unconfirmed fails closed.
+     *
+     * @param  array{api_key: string, connection_id: string, app_id: string, public_key: string}  $creds
+     */
+    private function assertBrowserCannotDial(array $creds): void
+    {
+        $key = 'voice:locked:' . sha1($creds['connection_id']);
+
+        if (Cache::get($key) === true) {
+            return;
+        }
+
+        $facts = $this->provider->inspectCredentialConnection($creds['api_key'], $creds['connection_id']);
+
+        if (! $facts['exists'] || ! $facts['active']) {
+            throw new VoiceUnavailableException('voice_connection_missing', 'The Telnyx voice connection is missing or switched off.');
+        }
+
+        if (! $facts['outbound_known']) {
+            throw new VoiceUnavailableException('outbound_unconfirmed', 'Telnyx did not confirm that browser calling is locked down on this voice connection, so calling stays off.');
+        }
+
+        if ($facts['outbound_profile_id'] !== null) {
+            throw new VoiceUnavailableException('direct_dialing_open', 'This voice connection has an outbound voice profile, which would let browsers dial directly. Remove it in Telnyx; MotionGrove places calls itself.');
+        }
+
+        Cache::put($key, true, 300);
     }
 
     /** Heartbeat from the ONE leading browser tab; this is what "online for inbound" means. */
