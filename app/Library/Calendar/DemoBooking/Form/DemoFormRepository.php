@@ -64,8 +64,13 @@ class DemoFormRepository
     /** Definitions saved by an older release still render: every property gets its default. */
     private function restore(array $fields): array
     {
-        $base = ['placeholder' => '', 'help' => '', 'required' => false, 'visible' => true, 'half' => false, 'show_optional' => false, 'options' => [], 'system' => false];
+        $base = ['placeholder' => '', 'help' => '', 'required' => false, 'visible' => true, 'half' => false, 'show_optional' => false, 'options' => []];
 
-        return DemoFormSchema::enforceProtected(array_map(static fn (array $f): array => $f + $base, $fields));
+        // Nothing is re-added or forced: a stored form is exactly what the owner saved (the retired `system` marker is dropped).
+        return array_map(static function (array $f) use ($base): array {
+            unset($f['system']);
+
+            return $f + $base;
+        }, array_values($fields));
     }
 }

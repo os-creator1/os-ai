@@ -19,7 +19,7 @@ final class DemoFormSchema
     public const MAX_OPTIONS = 30;
 
     /** Request inputs the booking itself uses; a form field can never take one of these names. */
-    public const RESERVED = ['date', 'time', 'visitor_timezone', 'demo_hp', 'cf-turnstile-response', 'form_version', '_token', 'website', 'sms_consent'];
+    public const RESERVED = ['date', 'time', 'visitor_timezone', 'demo_hp', 'cf-turnstile-response', 'form_version', '_token', 'website', 'sms_consent', 'attendee_first_name', 'attendee_email'];
 
     public static function slug(string $text): string
     {
@@ -37,11 +37,6 @@ final class DemoFormSchema
         $errors = [];
         $fields = [];
         $seen = [];
-        $systemDefaults = [];
-        foreach (DemoFormDefaults::fields() as $default) {
-            $systemDefaults[$default['key']] = $default;
-        }
-
         foreach (array_values($input) as $i => $raw) {
             $n = $i + 1;
             if (! is_array($raw)) {
@@ -50,8 +45,7 @@ final class DemoFormSchema
             }
             $key = strtolower(trim((string) ($raw['key'] ?? '')));
             $label = trim((string) ($raw['label'] ?? ''));
-            $system = array_key_exists($key, $systemDefaults) && in_array($key, DemoFormDefaults::SYSTEM, true);
-            $type = $system ? $systemDefaults[$key]['type'] : (string) ($raw['type'] ?? '');
+            $type = (string) ($raw['type'] ?? '');
 
             if (! preg_match('/^[a-z][a-z0-9_]{1,40}$/', $key) || in_array($key, self::RESERVED, true)) {
                 $errors[] = "Field {$n} has an invalid identifier.";
@@ -80,80 +74,18 @@ final class DemoFormSchema
                 'half' => filter_var($raw['half'] ?? false, FILTER_VALIDATE_BOOLEAN) && ! in_array($type, ['long_text', 'checkboxes', 'radio'], true),
                 'show_optional' => filter_var($raw['show_optional'] ?? false, FILTER_VALIDATE_BOOLEAN),
                 'options' => [],
-                'system' => $system,
             ];
             if (in_array($type, self::CHOICE_TYPES, true)) {
                 $field['options'] = self::options($raw['options'] ?? [], $label, $errors);
             }
-            $fields[] = self::protect($field);
+            $fields[] = $field;
         }
 
-        foreach (DemoFormDefaults::SYSTEM as $required) {
-            if (! isset($seen[$required])) {
-                $errors[] = 'The "'.$systemDefaults[$required]['label'].'" field is needed for booking and cannot be removed.';
-            }
-        }
         if (count($fields) > self::MAX_FIELDS) {
             $errors[] = 'A form can have at most '.self::MAX_FIELDS.' fields.';
         }
 
         return ['fields' => $fields, 'errors' => array_values(array_unique($errors))];
-    }
-
-    /** Forces the always-visible and always-required rules onto one field. @param array<string, mixed> $field @return array<string, mixed> */
-    public static function protect(array $field): array
-    {
-        if (in_array($field['key'], DemoFormDefaults::ALWAYS_VISIBLE, true)) {
-            $field['visible'] = true;
-        }
-        if (in_array($field['key'], DemoFormDefaults::ALWAYS_REQUIRED, true)) {
-            $field['required'] = true;
-        }
-
-        return $field;
-    }
-
-    /**
-     * Makes any stored definition honour the protections, including versions saved before a protection existed:
-     * a missing system field is re-added in its design position, and type and visibility are forced.
-     *
-     * @param  array<int, array<string, mixed>>  $fields
-     * @return array<int, array<string, mixed>>
-     */
-    public static function enforceProtected(array $fields): array
-    {
-        $fields = array_values($fields);
-        $defaults = DemoFormDefaults::fields();
-        $have = array_column($fields, null, 'key');
-
-        foreach ($defaults as $i => $default) {
-            if (! $default['system']) {
-                continue;
-            }
-            if (! isset($have[$default['key']])) {
-                // Insert after the nearest earlier design field that is present, else at the top.
-                $at = 0;
-                for ($j = $i - 1; $j >= 0; $j--) {
-                    $found = array_search($defaults[$j]['key'], array_column($fields, 'key'), true);
-                    if ($found !== false) {
-                        $at = $found + 1;
-                        break;
-                    }
-                }
-                array_splice($fields, $at, 0, [$default]);
-            }
-        }
-
-        foreach ($fields as $i => $field) {
-            $default = array_values(array_filter($defaults, static fn (array $d): bool => $d['key'] === $field['key'] && $d['system']))[0] ?? null;
-            if ($default !== null) {
-                $field['type'] = $default['type'];
-                $field['system'] = true;
-            }
-            $fields[$i] = self::protect($field);
-        }
-
-        return $fields;
     }
 
     /** @return array<int, array{value: string, label: string}> */
@@ -258,5 +190,81 @@ final class DemoFormSchema
         }
 
         return $rows;
+    }
+
+    /** Contact fields a question may fill, and the type it must still have for its answer to be trusted as that field. */
+    private const CONTACT_TYPES = [
+        'first_name' => ['short_text'], 'last_name' => ['short_text'], 'email' => ['email'],
+        'phone' => ['phone'], 'business_name' => ['short_text'],
+    ];
+
+    /**
+     * The keys of visible questions that map onto the Contact: a known key that kept a compatible type (an owner who
+     * retypes "email" to a dropdown has made it an ordinary question, mirrored to CRM like any other).
+     *
+     * @return array<int, string>
+     */
+    public static function contactKeys(array $fields): array
+    {
+        $keys = [];
+        foreach (self::visible($fields) as $f) {
+            if (in_array($f['type'], self::CONTACT_TYPES[$f['key']] ?? [], true)) {
+                $keys[] = $f['key'];
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * The guest identity for the booking: the questionnaire's own answers where it asks for them, else the separate
+     * attendee details collected at confirmation (first name and email are the only essentials).
+     *
+     * @param  array<string, mixed>  $validated
+     * @return array{first_name: string, last_name: string, email: string, phone: string, business_name: string}
+     */
+    public static function identity(array $fields, array $validated): array
+    {
+        $mapped = self::contactKeys($fields);
+        $pick = static fn (string $key): string => in_array($key, $mapped, true) && is_string($validated[$key] ?? null) ? trim($validated[$key]) : '';
+
+        $identity = [];
+        foreach (self::CONTACT_TYPES as $key => $unused) {
+            $identity[$key] = $pick($key);
+        }
+        foreach (['first_name', 'email'] as $essential) {
+            if ($identity[$essential] === '') {
+                $identity[$essential] = trim((string) ($validated['attendee_'.$essential] ?? ''));
+            }
+        }
+
+        return $identity;
+    }
+
+    /** Rules for the separate attendee inputs. Presence is decided against the resolved identity, not here. @return array<string, array<int, mixed>> */
+    public static function attendeeRules(): array
+    {
+        return [
+            'attendee_first_name' => ['nullable', 'string', 'max:120'],
+            'attendee_email' => ['nullable', 'string', 'email:rfc', 'max:190'],
+        ];
+    }
+
+    /**
+     * Which essentials the confirmation step must ask for: all but those the questionnaire always collects (a visible,
+     * required question of the right type). An optional question can still be left blank, so it keeps its fallback.
+     *
+     * @return array{first_name: bool, email: bool}
+     */
+    public static function attendeeNeeds(array $fields): array
+    {
+        $required = [];
+        foreach (self::visible($fields) as $f) {
+            if ($f['required'] && in_array($f['key'], self::contactKeys([$f]), true)) {
+                $required[$f['key']] = true;
+            }
+        }
+
+        return ['first_name' => ! isset($required['first_name']), 'email' => ! isset($required['email'])];
     }
 }
