@@ -15,7 +15,7 @@ jobs:
   focused-demo-qa:
     name: Isolated Laravel demo/form tests
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       APP_ENV: testing
       APP_URL: http://localhost
@@ -100,7 +100,16 @@ jobs:
             tests/Feature/Calendar/DemoBookingTest.php \
             tests/Feature/Marketing/MarketingWebsiteTest.php \
             tests/Feature/PlatformOwner/PlatformOwnerShellNavigationTest.php \
-            tests/Feature/Calendar/Zoom/ZoomCalendarUiTest.php
+            tests/Feature/Calendar/Zoom/ZoomCalendarUiTest.php \
+            tests/Feature/Calendar/PublicBookingTest.php \
+            tests/Feature/Calendar/PublicBookingExperienceTest.php \
+            tests/Feature/Calendar/PublicSchedulerAcceptanceTest.php \
+            tests/Feature/Calendar/BookingNotificationsTest.php \
+            tests/Feature/Calendar/AppointmentLifecycleTest.php \
+            tests/Feature/Calendar/AppointmentDetailRedesignTest.php \
+            tests/Feature/Calendar/Zoom/ZoomMeetingLifecycleTest.php \
+            tests/Feature/Calendar/Zoom/ZoomCreationRecoveryTest.php \
+            tests/Feature/Calendar/ProvisionDemoBookingCommandTest.php
           do
             echo "::group::${file}"
             log="$RUNNER_TEMP/$(basename "$file").log"
