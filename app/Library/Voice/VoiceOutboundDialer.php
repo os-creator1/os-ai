@@ -83,7 +83,9 @@ final class VoiceOutboundDialer
         $claimed = VoiceCall::query()
             ->whereKey($call->id)
             ->whereNull('bridge_requested_at')
-            ->whereNotIn('status', array_map(fn (VoiceCallStatus $s) => $s->value, array_filter(VoiceCallStatus::cases(), fn ($s) => $s->isFinal())))
+            // A call the user canceled, that the browser reported ended, or that is already finished can never bridge.
+            ->whereNull('client_reported_ended_at')
+            ->whereNotIn('status', array_map(fn (VoiceCallStatus $s) => $s->value, array_filter(VoiceCallStatus::cases(), fn ($s) => $s->isFinal() || $s === VoiceCallStatus::Unconfirmed)))
             ->update(['bridge_requested_at' => now()]);
 
         if ($claimed !== 1) {
@@ -137,7 +139,20 @@ final class VoiceOutboundDialer
     /** The user pressed Cancel (or End) before the browser leg was up: hang up our leg. */
     public function cancel(VoiceCall $call, VoiceNumber $number, Business $business): void
     {
-        if ($call->provider_call_control_id === null || $call->statusEnum()->isFinal()) {
+        if ($call->statusEnum()->isFinal()) {
+            return;
+        }
+
+        // Close the record FIRST: from this moment no later "leg answered" event can bridge this call.
+        VoiceCall::query()->whereKey($call->id)->whereNull('answered_at')->whereNotIn('status', array_map(fn (VoiceCallStatus $s) => $s->value, array_filter(VoiceCallStatus::cases(), fn ($s) => $s->isFinal())))->update([
+            'status' => VoiceCallStatus::Canceled->value,
+            'status_rank' => VoiceCallStatus::Canceled->rank(),
+            'hangup_cause' => 'user_canceled',
+            'ended_at' => now(),
+            'duration_seconds' => 0,
+        ]);
+
+        if ($call->provider_call_control_id === null) {
             return;
         }
 
