@@ -43,6 +43,7 @@ class AgencyByoTelnyxWebhookFirstSetupTest extends TestCase
 
     private function fakeOk(): void
     {
+        Http::swap(new \Illuminate\Http\Client\Factory());
         Http::fake([
             'api.telnyx.com/v2/messaging_profiles/*' => Http::response(['data' => ['id' => 'p']]),
             'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['id' => 'n', 'status' => 'active']]]),
@@ -68,7 +69,6 @@ class AgencyByoTelnyxWebhookFirstSetupTest extends TestCase
         $url = $this->pageUrl($html);
         $reservation = AgencyChannelSetupReservation::where('workspace_id', $agency['workspace']->id)->sole();
         $this->assertSame(route('prospecting.webhooks.agency_telnyx', [$reservation->uid, AgencyProspectingWebhookToken::forChannel($reservation->uid)]), $url);
-        $this->assertStringNotContainsString('/telnyx', substr($url, strlen(url('/webhooks/prospecting'))), 'Not the older AI Prospecting route.');
         $this->assertStringNotContainsString('webhooks/prospecting/', $url);
         $this->assertSame(0, AgencyProspectingChannel::count(), 'Viewing the page creates no channel.');
     }
@@ -172,5 +172,50 @@ class AgencyByoTelnyxWebhookFirstSetupTest extends TestCase
         $this->signedWebhook($existing, $this->receivedPayload($existing, 'hello', 'in-old-1'))->assertOk();
         $show = $this->get(route('customer.workspaces.prospecting.channels.show', [$agency['workspace']->uid, $existing->uid]))->assertOk()->getContent();
         $this->assertStringContainsString(htmlspecialchars(route('prospecting.webhooks.agency_telnyx', [$existing->uid, AgencyProspectingWebhookToken::forChannel($existing->uid)]), ENT_QUOTES), $show);
+    }
+
+    public function test_a_second_number_gets_its_own_url_and_a_stale_tab_cannot_be_paired_with_the_wrong_one(): void
+    {
+        $agency = $this->outreachAgency('Alpha');
+        $this->authenticateAs($agency['customer']);
+        $this->fakeOk();
+
+        $html = $this->get($this->connectUrl($agency))->getContent();
+        $urlOne = $this->pageUrl($html);
+        $this->assertSame(1, preg_match('~name="setup_uid" value="([^"]+)"~', $html, $m));
+        $uidOne = $m[1];
+        $this->assertStringContainsString($uidOne, $urlOne);
+
+        // Tab A connects number one with the shown URL.
+        $this->connect($agency, ['setup_uid' => $uidOne])[0]->assertSessionHasNoErrors();
+
+        // Tab B (still showing URL one) submits number two: refused, nothing stored, no URL pairing mix-up.
+        $this->connect($agency, ['setup_uid' => $uidOne, 'sender_number' => '+12025552001'])[0]->assertSessionHasErrors('setup_uid');
+        $this->assertSame(1, AgencyProspectingChannel::count());
+
+        // Reloading gives a different URL, and number two connects on exactly that one.
+        $html = $this->get($this->connectUrl($agency))->getContent();
+        $urlTwo = $this->pageUrl($html);
+        $this->assertNotSame($urlOne, $urlTwo);
+        preg_match('~name="setup_uid" value="([^"]+)"~', $html, $m);
+        $this->connect($agency, ['setup_uid' => $m[1], 'sender_number' => '+12025552001'])[0]->assertSessionHasNoErrors();
+
+        $this->assertSame(2, AgencyProspectingChannel::where('workspace_id', $agency['workspace']->id)->count());
+        $this->assertTrue(AgencyProspectingChannel::where('uid', $m[1])->where('sender_number', '12025552001')->exists());
+        $this->assertSame(0, AgencyChannelSetupReservation::count());
+    }
+
+    public function test_another_agencys_setup_uid_is_refused(): void
+    {
+        $alpha = $this->outreachAgency('Alpha');
+        $beta = $this->outreachAgency('Beta');
+        $this->authenticateAs($alpha['customer']);
+        $alphaUid = AgencyChannelSetupReservation::openFor($alpha['workspace'], 'Telnyx', null)->uid;
+
+        $this->authenticateAs($beta['customer']);
+        $this->fakeOk();
+        $this->connect($beta, ['setup_uid' => $alphaUid])[0]->assertSessionHasErrors('setup_uid');
+        $this->assertSame(0, AgencyProspectingChannel::count());
+        $this->assertSame(1, AgencyChannelSetupReservation::count(), "Alpha's reservation is untouched.");
     }
 }

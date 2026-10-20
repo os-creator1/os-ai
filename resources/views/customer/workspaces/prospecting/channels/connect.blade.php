@@ -32,6 +32,9 @@
                 <button type="button" class="btn btn-outline-primary" id="copy-webhook-url">Copy Webhook URL</button>
             </div>
             <div class="text-caption" id="copy-webhook-status" role="status"></div>
+            @error('setup_uid')
+                <div class="text-danger mb-1">{{ $message }}</div>
+            @enderror
             <div class="text-caption">Nothing is sent or received until you finish connecting below. Replies are accepted only when signed with your Telnyx webhook public key.</div>
         </x-card>
 
@@ -50,6 +53,9 @@
     <x-card title="{{ $isTelnyx ? 'Your Telnyx details' : 'Account details' }}" :padded="true">
         <form method="post" action="{{ route('customer.workspaces.prospecting.channels.connect', [$workspaceUid, $provider]) }}">
             @csrf
+            @if($isTelnyx)
+                <input type="hidden" name="setup_uid" value="{{ $setupUid }}">
+            @endif
 
             <div class="mb-1">
                 <label class="form-label" for="sender_number">Sender number <span class="text-danger">*</span> <small class="text-muted">(include country code)</small></label>

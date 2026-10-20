@@ -122,12 +122,14 @@ class AgencyProspectingChannelController extends CustomerBaseController
 
         // Telnyx asks for the webhook URL while the Messaging Profile is being created, so the
         // agency's real URL (the channel uid is reserved now and used again on connect) is shown first.
-        $webhookUrl = $provider === SendingServer::TYPE_TELNYX
-            ? $this->reservedWebhookUrl(AgencyChannelSetupReservation::openFor($workspace, $provider, Auth::id()))
+        $reservation = $provider === SendingServer::TYPE_TELNYX
+            ? AgencyChannelSetupReservation::openFor($workspace, $provider, Auth::id())
             : null;
+        $webhookUrl = $reservation !== null ? $this->reservedWebhookUrl($reservation) : null;
 
         return view('customer.workspaces.prospecting.channels.connect', [
             'webhookUrl' => $webhookUrl,
+            'setupUid' => $reservation?->uid,
             'workspaceUid' => $workspaceUid,
             'provider' => $provider,
             'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'],
@@ -158,6 +160,23 @@ class AgencyProspectingChannelController extends CustomerBaseController
 
         if (config('app.stage') === 'demo') {
             return $this->channelsError($workspaceUid, 'Sorry! This option is not available in demo mode');
+        }
+
+        // The page names the reserved uid whose webhook URL it displayed. If that reservation is gone
+        // (another tab already connected with it) the shown URL belongs to a different channel, so refuse
+        // rather than silently pairing this connection with a URL the agency never saw.
+        $reservation = null;
+
+        if ($provider === SendingServer::TYPE_TELNYX) {
+            $requestedUid = trim((string) $request->input('setup_uid'));
+            $reservation = $requestedUid === ''
+                ? AgencyChannelSetupReservation::openFor($workspace, $provider, Auth::id())
+                : AgencyChannelSetupReservation::where('workspace_id', $workspace->id)->where('provider', $provider)->where('uid', $requestedUid)->first();
+
+            if ($reservation === null) {
+                return redirect()->route('customer.workspaces.prospecting.channels.connect', [$workspaceUid, $provider])
+                    ->withErrors(['setup_uid' => 'The webhook URL on that page has already been used for another connection. Reload this page and use the new webhook URL in your Telnyx Messaging Profile.']);
+            }
         }
 
         $senderNumber = AgencyProspectPhoneNormalizer::normalize((string) $request->input('sender_number'));
@@ -237,10 +256,6 @@ class AgencyProspectingChannelController extends CustomerBaseController
         // provider-owner identity.
         // The channel takes the uid reserved when the setup page was shown, so the webhook URL the
         // agency already configured in Telnyx is the very URL this channel receives on.
-        $reservation = $provider === SendingServer::TYPE_TELNYX
-            ? AgencyChannelSetupReservation::openFor($workspace, $provider, Auth::id())
-            : null;
-
         try {
             $channel = DB::transaction(function () use ($input, $workspace, $provider, $senderNumber, $webhookKey, $smsConfirmed, $reservation): AgencyProspectingChannel {
             $sendingServer = $this->sendingServers->store($input);
