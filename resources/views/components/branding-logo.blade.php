@@ -1,6 +1,9 @@
 @props([
     'variant' => 'full',
     'background' => 'light',
+    // Shell logos only: also render the dark-background logo, shown instead of the light one
+    // while <html> carries `dark-layout` (the user's Light/Dark/System appearance).
+    'adaptive' => false,
 ])
 
 {{--
@@ -28,7 +31,18 @@
         <span class="sr-only">{{ $agencyChrome['name'] }}</span>
     </span>
 @elseif($branding['src'])
-    <img src="{{ asset($branding['src']) }}" alt="{{ $branding['alt'] }}" {{ $attributes }} />
+    @php
+        $darkLogo = ($adaptive && $variant === 'full' && $background === 'light')
+            ? app(\App\Library\Branding\BrandingPresenter::class)->logo('full', 'dark')
+            : null;
+        $hasDarkLogo = $darkLogo !== null && ! empty($darkLogo['src']) && $darkLogo['src'] !== $branding['src'];
+    @endphp
+    @if($hasDarkLogo)
+        <img src="{{ asset($branding['src']) }}" alt="{{ $branding['alt'] }}" {{ $attributes->class(['mg-logo-light']) }} />
+        <img src="{{ asset($darkLogo['src']) }}" alt="" aria-hidden="true" {{ $attributes->class(['mg-logo-dark']) }} />
+    @else
+        <img src="{{ asset($branding['src']) }}" alt="{{ $branding['alt'] }}" {{ $attributes }} />
+    @endif
 @else
     {{--
         No owner-configured or bundled asset resolved (defensive-only path

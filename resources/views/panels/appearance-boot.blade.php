@@ -67,6 +67,7 @@
     apply();
 })();
 </script>
-{{-- The bundled default logo has dark lettering; in dark appearance the same mark is shown with light lettering.
-     An owner-uploaded logo is the owner's own artwork and is never altered. --}}
-<style>html.dark-layout img[src$="images/branding/default-logo.svg"]{content:url("{{ asset('images/branding/default-logo-dark.svg') }}")}</style>
+{{-- Shell logos render a light and a dark <img> (components/branding-logo.blade.php, `adaptive`);
+     the same html.dark-layout class that themes the page picks which one shows, so a theme switch is
+     instant and needs no request. --}}
+<style>.mg-logo-dark{display:none}html.dark-layout .mg-logo-light{display:none}html.dark-layout .mg-logo-dark{display:inline}</style>
