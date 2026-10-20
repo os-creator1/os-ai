@@ -12,6 +12,7 @@ use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
 use App\Library\AgencyProspecting\TelnyxCredentialVerifier;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Security\SealedSecret;
+use App\Models\AgencyChannelSetupReservation;
 use App\Models\AgencyProspectingChannel;
 use App\Models\Customer;
 use App\Models\SendingServer;
@@ -119,7 +120,14 @@ class AgencyProspectingChannelController extends CustomerBaseController
             return $this->channelsError($workspaceUid, 'Unsupported provider.');
         }
 
+        // Telnyx asks for the webhook URL while the Messaging Profile is being created, so the
+        // agency's real URL (the channel uid is reserved now and used again on connect) is shown first.
+        $webhookUrl = $provider === SendingServer::TYPE_TELNYX
+            ? $this->reservedWebhookUrl(AgencyChannelSetupReservation::openFor($workspace, $provider, Auth::id()))
+            : null;
+
         return view('customer.workspaces.prospecting.channels.connect', [
+            'webhookUrl' => $webhookUrl,
             'workspaceUid' => $workspaceUid,
             'provider' => $provider,
             'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'],
@@ -227,11 +235,20 @@ class AgencyProspectingChannelController extends CustomerBaseController
         // authenticated actor who performed this action (the owner, or an
         // active Workspace Admin) — never silently conflated with the
         // provider-owner identity.
+        // The channel takes the uid reserved when the setup page was shown, so the webhook URL the
+        // agency already configured in Telnyx is the very URL this channel receives on.
+        $reservation = $provider === SendingServer::TYPE_TELNYX
+            ? AgencyChannelSetupReservation::openFor($workspace, $provider, Auth::id())
+            : null;
+
         try {
-            $channel = DB::transaction(function () use ($input, $workspace, $provider, $senderNumber, $webhookKey, $smsConfirmed): AgencyProspectingChannel {
+            $channel = DB::transaction(function () use ($input, $workspace, $provider, $senderNumber, $webhookKey, $smsConfirmed, $reservation): AgencyProspectingChannel {
             $sendingServer = $this->sendingServers->store($input);
 
-            return AgencyProspectingChannel::create([
+            $channel = new AgencyProspectingChannel();
+            $channel->uid = $reservation?->uid;
+
+            $channel->fill([
                 'workspace_id' => $workspace->id,
                 'sending_server_id' => $sendingServer->id,
                 'provider' => $provider,
@@ -241,7 +258,11 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 'webhook_public_key' => $webhookKey !== null ? SealedSecret::seal($webhookKey) : null,
                 'credentials_verified_at' => $provider === SendingServer::TYPE_TELNYX ? now() : null,
                 'sms_capability_confirmed_at' => $smsConfirmed ? now() : null,
-            ]);
+            ])->save();
+
+            $reservation?->delete();
+
+            return $channel;
             });
         } catch (\Illuminate\Database\UniqueConstraintViolationException) {
             // Another agency connected this number first (the database key is the arbiter);
@@ -606,6 +627,11 @@ class AgencyProspectingChannelController extends CustomerBaseController
         $providerSegment = $channel->provider === SendingServer::TYPE_TELNYX ? 'telnyx' : 'twilio';
 
         return route('prospecting.webhooks.' . $providerSegment, [$channel->uid, $token]);
+    }
+
+    private function reservedWebhookUrl(AgencyChannelSetupReservation $reservation): string
+    {
+        return route('prospecting.webhooks.agency_telnyx', [$reservation->uid, AgencyProspectingWebhookToken::forChannel($reservation->uid)]);
     }
 
     private function channelsError(string $workspaceUid, string $message): RedirectResponse
