@@ -1,3 +1,4 @@
+@include('panels.appearance-boot')
 <!-- BEGIN: Vendor CSS-->
 @if (isset($configData['direction']) && $configData['direction'] === 'rtl')
     <link rel="stylesheet" href="{{ asset(mix('vendors/css/vendors-rtl.min.css')) }}"/>

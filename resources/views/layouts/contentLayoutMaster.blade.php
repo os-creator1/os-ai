@@ -6,10 +6,10 @@
     $configData = \App\Helpers\Helper::applClasses();
 @endphp
 
-<html class="loading {{ ($configData['theme'] === 'light') ? '' : $configData['layoutTheme']}}"
+<html class="loading {{ ($configData['theme'] === 'light') ? '' : $configData['layoutTheme']}} {{ \App\Library\Appearance\Appearance::htmlClass(Auth::user()) }}"
       lang="@if(Session::has('locale')){{Session::get('locale')}}@else{{config('app.locale')}}@endif"
       data-textdirection="{{ config('app.locale_direction') === 'rtl' ? 'rtl' : 'ltr' }}"
-      @if($configData['theme'] === 'dark') data-layout="dark-layout" @endif>
+      @if($configData['theme'] === 'dark' || \App\Library\Appearance\Appearance::htmlClass(Auth::user()) !== '') data-layout="dark-layout" @endif>
 
 <head>
     <meta charset="utf-8">

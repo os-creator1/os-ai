@@ -261,3 +261,23 @@
     .pc-how__grid { grid-template-columns: minmax(0, 1fr); }
     .pc-disconnect__row { flex-wrap: wrap; }
 }
+
+/* Dark appearance (html.dark-layout, set from the user's own preference).
+   Only the literal tints above are re-pointed; everything else already reads the
+   semantic tokens, which the dark tokens redefine (tokens/_dark.scss). */
+html.dark-layout .sr-chip--success,
+html.dark-layout .sr-included .sr-check,
+html.dark-layout .pc-tile--success,
+html.dark-layout .pc-mark--done { color: var(--color-status-success-text); }
+html.dark-layout .sr-chip--warn { color: var(--color-status-warning-text); }
+html.dark-layout .sr-chip--danger { color: var(--color-status-danger-text); }
+html.dark-layout .sr-callout--info { background: var(--color-status-info-soft-bg); border-color: var(--color-status-info-border); color: var(--color-status-info-text); }
+html.dark-layout .sr-callout--warn { background: var(--color-status-warning-soft-bg); border-color: var(--color-status-warning-border); color: var(--color-status-warning-text); }
+html.dark-layout .sr-callout--success { background: var(--color-status-success-soft-bg); border-color: var(--color-status-success-border); color: var(--color-status-success-text); }
+html.dark-layout .sr-callout--danger { background: var(--color-status-danger-soft-bg); border-color: var(--color-status-danger-border); color: var(--color-status-danger-text); }
+html.dark-layout .sr-switch input:not(:checked) { background: #575550; }
+html.dark-layout .sr-list__row.is-highlight { background: var(--color-primary-soft-bg); }
+html.dark-layout .sr-meter__seg { background: var(--color-border); }
+html.dark-layout .pc-reason { color: var(--color-status-warning-text); background: var(--color-status-warning-soft-bg); border-color: var(--color-status-warning-border); }
+html.dark-layout .pc-mark--pending { background: var(--color-status-warning-soft-bg); border-color: var(--color-status-warning-border); }
+html.dark-layout .pc-tech { background: var(--color-surface-secondary); }

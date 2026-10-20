@@ -34,6 +34,9 @@
         .mg-cp-info-value{display:block;font-weight:600;overflow-wrap:anywhere}
         .mg-cp-iconbtn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:1.8rem;height:1.8rem;padding:0;border:0;border-radius:.45rem;background:transparent;color:#8a867d;cursor:pointer}
         .mg-cp-iconbtn:hover{background:#efece7}
+        html.dark-layout .mg-cp-info-icon{background:rgba(255,255,255,.08);color:var(--color-text-secondary,#bdbbb5)}
+        html.dark-layout .mg-cp-iconbtn{color:var(--color-text-muted,#a09e97)}
+        html.dark-layout .mg-cp-iconbtn:hover{background:rgba(255,255,255,.1)}
         .mg-cp-iconbtn:focus-visible{outline:2px solid var(--color-primary,#b5524c);outline-offset:1px}
         .mg-cp-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.9rem 1rem}
         .mg-cp-field{min-width:0}

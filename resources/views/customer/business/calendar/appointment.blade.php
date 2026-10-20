@@ -42,6 +42,7 @@
         .mg-appt-danger .card-title,.mg-appt-danger h2,.mg-appt-danger h3,.mg-appt-danger h4{color:var(--color-danger,#c0392b)}
         .mg-appt-banner{display:flex;gap:.75rem;align-items:flex-start;padding:.875rem 1rem;margin-bottom:1rem;border:1px solid var(--color-border-neutral,#e5e5e5);border-radius:.75rem;background:var(--color-surface-muted,#f6f5f2)}
         .mg-appt-banner.is-cancelled{border-color:#e7bcb7;background:#fbefed}
+        html.dark-layout .mg-appt-banner.is-cancelled{border-color:var(--color-status-danger-border);background:var(--color-status-danger-soft-bg)}
         .mg-appt-closed{margin:1rem 0 0;color:var(--color-text-muted)}
         @media (max-width:767.98px){
             .mg-appt-grid{grid-template-columns:minmax(0,1fr)}

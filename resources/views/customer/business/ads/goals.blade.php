@@ -27,6 +27,7 @@
         .gl-tools { display: flex; justify-content: flex-end; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
         .gl-seg button { border: 0; background: transparent; padding: .3rem .8rem; border-radius: .4rem; font-size: .85rem; }
         .gl-seg button[aria-pressed="true"] { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
+        html.dark-layout .gl-seg button[aria-pressed="true"] { background: var(--color-surface-secondary, #2b2b29); box-shadow: 0 0 0 1px var(--color-border, #3a3936); }
         .gl-seg { display: inline-flex; background: rgba(120,113,108,.12); padding: .2rem; border-radius: .6rem; }
         .gl-path { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; margin-bottom: 1rem; }
         @media (max-width: 767px) { .gl-path { grid-template-columns: minmax(0, 1fr); } }
