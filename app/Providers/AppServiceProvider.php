@@ -535,6 +535,12 @@
                 \App\Library\MetaAds\Sync\MetaAdsSyncCoordinator::OBSERVER_TAG,
             );
 
+            // Browser calling: the one Telnyx voice client (tests bind a fake over this).
+            $this->app->bind(
+                \App\Library\Voice\VoiceProviderClient::class,
+                \App\Library\Voice\TelnyxVoiceClient::class,
+            );
+
             // Conversations — the contact activity timeline. Its sources, in
             // merge order, and the contact panel's optional sections (none
             // registered yet). Email, forms, invoices, payments, bookings or a
@@ -552,6 +558,8 @@
                 \App\Library\Timeline\Sources\DocumentActivitySource::class,
                 // Forms V1 (§16) — a Contact's form submissions.
                 \App\Library\Timeline\Sources\FormSubmissionActivitySource::class,
+                // Browser calling — a person's calls, from the one canonical voice_calls table.
+                \App\Library\Timeline\Sources\VoiceCallActivitySource::class,
             ], \App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG);
 
             $this->app->bind(\App\Library\Timeline\ContactActivityTimeline::class, fn ($app) => new \App\Library\Timeline\ContactActivityTimeline(

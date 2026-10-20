@@ -205,6 +205,11 @@
     Route::post('inbound/telnyx-managed', 'Customer\DLRController@inboundTelnyxManaged')
         ->middleware('throttle:600,1')
         ->name('inbound.telnyx_managed');
+    // Browser calling (V1): Telnyx call events for the managed voice connection. Public until the Ed25519
+    // signature is verified, so throttled like the messaging route above.
+    Route::post('webhooks/telnyx-voice', 'Voice\TelnyxVoiceWebhookController@managed')
+        ->middleware('throttle:600,1')
+        ->name('voice.webhooks.telnyx_managed');
     Route::any('inbound/teletopiasms/{gateway?}', 'Customer\DLRController@inboundTeletopiasms')->name('inbound.teletopiasms');
     Route::any('inbound/flowroute/{gateway?}', 'Customer\DLRController@inboundFlowRoute')->name('inbound.flowroute');
     Route::any('dlr/easysendsms', 'Customer\DLRController@dlrEasySendSMS')->name('dlr.easysendsms');
@@ -378,6 +383,12 @@
     Route::post('webhooks/agency-telnyx/{channelUid}/{token}', 'Prospecting\AgencyByoTelnyxWebhookController@handle')
         ->middleware('throttle:600,1')
         ->name('prospecting.webhooks.agency_telnyx');
+
+    // The same agency's OWN Telnyx account, call events for browser calling. Verified against that
+    // agency's own stored public key.
+    Route::post('webhooks/agency-telnyx-voice/{channelUid}/{token}', 'Voice\TelnyxVoiceWebhookController@agency')
+        ->middleware('throttle:600,1')
+        ->name('prospecting.webhooks.agency_telnyx_voice');
 
     /*
      * Implementation Contract 15 §11/§12.F — inbound Google/Outlook calendar

@@ -70,6 +70,9 @@
 {{-- include default scripts --}}
 @include('panels/scripts')
 
+{{-- browser calling: the one floating phone panel (renders only inside a Business route) --}}
+@include('layouts.partials.voice-softphone')
+
 <script type="text/javascript">
     $(window).on('load', function () {
         if (feather) {

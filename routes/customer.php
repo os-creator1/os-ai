@@ -1787,6 +1787,31 @@
 
         /*
         |----------------------------------------------------------------
+        | Browser calling (Telnyx WebRTC) — Business-scoped
+        |----------------------------------------------------------------
+        |
+        | Every action re-runs the Conversations tenancy chain in
+        | VoiceBusinessContext and refuses while an Agency is viewing as
+        | a client. Static segments are registered before {callUid}.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/voice')->name('businesses.voice.')->group(function () {
+            Route::get('/options', 'Business\VoiceController@options')->middleware('throttle:60,1')->name('options');
+            Route::get('/session', 'Business\VoiceController@session')->middleware('throttle:60,1')->name('session');
+            Route::get('/lookup', 'Business\VoiceController@lookup')->middleware('throttle:60,1')->name('lookup');
+            Route::post('/token', 'Business\VoiceController@token')->middleware('throttle:30,1')->name('token');
+            Route::post('/heartbeat', 'Business\VoiceController@heartbeat')->middleware('throttle:10,1')->name('heartbeat');
+            Route::post('/offline', 'Business\VoiceController@offline')->middleware('throttle:30,1')->name('offline');
+            Route::post('/calls', 'Business\VoiceController@startCall')->middleware('throttle:20,1')->name('calls.start');
+            Route::post('/calls/{callUid}/client-event', 'Business\VoiceController@clientEvent')->middleware('throttle:60,1')->name('calls.client-event');
+            Route::post('/calls/{callUid}/note', 'Business\VoiceController@note')->middleware('throttle:30,1')->name('calls.note');
+            Route::get('/settings', 'Business\VoiceController@settings')->name('settings');
+            Route::post('/settings/numbers', 'Business\VoiceController@saveNumber')->middleware('throttle:30,1')->name('settings.numbers.save');
+            Route::post('/settings/numbers/{numberUid}/verify', 'Business\VoiceController@verifyNumber')->middleware('throttle:10,1')->name('settings.numbers.verify');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | B1 Pass 2 — Business-addressable CRM (Contacts / Contact Groups)
         |----------------------------------------------------------------
         |

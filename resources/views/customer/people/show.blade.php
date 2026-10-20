@@ -103,6 +103,10 @@
                 @if ($canEditDetails)
                     <x-button variant="outline" size="sm" icon="pencil" data-role="contact-edit" :href="route('customer.workspaces.businesses.contact.edit', [$workspaceUid, $businessUid, $profile['group']['uid']]) . '?contact_id=' . urlencode($contactUid)">Edit details</x-button>
                 @endif
+                {{-- Browser calling: enabled only when this contact has a callable number AND an authorized, voice-ready caller ID; otherwise disabled with the reason (softphone.js). --}}
+                @if (\App\Library\Voice\VoiceAvailability::mounted(request()))
+                <x-button variant="outline" size="sm" icon="phone" data-role="contact-call" data-mg-call data-mg-show-reason :data-contact-uid="$contactUid" aria-label="Call {{ $displayName }}" disabled>Call</x-button>
+                @endif
                 @if ($actions['bookUrl'] !== null)
                     <x-button variant="outline" size="sm" icon="calendar" data-role="contact-book" :href="$actions['bookUrl']">Book appointment</x-button>
                 @endif
@@ -170,7 +174,7 @@
 
                 <div class="mg-cp-card" data-role="contact-activity">
                     <h2 class="mg-cp-card-title">Activity</h2>
-                    @if ($profile['conversation'] === null && empty($profile['campaigns']))
+                    @if ($profile['conversation'] === null && empty($profile['campaigns']) && ($calls ?? collect())->isEmpty())
                         <div class="mg-cp-empty" data-role="contact-no-activity">
                             <span class="mg-cp-empty-icon"><x-ds-icon name="message-square" size="20" aria-hidden="true" /></span>
                             <strong>No activity yet</strong>
@@ -192,6 +196,21 @@
                                     <li class="mb-50">
                                         <span class="text-caption">{{ $message['incoming'] ? 'Received' : 'Sent' }}{{ $message['at'] !== null ? ' · ' . $message['at']->format('M j, Y H:i') : '' }}</span>
                                         <div>{{ \Illuminate\Support\Str::limit($message['text'], 240) }}</div>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endif
+
+                    @if (($calls ?? collect())->isNotEmpty())
+                        <div class="mb-2" data-role="contact-calls">
+                            <h3 class="h5 mb-1">Calls</h3>
+                            <ul class="list-unstyled mb-0">
+                                @foreach (($calls ?? collect()) as $call)
+                                    @php($described = \App\Library\Voice\VoiceCallHistory::describe($call))
+                                    <li class="mb-50" data-role="contact-call-row" data-call-status="{{ $call->status }}">
+                                        <span class="text-caption">{{ $call->initiated_at?->format('M j, Y H:i') }}</span>
+                                        <div>{{ $described['title'] }}@if ($described['detail'] !== null) <span class="text-caption">· {{ $described['detail'] }}</span>@endif</div>
                                     </li>
                                 @endforeach
                             </ul>

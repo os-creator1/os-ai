@@ -635,6 +635,13 @@
                     </div>
                     <div class="d-flex align-items-center">
 
+                        {{-- Browser calling: same Call action as Contacts; the open conversation's uid is read from .chat_id when clicked. --}}
+                        @if (\App\Library\Voice\VoiceAvailability::mounted(request()))
+                        <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-50 me-1" data-role="conversation-call" data-mg-call data-conversation-input=".chat_id" aria-label="Call this contact" disabled>
+                            <x-ds-icon name="phone" size="16" aria-hidden="true" /><span class="d-none d-sm-inline">Call</span>
+                        </button>
+                        @endif
+
                         <x-tooltip text="{{ __('locale.labels.block') }}" placement="top" class="add-to-blacklist">
                             <x-ds-icon name="shield" class="cursor-pointer font-medium-2 mx-1 text-primary" />
                         </x-tooltip>
@@ -915,6 +922,7 @@
 
             $("[data-role=conversation-title]").text(response.title);
             $(".chat_history").html(response.timeline);
+            if (window.MGSoftphone && window.MGSoftphone.refreshButtons) { window.MGSoftphone.refreshButtons(); }
             $("#conversation-context").html(response.context);
 
             // Show the active chat area

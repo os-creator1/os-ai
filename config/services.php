@@ -247,6 +247,10 @@
             'api_key'             => env('TELNYX_API_KEY'),
             'webhook_public_key'  => env('TELNYX_WEBHOOK_PUBLIC_KEY'),
             'mode'                => env('TELNYX_MODE', 'sandbox'),
+            // Browser calling (V1). Off unless explicitly enabled; managed calling additionally needs the
+            // platform's own Telnyx credential connection (WebRTC/SIP users) named here.
+            'voice_enabled'       => env('TELNYX_VOICE_ENABLED', false),
+            'voice_connection_id' => env('TELNYX_VOICE_CONNECTION_ID'),
         ],
 
         /*

@@ -28,6 +28,10 @@
             '/payment/*',
             'dlr/*',
             'webhooks/prospecting/*',
+            // Browser calling: Telnyx call events carry no session; authenticity is the Ed25519 signature
+            // (and, for an Agency's own account, the URL-embedded channel token), verified in-controller.
+            'webhooks/telnyx-voice',
+            'webhooks/agency-telnyx-voice/*',
             // Implementation Contract 15 §11 — Google/Outlook push
             // notifications carry no Laravel session; authenticity is the
             // URL-embedded HMAC token (ExternalCalendarWebhookToken),

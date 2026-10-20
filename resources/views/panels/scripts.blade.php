@@ -4,7 +4,9 @@
 
 <!-- BEGIN: Page Vendor JS-->
 <script src="{{asset(mix('vendors/js/ui/jquery.sticky.js'))}}"></script>
+<script type="application/x-mg-region" data-mg-region="vendor-scripts:start"></script>
 @yield('vendor-script')
+<script type="application/x-mg-region" data-mg-region="vendor-scripts:end"></script>
 <!-- END: Page Vendor JS-->
 
 <!-- BEGIN: Theme JS-->
@@ -73,7 +75,9 @@
 
 
 {{-- page script --}}
+<script type="application/x-mg-region" data-mg-region="page-scripts:start"></script>
 @yield('page-script')
+<script type="application/x-mg-region" data-mg-region="page-scripts:end"></script>
 <script>
     $(document).on('select2:open', () => {
         document.querySelector('.select2-search__field').focus();

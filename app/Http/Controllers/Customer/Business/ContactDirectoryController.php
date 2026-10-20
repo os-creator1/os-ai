@@ -110,6 +110,13 @@ class ContactDirectoryController extends CustomerBaseController
             'contactUid' => (string) $contact->uid,
             'profile' => $profile,
             'actions' => $this->profileActions($workspace, $business, $contact, $profile, $canConverse),
+            // Browser calling: this contact's calls (same Business only), newest first.
+            'calls' => app(\App\Library\Voice\VoiceCallHistory::class)->forPerson(
+                $business,
+                $contact,
+                array_values(array_filter([\App\Library\Messaging\E164Normalizer::normalize((string) $contact->phone)])),
+                20,
+            ),
             // Business-defined Custom Fields: only shown for a Contact whose
             // Location the actor may access (the existing Contact Location ACL).
             'customFields' => $this->locationAccessible($contact)
