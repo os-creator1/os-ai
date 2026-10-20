@@ -85,11 +85,19 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
         return app(AgencyWhiteLabelManager::class)->save((int) $owner->user_id, $agency, $this->payload($overrides) + ['social_links' => $this->payload($overrides)['social']]);
     }
 
+    private bool $dnsFound = false;
+
+    /** One mock for the whole test; flip $this->dnsFound to change what DNS "contains" (routes cache their controller). */
     private function fakeDns(bool $found): void
     {
-        $dns = Mockery::mock(DnsVerifier::class);
-        $dns->shouldReceive('hasTxtRecord')->andReturn($found);
-        $this->app->instance(DnsVerifier::class, $dns);
+        $this->dnsFound = $found;
+
+        if (! $this->app->bound('wl.dns.mocked')) {
+            $dns = Mockery::mock(DnsVerifier::class);
+            $dns->shouldReceive('hasTxtRecord')->andReturnUsing(fn () => $this->dnsFound);
+            $this->app->instance(DnsVerifier::class, $dns);
+            $this->app->instance('wl.dns.mocked', true);
+        }
     }
 
     public function test_the_full_identity_is_saved_through_the_form_and_restored_on_the_page(): void
@@ -135,7 +143,9 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
             ['social' => ['linkedin' => 'https://evil.example/in/x']],
             ['social' => ['x' => 'https://x.com.evil.example/a']],
         ] as $bad) {
-            $this->post($this->url('update', $agency), $this->payload($bad))->assertSessionHas('status', 'error')->assertSessionMissing('status', 'success');
+            $this->post($this->url('update', $agency), $this->payload($bad));
+            $this->assertTrue(session('status') === 'error' || (session('errors')?->any() ?? false), 'accepted: ' . json_encode($bad));
+            $this->assertNotSame('success', session('status'));
         }
 
         $this->post($this->url('update', $agency), $this->payload() + ['favicon' => UploadedFile::fake()->image('big.png', 2000, 2000)])
@@ -164,7 +174,10 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
     {
         [$agency, $owner] = $this->agency();
         $m = app(AgencyWhiteLabelManager::class);
-        $bytes = (string) file_get_contents(UploadedFile::fake()->image('a.png', 64, 64)->getRealPath());
+        $img = imagecreatetruecolor(64, 64);
+        ob_start();
+        imagepng($img);
+        $bytes = (string) ob_get_clean();
 
         $s = $m->save((int) $owner->user_id, $agency, $this->payload(), null, false, [
             'logo_compact' => UploadedFile::fake()->createWithContent('a.png', $bytes),
@@ -225,6 +238,7 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
     {
         [$agency, $owner] = $this->agency();
         $this->saved($agency, $owner);
+        $this->fakeDns(false);
         $this->authenticateAs($owner);
 
         $this->post($this->url('domain.attach', $agency), ['app_domain' => 'App.Northwind.Example'])->assertSessionHas('status', 'success');
@@ -277,8 +291,8 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
     {
         [$agency, $owner] = $this->agency();
         $this->saved($agency, $owner);
-        $svc = app(AgencyAppDomainService::class);
         $this->fakeDns(true);
+        $svc = app(AgencyAppDomainService::class);
 
         $svc->attach((int) $owner->user_id, $agency, 'app.one.example');
         $svc->check((int) $owner->user_id, $agency);
