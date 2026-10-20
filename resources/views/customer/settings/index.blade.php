@@ -175,21 +175,34 @@
             var group = document.querySelector('.mg-appearance-seg');
             if (!group) { return; }
             var status = document.querySelector('[data-role="appearance-status"]');
-            var saved = group.querySelector('input:checked');
-            saved = saved ? saved.value : 'light';
+            var initial = group.querySelector('input:checked');
+
+            // The choice the person made last (what the screen shows), and the last value the server
+            // confirmed. Saves are serialized: one request in flight at a time, and each follow-up
+            // sends only the latest choice, so the server always ends on the last selection and an
+            // older response can never overwrite or visually revert a newer one.
+            var wanted = initial ? initial.value : 'light';
+            var confirmed = wanted;
+            var uncertain = false;   // a request failed, so the server's value is not known for sure
+            var inFlight = false;
 
             function say(text, isError) {
                 status.textContent = text;
                 status.classList.toggle('is-error', !!isError);
             }
 
-            group.addEventListener('change', function (event) {
-                var value = event.target.value;
-                var previous = saved;
-                // Apply at once; the save below makes it follow the account across devices.
+            function show(value) {
                 if (window.MGAppearance) { window.MGAppearance.set(value); }
-                say('Saving…', false);
+                var radio = group.querySelector('input[value="' + value + '"]');
+                if (radio) { radio.checked = true; }
+            }
+
+            function flush() {
+                if (inFlight || (wanted === confirmed && !uncertain)) { return; }
+                var sending = wanted;
                 var token = document.querySelector('meta[name="csrf-token"]');
+                inFlight = true;
+                say('Saving…', false);
                 fetch(group.getAttribute('data-url'), {
                     method: 'POST',
                     credentials: 'same-origin',
@@ -199,18 +212,34 @@
                         'X-Requested-With': 'XMLHttpRequest',
                         'X-CSRF-TOKEN': token ? token.getAttribute('content') : ''
                     },
-                    body: JSON.stringify({ appearance: value })
+                    body: JSON.stringify({ appearance: sending })
                 }).then(function (response) {
                     if (!response.ok) { throw new Error('save failed'); }
-                    saved = value;
-                    say('Saved.', false);
+                    confirmed = sending;
+                    uncertain = false;
+                    inFlight = false;
+                    if (wanted === confirmed) { say('Saved.', false); } else { flush(); }
+                }, function () {
+                    throw new Error('save failed');
                 }).catch(function () {
-                    // Never leave the screen showing a choice the account does not have.
-                    if (window.MGAppearance) { window.MGAppearance.set(previous); }
-                    var back = group.querySelector('input[value="' + previous + '"]');
-                    if (back) { back.checked = true; }
-                    say('Could not save your appearance. Please try again.', true);
+                    inFlight = false;
+                    uncertain = true;
+                    if (wanted !== sending) {
+                        // A newer choice is already waiting: it is what the account should end on.
+                        flush();
+                        return;
+                    }
+                    // The latest choice could not be saved: fall back to what the account has.
+                    wanted = confirmed;
+                    show(confirmed);
+                    say('Could not save your appearance. Showing your saved setting.', true);
                 });
+            }
+
+            group.addEventListener('change', function (event) {
+                wanted = event.target.value;
+                if (window.MGAppearance) { window.MGAppearance.set(wanted); }
+                flush();
             });
         })();
     </script>
