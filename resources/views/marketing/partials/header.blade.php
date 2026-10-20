@@ -11,7 +11,7 @@
 @endphp
 <header class="mg-header">
 <div class="wrap mg-bar" style="display: flex; align-items: center; gap: 24px">
-<a href="{{ $mg->url('home') }}" aria-label="MotionGrove home" style="display: flex; align-items: center"><img src="{{ $mg->asset('img/mg-wordmark.png') }}" alt="MotionGrove" width="169" height="30" class="mg-logo" style="height: 30px; width: auto; display: block"></a>
+<a href="{{ $mg->url('home') }}" aria-label="{{ $mg->brandName() }} home" style="display: flex; align-items: center"><img src="{{ $mg->wordmark() }}" alt="{{ $mg->brandName() }}" width="169" height="30" class="mg-logo" style="height: 30px; width: auto; display: block"></a>
 <nav class="navl" aria-label="Main" style="display: flex; align-items: center; gap: 2px; margin-left: 12px">
 @foreach ($nav as $key => [$label, $href])
 <a href="{{ $href }}"@if ($key === $active) aria-current="page" style="color: #8F3B35; font-weight: 600"@endif>{{ $label }}</a>

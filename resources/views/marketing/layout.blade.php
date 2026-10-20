@@ -11,7 +11,7 @@
     <title>{{ $meta['title'] }}</title>
     <meta name="description" content="{{ $meta['description'] }}">
     <link rel="canonical" href="{{ $meta['canonical'] }}">
-    <meta property="og:site_name" content="{{ config('marketing.site.name') }}">
+    <meta property="og:site_name" content="{{ $mg->brandName() }}">
     <meta property="og:type" content="website">
     <meta property="og:title" content="{{ $meta['title'] }}">
     <meta property="og:description" content="{{ $meta['description'] }}">
@@ -20,7 +20,7 @@
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="{{ $meta['title'] }}">
     <meta name="twitter:description" content="{{ $meta['description'] }}">
-    <link rel="icon" type="image/png" href="{{ $mg->asset('img/mg-mark.png') }}">
+    <link rel="icon" href="{{ $mg->favicon() }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&amp;display=swap">
@@ -29,9 +29,9 @@
     <script type="application/ld+json">{!! json_encode(array_filter([
         '@context' => 'https://schema.org',
         '@type' => 'Organization',
-        'name' => config('marketing.site.name'),
+        'name' => $mg->brandName(),
         'url' => $mg->url('home'),
-        'logo' => $mg->asset('img/mg-mark.png'),
+        'logo' => $mg->mark(),
         'sameAs' => array_values($mg->social()) ?: null,
     ]), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) !!}</script>
     @if (! empty($faqs))

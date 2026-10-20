@@ -19,7 +19,7 @@
 <div style="flex: 1 1 400px; display: flex; flex-direction: column; gap: 18px">
 <span class="chip" style="background: #F6E7E4; color: #8F3B35; align-self: flex-start">SEO, ads — or both</span>
 <h3 style="margin: 0; font-size: clamp(28px, 3vw, 38px); line-height: 1.1; font-weight: 800; letter-spacing: -0.03em">Show up when customers search for what you do.</h3>
-<p class="lead">MotionGrove tracks where you appear on Google, tells you in plain language what to improve next, and helps you get it done — so your business is working to bring in leads, not just to manage them.</p>
+<p class="lead">{{ $mg->brandName() }} tracks where you appear on Google, tells you in plain language what to improve next, and helps you get it done — so your business is working to bring in leads, not just to manage them.</p>
 <p class="lead">Ads are optional. Grow through search alone, add ads when you want leads faster, or run both — we’ll help you pick what fits your situation.</p>
 <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 16px">
 <li style="display: flex; gap: 12px; align-items: center"><span class="tick"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px; stroke-width: 2.6"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>Keyword and local visibility tracking</li>
@@ -50,7 +50,7 @@
 <div style="flex: 1 1 400px; display: flex; flex-direction: column; gap: 18px; order: 2">
 <span class="chip" style="background: #F6E7E4; color: #8F3B35; align-self: flex-start">Website</span>
 <h3 style="margin: 0; font-size: clamp(28px, 3vw, 38px); line-height: 1.1; font-weight: 800; letter-spacing: -0.03em">A website built to turn visitors into inquiries.</h3>
-<p class="lead">Answer a few questions about what you offer and where you work. MotionGrove builds a mobile-ready site with clear services, photos and a booking form on every page — designed to get people to reach out, and easy to edit afterwards.</p>
+<p class="lead">Answer a few questions about what you offer and where you work. {{ $mg->brandName() }} builds a mobile-ready site with clear services, photos and a booking form on every page — designed to get people to reach out, and easy to edit afterwards.</p>
 <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 16px">
 <li style="display: flex; gap: 12px; align-items: center"><span class="tick"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px; stroke-width: 2.6"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>Guided questions instead of a blank page</li>
 <li style="display: flex; gap: 12px; align-items: center"><span class="tick"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px; stroke-width: 2.6"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>Hosting and your own domain</li>
@@ -148,11 +148,11 @@
 <div style="flex: 1 1 360px; display: flex; flex-direction: column; gap: 14px">
 <span class="chip" style="background: #FFFFFF; color: #8F3B35; align-self: flex-start">AI growth assistance</span>
 <h3 style="margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.025em">Ask what to do next. Get an answer about your business.</h3>
-<p style="margin: 0; color: #4A4340; line-height: 1.6; font-size: 17px">Ask MotionGrove looks at your leads, bookings and marketing and suggests practical next steps — in plain language, with links to do them.</p>
+<p style="margin: 0; color: #4A4340; line-height: 1.6; font-size: 17px">Ask {{ $mg->brandName() }} looks at your leads, bookings and marketing and suggests practical next steps — in plain language, with links to do them.</p>
 </div>
 <div aria-hidden="true" class="ui" style="flex: 1 1 420px; background: #FFFFFF; border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 40px -24px rgba(24,20,19,.3)">
 <div style="align-self: flex-end; padding: 10px 14px; border-radius: 14px; background: #F3EFEB; font-size: 13.5px">Why did I get fewer inquiries this month?</div>
-<div style="display: flex; gap: 10px"><img src="{{ $mg->asset('img/mg-mark.png') }}" alt="" style="width: 26px; height: 26px; flex: none"><div style="font-size: 13.5px; line-height: 1.55; color: #2E2826">Website visits held steady, but your contact form moved below the fold after the last edit. <b>Move it back to the top of your Weddings page</b> — I can make the change if you’d like.</div></div>
+<div style="display: flex; gap: 10px"><img src="{{ $mg->mark() }}" alt="" style="width: 26px; height: 26px; flex: none"><div style="font-size: 13.5px; line-height: 1.55; color: #2E2826">Website visits held steady, but your contact form moved below the fold after the last edit. <b>Move it back to the top of your Weddings page</b> — I can make the change if you’d like.</div></div>
 <div style="display: flex; gap: 8px; padding-left: 36px"><span class="chip" style="background: #B4514A; color: #FFFFFF">Make the change</span><span class="chip" style="background: #EFEBE7">Show me</span></div>
 <div class="ex-note">{{ $mg->get('copy.example_tag') }}</div></div>
 </div>

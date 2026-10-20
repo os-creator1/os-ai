@@ -18,30 +18,102 @@ use Illuminate\Support\Facades\Route;
  *   - an unconfirmed value (null) renders nothing, or a labelled placeholder
  *     only while `marketing.show_placeholders` is on.
  */
-final class MarketingSite
+class MarketingSite
 {
     public const PAGES = ['home', 'product', 'solutions', 'how-it-works', 'customers', 'pricing'];
+
+    /**
+     * The one read of marketing content. Everything else in this class (and every view, through $mg->get())
+     * goes through it, so a subclass can serve a different content tree — an Agency's own site — without a
+     * single view changing. An empty key returns the whole tree.
+     */
+    protected function cfg(string $key, mixed $default = null): mixed
+    {
+        return $key === '' ? config('marketing') : config('marketing.'.$key, $default);
+    }
 
     /** @return array<string, mixed> */
     public function content(): array
     {
-        return (array) config('marketing');
+        return (array) $this->cfg('');
     }
 
     public function get(string $key, mixed $default = null): mixed
     {
-        return config('marketing.'.$key, $default);
+        return $this->cfg(''.$key, $default);
     }
 
     public function showPlaceholders(): bool
     {
-        return (bool) config('marketing.show_placeholders');
+        return (bool) $this->cfg('show_placeholders');
     }
 
     /** Section switch, e.g. section('home.trust_logos'). */
     public function section(string $key): bool
     {
-        return (bool) config('marketing.sections.'.$key, true);
+        return (bool) $this->cfg('sections.'.$key, true);
+    }
+
+    // ------------------------------------------------------------ Identity
+
+    /** Home-page sections between the header and the footer, in the default order (view name per key). */
+    public const HOME_SECTIONS = [
+        'hero' => 'marketing.home.hero',
+        'trust' => 'marketing.home.trust',
+        'problem' => 'marketing.home.problem',
+        'system' => 'marketing.home.system',
+        'capabilities' => 'marketing.home.capabilities',
+        'people' => 'marketing.home.people',
+        'how' => 'marketing.home.how',
+        'videos' => 'marketing.home.videos',
+        'comparison' => 'marketing.home.comparison',
+        'pricing' => 'marketing.home.pricing',
+        'commitment' => 'marketing.home.commitment',
+        'faq' => 'marketing.home.faq',
+        'final_cta' => 'marketing.partials.final-cta',
+    ];
+
+    public function brandName(): string
+    {
+        return (string) $this->cfg('site.name', 'MotionGrove');
+    }
+
+    /** The wordmark image; $onDark selects the white variant used on dark bands. */
+    public function wordmark(bool $onDark = false): string
+    {
+        return $this->asset($onDark ? 'img/mg-wordmark-white.png' : 'img/mg-wordmark.png');
+    }
+
+    /** The square mark used in small chrome and structured data. */
+    public function mark(): string
+    {
+        return $this->asset('img/mg-mark.png');
+    }
+
+    public function favicon(): string
+    {
+        return $this->mark();
+    }
+
+    /**
+     * Home sections to render, in order. The platform's own site shows them all in the default order; an
+     * Agency site overrides this with its own order and visibility.
+     *
+     * @return list<string> keys of self::HOME_SECTIONS
+     */
+    public function homeSections(): array
+    {
+        return array_keys(self::HOME_SECTIONS);
+    }
+
+    public function showsHeader(): bool
+    {
+        return true;
+    }
+
+    public function showsFooter(): bool
+    {
+        return true;
     }
 
     // ---------------------------------------------------------------- URLs
@@ -61,14 +133,14 @@ final class MarketingSite
     /** Whether the public marketing site answers this request: enabled, and on an allowed host. */
     public function servesRequest(\Illuminate\Http\Request $request): bool
     {
-        if (! config('marketing.enabled', true)) {
+        if (! $this->cfg('enabled', true)) {
             return false;
         }
 
         // Blank MARKETING_HOSTS means the platform host only (the APP_URL host). TrustHosts also admits every
         // subdomain of APP_URL, and a customer domain that is not yet Active reaches routing unmatched, so
         // "any host" would publish the marketing site where it was never intended.
-        $hosts = (array) config('marketing.hosts', []);
+        $hosts = (array) $this->cfg('hosts', []);
         if ($hosts === []) {
             $hosts = [(string) parse_url((string) config('app.url'), PHP_URL_HOST)];
         }
@@ -87,7 +159,7 @@ final class MarketingSite
 
     public function loginUrl(): string
     {
-        $configured = $this->cleanUrl(config('marketing.cta.login_url'));
+        $configured = $this->cleanUrl($this->cfg('cta.login_url'));
 
         return $configured ?? route('login');
     }
@@ -101,7 +173,7 @@ final class MarketingSite
      */
     public function bookDemoUrl(): ?string
     {
-        $configured = $this->cleanUrl(config('marketing.cta.book_demo_url'));
+        $configured = $this->cleanUrl($this->cfg('cta.book_demo_url'));
 
         if ($configured !== null) {
             return $configured;
@@ -139,7 +211,7 @@ final class MarketingSite
     /** Destination for a plan's "Choose …" / "Get started" button. Never a trial. */
     public function planUrl(string $tier): string
     {
-        $configured = $this->cleanUrl(config('marketing.cta.plans.'.$tier));
+        $configured = $this->cleanUrl($this->cfg('cta.plans.'.$tier));
 
         if ($configured !== null) {
             return $configured;
@@ -165,7 +237,7 @@ final class MarketingSite
     {
         $plans = [];
 
-        foreach ((array) config('marketing.plans') as $key => $plan) {
+        foreach ((array) $this->cfg('plans') as $key => $plan) {
             $plans[$key] = $plan + ['key' => $key, 'url' => $this->planUrl($key)];
         }
 
@@ -177,7 +249,7 @@ final class MarketingSite
     {
         $out = [];
 
-        foreach ((array) config('marketing.faqs.'.$page, []) as $faq) {
+        foreach ((array) $this->cfg('faqs.'.$page, []) as $faq) {
             $answer = $faq['a'] ?? null;
 
             if ($answer === null && $this->showPlaceholders()) {
@@ -203,7 +275,7 @@ final class MarketingSite
     /** Industries with unverified feature rows removed. */
     public function industries(): array
     {
-        $showUnverified = (bool) config('marketing.show_unverified_features');
+        $showUnverified = (bool) $this->cfg('show_unverified_features');
 
         return array_map(function (array $industry) use ($showUnverified) {
             $industry['jobs'] = array_values(array_filter(
@@ -212,7 +284,7 @@ final class MarketingSite
             ));
 
             return $industry;
-        }, (array) config('marketing.industries'));
+        }, (array) $this->cfg('industries'));
     }
 
     /** @return array<string, string> label => url, only entries that are configured and valid. */
@@ -221,7 +293,7 @@ final class MarketingSite
         $out = [];
 
         foreach (['youtube' => 'YouTube', 'instagram' => 'Instagram'] as $key => $label) {
-            $url = $this->cleanUrl(config('marketing.social.'.$key));
+            $url = $this->cleanUrl($this->cfg('social.'.$key));
             if ($url !== null) {
                 $out[$label] = $url;
             }
@@ -233,12 +305,12 @@ final class MarketingSite
     public function link(string $key): ?string
     {
         if ($key === 'support_email') {
-            $email = trim((string) config('marketing.links.support_email'));
+            $email = trim((string) $this->cfg('links.support_email'));
 
             return filter_var($email, FILTER_VALIDATE_EMAIL) ? 'mailto:'.$email : null;
         }
 
-        return $this->cleanUrl(config('marketing.links.'.$key));
+        return $this->cleanUrl($this->cfg('links.'.$key));
     }
 
     /** Help destination for the footer: help centre, else support email, else nothing. */
@@ -263,7 +335,7 @@ final class MarketingSite
         $slots = [];
         $showPlaceholders = $this->showPlaceholders();
 
-        foreach ((array) config('marketing.testimonials') as $i => $t) {
+        foreach ((array) $this->cfg('testimonials') as $i => $t) {
             if (($t['visible'] ?? true) === false) {
                 continue;
             }
@@ -343,13 +415,13 @@ final class MarketingSite
     /** @return array{title: string, description: string, canonical: string, image: string} */
     public function meta(string $page): array
     {
-        $meta = (array) config('marketing.pages.'.$page);
+        $meta = (array) $this->cfg('pages.'.$page);
 
         return [
-            'title' => (string) ($meta['title'] ?? config('marketing.site.name')),
+            'title' => (string) ($meta['title'] ?? $this->cfg('site.name')),
             'description' => (string) ($meta['description'] ?? ''),
             'canonical' => $this->url($page),
-            'image' => $this->asset((string) config('marketing.site.og_image')),
+            'image' => $this->asset((string) $this->cfg('site.og_image')),
         ];
     }
 

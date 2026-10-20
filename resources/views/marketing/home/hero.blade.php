@@ -17,7 +17,7 @@
 </div>
 
 @if ($shot = $mg->get('screenshots.hero'))
-<div class="wrap" style="position: relative; margin-top: 64px; max-width: 1280px"><figure style="margin: 0; position: relative"><img src="{{ $mg->asset($shot) }}" alt="MotionGrove workspace with sample data" style="width: 100%; height: auto; border-radius: 22px; border: 1px solid #DCD5CE; box-shadow: 0 40px 80px -30px rgba(60,30,24,0.35)"><figcaption style="position: absolute; right: 16px; bottom: 14px"><span class="chip" style="background: #181413; color: #FFFFFF">{{ $mg->get('copy.example_tag') }}</span></figcaption></figure></div>
+<div class="wrap" style="position: relative; margin-top: 64px; max-width: 1280px"><figure style="margin: 0; position: relative"><img src="{{ $mg->asset($shot) }}" alt="{{ $mg->brandName() }} workspace with sample data" style="width: 100%; height: auto; border-radius: 22px; border: 1px solid #DCD5CE; box-shadow: 0 40px 80px -30px rgba(60,30,24,0.35)"><figcaption style="position: absolute; right: 16px; bottom: 14px"><span class="chip" style="background: #181413; color: #FFFFFF">{{ $mg->get('copy.example_tag') }}</span></figcaption></figure></div>
 @else
 <div class="hide-m">@include('marketing.home._hero-desktop-shot')</div>
 <div class="wrap show-m">@include('marketing.home._hero-phone-shot')</div>
