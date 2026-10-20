@@ -383,7 +383,7 @@ class ContactActivityTimelineTest extends TestCase
         $many = $read();
 
         $this->assertSame($few, $many);
-        $this->assertSame(9, $many, 'Messages, sent reports, the three automation ledgers, the block list, the contact\'s group, this contact\'s documents (no rows, so payments/refunds add nothing further), and this contact\'s form submissions.');
+        $this->assertSame(10, $many, 'Messages, sent reports, the three automation ledgers, the block list, the contact\'s group, this contact\'s documents (no rows, so payments/refunds add nothing further), this contact\'s form submissions, and this person\'s calls.');
     }
 
     // -----------------------------------------------------------------

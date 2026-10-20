@@ -115,6 +115,8 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.locations.allocations.',
         'customer.workspaces.businesses.usage-billing.',
         'customer.workspaces.businesses.channels.',
+        // Voice setup names a Telnyx connection and the person who rings for a number: never "the client".
+        'customer.workspaces.businesses.voice.settings.',
         'customer.workspaces.prospecting.channels.',
         'customer.channels.',
         'customer.subscriptions.',
