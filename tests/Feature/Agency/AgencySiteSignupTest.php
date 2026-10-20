@@ -471,7 +471,8 @@ class AgencySiteSignupTest extends TestCase
 
         // 4. Inside the app the customer sees the Agency's name and colours, and only their own account.
         app(\App\Library\Support\RequestScopedCache::class)->flush();
-        $home = $this->get(route('user.home'))->assertOk()->getContent();
+        // A brand-new account may be sent to its own onboarding first; follow it to the first page it really shows.
+        $home = $this->followingRedirects()->get(route('user.home'))->assertOk()->getContent();
         $this->assertStringContainsString('Northwind Agency Digital', $home);
         $this->assertStringContainsString('agency-theme-overrides', $home);
         $this->get(route('customer.workspaces.agency.white-label.show', $live['agency']->uid))->assertNotFound();
