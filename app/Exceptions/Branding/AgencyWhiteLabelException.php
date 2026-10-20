@@ -33,6 +33,22 @@ final class AgencyWhiteLabelException extends RuntimeException
 
     public const LOGO_STORAGE_FAILED = 'logo_storage_failed';
 
+    public const INVALID_SECONDARY = 'invalid_secondary';
+
+    public const INVALID_SUPPORT_URL = 'invalid_support_url';
+
+    public const INVALID_LEGAL_NAME = 'invalid_legal_name';
+
+    public const INVALID_SOCIAL = 'invalid_social';
+
+    public const INVALID_DOMAIN = 'invalid_domain';
+
+    public const DOMAIN_RESERVED = 'domain_reserved';
+
+    public const DOMAIN_TAKEN = 'domain_taken';
+
+    public const NO_DOMAIN = 'no_domain';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -50,6 +66,14 @@ final class AgencyWhiteLabelException extends RuntimeException
             self::INVALID_SUPPORT_EMAIL => 'Enter a valid support email address.',
             self::INVALID_LOGO => 'That logo could not be used.',
             self::LOGO_STORAGE_FAILED => 'The logo could not be saved. Please try again.',
+            self::INVALID_SECONDARY => 'Enter the secondary colour as a 6-digit hex value such as #0f172a.',
+            self::INVALID_SUPPORT_URL => 'Enter a support link that starts with https://.',
+            self::INVALID_LEGAL_NAME => 'The legal name can be at most 120 characters, without HTML.',
+            self::INVALID_SOCIAL => 'Each social link must be a full https:// address on that network.',
+            self::INVALID_DOMAIN => 'Enter a hostname such as app.youragency.com (no https://, path or port).',
+            self::DOMAIN_RESERVED => 'That domain belongs to the platform and cannot be used.',
+            self::DOMAIN_TAKEN => 'That domain is already in use.',
+            self::NO_DOMAIN => 'Add an app domain first.',
             default => 'That change could not be made.',
         });
     }

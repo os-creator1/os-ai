@@ -56,6 +56,30 @@ class AgencyWhiteLabelManager
 {
     public const NAME_MAX = 80;
 
+    /** Asset slot => column. Each slot is validated with ValidBrandingImageRule under its own field name. */
+    public const ASSET_COLUMNS = [
+        'logo' => 'logo_path',
+        'logo_dark' => 'logo_dark_path',
+        'logo_compact' => 'logo_compact_path',
+        'favicon' => 'favicon_path',
+    ];
+
+    /** Text fields written through save() and recorded in the audit trail. */
+    public const AUDITED_FIELDS = [
+        'display_name', 'tagline', 'accent_color', 'secondary_color', 'support_email', 'support_url',
+        'legal_name', 'social_links', 'is_enabled',
+    ];
+
+    /** The only social networks accepted, each with the hosts its link may point at. */
+    public const SOCIAL_NETWORKS = [
+        'facebook' => ['facebook.com', 'fb.com'],
+        'instagram' => ['instagram.com'],
+        'linkedin' => ['linkedin.com'],
+        'x' => ['x.com', 'twitter.com'],
+        'youtube' => ['youtube.com', 'youtu.be'],
+        'tiktok' => ['tiktok.com'],
+    ];
+
     public const TAGLINE_MAX = 160;
 
     public const EMAIL_MAX = 191;
@@ -84,6 +108,28 @@ class AgencyWhiteLabelManager
             ->get();
     }
 
+    /**
+     * The three authority checks every write re-derives from the LOCKED Workspace row: owner, live Agency
+     * eligibility and the `white_label` entitlement. Shared with AgencyAppDomainService so a domain write
+     * can never be authorised more loosely than a brand write.
+     *
+     * @throws AgencyWhiteLabelException
+     */
+    public function assertCanManage(Workspace $locked, int $actorUserId): void
+    {
+        if ((int) $locked->owner_user_id !== $actorUserId) {
+            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::NOT_OWNER);
+        }
+
+        if (! $this->relationships->agencyWorkspaceHasManagementEligibility($locked)) {
+            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::NOT_ELIGIBLE);
+        }
+
+        if (! $this->isEntitled($locked)) {
+            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::NOT_ENTITLED);
+        }
+    }
+
     /** Is white label included in this Agency's plan right now? (Read-only.) */
     public function isEntitled(Workspace $agency): bool
     {
@@ -91,7 +137,10 @@ class AgencyWhiteLabelManager
     }
 
     /**
-     * @param  array{display_name?: mixed, tagline?: mixed, accent_color?: mixed, support_email?: mixed, is_enabled?: mixed}  $data
+     * @param  array<string, mixed>  $data  display_name is required; every other key is applied only when present, so a
+     *                                      caller that predates the Branding tab keeps its exact behaviour
+     * @param  array<string, UploadedFile>  $assets  logo_dark | logo_compact | favicon (the primary logo is $logo)
+     * @param  array<int, string>  $removeAssets  asset keys to clear: logo_dark | logo_compact | favicon
      *
      * @throws AgencyWhiteLabelException
      */
@@ -101,26 +150,63 @@ class AgencyWhiteLabelManager
         array $data,
         ?UploadedFile $logo = null,
         bool $removeLogo = false,
+        array $assets = [],
+        array $removeAssets = [],
     ): AgencyWhiteLabelSetting {
         // Validated before any lock or file write: a bad value costs nothing.
         $values = $this->normalize($data);
 
-        if ($logo !== null) {
-            $this->assertLogoIsValid($logo);
+        $uploads = [];
 
-            // No file is written for an actor who is not the owner. This is a
-            // cheap early refusal, not the authority: the owner is read again
-            // from the locked row inside the transaction below.
-            if ((int) Workspace::query()->whereKey($agency->id)->value('owner_user_id') !== $actorUserId) {
-                throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::NOT_OWNER);
+        if ($logo !== null) {
+            $uploads['logo'] = $logo;
+        }
+
+        foreach ($assets as $key => $file) {
+            if ($file instanceof UploadedFile && isset(self::ASSET_COLUMNS[$key]) && $key !== 'logo') {
+                $uploads[$key] = $file;
             }
         }
 
-        [$newLogoPath, $newLogoFileCreated] = $logo !== null ? $this->storeLogo($agency, $logo) : [null, false];
-        $previousLogoPath = null;
+        foreach ($uploads as $key => $file) {
+            $this->assertAssetIsValid($file, $key);
+        }
+
+        // No file is written for an actor who is not the owner. This is a
+        // cheap early refusal, not the authority: the owner is read again
+        // from the locked row inside the transaction below.
+        if ($uploads !== [] && (int) Workspace::query()->whereKey($agency->id)->value('owner_user_id') !== $actorUserId) {
+            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::NOT_OWNER);
+        }
+
+        $stored = []; // column => [relative path, created by this call]
 
         try {
-            $setting = DB::transaction(function () use ($actorUserId, $agency, $values, $newLogoPath, $removeLogo, &$previousLogoPath): AgencyWhiteLabelSetting {
+            foreach ($uploads as $key => $file) {
+                $stored[self::ASSET_COLUMNS[$key]] = $this->storeAsset($agency, $file, $key);
+            }
+        } catch (Throwable $e) {
+            foreach ($stored as [$path, $created]) {
+                if ($created) {
+                    $this->deleteOwnedFile($agency, $path);
+                }
+            }
+
+            throw $e;
+        }
+
+        $removeColumns = [];
+
+        foreach (array_merge($removeLogo ? ['logo'] : [], $removeAssets) as $key) {
+            if (isset(self::ASSET_COLUMNS[$key])) {
+                $removeColumns[] = self::ASSET_COLUMNS[$key];
+            }
+        }
+
+        $replacedPaths = [];
+
+        try {
+            $setting = DB::transaction(function () use ($actorUserId, $agency, $values, $stored, $removeColumns, &$replacedPaths): AgencyWhiteLabelSetting {
                 /** @var Workspace|null $locked */
                 $locked = Workspace::query()->whereKey($agency->id)->lockForUpdate()->first();
 
@@ -137,21 +223,26 @@ class AgencyWhiteLabelManager
                 }
 
                 $existing = $this->find($locked);
-                $before = $existing !== null
-                    ? $existing->only(['display_name', 'tagline', 'accent_color', 'support_email', 'is_enabled', 'logo_path'])
-                    : ['display_name' => null, 'tagline' => null, 'accent_color' => null, 'support_email' => null, 'is_enabled' => false, 'logo_path' => null];
+                $fields = array_merge(self::AUDITED_FIELDS, array_values(self::ASSET_COLUMNS));
+                $before = array_fill_keys($fields, null);
+                $before['is_enabled'] = false;
+
+                if ($existing !== null) {
+                    $before = array_merge($before, $existing->only($fields));
+                }
 
                 $after = $before;
-                $after['display_name'] = $values['display_name'];
-                $after['tagline'] = $values['tagline'];
-                $after['accent_color'] = $values['accent_color'];
-                $after['support_email'] = $values['support_email'];
-                $after['is_enabled'] = $values['is_enabled'];
 
-                if ($newLogoPath !== null) {
-                    $after['logo_path'] = $newLogoPath;
-                } elseif ($removeLogo) {
-                    $after['logo_path'] = null;
+                foreach ($values as $field => $value) {
+                    $after[$field] = $value;
+                }
+
+                foreach ($removeColumns as $column) {
+                    $after[$column] = null;
+                }
+
+                foreach ($stored as $column => [$path]) {
+                    $after[$column] = $path;
                 }
 
                 $changes = [];
@@ -167,7 +258,11 @@ class AgencyWhiteLabelManager
                     return $existing;
                 }
 
-                $previousLogoPath = $before['logo_path'];
+                foreach (array_values(self::ASSET_COLUMNS) as $column) {
+                    if (isset($changes[$column]) && $before[$column] !== null) {
+                        $replacedPaths[] = $before[$column];
+                    }
+                }
 
                 $setting = $existing ?? new AgencyWhiteLabelSetting(['agency_workspace_id' => $locked->id]);
                 $setting->fill($after);
@@ -185,19 +280,26 @@ class AgencyWhiteLabelManager
             });
         } catch (Throwable $e) {
             // The transaction rolled back: a file THIS call created is an
-            // orphan. A file that already existed (an identical logo already
+            // orphan. A file that already existed (an identical image already
             // in use) is never touched.
-            if ($newLogoFileCreated) {
-                $this->deleteOwnedFile($agency, $newLogoPath);
+            foreach ($stored as [$path, $created]) {
+                if ($created) {
+                    $this->deleteOwnedFile($agency, $path);
+                }
             }
 
             throw $e;
         }
 
         // Swap, then delete — never delete-then-write. Only after the commit
-        // that stopped pointing at the old file.
-        if ($previousLogoPath !== null && $previousLogoPath !== $setting->logo_path) {
-            $this->deleteOwnedFile($agency, $previousLogoPath);
+        // that stopped pointing at the old file, and never a file still in use
+        // by another slot of this same brand.
+        $inUse = array_filter(array_map(fn (string $column) => $setting->{$column}, array_values(self::ASSET_COLUMNS)));
+
+        foreach ($replacedPaths as $old) {
+            if (! in_array($old, $inUse, true)) {
+                $this->deleteOwnedFile($agency, $old);
+            }
         }
 
         return $setting->refresh();
@@ -237,13 +339,93 @@ class AgencyWhiteLabelManager
             throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::INVALID_SUPPORT_EMAIL);
         }
 
-        return [
+        $out = [
             'display_name' => $name,
             'tagline' => $tagline,
             'accent_color' => $accent === '' ? null : $accent,
             'support_email' => $email === '' ? null : $email,
             'is_enabled' => filter_var($data['is_enabled'] ?? false, FILTER_VALIDATE_BOOLEAN),
         ];
+
+        if (array_key_exists('secondary_color', $data)) {
+            $secondary = strtolower(trim((string) $data['secondary_color']));
+
+            if ($secondary !== '' && preg_match('/^#[0-9a-f]{6}$/', $secondary) !== 1) {
+                throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::INVALID_SECONDARY);
+            }
+
+            $out['secondary_color'] = $secondary === '' ? null : $secondary;
+        }
+
+        if (array_key_exists('support_url', $data)) {
+            $out['support_url'] = $this->httpsUrlOrNull($data['support_url'], null, AgencyWhiteLabelException::INVALID_SUPPORT_URL);
+        }
+
+        if (array_key_exists('legal_name', $data)) {
+            $legal = $this->plainTextOrNull($data['legal_name'], AgencyWhiteLabelException::INVALID_LEGAL_NAME);
+
+            if ($legal !== null && mb_strlen($legal) > 120) {
+                throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::INVALID_LEGAL_NAME);
+            }
+
+            $out['legal_name'] = $legal;
+        }
+
+        if (array_key_exists('social_links', $data)) {
+            $links = [];
+
+            foreach (self::SOCIAL_NETWORKS as $network => $hosts) {
+                $url = $this->httpsUrlOrNull($data['social_links'][$network] ?? null, $hosts, AgencyWhiteLabelException::INVALID_SOCIAL);
+
+                if ($url !== null) {
+                    $links[$network] = $url;
+                }
+            }
+
+            $out['social_links'] = $links === [] ? null : $links;
+        }
+
+        return $out;
+    }
+
+    /**
+     * An absolute https:// URL with no credentials, optionally restricted to a host (or its subdomains).
+     *
+     * @param  array<int, string>|null  $allowedHosts
+     */
+    private function httpsUrlOrNull(mixed $value, ?array $allowedHosts, string $reason): ?string
+    {
+        if ($value === null || (is_string($value) && trim($value) === '')) {
+            return null;
+        }
+
+        $url = is_string($value) ? trim($value) : '';
+        $parts = $url === '' ? false : parse_url($url);
+
+        if ($parts === false || mb_strlen($url) > 255 || ($parts['scheme'] ?? '') !== 'https' || empty($parts['host'])
+            || isset($parts['user']) || isset($parts['pass']) || preg_match('/[\x00-\x20<>"\x7F]/', $url) === 1) {
+            throw AgencyWhiteLabelException::because($reason);
+        }
+
+        $host = strtolower($parts['host']);
+
+        if ($allowedHosts !== null) {
+            $ok = false;
+
+            foreach ($allowedHosts as $allowed) {
+                if ($host === $allowed || str_ends_with($host, '.' . $allowed)) {
+                    $ok = true;
+                }
+            }
+
+            if (! $ok) {
+                throw AgencyWhiteLabelException::because($reason);
+            }
+        } elseif (! str_contains($host, '.')) {
+            throw AgencyWhiteLabelException::because($reason);
+        }
+
+        return $url;
     }
 
     /** Plain text only: HTML and control characters are refused, not silently stripped. */
@@ -286,8 +468,8 @@ class AgencyWhiteLabelManager
                 : AgencyWhiteLabelChange::TYPE_DISABLED;
         }
 
-        if (array_keys($changes) === ['logo_path']) {
-            return $changes['logo_path'][1] === null
+        if (count($changes) === 1 && in_array(array_key_first($changes), array_values(self::ASSET_COLUMNS), true)) {
+            return $changes[array_key_first($changes)][1] === null
                 ? AgencyWhiteLabelChange::TYPE_LOGO_REMOVED
                 : AgencyWhiteLabelChange::TYPE_LOGO_REPLACED;
         }
@@ -296,20 +478,20 @@ class AgencyWhiteLabelManager
     }
 
     /** @throws AgencyWhiteLabelException */
-    private function assertLogoIsValid(UploadedFile $file): void
+    private function assertAssetIsValid(UploadedFile $file, string $field): void
     {
         $failure = null;
 
-        (new ValidBrandingImageRule('logo'))->validate('logo', $file, function (string $message) use (&$failure): void {
+        (new ValidBrandingImageRule($field))->validate($field, $file, function (string $message) use (&$failure): void {
             $failure = $message;
         });
 
         if ($failure !== null) {
-            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::INVALID_LOGO, str_replace(':attribute', 'logo', $failure));
+            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::INVALID_LOGO, str_replace(':attribute', str_replace('_', ' ', $field), $failure));
         }
 
         if ($file->getSize() > 2 * 1024 * 1024) {
-            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::INVALID_LOGO, 'The logo must be 2 MB or smaller.');
+            throw AgencyWhiteLabelException::because(AgencyWhiteLabelException::INVALID_LOGO, 'That image must be 2 MB or smaller.');
         }
     }
 
@@ -319,7 +501,7 @@ class AgencyWhiteLabelManager
      *
      * @throws AgencyWhiteLabelException
      */
-    private function storeLogo(Workspace $agency, UploadedFile $file): array
+    private function storeAsset(Workspace $agency, UploadedFile $file, string $field): array
     {
         $contents = file_get_contents($file->getRealPath());
 
@@ -331,7 +513,8 @@ class AgencyWhiteLabelManager
         $hash = hash('sha256', $contents);
         $relativeDirectory = self::directoryFor($agency);
         $directory = public_path($relativeDirectory);
-        $relativePath = $relativeDirectory . '/' . $hash . '.' . $extension;
+        // The primary logo keeps its historical name so existing files stay valid; other slots are prefixed.
+        $relativePath = $relativeDirectory . '/' . ($field === 'logo' ? '' : $field . '-') . $hash . '.' . $extension;
         $destination = public_path($relativePath);
 
         if (! is_dir($directory) && ! mkdir($directory, 0755, true) && ! is_dir($directory)) {

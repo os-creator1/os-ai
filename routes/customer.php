@@ -1038,6 +1038,12 @@
             ->name('agency.white-label.show');
         Route::post('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@update')
             ->middleware('throttle:30,1')->name('agency.white-label.update');
+        Route::post('{workspaceUid}/agency/white-label/domain', 'Agency\AgencyWhiteLabelController@attachDomain')
+            ->middleware('throttle:20,1')->name('agency.white-label.domain.attach');
+        Route::post('{workspaceUid}/agency/white-label/domain/check', 'Agency\AgencyWhiteLabelController@checkDomain')
+            ->middleware('throttle:20,1')->name('agency.white-label.domain.check');
+        Route::delete('{workspaceUid}/agency/white-label/domain', 'Agency\AgencyWhiteLabelController@removeDomain')
+            ->middleware('throttle:20,1')->name('agency.white-label.domain.remove');
 
         /*
         |----------------------------------------------------------------------

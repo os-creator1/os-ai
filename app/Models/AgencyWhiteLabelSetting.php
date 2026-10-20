@@ -30,10 +30,22 @@ class AgencyWhiteLabelSetting extends Model
         'support_email',
         'logo_path',
         'updated_by_user_id',
+        'secondary_color',
+        'logo_dark_path',
+        'logo_compact_path',
+        'favicon_path',
+        'support_url',
+        'legal_name',
+        'social_links',
     ];
+
+    // App-domain columns are written only by AgencyAppDomainService, never mass-assigned.
 
     protected $casts = [
         'is_enabled' => 'boolean',
+        'social_links' => 'array',
+        'app_domain_verified_at' => 'datetime',
+        'app_domain_checked_at' => 'datetime',
     ];
 
     public function generateUid(): void

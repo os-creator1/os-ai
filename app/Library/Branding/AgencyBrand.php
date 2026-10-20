@@ -18,6 +18,10 @@ final class AgencyBrand
         public readonly ?string $tagline = null,
         public readonly ?string $accentColor = null,
         public readonly ?string $supportEmail = null,
+        public readonly ?string $secondaryColor = null,
+        public readonly ?string $faviconPath = null,
+        public readonly ?string $logoCompactPath = null,
+        public readonly ?string $supportUrl = null,
     ) {
     }
 }
