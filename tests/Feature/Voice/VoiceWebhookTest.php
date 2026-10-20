@@ -336,6 +336,30 @@ class VoiceWebhookTest extends TestCase
         $this->assertSame('authorization_expired', $call->fresh()->hangup_cause);
     }
 
+    public function test_a_canceled_call_can_never_bridge_even_if_the_browser_leg_answers_late(): void
+    {
+        [$call, $business, $workspace] = $this->startedOutbound();
+        $base = $this->voiceUrl($workspace, $business, 'calls.start');
+
+        $this->postJson("$base/{$call->uid}/cancel")->assertOk();
+        $this->assertSame('canceled', $call->fresh()->status);
+
+        $this->bridged($call); // the leg-answered event overtakes the hangup event
+
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'), 'A canceled call never reaches the customer.');
+        $this->assertSame('canceled', $call->fresh()->status);
+    }
+
+    public function test_a_call_the_browser_reported_ended_can_never_bridge(): void
+    {
+        [$call, $business, $workspace] = $this->startedOutbound();
+        $this->postJson($this->voiceUrl($workspace, $business, 'calls.start') . '/' . $call->uid . '/client-event', ['event' => 'ended'])->assertOk();
+
+        $this->bridged($call);
+
+        $this->assertSame([], $this->telnyx->callsTo('transferToSip'));
+    }
+
     public function test_a_provider_failure_while_bridging_closes_the_call_and_releases_our_leg(): void
     {
         [$call] = $this->startedOutbound();

@@ -207,7 +207,7 @@ async function run(label, viewport) {
   check(`${label}: the conversation's Call action is enabled for a callable contact`, true);
 
   // incoming: routed to the assigned, online user; decline; then answer
-  const inc = (id) => ({ call_session_id: id, call_control_id: 'cc-' + id, call_leg_id: 'lg-' + id, direction: 'incoming', from: '+12025550111', to: '+14155550199' });
+  const inc = (id) => ({ call_session_id: `${label}-${id}`, call_control_id: `cc-${label}-${id}`, call_leg_id: `lg-${label}-${id}`, direction: 'incoming', from: '+12025550111', to: '+14155550199' });
   check(`${label}: signed incoming-call event accepted`, await webhook('call.initiated', inc('in-s1')) === 200);
   const incRow = lastCall();
   check(`${label}: incoming call recorded against the right Business/contact and routed (ringing, not missed)`, incRow.direction === 'inbound' && incRow.status === 'ringing', JSON.stringify(incRow));
@@ -226,7 +226,7 @@ async function run(label, viewport) {
   await page.waitForSelector('[data-role=voice-answer]');
   await page.click('[data-role=voice-answer]');
   await page.waitForFunction(() => /In call/i.test(document.querySelector('[data-el=badge]').textContent));
-  await webhook('call.answered', { ...inc('in-s2'), call_control_id: 'leg2-in-s2' });
+  await webhook('call.answered', { ...inc('in-s2'), call_control_id: `leg2-${label}-in-s2` });
   check(`${label}: answering an incoming call is explicit and the server records it answered`, lastCall().status === 'answered');
   await page.click('[data-role=voice-end]');
   await webhook('call.hangup', { ...inc('in-s2'), hangup_cause: 'normal_clearing', end_time: new Date().toISOString() });
