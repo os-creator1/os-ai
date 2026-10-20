@@ -154,12 +154,13 @@ final class AgencyMarketingSite extends MarketingSite
     {
         $out = [];
 
-        foreach ($this->context->plans as $plan) {
+        foreach ($this->context->actionablePlans() as $plan) {
             $subscribable = $this->context->offersSubscriptions() && $plan['sellable'];
 
+            // actionablePlans() guarantees a plan that cannot be bought has a working booking page to send people to.
             $url = $subscribable
                 ? ($this->context->signupUrl)((string) $plan['uid'])
-                : ($this->bookDemoUrl() ?? ($this->context->pageUrl)('home'));
+                : (string) $this->bookDemoUrl();
 
             $out[$plan['uid']] = [
                 'key' => $plan['uid'],

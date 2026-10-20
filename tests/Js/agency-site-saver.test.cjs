@@ -137,3 +137,24 @@ test('an empty save is a successful no-op and sends nothing', async () => {
     assert.strictEqual(r.ok, true);
     assert.strictEqual(server.log.length, 0);
 });
+
+test('a reset queued behind an in-flight save runs after it, and later saves wait for the reset (reset wins)', async () => {
+    const server = fakeServer([60]);
+    const saver = Saver.create({ send: server.send });
+    saver.remember('p', 'Default');
+    const events = [];
+
+    const edit = saver.save(saver.changed({ p: 'edited' })).then(() => events.push('save-done'));
+    const reset = saver.enqueue(async () => { events.push('reset-run'); delete server.state.p; return { ok: true }; });
+    await Promise.all([edit, reset]);
+
+    assert.deepStrictEqual(events, ['save-done', 'reset-run'], 'the reset starts only after the in-flight save finished');
+    assert.strictEqual(server.state.p, undefined, 'the reset is what the server ends with');
+});
+
+test('a failing queued task resolves {ok:false} instead of rejecting', async () => {
+    const saver = Saver.create({ send: async () => ({ status: 200, body: { ok: true } }) });
+    const r = await saver.enqueue(async () => { throw new Error('offline'); });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(saver.pending(), 0);
+});

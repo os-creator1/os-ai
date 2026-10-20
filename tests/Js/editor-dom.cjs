@@ -108,6 +108,29 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
         return { during, after, failed: (await page.textContent('#wl-save-state')).trim(), inputKept: await page.inputValue(TITLE) };
     });
 
+    // Reset vs pending autosave: the reset must win and stay persisted after the reload it triggers.
+    const resetServer = (slowFirstSave) => async (kind, body, server) => {
+        server.events = server.events || [];
+        if (kind === 'save') {
+            server.events.push('save:' + JSON.stringify(body.answers['copy.home.hero.title'] ?? null));
+            if (slowFirstSave && server.events.filter((e) => e.startsWith('save')).length === 1) { await wait(900); }
+            Object.assign(server.state, body.answers);
+        }
+        if (kind === 'reset-group') { server.events.push('reset'); delete server.state['copy.home.hero.title']; }
+        return ok();
+    };
+    const resetRun = async (page, server, waitBeforeReset) => {
+        let loads = 0; page.on('load', () => { loads++; });
+        page.on('dialog', (d) => d.accept());
+        await page.fill(TITLE, 'Edited then reset');
+        if (waitBeforeReset) { await wait(waitBeforeReset); }
+        await page.click('li[data-key="hero"] [data-reset-group="hero"]');
+        await wait(2500);                                              // longer than the debounce: a leaked timer would fire now
+        return { events: server.events, finalHasOverride: 'copy.home.hero.title' in server.state, reloaded: loads >= 1 };
+    };
+    results.resetBeatsPendingDebounce = await scenario(browser, 'reset-pending', resetServer(false), (page, server) => resetRun(page, server, 0));
+    results.resetBeatsInFlightSave = await scenario(browser, 'reset-inflight', resetServer(true), (page, server) => resetRun(page, server, 1000));
+
     console.log(JSON.stringify(results));
     await browser.close();
 })();

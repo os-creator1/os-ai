@@ -93,7 +93,23 @@
             return result;
         }
 
+        /**
+         * Run any other server write (a section reset) IN ORDER with the saves: it starts only after every earlier
+         * queued save has finished, and later saves wait for it. Resolves the task's result; a rejection becomes
+         * {ok:false, message}. This is what lets a reset win over an edit that is still in flight.
+         */
+        function enqueue(task) {
+            inFlight++;
+            var result = chain.then(function () { return task(); }).then(function (value) { return value; }, function () {
+                return { ok: false, message: 'Could not reach the server — nothing was changed.' };
+            });
+            chain = result.then(function () { inFlight--; }, function () { inFlight--; });
+
+            return result;
+        }
+
         return {
+            enqueue: enqueue,
             remember: remember,
             changed: changed,
             save: save,

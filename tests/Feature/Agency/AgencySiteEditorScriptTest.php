@@ -119,4 +119,22 @@ class AgencySiteEditorScriptTest extends TestCase
         $this->assertStringContainsString('Not saved', $draft['failed']);
         $this->assertSame('FAIL this one', $draft['inputKept']);
     }
+
+    public function test_a_section_reset_wins_over_a_pending_or_in_flight_autosave_and_stays_after_the_reload(): void
+    {
+        $results = $this->runEditor();
+
+        foreach (['resetBeatsPendingDebounce', 'resetBeatsInFlightSave'] as $scenario) {
+            $events = $results[$scenario]['events'];
+
+            $this->assertContains('reset', $events, "{$scenario}: the reset was sent");
+            $this->assertSame('reset', end($events), "{$scenario}: nothing is saved after the reset (no leaked timer, no stale queue)");
+            $this->assertFalse($results[$scenario]['finalHasOverride'], "{$scenario}: the server holds the reset, not the edit");
+            $this->assertTrue($results[$scenario]['reloaded'], "{$scenario}: the page reloads with the reset content");
+        }
+
+        // With a save already in flight, the reset is applied AFTER it, in order — so it is what the server ends with.
+        $inFlight = $results['resetBeatsInFlightSave']['events'];
+        $this->assertStringStartsWith('save:', $inFlight[0]);
+    }
 }

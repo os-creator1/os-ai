@@ -454,4 +454,130 @@ class AgencySiteTest extends TestCase
         $this->assertStringNotContainsString('White-label branding', $html);
         $this->assertStringNotContainsString('Multi-account management', $html);
     }
+
+    // ------------------------------------------- unsellable plans (Codex P2)
+
+    private function stripeCannotCharge(): void
+    {
+        \App\Models\AgencyStripeConnection::query()->update(['charges_enabled' => false]);
+    }
+
+    private function pricing(Workspace $agency): string
+    {
+        return $this->get($this->url('preview', $agency, ['page' => 'pricing']))->assertOk()->getContent();
+    }
+
+    public function test_a_plan_that_cannot_be_bought_offers_a_working_booking_page_instead_of_a_dead_button(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        $type = $this->bookableType($agency, $owner);
+        $this->openEditor($agency, $owner);
+        $this->save($agency, ['x.booking_type_uid' => $type->public_booking_uuid], 7)->assertOk();
+
+        $this->assertStringContainsString('/signup/', $this->pricing($agency), 'sellable: online checkout');
+
+        $this->stripeCannotCharge();
+        $html = $this->pricing($agency);
+        $booking = route('public.booking.show', $type->public_booking_uuid);
+
+        $this->assertStringNotContainsString('/signup/', $html, 'no checkout link for an unsellable plan');
+        $this->assertStringContainsString('Studio', $html);
+        $this->assertMatchesRegularExpression('#<a href="' . preg_quote($booking, '#') . '"[^>]*>Book a call</a>#', $html, 'the plan button is the real booking page');
+        $this->assertStringNotContainsString('<a href="' . route('customer.workspaces.agency.site.preview', [$agency->uid, 'home']) . '" class="btn', $html, 'never a button to the homepage');
+    }
+
+    public function test_a_plan_with_neither_checkout_nor_booking_is_not_shown_as_an_offer(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        $type = $this->bookableType($agency, $owner);
+        $this->openEditor($agency, $owner);
+        $this->save($agency, ['x.booking_type_uid' => $type->public_booking_uuid], 7)->assertOk();
+
+        // Stripe disconnected AND the booking type is switched off: nothing a visitor could use remains.
+        $this->stripeCannotCharge();
+        app(\App\Library\Calendar\BookingTypeManager::class)->setActive($type, false);
+
+        $pricing = $this->pricing($agency);
+        $this->assertStringNotContainsString('Studio', $pricing, 'the offer is hidden, not shown with a dead button');
+        $this->assertStringNotContainsString('$49', $pricing);
+        $this->assertStringContainsString('data-role="plans-unavailable"', $pricing);
+        $this->assertStringContainsString('Plans are not available right now', $pricing);
+        $this->assertStringNotContainsString('Compare plans', $pricing);
+        $this->assertStringNotContainsString('Book a call', $pricing);
+
+        $home = $this->get($this->url('preview', $agency, ['page' => 'home']))->getContent();
+        $this->assertStringNotContainsString('Studio', $home);
+        $this->assertStringNotContainsString('Choose the plan that fits', $home, 'the home pricing section hides with it');
+        $this->assertStringNotContainsString('Book a call', $home);
+        $this->assertStringNotContainsString('Book a demo', $home);
+    }
+
+    public function test_a_subscriptions_only_site_hides_an_unsellable_plan_even_if_a_calendar_exists(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Core, '19.00', null, 'Basic');
+        $type = $this->bookableType($agency, $owner);
+        $this->openEditor($agency, $owner);
+        // Subscriptions only: the Agency did not offer calls, so the calendar is not a fallback.
+        $this->save($agency, ['x.goal' => 'subscriptions', 'x.pricing_mode' => 'subscriptions', 'x.booking_type_uid' => $type->public_booking_uuid], 7)->assertOk();
+
+        $this->assertStringContainsString('Basic', $this->pricing($agency));
+
+        $this->stripeCannotCharge();
+        $html = $this->pricing($agency);
+        $this->assertStringNotContainsString('Basic', $html);
+        $this->assertStringNotContainsString(route('public.booking.show', $type->public_booking_uuid), $html);
+    }
+
+    public function test_an_unpublished_plan_and_a_working_checkout_without_any_calendar_still_behave(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $plan = $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        $this->openEditor($agency, $owner);
+
+        // No booking type exists, but checkout works: the plan is sold normally, with no booking wording anywhere.
+        $html = $this->pricing($agency);
+        $this->assertStringContainsString('/signup/', $html);
+        $this->assertStringNotContainsString('Book a call', $html);
+
+        $this->plans()->unpublish((int) $owner->user_id, $plan->refresh());
+        $this->assertStringNotContainsString('Studio', $this->pricing($agency));
+    }
+
+    // -------------------------------------- tier-feature packaging is never stale (Codex P2)
+
+    public function test_a_change_to_a_tiers_packaging_shows_on_the_next_request_without_a_process_restart(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '99.00', null, 'Pro');
+        $this->openEditor($agency, $owner);
+
+        $row = function (): string {
+            preg_match('#<tr><th scope="row"[^>]*>SEO tools &amp; recommendations.*?</tr>#s', $this->pricing($this->agencyForRow), $m);
+
+            return $m[0] ?? '';
+        };
+        $this->agencyForRow = $agency;
+
+        $this->assertStringContainsString('class="tick"', $row(), 'Growth includes SEO tools today');
+        $catalogId = \App\Models\WorkspacePlanCatalog::query()->where('tier', 'growth')->value('id');
+        $removed = \Illuminate\Support\Facades\DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $catalogId)->where('feature_key', 'seo_module')->delete();
+        $this->assertSame(1, $removed);
+
+        // The platform owner changed the package. This very PHP process served the previous request, yet the next
+        // request already reflects the change: nothing about the packaging survives past its request.
+        $this->assertStringNotContainsString('class="tick"', $row());
+
+        \Illuminate\Support\Facades\DB::table('workspace_plan_features')->insert(['workspace_plan_catalog_id' => $catalogId, 'feature_key' => 'seo_module', 'created_at' => now(), 'updated_at' => now()]);
+        $this->assertStringContainsString('class="tick"', $row());
+    }
+
+    private Workspace $agencyForRow;
 }

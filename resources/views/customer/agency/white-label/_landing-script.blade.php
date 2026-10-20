@@ -9,6 +9,7 @@
     var stateEl = document.getElementById('wl-save-state');
     var iframe = document.getElementById('wl-preview');
     var timers = {};
+    var resetting = false; // a reset is under way: no further saves, and no unsaved-changes prompt on the reload it triggers
 
     function setState(text, isError) { if (stateEl) { stateEl.textContent = text; stateEl.className = 'text-caption' + (isError ? ' text-danger' : ''); } }
 
@@ -64,7 +65,7 @@
     });
 
     function save(answers, opts) {
-        if (!canEdit) { return Promise.resolve({ ok: true }); }
+        if (!canEdit || resetting) { return Promise.resolve({ ok: true }); }
         setState('Saving…');
         return saver.save(answers, { step: step }).then(function (r) {
             if (r.ok) {
@@ -177,6 +178,7 @@
     }
     function scopeOf(el) { return el.closest('[data-scope]'); }
     function schedule(scope) {
+        if (resetting) { return; }
         var id = scope.getAttribute('data-scope') + (scope.getAttribute('data-group') || '');
         clearTimeout(timers[id]); setState('Unsaved changes…');
         timers[id] = setTimeout(function () { delete timers[id]; saveScope(scope); }, 700);
@@ -220,14 +222,27 @@
             wrap.appendChild(tpl.content.firstElementChild.cloneNode(true)); return;
         }
         if (t.hasAttribute('data-open-section')) { var body = t.closest('li').querySelector('[data-section-body]'); if (body) { body.hidden = !body.hidden; } return; }
-        if (t.hasAttribute('data-reset-group')) {
-            if (!confirm('Return this section to its default content?')) { return; }
-            post(urls.reset, { group: t.getAttribute('data-reset-group') }).then(function (j) { if (j.ok) { setState('Section reset'); window.location.reload(); } else { setState(j.message || 'Could not reset', true); } });
+        if (t.hasAttribute('data-reset-group') || t.hasAttribute('data-reset-field')) {
+            var isGroup = t.hasAttribute('data-reset-group');
+            if (isGroup && !confirm('Return this section to its default content?')) { return; }
+            var scopeEl = t.closest('[data-scope]');
+            // The reset wins: drop this section's pending autosave timer, then run the reset IN ORDER after any save
+            // already in flight, and block every further save until the page reloads with the reset content.
+            var tid = scopeEl.getAttribute('data-scope') + (scopeEl.getAttribute('data-group') || '');
+            clearTimeout(timers[tid]); delete timers[tid];
+            resetting = true; setState('Resetting…');
+            var job;
+            if (isGroup) {
+                job = saver.enqueue(function () { return post(urls.reset, { group: t.getAttribute('data-reset-group') }); });
+            } else {
+                var field = t.closest('[data-field]'); var o = {}; o[field.getAttribute('data-path')] = null;
+                job = saver.enqueue(function () { return post(urls.save, { answers: o, step: step }); });
+            }
+            job.then(function (j) {
+                if (j && j.ok) { setState('Reset'); window.location.reload(); }
+                else { resetting = false; setState((j && j.message) || 'Could not reset', true); }
+            });
             return;
-        }
-        if (t.hasAttribute('data-reset-field')) {
-            var field = t.closest('[data-field]'); var o = {}; o[field.getAttribute('data-path')] = null;
-            save(o, { after: function () { window.location.reload(); } }); return;
         }
         if (t.hasAttribute('data-step-button')) { go(parseInt(t.getAttribute('data-step-button'), 10)); return; }
         if (t.hasAttribute('data-step-prev')) { go(step - 1); return; }
@@ -314,6 +329,6 @@
             }, function () { showPublishResult(false, 'Could not publish', ['Could not reach the server.']); });
         });
     }
-    window.addEventListener('beforeunload', function (ev) { if (saver.pending() > 0 || Object.keys(timers).length > 0) { ev.preventDefault(); ev.returnValue = ''; } });
+    window.addEventListener('beforeunload', function (ev) { if (!resetting && (saver.pending() > 0 || Object.keys(timers).length > 0)) { ev.preventDefault(); ev.returnValue = ''; } });
 })();
 </script>

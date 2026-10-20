@@ -17,6 +17,9 @@
 </section>
 
 <section aria-label="Plans" style="padding: 0 0 96px">
+@if ($plans === [])
+<div class="wrap" data-role="plans-unavailable"><p style="margin: 0; text-align: center; font-size: 17px; color: #5E5652">{{ $mg->get('page_copy.pricing.unavailable', 'Plans are not available right now. Please check back soon.') }}</p></div>
+@endif
 <div class="wrap" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr)); gap: 20px; align-items: stretch">
 @foreach ($plans as $plan)
 @include('marketing.partials.plan-card', ['plan' => $plan, 'variant' => 'pricing'])
@@ -27,6 +30,7 @@
 @endif
 </section>
 
+@if ($plans !== [])
 <section aria-labelledby="cmp-h" style="padding: 0 0 112px">
 <div class="wrap" style="display: flex; flex-direction: column; gap: 28px">
 <h2 id="cmp-h" class="h2">{{ $c['compare']['title'] }}</h2>
@@ -56,6 +60,7 @@
 @if ($mg->showPlaceholders())<p style="margin: 0; font-size: 13px; color: #6B625E">[{{ $c['compare']['note'] }}]</p>@endif
 </div>
 </section>
+@endif
 
 @if ($mg->section('pricing.usage') && $mg->get('usage_charges'))
 <section id="usage" aria-labelledby="use-h" style="padding: 112px 0; background: #EDE5DF">

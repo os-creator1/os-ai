@@ -24,9 +24,6 @@ final class SiteContentBuilder
     /** Comparison rows that are about running the reseller business itself and must never appear on a resale plan. */
     private const NOT_RESOLD = ['agency_package_capabilities', 'white_label'];
 
-    /** @var array<string, list<string>> */
-    private static array $tierFeatures = [];
-
     /**
      * @param  array<string, mixed>  $values  saved answers, path => value
      */
@@ -276,7 +273,7 @@ final class SiteContentBuilder
         }
 
         // A pricing section or comparison table with no plan in it is not a section.
-        if ($context->plans === []) {
+        if ($context->actionablePlans() === []) {
             array_push($hidden, 'pricing', 'comparison');
         }
 
@@ -288,7 +285,7 @@ final class SiteContentBuilder
     /** @return array<string, array<string, mixed>> */
     private function planViews(SiteContext $context): array
     {
-        return collect($context->plans)->mapWithKeys(fn ($p) => [$p['uid'] => $p])->all();
+        return collect($context->actionablePlans())->mapWithKeys(fn ($p) => [$p['uid'] => $p])->all();
     }
 
     /**
@@ -299,7 +296,7 @@ final class SiteContentBuilder
      */
     private function comparison(SiteContext $context): array
     {
-        if ($context->plans === []) {
+        if ($context->actionablePlans() === []) {
             return [];
         }
 
@@ -316,7 +313,7 @@ final class SiteContentBuilder
                     continue;
                 }
 
-                $cells = array_map(fn ($p) => in_array($featureKey, self::featuresOfTier((string) $p['tier']), true), $context->plans);
+                $cells = array_map(fn ($p) => in_array($featureKey, self::featuresOfTier((string) $p['tier']), true), $context->actionablePlans());
                 $rows[] = [str_replace('MotionGrove', $context->brandName, $row[0]), $cells] + (isset($row[2]) ? [2 => $row[2]] : []);
             }
 
@@ -347,22 +344,25 @@ final class SiteContentBuilder
         return $labels;
     }
 
-    /** @return list<string> catalog feature keys the tier includes (the platform's own packaging) */
+    /**
+     * Catalog feature keys the tier includes (the platform's own packaging), read once per REQUEST.
+     *
+     * Deliberately not a process-lifetime `static`: the platform owner can change a tier's packaging at any time
+     * (PlatformPlanAdministrator), and a long-lived process (queue worker, Octane, a test run) would keep serving the
+     * old package. Under PHP-FPM a static does not outlive its request, but nothing here should rely on that. The
+     * repository's own request-scoped memo (keyed on the Request object, flushed at queue-job boundaries) gives one
+     * read per request and can never outlive the request it was made in.
+     *
+     * @return list<string>
+     */
     public static function featuresOfTier(string $tier): array
     {
-        if (isset(self::$tierFeatures[$tier])) {
-            return self::$tierFeatures[$tier];
-        }
+        return app(\App\Library\Support\RequestScopedCache::class)->remember('agency-site:tier-features:'.$tier, function () use ($tier): array {
+            $catalog = WorkspacePlanCatalog::query()->where('tier', $tier)->first();
 
-        $catalog = WorkspacePlanCatalog::query()->where('tier', $tier)->first();
-
-        return self::$tierFeatures[$tier] = $catalog === null
-            ? []
-            : DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $catalog->id)->pluck('feature_key')->all();
-    }
-
-    public static function forgetTierCache(): void
-    {
-        self::$tierFeatures = [];
+            return $catalog === null
+                ? []
+                : DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $catalog->id)->pluck('feature_key')->all();
+        });
     }
 }

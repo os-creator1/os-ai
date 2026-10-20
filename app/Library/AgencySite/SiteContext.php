@@ -48,6 +48,21 @@ final class SiteContext
         return in_array($this->goal, ['both', 'subscriptions'], true) && $this->pricingMode !== 'book_call';
     }
 
+    /**
+     * Plans a visitor can actually ACT on right now: buy online, or (when the Agency offers calls and the booking type
+     * is bookable) book a call about it. A published plan that is neither — Stripe disconnected, price no longer
+     * verified, and no working calendar — is not shown as an offer at all, so no button ever leads nowhere.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function actionablePlans(): array
+    {
+        return array_values(array_filter(
+            $this->plans,
+            fn (array $plan) => ($this->offersSubscriptions() && $plan['sellable']) || $this->offersBooking(),
+        ));
+    }
+
     public function offersBooking(): bool
     {
         return $this->bookingUrl !== null && in_array($this->goal, ['both', 'book_call'], true);
