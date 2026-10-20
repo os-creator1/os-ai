@@ -221,17 +221,26 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
         $this->assertSame('Brand B', AgencyWhiteLabelSetting::query()->sole()->display_name);
     }
 
-    public function test_the_landing_tab_reports_real_state_and_claims_nothing_is_published(): void
+    public function test_the_landing_tab_opens_a_draft_editor_for_the_owner_and_a_status_card_for_the_team(): void
     {
         [$agency, $owner] = $this->agency();
         $this->authenticateAs($owner);
 
         $html = $this->get($this->url('show', $agency, ['tab' => 'landing']))->assertOk()->getContent();
-        $this->assertStringContainsString('data-role="landing-status"', $html);
-        $this->assertStringContainsString('Not published', $html);
-        $this->assertStringContainsString('not set up', $html);
-        $this->assertStringContainsString('Stripe account for selling to customers: not connected', $html);
+        $this->assertStringContainsString('data-role="landing-editor"', $html);
+        $this->assertStringContainsString('>Draft<', $html);
+        $this->assertStringNotContainsString('>Published<', $html);
         $this->assertStringNotContainsString('data-role="white-label-form"', $html);
+
+        // A team member sees the same site read-only; before any site exists they only get honest status.
+        [$other, $otherOwner] = $this->agency('Agency B');
+        $member = $this->createCustomer();
+        $this->member($other, $member->user, \App\Enums\Workspace\WorkspaceMembershipRole::Admin);
+        $this->authenticateAs($member);
+        $status = $this->get($this->url('show', $other, ['tab' => 'landing']))->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="landing-status"', $status);
+        $this->assertStringContainsString('Not published', $status);
+        $this->assertStringContainsString('Stripe account for selling to customers: not connected', $status);
     }
 
     public function test_app_domain_is_pending_until_dns_proves_ownership_and_is_never_reported_live(): void
