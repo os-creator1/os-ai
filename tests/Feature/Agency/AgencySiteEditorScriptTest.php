@@ -76,6 +76,7 @@ class AgencySiteEditorScriptTest extends TestCase
         }
 
         foreach ($results as $name => $result) {
+            $this->assertArrayNotHasKey('failure', $result, "{$name}: scenario did not complete: ".($result['failure'] ?? ''));
             $this->assertSame([], $result['errors'] ?? [], "{$name}: no script errors");
         }
 

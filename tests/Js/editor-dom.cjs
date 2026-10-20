@@ -28,7 +28,8 @@ async function scenario(browser, name, serverFor, run) {
     await page.goto(pathToFileURL(html).href);
     await page.click('[data-step-button="2"]');
     await page.click('li[data-key="hero"] [data-open-section]');
-    const out = await run(page, server);
+    let out;
+    try { out = await run(page, server); } catch (e) { out = { failure: String(e).slice(0, 300) }; }
     out.errors = errors;
     await page.context().close();
     return out;

@@ -4,6 +4,6 @@
         @include('customer.agency.white-label._field', ['field' => $field, 'canEdit' => $canEdit])
     @endforeach
     @if ($canEdit)
-        <button type="button" class="btn btn-link btn-sm p-0" data-reset-group="{{ $group['key'] }}" @disabled(! $group['modified'])>Reset this section to defaults</button>
+        <button type="button" class="btn btn-link btn-sm p-0" data-reset-group="{{ $group['key'] }}">Reset this section to defaults</button>
     @endif
 </div>
