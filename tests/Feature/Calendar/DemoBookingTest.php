@@ -122,7 +122,7 @@ class DemoBookingTest extends TestCase
         $other = $this->bookingType($this->locationB, ['name' => 'Customer service']);
         $other->staff()->attach($this->bookableStaff($this->locationB)->id);
 
-        $this->get('/book-demo?date=2027-03-01')->assertOk()->assertSee('MotionGrove Demo')->assertDontSee('Customer service');
+        $this->get('/book-demo')->assertOk()->assertSee('Let’s talk about your business.')->assertDontSee('Customer service');
         $this->assertSame('book-demo', Route::getRoutes()->getByName('demo.booking.store')->uri());
         $this->post('/book-demo', $this->payload(['booking_type_uuid' => $other->public_booking_uuid, 'booking_type_id' => $other->id]))
             ->assertRedirect();
@@ -133,17 +133,25 @@ class DemoBookingTest extends TestCase
 
     public function test_the_page_collects_the_demo_fields_and_exposes_only_the_site_key(): void
     {
-        $html = $this->get('/book-demo?date=2027-03-01')->assertOk()
-            ->assertSee('name="business_name"', false)->assertSee('name="website"', false)
+        $html = $this->get('/book-demo')->assertOk()
+            ->assertSee('Let’s talk about your business.')
+            ->assertSee('name="first_name"', false)->assertSee('name="business_name"', false)->assertSee('name="industry"', false)
+            ->assertSee('name="help_with[]"', false)->assertSee('name="message"', false)
+            ->assertSee('Continue to choose a time')
             ->assertSee('name="demo_hp"', false)->assertSee('data-sitekey="site-key-public"', false)
             ->assertSee('challenges.cloudflare.com/turnstile/v0/api.js', false)
-            ->assertSee('10:00')->getContent();
+            ->assertSee('data-role="public-scheduler"', false)
+            ->getContent();
 
         $this->assertStringNotContainsString('secret-key-private', $html);
         $this->assertStringContainsString(route('demo.booking.store'), $html);
         $this->assertStringContainsString('book-demo\/slots', $html);
         $this->assertDoesNotMatchRegularExpression('/name="phone"[^>]*required/', $html);
         $this->assertStringNotContainsString('sms-consent', $html);
+        // The design's placeholders never reach the public page.
+        $this->assertStringNotContainsString('[Scheduling calendar]', $html);
+        $this->assertStringNotContainsString('[Confirm demo length]', $html);
+        $this->assertStringContainsString($this->type->duration_minutes.' minutes', $html);
     }
 
     // ---- booking, calendar, CRM ------------------------------------------------------------

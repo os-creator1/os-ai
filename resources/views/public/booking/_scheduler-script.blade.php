@@ -205,7 +205,7 @@
         els.picked.appendChild(small);
         clearErrors();
         setStep('details');
-        els.form.elements.first_name.focus();
+        if (els.form.elements.first_name) { els.form.elements.first_name.focus(); }
     }
 
     /* ---------- form ---------- */
@@ -274,6 +274,7 @@
             if (r.status === 201) { state.available = {}; showConfirmation(r.data.booking); return; }
             // A Turnstile token is single-use: a refused attempt needs a fresh one.
             if (window.turnstile) { try { window.turnstile.reset(); } catch (e) { /* widget not mounted */ } }
+            app.dispatchEvent(new CustomEvent('pb:refused', { bubbles: true, detail: { status: r.status, data: r.data } }));
             if (r.status === 409) {
                 // The slot went while the guest typed: refresh the day and send them back to pick another.
                 state.available = {};

@@ -177,6 +177,20 @@
                     </dl>
                 </x-card>
 
+                @php($demoAnswers = $appointment->demoBookingResponse?->answers)
+                @if (! empty($demoAnswers))
+                    <x-card title="Booking form answers" data-section="appointment-form-answers">
+                        <p class="mg-appt-help">What the prospect told us when they booked.</p>
+                        <dl class="mg-appt-details">
+                            @foreach ($demoAnswers as $answer)
+                                <div class="mg-appt-row" data-role="form-answer">
+                                    <div class="mg-appt-row__body"><dt>{{ $answer['label'] }}</dt><dd style="white-space:pre-line">{{ $answer['display'] }}</dd></div>
+                                </div>
+                            @endforeach
+                        </dl>
+                    </x-card>
+                @endif
+
                 @if ($isScheduled)
                     <x-card title="Reschedule" data-section="appointment-reschedule">
                         <p class="mg-appt-help">Pick a new date, time or staff member.</p>

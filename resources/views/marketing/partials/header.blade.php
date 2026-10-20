@@ -20,7 +20,7 @@
 <div style="flex: 1"></div>
 <div style="display: flex; align-items: center; gap: 10px">
 <a href="{{ $mg->loginUrl() }}" class="hide-m" style="font-size: 15px; font-weight: 600; padding: 10px 12px">Log in</a>
-@if ($mg->hasBookDemo())
+@if ($mg->hasBookDemo() && $active !== 'book-demo')
 <a href="{{ $mg->bookDemoUrl() }}" class="btn btn-s hide-m">Book a demo</a>
 @endif
 @if ($showGetStarted)

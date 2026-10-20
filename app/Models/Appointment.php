@@ -134,4 +134,10 @@ class Appointment extends Model
     {
         return $this->status === AppointmentStatus::Scheduled;
     }
+
+    /** The Book a Demo form answers frozen at booking time (only /book-demo appointments have one). */
+    public function demoBookingResponse(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(DemoBookingResponse::class, 'appointment_id');
+    }
 }

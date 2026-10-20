@@ -715,6 +715,13 @@
         Route::get('platform-owner', 'PlatformOwnerController@overview')->name('platform-owner.overview');
         Route::get('platform-owner/audit', 'PlatformOwnerController@audit')->name('platform-owner.audit');
 
+        // Marketing Website → Demo Form: the Platform Owner edits the questions on the public /book-demo form.
+        Route::get('platform-owner/marketing/demo-form', 'DemoFormController@edit')->name('platform-owner.demo-form');
+        Route::get('platform-owner/marketing/demo-form/preview', 'DemoFormController@preview')->name('platform-owner.demo-form.preview');
+        Route::post('platform-owner/marketing/demo-form', 'DemoFormController@save')->name('platform-owner.demo-form.save');
+        Route::post('platform-owner/marketing/demo-form/publish', 'DemoFormController@publish')->name('platform-owner.demo-form.publish');
+        Route::post('platform-owner/marketing/demo-form/discard', 'DemoFormController@discard')->name('platform-owner.demo-form.discard');
+
         // The one lifecycle control on the support page
         // (EntitlementManager::recoverAccess(), through PlatformOwnerAccountActions).
         // Named outside the `admin.workspaces.` family on purpose: that family
