@@ -442,4 +442,38 @@ class AgencySiteSignupTest extends TestCase
         $this->assertSame(1, AgencySiteSignup::query()->count());
         $this->assertNotNull(AgencyClientSubscription::query()->first());
     }
+
+    // ------------------------------------------------ one pass, end to end
+
+    public function test_signup_to_stripe_payment_to_activation_to_branded_login_in_one_pass(): void
+    {
+        $live = $this->liveAgency();
+
+        // 1. Visitor picks the plan on the Agency's site and signs up; Stripe Checkout opens on the Agency's account.
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        $client = $this->clientOf('dana@harbor.example');
+        $subscription = AgencyClientSubscription::query()->sole();
+        $this->assertNull($this->tierOf($client));
+
+        // 2. Stripe (fake gateway) reports a paid subscription; the return re-reads it and activates the plan.
+        $this->agencyStripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+        $this->actingAs(User::query()->where('email', 'dana@harbor.example')->sole())->get(route('customer.workspaces.agency-plan.return', $client->uid));
+        $this->assertSame(AgencyClientSubscriptionStatus::Active, $subscription->refresh()->status);
+        $this->assertSame(WorkspacePlanTier::Growth, $this->tierOf($client));
+
+        // 3. Later, signed out: the Agency's own sign-in page is branded and the customer can really sign in with it.
+        auth()->logout();
+        $login = $this->get(route('agency.site.login', $live['site']->public_id))->assertOk()->getContent();
+        $this->assertStringContainsString('Northwind Agency Digital', $login);
+
+        $this->post(route('login'), ['email' => 'dana@harbor.example', 'password' => 'correct-horse-9'])->assertRedirect();
+        $this->assertAuthenticatedAs(User::query()->where('email', 'dana@harbor.example')->sole());
+
+        // 4. Inside the app the customer sees the Agency's name and colours, and only their own account.
+        app(\App\Library\Support\RequestScopedCache::class)->flush();
+        $home = $this->get(route('user.home'))->assertOk()->getContent();
+        $this->assertStringContainsString('Northwind Agency Digital', $home);
+        $this->assertStringContainsString('agency-theme-overrides', $home);
+        $this->get(route('customer.workspaces.agency.white-label.show', $live['agency']->uid))->assertNotFound();
+    }
 }
