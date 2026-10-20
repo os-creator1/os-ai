@@ -156,6 +156,7 @@
 <style>
     .website-starter-choice { border: 1px solid #d8dce5; border-radius: 14px; padding: 16px; cursor: pointer; background: #fff; }
     .website-starter-choice:has(input:checked) { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, .15); }
+    html.dark-layout .website-starter-choice { border-color: var(--color-border, #3a3936); background: var(--color-surface, #262625); }
     .website-starter-preview { display: block; position: relative; height: 160px; border-radius: 9px; margin: 12px 0; overflow: hidden; background: #f1f5f9; }
     .website-starter-preview span, .website-starter-preview i { display: block; }
     .website-starter-preview-top { height: 20px; background: #fff; }

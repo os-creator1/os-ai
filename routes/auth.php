@@ -168,6 +168,7 @@
              * User Profile Update
              */
             Route::patch('account/update', 'AccountController@update')->name('account.update');
+            Route::post('account/appearance', 'AppearanceController@update')->middleware('throttle:60,1')->name('account.appearance');
             Route::post('account/update-information', 'AccountController@updateInformation')->name('account.update_information');
 
             Route::post('account/change-password', 'AccountController@changePassword')->name('account.change.password');

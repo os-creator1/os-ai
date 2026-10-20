@@ -75,6 +75,11 @@
         .dd-event:not(:last-child)::before { content: ""; position: absolute; left: .9375rem; top: 2rem; bottom: .125rem; width: 1px; background: var(--color-border, #E5E1DA); }
         .dd-event__dot { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 1.875rem; height: 1.875rem; border-radius: 50%; background: var(--color-primary-soft-bg, #F4E5E4); color: var(--color-primary, #B5524C); }
         .dd-event__dot--success { background: color-mix(in srgb, var(--color-status-success, #28C76F) 14%, #fff); color: color-mix(in srgb, var(--color-status-success, #28C76F) 70%, #000); }
+        /* Dark appearance: the soft states above blend with white, so re-point them at the status tokens. */
+        html.dark-layout .dd-btn--danger:hover { background: var(--color-status-danger-soft-bg); }
+        html.dark-layout .dd-notice--success, html.dark-layout .dd-sig { border-color: var(--color-status-success-border); background: var(--color-status-success-soft-bg); }
+        html.dark-layout .dd-notice--danger, html.dark-layout .dd-link-state--bad { border-color: var(--color-status-danger-border); background: var(--color-status-danger-soft-bg); }
+        html.dark-layout .dd-event__dot--success { background: var(--color-status-success-soft-bg); color: var(--color-status-success-text); }
         .dd-event__dot--muted { background: var(--color-border-subtle, #F2F0ED); color: var(--color-text-secondary, #676664); }
         .dd-event__title { font-size: .875rem; font-weight: 600; overflow-wrap: anywhere; }
         .dd-event__meta { font-size: .75rem; color: var(--color-text-muted, #6F6D67); }

@@ -50,6 +50,10 @@
         .mg-cf-note p{margin:0}
         .mg-cf-note p + p{margin-top:.2rem}
         .mg-cf-note-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:1.9rem;height:1.9rem;border-radius:999px;background:#e6eefb;color:#2b5fb8}
+        html.dark-layout .mg-cf-iconbtn,html.dark-layout .mg-cf-badge{background:rgba(255,255,255,.08);color:var(--color-text-secondary,#bdbbb5)}
+        html.dark-layout .mg-cf-iconbtn:hover:not(:disabled){background:rgba(255,255,255,.14)}
+        html.dark-layout .mg-cf-order button{color:var(--color-text-muted,#a09e97)}
+        html.dark-layout .mg-cf-note-icon{background:rgba(75,134,220,.2);color:#8fb6f0}
         @media (max-width:575.98px){
             .mg-cf-head{flex-direction:column}
             .mg-cf-table th,.mg-cf-table td{padding:.6rem .6rem}
