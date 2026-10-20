@@ -37,9 +37,9 @@ class BrandingLogoThemeTest extends TestCase
         config(['app.logo' => $light, 'app.logo_dark' => $dark, 'app.logo_compact' => null]);
     }
 
-    public function test_the_bundled_dark_logo_is_the_supplied_asset_with_its_transparency_and_proportions(): void
+    public function test_the_supplied_motiongrove_dark_logo_keeps_its_transparency_and_proportions(): void
     {
-        $path = public_path(BrandingPresenter::DEFAULT_DARK_LOGO);
+        $path = public_path('images/branding/motiongrove-logo-for-dark-backgrounds-fits-800x200.png');
 
         $this->assertFileExists($path);
         [$w, $h] = getimagesize($path);
@@ -47,7 +47,7 @@ class BrandingLogoThemeTest extends TestCase
         $this->assertSame(6, ord(file_get_contents($path, false, null, 25, 1)), 'RGBA, so the transparent background is preserved');
     }
 
-    public function test_default_branding_pairs_the_default_light_logo_with_the_bundled_dark_logo(): void
+    public function test_an_unconfigured_install_shows_one_brand_in_both_themes(): void
     {
         $this->set(BrandingPresenter::DEFAULT_LIGHT_LOGO, null);
 
@@ -55,8 +55,21 @@ class BrandingLogoThemeTest extends TestCase
 
         $this->assertSame(2, substr_count($html, '<img'));
         $this->assertMatchesRegularExpression('#<img src="[^"]*default-logo\.svg"[^>]*class="[^"]*mg-logo-light#', $html);
-        $this->assertMatchesRegularExpression('#<img src="[^"]*motiongrove-logo-for-dark-backgrounds-fits-800x200\.png" alt="" aria-hidden="true"[^>]*class="[^"]*mg-logo-dark#', $html);
+        $this->assertMatchesRegularExpression('#<img src="[^"]*default-logo-dark\.svg" alt="" aria-hidden="true"[^>]*class="[^"]*mg-logo-dark#', $html);
+        $this->assertStringNotContainsString('motiongrove-logo', $html, 'the placeholder brand is never paired with the MotionGrove dark logo');
         $this->assertStringContainsString('w-100', $html, 'existing sizing classes reach both images');
+        $this->assertFileExists(public_path(BrandingPresenter::DEFAULT_DARK_LOGO));
+    }
+
+    public function test_motiongrove_branding_switches_between_app_logo_and_app_dark_logo(): void
+    {
+        $this->set('images/logo/motiongrove-light.png', 'images/branding/motiongrove-logo-for-dark-backgrounds-fits-800x200.png');
+
+        $html = $this->logo('variant="full" background="light" adaptive');
+
+        $this->assertSame(2, substr_count($html, '<img'));
+        $this->assertMatchesRegularExpression('#<img src="[^"]*motiongrove-light\.png"[^>]*class="[^"]*mg-logo-light#', $html);
+        $this->assertMatchesRegularExpression('#<img src="[^"]*motiongrove-logo-for-dark-backgrounds-fits-800x200\.png"[^>]*class="[^"]*mg-logo-dark#', $html);
     }
 
     public function test_a_custom_light_logo_without_a_dark_one_is_kept_in_both_themes_and_never_replaced(): void
