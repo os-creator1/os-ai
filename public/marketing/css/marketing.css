@@ -26,6 +26,7 @@ body.mg{margin:0;background:#F7F5F2;color:#181413;font-family:'Figtree',system-u
 .card{background:#FFFFFF;border:1px solid #E7E1DB;border-radius:20px}
 .navl a{font-size:15px;font-weight:500;color:#2E2826;padding:10px 12px;border-radius:8px}
 .navl a:hover{background:#EFEAE5;color:#181413}
+.mg-bar a{white-space:nowrap}
 .ic{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;font-size:12.5px;font-weight:600;white-space:nowrap}
 .tick{width:22px;height:22px;flex:none;border-radius:50%;background:#E4F0EA;color:#1F5E4A;display:flex;align-items:center;justify-content:center}
@@ -194,6 +195,12 @@ body.mg-pricing .tick .ic{width:12px;height:12px;stroke-width:2.6}
   .navl a{padding:10px 7px;font-size:14px}
   .mg-bar{gap:12px !important}
   .mg-bar .btn{padding:0 14px}
+}
+@media (min-width:961px) and (max-width:1060px){
+  .navl a{padding:10px 4px;font-size:13.5px}
+  .mg-bar{gap:8px !important}
+  .mg-bar > div:last-child{gap:6px !important}
+  .mg-bar .btn{padding:0 11px;font-size:14px}
 }
 @media (max-width:360px){.mg-logo{height:20px !important}.mg-gs{padding:0 10px;font-size:13px}.mg-bar{gap:6px !important}.mg-bar > div:last-child{gap:6px !important}}
 
