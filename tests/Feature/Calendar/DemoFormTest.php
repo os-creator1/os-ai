@@ -229,8 +229,12 @@ class DemoFormTest extends TestCase
         Notification::fake();
         Event::fake([AppointmentScheduled::class]);
         $contactsBefore = Contacts::query()->count();
-        DemoBookingResponse::creating(static function (): void {
-            throw new \RuntimeException('forced answer-storage failure');
+        // Eloquent listeners outlive a single request, so the injection is switched off by a flag, not by removal.
+        $failStorage = true;
+        DemoBookingResponse::creating(static function () use (&$failStorage): void {
+            if ($failStorage) {
+                throw new \RuntimeException('forced answer-storage failure');
+            }
         });
 
         $this->postJson(route('demo.booking.store'), $this->payload(), ['X-Requested-With' => 'XMLHttpRequest'])->assertStatus(500)
@@ -245,7 +249,7 @@ class DemoFormTest extends TestCase
         Http::assertNotSent(fn ($request) => str_contains($request->url(), 'zoom'));
 
         // The slot is still free: the same request succeeds once storage works again.
-        DemoBookingResponse::flushEventListeners();
+        $failStorage = false;
         $this->postJson(route('demo.booking.store'), $this->payload(), ['X-Requested-With' => 'XMLHttpRequest'])->assertCreated();
         $this->assertDatabaseCount('appointments', 1);
         $this->assertDatabaseCount('demo_booking_responses', 1);
@@ -254,8 +258,9 @@ class DemoFormTest extends TestCase
     public function test_a_failed_crm_mirror_never_loses_the_booking_or_its_answers(): void
     {
         $this->publish($this->withExtra([]));
-        ContactsCustomField::creating(static function ($row): void {
-            if ((string) $row->value === 'A podcast') {
+        $failMirror = true;
+        ContactsCustomField::creating(static function ($row) use (&$failMirror): void {
+            if ($failMirror && (string) $row->value === 'A podcast') {
                 throw new \RuntimeException('forced CRM mirror failure');
             }
         });
@@ -264,7 +269,7 @@ class DemoFormTest extends TestCase
 
         $this->assertDatabaseCount('appointments', 1);
         $this->assertSame('A podcast', collect(DemoBookingResponse::query()->sole()->answers)->firstWhere('key', 'custom_ab12cd34')['display']);
-        ContactsCustomField::flushEventListeners();
+        $failMirror = false;
     }
 
     public function test_the_answers_commit_with_the_booking_and_other_booking_types_are_unaffected(): void
@@ -318,8 +323,28 @@ class DemoFormTest extends TestCase
 
     public function test_the_editor_is_for_platform_owners_only(): void
     {
-        $this->get(route('admin.platform-owner.demo-form'))->assertRedirect();
-        $this->post(route('admin.platform-owner.demo-form.publish'), ['fields' => json_encode($this->fields())])->assertRedirect();
+        $publish = ['fields' => json_encode($this->withExtra(['label' => 'Should never go live']))];
+
+        // Not signed in: refused outright (HTTP 401), nothing written.
+        $this->get(route('admin.platform-owner.demo-form'))->assertUnauthorized();
+        $this->post(route('admin.platform-owner.demo-form.publish'), $publish)->assertUnauthorized();
+        $this->assertDatabaseCount('demo_form_versions', 0);
+
+        // A signed-in customer (not a platform administrator) cannot open or change it.
+        $customer = \App\Models\User::create([
+            'first_name' => 'Cass', 'last_name' => 'Customer', 'email' => 'cass-'.uniqid('', true).'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $this->actingAs($customer);
+        $this->assertNotSame(200, $this->get(route('admin.platform-owner.demo-form'))->getStatusCode());
+        $this->assertNotSame(200, $this->get(route('admin.platform-owner.demo-form.preview'))->getStatusCode());
+        $this->assertNotSame(200, $this->post(route('admin.platform-owner.demo-form.publish'), $publish)->getStatusCode());
+        $this->assertDatabaseCount('demo_form_versions', 0);
+
+        // A platform administrator without the backend permission is refused (403) and writes nothing.
+        $this->actingAsPlatformOwner(['view business']);
+        $this->get(route('admin.platform-owner.demo-form'))->assertForbidden();
+        $this->post(route('admin.platform-owner.demo-form.publish'), $publish)->assertForbidden();
         $this->assertDatabaseCount('demo_form_versions', 0);
 
         $this->actingAsPlatformOwner();
