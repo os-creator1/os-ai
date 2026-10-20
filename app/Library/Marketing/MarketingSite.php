@@ -78,6 +78,12 @@ class MarketingSite
         return (string) $this->cfg('site.name', 'MotionGrove');
     }
 
+    /** Name shown in the copyright line; an Agency may set its registered business name. */
+    public function legalName(): string
+    {
+        return (string) ($this->cfg('site.legal_name') ?: $this->brandName());
+    }
+
     /** The wordmark image; $onDark selects the white variant used on dark bands. */
     public function wordmark(bool $onDark = false): string
     {
@@ -104,6 +110,27 @@ class MarketingSite
     public function homeSections(): array
     {
         return array_keys(self::HOME_SECTIONS);
+    }
+
+    /** Header/footer label for a page link; the platform site uses the design's own wording. */
+    public function navLabel(string $key, string $default): string
+    {
+        return (string) $this->cfg('nav.'.$key, $default);
+    }
+
+    /** Whether a navigable page exists on this site (an Agency can switch Customers/Solutions off). */
+    public function pageVisible(string $key): bool
+    {
+        return $this->section('pages.'.$key);
+    }
+
+    /**
+     * Destination of a named call-to-action button (`hero`, `final`). The platform site always sends
+     * visitors to the plans; an Agency site maps it to signup, pricing or booking.
+     */
+    public function ctaUrl(string $slot): string
+    {
+        return $this->getStartedUrl();
     }
 
     public function showsHeader(): bool

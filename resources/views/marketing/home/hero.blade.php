@@ -6,7 +6,7 @@
 <p class="lead hero-lead hide-m">{{ $h['lead'] }}</p>
 <p class="lead hero-lead show-m">{{ $h['lead_mobile'] }}</p>
 <div class="hero-cta">
-<a href="{{ $mg->getStartedUrl() }}" class="btn btn-p hero-btn">{{ $h['primary'] }}<svg class="ic hide-m" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+<a href="{{ $mg->ctaUrl('hero') }}" class="btn btn-p hero-btn">{{ $h['primary'] }}<svg class="ic hide-m" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
 <a href="{{ $mg->url('how-it-works') }}" class="btn btn-s hero-btn">{{ $h['secondary'] }}</a>
 </div>
 <ul class="hero-ticks" style="list-style: none; margin: 0; padding: 0">

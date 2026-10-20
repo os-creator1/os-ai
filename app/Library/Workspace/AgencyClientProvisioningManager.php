@@ -101,44 +101,66 @@ class AgencyClientProvisioningManager
                 throw new WorkspaceNotFoundException((int) $locked->agency_workspace_id);
             }
 
-            // Step 7 — the real User's own ID, never a placeholder.
-            $clientWorkspace = $this->workspaceManager->createWorkspace(
-                (int) $authenticatedUser->id,
-                $this->workspaceName($locked),
-            );
-
-            // Step 8 — the smallest safe session-independent seam (see
-            // BusinessManager::createBusinessForNewWorkspace()'s own
-            // docblock for why applyIdentity()'s CREATE branch is not
-            // reusable here).
-            $business = $this->businessManager->createBusinessForNewWorkspace($customer, $clientWorkspace, [
-                'name' => $locked->intended_business_name ?? $this->workspaceName($locked),
-                'industry' => BusinessIndustry::Other->value,
-                'country_code' => 'US',
-                'timezone' => 'UTC',
-                'currency_code' => 'USD',
-            ]);
-
-            // Step 9 — unchanged, exactly as organic onboarding uses it;
-            // its own capacity check already exempts a Business's first
-            // Location from requiring an assigned plan.
-            $this->locationManager->upsertPrimaryLocation($business, [
-                'service_mode' => 'storefront',
-                'country_code' => 'US',
-            ]);
-
-            // Step 10 — unchanged. established_by_user_id is the AGENCY
-            // actor who sent the invitation, never the accepting client
-            // (§10): two distinct real actors, both recorded accurately.
-            $this->relationshipManager->create(
-                (int) $locked->invited_by_user_id,
+            $clientWorkspace = $this->provisionClientWorkspace(
+                $authenticatedUser,
+                $customer,
                 $agencyWorkspace,
-                $clientWorkspace,
+                (int) $locked->invited_by_user_id,
+                $locked->intended_business_name ?? $this->workspaceName($locked),
+                $this->workspaceName($locked),
             );
 
             // Steps 11-13, together.
             return $this->invitationRepository->markAccepted($locked, (int) $clientWorkspace->id);
         });
+    }
+
+    /**
+     * Steps 7-10 of the acceptance flow, shared with every other way a real, authenticated User becomes an
+     * Agency's managed client (today: the invitation claim above, and a signup from the Agency's own website):
+     * a Client Workspace owned by that User, its Business, the Business's primary Location, and the ACTIVE
+     * Agency<->Client relationship. The caller owns the transaction, so a failure here (an ineligible Agency
+     * included) rolls back everything the caller wrote, leaving no orphan Workspace.
+     *
+     * $establishedByUserId is the AGENCY actor on whose standing authority the relationship is created.
+     */
+    public function provisionClientWorkspace(
+        User $user,
+        \App\Models\Customer $customer,
+        \App\Models\Workspace $agencyWorkspace,
+        int $establishedByUserId,
+        string $businessName,
+        string $workspaceName,
+    ): \App\Models\Workspace {
+        // Step 7 — the real User's own ID, never a placeholder.
+        $clientWorkspace = $this->workspaceManager->createWorkspace((int) $user->id, $workspaceName);
+
+        // Step 8 — the smallest safe session-independent seam (see
+        // BusinessManager::createBusinessForNewWorkspace()'s own
+        // docblock for why applyIdentity()'s CREATE branch is not
+        // reusable here).
+        $business = $this->businessManager->createBusinessForNewWorkspace($customer, $clientWorkspace, [
+            'name' => $businessName,
+            'industry' => BusinessIndustry::Other->value,
+            'country_code' => 'US',
+            'timezone' => 'UTC',
+            'currency_code' => 'USD',
+        ]);
+
+        // Step 9 — unchanged, exactly as organic onboarding uses it;
+        // its own capacity check already exempts a Business's first
+        // Location from requiring an assigned plan.
+        $this->locationManager->upsertPrimaryLocation($business, [
+            'service_mode' => 'storefront',
+            'country_code' => 'US',
+        ]);
+
+        // Step 10 — unchanged. established_by_user_id is the AGENCY
+        // actor, never the client (§10): two distinct real actors, both
+        // recorded accurately.
+        $this->relationshipManager->create($establishedByUserId, $agencyWorkspace, $clientWorkspace);
+
+        return $clientWorkspace;
     }
 
     private function assertClaimStillValid(ClientWorkspaceInvitation $locked, string $plaintextToken, string $authenticatedEmail): void

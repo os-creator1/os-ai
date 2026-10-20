@@ -166,6 +166,22 @@
     Route::post('stripe/webhook/agency-subscriptions', 'Public\AgencySubscriptionWebhookController@handle')
         ->middleware('throttle:600,1')->name('public.agency-subscriptions.webhook');
 
+    /*
+    |--------------------------------------------------------------------------
+    | White Label — an Agency's published marketing site, on the platform host.
+    | Public and read-only; the id is the site's own unguessable public id, never
+    | a workspace uid. Signup/checkout routes sit beside it (AgencySiteSignupController).
+    |--------------------------------------------------------------------------
+    */
+    Route::get('w/{publicId}', 'Public\AgencySiteController@home')->whereUuid('publicId')->name('agency.site.home');
+    Route::get('w/{publicId}/css/marketing.css', 'Public\AgencySiteController@css')->whereUuid('publicId')->name('agency.site.css');
+    Route::get('w/{publicId}/signup/{planUid}', 'Public\AgencySiteSignupController@show')
+        ->whereUuid('publicId')->whereUuid('planUid')->name('agency.site.signup');
+    Route::post('w/{publicId}/signup/{planUid}', 'Public\AgencySiteSignupController@store')
+        ->whereUuid('publicId')->whereUuid('planUid')->middleware('throttle:10,1')->name('agency.site.signup.store');
+    Route::get('w/{publicId}/{page}', 'Public\AgencySiteController@page')
+        ->whereUuid('publicId')->where('page', 'product|solutions|how-it-works|customers|pricing')->name('agency.site.page');
+
     /**
      * All public routes listed here. No middleware will not affect these routes
      */

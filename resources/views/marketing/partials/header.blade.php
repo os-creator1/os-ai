@@ -1,12 +1,13 @@
 @php
     $nav = [
-        'product' => ['Product', $mg->url('product')],
-        'solutions' => ['Solutions', $mg->url('solutions')],
-        'how-it-works' => ['How it works', $mg->url('how-it-works')],
-        'customers' => ['Customers', $mg->url('customers')],
-        'pricing' => ['Pricing', $mg->url('pricing')],
-        'resources' => ['Resources', $mg->url('home').'#faq'],
+        'product' => [$mg->navLabel('product', 'Product'), $mg->url('product')],
+        'solutions' => [$mg->navLabel('solutions', 'Solutions'), $mg->url('solutions')],
+        'how-it-works' => [$mg->navLabel('how-it-works', 'How it works'), $mg->url('how-it-works')],
+        'customers' => [$mg->navLabel('customers', 'Customers'), $mg->url('customers')],
+        'pricing' => [$mg->navLabel('pricing', 'Pricing'), $mg->url('pricing')],
+        'resources' => [$mg->navLabel('resources', 'Resources'), $mg->url('home').'#faq'],
     ];
+    $nav = array_filter($nav, fn ($key) => $mg->pageVisible($key), ARRAY_FILTER_USE_KEY);
     $showGetStarted = $active !== 'pricing';
 @endphp
 <header class="mg-header">
