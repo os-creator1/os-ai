@@ -132,6 +132,45 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     results.resetBeatsPendingDebounce = await scenario(browser, 'reset-pending', resetServer(false), (page, server) => resetRun(page, server, 0));
     results.resetBeatsInFlightSave = await scenario(browser, 'reset-inflight', resetServer(true), (page, server) => resetRun(page, server, 1000));
 
+    // Reset section B while section A has unsaved edits: A's edits must be saved (not lost), B must stay reset.
+    const OTHER_KEY = 'li[data-key]:not([data-key="hero"])';
+    const withOther = async (page) => {
+        const li = page.locator(OTHER_KEY).first();
+        await li.locator('[data-open-section]').click();
+        const input = li.locator('[data-field] [data-input]').first();
+        return { input, path: await input.locator('xpath=ancestor::*[@data-path][1]').getAttribute('data-path') };
+    };
+    const otherServer = (opts) => async (kind, body, server) => {
+        server.events = server.events || [];
+        if (kind === 'save') {
+            const paths = Object.keys(body.answers);
+            server.events.push('save:' + paths.join(','));
+            if (opts.failOther && paths.some((p) => p !== 'copy.home.hero.title')) { return { status: 422, body: { ok: false, message: 'Use plain text only.' } }; }
+            if (opts.slowOther && !server.slowDone && paths.some((p) => !p.startsWith('x.') && p !== 'copy.home.hero.title')) { server.slowDone = true; await wait(900); }
+            Object.assign(server.state, body.answers);
+        }
+        if (kind === 'reset-group') { server.events.push('reset'); delete server.state['copy.home.hero.title']; }
+        return ok();
+    };
+    const otherRun = (mode) => async (page, server) => {
+        let loads = 0; page.on('load', () => { loads++; });
+        page.on('dialog', (d) => d.accept());
+        const other = await withOther(page);
+        await page.fill(TITLE, 'Hero edit that the reset discards');
+        await other.input.fill('Kept unrelated');
+        if (mode === 'inflight') { await wait(950); }
+        await page.click('li[data-key="hero"] [data-reset-group="hero"]');
+        await wait(3000);
+        return {
+            events: server.events, otherSaved: server.state[other.path] === 'Kept unrelated',
+            heroHasOverride: 'copy.home.hero.title' in server.state, reloaded: loads >= 1,
+            otherKept: await other.input.inputValue(), state: (await page.textContent('#wl-save-state')).trim(),
+        };
+    };
+    results.resetKeepsUnrelatedPendingEdit = await scenario(browser, 'other-pending', otherServer({}), otherRun('pending'));
+    results.resetKeepsUnrelatedInFlightEdit = await scenario(browser, 'other-inflight', otherServer({ slowOther: true }), otherRun('inflight'));
+    results.resetWithFailedUnrelatedSave = await scenario(browser, 'other-failed', otherServer({ failOther: true }), otherRun('pending'));
+
     console.log(JSON.stringify(results));
     await browser.close();
 })();

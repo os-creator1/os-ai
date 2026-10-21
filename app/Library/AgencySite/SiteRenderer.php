@@ -70,7 +70,12 @@ final class SiteRenderer
             $map['#181413'] = strtolower($context->secondaryColor);
         }
 
-        return str_ireplace(array_keys($map), array_values($map), $text);
+        // ONE pass over the source: a colour that has just been written is never looked at again, so a brand colour that
+        // happens to equal another source token (or a dark secondary equal to #181413) is not replaced a second time.
+        // Matching stays case-insensitive, as the templates mix cases.
+        $pattern = '/'.implode('|', array_map(fn (string $token) => preg_quote($token, '/'), array_keys($map))).'/i';
+
+        return (string) preg_replace_callback($pattern, fn (array $m) => $map[strtolower($m[0])], $text);
     }
 
     private function previewBanner(string $html): string

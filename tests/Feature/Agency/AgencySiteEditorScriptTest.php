@@ -138,4 +138,38 @@ class AgencySiteEditorScriptTest extends TestCase
         $inFlight = $results['resetBeatsInFlightSave']['events'];
         $this->assertStringStartsWith('save:', $inFlight[0]);
     }
+
+    public function test_resetting_one_section_never_discards_another_sections_edits(): void
+    {
+        $results = $this->runEditor();
+
+        foreach (['resetKeepsUnrelatedPendingEdit', 'resetKeepsUnrelatedInFlightEdit'] as $name) {
+            $r = $results[$name];
+            $this->assertEmpty($r['failure'] ?? null, $name.': '.($r['failure'] ?? ''));
+            $this->assertTrue($r['otherSaved'], "{$name}: the unrelated edit reached the server before the page reloaded");
+            $this->assertFalse($r['heroHasOverride'], "{$name}: the reset section stays reset");
+            $this->assertTrue($r['reloaded'], "{$name}: the page reloads once everything is saved");
+            $this->assertSame('reset', end($r['events']), "{$name}: the stale edit of the reset section is never saved after the reset");
+            $this->assertSame(1, count(array_filter($r['events'], fn ($e) => $e === 'reset')));
+            if ($name === 'resetKeepsUnrelatedPendingEdit') {
+                $this->assertNotContains('save:copy.home.hero.title', $r['events'], "{$name}: the reset section's own pending edit is dropped");
+            }
+        }
+
+        // The unrelated save is queued BEFORE the reset, so it is never overtaken by it.
+        $events = $results['resetKeepsUnrelatedInFlightEdit']['events'];
+        $this->assertStringStartsWith('save:', $events[0]);
+    }
+
+    public function test_when_unrelated_edits_cannot_be_saved_the_page_does_not_reload_over_them(): void
+    {
+        $r = $this->runEditor()['resetWithFailedUnrelatedSave'];
+
+        $this->assertEmpty($r['failure'] ?? null, (string) ($r['failure'] ?? ''));
+        $this->assertContains('reset', $r['events'], 'the reset itself still happened');
+        $this->assertFalse($r['reloaded'], 'no reload while unsaved edits are on screen');
+        $this->assertSame('Kept unrelated', $r['otherKept'], 'the edit is still in the field');
+        $this->assertStringContainsString('not saved', $r['state']);
+        $this->assertFalse($r['otherSaved']);
+    }
 }

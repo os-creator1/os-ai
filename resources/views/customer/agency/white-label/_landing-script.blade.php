@@ -9,7 +9,9 @@
     var stateEl = document.getElementById('wl-save-state');
     var iframe = document.getElementById('wl-preview');
     var timers = {};
-    var resetting = false; // a reset is under way: no further saves, and no unsaved-changes prompt on the reload it triggers
+    var suppressed = {};   // scopes being reset: their (stale) on-screen values are never saved, so the reset stays reset
+    var reloading = false; // the reload after a successful reset is about to happen: no unsaved-changes prompt
+    var unsavedAfterFailure = false; // edits that could not be saved are still on screen: keep warning before leaving
 
     function setState(text, isError) { if (stateEl) { stateEl.textContent = text; stateEl.className = 'text-caption' + (isError ? ' text-danger' : ''); } }
 
@@ -65,7 +67,7 @@
     });
 
     function save(answers, opts) {
-        if (!canEdit || resetting) { return Promise.resolve({ ok: true }); }
+        if (!canEdit) { return Promise.resolve({ ok: true }); }
         setState('Saving…');
         return saver.save(answers, { step: step }).then(function (r) {
             if (r.ok) {
@@ -137,6 +139,7 @@
     function saveChanged(answers) { var c = saver.changed(answers); return Object.keys(c).length ? save(c) : Promise.resolve({ ok: true }); }
     function saveScope(scope) {
         var kind = scope.getAttribute('data-scope');
+        if (suppressed[scopeId(scope)]) { return Promise.resolve({ ok: true }); }
         if (kind === 'fields') { var changed = collectFields(scope); return Object.keys(changed).length ? save(changed) : Promise.resolve({ ok: true }); }
         if (kind === 'home') {
             var order = [], hidden = [], shown = [];
@@ -177,9 +180,10 @@
         return Promise.resolve({ ok: true });
     }
     function scopeOf(el) { return el.closest('[data-scope]'); }
+    function scopeId(scope) { return scope.getAttribute('data-scope') + (scope.getAttribute('data-group') || ''); }
     function schedule(scope) {
-        if (resetting) { return; }
-        var id = scope.getAttribute('data-scope') + (scope.getAttribute('data-group') || '');
+        var id = scopeId(scope);
+        if (suppressed[id]) { return; }
         clearTimeout(timers[id]); setState('Unsaved changes…');
         timers[id] = setTimeout(function () { delete timers[id]; saveScope(scope); }, 700);
     }
@@ -189,12 +193,19 @@
      * Save every pending edit NOW and report whether ALL of it was persisted: {ok, message}. Waits for the queue, so a
      * result of ok means the server holds what is on screen. A failure leaves the edits in place and still unsaved.
      */
-    function saveEverything() {
+    function saveEverything() { return flushScopes(null); }
+
+    /** Save every pending edit in every scope except the one being reset; resolves {ok, message} once the queue is idle. */
+    function flushScopes(skipId) {
         flushAll();
-        var scopes = []; document.querySelectorAll('[data-scope]').forEach(function (s) { if (s.getAttribute('data-scope') !== 'booking') { scopes.push(s); } });
+        var scopes = []; document.querySelectorAll('[data-scope]').forEach(function (s) {
+            var id = scopeId(s);
+            if (s.getAttribute('data-scope') !== 'booking' && id !== skipId && !suppressed[id]) { scopes.push(s); }
+        });
         return Promise.all(scopes.map(saveScope)).then(function (results) {
             return saver.idle().then(function () {
                 var failed = results.filter(function (r) { return !r || r.ok !== true; })[0];
+                unsavedAfterFailure = !!failed;
                 return failed ? { ok: false, message: failed.message || saver.lastFailure() || 'Could not save your changes.' } : { ok: true };
             });
         });
@@ -226,11 +237,13 @@
             var isGroup = t.hasAttribute('data-reset-group');
             if (isGroup && !confirm('Return this section to its default content?')) { return; }
             var scopeEl = t.closest('[data-scope]');
-            // The reset wins: drop this section's pending autosave timer, then run the reset IN ORDER after any save
-            // already in flight, and block every further save until the page reloads with the reset content.
-            var tid = scopeEl.getAttribute('data-scope') + (scopeEl.getAttribute('data-group') || '');
-            clearTimeout(timers[tid]); delete timers[tid];
-            resetting = true; setState('Resetting…');
+            var tid = scopeId(scopeEl);
+            // A section reset must not take other sections' edits with it. Its own pending edit is dropped and the
+            // section is excluded from saving; every OTHER pending edit is queued first, then the reset runs in order
+            // after any save already in flight. The page reloads only once all of that has succeeded.
+            if (isGroup) { clearTimeout(timers[tid]); delete timers[tid]; suppressed[tid] = true; }
+            setState('Resetting…');
+            var others = flushScopes(isGroup ? tid : null);
             var job;
             if (isGroup) {
                 job = saver.enqueue(function () { return post(urls.reset, { group: t.getAttribute('data-reset-group') }); });
@@ -238,9 +251,16 @@
                 var field = t.closest('[data-field]'); var o = {}; o[field.getAttribute('data-path')] = null;
                 job = saver.enqueue(function () { return post(urls.save, { answers: o, step: step }); });
             }
-            job.then(function (j) {
-                if (j && j.ok) { setState('Reset'); window.location.reload(); }
-                else { resetting = false; setState((j && j.message) || 'Could not reset', true); }
+            Promise.all([others, job]).then(function (rs) {
+                var saved = rs[0], j = rs[1];
+                if (!(j && j.ok)) { delete suppressed[tid]; setState((j && j.message) || 'Could not reset', true); return null; }
+                if (!saved.ok) { return saved; }
+                return flushScopes(isGroup ? tid : null); // anything typed while the reset was running
+            }).then(function (final) {
+                if (final === null) { return; }
+                if (final.ok) { reloading = true; setState('Reset'); window.location.reload(); return; }
+                // The reset itself is done on the server, but other edits could not be saved: do NOT reload over them.
+                setState('Section reset, but other changes were not saved — ' + final.message + ' Your edits are still on this page; use Save draft, then reload.', true);
             });
             return;
         }
@@ -329,6 +349,6 @@
             }, function () { showPublishResult(false, 'Could not publish', ['Could not reach the server.']); });
         });
     }
-    window.addEventListener('beforeunload', function (ev) { if (!resetting && (saver.pending() > 0 || Object.keys(timers).length > 0)) { ev.preventDefault(); ev.returnValue = ''; } });
+    window.addEventListener('beforeunload', function (ev) { if (!reloading && (unsavedAfterFailure || saver.pending() > 0 || Object.keys(timers).length > 0)) { ev.preventDefault(); ev.returnValue = ''; } });
 })();
 </script>
