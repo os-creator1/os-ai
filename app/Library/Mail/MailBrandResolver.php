@@ -94,7 +94,8 @@ class MailBrandResolver
 
     /**
      * The brand for mail addressed to a PERSON about their own account (password reset, email verification): the
-     * white-label brand of the Agency that manages a workspace this person OWNS, else the platform's. Keyed on the
+     * white-label brand of the ONE Agency that manages the workspaces this person OWNS, else the platform's (no
+     * Agency, or more than one). Keyed on the
      * account being mailed, never on the request or the signed-in user, so one Agency's brand cannot reach another
      * Agency's customers or a direct platform customer.
      */
@@ -107,15 +108,19 @@ class MailBrandResolver
         }
 
         try {
-            $agencyId = \App\Models\AgencyClientWorkspaceRelationship::query()
+            $agencyIds = \App\Models\AgencyClientWorkspaceRelationship::query()
                 ->whereIn('client_workspace_id', Workspace::query()->where('owner_user_id', $userId)->select('id'))
                 ->where('status', \App\Enums\Workspace\AgencyClientRelationshipStatus::Active->value)
                 ->whereNull('terminated_at')
-                ->orderBy('id')
-                ->value('agency_workspace_id');
+                ->distinct()
+                ->pluck('agency_workspace_id');
         } catch (Throwable) {
-            $agencyId = null;
+            return MailBrand::platform();
         }
+
+        // Exactly one managing Agency is unambiguous. Several are not, and "the oldest" is not a reason to show a
+        // customer one Agency's identity on mail that concerns their account with another: use the platform's.
+        $agencyId = $agencyIds->count() === 1 ? (int) $agencyIds->first() : null;
 
         return $this->forAgencyWorkspace($agencyId === null ? null : (int) $agencyId);
     }

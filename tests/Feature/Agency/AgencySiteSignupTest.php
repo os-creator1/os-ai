@@ -783,4 +783,99 @@ class AgencySiteSignupTest extends TestCase
             'sub_wrong', 'cus_x', 'acct_other', AgencyClientSubscriptionStatus::Active, (string) $row->checkout_attempt_price_id,
         )));
     }
+
+    // ------------------------------------------- account mail brand with several Agencies (Codex P2)
+
+    private function mailBrand(User $user): \App\Library\Mail\MailBrand
+    {
+        return app(\App\Library\Mail\MailBrandResolver::class)->forUser($user->fresh());
+    }
+
+    /** Another managed workspace for the same person under the given Agency. */
+    private function manageAnotherWorkspaceOf(User $user, Workspace $agency, string $name): Workspace
+    {
+        return app(\App\Library\Workspace\AgencyClientProvisioningManager::class)->provisionClientWorkspace(
+            $user, Customer::query()->where('user_id', $user->id)->firstOrFail(), $agency, (int) $agency->owner_user_id, $name, $name,
+        );
+    }
+
+    public function test_account_mail_uses_the_one_managing_agencys_brand(): void
+    {
+        $live = $this->liveAgency();
+        $this->post($this->signupUrl($live), $this->form())->assertRedirect();
+        $user = User::query()->where('email', 'dana@harbor.example')->sole();
+
+        $brand = $this->mailBrand($user);
+        $this->assertSame('agency', $brand->kind);
+        $this->assertSame('Northwind Agency Digital', $brand->name);
+
+        // The same Agency managing several of their workspaces is still one Agency.
+        $this->manageAnotherWorkspaceOf($user, $live['agency'], 'Second Studio');
+        $this->assertSame('Northwind Agency Digital', $this->mailBrand($user)->name);
+    }
+
+    public function test_account_mail_is_neutral_when_two_different_agencies_manage_the_persons_workspaces(): void
+    {
+        $one = $this->liveAgency('Northwind Agency');
+        $two = $this->liveAgency('Southwind Agency');
+        $this->post($this->signupUrl($one), $this->form())->assertRedirect();
+        $user = User::query()->where('email', 'dana@harbor.example')->sole();
+        $this->assertSame('Northwind Agency Digital', $this->mailBrand($user)->name);
+
+        $this->manageAnotherWorkspaceOf($user, $two['agency'], 'Other Agency Client');
+
+        $brand = $this->mailBrand($user);
+        $this->assertSame('platform', $brand->kind, 'never the oldest relationship\'s Agency');
+        $this->assertStringNotContainsString('Northwind', $brand->name);
+        $this->assertStringNotContainsString('Southwind', $brand->name);
+
+        // The rendered reset / verification mails follow suit.
+        $reset = (new \App\Notifications\Auth\BrandedResetPassword('token'))->toMail($user->fresh());
+        $this->assertStringNotContainsString('Northwind', (string) $reset->render());
+        $this->assertStringNotContainsString('Southwind', (string) $reset->render());
+    }
+
+    public function test_ended_relationships_do_not_count_for_or_against_a_brand(): void
+    {
+        $one = $this->liveAgency('Northwind Agency');
+        $two = $this->liveAgency('Southwind Agency');
+        $this->post($this->signupUrl($one), $this->form())->assertRedirect();
+        $user = User::query()->where('email', 'dana@harbor.example')->sole();
+        $second = $this->manageAnotherWorkspaceOf($user, $two['agency'], 'Other Agency Client');
+        $this->assertSame('platform', $this->mailBrand($user)->kind);
+
+        // Southwind's management ends: Northwind is the only ACTIVE Agency again.
+        AgencyClientWorkspaceRelationship::query()->where('client_workspace_id', $second->id)->update([
+            'status' => \App\Enums\Workspace\AgencyClientRelationshipStatus::Terminated->value, 'terminated_at' => now(),
+        ]);
+        $this->assertSame('Northwind Agency Digital', $this->mailBrand($user)->name);
+
+        // Now Northwind's ends too: nobody manages them.
+        AgencyClientWorkspaceRelationship::query()->where('agency_workspace_id', $one['agency']->id)->update([
+            'status' => \App\Enums\Workspace\AgencyClientRelationshipStatus::Terminated->value, 'terminated_at' => now(),
+        ]);
+        $this->assertSame('platform', $this->mailBrand($user)->kind);
+    }
+
+    public function test_direct_platform_users_and_unknown_accounts_get_the_platform_brand(): void
+    {
+        $this->liveAgency();
+        [$owner] = $this->tenant(WorkspacePlanTier::Growth, 'Direct Business', 'Direct Co');
+
+        $this->assertSame('platform', $this->mailBrand(User::query()->findOrFail($owner->user_id))->kind);
+        $this->assertSame('platform', app(\App\Library\Mail\MailBrandResolver::class)->forUser(null)->kind);
+        $this->assertSame('platform', app(\App\Library\Mail\MailBrandResolver::class)->forUser((object) ['id' => 999999])->kind);
+    }
+
+    public function test_an_explicit_agency_context_keeps_the_agencys_brand_regardless_of_the_recipients_other_agencies(): void
+    {
+        $one = $this->liveAgency('Northwind Agency');
+        $two = $this->liveAgency('Southwind Agency');
+        $resolver = app(\App\Library\Mail\MailBrandResolver::class);
+
+        // Invitations name their Agency authoritatively; that path never consults the recipient's relationships.
+        $this->assertSame('Northwind Agency Digital', $resolver->forAgencyWorkspace((int) $one['agency']->id)->name);
+        $this->assertSame('Southwind Agency Digital', $resolver->forAgencyWorkspace((int) $two['agency']->id)->name);
+        $this->assertSame('platform', $resolver->forAgencyWorkspace(null)->kind);
+    }
 }
