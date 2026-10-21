@@ -28,7 +28,7 @@ class ClientChromeBrand
     }
 
     /**
-     * @return array{name: string, mark: string, logo: ?string, accent: ?string, accentContrast: ?string, tagline: ?string, support: ?string}|null
+     * @return array{name: string, mark: string, logo: ?string, accent: ?string, accentContrast: ?string, secondary: ?string, favicon: ?string, logoCompact: ?string, supportUrl: ?string, tagline: ?string, support: ?string}|null
      */
     public function current(Request $request): ?array
     {
@@ -50,8 +50,19 @@ class ClientChromeBrand
             'accent' => $accent,
             'accentContrast' => $accent !== null ? self::contrastFor($accent) : null,
             'tagline' => $brand->tagline,
+            'secondary' => $this->presenter->safeHex($agency->secondaryColor),
+            'favicon' => $this->presenter->safeAsset($agency->faviconPath),
+            'logoCompact' => $this->presenter->safeAsset($agency->logoCompactPath),
+            'supportUrl' => $this->safeHttpsUrl($agency->supportUrl),
             'support' => $support !== '' && filter_var($support, FILTER_VALIDATE_EMAIL) !== false ? $support : null,
         ];
+    }
+
+    private function safeHttpsUrl(?string $url): ?string
+    {
+        $url = trim((string) $url);
+
+        return $url !== '' && str_starts_with($url, 'https://') && filter_var($url, FILTER_VALIDATE_URL) !== false ? $url : null;
     }
 
     /**

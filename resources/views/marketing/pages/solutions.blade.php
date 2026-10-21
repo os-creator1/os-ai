@@ -31,18 +31,21 @@
 <p class="lead">{{ $industry['body'] }}</p>
 <div style="display: flex; flex-wrap: wrap; gap: 10px; padding-top: 6px">@if ($mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}" class="btn btn-p">Book a demo</a>@endif<a href="{{ $mg->url('pricing') }}" class="btn {{ $mg->hasBookDemo() ? 'btn-s' : 'btn-p' }}">See pricing</a></div>
 </div>
+@if ($industry['jobs'])
 <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 10px">
-<span style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6B625E">What MotionGrove takes off your plate</span>
+<span style="font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6B625E">What {{ $mg->brandName() }} takes off your plate</span>
 @foreach ($industry['jobs'] as $job)
 <div style="display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; border-radius: 14px; background: #F7F5F2"><span style="width: 26px; height: 26px; flex: none; border-radius: 50%; background: #E4F0EA; color: #1F5E4A; display: flex; align-items: center; justify-content: center"><svg viewBox="0 0 24 24" aria-hidden="true" style="width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><div><b style="font-size: 15.5px">{{ $job[0] }}</b><div style="color: #5E5652; font-size: 14.5px; margin-top: 2px; line-height: 1.5">{{ $job[1] }}</div></div></div>
 @endforeach
 </div>
+@endif
 </div>
 @endforeach
 <p style="margin: 0; font-size: 13px; color: #6B625E">{{ $c['note'] }}@if ($mg->hasBookDemo()) <a href="{{ $mg->bookDemoUrl() }}" style="text-decoration: underline">Ask us</a> — the platform isn’t industry-specific.@endif</p>
 </div>
 </section>
 
+@if ($mg->section('solutions.agency'))
 <section aria-labelledby="ag-h" style="padding: 112px 0; background: #181413; color: #FFFFFF">
 <div class="wrap" style="display: flex; flex-wrap: wrap; gap: 56px; align-items: center">
 <div style="flex: 1 1 440px; display: flex; flex-direction: column; gap: 18px"><span class="eyebrow" style="color: #E8A49C">{{ $ag['eyebrow'] }}</span><h2 id="ag-h" class="h2">{{ $ag['title'] }}</h2><p class="lead" style="color: #C9C0BA">{{ $ag['lead'] }}</p><div style="display: flex; flex-wrap: wrap; gap: 12px"><a href="{{ $mg->planUrl('agency') }}" class="btn btn-p">{{ $ag['primary'] }}</a>@if ($mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}" class="btn" style="border-color: rgba(255,255,255,.35); color: #FFFFFF">{{ $ag['secondary'] }}</a>@endif</div></div>
@@ -55,6 +58,7 @@
 </div>
 </div>
 </section>
+@endif
 
 @include('marketing.partials.cta-center', ['title' => $c['cta']['title'], 'lead' => $c['cta']['lead'], 'titleMax' => 760, 'leadMax' => 560])
 @endsection

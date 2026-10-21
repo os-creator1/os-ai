@@ -27,7 +27,7 @@
 @else
 <div style="width: 44px; height: 44px; flex: none; border-radius: 50%; border: 1.5px dashed #C9BDB5; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #6B625E; text-align: center">[Photo]</div>
 @endif
-<div style="display: flex; flex-direction: column; gap: 4px"><b style="font-size: 13.5px">{{ $specialistName }} <span style="font-weight: 500; color: #6B625E">· MotionGrove team</span></b><span style="font-size: 13.5px; line-height: 1.5; color: #2E2826">Your calendar is connected. Next we’ll set up your business number — I’ve booked 15 minutes for Thursday.</span><span style="font-size: 11.5px; color: #6B625E">Example message</span></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><b style="font-size: 13.5px">{{ $specialistName }} <span style="font-weight: 500; color: #6B625E">· {{ $mg->brandName() }} team</span></b><span style="font-size: 13.5px; line-height: 1.5; color: #2E2826">Your calendar is connected. Next we’ll set up your business number — I’ve booked 15 minutes for Thursday.</span><span style="font-size: 11.5px; color: #6B625E">Example message</span></div>
 </div>
 @endif
 </div>

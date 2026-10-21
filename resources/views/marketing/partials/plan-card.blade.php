@@ -18,7 +18,7 @@
 <article @class(['card' => ! $featured]) style="padding: {{ $pad }}; display: flex; flex-direction: column; gap: {{ $gap }};{{ $featured ? ' border-radius: '.($pricing ? '22px' : '20px').'; background: #181413; color: #FFFFFF; box-shadow: 0 30px 60px -30px rgba(24,20,19,.6); position: relative' : '' }}">
 @if ($featured && ! empty($plan['badge']))<span class="chip" style="position: absolute; top: {{ $pricing ? '28px' : '24px' }}; right: {{ $pricing ? '28px' : '24px' }}; background: #B4514A; color: #FFFFFF">{{ $plan['badge'] }}</span>@endif
 <div><{{ $heading }} style="margin: 0; font-size: {{ $hSize }}; font-weight: 700">{{ $plan['name'] }}</{{ $heading }}><p style="margin: 6px 0 0; color: {{ $muted }}">{{ $tag }}</p></div>
-<div style="display: flex; align-items: baseline; gap: 6px"><span style="font-size: {{ $priceSize }}; font-weight: 800; letter-spacing: -0.04em">${{ $plan['price'] }}</span><span style="color: {{ $muted }}">/ 28 days</span></div>
+@if ($plan['price_label'] !== null)<div style="display: flex; align-items: baseline; gap: 6px"><span style="font-size: {{ $priceSize }}; font-weight: 800; letter-spacing: -0.04em">{{ $plan['price_label'] }}</span><span style="color: {{ $muted }}">{{ $plan['cycle_label'] }}</span></div>@endif
 <a href="{{ $plan['url'] }}" class="btn {{ $featured ? 'btn-p' : 'btn-s' }}">{{ $plan['cta'] }}</a>
 <ul style="list-style: none; margin: 0; padding: {{ $pricing ? '20px' : '18px' }} 0 0; border-top: 1px solid {{ $featured ? '#3A322F' : '#EFEAE5' }}; display: flex; flex-direction: column; gap: 12px; font-size: 15px">
 @if (! empty($plan['features_lead']))<li style="font-weight: 600">{{ $plan['features_lead'] }}</li>@endif

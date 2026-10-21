@@ -73,6 +73,7 @@ final class CustomerMenuBuilder
         // must stay active while any of their own pages is open.
         'customer.workspaces.agency.saas.',
         'customer.workspaces.agency.white-label.',
+        'customer.workspaces.agency.site.',
         'customer.workspaces.agency-plan.',
     ];
 
@@ -574,6 +575,7 @@ final class CustomerMenuBuilder
             ]);
             $items[] = $this->item($user, 'agency-white-label', 'White Label', 'droplet', ['access_backend'], 'customer.workspaces.agency.white-label.show', [$agency->uid], $current, [
                 'customer.workspaces.agency.white-label.',
+                'customer.workspaces.agency.site.',
             ]);
         }
 
@@ -926,6 +928,7 @@ final class CustomerMenuBuilder
             ]);
             $accountItems[] = $this->item($user, 'agency-white-label', 'White label', 'droplet', ['access_backend'], 'customer.workspaces.agency.white-label.show', [$account->uid], $current, [
                 'customer.workspaces.agency.white-label.',
+                'customer.workspaces.agency.site.',
             ]);
         }
 

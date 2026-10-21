@@ -2,6 +2,8 @@
 
 namespace App\Library\Website\Domains;
 
+use App\Library\Domains\DomainReservations;
+use App\Library\Domains\DomainUnavailableException;
 use App\Enums\Website\WebsiteDomainCertificateStatus;
 use App\Enums\Website\WebsiteDomainStatus;
 use App\Http\Middleware\TrustHosts;
@@ -75,7 +77,7 @@ final class WebsiteDomainService
                 ]);
             }
 
-            return $website->domains()->create([
+            $created = $website->domains()->create([
                 'domain' => $domain,
                 // The first domain a website ever connects becomes its
                 // canonical address automatically; every domain added
@@ -85,6 +87,16 @@ final class WebsiteDomainService
                 'status' => WebsiteDomainStatus::PendingVerification,
                 'verification_token' => Str::random(40),
             ]);
+
+            // One hostname, one owner — across website domains AND Agency app domains. The unique reservation decides
+            // a simultaneous claim; the transaction rolls the row back if it loses.
+            try {
+                app(DomainReservations::class)->claim($domain, DomainReservations::WEBSITE, (int) $created->id);
+            } catch (DomainUnavailableException $e) {
+                throw ValidationException::withMessages(['domain' => [$e->getMessage()]]);
+            }
+
+            return $created;
         });
     }
 

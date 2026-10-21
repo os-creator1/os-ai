@@ -130,6 +130,10 @@ class ClientWorkspaceBrandResolver
                 tagline: $setting->tagline,
                 accentColor: $setting->accent_color,
                 supportEmail: $setting->support_email,
+                secondaryColor: $setting->secondary_color,
+                faviconPath: $setting->favicon_path,
+                logoCompactPath: $setting->logo_compact_path,
+                supportUrl: $setting->support_url,
             );
         } catch (Throwable) {
             // Branding is cosmetic: a failure here must never take the page

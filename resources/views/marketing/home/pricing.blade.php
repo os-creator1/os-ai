@@ -15,16 +15,15 @@
 
 {{-- Phone: Growth up front, the other two as compact rows (Home-phone.dc.html). --}}
 <div class="show-m" style="display: flex; flex-direction: column; gap: 14px">
-@php($g = $plans['growth'])
+@php($g = collect($plans)->first(fn ($candidate) => $candidate['featured']) ?? collect($plans)->first())
 <article style="padding: 24px; border-radius: 20px; background: #181413; color: #FFFFFF; display: flex; flex-direction: column; gap: 14px; text-align: left">
 <div style="display: flex; justify-content: space-between; align-items: center"><b style="font-size: 19px">{{ $g['name'] }}</b>@if (! empty($g['badge']))<span class="chip" style="background: #B4514A; color: #FFFFFF">{{ $g['badge'] }}</span>@endif</div>
-<div><span style="font-size: 44px; font-weight: 800; letter-spacing: -0.04em">${{ $g['price'] }}</span><span style="color: #C9C0BA"> / 28 days</span></div>
+@if ($g['price_label'] !== null)<div><span style="font-size: 44px; font-weight: 800; letter-spacing: -0.04em">{{ $g['price_label'] }}</span><span style="color: #C9C0BA"> {{ $g['cycle_label'] }}</span></div>@endif
 <span style="color: #C9C0BA; font-size: 15px; line-height: 1.5">{{ $g['tagline_mobile'] }}</span>
 <a href="{{ $g['url'] }}" class="btn btn-p" style="min-height: 52px; border-radius: 14px; font-size: 16px">{{ $g['cta'] }}</a>
 </article>
-@foreach (['core', 'agency'] as $key)
-@php($p = $plans[$key])
-<a href="{{ $p['url'] }}" class="card" style="padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; border-radius: 18px; text-align: left"><div><b style="font-size: 17px">{{ $p['name'] }}</b><div style="color: #5E5652; font-size: 14px">{{ $p['tagline_mobile'] }}</div></div><b style="font-size: 22px">${{ $p['price'] }}</b></a>
+@foreach (collect($plans)->reject(fn ($candidate) => $candidate['key'] === $g['key']) as $p)
+<a href="{{ $p['url'] }}" class="card" style="padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; border-radius: 18px; text-align: left"><div><b style="font-size: 17px">{{ $p['name'] }}</b><div style="color: #5E5652; font-size: 14px">{{ $p['tagline_mobile'] }}</div></div>@if ($p['price_label'] !== null)<b style="font-size: 22px">{{ $p['price_label'] }}</b>@endif</a>
 @endforeach
 <a href="{{ $mg->url('pricing') }}" style="font-size: 14px; color: #8F3B35; font-weight: 600; text-decoration: underline">{{ $c['link_mobile'] }}</a>
 </div>

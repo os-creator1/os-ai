@@ -37,6 +37,8 @@ final class MailBrand
         /** @var array<int, string> plain-text footer lines (escaped on output) */
         public readonly array $footerLines,
         public readonly ?string $homeUrl = null,
+        /** The Agency's support address, used as Reply-To only. The From address is never the Agency's. */
+        public readonly ?string $replyTo = null,
     ) {
         $tokens = BrandColors::tokens($accent) ?? BrandColors::tokens(self::PLATFORM_ACCENT);
 
@@ -78,20 +80,28 @@ final class MailBrand
     }
 
     /** Agency white-label identity: the Agency's own name, colour and logo. */
-    public static function agency(string $displayName, ?string $accent, ?string $logoUrl): self
+    public static function agency(string $displayName, ?string $accent, ?string $logoUrl, ?string $supportEmail = null, ?string $supportUrl = null): self
     {
         $platform = trim((string) config('app.name')) ?: 'MotionGrove';
         $name = self::clean($displayName) ?? $platform;
+        $email = filter_var(trim((string) $supportEmail), FILTER_VALIDATE_EMAIL) ?: null;
+        $url = is_string($supportUrl) && str_starts_with($supportUrl, 'https://') && filter_var($supportUrl, FILTER_VALIDATE_URL) ? $supportUrl : null;
+
+        $lines = ['Sent by ' . $name . ' through ' . $platform . '.'];
+
+        if ($email !== null || $url !== null) {
+            $lines[] = 'Need help? Contact ' . $name . ' support' . ($email !== null ? ' at ' . $email : '') . ($url !== null ? ($email !== null ? ' or visit ' : ': ') . $url : '') . '.';
+        }
+
+        $lines[] = '© ' . date('Y') . ' ' . $platform . '. All rights reserved.';
 
         return new self(
             name: $name,
             accent: $accent,
             logoUrl: self::emailSafeLogo($logoUrl),
             kind: 'agency',
-            footerLines: [
-                'Sent by ' . $name . ' through ' . $platform . '.',
-                '© ' . date('Y') . ' ' . $platform . '. All rights reserved.',
-            ],
+            footerLines: $lines,
+            replyTo: $email,
         );
     }
 

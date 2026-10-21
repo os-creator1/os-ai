@@ -181,6 +181,23 @@ final class AgencyClientSubscriptionManager
                 throw AgencyBillingException::because(AgencyBillingException::CLIENT_ALREADY_SUBSCRIBED);
             }
 
+            // THE SAME PROPOSAL, OFFERED AGAIN, IS NOT A NEW PROPOSAL.
+            //
+            // A double submit, a return to the signup page or a simultaneous retry all re-offer identical terms.
+            // Starting a "fresh attempt" for them forgot the open Checkout session, so a second payable session
+            // was created while the first stayed open. Identical terms on an unpaid, non-ended row change nothing.
+            if ($existing !== null && ! $existing->status->isTerminal() && $this->termsMatch($existing, $plan, $connection)) {
+                return $existing;
+            }
+
+            // CHANGED TERMS NEVER REPLACE TERMS A CLIENT CAN STILL PAY. A recorded Checkout session is payable until
+            // the provider says otherwise, and that cannot be asked under this lock. The caller retires it first
+            // (retireCheckoutForReplacement) — which clears the id once the session is provably dead. If one is still
+            // recorded, or appeared meanwhile, the old terms stay exactly as they are.
+            if ($existing !== null && ! $existing->status->isTerminal() && $existing->provider_checkout_session_id !== null) {
+                throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_CONTENDED);
+            }
+
             $row = $existing ?? new AgencyClientSubscription([
                 'agency_workspace_id' => $agencyWorkspace->id,
                 'client_workspace_id' => $clientWorkspace->id,
@@ -233,15 +250,100 @@ final class AgencyClientSubscriptionManager
                 'trial_days_snapshot' => $plan->configuredTrialDays(),
                 'offered_by_user_id' => $actorUserId,
                 'offered_at' => now(),
-                // A fresh proposal starts a fresh attempt.
+                'checkout_attempt_generation' => (int) ($row->checkout_attempt_generation ?? 0) + 1,
+                // New terms start a new attempt: a request still holding the old terms can no longer record a session.
                 'checkout_attempt_uid' => null,
                 'checkout_attempt_price_id' => null,
                 'provider_checkout_session_id' => null,
-                'checkout_attempt_generation' => (int) ($row->checkout_attempt_generation ?? 0) + 1,
             ])->save();
 
             return $row->refresh();
         });
+    }
+
+    /** Whether an unpaid row already carries exactly these terms on this connection. */
+    private function termsMatch(AgencyClientSubscription $row, AgencySaasPlan $plan, $connection): bool
+    {
+        return (int) $row->agency_saas_plan_id === (int) $plan->id
+            && (int) $row->agency_workspace_id === (int) $plan->agency_workspace_id
+            && abs((float) $row->price_snapshot - (float) $plan->price) < 0.0001
+            && (string) $row->currency_code === (string) $plan->currency_code
+            && (string) $row->billing_cycle_snapshot === (string) $plan->billing_cycle
+            && (int) $row->trial_days_snapshot === (int) $plan->configuredTrialDays()
+            && (string) $row->connected_account_id === (string) $connection->stripe_account_id;
+    }
+
+    /**
+     * Make an unpaid client's recorded Checkout session provably dead BEFORE different terms are offered.
+     *
+     * Order matters: the session is read from the provider, expired, and only then is the local record released, so the
+     * row never names a plan other than the one a payable session is for. Provider calls happen here, outside any lock.
+     *
+     *  - complete  → the payment is reconciled against the terms it was OPENED for (the row still carries them),
+     *                then the caller is refused: the client already bought that plan.
+     *  - open      → expired; if Stripe will not confirm that, nothing changes and the caller is refused.
+     *  - expired   → the record is released.
+     *
+     * @throws AgencyBillingException
+     */
+    public function retireCheckoutForReplacement(Workspace $clientWorkspace, AgencySaasPlan $target): void
+    {
+        for ($round = 0; $round < self::MAX_CHECKOUT_ROUNDS; $round++) {
+            $row = $this->findForClientWorkspace($clientWorkspace);
+
+            if ($row === null || $row->status->isTerminal() || $row->provider_checkout_session_id === null) {
+                return;
+            }
+
+            $agency = Workspace::query()->findOrFail($row->agency_workspace_id);
+            $connection = $this->connections->chargeableConnection($agency);
+
+            if ($this->termsMatch($row, $target, $connection)) {
+                return;
+            }
+
+            $accountId = (string) $row->connected_account_id;
+
+            if ($accountId === '') {
+                throw AgencyBillingException::because(AgencyBillingException::NO_CONNECTION);
+            }
+
+            $sessionId = (string) $row->provider_checkout_session_id;
+            $session = $this->gateway->retrieveCheckoutSession($accountId, $sessionId);
+
+            if ($session->status === 'complete') {
+                $this->confirmCheckoutSession($row, $sessionId);
+
+                throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_ALREADY_COMPLETED);
+            }
+
+            if ($session->status === 'open') {
+                $this->retireSessionOrFail($accountId, $sessionId);
+            }
+
+            $released = DB::transaction(function () use ($row, $sessionId): bool {
+                $locked = AgencyClientSubscription::query()->whereKey($row->id)->lockForUpdate()->firstOrFail();
+
+                if ((string) $locked->provider_checkout_session_id !== $sessionId) {
+                    return false;
+                }
+
+                $locked->forceFill([
+                    'provider_checkout_session_id' => null,
+                    'checkout_attempt_uid' => null,
+                    'checkout_attempt_price_id' => null,
+                    'checkout_attempt_generation' => (int) $locked->checkout_attempt_generation + 1,
+                ])->save();
+
+                return true;
+            });
+
+            if ($released) {
+                return;
+            }
+        }
+
+        throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_CONTENDED);
     }
 
     /**
@@ -661,8 +763,8 @@ final class AgencyClientSubscriptionManager
             }
 
             // Somebody replaced this attempt while we were talking to Stripe.
-            // The session just created would still be payable, so retire it.
-            $this->expireQuietly($connectedAccountId, $result->sessionId);
+            // The session just created would still be payable, so retire it — or stop.
+            $this->retireSessionOrFail($connectedAccountId, $result->sessionId);
         }
 
         throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_CONTENDED);
@@ -708,7 +810,7 @@ final class AgencyClientSubscriptionManager
                 // A deliberate replacement: retire the old session first, so a
                 // stale tab cannot still pay for the plan just left behind.
                 if ($session->status === 'open') {
-                    $this->expireQuietly($connectedAccountId, $session->sessionId);
+                    $this->retireSessionOrFail($connectedAccountId, $session->sessionId);
                 }
             } elseif ($hasAttempt && $samePrice) {
                 // An attempt exists but no session id was recorded: the
@@ -751,6 +853,12 @@ final class AgencyClientSubscriptionManager
                 return null;
             }
 
+            // The caller is working from a plan it read earlier. If the terms moved on since, it must not open a
+            // session for the old plan against the new terms.
+            if ((int) $locked->agency_saas_plan_id !== (int) $plan->id) {
+                throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_CONTENDED);
+            }
+
             $locked->forceFill([
                 'checkout_attempt_uid' => (string) Str::uuid(),
                 'checkout_attempt_price_id' => $plan->provider_price_id,
@@ -785,18 +893,38 @@ final class AgencyClientSubscriptionManager
     }
 
     /**
-     * Retiring an orphan must never mask the real outcome of the caller's
-     * operation: if the provider refuses the expire — a race where somebody
-     * else already expired it, say — that is not this request's problem.
+     * A session being REPLACED must be provably unpayable before another is opened, or the client could pay twice.
+     *
+     * Expire it; if the provider refuses, re-read it. Already expired (somebody else won) is fine, and so is complete
+     * (the caller learns the payment landed). Still open, or state that cannot be read, is not: stop with an error
+     * and leave the existing attempt in place so a later retry starts from the same session again.
+     *
+     * @throws AgencyBillingException
      */
-    private function expireQuietly(string $connectedAccountId, string $sessionId): void
+    private function retireSessionOrFail(string $connectedAccountId, string $sessionId): void
     {
         try {
             $this->gateway->expireCheckoutSession($connectedAccountId, $sessionId);
+
+            return;
         } catch (Throwable $e) {
             Log::warning('AgencyClientSubscriptionManager could not expire a superseded checkout session', [
                 'exception' => class_basename($e),
             ]);
+        }
+
+        try {
+            $status = $this->gateway->retrieveCheckoutSession($connectedAccountId, $sessionId)->status;
+        } catch (Throwable) {
+            throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_CONTENDED);
+        }
+
+        if ($status === 'complete') {
+            throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_ALREADY_COMPLETED);
+        }
+
+        if ($status !== 'expired') {
+            throw AgencyBillingException::because(AgencyBillingException::CHECKOUT_CONTENDED);
         }
     }
 
