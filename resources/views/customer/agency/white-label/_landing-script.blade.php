@@ -211,6 +211,18 @@
         });
     }
 
+    /**
+     * flushScopes, repeated until the editor is quiescent: an edit typed WHILE a flush was saving creates a new autosave
+     * timer after flushAll() has run, so one pass could reload the page over it. Gives up (not ok) rather than loop forever.
+     */
+    function settleScopes(skipId, round) {
+        return flushScopes(skipId).then(function (r) {
+            if (!r.ok || (Object.keys(timers).length === 0 && saver.pending() === 0)) { return r; }
+            if ((round || 0) >= 5) { return { ok: false, message: 'Your page kept changing while it was being saved.' }; }
+            return settleScopes(skipId, (round || 0) + 1);
+        });
+    }
+
     root.addEventListener('input', function (ev) { var s = scopeOf(ev.target); if (s && canEdit && s.getAttribute('data-scope') !== 'booking') { schedule(s); } });
     root.addEventListener('change', function (ev) {
         var t = ev.target, s = scopeOf(t); if (!s || !canEdit) { return; }
@@ -255,12 +267,14 @@
                 var saved = rs[0], j = rs[1];
                 if (!(j && j.ok)) { delete suppressed[tid]; setState((j && j.message) || 'Could not reset', true); return null; }
                 if (!saved.ok) { return saved; }
-                return flushScopes(isGroup ? tid : null); // anything typed while the reset was running
+                return settleScopes(isGroup ? tid : null); // anything typed while the reset was running
             }).then(function (final) {
                 if (final === null) { return; }
                 if (final.ok) { reloading = true; setState('Reset'); window.location.reload(); return; }
-                // The reset itself is done on the server, but other edits could not be saved: do NOT reload over them.
-                setState('Section reset, but other changes were not saved — ' + final.message + ' Your edits are still on this page; use Save draft, then reload.', true);
+                // The reset itself is done on the server, but other edits could not be saved: do NOT reload over them. The reset
+                // section still shows its old content, so it is locked (not silently ignoring input) until the page is reloaded.
+                if (isGroup) { scopeEl.querySelectorAll('input, textarea, select, button').forEach(function (el) { el.disabled = true; }); }
+                setState('Section reset, but other changes were not saved — ' + final.message + ' Your edits are still on this page; use Save draft, then reload. The reset section is locked until you reload.', true);
             });
             return;
         }
