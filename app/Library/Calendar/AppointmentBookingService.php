@@ -89,7 +89,8 @@ class AppointmentBookingService
         int $contactId,
         CarbonInterface $startAt,
         ?int $createdByUserId = null,
-        ?int $crmOpportunityId = null
+        ?int $crmOpportunityId = null,
+        ?array $meetingLocation = null
     ): Appointment {
         \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('booking');
 
@@ -98,8 +99,12 @@ class AppointmentBookingService
         // §7.2 step 1 — ensure OUTSIDE the transaction, before any lock.
         $this->locks->ensure([$staffUserId]);
 
+        // A Zoom appointment needs a usable host BEFORE any lock is taken: refuse it here rather than book a
+        // meeting that can never get a link. (A host lost after this point is handled by the Zoom provisioning job.)
+        $meetingLocation = \App\Library\Calendar\Zoom\ZoomHostResolver::assertBookable($bookingType, $staffUserId, $meetingLocation);
+
         $appointment = DB::transaction(function () use (
-            $bookingType, $location, $staffUserId, $contactId, $startAt, $createdByUserId, $crmOpportunityId
+            $bookingType, $location, $staffUserId, $contactId, $startAt, $createdByUserId, $crmOpportunityId, $meetingLocation
         ): Appointment {
             // Tier 0, FIRST: the Booking Type row, never the caller's model.
             $lockedType = $this->lockBookingTypeForBooking($bookingType, $location);
@@ -118,7 +123,8 @@ class AppointmentBookingService
                 $startAt,
                 $endAt,
                 $createdByUserId,
-                $crmOpportunityId
+                $crmOpportunityId,
+                $meetingLocation
             );
         }, self::TRANSACTION_ATTEMPTS);
 
@@ -143,14 +149,16 @@ class AppointmentBookingService
         int $contactId,
         CarbonInterface $startAt,
         ?int $createdByUserId = null,
-        ?int $crmOpportunityId = null
+        ?int $crmOpportunityId = null,
+        ?array $meetingLocation = null
     ): Appointment {
         return $this->bookWithRoundRobinContactResolver(
             $bookingType,
             $startAt,
             static fn (): int => $contactId,
             $createdByUserId,
-            $crmOpportunityId
+            $crmOpportunityId,
+            $meetingLocation
         );
     }
 
@@ -160,14 +168,23 @@ class AppointmentBookingService
      * write a Contact; a refusal rolls it back with the Appointment and cursor.
      * Existing authenticated callers continue through bookWithRoundRobin().
      *
+     * `$afterInsert`, when given, runs in the SAME transaction right after the
+     * Appointment row exists. Anything it writes commits with the booking, and
+     * if it throws the Appointment, Contact and cursor roll back and nothing is
+     * dispatched. It may run again if the transaction is retried, so it must
+     * only write rows that belong to the Appointment it is handed.
+     *
      * @param callable(): int $resolveContactId
+     * @param (callable(Appointment): void)|null $afterInsert
      */
     public function bookWithRoundRobinContactResolver(
         BookingType $bookingType,
         CarbonInterface $startAt,
         callable $resolveContactId,
         ?int $createdByUserId = null,
-        ?int $crmOpportunityId = null
+        ?int $crmOpportunityId = null,
+        ?array $meetingLocation = null,
+        ?callable $afterInsert = null
     ): Appointment {
         $location = $this->locationFor($bookingType);
         $endAt = $this->endFor($bookingType, $startAt);
@@ -191,8 +208,11 @@ class AppointmentBookingService
         $this->locks->ensure($pool);
         $this->ensureRoundRobinState($bookingType);
 
+        // Zoom: every pooled host must be usable (the type's readiness already demands it); checked before any lock.
+        $meetingLocation = \App\Library\Calendar\Zoom\ZoomHostResolver::assertPoolBookable($bookingType, $pool, $meetingLocation);
+
         $appointment = DB::transaction(function () use (
-            $bookingType, $location, $pool, $resolveContactId, $startAt, $createdByUserId, $crmOpportunityId
+            $bookingType, $location, $pool, $resolveContactId, $startAt, $createdByUserId, $crmOpportunityId, $meetingLocation, $afterInsert
         ): Appointment {
             // Tier 0 first (the Booking Type row, re-derived under a shared
             // lock), then tier 1, held for the whole assignment.
@@ -230,7 +250,8 @@ class AppointmentBookingService
                     $startAt,
                     $endAt,
                     $createdByUserId,
-                    $crmOpportunityId
+                    $crmOpportunityId,
+                    $meetingLocation
                 );
 
                 // §7.3 step 4 — the cursor advances in the SAME transaction as
@@ -243,6 +264,10 @@ class AppointmentBookingService
                         'last_assigned_at' => now(),
                         'updated_at' => now(),
                     ]);
+
+                if ($afterInsert !== null) {
+                    $afterInsert($appointment);
+                }
 
                 return $appointment;
             }
@@ -668,9 +693,13 @@ class AppointmentBookingService
         CarbonInterface $startAt,
         CarbonInterface $endAt,
         ?int $createdByUserId,
-        ?int $crmOpportunityId
+        ?int $crmOpportunityId,
+        ?array $meetingLocation = null
     ): Appointment {
-        return Appointment::create([
+        // The location is a SNAPSHOT: a later edit of the Booking Type never rewrites an existing appointment.
+        $location_ = \App\Library\Calendar\Zoom\ZoomHostResolver::snapshot($bookingType, $meetingLocation);
+
+        return Appointment::create($location_ + [
             'business_location_id' => $location->id,
             'booking_type_id' => $bookingType->id,
             'staff_user_id' => $staffUserId,

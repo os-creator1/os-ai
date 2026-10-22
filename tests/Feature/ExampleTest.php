@@ -6,10 +6,10 @@ use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
-    public function test_an_unauthenticated_visitor_is_redirected_to_login(): void
+    public function test_an_unauthenticated_visitor_sees_the_public_marketing_homepage(): void
     {
-        $response = $this->get('/');
-
-        $response->assertRedirect(route('login'));
+        // The root used to redirect guests to the login page. It is now the public MotionGrove site
+        // (tests/Feature/Marketing); signed-in customers are still sent into the application.
+        $this->get('/')->assertOk()->assertSee('More bookings.', false);
     }
 }

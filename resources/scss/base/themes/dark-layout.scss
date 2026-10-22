@@ -112,7 +112,7 @@
 
   // main navbar and header navbar shadow(generic navbar)
   .header-navbar-shadow {
-    background: linear-gradient(180deg, rgba(22, 29, 49, 0.9) 44%, rgba(22, 29, 49, 0.43) 73%, rgba(22, 29, 49, 0));
+    background: linear-gradient(180deg, rgba(26, 26, 25, 0.9) 44%, rgba(26, 26, 25, 0.43) 73%, rgba(26, 26, 25, 0));
   }
 
   // main header navbar dark style
@@ -1510,7 +1510,7 @@
   .kb-search-content-info {
     .kb-search-content {
       .card-img-top {
-        background-color: #3f4860;
+        background-color: #41403c;
       }
     }
   }
@@ -1727,7 +1727,7 @@
           // removed structurally, matching the light-mode fix
           // (app-chat.scss, item 51). The rest of this dark theme
           // bundle's own palette is deliberately left untouched.
-          background-color: #1e232f;
+          background-color: #1e1e1d;
         }
         .user-chats {
           .divider .divider-text {

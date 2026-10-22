@@ -97,9 +97,13 @@ Cancel and reschedule are `AppointmentBookingService::cancel` / `::reschedule`
 the new time or stop). The page works without JavaScript; the reschedule picker
 is server-rendered, in the Business timezone.
 
+## The demo form
+
+The Platform Owner can edit every question at `/admin/platform-owner/marketing/demo-form`, including removing all of them: no question is protected, always visible or restored, and a form with no questions can be saved and published. The design default is used only until the first publish. The booking's own essentials are a first name and an email address; when the published questions do not collect them (a visible, required question of the matching type keeps its own answer), the confirmation step shows small attendee inputs for just those. With no questions the page skips the questionnaire and opens the calendar directly. Contact fields (last name, phone, business name) are filled only from questions that exist, and every other answer is mirrored as a `DEMO_*` CRM field.
+
 ## Known limitations
 
 - The confirmation page for an honeypot hit shows the generic page with no details.
 - The demo page offers no SMS consent: demo notifications are email only.
-- Guests get no email when they cancel or reschedule (the Calendar's notifications are confirmation and reminders only); reminders follow the new time automatically.
+- After a successful reschedule or cancellation the guest gets one email (a `rescheduled` / `cancellation` row in the Calendar's notification ledger, keyed per reschedule so a replay sends nothing). It goes to the address frozen on their confirmation, is email only, and only for this Booking Type. The reschedule email carries the new time and a fresh manage link; the cancellation email carries no Zoom link and no manage link. Reminders follow the new time, or stop on cancel.
 - `DEMO_BOOKING_TYPE_UUID` is trusted deployer configuration: point it only at the internal Business's Booking Type.

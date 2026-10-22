@@ -60,6 +60,7 @@ final class AgencyClientSubscriptionFinalizer
     public const SUBSCRIPTION_MISMATCH = 'subscription_mismatch';
     public const CUSTOMER_MISMATCH = 'customer_mismatch';
     public const OPERATION_ID_MISMATCH = 'operation_id_mismatch';
+    public const PRICE_MISMATCH = 'price_mismatch';
 
     /** Dispositions that mean "we could not prove this event is ours". */
     public const IDENTITY_MISMATCHES = [
@@ -67,6 +68,7 @@ final class AgencyClientSubscriptionFinalizer
         self::SUBSCRIPTION_MISMATCH,
         self::CUSTOMER_MISMATCH,
         self::OPERATION_ID_MISMATCH,
+        self::PRICE_MISMATCH,
     ];
 
     public function __construct(
@@ -432,6 +434,18 @@ final class AgencyClientSubscriptionFinalizer
         // metadata. When present it must be ours.
         if ($snapshot->operationId !== null && $snapshot->operationId !== (string) $subscription->uid) {
             return self::OPERATION_ID_MISMATCH;
+        }
+
+        // THE PURCHASE MUST BE THE ONE THIS ROW OFFERED. The first confirmation of a checkout binds the provider
+        // subscription to the row, and the tier granted afterwards comes from the row's plan. A subscription for a
+        // different Price than the attempt opened for this plan writes and grants nothing.
+        if ($subscription->provider_subscription_id === null && $snapshot->providerPriceId !== null) {
+            $expectedPrice = $subscription->checkout_attempt_price_id
+                ?? AgencySaasPlan::query()->whereKey($subscription->agency_saas_plan_id)->value('provider_price_id');
+
+            if ($expectedPrice !== null && (string) $expectedPrice !== $snapshot->providerPriceId) {
+                return self::PRICE_MISMATCH;
+            }
         }
 
         return null;

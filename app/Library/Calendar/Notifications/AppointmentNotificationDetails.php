@@ -40,10 +40,15 @@ final readonly class AppointmentNotificationDetails
         public ?MailBrand $brand = null,
         /** Signed guest cancel/reschedule link; only the designated /book-demo Booking Type ever has one. */
         public ?string $manageUrl = null,
+        // A valid Zoom participant link, present only when the appointment really has a ready, in-sync Zoom meeting.
+        public ?string $joinUrl = null,
+        // A Zoom appointment whose link could not be created yet: the email says so honestly instead of implying a link.
+        public bool $zoomPending = false,
     ) {
     }
 
-    public static function for(Appointment $appointment): ?self
+    /** @param  bool  $closed  A cancelled appointment: no Zoom link and no manage link may be offered as usable. */
+    public static function for(Appointment $appointment, bool $zoomPending = false, bool $closed = false): ?self
     {
         $type = BookingType::query()->find($appointment->booking_type_id);
         $location = BusinessLocation::query()->find($appointment->business_location_id);
@@ -76,14 +81,33 @@ final readonly class AppointmentNotificationDetails
             startTime: $localStart->format('g:i A'),
             zoneAbbr: $localStart->format('T'),
             timezone: str_replace('_', ' ', $zone) . ' (' . $localStart->format('T') . ')',
-            where: BookingLocationLabel::for($location),
+            where: self::whereLabel($appointment, $location),
             instructions: $instructions === '' ? null : $instructions,
             startUtc: $start,
             endUtc: $end,
             sequence: (int) $appointment->reschedule_count,
             brand: app(MailBrandResolver::class)->forBusiness($business),
-            manageUrl: \App\Library\Calendar\DemoBooking\DemoBookingManageLinks::urlFor($appointment),
+            manageUrl: $closed ? null : \App\Library\Calendar\DemoBooking\DemoBookingManageLinks::urlFor($appointment),
+            joinUrl: $closed ? null : self::joinUrlFor($appointment),
+            zoomPending: ! $closed && $zoomPending && $appointment->meeting_location_type === 'zoom',
         );
+    }
+
+    /** The location line: the appointment's own meeting location when it has one, else the Location as before. */
+    private static function whereLabel(Appointment $appointment, BusinessLocation $location): ?string
+    {
+        return match ($appointment->meeting_location_type) {
+            'zoom' => 'Zoom meeting',
+            'phone' => 'Phone call',
+            'custom' => filled($appointment->meeting_location_custom) ? (string) $appointment->meeting_location_custom : BookingLocationLabel::for($location),
+            default => BookingLocationLabel::for($location),
+        };
+    }
+
+    /** Only a valid participant link for a meeting that is ready AND at the appointment's current time. */
+    private static function joinUrlFor(Appointment $appointment): ?string
+    {
+        return \App\Library\Calendar\Zoom\ZoomLinkGate::joinUrl($appointment);
     }
 
     public function title(): string

@@ -1,0 +1,140 @@
+// Dark appearance. A user who picks Dark (or System, with a dark OS) gets the
+// existing `dark-layout` class on <html> (see panels/appearance-boot.blade.php);
+// the template's own dark-layout.scss restyles the Bootstrap/vendor components,
+// and this block restyles the semantic tokens that MotionGrove's own components
+// read, using the same surface family so the two layers match.
+//
+// Only neutral surfaces, text, borders and the status/chart tints are redefined.
+// The brand identity (--color-primary*, links, focus ring, active nav, chat
+// bubble out) is deliberately left to the light-mode/preset values, so the
+// accent keeps its identity. `html.dark-layout` outranks the runtime
+// `:root{...}` preset block (panels/styles.blade.php) by specificity.
+
+html.dark-layout {
+    color-scheme: dark;
+
+    --color-canvas: #1a1a19;
+    --color-sidebar: #1f1f1e;
+    --color-sidebar-bg: #1f1f1e;
+    --color-header: #222221;
+    --color-surface: #262625;
+    --color-surface-primary: #262625;
+    --color-surface-secondary: #2b2b29;
+    --color-dropdown: #2f2e2c;
+    --color-input-bg: #262625;
+    --color-table-header: #32312f;
+    --color-table-row: #262625;
+    --color-row-hover: #32312f;
+    --color-chat-canvas: #1a1a19;
+    --color-chat-bubble-in: #32312f;
+    --color-chat-composer: #262625;
+    --color-modal-surface: #262625;
+    --color-popover-surface: #2f2e2c;
+    --color-overlay: rgba(8, 11, 20, 0.7);
+    --color-tooltip-surface: #3d3c39;
+    --color-tooltip-text: #f3f4f6;
+
+    --color-text-primary: #ecebe7;
+    --color-text-secondary: #bdbbb5;
+    --color-text-muted: #a09e97;
+    --color-text-disabled: #6e6c66;
+    --color-icon-default: #e0ded9;
+    --color-icon-muted: #a09e97;
+
+    --color-border: #3a3936;
+    --color-border-neutral: #3a3936;
+    --color-border-subtle: #2e2d2b;
+    --color-border-strong: #5a5853;
+    --color-input-border: #42413d;
+    --color-shadow-tint: rgba(0, 0, 0, 0.3);
+    --color-elevated-shadow-tint: rgba(0, 0, 0, 0.5);
+
+    // Soft accent surfaces become a low-alpha tint of the (unchanged) accent.
+    --color-primary-soft-bg: rgba(181, 82, 76, 0.22);
+    --color-primary-border: rgba(181, 82, 76, 0.5);
+    --color-nav-hover: rgba(255, 255, 255, 0.06);
+    --color-selection: rgba(181, 82, 76, 0.35);
+    --color-link: #e08a84;
+    --color-link-hover: #eca39e;
+
+    --color-status-success-text: #8be0b0;
+    --color-status-success-border: rgba(40, 199, 111, 0.4);
+    --color-status-success-soft-bg: rgba(40, 199, 111, 0.16);
+    --color-status-warning-text: #ffc58a;
+    --color-status-warning-border: rgba(255, 159, 67, 0.4);
+    --color-status-warning-soft-bg: rgba(255, 159, 67, 0.16);
+    --color-status-danger-text: #f7a1a2;
+    --color-status-danger-border: rgba(234, 84, 85, 0.45);
+    --color-status-danger-soft-bg: rgba(234, 84, 85, 0.16);
+    --color-status-info-text: #7fe4f1;
+    --color-status-info-border: rgba(0, 207, 232, 0.4);
+    --color-status-info-soft-bg: rgba(0, 207, 232, 0.14);
+    --color-status-pending-text: #e6cd9d;
+    --color-status-pending-border: rgba(181, 139, 70, 0.45);
+    --color-status-pending-soft-bg: rgba(181, 139, 70, 0.18);
+
+    --color-chart-grid: #3a3936;
+    --color-chart-axis: #a09e97;
+    --color-chart-tooltip-bg: #3d3c39;
+    --color-chart-tooltip-text: #f3f4f6;
+    --color-chart-neutral: #807e78;
+
+    // Names that views reference with a light literal fallback but that the
+    // light token set never defines. Defining them only in dark leaves light
+    // mode on its fallbacks (unchanged) and gives dark a matching surface.
+    --color-surface-muted: #2f2e2c;
+    --color-success: #3dcf86;
+    --color-danger: #f0696a;
+    --color-warning: #ffae5c;
+    --color-success-soft-bg: rgba(40, 199, 111, 0.16);
+    --color-warning-soft-bg: rgba(255, 159, 67, 0.16);
+    --color-warning-border: rgba(255, 159, 67, 0.4);
+    --color-primary-soft-border: rgba(181, 82, 76, 0.5);
+    --color-accent-subtle: rgba(181, 82, 76, 0.22);
+    --cx-surface: #262625;
+    --bs-secondary-color: #a09e97;
+    --bs-heading-color: #e0ded9;
+    --bs-border-color: #3a3936;
+    --bs-card-bg: #262625;
+}
+
+// Template components whose compiled colours would otherwise stay light-mode
+// values on a dark surface. Kept narrow: text/outline colours only, and the
+// buttons' own hover/active states are left to their existing rules.
+html.dark-layout {
+    .main-menu {
+        color: var(--color-text-primary);
+    }
+
+    .text-muted {
+        color: var(--color-text-muted) !important;
+    }
+
+    // Bootstrap 5.1 applies striped/hover/active shading on the cells from these
+    // variables, so the template's per-row override never reached them and
+    // striped rows stayed near-white.
+    .table {
+        --bs-table-color: var(--color-text-secondary);
+        --bs-table-striped-color: var(--color-text-secondary);
+        --bs-table-hover-color: var(--color-text-primary);
+        --bs-table-active-color: var(--color-text-primary);
+        --bs-table-striped-bg: #2f2e2c;
+        --bs-table-hover-bg: #32312f;
+        --bs-table-active-bg: #3a3936;
+    }
+
+    .table > :not(:first-child) {
+        border-top-color: var(--color-border-strong);
+    }
+
+    .btn-outline-primary:not(:hover):not(:focus):not(:active):not(.active) {
+        color: var(--color-link) !important;
+        border-color: var(--color-primary-border) !important;
+    }
+
+    .btn-outline-secondary:not(:hover):not(:focus):not(:active):not(.active) {
+        color: var(--color-text-secondary) !important;
+        border-color: var(--color-border-strong) !important;
+    }
+}
+

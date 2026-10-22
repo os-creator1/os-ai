@@ -27,6 +27,7 @@ final class AppointmentNotificationContent
         'timezone' => 'Time zone',
         'location' => 'Location',
         'instructions' => 'Your meeting instructions',
+        'join_url' => 'Zoom join link (blank unless the appointment has a Zoom meeting)',
     ];
 
     private const OPT_OUT = 'Reply STOP to opt out.';
@@ -56,6 +57,7 @@ final class AppointmentNotificationContent
             'timezone' => $d->timezone,
             'location' => (string) $d->where,
             'instructions' => (string) $d->instructions,
+            'join_url' => (string) $d->joinUrl,
         ];
 
         $out = preg_replace_callback(

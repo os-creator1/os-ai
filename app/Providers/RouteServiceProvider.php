@@ -90,6 +90,10 @@
         protected function mapWebRoutes()
         {
 
+            // The public marketing site claims `/` and its page URLs before the legacy root redirect.
+            Route::middleware('web')
+                ->group(base_path('routes/marketing.php'));
+
             Route::middleware('web')
                 ->namespace($this->namespace)
                 ->group(base_path('routes/web.php'));

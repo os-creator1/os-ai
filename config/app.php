@@ -77,8 +77,11 @@
         |--------------------------------------------------------------------------
         |
         | This is the optional dark-background logo variant of your application.
-        | Falls back to the full, light-background logo, then to a neutral mark,
-        | if not configured. Deliberately not named APP_LOGO_DARK -- see the
+        | Falls back to the full, light-background logo, then to a neutral mark, if
+        | not configured. Only the bundled default logo is paired with its own dark
+        | variant (BrandingPresenter::DEFAULT_DARK_LOGO); an owner-configured light logo
+        | is never given a bundled dark logo of another brand.
+        | Deliberately not named APP_LOGO_DARK -- see the
         | APP_COMPACT_LOGO note above; the same substring-collision risk
         | applies identically here.
         |

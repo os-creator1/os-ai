@@ -85,6 +85,16 @@ class BookingTypeManager
             $text = trim((string) $attributes['meeting_instructions']);
             $out['meeting_instructions'] = $text === '' ? null : $text;
         }
+        // Meeting location (Zoom | in person | phone | custom). null/blank = the type's behaviour before this setting existed.
+        if (array_key_exists('meeting_location_type', $attributes)) {
+            $type = in_array($attributes['meeting_location_type'], \App\Library\Calendar\Zoom\ZoomHostResolver::TYPES, true) ? $attributes['meeting_location_type'] : null;
+            $out['meeting_location_type'] = $type;
+            $custom = trim((string) ($attributes['meeting_location_custom'] ?? ''));
+            $out['meeting_location_custom'] = $type === 'custom' && $custom !== '' ? mb_substr($custom, 0, 500) : null;
+            // A shared Zoom host only means something for a Zoom type. Whether it belongs to THIS Business is enforced where it is used.
+            $host = $attributes['zoom_host_connection_id'] ?? null;
+            $out['zoom_host_connection_id'] = $type === 'zoom' && $host !== null && $host !== '' ? (int) $host : null;
+        }
         // Customer notifications (Booking Notifications V1): same rule, only submitted keys change.
         foreach (['notify_email', 'notify_sms'] as $key) {
             if (array_key_exists($key, $attributes) && $attributes[$key] !== null) {
@@ -277,6 +287,11 @@ class BookingTypeManager
             ->all();
         if ($eligibleIds === []) {
             return ['ready' => false, 'reason' => 'No one is assigned. Tick at least one person under Team and save.'];
+        }
+
+        // A Zoom type is only bookable while its host(s) are connected: never a booking page that cannot produce a video link.
+        if (($zoomProblem = \App\Library\Calendar\Zoom\ZoomHostResolver::readinessProblem($bookingType, $eligibleIds)) !== null) {
+            return ['ready' => false, 'reason' => $zoomProblem];
         }
 
         $hasHours = StaffAvailabilityRule::query()

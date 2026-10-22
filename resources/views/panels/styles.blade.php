@@ -1,3 +1,4 @@
+@include('panels.appearance-boot')
 <!-- BEGIN: Vendor CSS-->
 @if (isset($configData['direction']) && $configData['direction'] === 'rtl')
     <link rel="stylesheet" href="{{ asset(mix('vendors/css/vendors-rtl.min.css')) }}"/>
@@ -51,4 +52,11 @@
 @php $platformThemeStyleBlock = app(\App\Library\Theme\PlatformThemeManager::class)->currentStyleBlock(); @endphp
 @if ($platformThemeStyleBlock)
     {!! $platformThemeStyleBlock !!}
+@endif
+
+{{-- White Label: a managed client of an Agency gets the Agency's brand colours as the same design tokens. Brand and
+     interaction tokens only; status colours stay semantic. Nothing for platform customers or the Agency itself. --}}
+@php $agencyThemeStyleBlock = app(\App\Library\Branding\AgencyThemeStyle::class)->forRequest(request()); @endphp
+@if ($agencyThemeStyleBlock)
+    {!! $agencyThemeStyleBlock !!}
 @endif

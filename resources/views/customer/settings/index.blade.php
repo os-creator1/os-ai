@@ -44,6 +44,21 @@
         .mg-settings-name{color:var(--color-text-primary,#262522);display:block;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
         .mg-settings-desc{display:block;font-size:.8rem;color:var(--color-text-muted,#6f6d67);line-height:1.35;overflow-wrap:anywhere}
         .mg-settings-chev{flex:none;color:#a9a59d}
+        .mg-appearance{display:flex;align-items:center;justify-content:space-between;gap:.75rem 1.25rem;flex-wrap:wrap;padding:.9rem 1.25rem}
+        .mg-appearance-seg{display:inline-flex;gap:.25rem;padding:.2rem;border:1px solid var(--color-border-neutral,#e5e1da);border-radius:.65rem;background:var(--color-surface-secondary,#fbfaf7)}
+        .mg-appearance-opt{position:relative;margin:0;cursor:pointer}
+        .mg-appearance-opt input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+        .mg-appearance-opt span{display:inline-flex;align-items:center;gap:.4rem;padding:.35rem .75rem;border-radius:.45rem;font-size:.85rem;font-weight:600;color:var(--color-text-muted,#6f6d67);line-height:1.3}
+        .mg-appearance-opt input:checked + span{background:var(--color-surface-primary,#fff);color:var(--color-text-primary,#262522);box-shadow:0 1px 3px var(--color-shadow-tint,rgba(38,37,34,.08)),0 0 0 1px var(--color-border-neutral,#e5e1da)}
+        .mg-appearance-opt input:focus-visible + span{outline:2px solid var(--color-focus-ring,#b5524c);outline-offset:2px}
+        .mg-appearance-desc{display:block;font-size:.8rem;color:var(--color-text-muted,#6f6d67);line-height:1.35;overflow-wrap:anywhere}
+        .mg-appearance-status{flex-basis:100%;margin:0;font-size:.75rem;color:var(--color-text-muted,#6f6d67);min-height:1em}
+        .mg-appearance-status.is-error{color:var(--color-status-danger,#ea5455)}
+        /* Dark appearance: the few literal tints above get dark equivalents (everything else already reads the semantic tokens). */
+        html.dark-layout .mg-settings-icon{background:rgba(255,255,255,.08);color:var(--color-text-secondary,#bdbbb5)}
+        html.dark-layout .mg-settings-card[data-tone="communication"] .mg-settings-icon{background:rgba(75,134,220,.2);color:#8fb6f0}
+        html.dark-layout .mg-settings-card[data-tone="billing-team"] .mg-settings-icon{background:rgba(63,168,114,.2);color:#7fd0a4}
+        html.dark-layout .mg-settings-chev{color:var(--color-text-muted,#a09e97)}
         .mg-settings-features{grid-column:1 / -1}
         .mg-settings-features-head{display:flex;justify-content:space-between;align-items:baseline;gap:.75rem 1.5rem;flex-wrap:wrap;padding:.9rem 1.25rem;border-bottom:1px solid var(--color-border-neutral,#e5e1da)}
         .mg-settings-features-head h2{margin:0;font-size:1rem;font-weight:700}
@@ -56,7 +71,7 @@
         @media (max-width:767.98px){
             .mg-settings-grid{grid-template-columns:minmax(0,1fr)}
             .mg-settings-title{font-size:1.35rem}
-            .mg-settings-row{padding:.8rem 1rem}
+            .mg-settings-row,.mg-appearance{padding:.8rem 1rem}
             .mg-settings-card-title,.mg-settings-features-head{padding-left:1rem;padding-right:1rem}
             .mg-settings-features #business-feature-settings .list-group-item{padding-left:1rem;padding-right:1rem}
         }
@@ -113,6 +128,25 @@
                             <x-ds-icon name="chevron-right" size="16" class="mg-settings-chev" aria-hidden="true" />
                         </a>
                     </li>
+                    <li data-role="settings-appearance">
+                        @php $appearance = \App\Library\Appearance\Appearance::forUser(Auth::user()); @endphp
+                        <div class="mg-appearance">
+                            <span class="mg-settings-text">
+                                <span class="mg-settings-name" id="mg-appearance-label">Appearance</span>
+                                <span class="mg-appearance-desc">Light, dark, or follow your device. Applies to your own account on every device.</span>
+                            </span>
+                            <div class="mg-appearance-seg" role="radiogroup" aria-labelledby="mg-appearance-label"
+                                 data-url="{{ route('user.account.appearance') }}">
+                                @foreach (['light' => ['Light', 'sun'], 'dark' => ['Dark', 'moon'], 'system' => ['System', 'monitor']] as $value => [$text, $icon])
+                                    <label class="mg-appearance-opt">
+                                        <input type="radio" name="appearance" value="{{ $value }}" @checked($appearance === $value)>
+                                        <span><x-ds-icon :name="$icon" size="15" aria-hidden="true" />{{ $text }}</span>
+                                    </label>
+                                @endforeach
+                            </div>
+                            <p class="mg-appearance-status" role="status" aria-live="polite" data-role="appearance-status"></p>
+                        </div>
+                    </li>
                 </ul>
             </div>
 
@@ -133,4 +167,80 @@
             @endif
         </div>
     </section>
+@endsection
+
+@section('page-script')
+    <script>
+        (function () {
+            var group = document.querySelector('.mg-appearance-seg');
+            if (!group) { return; }
+            var status = document.querySelector('[data-role="appearance-status"]');
+            var initial = group.querySelector('input:checked');
+
+            // The choice the person made last (what the screen shows), and the last value the server
+            // confirmed. Saves are serialized: one request in flight at a time, and each follow-up
+            // sends only the latest choice, so the server always ends on the last selection and an
+            // older response can never overwrite or visually revert a newer one.
+            var wanted = initial ? initial.value : 'light';
+            var confirmed = wanted;
+            var uncertain = false;   // a request failed, so the server's value is not known for sure
+            var inFlight = false;
+
+            function say(text, isError) {
+                status.textContent = text;
+                status.classList.toggle('is-error', !!isError);
+            }
+
+            function show(value) {
+                if (window.MGAppearance) { window.MGAppearance.set(value); }
+                var radio = group.querySelector('input[value="' + value + '"]');
+                if (radio) { radio.checked = true; }
+            }
+
+            function flush() {
+                if (inFlight || (wanted === confirmed && !uncertain)) { return; }
+                var sending = wanted;
+                var token = document.querySelector('meta[name="csrf-token"]');
+                inFlight = true;
+                say('Saving…', false);
+                fetch(group.getAttribute('data-url'), {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRF-TOKEN': token ? token.getAttribute('content') : ''
+                    },
+                    body: JSON.stringify({ appearance: sending })
+                }).then(function (response) {
+                    if (!response.ok) { throw new Error('save failed'); }
+                    confirmed = sending;
+                    uncertain = false;
+                    inFlight = false;
+                    if (wanted === confirmed) { say('Saved.', false); } else { flush(); }
+                }, function () {
+                    throw new Error('save failed');
+                }).catch(function () {
+                    inFlight = false;
+                    uncertain = true;
+                    if (wanted !== sending) {
+                        // A newer choice is already waiting: it is what the account should end on.
+                        flush();
+                        return;
+                    }
+                    // The latest choice could not be saved: fall back to what the account has.
+                    wanted = confirmed;
+                    show(confirmed);
+                    say('Could not save your appearance. Showing your saved setting.', true);
+                });
+            }
+
+            group.addEventListener('change', function (event) {
+                wanted = event.target.value;
+                if (window.MGAppearance) { window.MGAppearance.set(wanted); }
+                flush();
+            });
+        })();
+    </script>
 @endsection

@@ -104,7 +104,9 @@ case "$mode" in
     live)
         case "$key" in pk_live_?*) : ;; *) bad "STRIPE_MODE=live requires STRIPE_KEY to be a live publishable key (pk_live_...)." ;; esac
         case "$secret" in sk_live_?*|rk_live_?*) : ;; *) bad "STRIPE_MODE=live requires STRIPE_SECRET to be a live secret/restricted key (sk_live_/rk_live_...)." ;; esac
-        for w in STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET STRIPE_WEBHOOK_SECRET; do
+        # All four lanes: A platform subscriptions, B Business payments (Connect), C Agency client subscriptions (Connect),
+        # D usage billing. A lane without its secret rejects every event, so Stripe can take a payment the app never confirms.
+        for w in STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET STRIPE_CONNECT_WEBHOOK_SECRET STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET STRIPE_WEBHOOK_SECRET; do
             case "$(env_get "$w")" in whsec_?*) : ;; *) bad "STRIPE_MODE=live requires $w (whsec_...) - webhooks cannot be verified without it." ;; esac
         done
         ;;

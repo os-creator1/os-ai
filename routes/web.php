@@ -29,6 +29,12 @@
 
     Route::get('/', function () {
 
+        // The public MotionGrove marketing homepage (see routes/marketing.php). A signed-in customer,
+        // an uninstalled instance and a host outside marketing.hosts keep the behaviour below unchanged.
+        if (app(\App\Library\Marketing\MarketingSite::class)->servesRequest(request())) {
+            return app(\App\Http\Controllers\Public\MarketingController::class)->home(request());
+        }
+
         if (config('app.stage') == 'new') {
             // There is no web installer: a fresh instance is provisioned from the
             // command line, and a redirect to a route that does not exist only 404s.
@@ -36,7 +42,7 @@
         }
 
         return redirect('login');
-    });
+    })->name('marketing.home');
 
 // locale Route
 ///new

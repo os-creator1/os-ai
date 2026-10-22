@@ -54,6 +54,68 @@
             @error('description') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
         </div>
 
+        @php
+            // Meeting location. Zoom is offered only where this Business may use it; the server re-checks (plan + host), this
+            // only avoids offering a choice that would be refused.
+            $zoomManager = app(\App\Library\Calendar\Zoom\ZoomConnectionManager::class);
+            $zoomAvailable = isset($business) && $zoomManager->isEnabledFor($business);
+            $zoomHosts = $zoomAvailable ? \App\Models\ZoomConnection::query()->where('business_id', $business->id)->where('state', 'active')->orderBy('id')->get() : collect();
+            $zoomUsers = \App\Models\User::query()->whereIn('id', $zoomHosts->pluck('user_id'))->get()->keyBy('id');
+            $chosenLocation = old('meeting_location_type', $type?->meeting_location_type);
+        @endphp
+        <div class="form-group" data-section="meeting-location">
+            <label for="meeting_location_type">Meeting location</label>
+            <select id="meeting_location_type" name="meeting_location_type" class="form-control{{ $invalid('meeting_location_type') }}">
+                <option value="" @selected(! $chosenLocation)>Use the location below (default)</option>
+                @if ($zoomAvailable || $chosenLocation === 'zoom')
+                    <option value="zoom" @selected($chosenLocation === 'zoom') @disabled(! $zoomAvailable)>Zoom meeting</option>
+                @endif
+                <option value="in_person" @selected($chosenLocation === 'in_person')>In person</option>
+                <option value="phone" @selected($chosenLocation === 'phone')>Phone call</option>
+                <option value="custom" @selected($chosenLocation === 'custom')>Custom meeting link or location</option>
+            </select>
+            @error('meeting_location_type') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+
+            <div data-role="meeting-location-custom" class="mt-1" @if ($chosenLocation !== 'custom') hidden @endif>
+                <input type="text" id="meeting_location_custom" name="meeting_location_custom" class="form-control{{ $invalid('meeting_location_custom') }}" maxlength="500"
+                       placeholder="A meeting link or an address" value="{{ old('meeting_location_custom', $type?->meeting_location_custom) }}">
+                @error('meeting_location_custom') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+            </div>
+
+            @if ($zoomAvailable)
+                <div data-role="meeting-location-zoom" class="mt-1" @if ($chosenLocation !== 'zoom') hidden @endif>
+                    <label for="zoom_host_connection_id" class="mb-25">Zoom host</label>
+                    <select id="zoom_host_connection_id" name="zoom_host_connection_id" class="form-control">
+                        <option value="" @selected(! old('zoom_host_connection_id', $type?->zoom_host_connection_id))>The person who gets each booking</option>
+                        @foreach ($zoomHosts as $host)
+                            @php($hostUser = $zoomUsers[$host->user_id] ?? null)
+                            <option value="{{ $host->id }}" @selected((string) old('zoom_host_connection_id', $type?->zoom_host_connection_id) === (string) $host->id)>
+                                One shared host: {{ trim(($hostUser->first_name ?? '').' '.($hostUser->last_name ?? '')) ?: ($hostUser->email ?? 'Team member') }}@if ($host->zoom_account_email) ({{ $host->zoom_account_email }})@endif
+                            </option>
+                        @endforeach
+                    </select>
+                    <small class="cx-hint">
+                        MotionGrove creates a unique Zoom meeting for every booking and puts the join link in the confirmation and reminders.
+                        Customers cannot book this type until its host has connected Zoom
+                        (<a href="{{ route('customer.workspaces.businesses.calendar.integrations.zoom.show', [$workspace->uid, $business->uid]) }}">Zoom settings</a>).
+                    </small>
+                </div>
+            @endif
+            <script>
+                (function () {
+                    var select = document.getElementById('meeting_location_type');
+                    if (!select) { return; }
+                    function sync() {
+                        var custom = document.querySelector('[data-role="meeting-location-custom"]');
+                        var zoom = document.querySelector('[data-role="meeting-location-zoom"]');
+                        if (custom) { custom.hidden = select.value !== 'custom'; }
+                        if (zoom) { zoom.hidden = select.value !== 'zoom'; }
+                    }
+                    select.addEventListener('change', sync);
+                })();
+            </script>
+        </div>
+
         <div class="form-group">
             <label for="meeting_instructions">Location &amp; meeting instructions</label>
             <textarea id="meeting_instructions" name="meeting_instructions" class="form-control{{ $invalid('meeting_instructions') }}" rows="2" maxlength="2000"

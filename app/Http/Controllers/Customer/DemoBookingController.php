@@ -6,7 +6,13 @@ use App\Enums\GoogleAds\LeadAttributionEntrySurface;
 use App\Enums\GoogleAds\LeadAttributionSubjectType;
 use App\Exceptions\Calendar\BookingRefusedException;
 use App\Library\Calendar\DemoBooking\DemoBookingContactResolver;
+use App\Library\Calendar\DemoBooking\DemoAnswersNotSavedException;
+use App\Library\Calendar\DemoBooking\Form\DemoFormRepository;
+use App\Library\Calendar\DemoBooking\Form\DemoFormSchema;
 use App\Library\Calendar\DemoBooking\TurnstileVerifier;
+use App\Library\Marketing\MarketingSite;
+use App\Models\Appointment;
+use App\Models\DemoBookingResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -26,8 +32,8 @@ use Illuminate\View\View;
  * inherited resolve() re-runs the six-check authority stack, and the booking
  * itself goes through AppointmentBookingService.
  *
- * What differs is only the form (business name, optional website, optional
- * phone), the Contact resolver, and the anti-abuse layer: a honeypot and a
+ * What differs is only the form (the Platform Owner's published Book a Demo
+ * form, see DemoFormRepository), the Contact resolver, and the anti-abuse layer: a honeypot and a
  * server-verified Cloudflare Turnstile token, on top of the route throttle.
  * Anything not configured fails closed with the same refusal.
  */
@@ -35,21 +41,49 @@ class DemoBookingController extends PublicBookingController
 {
     public const HONEYPOT_FIELD = 'demo_hp';
 
-    public function page(Request $request, TurnstileVerifier $turnstile): View
+    public function page(Request $request, TurnstileVerifier $turnstile, DemoFormRepository $forms, MarketingSite $site): View
     {
         $uuid = $this->designatedUuid($turnstile);
         $view = $this->show($request, $uuid);
+        $data = $view->getData();
+        $form = $forms->published();
 
-        return $view->with('demo', [
-            'showUrl' => route('demo.booking.show'),
-            'storeUrl' => route('demo.booking.store'),
-            'honeypot' => self::HONEYPOT_FIELD,
-            'turnstileSiteKey' => $turnstile->isConfigured() ? $turnstile->siteKey() : null,
-        ])->with('config', array_replace($view->getData()['config'], [
+        return view('marketing.pages.book-demo', $data + [
+            'mg' => $site,
+            'page' => 'book-demo',
+            'meta' => $site->meta('book-demo'),
+            'formFields' => DemoFormSchema::visible($form['fields']),
+            'attendeeNeeds' => DemoFormSchema::attendeeNeeds($form['fields']),
+            'formVersion' => $form['id'] ?? 'default',
+            'demo' => [
+                'showUrl' => route('demo.booking.show'),
+                'storeUrl' => route('demo.booking.store'),
+                'detailsUrl' => route('demo.booking.details'),
+                'honeypot' => self::HONEYPOT_FIELD,
+                'turnstileSiteKey' => $turnstile->isConfigured() ? $turnstile->siteKey() : null,
+            ],
+            'offerSmsConsent' => false,
+        ])->with('config', array_replace($data['config'], [
             'datesUrl' => route('demo.booking.dates'),
             'slotsUrl' => route('demo.booking.slots'),
             'storeUrl' => route('demo.booking.store'),
-        ]))->with('offerSmsConsent', false);
+        ]));
+    }
+
+    /**
+     * Step 1 of the page: check the visitor's answers against the published form BEFORE the calendar opens. Nothing
+     * is stored and no bot check is spent here; the booking write repeats the whole validation.
+     */
+    public function details(Request $request, TurnstileVerifier $turnstile, DemoFormRepository $forms): JsonResponse
+    {
+        $this->designatedUuid($turnstile);
+        $form = $forms->published();
+        $validator = Validator::make($request->all(), DemoFormSchema::rules($form['fields']));
+        if ($validator->fails()) {
+            return $this->json(['message' => 'Please check your details.', 'errors' => $validator->errors()->toArray()], 422);
+        }
+
+        return $this->json(['status' => 'ok', 'form_version' => $form['id'] ?? 'default']);
     }
 
     public function demoDates(Request $request, TurnstileVerifier $turnstile): JsonResponse
@@ -66,6 +100,7 @@ class DemoBookingController extends PublicBookingController
         Request $request,
         TurnstileVerifier $turnstile,
         DemoBookingContactResolver $contactResolver,
+        DemoFormRepository $forms,
     ): RedirectResponse|JsonResponse {
         $uuid = $this->designatedUuid($turnstile);
         // Re-run the identical authority stack before inspecting any guest input.
@@ -79,21 +114,23 @@ class DemoBookingController extends PublicBookingController
                 : redirect()->route('demo.booking.confirmed');
         }
 
-        $validator = Validator::make($request->all(), [
+        // The form is whatever is published NOW. A visitor who started on an older version is re-validated
+        // against the current one; if that fails the page is told the form changed so they can review it.
+        $form = $forms->published();
+        $formVersion = $form['id'] ?? 'default';
+        $validator = Validator::make($request->all(), DemoFormSchema::rules($form['fields']) + DemoFormSchema::attendeeRules() + [
             'date' => ['required', 'date_format:Y-m-d'],
             'time' => ['required', 'date_format:H:i'],
-            'first_name' => ['required', 'string', 'max:120'],
-            'last_name' => ['required', 'string', 'max:120'],
-            'email' => ['required', 'string', 'email:rfc', 'max:190'],
-            'business_name' => ['required', 'string', 'max:190'],
             'website' => ['nullable', 'string', 'max:190'],
-            'phone' => ['nullable', 'string', 'max:32'],
         ]);
-        $validator->after(function ($validator) use ($request, $type): void {
-            $phone = trim((string) $request->input('phone'));
-            $digits = trim(str_replace(['+', '-', '(', ')', ' '], '', $phone));
-            if ($phone !== '' && ! $validator->errors()->has('phone') && ($digits === '' || strlen($digits) > 32 || ! ctype_digit($digits))) {
-                $validator->errors()->add('phone', 'Enter a valid phone number.');
+        $validator->after(function ($validator) use ($request, $type, $form): void {
+            // First name and email are the booking's own essentials: from the questionnaire when it asks, else the attendee inputs.
+            $identity = DemoFormSchema::identity($form['fields'], $request->all());
+            if ($identity['first_name'] === '' && ! $validator->errors()->has('attendee_first_name')) {
+                $validator->errors()->add('attendee_first_name', 'Enter your first name.');
+            }
+            if ($identity['email'] === '' && ! $validator->errors()->has('attendee_email')) {
+                $validator->errors()->add('attendee_email', 'Enter your email address.');
             }
             if (! $validator->errors()->has('website') && $this->normalizeWebsite($request->input('website')) === false) {
                 $validator->errors()->add('website', 'Enter a valid website address, or leave it blank.');
@@ -103,8 +140,12 @@ class DemoBookingController extends PublicBookingController
             }
         });
         if ($validator->fails()) {
+            $changed = (string) $request->input('form_version') !== (string) $formVersion
+                && array_diff(array_keys($validator->errors()->toArray()), ['date', 'time', 'website', 'attendee_first_name', 'attendee_email']) !== [];
+
             return $wantsJson
-                ? $this->json(['message' => 'Please check your details.', 'errors' => $validator->errors()->toArray()], 422)
+                ? $this->json(['message' => $changed ? 'We have updated this form since you started. Please review your answers.' : 'Please check your details.',
+                    'errors' => $validator->errors()->toArray(), 'form_changed' => $changed], 422)
                 : throw new ValidationException($validator);
         }
 
@@ -119,6 +160,8 @@ class DemoBookingController extends PublicBookingController
 
         $data = $validator->validated();
         $data['website'] = $this->normalizeWebsite($data['website'] ?? null) ?: null;
+        $identity = DemoFormSchema::identity($form['fields'], $data);
+        $answers = DemoFormSchema::snapshot($form['fields'], $data);
         $timezone = $this->timezoneFor($business);
         $start = $this->slots->instantFor($data['date'], $data['time'], $timezone);
         if ($start === null || ! $this->slots->mayBook($type, $timezone, $data['date'], $start)) {
@@ -129,8 +172,14 @@ class DemoBookingController extends PublicBookingController
             $appointment = $this->booking->bookWithRoundRobinContactResolver(
                 $type,
                 $start,
-                fn (): int => $contactResolver->resolve($location, $business, $data),
+                fn (): int => $contactResolver->resolve($location, $business, $identity + ['website' => $data['website']]),
+                // The canonical answers commit WITH the booking: a failure here rolls the whole booking back.
+                afterInsert: fn (Appointment $created) => $this->saveAnswers($created, $form['id'], $answers),
             );
+        } catch (DemoAnswersNotSavedException $exception) {
+            report($exception);
+
+            return $this->refused($wantsJson, 'We could not save your booking. Please try again.', 500);
         } catch (BookingRefusedException) {
             return $this->refused($wantsJson, 'That time is no longer available. Choose another time.', 409);
         } catch (ValidationException $exception) {
@@ -140,7 +189,13 @@ class DemoBookingController extends PublicBookingController
             throw $exception;
         }
 
-        // After commit, never able to fail the booking.
+        // After commit, never able to fail the booking. The CRM mirror is a secondary copy of answers that are
+        // already safely stored with the appointment.
+        try {
+            $contactResolver->mirrorAnswers($location, $business, (int) $appointment->contact_id, $this->crmExtras($answers, DemoFormSchema::contactKeys($form['fields'])));
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
         $this->attribution->record(
             $business,
             (int) $location->id,
@@ -151,14 +206,14 @@ class DemoBookingController extends PublicBookingController
             $request,
         );
         try {
-            $this->notifications->recordPublicBooking($appointment, $type, (string) $data['email'], trim((string) ($data['phone'] ?? '')), false);
+            $this->notifications->recordPublicBooking($appointment, $type, $identity['email'], $identity['phone'], false);
         } catch (\Throwable $exception) {
             report($exception);
         }
 
         $visitorTimezone = $this->visitorTimezone($request, $timezone, 'visitor_timezone');
         $summary = $this->summary($type, $business, $location, $start, $visitorTimezone)
-            + ['notice' => $this->noticeLine($type, (string) $data['email'], false)];
+            + ['notice' => $this->noticeLine($type, $identity['email'], false)];
         if ($wantsJson) {
             return $this->json(['status' => 'confirmed', 'booking' => $summary], 201);
         }
@@ -186,6 +241,44 @@ class DemoBookingController extends PublicBookingController
         abort_unless($turnstile === null || $turnstile->isAvailable(), 404);
 
         return strtolower($uuid);
+    }
+
+    /**
+     * Inside the booking transaction: the answer snapshot is part of the booking, not an afterthought.
+     *
+     * @param  array<int, array<string, mixed>>  $answers
+     */
+    private function saveAnswers(Appointment $appointment, ?int $formVersionId, array $answers): void
+    {
+        try {
+            DemoBookingResponse::query()->create([
+                'appointment_id' => (int) $appointment->id,
+                'contact_id' => (int) $appointment->contact_id,
+                'form_version_id' => $formVersionId,
+                'answers' => $answers,
+            ]);
+        } catch (\Throwable $exception) {
+            throw new DemoAnswersNotSavedException('Demo form answers could not be stored.', 0, $exception);
+        }
+    }
+
+    /**
+     * The owner-configured answers mirrored onto the Contact as CRM fields. Only the questions that fill the Contact itself
+     * ($contactKeys) are excluded; every other answer, Industry included, is mirrored as a DEMO_* field.
+     *
+     * @param  array<int, array{key: string, label: string, display: string}>  $answers
+     * @return array<int, array{tag: string, label: string, value: string}>
+     */
+    private function crmExtras(array $answers, array $contactKeys): array
+    {
+        $extras = [];
+        foreach ($answers as $answer) {
+            if (! in_array($answer['key'], $contactKeys, true)) {
+                $extras[] = ['tag' => 'DEMO_'.strtoupper($answer['key']), 'label' => mb_substr($answer['label'], 0, 120), 'value' => $answer['display']];
+            }
+        }
+
+        return $extras;
     }
 
     /** @return string|false|null  normalized https URL, null when blank, false when invalid */

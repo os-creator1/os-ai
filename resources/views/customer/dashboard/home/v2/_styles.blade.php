@@ -112,6 +112,8 @@
     .hv2 .hv2-steps { list-style: none; margin: 0; padding: 0; }
     .hv2 .hv2-step { display: flex; align-items: center; gap: .75rem; padding: .75rem 1.125rem; border-top: 1px solid var(--hv2-border); }
     .hv2 .hv2-step.is-next { background: #FDF7F5; box-shadow: inset 3px 0 0 var(--hv2-brand); }
+    html.dark-layout .hv2 .hv2-step.is-next { background: var(--color-primary-soft-bg); }
+    html.dark-layout .hv2 a.hv2-kpi.hv2-kpi--lead, html.dark-layout .hv2 .hv2-kpi--lead { background: var(--color-primary-soft-bg); }
     .hv2 .hv2-step__mark { flex: 0 0 1.5rem; height: 1.5rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid var(--color-border, #D9D3C8); font-size: .75rem; color: var(--hv2-muted); }
     .hv2 .hv2-step.is-next .hv2-step__mark { background: var(--hv2-brand); border-color: var(--hv2-brand); color: #fff; }
     .hv2 .hv2-step.is-done .hv2-step__mark { background: var(--color-status-success-soft-bg, #E6F3EA); border-color: var(--color-status-success, #1E7B3C); color: var(--color-status-success, #1E7B3C); }

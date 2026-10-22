@@ -28,12 +28,25 @@ use Throwable;
  */
 class AgencyBrandResolver
 {
+    /**
+     * Request attribute a trusted, server-side controller sets to name the Agency whose hosted page this is (the
+     * Agency's own published site login). It is never read from input: it carries an AgencyBrand built from a
+     * database row, and is authorised below exactly like a host-resolved brand.
+     */
+    public const HOSTED_SITE_ATTRIBUTE = 'agency.hosted_site_brand';
+
     public function __construct(private readonly Container $container)
     {
     }
 
     public function resolve(Request $request): ?AgencyBrand
     {
+        $hosted = $request->attributes->get(self::HOSTED_SITE_ATTRIBUTE);
+
+        if ($hosted instanceof AgencyBrand) {
+            return trim($hosted->displayName) !== '' && $this->isAuthorizedAgencyWorkspace($hosted->workspaceUid) ? $hosted : null;
+        }
+
         if (! $this->container->bound(AgencyBrandSource::class)) {
             return null;
         }

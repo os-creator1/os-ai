@@ -153,6 +153,7 @@
             // idempotent by the appointment_notifications ledger, so an overlapping or
             // repeated tick sends nothing twice.
             $schedule->command('calendar:dispatch-due-reminders')->everyMinute();
+            $schedule->command('calendar:reconcile-zoom')->everyFiveMinutes()->withoutOverlapping();
             $schedule->command('app:clean-database')->monthly();
             // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
 

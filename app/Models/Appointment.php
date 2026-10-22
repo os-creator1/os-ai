@@ -38,6 +38,16 @@ class Appointment extends Model
         'resolved_at',
         'resolved_by_user_id',
         'cancellation_reason',
+        'meeting_location_type',
+        'meeting_location_custom',
+        'zoom_connection_id',
+        'zoom_status',
+        'zoom_meeting_id',
+        'zoom_join_url',
+        'zoom_synced_start_at',
+        'zoom_synced_duration',
+        'zoom_attempts',
+        'zoom_last_error',
     ];
 
     protected $casts = [
@@ -46,6 +56,10 @@ class Appointment extends Model
         'end_at' => 'datetime',
         'reschedule_count' => 'integer',
         'resolved_at' => 'datetime',
+        'zoom_synced_start_at' => 'datetime',
+        'zoom_attempts' => 'integer',
+        'zoom_create_started_at' => 'datetime',
+        'zoom_create_lease_until' => 'datetime',
     ];
 
     /**
@@ -119,5 +133,11 @@ class Appointment extends Model
     public function isScheduled(): bool
     {
         return $this->status === AppointmentStatus::Scheduled;
+    }
+
+    /** The Book a Demo form answers frozen at booking time (only /book-demo appointments have one). */
+    public function demoBookingResponse(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(DemoBookingResponse::class, 'appointment_id');
     }
 }

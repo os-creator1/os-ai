@@ -2,12 +2,18 @@
    drawn with the shared pf- classes from resources/views/public/forms/_style. */
 .fb,.fb-modal{--fb-accent:var(--bs-primary,#4f46e5);--fb-line:#dfe3ea;--fb-soft:#f5f6fa;--fb-text:#1f2937;--fb-muted:#6b7280;--fb-ok:#16794c;--fb-bad:#b42318;--fb-warn:#b25e09;
     color:var(--fb-text);margin:-1rem -1rem 0}
-.dark-layout .fb,.dark-layout .fb-modal{--fb-line:#3b4253;--fb-soft:#283046;--fb-text:#d0d2d6;--fb-muted:#9aa0ac}
+.dark-layout .fb,.dark-layout .fb-modal{--fb-line:var(--color-border,#3a3936);--fb-soft:var(--color-surface,#262625);--fb-surface:var(--color-surface,#262625);--fb-text:var(--color-text-primary,#e0ded9);--fb-muted:var(--color-text-muted,#a09e97)}
+.dark-layout .fb{color:var(--fb-text)}
+.dark-layout .fb .pf-card,.dark-layout .fb .pf-card h1,.dark-layout .fb .pf-card h2,.dark-layout .fb .pf-card h3,.dark-layout .fb .pf-card h4{color:var(--pf-text,#18202b)}
+.dark-layout .fb .fb-tab,.dark-layout .fb .fb-ico{color:var(--color-link,#e08a84)}
+.dark-layout .fb .fb-save{color:var(--color-status-success-text,#8be0b0)}
 .fb *,.fb-modal *{box-sizing:border-box}
 
 /* ---- top bar ---- */
 .fb-top{display:flex;align-items:center;gap:.75rem;padding:.6rem 1rem;border-bottom:1px solid var(--fb-line);background:var(--fb-surface,#fff);flex-wrap:wrap}
-.dark-layout .fb-top,.dark-layout .fb-side,.dark-layout .fb-inspector{--fb-surface:#283046}
+.dark-layout .fb-badge.is-active{background:var(--color-status-success-soft-bg);color:var(--color-status-success-text)}
+.dark-layout .fb-banner{background:var(--color-status-danger-soft-bg);color:var(--color-status-danger-text);border-bottom-color:var(--color-status-danger-border)}
+.dark-layout .fb-mapped.is-archived,.dark-layout .fb-note.is-warn{background:var(--color-status-warning-soft-bg);color:var(--color-status-warning-text)}
 .fb-back{color:var(--fb-muted);text-decoration:none;font-size:.9rem;white-space:nowrap}
 .fb-back:hover{color:var(--fb-accent)}
 .fb-name{flex:1 1 12rem;min-width:8rem;max-width:26rem;font-weight:600;font-size:1.05rem;border:1px solid transparent;border-radius:6px;padding:.3rem .5rem;background:transparent;color:inherit}

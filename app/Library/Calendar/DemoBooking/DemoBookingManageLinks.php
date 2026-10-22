@@ -20,6 +20,15 @@ use Illuminate\Support\Facades\URL;
  */
 class DemoBookingManageLinks
 {
+    /** Whether the appointment belongs to the designated /book-demo Booking Type. */
+    public static function isDemo(Appointment $appointment): bool
+    {
+        $designated = strtolower((string) config('demo_booking.booking_type_uuid'));
+        $type = $appointment->bookingType;
+
+        return $designated !== '' && $type !== null && strtolower((string) $type->public_booking_uuid) === $designated;
+    }
+
     public static function urlFor(Appointment $appointment): ?string
     {
         $designated = strtolower((string) config('demo_booking.booking_type_uuid'));

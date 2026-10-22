@@ -168,6 +168,7 @@
              * User Profile Update
              */
             Route::patch('account/update', 'AccountController@update')->name('account.update');
+            Route::post('account/appearance', 'AppearanceController@update')->middleware('throttle:60,1')->name('account.appearance');
             Route::post('account/update-information', 'AccountController@updateInformation')->name('account.update_information');
 
             Route::post('account/change-password', 'AccountController@changePassword')->name('account.change.password');
@@ -205,7 +206,9 @@
              * Version 3.7
              */
 
-            Route::get('pricing', 'AccountController@pricing')->name('account.pricing');
+            // Guests get the public MotionGrove pricing page (resources/views/marketing); a signed-in customer
+            // reaches this page exactly as before. The middleware runs ahead of `auth` (Kernel::$middlewarePriority).
+            Route::get('pricing', 'AccountController@pricing')->middleware(\App\Http\Middleware\ServeMarketingPricingToGuests::class)->name('account.pricing');
             Route::post('pricing', 'AccountController@searchPricing');
             Route::post('pricing/view', 'AccountController@viewPricing')->name('account.pricing-view');
 

@@ -201,6 +201,12 @@
                 \App\Library\AgencyBilling\StripeApiAgencyGateway::class,
             );
 
+            // White Label: unauthenticated screens resolve an Agency brand from a VERIFIED app domain host only.
+            $this->app->bind(
+                \App\Library\Branding\AgencyBrandSource::class,
+                \App\Library\Branding\DatabaseAgencyBrandSource::class,
+            );
+
             $bindings = [
                 UserRepository::class           => EloquentUserRepository::class,
                 AccountRepository::class        => EloquentAccountRepository::class,

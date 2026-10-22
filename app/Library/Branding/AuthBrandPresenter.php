@@ -194,6 +194,17 @@ class AuthBrandPresenter
      * no traversal segment, and names an existing public file. The
      * rejected value is never returned or logged with the response.
      */
+    /** Public form of the same asset gate the login screen uses (relative, under images/branding/, existing file). */
+    public function safeAsset(?string $path): ?string
+    {
+        return $this->publicAssetOrNull($path);
+    }
+
+    public function safeHex(?string $value): ?string
+    {
+        return $this->hexColorOrNull($value);
+    }
+
     private function publicAssetOrNull(?string $path): ?string
     {
         if ($path === null) {

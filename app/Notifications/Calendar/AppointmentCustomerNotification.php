@@ -4,6 +4,7 @@ namespace App\Notifications\Calendar;
 
 use App\Library\Calendar\Notifications\AppointmentCalendarLinks;
 use App\Library\Calendar\Notifications\AppointmentNotificationDetails;
+use App\Models\AppointmentNotification;
 use Illuminate\Bus\Queueable;
 use App\Library\Mail\BrandedMailMessage;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -32,6 +33,8 @@ class AppointmentCustomerNotification extends Notification
         private readonly bool $isReminder,
         /** @var array{subject: string, body: string}|null The Booking Type's own wording, already rendered. */
         private readonly ?array $custom = null,
+        /** The ledger kind, so a rescheduled or cancelled /book-demo appointment gets its own wording. */
+        private readonly ?string $kind = null,
     ) {
     }
 
@@ -45,6 +48,10 @@ class AppointmentCustomerNotification extends Notification
     {
         $d = $this->details;
 
+        if ($this->kind === AppointmentNotification::KIND_CANCELLATION) {
+            return $this->cancelledMail();
+        }
+
         if ($this->custom !== null) {
             $mail = (new BrandedMailMessage)
                 ->from((string) config('mail.from.address'), $d->businessName)
@@ -56,20 +63,24 @@ class AppointmentCustomerNotification extends Notification
                 }
             }
 
-            $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar'])
-                ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+            $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar']);
+            $this->addCalendarActions($mail);
             $this->addManageLine($mail);
 
             return $mail->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
         }
 
+        $rescheduled = $this->kind === AppointmentNotification::KIND_RESCHEDULED;
+
         $mail = (new BrandedMailMessage)
             ->from((string) config('mail.from.address'), $d->businessName)
-            ->subject(($this->isReminder ? 'Reminder: ' : 'Booking confirmed: ') . $d->title() . ' on ' . $d->date)
-            ->greeting($this->isReminder ? 'Your appointment is coming up' : 'You are booked')
+            ->subject(($this->isReminder ? 'Reminder: ' : ($rescheduled ? 'Booking rescheduled: ' : 'Booking confirmed: ')) . $d->title() . ' on ' . $d->date)
+            ->greeting($this->isReminder ? 'Your appointment is coming up' : ($rescheduled ? 'Your appointment has been rescheduled' : 'You are booked'))
             ->line($this->isReminder
                 ? "This is a reminder of your appointment with {$d->businessName}."
-                : "Your appointment with {$d->businessName} is confirmed.");
+                : ($rescheduled
+                    ? "Your appointment with {$d->businessName} has moved to the new time below."
+                    : "Your appointment with {$d->businessName} is confirmed."));
 
         $details = ['What' => $d->bookingType, 'Business' => $d->businessName, 'Date' => $d->date, 'Time' => $d->timeRange, 'Time zone' => $d->timezone];
 
@@ -81,14 +92,52 @@ class AppointmentCustomerNotification extends Notification
             $details['Details'] = $d->instructions;
         }
 
-        $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => $details])
-            ->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+        $mail->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => $details]);
+        $this->addCalendarActions($mail);
         $this->addManageLine($mail);
 
         return $mail->attachData(AppointmentCalendarLinks::ics($d), 'appointment.ics', ['mime' => 'text/calendar; charset=UTF-8; method=PUBLISH']);
     }
 
+    /** The cancellation notice: what was cancelled, and that nothing more is needed. No Zoom link, calendar file or manage link. */
+    private function cancelledMail(): MailMessage
+    {
+        $d = $this->details;
+
+        return (new BrandedMailMessage)
+            ->from((string) config('mail.from.address'), $d->businessName)
+            ->subject('Booking cancelled: ' . $d->title() . ' on ' . $d->date)
+            ->greeting('Your appointment has been cancelled')
+            ->line("Your appointment with {$d->businessName} has been cancelled. No further action is needed.")
+            ->viewData(['brand' => $d->brand, 'icon' => 'calendar', 'details' => [
+                'What' => $d->bookingType, 'Business' => $d->businessName, 'Date' => $d->date, 'Time' => $d->timeRange, 'Time zone' => $d->timezone,
+            ]]);
+    }
+
     /** Below the action button: the signed guest link, only for the /book-demo Booking Type. */
+    /**
+     * The primary button. For an appointment with a real Zoom meeting it is "Join Zoom meeting" (with the plain link as a
+     * fallback and Google Calendar as a text link); otherwise it is exactly what it always was.
+     */
+    private function addCalendarActions(MailMessage $mail): void
+    {
+        $d = $this->details;
+
+        if ($d->joinUrl !== null) {
+            $mail->action('Join Zoom meeting', $d->joinUrl)
+                ->line(new \Illuminate\Support\HtmlString('Or copy this link into your browser: <a href="'.e($d->joinUrl).'">'.e($d->joinUrl).'</a>'))
+                ->line(new \Illuminate\Support\HtmlString('<a href="'.e(AppointmentCalendarLinks::googleUrl($d)).'">Add to Google Calendar</a>'));
+
+            return;
+        }
+
+        if ($d->zoomPending) {
+            $mail->line('Your Zoom link is still being prepared. We will email it to you as soon as it is ready, before the meeting.');
+        }
+
+        $mail->action('Add to Google Calendar', AppointmentCalendarLinks::googleUrl($d));
+    }
+
     private function addManageLine(MailMessage $mail): void
     {
         if ($this->details->manageUrl !== null) {

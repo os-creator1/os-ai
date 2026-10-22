@@ -6,12 +6,12 @@
             <ul class="nav navbar-nav">
                 @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_customer == 1 && Auth::user()->customer->activeSubscription())
                     <li class="nav-item"><a class="navbar-brand" href="{{route('user.home')}}">
-                            <span class="brand-logo"><x-branding-logo variant="full" background="light" /></span>
+                            <span class="brand-logo"><x-branding-logo variant="full" background="light" adaptive /></span>
                         </a>
                     </li>
                 @else
                     <li class="nav-item"><a class="navbar-brand" href="{{\App\Helpers\Helper::adminHomeUrl()}}">
-                            <span class="brand-logo"><x-branding-logo variant="full" background="light" /></span>
+                            <span class="brand-logo"><x-branding-logo variant="full" background="light" adaptive /></span>
                         </a>
                     </li>
                 @endif

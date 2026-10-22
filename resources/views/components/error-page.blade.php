@@ -12,6 +12,11 @@
 @php
     $page = app(\App\Library\ErrorPages\ErrorPagePresenter::class)->for((int) $code, request());
     $digits = str_split((string) $page['code']);
+    // White label: a customer of an Agency sees the Agency's name and colours on error pages too. Resolved only from the
+    // persisted client relationship (and only when the request got far enough to have a customer context).
+    $agencyChrome = app(\App\Library\Branding\ClientChromeBrand::class)->current(request());
+    $errorBrandName = $agencyChrome['name'] ?? config('app.name');
+    $agencyThemeStyle = app(\App\Library\Branding\AgencyThemeStyle::class)->forRequest(request());
 @endphp
 <!doctype html>
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
@@ -19,7 +24,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
-    <title>{{ $page['title'] }} · {{ config('app.name') }}</title>
+    <title>{{ $page['title'] }} · {{ $errorBrandName }}</title>
     <style>
         :root{--eb-canvas:var(--color-canvas,#F7F6F2);--eb-surface:var(--color-surface,#FFFFFF);--eb-border:var(--color-border,#E5E1DA);--eb-text:var(--color-text-primary,#262522);--eb-muted:var(--color-text-muted,#6F6D67);--eb-accent:var(--color-primary,#B5524C);--eb-accent-hover:var(--color-primary-hover,#A83D38);--eb-accent-soft:var(--color-primary-soft-bg,#F4E6E4)}
         *{box-sizing:border-box}
@@ -47,6 +52,7 @@
         .eb-footer{display:flex;justify-content:space-between;gap:1rem;padding:1rem 1.5rem;border-top:1px solid var(--eb-border);font-size:.75rem;color:var(--eb-muted)}
         @media (max-width:480px){.eb-actions .eb-btn{flex:1 1 100%}}
     </style>
+    @if ($agencyThemeStyle){!! $agencyThemeStyle !!}@endif
 </head>
 <body>
 <header class="eb-header">

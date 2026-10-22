@@ -50,6 +50,8 @@ STRIPE_MODE=live
 STRIPE_KEY=pk_live_FAKEFAKEFAKE
 STRIPE_SECRET=sk_live_FAKEFAKEFAKE
 STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET=whsec_FAKE1
+STRIPE_CONNECT_WEBHOOK_SECRET=whsec_FAKE3
+STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET=whsec_FAKE4
 STRIPE_WEBHOOK_SECRET=whsec_FAKE2
 OPENAI_ACTIVE=false
 EOF
@@ -119,6 +121,8 @@ mutate h3 's/^STRIPE_KEY=.*/STRIPE_KEY=pk_test_FAKE/';       expect_refuse "live
 mutate h4 's/^STRIPE_MODE=.*/STRIPE_MODE=test/';             expect_refuse "test mode + live keys" "test" run_pre "$TMP/h4.env"
 mutate h5 's/^STRIPE_SECRET=.*/STRIPE_SECRET=/';             expect_refuse "live mode + empty secret" "STRIPE_SECRET" run_pre "$TMP/h5.env"
 drop   h6 STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET;       expect_refuse "live mode, no platform webhook secret" "WEBHOOK_SECRET" run_pre "$TMP/h6.env"
+drop   h6b STRIPE_CONNECT_WEBHOOK_SECRET;                   expect_refuse "live mode, no Connect (lane B) webhook secret" "STRIPE_CONNECT_WEBHOOK_SECRET" run_pre "$TMP/h6b.env"
+drop   h6c STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET;           expect_refuse "live mode, no Agency (lane C) webhook secret" "STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET" run_pre "$TMP/h6c.env"
 printf 'STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET=x\nSTRIPE_FOO=sk_test_LEAK\n' | cat "$TMP/good.env" - > "$TMP/h7.env"; expect_refuse "stray test key under a live mode" "test-mode Stripe key" run_pre "$TMP/h7.env"
 mutate h8 's/^STRIPE_MODE=.*/STRIPE_MODE=Live /';             expect_pass "STRIPE_MODE is case/space tolerant" run_pre "$TMP/h8.env"
 expect_refuse "missing env file" "not found" run_pre "$TMP/nope.env"

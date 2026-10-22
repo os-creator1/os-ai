@@ -11,6 +11,7 @@ use App\Models\AppointmentNotification;
 use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\Contacts;
+use App\Library\Calendar\Zoom\ZoomLinkGate;
 use App\Models\User;
 use App\Notifications\Calendar\AppointmentCustomerNotification;
 use App\Repositories\Contracts\CampaignRepository;
@@ -101,11 +102,20 @@ class AppointmentNotificationSender
     {
         $appointment = Appointment::query()->find($row->appointment_id);
 
-        if ($appointment === null || $appointment->status !== AppointmentStatus::Scheduled) {
+        $isCancellation = $row->kind === AppointmentNotification::KIND_CANCELLATION;
+
+        // A cancellation notice is the one message that is only ever sent for a cancelled appointment.
+        if ($appointment === null || $appointment->status !== ($isCancellation ? AppointmentStatus::Cancelled : AppointmentStatus::Scheduled)) {
             return [AppointmentNotification::STATUS_CANCELLED, 'appointment_not_scheduled'];
         }
 
         $isReminder = $row->kind === AppointmentNotification::KIND_REMINDER;
+
+        // A reschedule notice for a start the appointment has since left is obsolete: only the latest move is announced.
+        if ($row->kind === AppointmentNotification::KIND_RESCHEDULED
+            && ! $appointment->start_at->copy()->utc()->equalTo($row->appointment_start_at)) {
+            return [AppointmentNotification::STATUS_CANCELLED, 'rescheduled'];
+        }
 
         if ($isReminder) {
             // Bound to a start the appointment no longer has: obsolete, never sent.
@@ -124,10 +134,45 @@ class AppointmentNotificationSender
             return [AppointmentNotification::STATUS_SKIPPED, 'business_inactive'];
         }
 
-        $details = AppointmentNotificationDetails::for($appointment);
+        if ($isCancellation) {
+            // Nothing to join any more: the details carry no Zoom link and no manage link.
+            $details = AppointmentNotificationDetails::for($appointment, false, true);
+
+            return $details === null
+                ? [AppointmentNotification::STATUS_SKIPPED, 'details_unavailable']
+                : $this->sendEmail($row, $details, false);
+        }
+
+        // Zoom: never send a confirmation or reminder that promises a video link which does not exist (yet).
+        $zoomState = ZoomLinkGate::state($appointment);
+        $zoomFallback = false;
+
+        if ($zoomState === ZoomLinkGate::PENDING) {
+            // The meeting is still being created (or moved). Put the row back; it is released the moment Zoom is ready.
+            return [AppointmentNotification::STATUS_PENDING, 'zoom_pending'];
+        }
+
+        if ($zoomState === ZoomLinkGate::FAILED) {
+            if ($isReminder || ! in_array($row->kind, [AppointmentNotification::KIND_CONFIRMATION, AppointmentNotification::KIND_RESCHEDULED], true) || ($row->kind === AppointmentNotification::KIND_CONFIRMATION && $row->occurrence_key !== 'confirmation')) {
+                return [AppointmentNotification::STATUS_SKIPPED, 'zoom_unavailable'];
+            }
+
+            // Provisioning gave up: say plainly that the link will follow, never imply it is in this email.
+            $zoomFallback = true;
+        }
+
+        $details = AppointmentNotificationDetails::for($appointment, $zoomFallback);
 
         if ($details === null) {
             return [AppointmentNotification::STATUS_SKIPPED, 'details_unavailable'];
+        }
+
+        if ($zoomFallback) {
+            [$status] = $row->channel === AppointmentNotification::CHANNEL_EMAIL
+                ? $this->sendEmail($row, $details, $isReminder)
+                : $this->sendSms($row, $business, $details, $isReminder);
+
+            return [$status, $status === AppointmentNotification::STATUS_SENT ? 'zoom_link_pending' : null];
         }
 
         return $row->channel === AppointmentNotification::CHANNEL_EMAIL
@@ -145,7 +190,7 @@ class AppointmentNotificationSender
         }
 
         Notification::route('mail', $recipient)->notify(
-            new AppointmentCustomerNotification($details, $isReminder, $this->customEmail($row, $details, $isReminder)),
+            new AppointmentCustomerNotification($details, $isReminder, $this->customEmail($row, $details, $isReminder), $row->kind),
         );
 
         return [AppointmentNotification::STATUS_SENT, null];
@@ -227,6 +272,11 @@ class AppointmentNotificationSender
     /** The Booking Type's own text for this send, or null for the built-in wording. */
     private function customEmail(AppointmentNotification $row, AppointmentNotificationDetails $d, bool $isReminder): ?array
     {
+        // Change notices use the built-in wording: the Booking Type's templates are for confirmations and reminders.
+        if (in_array($row->kind, [AppointmentNotification::KIND_RESCHEDULED, AppointmentNotification::KIND_CANCELLATION], true)) {
+            return null;
+        }
+
         $kind = $isReminder ? 'reminder' : 'confirmation';
         $template = AppointmentNotificationContent::templateFor($this->typeOf($row), $kind, 'email', $row->offset_minutes);
 
@@ -293,6 +343,12 @@ class AppointmentNotificationSender
             $parts[] = mb_strimwidth(preg_replace('/\s+/', ' ', $d->instructions) ?? '', 0, 140, '...');
         }
 
+        if ($d->joinUrl !== null) {
+            $parts[] = 'Join Zoom: ' . $d->joinUrl;
+        } elseif ($d->zoomPending) {
+            $parts[] = 'Your Zoom link will follow.';
+        }
+
         $parts[] = 'Reply STOP to opt out.';
 
         return implode(' ', $parts);
@@ -311,6 +367,8 @@ class AppointmentNotificationSender
             ->update([
                 'status' => $status,
                 'reason' => $reason,
+                // A held row is re-queued by the sweep only after the normal delay; Zoom readiness releases it at once.
+                'dispatched_at' => $status === AppointmentNotification::STATUS_PENDING ? $now : $row->dispatched_at,
                 'sent_at' => $status === AppointmentNotification::STATUS_SENT ? $now : null,
                 'updated_at' => $now,
             ]);

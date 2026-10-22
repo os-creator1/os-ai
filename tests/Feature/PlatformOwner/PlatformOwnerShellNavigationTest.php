@@ -45,6 +45,7 @@ class PlatformOwnerShellNavigationTest extends TestCase
         'Feature Management' => 'platform-features',
         'Announcements' => 'platform-announcements',
         'Platform Automations' => 'platform-automations',
+        'Demo Form' => 'platform-owner/marketing/demo-form',
         'Audit Logs' => 'platform-owner/audit',
         'Administrators' => 'administrators',
         'Roles' => 'roles',

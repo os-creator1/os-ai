@@ -69,6 +69,12 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.email.disconnect',
         'customer.workspaces.businesses.email.send',
         'customer.email.oauth.callback',
+        // Zoom (native meetings): authorizing, disconnecting or retrying a client's Zoom host is the client's own act.
+        // An Agency never connects its own Zoom for a client Business.
+        'customer.workspaces.businesses.calendar.integrations.zoom.connect',
+        'customer.workspaces.businesses.calendar.integrations.zoom.disconnect',
+        'customer.workspaces.businesses.calendar.appointments.zoom-retry',
+        'customer.zoom.oauth.callback',
         // API credentials / sending-server configuration
         'customer.developer.generate',
         'customer.developer.server',
@@ -102,6 +108,7 @@ final class ViewAsProhibitedActions
         // something a View As session (which is "the client") may read or
         // change. Both the page and the save are refused outright.
         'customer.workspaces.agency.white-label.',
+        'customer.workspaces.agency.site.',
         // The Agency's own operating workspace is set up by the Agency, never as "the client".
         'customer.workspaces.agency.operations.',
         'customer.workspaces.members.',

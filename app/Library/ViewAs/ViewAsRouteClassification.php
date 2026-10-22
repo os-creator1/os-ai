@@ -59,6 +59,7 @@ final class ViewAsRouteClassification
         'user.remove_avatar',
         'user.account.update',
         'user.account.update_information',
+        'user.account.appearance',
         'user.account.change.password',
         'user.account.twofactor.auth',
         'user.account.twofactor.generate_code',

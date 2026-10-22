@@ -24,6 +24,7 @@
         .website-choices .choice-icon{display:inline-flex;align-items:center;justify-content:center;width:2.5rem;height:2.5rem;border-radius:.6rem;margin-bottom:1rem}
         .website-choices .choice-icon.is-build{background:var(--color-primary-soft-bg,#f4e6e4);color:var(--color-primary,#b5524c)}
         .website-choices .choice-icon.is-existing{background:#e6eefb;color:#2b5fb8}
+        html.dark-layout .website-choices .choice-icon.is-existing{background:rgba(75,134,220,.2);color:#8fb6f0}
         .website-choices .choice-points{list-style:none;margin:.5rem 0 1.25rem;padding:0;font-size:.85rem}
         .website-choices .choice-points li{display:flex;gap:.5rem;align-items:flex-start;margin-bottom:.35rem}
         .website-choices .choice-points .ds-icon{flex:none;margin-top:.15rem;color:#3d8b5f}
