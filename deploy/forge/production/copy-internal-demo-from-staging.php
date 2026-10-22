@@ -25,9 +25,11 @@
  *      identifiers, connections, tokens or secrets are never copied.
  *   6. Sets the host's weekly hours with StaffAvailabilityService::replaceWeek (only when production has none yet,
  *      unless --replace-availability) and adds future time off that is not there yet.
- *   7. Points DEMO_BOOKING_TYPE_UUID at the real production Booking Type (one line of the production .env, atomic
+ *   7. Copies the PUBLISHED /book-demo form (questions, order, options) through DemoFormRepository save+publish, unless
+ *      production already has an identical published form.
+ *   8. Points DEMO_BOOKING_TYPE_UUID at the real production Booking Type (one line of the production .env, atomic
  *      replace) and runs config:cache.
- *   8. Verifies: the records link up, the Business is active, the host is eligible, real slots exist in the next 21
+ *   9. Verifies: the records link up, the Business is active, the host is eligible, real slots exist in the next 21
  *      days, and https://<app url>/book-demo answers 200.
  *
  * Not copied, ever: users other than the two named, passwords, tokens, appointments, contacts, payments,
@@ -49,9 +51,11 @@ use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\BookingType;
 use App\Models\Customer;
+use App\Models\DemoFormVersion;
 use App\Models\StaffAvailabilityRule;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Library\Calendar\DemoBooking\Form\DemoFormRepository;
 use App\Library\Calendar\PublicSlotFinder;
 use App\Library\Calendar\StaffAvailabilityService;
 use App\Repositories\Contracts\CustomerRepository;
@@ -183,6 +187,7 @@ if (! empty($stgEnv['DEMO_BOOKING_TYPE_UUID'])) {
 $srcType ??= $stg->table('booking_types')->where('business_location_id', $srcLocation->id)->where('name', 'MotionGrove Demo')->first()
     ?? $fail('Staging has no demo Booking Type at the internal Location.');
 $srcHosts = $stg->table('booking_type_staff')->where('booking_type_id', $srcType->id)->pluck('staff_user_id')->all();
+$srcForm = Schema::hasTable('demo_form_versions') ? $stg->table('demo_form_versions')->where('status', DemoFormVersion::PUBLISHED)->orderByDesc('id')->first() : null;
 $srcAdmins = $stg->table('users')->where('is_admin', 1)->orderBy('id')->pluck('email')->all();
 $srcRules = $stg->table('staff_availability_rules')->where('business_location_id', $srcLocation->id)->where('staff_user_id', $srcOwner->id)->orderBy('day_of_week')->orderBy('start_time')->get();
 $srcTimeOff = $stg->table('staff_time_off')->where('staff_user_id', $srcOwner->id)->where('end_at', '>', now()->utc())->get();
@@ -194,6 +199,7 @@ $say("internal owner          : {$srcOwner->email}  ({$srcOwner->first_name} {$s
 $say("Business timezone       : {$srcBusiness->timezone}");
 $say("Booking Type            : {$srcType->name}, {$srcType->duration_minutes} min");
 $say('hosts on the type       : '.count($srcHosts).($srcHosts === [(int) $srcOwner->id] || $srcHosts === [(string) $srcOwner->id] ? ' (the owner only)' : ' (more than the owner: extra hosts are NOT transferred)'));
+$say('published demo form      : '.($srcForm ? count((array) json_decode((string) $srcForm->fields, true)).' field(s)' : 'none (production keeps the design default)'));
 $say("weekly hour windows     : {$srcRules->count()}   future time-off rows: {$srcTimeOff->count()}");
 
 // ---------------------------------------------------------------- 2. read production
@@ -337,6 +343,27 @@ foreach ($srcTimeOff as $off) {
     }
 }
 $say("future time off added: {$added}");
+
+// ---------------------------------------------------------------- 6b. published demo form
+$say();
+$say('--- demo form ---');
+if ($srcForm === null) {
+    $say('staging has no published demo form (it uses the design default); production keeps the default too.');
+} else {
+    $srcFields = (array) json_decode((string) $srcForm->fields, true);
+    $forms = app(DemoFormRepository::class);
+    $live = $forms->published();
+    $normalize = static fn (array $f): string => json_encode($f, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $adminId = (int) User::query()->where('is_admin', true)->orderBy('id')->value('id');
+    $liveStored = $live['id'] === null ? null : (array) DemoFormVersion::query()->find($live['id'])?->fields;
+    if ($liveStored !== null && $normalize($liveStored) === $normalize($srcFields)) {
+        $say('production already has this exact published form: unchanged.');
+    } else {
+        $forms->saveDraft($srcFields, $adminId);
+        $forms->publish($adminId);
+        $say('published the staging demo form on production ('.count($srcFields).' field(s)).');
+    }
+}
 
 // ---------------------------------------------------------------- 7. DEMO_BOOKING_TYPE_UUID
 $say();
