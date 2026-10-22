@@ -433,7 +433,11 @@ final class FormSubmissionService
         ], fn ($value) => $value !== null && $value !== '');
 
         // The Location is the authoritative row the resolver re-read — the
-        // Contacts seam takes its Business from it.
+        // Contacts seam takes its Business from it. Hand it the Business we already hold: lazy-loading it there would run
+        // a plain SELECT inside this transaction BEFORE the Location+phone lock, fixing the REPEATABLE READ snapshot and
+        // hiding the Contact (and anything else) a concurrent twin commits while we wait for that lock.
+        $context->location->setRelation('business', $context->business);
+
         return $this->contacts->findOrCreateForForm($context->location, (string) $phone, $details);
     }
 
