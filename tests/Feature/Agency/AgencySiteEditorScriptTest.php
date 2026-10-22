@@ -171,5 +171,6 @@ class AgencySiteEditorScriptTest extends TestCase
         $this->assertSame('Kept unrelated', $r['otherKept'], 'the edit is still in the field');
         $this->assertStringContainsString('not saved', $r['state']);
         $this->assertFalse($r['otherSaved']);
+        $this->assertTrue($r['heroLocked'], 'the reset section is locked, not silently ignoring input, until the page is reloaded');
     }
 }

@@ -165,6 +165,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
             events: server.events, otherSaved: server.state[other.path] === 'Kept unrelated',
             heroHasOverride: 'copy.home.hero.title' in server.state, reloaded: loads >= 1,
             otherKept: await other.input.inputValue(), state: (await page.textContent('#wl-save-state')).trim(),
+            heroLocked: await page.locator(TITLE).isDisabled(),
         };
     };
     results.resetKeepsUnrelatedPendingEdit = await scenario(browser, 'other-pending', otherServer({}), otherRun('pending'));
