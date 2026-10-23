@@ -558,6 +558,9 @@
                 \App\Library\Timeline\Sources\DocumentActivitySource::class,
                 // Forms V1 (§16) — a Contact's form submissions.
                 \App\Library\Timeline\Sources\FormSubmissionActivitySource::class,
+                // Historical email/calls/notes/activity imported from another system (read-only).
+                \App\Library\Timeline\Sources\ImportedHistorySource::class,
+                \App\Library\Timeline\Sources\ContactTasksSource::class,
             ], \App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG);
 
             $this->app->bind(\App\Library\Timeline\ContactActivityTimeline::class, fn ($app) => new \App\Library\Timeline\ContactActivityTimeline(

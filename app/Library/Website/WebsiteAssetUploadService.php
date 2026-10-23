@@ -87,6 +87,54 @@ final class WebsiteAssetUploadService
      *
      * @throws ValidationException
      */
+    public const VIDEO_MAX_BYTES = 52428800; // 50 MB
+
+    /**
+     * Stores an uploaded MP4 in the SAME persisted directory the images use (`images/websites/{uid}`): the production
+     * release switch only preserves a fixed list of public directories, and a video anywhere else would vanish on the
+     * next deploy. Content-hash named, so a re-upload is a no-op.
+     */
+    public function storeVideo(Website $website, UploadedFile $file, ?string $altText = null): WebsiteAsset
+    {
+        $path = $file->getRealPath();
+        $size = $path === false ? 0 : (int) filesize($path);
+
+        if ($size < 1024) {
+            throw new InvalidWebsiteAssetException('The uploaded video could not be read.');
+        }
+        if ($size > self::VIDEO_MAX_BYTES) {
+            throw new InvalidWebsiteAssetException('Videos can be at most 50 MB.');
+        }
+
+        // An MP4 is an ISO box file: bytes 4-8 are "ftyp". Never trust the client's name or MIME type.
+        $head = (string) (new \SplFileObject($path, 'rb'))->fread(12);
+        if (substr($head, 4, 4) !== 'ftyp') {
+            throw new InvalidWebsiteAssetException('Only MP4 videos are supported.');
+        }
+
+        $hash = hash_file('sha256', $path);
+        $existing = WebsiteAsset::query()->where('website_id', $website->id)->where('content_hash', $hash)->where('purpose', WebsiteAssetPurpose::Video->value)->first();
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        $relative = "images/websites/{$website->uid}/{$hash}.mp4";
+        $directory = public_path("images/websites/{$website->uid}");
+        if (! is_dir($directory) && ! mkdir($directory, 0755, true) && ! is_dir($directory)) {
+            throw new InvalidWebsiteAssetException('The Website asset directory could not be created.');
+        }
+        if (! copy($path, public_path($relative)) || hash_file('sha256', public_path($relative)) !== $hash) {
+            @unlink(public_path($relative));
+            throw new InvalidWebsiteAssetException('The video failed integrity verification after storage.');
+        }
+
+        return $website->assets()->create([
+            'disk' => 'public', 'path' => $relative, 'mime_type' => 'video/mp4', 'size' => $size,
+            'width' => null, 'height' => null, 'alt_text' => $altText, 'content_hash' => $hash,
+            'purpose' => WebsiteAssetPurpose::Video->value,
+        ]);
+    }
+
     public function delete(Website $website, WebsiteAsset $asset): void
     {
         abort_unless($asset->website_id === $website->id, 404);

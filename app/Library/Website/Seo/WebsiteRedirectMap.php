@@ -100,7 +100,56 @@ final class WebsiteRedirectMap
     {
         $redirects = (array) ($snapshot['redirects'] ?? []);
 
-        return array_key_exists($path, $redirects) ? (string) $redirects[$path] : null;
+        if (array_key_exists($path, $redirects)) {
+            return (string) $redirects[$path];
+        }
+
+        // Addresses are case-insensitive for visitors (an old "/Check-availability" link must reach "/check-availability").
+        $folded = strtolower($path);
+        foreach ($redirects as $old => $target) {
+            if (strtolower((string) $old) === $folded) {
+                return (string) $target;
+            }
+        }
+
+        if ($folded !== $path) {
+            foreach ((array) ($snapshot['pages'] ?? []) as $page) {
+                if (empty($page['is_home']) && (string) ($page['slug'] ?? '') === $folded) {
+                    return $folded;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Folds the owner's custom redirects into the computed map. An entry survives only if its target is a live page of
+     * THIS revision and its old address is not itself a live page — so a redirect can never hide a page, loop, or point
+     * off-site. Owner entries win over automatic ones.
+     *
+     * @param  array<string, string>  $computed
+     * @param  array<string, string>|null  $custom
+     * @return array<string, string>
+     */
+    public function withCustom(array $computed, ?array $custom, array $pages): array
+    {
+        $live = [];
+        foreach ($pages as $page) {
+            $live[strtolower(self::pathOf($page))] = true;
+        }
+
+        foreach ((array) $custom as $old => $target) {
+            $old = strtolower(trim((string) $old, '/'));
+            $target = strtolower(trim((string) $target, '/'));
+
+            if ($old === '' || isset($live[$old]) || ! isset($live[$target]) || $old === $target) {
+                continue;
+            }
+            $computed[$old] = $target;
+        }
+
+        return array_slice($computed, 0, self::MAX_ENTRIES + 50, true);
     }
 
     /** @param  array<string, mixed>  $page */

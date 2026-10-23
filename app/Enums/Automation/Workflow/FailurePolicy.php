@@ -19,9 +19,15 @@ enum FailurePolicy: string
 {
     case Halt = 'halt';
 
+    /**
+     * A step that fails is logged as failed and the journey carries on with the next step. Used where steps are
+     * independent channels (e.g. e-mail then text): a missing mailbox must not cancel the text that follows.
+     */
+    case Continue = 'continue';
+
     public function haltsEnrollment(): bool
     {
-        return $this === self::Halt;
+        return $this === self::Halt;  // Continue never halts
     }
 
     public static function default(): self

@@ -5,6 +5,7 @@ namespace App\Library\Automation\Workflow\Executors;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Contracts\NodeExecutor;
+use App\Library\Automation\Workflow\Runtime\BusinessSendWindow;
 use App\Library\Automation\Workflow\WorkflowLimits;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
@@ -57,6 +58,17 @@ class WaitNodeExecutor implements NodeExecutor
         $config = is_array($node->config) ? $node->config : [];
         $timezone = $this->timezoneFor($business);
         $now = Carbon::now($timezone);
+
+        // "Wait until it is a good time to message them": outside quiet hours (always) and, when asked and the Location
+        // has recorded hours, inside business hours — in the BUSINESS's timezone. Already inside the window => no wait.
+        if ((string) ($config['mode'] ?? '') === 'until_send_window') {
+            $window = BusinessSendWindow::forBusiness($business, (bool) ($config['business_hours'] ?? false));
+            $now = Carbon::now();
+
+            return $window->isAllowed($now)
+                ? NodeExecutionOutcome::succeeded('Inside the send window')
+                : NodeExecutionOutcome::waitUntil($window->nextAllowed($now)->utc());
+        }
 
         $resumeAt = match ((string) ($config['mode'] ?? '')) {
             'duration' => $this->fromDuration($config, $now),

@@ -136,6 +136,31 @@ class WorkflowWakeService
                 return true;
             }
 
+            $node = AutomationWorkflowNode::query()->find($nodeId);
+
+            if ($node === null) {
+                $this->advancer->finish($enrollment->fresh(), EnrollmentStatus::Exited, 'node_missing');
+
+                return true;
+            }
+
+            // A send-window wait scheduled for 08:00 can be processed at 22:00 (workers down, a pause, a backlog). The window is
+            // a property of the moment of sending, so it is re-checked on resume and the run is parked again if it has closed.
+            $config = is_array($node->config) ? $node->config : [];
+            if ((string) ($config['mode'] ?? '') === 'until_send_window') {
+                $business = \App\Models\Business::query()->find($enrollment->business_id);
+                $window = $business === null ? null : \App\Library\Automation\Workflow\Runtime\BusinessSendWindow::forBusiness($business, (bool) ($config['business_hours'] ?? false));
+                if ($window !== null && ! $window->isAllowed(Carbon::now())) {
+                    AutomationEnrollment::query()->whereKey($enrollment->getKey())->update([
+                        'status' => EnrollmentStatus::Waiting->value,
+                        'resume_at' => $window->nextAllowed(Carbon::now())->utc(),
+                        'updated_at' => Carbon::now(),
+                    ]);
+
+                    return false;
+                }
+            }
+
             // The wait is over, so its step run is genuinely finished.
             AutomationStepRun::query()
                 ->where('enrollment_id', $enrollment->getKey())
@@ -146,14 +171,6 @@ class WorkflowWakeService
                     'completed_at' => Carbon::now(),
                     'updated_at' => Carbon::now(),
                 ]);
-
-            $node = AutomationWorkflowNode::query()->find($nodeId);
-
-            if ($node === null) {
-                $this->advancer->finish($enrollment->fresh(), EnrollmentStatus::Exited, 'node_missing');
-
-                return true;
-            }
 
             $successorId = $this->advancer->successorOf($node);
 

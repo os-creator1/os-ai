@@ -212,6 +212,10 @@ export function summarize(node, catalogs) {
         }
 
         case NODE_TYPES.WAIT:
+            if (config.mode === 'until_send_window') {
+                return { summary: config.business_hours ? 'Until business hours open (never overnight)' : 'Until a good time to message (never overnight)', incomplete: false }
+            }
+
             if (config.mode === 'until_datetime') {
                 const moment = formatMoment(config.at)
 

@@ -13,6 +13,8 @@ use App\Library\NicheBlueprint\Workspace\BlueprintChecksum;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\Business;
+use App\Models\CrmPipelineStage;
+use App\Models\Form;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -42,9 +44,30 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         'appointment_scheduled',
         'opportunity_won',
         'contact_tag_added',
+        'opportunity_stage_changed',
+        'opportunity_lost',
+        'questionnaire_submitted',
+        'payment_succeeded',
     ];
 
-    private const STEP_TYPES = ['add_tag', 'wait', 'send_sms', 'send_email', 'internal_notification'];
+    private const STEP_TYPES = ['add_tag', 'wait', 'send_sms', 'send_email', 'internal_notification', 'end_if_replied', 'end_if_unsubscribed', 'end_if_tagged', 'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link', 'wait_for_send_window'];
+
+    /**
+     * Guard steps compile to an If / Else whose YES path is an End and whose NO
+     * path carries every later step — "stop here if the person replied (or is
+     * unsubscribed), otherwise continue". They are how a Blueprint expresses
+     * reply detection and consent without a free-form condition language.
+     */
+    private const GUARD_SUBJECTS = [
+        'end_if_replied' => 'contact.replied_since_enrollment',
+        'end_if_unsubscribed' => 'contact.subscribed',
+        'end_if_tagged' => 'contact.has_tag',
+        // Stop when the deal is won or lost (no open deal remains) — covers booked / lost / closed states.
+        'end_if_no_open_deal' => 'contact.has_open_deal',
+        // Never promise a link the Business has not set up.
+        'end_if_no_review_link' => 'business.review_link_set',
+        'end_if_no_questionnaire_link' => 'business.questionnaire_link_set',
+    ];
 
     public function __construct(
         private readonly WorkflowDraftService $drafts,
@@ -64,6 +87,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         // Reuse the Automations node validators on every step, so a payload
         // the workflow editor would reject cannot be published in a Blueprint.
         foreach ($parsed['steps'] as $step) {
+            if (isset(self::GUARD_SUBJECTS[$step['type']])) {
+                continue;
+            }
+
             $node = $this->nodeFor($step, 1);
             $errors = $this->nodes->validateConfig(WorkflowNodeType::from($node['type']), $node['config']);
 
@@ -91,11 +118,9 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             ->firstOrFail();
 
         $definition = $draft->definition;
-        $definition['root']['config'] = array_merge($definition['root']['config'], $this->triggerConfig($business, $parsed));
-        $definition['root']['next'] = array_map(
-            fn (array $step) => $this->nodeFor($step, $this->resolveTagId($business, $step)),
-            $parsed['steps'],
-        );
+        // Pack journeys are sequences of independent channels: log a failed step and carry on rather than halting the whole journey.
+        $definition['root']['config'] = array_merge($definition['root']['config'], ['failure_policy' => 'continue'], $this->triggerConfig($business, $parsed));
+        $definition['root']['next'] = $this->buildSequence($business, $parsed['steps']);
 
         $this->drafts->autosave($draft, $definition, (int) $draft->definition_revision);
 
@@ -118,9 +143,82 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         return BlueprintChecksum::of([$workflow->name, $workflow->status->value, $version, $revision]);
     }
 
+    /**
+     * @param  list<array<string, mixed>>  $steps
+     * @return list<array<string, mixed>>
+     */
+    private function buildSequence(Business $business, array $steps): array
+    {
+        $nodes = [];
+
+        foreach ($steps as $i => $step) {
+            if (isset(self::GUARD_SUBJECTS[$step['type']])) {
+                // Consecutive guards become ONE If / Else ("stop if ANY of these is true"): the engine allows only 5 levels
+                // of nesting and a guard's NO lane carries everything after it.
+                $conditions = [];
+                $k = $i;
+                while (isset($steps[$k]) && isset(self::GUARD_SUBJECTS[$steps[$k]['type']]) && count($conditions) < 5) {
+                    $conditions[] = $this->guardCondition($business, $steps[$k]);
+                    $k++;
+                }
+
+                $nodes[] = [
+                    'key' => (string) Str::uuid(),
+                    'type' => 'if_else',
+                    'config' => ['match' => 'any', 'conditions' => $conditions],
+                    'yes' => [['key' => (string) Str::uuid(), 'type' => 'end', 'config' => [], 'next' => []]],
+                    'no' => $this->buildSequence($business, array_slice($steps, $k)),
+                ];
+
+                return $nodes;
+            }
+
+            $nodes[] = $this->nodeFor($step, $this->resolveTagId($business, $step));
+        }
+
+        return $nodes;
+    }
+
+    /** @return array{subject: string, operator: string} */
+    private function guardCondition(Business $business, array $step): array
+    {
+        return [
+            'subject' => $step['type'] === 'end_if_tagged'
+                ? 'contact.has_tag:'.$this->resolveTag($business, $step['tag'])
+                : self::GUARD_SUBJECTS[$step['type']],
+            // "replied" and "tagged" end on true; "subscribed", "has an open deal" and "link is set" end on false.
+            'operator' => in_array($step['type'], ['end_if_replied', 'end_if_tagged'], true) ? 'is_true' : 'is_false',
+        ];
+    }
+
     /** @return array<string, mixed> */
     private function triggerConfig(Business $business, array $parsed): array
     {
+        if ($parsed['trigger_type'] === 'opportunity_stage_changed') {
+            $stage = CrmPipelineStage::query()
+                ->where('business_id', $business->id)
+                ->whereNull('archived_at')
+                ->where('name', $parsed['trigger_stage'])
+                ->orderBy('id')
+                ->first();
+
+            if ($stage === null) {
+                throw new InvalidArgumentException("Install the pipeline first: no stage named \"{$parsed['trigger_stage']}\" exists in this Business.");
+            }
+
+            return ['pipeline_id' => (int) $stage->pipeline_id, 'to_stage_id' => (int) $stage->id];
+        }
+
+        if ($parsed['trigger_type'] === 'form_submitted' && $parsed['trigger_form'] !== null) {
+            $formId = Form::query()->where('business_id', $business->id)->where('name', $parsed['trigger_form'])->orderBy('id')->value('id');
+
+            if ($formId === null) {
+                throw new InvalidArgumentException("Install the form first: no form named \"{$parsed['trigger_form']}\" exists in this Business.");
+            }
+
+            return ['form_id' => (int) $formId];
+        }
+
         if ($parsed['trigger_type'] === 'contact_tag_added' && $parsed['trigger_tag'] !== null) {
             return ['tag_id' => $this->resolveTag($business, $parsed['trigger_tag'])];
         }
@@ -136,10 +234,11 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             'wait' => ['mode' => 'duration', 'amount' => $step['amount'], 'unit' => $step['unit']],
             'send_sms' => ['body' => $step['body']],
             'send_email' => ['subject' => $step['subject'], 'body' => $step['body']],
-            'internal_notification' => ['message' => $step['message']],
+            'internal_notification' => ['message' => $step['message']] + (isset($step['task']) ? ['task' => $step['task']] : []),
+            'wait_for_send_window' => ['mode' => 'until_send_window', 'business_hours' => (bool) $step['business_hours']],
         };
 
-        return ['key' => (string) Str::uuid(), 'type' => $step['type'], 'config' => $config, 'next' => []];
+        return ['key' => (string) Str::uuid(), 'type' => $step['type'] === 'wait_for_send_window' ? 'wait' : $step['type'], 'config' => $config, 'next' => []];
     }
 
     private function resolveTagId(Business $business, array $step): int
@@ -164,7 +263,7 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
 
     /**
      * @param  array<string, mixed>  $payload
-     * @return array{name: string, trigger_type: string, trigger_tag: ?string, steps: list<array<string, mixed>>}
+     * @return array{name: string, trigger_type: string, trigger_tag: ?string, trigger_stage: ?string, steps: list<array<string, mixed>>}
      */
     private function parse(array $payload): array
     {
@@ -176,6 +275,12 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         }
 
         $triggerTag = $this->optionalString($payload, 'trigger_tag', 191);
+        $triggerStage = $this->optionalString($payload, 'trigger_stage', 100);
+        $triggerForm = $this->optionalString($payload, 'trigger_form', 120);
+
+        if ($trigger === 'opportunity_stage_changed' && $triggerStage === null) {
+            throw new InvalidArgumentException('An "opportunity_stage_changed" trigger needs a "trigger_stage" (the stage name the deal moves into).');
+        }
 
         if ($trigger === 'contact_tag_added' && $triggerTag === null) {
             throw new InvalidArgumentException('A "contact_tag_added" trigger needs a "trigger_tag".');
@@ -212,11 +317,16 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
                 ],
                 'send_sms' => ['type' => $type, 'body' => $this->requireString($raw, 'body', 1600)],
                 'send_email' => ['type' => $type, 'subject' => $this->requireString($raw, 'subject', 200), 'body' => $this->requireString($raw, 'body', 20000)],
-                'internal_notification' => ['type' => $type, 'message' => $this->requireString($raw, 'message', 255)],
+                'internal_notification' => ['type' => $type, 'message' => $this->requireString($raw, 'message', 255)]
+                    + (is_array($raw['task'] ?? null) ? ['task' => $raw['task']] : []),
+                'end_if_replied', 'end_if_unsubscribed' => ['type' => $type],
+                'end_if_tagged' => ['type' => $type, 'tag' => $this->requireString($raw, 'tag', 191)],
+                'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link' => ['type' => $type],
+                'wait_for_send_window' => ['type' => $type, 'business_hours' => (bool) ($raw['business_hours'] ?? false)],
             };
         }
 
-        return ['name' => $name, 'trigger_type' => $trigger, 'trigger_tag' => $triggerTag, 'steps' => $steps];
+        return ['name' => $name, 'trigger_type' => $trigger, 'trigger_tag' => $triggerTag, 'trigger_stage' => $triggerStage, 'trigger_form' => $triggerForm, 'steps' => $steps];
     }
 
     public function surface(): string
@@ -251,8 +361,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             ['name' => 'trigger_type', 'label' => 'Starts when', 'type' => 'select', 'required' => true,
                 'options' => array_combine(self::TRIGGERS, array_map(fn ($t) => WorkflowTriggerType::from($t)->label(), self::TRIGGERS))],
             ['name' => 'trigger_tag', 'label' => 'Trigger tag', 'type' => 'text', 'required' => false, 'help' => 'Only for "A tag is added".'],
+            ['name' => 'trigger_stage', 'label' => 'Trigger stage', 'type' => 'text', 'required' => false, 'help' => 'Only for "A deal changes stage": the stage name.'],
+            ['name' => 'trigger_form', 'label' => 'Trigger form', 'type' => 'text', 'required' => false, 'help' => 'Only for "A form is submitted": the form name (blank = any form).'],
             ['name' => 'steps', 'label' => 'Steps', 'type' => 'lines', 'required' => true,
-                'help' => "One step per line:\nadd_tag: Tag name\nwait: 1 day   (minutes / hours / days)\nsend_sms: message text\nsend_email: Subject | Body\nnotify: message for your team"],
+                'help' => "One step per line:\nadd_tag: Tag name\nwait: 1 day   (minutes / hours / days)\nsend_sms: message text\nsend_email: Subject | Body\nnotify: message for your team\nwait_for_send_window: quiet_hours | business_hours   (never overnight)\nend_if_replied: / end_if_unsubscribed: / end_if_no_open_deal: / end_if_tagged: Tag name"],
         ];
     }
 
@@ -270,7 +382,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
                 'wait' => $this->waitStep($rest),
                 'send_sms' => ['type' => 'send_sms', 'body' => $rest],
                 'send_email' => $this->emailStep($rest),
-                'notify', 'internal_notification' => ['type' => 'internal_notification', 'message' => $rest],
+                'notify', 'internal_notification' => $this->notifyStep($rest),
+                'wait_for_send_window' => ['type' => 'wait_for_send_window', 'business_hours' => in_array(strtolower($rest), ['business_hours', 'business hours'], true)],
+                'end_if_replied', 'end_if_unsubscribed', 'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link' => ['type' => $kind],
+                'end_if_tagged' => ['type' => 'end_if_tagged', 'tag' => $rest],
                 default => throw new InvalidArgumentException("Unknown step \"{$kind}\"."),
             };
         }
@@ -281,8 +396,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             'steps' => $steps,
         ];
 
-        if (trim((string) ($input['trigger_tag'] ?? '')) !== '') {
-            $payload['trigger_tag'] = trim((string) $input['trigger_tag']);
+        foreach (['trigger_tag', 'trigger_stage', 'trigger_form'] as $key) {
+            if (trim((string) ($input[$key] ?? '')) !== '') {
+                $payload[$key] = trim((string) $input[$key]);
+            }
         }
 
         $this->validateDescriptor($payload);
@@ -300,7 +417,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
                 'wait' => 'wait: '.$s['amount'].' '.$s['unit'],
                 'send_sms' => 'send_sms: '.$s['body'],
                 'send_email' => 'send_email: '.$s['subject'].' | '.$s['body'],
-                default => 'notify: '.($s['message'] ?? ''),
+                'wait_for_send_window' => 'wait_for_send_window: '.(! empty($s['business_hours']) ? 'business_hours' : 'quiet_hours'),
+                'end_if_tagged' => 'end_if_tagged: '.$s['tag'],
+                'end_if_replied', 'end_if_unsubscribed', 'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link' => $s['type'].':',
+                default => 'notify: '.($s['message'] ?? '').(isset($s['task']) ? ' | task='.$s['task']['title'].' | due_hours='.($s['task']['due_in_hours'] ?? '') : ''),
             };
         }
 
@@ -308,8 +428,24 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             'name' => $payload['name'] ?? '',
             'trigger_type' => $payload['trigger_type'] ?? '',
             'trigger_tag' => $payload['trigger_tag'] ?? '',
+            'trigger_stage' => $payload['trigger_stage'] ?? '',
+            'trigger_form' => $payload['trigger_form'] ?? '',
             'steps' => implode("\n", $lines),
         ];
+    }
+
+    /** "message" or "message | task=Title | due_hours=2": the call task a notification creates survives an edit. @return array<string, mixed> */
+    private function notifyStep(string $rest): array
+    {
+        $parts = array_map('trim', explode(' | task=', $rest, 2));
+        $step = ['type' => 'internal_notification', 'message' => $parts[0]];
+
+        if (isset($parts[1])) {
+            [$title, $due] = array_pad(explode(' | due_hours=', $parts[1], 2), 2, '');
+            $step['task'] = ['title' => trim($title)] + (trim($due) !== '' ? ['due_in_hours' => (int) $due] : []);
+        }
+
+        return $step;
     }
 
     /** @return array<string, mixed> */

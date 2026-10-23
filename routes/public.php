@@ -225,6 +225,10 @@
     Route::post('inbound/telnyx-managed', 'Customer\DLRController@inboundTelnyxManaged')
         ->middleware('throttle:600,1')
         ->name('inbound.telnyx_managed');
+    // Telnyx porting-order status webhooks (number port-in). Ed25519-verified, idempotent by event id.
+    Route::post('webhooks/telnyx-porting', 'Messaging\TelnyxPortingWebhookController@handle')
+        ->middleware('throttle:120,1')
+        ->name('webhooks.telnyx_porting');
     Route::any('inbound/teletopiasms/{gateway?}', 'Customer\DLRController@inboundTeletopiasms')->name('inbound.teletopiasms');
     Route::any('inbound/flowroute/{gateway?}', 'Customer\DLRController@inboundFlowRoute')->name('inbound.flowroute');
     Route::any('dlr/easysendsms', 'Customer\DLRController@dlrEasySendSMS')->name('dlr.easysendsms');
