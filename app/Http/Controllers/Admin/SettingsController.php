@@ -231,10 +231,15 @@
              */
             $brandingUploadService = app(BrandingUploadService::class);
 
-            foreach (self::BRANDING_FIELDS as $field => $configKey) {
-                if ($request->hasFile($field) && $request->file($field)->isValid()) {
-                    $brandingUploadService->store($request->file($field), $configKey);
+            // A failed upload or save is reported, never shown as a success.
+            try {
+                foreach (self::BRANDING_FIELDS as $field => $configKey) {
+                    if ($request->hasFile($field) && $request->file($field)->isValid()) {
+                        $brandingUploadService->store($request->file($field), $configKey);
+                    }
                 }
+            } catch (\App\Library\Branding\Exceptions\InvalidBrandingAssetException $e) {
+                return redirect()->back()->with(['status' => 'error', 'message' => 'The image could not be saved: '.$e->getMessage()]);
             }
 
             $this->envWriter->set('APP_NAME', 'app.name', $validated['app_name']);
