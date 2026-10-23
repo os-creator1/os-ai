@@ -1,11 +1,7 @@
 @php
     $social = $mg->social();
     $help = $mg->helpUrl();
-    $legal = array_filter([
-        'Privacy' => $mg->link('privacy'),
-        'Terms' => $mg->link('terms'),
-        'Acceptable Use' => $mg->link('acceptable_use'),
-    ]);
+    $legal = $mg->legalLinks(true);
 @endphp
 <footer style="background: #181413; color: #C9C0BA; padding: 48px 20px 32px; display: flex; flex-direction: column; gap: 28px; font-size: 15px">
 <img src="{{ $mg->wordmark(true) }}" alt="{{ $mg->brandName() }}" style="height: 24px; width: auto; align-self: flex-start">

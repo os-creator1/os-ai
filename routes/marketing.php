@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Public\LegalController;
 use App\Http\Controllers\Public\MarketingController;
 use Illuminate\Support\Facades\Route;
 
@@ -20,7 +21,17 @@ use Illuminate\Support\Facades\Route;
 | none of this matches.
 */
 
-$register = function () {
+// The MotionGrove Legal Center. `privacy-policy` is deliberately absent: that URI already belongs to
+// routes/public.php (PublicController delegates to the Legal Center when the new document is live), and a second
+// registration would silently replace it. `terms-of-use` stays a legacy route there too and redirects.
+$legalSlugs = array_values(array_diff(array_keys((array) config('legal.documents', [])), ['privacy-policy']));
+
+$register = function () use ($legalSlugs) {
+    Route::get('legal', [LegalController::class, 'index'])->name('legal.index');
+    foreach ($legalSlugs as $slug) {
+        Route::get($slug, [LegalController::class, 'show'])->defaults('slug', $slug)->name('legal.'.$slug);
+    }
+
     Route::get('product', [MarketingController::class, 'product'])->name('marketing.product');
     Route::get('solutions', [MarketingController::class, 'solutions'])->name('marketing.solutions');
     Route::get('how-it-works', [MarketingController::class, 'howItWorks'])->name('marketing.how-it-works');
@@ -35,7 +46,11 @@ if (config('marketing.enabled', true)) {
     } else {
         // Route names must be unique, so only the first host carries them; the rest share the actions.
         foreach ($hosts as $i => $host) {
-            Route::domain($host)->group($i === 0 ? $register : function () {
+            Route::domain($host)->group($i === 0 ? $register : function () use ($legalSlugs) {
+                Route::get('legal', [LegalController::class, 'index']);
+                foreach ($legalSlugs as $slug) {
+                    Route::get($slug, [LegalController::class, 'show'])->defaults('slug', $slug);
+                }
                 Route::get('product', [MarketingController::class, 'product']);
                 Route::get('solutions', [MarketingController::class, 'solutions']);
                 Route::get('how-it-works', [MarketingController::class, 'howItWorks']);

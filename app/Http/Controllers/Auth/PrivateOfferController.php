@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Http\Controllers\Controller;
+use App\Library\Legal\LegalAcceptanceRecorder;
 use App\Library\PlatformBilling\Offers\OfferReturn;
 use App\Library\PlatformBilling\Offers\PrivateOfferRedemptionManager;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
@@ -120,6 +121,23 @@ class PrivateOfferController extends Controller
         $hash = (string) $validator->validated()['terms_hash'];
         $workspaceUid = $validator->validated()['workspace_uid'] ?? null;
         $user = $request->user();
+
+        // Published legal documents are accepted once per exact version for this offer. A billing-change offer
+        // on an existing subscription never forces re-acceptance. Nothing is asked while documents are unpublished.
+        $legalRecorder = app(LegalAcceptanceRecorder::class);
+        $legalOfferUid = (string) $offer->uid;
+        $needsLegal = ! $offer->isBillingChange()
+            && $legalRecorder->present('private_offer') !== null
+            && ! $legalRecorder->hasAccepted($user, 'private_offer', $legalOfferUid);
+        if ($needsLegal) {
+            if ($legalRecorder->satisfied('private_offer', $request) !== true) {
+                return redirect()->route('offers.show', ['token' => $token])->withErrors([
+                    LegalAcceptanceRecorder::FIELD => __('Please tick the box to confirm you accept the terms and policies shown.'),
+                ]);
+            }
+            $legalWorkspace = $this->offers->present($offer, $user, $workspaceUid)['workspace'] ?? null;
+            $legalRecorder->record($user, 'private_offer', $request, $legalWorkspace?->id, null, $legalOfferUid);
+        }
 
         try {
             if ($offer->isBillingChange()) {

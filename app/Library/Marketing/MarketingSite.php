@@ -402,6 +402,51 @@ class MarketingSite
         return $this->cleanUrl($this->cfg('links.'.$key));
     }
 
+    /**
+     * Legal links for the footer. On the platform site these are the Legal Center documents that are live (published, or
+     * staging preview); until then — and on Agency sites, which must never present MotionGrove's documents as their own —
+     * they are the separately configured URLs.
+     *
+     * @param bool $core only the short list shown beside the copyright line
+     * @return array<string, string> label => url
+     */
+    public function legalLinks(bool $core = false): array
+    {
+        $registry = app(\App\Library\Legal\LegalRegistry::class);
+        $docs = $registry->visibleDocuments();
+
+        if ($docs === []) {
+            return $this->configuredLegalLinks();
+        }
+
+        $out = [];
+        foreach ($docs as $doc) {
+            if (! $core || in_array($doc->slug, ['privacy-policy', 'terms-of-service', 'acceptable-use'], true)) {
+                $out[$doc->short] = $registry->url($doc->slug);
+            }
+        }
+
+        return $core ? $out : ['Legal Center' => $registry->indexUrl()] + $out;
+    }
+
+    /** @return array<string, string> */
+    protected function configuredLegalLinks(): array
+    {
+        return array_filter([
+            'Privacy Policy' => $this->link('privacy'),
+            'Terms of Service' => $this->link('terms'),
+            'Acceptable Use Policy' => $this->link('acceptable_use'),
+        ]);
+    }
+
+    /** The "brand of legal entity" line, shown only once Legal Center documents are live. */
+    public function brandOfEntityLine(): ?string
+    {
+        return app(\App\Library\Legal\LegalRegistry::class)->visibleDocuments() === []
+            ? null
+            : (string) config('legal.entity.description');
+    }
+
     /** Help destination for the footer: help centre, else support email, else nothing. */
     public function helpUrl(): ?string
     {

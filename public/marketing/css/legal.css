@@ -1,0 +1,108 @@
+/* MotionGrove Legal Center. Uses the marketing tokens (warm neutral #F7F5F2, ink #181413, red #B4514A / #8F3B35, Figtree). */
+.lg-head{padding:56px 0 36px;border-bottom:1px solid #E7E1DB}
+.lg-head .wrap{display:flex;flex-direction:column;gap:16px;align-items:flex-start}
+.lg-crumbs{display:flex;flex-wrap:wrap;gap:8px;font-size:14px;color:#6B625E}
+.lg-crumbs a:hover{color:#8F3B35;text-decoration:underline}
+.lg-crumbs [aria-current]{color:#2E2826;font-weight:600}
+.lg-title{margin:0;font-size:clamp(36px,5vw,60px);line-height:1.04;font-weight:800;letter-spacing:-.04em;max-width:900px}
+.lg-lead{margin:0;max-width:720px;font-size:clamp(16px,1.3vw,18px);line-height:1.6;color:#4A4340}
+.lg-meta{display:flex;flex-wrap:wrap;gap:12px 36px;margin:4px 0 0;padding:0}
+.lg-meta div{display:flex;flex-direction:column;gap:2px}
+.lg-meta dt{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8F3B35}
+.lg-meta dd{margin:0;font-size:16px;font-weight:600}
+.lg-actions{display:flex;flex-wrap:wrap;gap:10px}
+.lg-draft{max-width:860px;padding:14px 18px;border:1px solid #E9C9C5;border-left:4px solid #B4514A;border-radius:12px;background:#FBEFED;color:#5C2A26;font-size:14.5px;line-height:1.55}
+
+.lg-grid{display:grid;grid-template-columns:240px minmax(0,1fr);gap:48px;padding-top:40px;padding-bottom:96px;align-items:start}
+@media (min-width:1200px){.lg-grid{grid-template-columns:240px minmax(0,760px) 280px;justify-content:space-between}}
+.lg-toc{position:sticky;top:88px;max-height:calc(100vh - 110px);overflow:auto;font-size:14px}
+.lg-toc summary{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8F3B35;padding:0 0 10px}
+.lg-toc ol{list-style:none;margin:0;padding:0;border-left:1px solid #E7E1DB}
+.lg-toc a{display:flex;gap:10px;padding:6px 0 6px 14px;margin-left:-1px;border-left:2px solid transparent;line-height:1.35;color:#4A4340}
+.lg-toc a span{min-width:20px;color:#A99E96;font-variant-numeric:tabular-nums}
+.lg-toc a:hover{color:#8F3B35}
+.lg-toc a[aria-current]{border-left-color:#B4514A;color:#181413;font-weight:600}
+
+.lg-doc{min-width:0;font-size:16.5px;line-height:1.72;color:#2E2826}
+.lg-print-only{display:none}
+.lg-body .lg-h2{position:relative;margin:56px 0 14px;padding-top:28px;border-top:1px solid #E7E1DB;font-size:clamp(22px,2.4vw,28px);line-height:1.2;font-weight:800;letter-spacing:-.025em;color:#181413;scroll-margin-top:88px}
+.lg-body .lg-h2:first-child{margin-top:0;border-top:0;padding-top:0}
+.lg-hn{display:inline-block;min-width:2.1ch;margin-right:12px;color:#B4514A}
+.lg-anchor{margin-left:10px;color:#C9C0BA;font-weight:600;opacity:0;transition:opacity .15s}
+.lg-h2:hover .lg-anchor,.lg-anchor:focus{opacity:1}
+.lg-body p{margin:0 0 16px}
+.lg-clause{position:relative;padding-left:3.4rem}
+.lg-cn{position:absolute;left:0;top:0;width:3rem;font-weight:700;color:#8F3B35;font-variant-numeric:tabular-nums}
+.lg-body strong{color:#181413}
+.lg-body a{color:#8F3B35;text-decoration:underline}
+.lg-body ul,.lg-body ol{margin:0 0 16px;padding-left:1.4em}
+.lg-body li{margin:0 0 6px}
+.lg-body hr{border:0;border-top:1px solid #E7E1DB;margin:32px 0}
+.lg-notice{margin:0 0 20px;padding:16px 20px;border:1px solid #E7E1DB;border-left:4px solid #B4514A;border-radius:12px;background:#FFFFFF}
+.lg-notice p:last-child{margin:0}
+.lg-table-wrap{margin:0 0 24px;overflow-x:auto;border:1px solid #E7E1DB;border-radius:14px;background:#FFFFFF}
+.lg-body table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.5}
+.lg-body th{background:#EFEAE5;text-align:left;font-weight:700;color:#181413}
+.lg-body th,.lg-body td{padding:12px 14px;border-bottom:1px solid #E7E1DB;vertical-align:top}
+.lg-body tr:last-child td{border-bottom:0}
+.lg-pending{background:#FBEFED;color:#8F3B35;padding:1px 6px;border-radius:6px;font-weight:600}
+.lg-end{margin-top:56px;padding-top:20px;border-top:1px solid #E7E1DB;font-size:14px}
+
+.lg-side{position:sticky;top:88px;display:flex;flex-direction:column;gap:16px}
+.lg-card{background:#FFFFFF;border:1px solid #E7E1DB;border-radius:18px;padding:22px;font-size:14px;line-height:1.55;color:#4A4340}
+.lg-card h2{margin:0 0 12px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8F3B35}
+.lg-card ul{margin:0;padding-left:1.1em}
+.lg-card li{margin:0 0 8px}
+.lg-card hr{border:0;border-top:1px solid #EFEAE5;margin:16px 0}
+.lg-card dl{margin:0;display:flex;flex-direction:column;gap:10px}
+.lg-card dt{font-size:12px;color:#6B625E}
+.lg-card dd{margin:0;font-weight:600;color:#181413}
+.lg-card code{font-size:12.5px}
+.lg-fine{margin:14px 0 0;font-size:12.5px;color:#6B625E}
+.lg-links{list-style:none;padding:0!important}
+.lg-links a:hover{color:#8F3B35;text-decoration:underline}
+
+.lg-index{padding-top:40px;padding-bottom:96px}
+.lg-index-h{margin:40px 0 18px;font-size:22px;font-weight:800;letter-spacing:-.02em}
+.lg-index-h:first-child{margin-top:0}
+.lg-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.lg-doccard{display:flex;flex-direction:column;gap:8px;padding:24px;background:#FFFFFF;border:1px solid #E7E1DB;border-radius:20px;line-height:1.5;color:#4A4340;transition:border-color .15s,box-shadow .15s}
+.lg-doccard b{font-size:18px;color:#181413}
+.lg-doccard small{margin-top:auto;color:#6B625E}
+.lg-doccard:hover{border-color:#B4514A;box-shadow:0 10px 30px rgba(24,20,19,.08);color:#4A4340}
+
+/* Tablet: contents above the document, summary below it. */
+@media (max-width:1199px){
+  .lg-side{position:static;grid-column:2;flex-direction:row;flex-wrap:wrap}
+  .lg-side .lg-card{flex:1 1 280px}
+}
+/* Mobile / small tablet: single column; contents collapse into a disclosure. */
+@media (max-width:1023px){
+  .lg-head{padding:36px 0 28px}
+  .wrap.lg-grid{display:flex;flex-direction:column;align-items:stretch;gap:28px;padding-top:24px;padding-bottom:64px;padding-left:20px;padding-right:20px}
+  .lg-toc{position:static;max-height:none;border:1px solid #E7E1DB;border-radius:14px;background:#FFFFFF;padding:14px 16px;width:100%}
+  .lg-toc summary{padding:0;cursor:pointer}
+  .lg-toc[open] summary,.lg-toc details[open] summary{padding-bottom:10px}
+  .lg-side{width:100%}
+  .lg-doc{width:100%;min-width:0}
+  .lg-clause{padding-left:2.6rem}
+  .lg-cn{width:2.3rem}
+}
+
+/* Print / Save as PDF: the document only. */
+@media print{
+  body.mg{background:#fff;color:#000}
+  .mg-header,footer,.lg-toc,.lg-side,.lg-actions,.lg-end,.lg-anchor,.skip,.lg-crumbs{display:none!important}
+  .lg-head{padding:0 0 12px;border-bottom:1px solid #999}
+  .wrap{max-width:none;padding:0}
+  .lg-grid{display:block;padding:12px 0 0}
+  .lg-doc{font-size:11pt;line-height:1.5;color:#000}
+  .lg-print-only{display:block;margin:0 0 12px;font-size:9pt;color:#444}
+  .lg-title{font-size:22pt}
+  .lg-body .lg-h2{break-after:avoid;margin-top:20pt;font-size:14pt}
+  .lg-body p,.lg-notice,.lg-table-wrap{break-inside:avoid}
+  .lg-notice,.lg-draft{border-color:#999;background:#fff}
+  .lg-table-wrap{overflow:visible;border-color:#999}
+  .lg-body a{color:#000;text-decoration:none}
+  .lg-pending{background:none;color:#000;border:1px solid #999}
+}

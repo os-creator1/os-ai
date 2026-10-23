@@ -231,4 +231,5 @@
         @endif
     </div>
     </section>
+    @include('legal._notice', ['doc' => 'refund-policy', 'text' => 'Renewal, cancellation and refunds are governed by the'])
 @endsection

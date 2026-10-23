@@ -205,4 +205,6 @@
             })();
         </script>
     @endif
+    @include('legal._notice', ['doc' => 'agency-terms', 'text' => 'You sell to your clients as an independent business; see the'])
+    @include('legal._notice', ['doc' => 'payments-and-esignatures', 'text' => 'Which party is responsible for refunds, chargebacks and negative balances on these payments depends on your Stripe account and the'])
 @endsection

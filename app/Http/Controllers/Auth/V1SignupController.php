@@ -14,6 +14,7 @@ use App\Library\PlatformBilling\V1SignupManager;
 use App\Models\Customer;
 use App\Models\Language;
 use App\Models\PlatformSubscription;
+use App\Library\Legal\LegalAcceptanceRecorder;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspacePlanCatalog;
@@ -311,6 +312,8 @@ class V1SignupController extends Controller
             'account' => $draft->account(),
             'business' => $draft->business(),
             'isAgency' => $draft->tier() === 'agency',
+            // Null until the legal documents are published: then nothing is shown and signup is unchanged.
+            'legal' => app(LegalAcceptanceRecorder::class)->present($this->legalContext($draft)),
         ]);
     }
 
@@ -335,6 +338,17 @@ class V1SignupController extends Controller
         if ($redirect = $this->requirePlan($draft) ?? $this->requireAccount($draft) ?? $this->requireBusiness($draft)) {
             return $redirect;
         }
+
+        // Affirmative acceptance of the published legal documents, when there are any to present. Refused BEFORE
+        // anything is created or any payment is opened; nothing is shown (or required) while they are unpublished.
+        $legalContext = $this->legalContext($draft);
+        $legalRecorder = app(LegalAcceptanceRecorder::class);
+        if ($legalRecorder->satisfied($legalContext, $request) === false) {
+            return redirect()->route('register.payment')->withErrors([
+                LegalAcceptanceRecorder::FIELD => __('Please tick the box to confirm you accept the terms and policies shown.'),
+            ]);
+        }
+        $legalOfferUid = $this->draftOffer($draft)?->uid;
 
         $account = (array) $draft->account();
         $business = (array) $draft->business();
@@ -419,6 +433,7 @@ class V1SignupController extends Controller
             }
 
             OfferReturn::remember($offerToken);
+            $this->recordLegal($legalRecorder, $user, $legalContext, $request, $legalOfferUid);
 
             return redirect()->route('offers.show', ['token' => $offerToken]);
         }
@@ -438,7 +453,28 @@ class V1SignupController extends Controller
             ]);
         }
 
+        $this->recordLegal($legalRecorder, $user, $legalContext, $request, $legalOfferUid);
+
         return redirect()->away((string) $session->url);
+    }
+
+    /** Which legal bundle this signup presents: Agency, a private offer, or the standard checkout. */
+    private function legalContext(V1SignupDraft $draft): string
+    {
+        return $draft->tier() === 'agency'
+            ? 'agency_signup_checkout'
+            : ($this->draftOffer($draft) !== null ? 'private_offer' : 'signup_checkout');
+    }
+
+    private function recordLegal(LegalAcceptanceRecorder $recorder, User $user, string $context, Request $request, ?string $offerUid): void
+    {
+        try {
+            $workspace = \App\Models\Workspace::query()->where('owner_user_id', $user->id)->orderBy('id')->first();
+            $recorder->record($user, $context, $request, $workspace?->id, null, $offerUid);
+        } catch (\Throwable $e) {
+            // Evidence must never block a customer who has already been created; surface it to operators instead.
+            report($e);
+        }
     }
 
     // =================================================================

@@ -317,4 +317,5 @@
             </section>
         @endif
     </div>
+    @include('legal._notice', ['doc' => 'payments-and-esignatures', 'text' => 'Which party is responsible for refunds, chargebacks and negative balances on these payments depends on your Stripe account and the'])
 @endsection

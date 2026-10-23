@@ -102,6 +102,14 @@
                         </label>
                     </div>
 
+                    @if ($view['terms']->kind() !== 'billing_change')
+                        @php($legalRecorder = app(\App\Library\Legal\LegalAcceptanceRecorder::class))
+                        @php($legal = (auth()->check() && ! $legalRecorder->hasAccepted(auth()->user(), 'private_offer', (string) $offer->uid)) ? $legalRecorder->present('private_offer') : null)
+                        @if ($legal)
+                            @include('legal._acceptance', ['legal' => $legal])
+                        @endif
+                    @endif
+
                     <button type="submit" class="btn btn-primary w-100" data-role="offer-accept">
                         {{ $view['terms']->kind() === 'billing_change' ? __('Accept new pricing') : __('Accept and continue to secure payment') }}
                     </button>

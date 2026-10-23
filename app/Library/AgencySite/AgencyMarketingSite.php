@@ -53,6 +53,17 @@ final class AgencyMarketingSite extends MarketingSite
         return $this->context->brandName;
     }
 
+    /** An Agency site never presents MotionGrove's own documents as the Agency's: only its configured links. */
+    public function legalLinks(bool $core = false): array
+    {
+        return $this->configuredLegalLinks();
+    }
+
+    public function brandOfEntityLine(): ?string
+    {
+        return null;
+    }
+
     public function legalName(): string
     {
         return $this->context->legalName ?: $this->context->brandName;

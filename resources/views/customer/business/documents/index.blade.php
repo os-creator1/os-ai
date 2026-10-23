@@ -314,6 +314,7 @@
     @if($documents->hasPages())<div class="px-2 py-1">{{ $documents->links() }}</div>@endif
     <div class="px-2 py-1 border-top"><span class="text-caption">Drafts stay private until you send them.</span></div>
 </x-card>
+    @include('legal._notice', ['doc' => 'payments-and-esignatures', 'text' => 'MotionGrove supplies the software only: it does not give legal advice, you are responsible for the content of each document and for who signs it, and standard signing is not a qualified electronic signature or independent identity verification. See the'])
 @endsection
 
 @section('page-script')

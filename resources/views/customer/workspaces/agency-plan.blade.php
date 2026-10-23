@@ -211,4 +211,6 @@
             @endif
         </x-card>
     </section>
+    @include('legal._notice', ['doc' => 'refund-policy', 'text' => 'Renewal, cancellation and refunds for your own MotionGrove subscription are governed by the'])
+    @include('legal._notice', ['doc' => 'agency-terms', 'text' => 'Your resale and white-label responsibilities are set out in the'])
 @endsection

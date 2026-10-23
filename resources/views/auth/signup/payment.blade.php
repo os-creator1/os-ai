@@ -47,6 +47,9 @@
 
     <form method="POST" action="{{ route('register.payment.start') }}">
         @csrf
+        @if (! empty($legal))
+            @include('legal._acceptance', ['legal' => $legal, 'cycle' => $plan['billing_cycle_per'] ?? null])
+        @endif
         <button type="submit" class="btn btn-primary w-100">{{ $cta }}</button>
     </form>
     <p class="text-muted small text-center mt-1">{{ __('You will enter your card details on Stripe. We never see or store them.') }}</p>

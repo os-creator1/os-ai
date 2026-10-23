@@ -278,6 +278,7 @@
     <div class="mt-2">
         @include('customer.settings.text-messaging._port-out-card')
     </div>
+    @include('legal._notice', ['doc' => 'acceptable-use', 'text' => 'Carrier registration is not a legal safe harbor: you remain responsible for consent, opt-outs and telecom compliance. See the'])
 @endsection
 
 @section('page-script')

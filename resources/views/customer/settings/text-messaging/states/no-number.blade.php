@@ -207,4 +207,5 @@
         @include('customer.settings.text-messaging._port-out-card')
     </div>
 </div>
+    @include('legal._notice', ['doc' => 'acceptable-use', 'text' => 'You are responsible for having consent before you text or call anyone, honoring STOP and other opt-outs, and following carrier and telecom rules. Browser calling is not an emergency-calling service. See the'])
 @endsection
