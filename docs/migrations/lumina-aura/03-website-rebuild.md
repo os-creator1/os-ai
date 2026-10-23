@@ -54,17 +54,34 @@ LocalBusiness/FAQPage schema and a real sitemap.
 * 14 files referenced by the live pages (incl. 3 MP4s, a 2.9 MB JPEG) fetched from the public `filesafe` CDN at original size; 5 duplicate library files and 9 are **not** in the API media list (UUID-named uploads), so the public CDN was the only programmatic source for them.
 * Stored in the scratchpad during this run — **not committed** (binary, 27 MB). The provisioning step must ingest them through `WebsiteAssetUploadService` into MotionGrove-managed storage; the generated site must reference only MotionGrove URLs.
 
-## Build approach (single 360 booth)
+## Preview status — BUILT (isolated staging, platform path only)
 
-Use the existing `photo_booth_editorial` template and `PhotoBoothBlueprintV2` website config.
-Because Lumina advertises **one** booth, the site must be configured as one primary service
-("360 Video Booth") with add-ons and backdrops — **not** three booths to satisfy the
-generator's usual minimum. Whether the generator can emit a single-service site without
-override has not been verified here (needs a running app and Business); that check is a
-blocker listed in 07-owner-actions.md.
+Built by `php artisan lumina:build-website` (`LuminaWebsiteBuilder`) from the existing starter/page/asset/gallery/Forms/publisher services — **no AI generation and no metered API**. Published to the platform preview path `/sites/<public_id>`; **no custom domain, no DNS, no Forge domain** (asserted in tests).
 
-Forms: the Business Pack's *Check availability* form creates a contact and an opportunity
-(`create_opportunity: true`) in the Inquiries pipeline; the *Event questionnaire* form
-replaces GHL's survey `ESqkDS9Gztup8R`.
+| Page | Slug |
+|---|---|
+| Home (hero + CTA, 360 booth, event types, add-ons & backdrops, what makes us different, gallery, service areas, FAQ, CTA, contact) | `/` |
+| 360 Video Booth | `/360-video-booth` |
+| Backdrops & add-ons (ivy backdrops, inflatable enclosure) | `/backdrops` |
+| Gallery (8 event photos) | `/gallery` |
+| FAQ (6 verbatim) | `/faq` |
+| Check availability (real quote form) | `/check-availability` |
+| Privacy Policy / Terms of Service / Terms & Conditions (customer's existing text, verbatim) | `/privacy-policy`, `/terms-of-service`, `/terms-and-conditions` |
 
-Redirects: keep paths working — `/Check-availability`→`/check-availability`, `/Privacy-Policy`→`/privacy`, `/terms-of-service`, `/Terms-Conditions` (case-variants) and `/brochure`→`/` until pricing is confirmed.
+* **Single primary booth**: one service ("360 Video Booth") with add-ons as quote-only catalog items; the three-booth minimum was not satisfied by inventing booths — the page set is hand-composed from the template's own section types.
+* **No prices, packages or testimonials** appear anywhere (asserted). Every price surface says "Request a quote".
+* **Phone**: the site uses **+1 720-502-8306** (the GHL "Phone" custom value and LC Phone number). The profile phone +1 720-917-8741 appears nowhere (asserted on every page). Discrepancy still needs the owner's confirmation before launch.
+* **Images**: 20 of the customer's own originals stored in MotionGrove-managed media with responsive WebP variants; no GHL/filesafe URLs in any page (asserted). Asset provenance is in `website-manifest.json` (binaries are not committed; the builder resolves them by SHA-256).
+* **SEO**: unique title + meta description on every marketing page (none existed before), OG tags, canonical per page from the platform.
+* **Rendering checked** at desktop (1366 px) and mobile (390 px) with headless Chromium against a local server; every page returns 200 in tests.
+
+### The quote form is real
+`Check Availability` is a Forms-module form deployed to the website and as a direct link: name, phone, email, event date, event type (multi-select with the GHL option list), notes, and the **two GHL consent statements verbatim as separate, optional consent fields**. A submission through the public route creates/matches the Contact (Business-scoped), writes Event date / Event type custom values, opens an opportunity in **Inquiries → New Lead**, and — because staging has no published workflow and no sending path — sends nothing (tested through the real HTTP route).
+
+### Not done / owner-dependent
+* Videos (5 MP4) were retrieved but the website asset store accepts images only; no video section exists in the generator.
+* Old-URL redirects: the platform has no redirect table. Paths were kept lowercase (GHL matches case-insensitively); case-variants such as `/Check-availability` need a platform redirect feature or an edge rule at cutover.
+* The hero image is a real guest photo (identifiable people) and "Memories!" in the brand copper has modest contrast over it; confirm guest-photo release and consider a darker overlay.
+* The embedded form iframe's auto-height was not verified in a real interactive browser (static screenshot clips it).
+* Legal text is imported verbatim and still contains the source's blanks ("brand owned by [blank]", empty email) and a 2023 effective date — **needs owner/legal review before launch**.
+* Pricing, FAQ contradictions, logo variants, testimonials: unchanged (see table above).

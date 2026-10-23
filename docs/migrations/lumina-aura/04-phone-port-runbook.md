@@ -105,11 +105,15 @@ Bracketed values are **unknown** and are not guessed. Field names follow Telnyx'
 | Submit the port order | **You**, after the items above | Explicit approval required |
 | Cutover window | Lumina Aura owner + you | Calls/SMS interrupt briefly |
 
-## 7. MotionGrove readiness (code audit)
+## 7. MotionGrove readiness (code) — NOW IMPLEMENTED, nothing can submit or buy
 
-* `business_messaging_numbers` ties a number to a `business_messaging_identity` (one Business) with a **unique active/pending phone number** – cross-tenant duplication is impossible, so tenant isolation holds for a ported number.
-* `TelnyxProvisioningAdapter` implements **search/purchase, registration, campaign assignment and release only**; there is **no port-in method**, no `ported` provenance, and no inbound hook that adopts a ported number. `PortOutRequestManager` handles MotionGrove customers porting *out*.
-* Therefore a ported number cannot be assigned today without new work: (1) a `PortInOrder` record (business, identity, Telnyx order id, status, FOC, checklist); (2) a `porting_order.status_changed` webhook handler (signature-verified, idempotent) that, on completion, creates the `business_messaging_numbers` row as active with `provider_number_reference` = the Telnyx number id and assigns the messaging profile + voice connection; (3) billing rules for a number MotionGrove did not purchase (rent starts at activation; no purchase charge). **Not built** – it needs a contract (billing) decision and a Telnyx key to test.
+* **Tenant isolation was already structural**: `business_messaging_numbers` ties a number to one Business's identity and has a unique active/pending phone number across all tenants.
+* **Added**: `messaging_port_in_orders` (tracking record + 8-step checklist, one live order per number across all tenants) and `PortInOrderManager`. It **cannot create, submit or pay for a port**; it only tracks an order a human creates with the carrier, and attaches the number after the carrier reports it landed.
+* **Webhook** `POST /webhooks/telnyx-porting` (`TelnyxPortingWebhookController`): Ed25519 signature verified first with the same key and age rule as managed messaging; malformed → 400; replays collapse on `messaging_port_in_events` (unique event id); status only moves forward; `ported` attaches the number to the **ordering Business's own** messaging identity as an active number (primary if none), and to its Location if the order named one, via the existing `attachNumber` / `assignLocations`. After that the existing inbound attribution resolves the number to that Business only (tested).
+* **Safe stops**: if the Business has no real messaging profile yet the order stays `ported` for a human to finish rather than guessing; no signature key configured → ignored; unknown order ids are acknowledged but change nothing.
+* **Portability check**: `php artisan telnyx:portability-check +17205028306` (read-only `POST /v2/portability_checks`). **Run here it reports: `TELNYX_API_KEY is not configured`** — this is a separate blocker; it did not block any other work.
+* **Billing**: a ported number goes through the same `attachNumber` as a purchased one but with **no purchase charge**; recurring rent is whatever `NumberLifecycleManager` already does for an active number. Whether Lumina Aura should be charged a one-time port fee is a commercial decision that is **not** built.
+* Still manual: creating the messaging profile / voice connection in Telnyx and submitting the order (deliberately outside code).
 
 ## 8. A2P 10DLC
 

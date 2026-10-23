@@ -49,17 +49,30 @@ Nothing is activated. Every installed workflow lands as a **draft**; the owner p
 | Manual call task | `internal_notification` (day 1) | No task node in the engine |
 | After-hours follow-up | **GAP** (needs business-hours condition) | |
 
-## Improvements over GHL's pattern (built)
+## Engine capabilities added for the migrated workflows (built and tested)
 
-* **Reply detection** – `end_if_replied` (If/Else on `contact.replied_since_enrollment`) before every follow-up.
-* **Consent** – `end_if_unsubscribed` (`contact.subscribed`) before outbound steps; imported contacts with DND are suppressed.
-* **Follow-up cancellation** – `end_if_tagged` (e.g. Questionnaire Submitted stops reminders).
-* **Duplicate events / retry safety / execution logging** – inherited from the engine's at-most-once claim and run log; nothing re-implemented.
-* **Imported records never trigger automations** – planner emits `triggers_automation: false` on every record.
+| Requirement | Implementation |
+|---|---|
+| Business hours | `BusinessSendWindow`: uses the primary Location's recorded `hours`; **if none are recorded, "unknown" is never treated as closed**. Lumina's GHL account holds no hours, so business-hours gating is inert for Lumina until the owner enters hours. |
+| Quiet hours | Always on for pack messages: nothing is sent 21:00–08:00 local (`config/send_window.php`). DST-safe (tested across both 2026/2027 transitions). |
+| America/Denver | Read from the Business timezone (set at provisioning); the unit tests assert Denver local-time behaviour, including that 15:00 UTC is 08:00 local. |
+| Wait for a good time | Wait node mode `until_send_window` (builder summary updated). |
+| Stop on reply | `contact.replied_since_enrollment` guard, before every follow-up. |
+| Stop on opt-out | `contact.subscribed` guard + the existing SMS executor's own opt-out enforcement. |
+| Stop on booked / lost | new `contact.has_open_deal` fact: a won or lost deal ends the journey. |
+| Stop when a questionnaire arrives | tag guard (`Questionnaire Submitted`). |
+| Manual call tasks | `contact_tasks` table + `ContactTaskManager`; the notify step can carry a `task` (title, due-in-hours). Idempotent per enrollment+step; visible on the contact timeline. **No task inbox page or completion UI yet** (`ContactTaskManager::complete()` exists). |
+| Review / questionnaire links | merge fields `{{business.review_link}}` (saved review link) and `{{business.questionnaire_link}}` (first active form named "questionnaire"); `end_if_no_review_link` / `end_if_no_questionnaire_link` guards mean a message that promises a link is never sent without one. |
+| Retries and logs | engine at-most-once step claims (existing); new `FailurePolicy::Continue` so one failed channel (e.g. no mailbox) is logged and the journey carries on to the next step instead of dying. Replaying a finished journey sends/creates/logs nothing (tested). |
+| Imported records never trigger automations | the importer writes rows directly: no domain event, no queue, no enrolment (tested: 0 enrollments, nothing pushed). |
 
-## Gaps that need an engine change (own contract)
+All 11 workflows install as **drafts**; `published workflows = 0` is asserted by the provisioning safety audit.
 
-1. Business-hours and quiet-hours condition subject + send-time deferral.
-2. Task/"call the lead" node.
-3. Merge field for the questionnaire / review link.
-4. Missed-inbound-call trigger.
+## Verified by execution (not just installed)
+
+`tests/Feature/Migration/PhotoBoothAutomationsRuntimeTest` publishes the real workflows and drives them with the real advancer and wake sweep under a frozen America/Denver clock; only the provider edge is a recorder. Covered: New Inquiry tagging + call task + one text after the delay; reply cancelling the text and the second task; opt-out contact never messaged by six different workflows; 22:30 enrollment held and sent at 08:00 local; won deal stopping follow-ups; links rendered only when set up; replay safety; a real stage move enrolling the published workflow.
+
+## Still not reproducible from GHL
+
+* **Browser inspection of GHL was not possible.** No authenticated GHL browser session exists in this environment and signing in would need the owner's credentials/MFA; I did not attempt it. Workflow definitions therefore remain **unverified**, and the per-workflow "inferred" labels above stand. The *New Inquiry Received* screenshots were not attached.
+* "After-hours follow-up" in the brief maps to quiet hours + (when set) business hours; the exact GHL after-hours branch text is unknown.

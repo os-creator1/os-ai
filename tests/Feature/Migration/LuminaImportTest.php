@@ -168,4 +168,28 @@ class LuminaImportTest extends TestCase
         $this->assertSame([], array_values(array_filter($leak->items, fn ($i) => str_starts_with($i->key, 'imported:') || str_starts_with($i->key, 'conversation_message:'))));
         $this->assertSame(0, DB::table('external_import_records')->where('business_id', $other->id)->where('source_system', 'gohighlevel')->count());
     }
+
+    public function test_the_same_snapshot_imported_into_two_businesses_stays_fully_separate(): void
+    {
+        [$a, $locA] = $this->provision();
+        $b = app(LuminaAuraProvisioner::class)->provision('other-owner@example.test', 'another-long-test-password-2', []);
+        $plan = (new GhlImportPlanner())->plan($this->snapshot());
+        $writer = app(GhlImportWriter::class);
+
+        $writer->import($plan, $a, $locA, '+17205028306', false);
+        $second = $writer->import($plan, $b['context']->business, $b['context']->location, '+17205028306', false);
+
+        $this->assertSame(3, $second['counts']['contacts_created'], 'The first import does not make the second one a no-op: ledgers are per Business.');
+        foreach (['contacts', 'chat_boxes', 'crm_opportunities', 'imported_timeline_items', 'external_import_records'] as $table) {
+            $perBusiness = DB::table($table)->where('business_id', $a->id)->count();
+            $other = DB::table($table)->where('business_id', $b['context']->business->id)->count();
+            $this->assertSame($perBusiness - ($table === 'external_import_records' ? 21 : 0), $other - ($table === 'external_import_records' ? 21 : 0), "{$table}: identical, independent copies");
+            $this->assertGreaterThan(0, $other);
+        }
+
+        // No row of one Business points at a parent of the other.
+        $this->assertSame(0, DB::table('crm_opportunities as o')->join('contacts as c', 'c.id', '=', 'o.contact_id')->whereColumn('c.business_id', '!=', 'o.business_id')->count(), 'Every deal belongs to a contact of the same Business.');
+        $this->assertSame(0, DB::table('imported_timeline_items as t')->join('chat_boxes as cb', 'cb.id', '=', 't.chat_box_id')->whereColumn('cb.business_id', '!=', 't.business_id')->count());
+        $this->assertSame(0, DB::table('crm_opportunities as o')->join('crm_pipeline_stages as s', 's.id', '=', 'o.stage_id')->whereColumn('s.business_id', '!=', 'o.business_id')->count(), 'Stages are resolved inside the Business only.');
+    }
 }
