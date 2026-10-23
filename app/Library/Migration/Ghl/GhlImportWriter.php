@@ -198,7 +198,7 @@ final class GhlImportWriter
                 continue;
             }
 
-            DB::transaction(function () use ($c, $business, $location, $group, $identity, $phone): void {
+            $this->transact(function () use ($c, $business, $location, $group, $identity, $phone): void {
                 $contact = Contacts::create([
                     'customer_id' => $business->customer_id,
                     'business_id' => $business->id,
@@ -294,7 +294,7 @@ final class GhlImportWriter
                 continue;
             }
 
-            DB::transaction(function () use ($o, $business, $location, $pipeline, $stage, $contactId): void {
+            $this->transact(function () use ($o, $business, $location, $pipeline, $stage, $contactId): void {
                 $createdAt = $o['created_at'] ?? now()->toIso8601String();
                 $stageAt = $o['stage_changed_at'] ?? $createdAt;
                 $statusAt = $o['status_changed_at'] ?? $stageAt;
@@ -372,7 +372,8 @@ final class GhlImportWriter
                 continue;
             }
 
-            DB::transaction(function () use ($business, $location, $conv, $contact, $number, $newMessages, &$boxId): void {
+            $this->transact(function () use ($business, $location, $conv, $contact, $number, $newMessages, $boxId): void {
+                // Local to THIS attempt: after a deadlock rollback the retry must create the chat box again, not reuse an id that no longer exists.
                 if ($boxId === null) {
                     $box = new ChatBox([
                         'user_id' => $business->customer_id, 'business_id' => $business->id, 'location_id' => $location->id,
@@ -495,7 +496,26 @@ final class GhlImportWriter
             'business_id' => $business->id, 'source_system' => self::SYSTEM, 'source_type' => $type, 'source_id' => $id,
             'local_type' => $localType, 'local_id' => $localId, 'meta' => json_encode($meta), 'imported_at' => now(),
         ]);
-        $this->cache["ledger:{$type}:{$id}"] = $localId;
+        // Published to the cache only once the surrounding transaction commits (see transact()).
+        $this->pending["ledger:{$type}:{$id}"] = $localId;
+    }
+
+    /** @var array<string, int> ledger entries written by the current transaction attempt, not yet committed */
+    private array $pending = [];
+
+    /**
+     * One record = one transaction, retried on deadlock. Each attempt starts with nothing pending, and the in-memory ledger
+     * cache is only updated after COMMIT, so a rolled-back attempt leaves no trace that a retry could mistake for real rows.
+     */
+    private function transact(\Closure $work, int $retries): void
+    {
+        DB::transaction(function () use ($work): void {
+            $this->pending = [];
+            $work();
+        }, $retries);
+
+        $this->cache = $this->pending + $this->cache;
+        $this->pending = [];
     }
 
     private function count(string $key): void
