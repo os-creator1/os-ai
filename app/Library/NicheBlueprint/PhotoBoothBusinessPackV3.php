@@ -58,7 +58,7 @@ final class PhotoBoothBusinessPackV3
             self::c('pb3_cf_booth_start_time', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Booth start time', 'type' => 'text']),
             self::c('pb3_cf_booth_location', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Booth location at venue', 'type' => 'text']),
             self::c('pb3_cf_power_confirmed', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Power available near booth', 'type' => 'select', 'options' => ['Yes', 'No', 'Not sure']]),
-            self::c('pb3_cf_day_of_phone', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Event day coordinator phone', 'type' => 'phone']),
+            self::c('pb3_cf_day_of_phone', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Event day coordinator phone', 'type' => 'text']),
             self::c('pb3_cf_backdrop', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Backdrop choice', 'type' => 'text']),
             self::c('pb3_cf_instagram', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Instagram handle', 'type' => 'text']),
 
@@ -77,7 +77,7 @@ final class PhotoBoothBusinessPackV3
                     ['key' => 'start_time', 'label' => 'Booth start time', 'type' => 'text', 'required' => true, 'custom_field_label' => 'Booth start time'],
                     ['key' => 'location', 'label' => 'Where should the booth be set up?', 'type' => 'text', 'required' => true, 'custom_field_label' => 'Booth location at venue'],
                     ['key' => 'power', 'label' => 'Will power be available near the booth?', 'type' => 'select', 'required' => true, 'options' => ['Yes', 'No', 'Not sure'], 'custom_field_label' => 'Power available near booth'],
-                    ['key' => 'coordinator_phone', 'label' => 'Event day coordinator phone', 'type' => 'phone', 'required' => false, 'custom_field_label' => 'Event day coordinator phone'],
+                    ['key' => 'coordinator_phone', 'label' => 'Event day coordinator phone', 'type' => 'text', 'required' => false, 'custom_field_label' => 'Event day coordinator phone'],
                     ['key' => 'backdrop', 'label' => 'Backdrop you like', 'type' => 'text', 'required' => false, 'custom_field_label' => 'Backdrop choice'],
                     ['key' => 'instagram', 'label' => 'Instagram account (so we can tag you)', 'type' => 'text', 'required' => false, 'custom_field_label' => 'Instagram handle'],
                 ],

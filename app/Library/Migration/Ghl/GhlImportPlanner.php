@@ -48,12 +48,15 @@ final class GhlImportPlanner
         $opps = $this->opportunities($snapshot['opportunities'] ?? [], $pipelines, $contacts, $issues);
         $messages = $this->messages($snapshot['messages'] ?? [], $snapshot['conversations'] ?? [], $contacts, $issues);
 
+        $conversations = $this->conversations($snapshot['conversations'] ?? [], $messages);
+
         return [
             'source' => ['system' => 'gohighlevel', 'location_id' => $snapshot['location']['id'] ?? null],
             'contacts' => array_values($contacts),
             'pipelines' => $pipelines,
             'opportunities' => $opps,
             'messages' => $messages,
+            'conversations' => $conversations,
             'tags' => array_values(array_unique(array_merge([], ...array_values(array_map(fn ($c) => $c['tags'], $contacts))))),
             'issues' => $issues,
             'counts' => [
@@ -61,6 +64,7 @@ final class GhlImportPlanner
                 'contacts_with_phone' => count(array_filter($contacts, fn ($c) => $c['phone_e164'] !== null)),
                 'contacts_suppressed' => count(array_filter($contacts, fn ($c) => $c['consent']['sms'] === 'suppressed')),
                 'opportunities' => count($opps),
+                'conversations' => count($conversations),
                 'messages_total' => count($messages),
                 'messages_by_kind' => array_count_values(array_column($messages, 'kind')),
                 'issues' => count($issues),
@@ -264,6 +268,23 @@ final class GhlImportPlanner
             }
         }
         usort($out, fn ($a, $b) => strcmp((string) $a['occurred_at'], (string) $b['occurred_at']));
+
+        return $out;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function conversations(array $rows, array $messages): array
+    {
+        $counts = array_count_values(array_column($messages, 'conversation_source_id'));
+        $out = [];
+        foreach ($rows as $c) {
+            $out[] = [
+                'source_id' => $c['id'],
+                'contact_source_id' => $c['contactId'] ?? null,
+                'message_count' => $counts[$c['id']] ?? 0,
+                'provenance' => ['system' => 'gohighlevel', 'id' => $c['id']],
+            ];
+        }
 
         return $out;
     }
