@@ -1902,6 +1902,10 @@
             Route::post('/', 'Business\CrmOpportunitiesController@store')->name('opportunities.store');
             Route::get('/contacts', 'Business\CrmOpportunitiesController@contactSearch')->name('contacts.search');
 
+            // Call-task inbox (declared before the {opportunityUid} wildcard so "tasks" is never read as a uid).
+            Route::get('/tasks', 'Business\CrmTasksController@list')->name('tasks.index');
+            Route::post('/tasks/{taskUid}/complete', 'Business\CrmTasksController@complete')->name('tasks.complete');
+
             Route::post('/pipelines', 'Business\CrmPipelinesController@store')->name('pipelines.store');
             Route::get('/pipelines/{pipelineUid}', 'Business\CrmPipelinesController@settings')->name('pipelines.settings');
             Route::post('/pipelines/{pipelineUid}', 'Business\CrmPipelinesController@update')->name('pipelines.update');

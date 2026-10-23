@@ -17,6 +17,9 @@ enum WebsiteAssetPurpose: string
     /** General homepage/service photography and the Gallery page pool. */
     case Gallery = 'gallery';
 
+    /** An uploaded MP4 shown by a `video` section. Never listed in the gallery, never given image variants. */
+    case Video = 'video';
+
     /** The wizard's optional custom-section media — never mixed into the general gallery/hero pool. */
     case CustomSection = 'custom_section';
 

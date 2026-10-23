@@ -32,6 +32,7 @@ class Website extends Model
         'status',
         'published_revision_id',
         'theme',
+        'custom_redirects',
         'template_key',
         'gallery_page_enabled',
         'indexing_released_at',
@@ -44,6 +45,7 @@ class Website extends Model
     protected $casts = [
         'status' => WebsiteStatus::class,
         'theme' => 'array',
+        'custom_redirects' => 'array',
         'gallery_page_enabled' => 'boolean',
         'indexing_released_at' => 'datetime',
         'presentation_changes_pending_at' => 'datetime',

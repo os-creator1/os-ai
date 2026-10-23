@@ -20,6 +20,7 @@ enum WebsiteSectionType: string
     case Cta = 'cta';
     case ContactDetails = 'contact_details';
     case Gallery = 'gallery';
+    case Video = 'video';
     case Form = 'form';
 
     /** Website V1 closure — a Forms-module form placed on a page, by the stable uid of its Website-source FormDeployment (see WebsiteFormsModuleReferences). */

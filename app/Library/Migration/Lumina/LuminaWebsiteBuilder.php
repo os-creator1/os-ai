@@ -57,6 +57,9 @@ final class LuminaWebsiteBuilder
     /** @var array<string, WebsiteAsset> */
     private array $assets = [];
 
+    /** @var array<string, string> */
+    private array $videoTitles = [];
+
     public function __construct(
         private readonly WebsiteStarterDraftService $starter,
         private readonly WebsiteDraftPageService $pages,
@@ -67,6 +70,7 @@ final class LuminaWebsiteBuilder
         private readonly FormManager $forms,
         private readonly CatalogItemManager $catalog,
         private readonly BusinessServiceRepository $services,
+        private readonly \App\Library\Website\Seo\WebsiteRedirectManager $redirects,
     ) {
     }
 
@@ -101,6 +105,18 @@ final class LuminaWebsiteBuilder
             $this->assets[$role] = $this->storeAsset($website, $role, $path, $entry['alt']);
         }
 
+        // The customer's own MP4s, stored in the same persisted directory as the images.
+        foreach ((json_decode((string) file_get_contents($manifestPath), true)['videos'] ?? []) as $role => $entry) {
+            $path = $files[$entry['sha256']] ?? null;
+            if ($path === null) {
+                $missing[] = $role;
+
+                continue;
+            }
+            $this->assets[$role] = $this->uploads->storeVideo($website, $this->upload($path, $role), $entry['alt']);
+            $this->videoTitles[$role] = $entry['title'];
+        }
+
         $heroUid = $this->uid('event_7') ?? $this->uid('booth_1');
         $website->refresh();
         if (isset($this->assets['logo']) && ! isset($website->theme['logo_asset_uid'])) {
@@ -126,6 +142,9 @@ final class LuminaWebsiteBuilder
         }
 
         $website = $website->fresh();
+        // The old GHL addresses that no longer match a page one-for-one (matching paths and capitals are handled automatically).
+        $this->redirects->set($website, ['brochure' => '', 'thank-you' => 'check-availability', 'terms-conditions' => 'terms-and-conditions']);
+        $website = $website->fresh();
         $this->publisher->publish($website, $actorUserId);
         $website = $website->fresh();
 
@@ -145,7 +164,7 @@ final class LuminaWebsiteBuilder
     {
         $out = [];
         foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)) as $file) {
-            if ($file->isFile() && ! str_ends_with(strtolower($file->getFilename()), '.mp4')) {
+            if ($file->isFile()) {
                 $out[hash_file('sha256', $file->getPathname())] = $file->getPathname();
             }
         }
@@ -257,6 +276,12 @@ final class LuminaWebsiteBuilder
             ['question' => 'What space do you need?', 'answer' => 'We need at least 10 by 10 feet of space and a level ground. Please note that our backdrop stands are 8 feet tall.'],
         ]]];
 
+        $videos = array_values(array_filter(array_map(
+            fn (string $r) => $this->uid($r) === null ? null : ['video' => $this->uid($r), 'title' => $this->videoTitles[$r] ?? null],
+            ['video_1', 'video_2', 'video_3'],
+        )));
+        $videoSection = $videos === [] ? null : ['type' => 'video', 'data' => ['heading' => 'See the 360 booth in action', 'items' => $videos]];
+
         $pages = [];
 
         $pages[''] = [
@@ -287,6 +312,7 @@ final class LuminaWebsiteBuilder
                     ['name' => 'Ivy backdrops', 'description' => 'À la carte sizing and decoration options, with custom neon signage and fairy lighting available.', 'price_label' => 'Request a quote', 'image' => $this->uid('ivy_1')],
                 ]]],
                 ['type' => 'gallery', 'data' => ['heading' => 'See some of our favorite events', 'items' => array_map(fn ($u) => ['image' => $u], $g(['event_1', 'event_2', 'event_3', 'event_4', 'event_5', 'event_6']))]],
+                $videoSection,
                 ['type' => 'services', 'data' => ['heading' => 'What makes us different', 'items' => [
                     ['name' => 'Branding', 'description' => 'Branding & custom filters for created content for guests available for additional cost.'],
                     ['name' => 'Customization', 'description' => 'Arches & themed backdrops.'],
@@ -306,6 +332,7 @@ final class LuminaWebsiteBuilder
             'sections' => array_values(array_filter([
                 ['type' => 'hero', 'data' => array_filter(['heading' => '360 Video Booth', 'subheading' => 'Cinematic 360° videos your guests can share instantly.', 'background_image' => $hero ?: null, 'primary_cta' => $quote])],
                 ['type' => 'image_text', 'data' => ['heading' => 'How it works', 'body' => "Guests step onto the platform while a rotating camera captures smooth, cinematic videos from every angle. Expect 1-3 videos per guest before the next person steps up, with custom overlays, music and instant sharing.\n\nSetup takes about an hour before your run time and pack-down about half an hour. We need at least a 10 by 10 foot level area.", 'image' => $this->uid('booth_2'), 'image_position' => 'left']],
+                $videoSection,
                 ['type' => 'image_text', 'data' => ['heading' => 'Custom vinyl & branding', 'body' => 'Make your booth stand out with custom vinyl designed to match your brand or event style. Branding and custom filters for the content your guests create are available for an additional cost.', 'image' => $this->uid('vinyl'), 'image_position' => 'right']],
                 $cta,
             ])),

@@ -1,5 +1,5 @@
 {
- "note": "Authentic assets retrieved from the customer GHL Media Storage / public site. Binaries are NOT committed; the builder resolves each by sha256 from --assets. Excluded: f28673cb-e60c-434d-9160-58d70b966f18.jpeg (stored under a different GHL location), 5 MP4 videos (the website asset store accepts images only).",
+ "note": "Authentic assets retrieved from the customer GHL Media Storage / public site. Binaries are NOT committed; the builder resolves each by sha256 from --assets. Excluded: f28673cb-e60c-434d-9160-58d70b966f18.jpeg (stored under a different GHL location), 2 further library MP4s not used on the live site (the 3 used on the live site are published as `video` section assets).",
  "assets": {
   "ivy_1": {
    "sha256": "542bc4b2aa4d8339e53c4a85c6efba4128ea695f6265ce06438be4af7e67c6a6",
@@ -108,6 +108,29 @@
    "alt": "Guest against a gold sequin backdrop",
    "ghl_file": "b2dc2e8f-acc8-47e2-9127-387a4f2d71a1.jpeg",
    "bytes": 154728
+  }
+ },
+ "videos": {
+  "video_1": {
+   "sha256": "5fd64b267c975dba707a2b541487e35ad47027fc521c28c2d6c88870a25c2e30",
+   "title": "360\u00b0 booth clip 1",
+   "alt": "360 video booth clip 1 from a Lumina Aura event",
+   "ghl_file": "699cd4275dfd50db0594cc28.mp4",
+   "bytes": 2798848
+  },
+  "video_2": {
+   "sha256": "387f113b63cc3729ac34af9ed3854c7ac483ae9daa87d3be792fcc6ea2f972c5",
+   "title": "360\u00b0 booth clip 2",
+   "alt": "360 video booth clip 2 from a Lumina Aura event",
+   "ghl_file": "699cd42a5dfd501dc594ccdb.mp4",
+   "bytes": 5517614
+  },
+  "video_3": {
+   "sha256": "4430adfc6ab1d73e921b98831148d9af369038f56924a205b39060da621b0e5d",
+   "title": "360\u00b0 booth clip 3",
+   "alt": "360 video booth clip 3 from a Lumina Aura event",
+   "ghl_file": "699cd431d0716bedb74ee903.mp4",
+   "bytes": 6594015
   }
  }
 }
