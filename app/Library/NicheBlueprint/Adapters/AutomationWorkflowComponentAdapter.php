@@ -13,6 +13,7 @@ use App\Library\NicheBlueprint\Workspace\BlueprintChecksum;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\Business;
+use App\Models\CrmPipelineStage;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -42,9 +43,25 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         'appointment_scheduled',
         'opportunity_won',
         'contact_tag_added',
+        'opportunity_stage_changed',
+        'opportunity_lost',
+        'questionnaire_submitted',
+        'payment_succeeded',
     ];
 
-    private const STEP_TYPES = ['add_tag', 'wait', 'send_sms', 'send_email', 'internal_notification'];
+    private const STEP_TYPES = ['add_tag', 'wait', 'send_sms', 'send_email', 'internal_notification', 'end_if_replied', 'end_if_unsubscribed', 'end_if_tagged'];
+
+    /**
+     * Guard steps compile to an If / Else whose YES path is an End and whose NO
+     * path carries every later step — "stop here if the person replied (or is
+     * unsubscribed), otherwise continue". They are how a Blueprint expresses
+     * reply detection and consent without a free-form condition language.
+     */
+    private const GUARD_SUBJECTS = [
+        'end_if_replied' => 'contact.replied_since_enrollment',
+        'end_if_unsubscribed' => 'contact.subscribed',
+        'end_if_tagged' => 'contact.has_tag',
+    ];
 
     public function __construct(
         private readonly WorkflowDraftService $drafts,
@@ -64,6 +81,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         // Reuse the Automations node validators on every step, so a payload
         // the workflow editor would reject cannot be published in a Blueprint.
         foreach ($parsed['steps'] as $step) {
+            if (isset(self::GUARD_SUBJECTS[$step['type']])) {
+                continue;
+            }
+
             $node = $this->nodeFor($step, 1);
             $errors = $this->nodes->validateConfig(WorkflowNodeType::from($node['type']), $node['config']);
 
@@ -92,10 +113,7 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
 
         $definition = $draft->definition;
         $definition['root']['config'] = array_merge($definition['root']['config'], $this->triggerConfig($business, $parsed));
-        $definition['root']['next'] = array_map(
-            fn (array $step) => $this->nodeFor($step, $this->resolveTagId($business, $step)),
-            $parsed['steps'],
-        );
+        $definition['root']['next'] = $this->buildSequence($business, $parsed['steps']);
 
         $this->drafts->autosave($draft, $definition, (int) $draft->definition_revision);
 
@@ -118,9 +136,57 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         return BlueprintChecksum::of([$workflow->name, $workflow->status->value, $version, $revision]);
     }
 
+    /**
+     * @param  list<array<string, mixed>>  $steps
+     * @return list<array<string, mixed>>
+     */
+    private function buildSequence(Business $business, array $steps): array
+    {
+        $nodes = [];
+
+        foreach ($steps as $i => $step) {
+            if (isset(self::GUARD_SUBJECTS[$step['type']])) {
+                $nodes[] = [
+                    'key' => (string) Str::uuid(),
+                    'type' => 'if_else',
+                    'config' => ['match' => 'all', 'conditions' => [[
+                        'subject' => $step['type'] === 'end_if_tagged'
+                            ? 'contact.has_tag:'.$this->resolveTag($business, $step['tag'])
+                            : self::GUARD_SUBJECTS[$step['type']],
+                        // "replied" and "tagged" end on true; "subscribed" ends on false.
+                        'operator' => $step['type'] === 'end_if_unsubscribed' ? 'is_false' : 'is_true',
+                    ]]],
+                    'yes' => [['key' => (string) Str::uuid(), 'type' => 'end', 'config' => [], 'next' => []]],
+                    'no' => $this->buildSequence($business, array_slice($steps, $i + 1)),
+                ];
+
+                return $nodes;
+            }
+
+            $nodes[] = $this->nodeFor($step, $this->resolveTagId($business, $step));
+        }
+
+        return $nodes;
+    }
+
     /** @return array<string, mixed> */
     private function triggerConfig(Business $business, array $parsed): array
     {
+        if ($parsed['trigger_type'] === 'opportunity_stage_changed') {
+            $stage = CrmPipelineStage::query()
+                ->where('business_id', $business->id)
+                ->whereNull('archived_at')
+                ->where('name', $parsed['trigger_stage'])
+                ->orderBy('id')
+                ->first();
+
+            if ($stage === null) {
+                throw new InvalidArgumentException("Install the pipeline first: no stage named \"{$parsed['trigger_stage']}\" exists in this Business.");
+            }
+
+            return ['pipeline_id' => (int) $stage->pipeline_id, 'to_stage_id' => (int) $stage->id];
+        }
+
         if ($parsed['trigger_type'] === 'contact_tag_added' && $parsed['trigger_tag'] !== null) {
             return ['tag_id' => $this->resolveTag($business, $parsed['trigger_tag'])];
         }
@@ -164,7 +230,7 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
 
     /**
      * @param  array<string, mixed>  $payload
-     * @return array{name: string, trigger_type: string, trigger_tag: ?string, steps: list<array<string, mixed>>}
+     * @return array{name: string, trigger_type: string, trigger_tag: ?string, trigger_stage: ?string, steps: list<array<string, mixed>>}
      */
     private function parse(array $payload): array
     {
@@ -176,6 +242,11 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         }
 
         $triggerTag = $this->optionalString($payload, 'trigger_tag', 191);
+        $triggerStage = $this->optionalString($payload, 'trigger_stage', 100);
+
+        if ($trigger === 'opportunity_stage_changed' && $triggerStage === null) {
+            throw new InvalidArgumentException('An "opportunity_stage_changed" trigger needs a "trigger_stage" (the stage name the deal moves into).');
+        }
 
         if ($trigger === 'contact_tag_added' && $triggerTag === null) {
             throw new InvalidArgumentException('A "contact_tag_added" trigger needs a "trigger_tag".');
@@ -213,10 +284,12 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
                 'send_sms' => ['type' => $type, 'body' => $this->requireString($raw, 'body', 1600)],
                 'send_email' => ['type' => $type, 'subject' => $this->requireString($raw, 'subject', 200), 'body' => $this->requireString($raw, 'body', 20000)],
                 'internal_notification' => ['type' => $type, 'message' => $this->requireString($raw, 'message', 255)],
+                'end_if_replied', 'end_if_unsubscribed' => ['type' => $type],
+                'end_if_tagged' => ['type' => $type, 'tag' => $this->requireString($raw, 'tag', 191)],
             };
         }
 
-        return ['name' => $name, 'trigger_type' => $trigger, 'trigger_tag' => $triggerTag, 'steps' => $steps];
+        return ['name' => $name, 'trigger_type' => $trigger, 'trigger_tag' => $triggerTag, 'trigger_stage' => $triggerStage, 'steps' => $steps];
     }
 
     public function surface(): string
