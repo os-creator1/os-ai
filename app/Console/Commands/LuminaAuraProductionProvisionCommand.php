@@ -63,7 +63,21 @@ class LuminaAuraProductionProvisionCommand extends Command
             : "Lumina Aura already exists (Business #{$business->id}): the run would only FILL IN what is missing (idempotent).");
 
         if (! $this->option('apply')) {
-            $this->warn('Dry inspection only. Re-run with --apply to write.');
+            // A real dry run of the mapping: read the snapshot and print exactly what --apply would import. Pure computation;
+            // no write, no queue, no network.
+            if ($snapshotDir = $this->option('snapshot')) {
+                $snapshot = [];
+                foreach (glob(rtrim((string) $snapshotDir, '/').'/*.json') ?: [] as $file) {
+                    $snapshot[basename($file, '.json')] = json_decode((string) file_get_contents($file), true) ?? [];
+                }
+                $plan = (new GhlImportPlanner())->plan($snapshot);
+                $this->line('PLAN counts : '.json_encode($plan['counts']));
+                $codes = array_count_values(array_column($plan['issues'], 'code'));
+                ksort($codes);
+                $this->line('PLAN issues : '.json_encode($codes));
+                $this->line('Existing rows are matched by GHL id and skipped, so a repeat run adds nothing.');
+            }
+            $this->warn('Dry inspection only — nothing was written. Re-run with --apply to write.');
 
             return self::SUCCESS;
         }

@@ -15,5 +15,5 @@ Everything technically possible with the data and access available has been buil
 | 9 | Staff accounts | Operator | Two other GHL admins were created as **least-privilege staff** with random unusable passwords; no invitation was sent. Confirm who should have access and send real invitations. |
 | 10 | HighLevel Support case, LOA signature, carrier account data, A2P status, charges, port submission | Owner / operator | Unchanged — see 04. Nothing was submitted. |
 | 11 | DNS access / cutover approval | Owner / operator | Unchanged — see 05. |
-| 12 | Task inbox UI, old-URL redirect feature, video section, port-fee billing decision | Product | Not built (each needs its own contract). |
+| 12 | Port-fee billing decision; redirect/video management screens in the website editor (both are builder/API-only today) | Product | Not built (each needs its own contract). Task inbox, video sections and old-URL redirects **are** built. |
 | 13 | Production provisioning of this Business | Operator | Not done. `lumina:provision` refuses any host/database that is not explicitly opted in and confirmed. |

@@ -86,4 +86,31 @@ class LuminaProductionTest extends TestCase
         $this->assertSame(1, DB::table('businesses')->where('name', 'Lumina Aura Events')->count());
         $this->assertSame(1, DB::table('workspaces')->where('name', 'Lumina Aura Events')->count());
     }
+
+    public function test_the_command_without_apply_prints_the_plan_and_writes_nothing(): void
+    {
+        $this->owner();
+        $this->app->instance(LuminaProductionGuard::class, $this->guard());
+        putenv(LuminaProductionGuard::OPT_IN_ENV.'=true');
+
+        $dir = sys_get_temp_dir().'/lumina-snap-'.uniqid();
+        mkdir($dir);
+        file_put_contents("{$dir}/contacts.json", json_encode([['id' => 'C1', 'firstNameRaw' => 'Ann', 'phone' => '(720) 555-0101', 'dateAdded' => '2026-01-01T00:00:00.000Z']]));
+        file_put_contents("{$dir}/location.json", json_encode(['id' => 'L']));
+        $before = [DB::table('users')->count(), DB::table('businesses')->count(), DB::table('workspaces')->count()];
+
+        try {
+            $this->artisan('lumina:production-provision', [
+                '--owner-email' => 'real-owner@example.test', '--confirm-database' => 'motiongrove_app', '--backup-reference' => 'bk-1',
+                '--confirm-phrase' => LuminaProductionGuard::PHRASE, '--snapshot' => $dir,
+            ])->expectsOutputToContain('PLAN counts')->expectsOutputToContain('nothing was written')->assertExitCode(0);
+        } finally {
+            putenv(LuminaProductionGuard::OPT_IN_ENV);
+            @unlink("{$dir}/contacts.json");
+            @unlink("{$dir}/location.json");
+            @rmdir($dir);
+        }
+
+        $this->assertSame($before, [DB::table('users')->count(), DB::table('businesses')->count(), DB::table('workspaces')->count()]);
+    }
 }

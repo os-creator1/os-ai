@@ -62,4 +62,19 @@ class GhlSnapshotExporterTest extends TestCase
         $this->expectException(\RuntimeException::class);
         new GhlApiClient('https://example.test', '');
     }
+
+    public function test_the_token_is_read_from_the_process_environment_when_config_is_cached(): void
+    {
+        config(['ghl_migration.token' => null, 'ghl_migration.base_url' => 'https://example.test']);
+        putenv('GHL_PRIVATE_INTEGRATION_TOKEN=from-process-env');
+
+        try {
+            $client = \App\Library\Migration\Ghl\GhlApiClient::fromConfig();
+            Http::fake(['*' => Http::response(['ok' => true])]);
+            $client->get('/x');
+            Http::assertSent(fn (Request $r) => $r->hasHeader('Authorization', 'Bearer from-process-env'));
+        } finally {
+            putenv('GHL_PRIVATE_INTEGRATION_TOKEN');
+        }
+    }
 }

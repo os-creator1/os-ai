@@ -14,7 +14,7 @@ class GhlExportSnapshotCommand extends Command
 
     public function handle(): int
     {
-        $location = (string) ($this->option('location') ?: config('ghl_migration.location_id'));
+        $location = (string) ($this->option('location') ?: config('ghl_migration.location_id') ?: getenv('GHL_LOCATION_ID'));
         if ($location === '') {
             $this->error('Set GHL_LOCATION_ID or pass --location.');
 
