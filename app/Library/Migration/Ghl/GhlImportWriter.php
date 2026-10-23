@@ -173,7 +173,7 @@ final class GhlImportWriter
             }
 
             $phone = $c['phone_e164'] === null
-                ? self::NO_PHONE_PREFIX.substr(strtolower($c['source_id']), 0, 16)
+                ? self::noPhoneKey($c['source_id'])
                 : ContactPhone::legacyDigits($c['phone_e164']);
 
             $clash = Contacts::query()->where('business_id', $business->id)->where('phone', $phone)->exists();
@@ -425,6 +425,21 @@ final class GhlImportWriter
                 ]);
             }, $retries);
         }
+    }
+
+    /**
+     * The stand-in key for a contact GHL holds without a phone. LETTERS ONLY (derived from the source id): every phone
+     * normaliser in the product strips non-digits, so a key containing digits could collapse into a real, dialable
+     * number. With no digit at all it can never normalise to one, so nothing can text or call it.
+     */
+    public static function noPhoneKey(string $sourceId): string
+    {
+        $key = '';
+        foreach (str_split(md5('ghl-no-phone|'.$sourceId), 2) as $pair) {
+            $key .= chr(97 + (hexdec($pair) % 26));
+        }
+
+        return self::NO_PHONE_PREFIX.substr($key, 0, 16);
     }
 
     /**

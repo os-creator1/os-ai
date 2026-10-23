@@ -72,7 +72,7 @@ final class LuminaAuraProvisioner
      * @param  list<array{first: string, last: string, email: string}>  $people  GHL users from the snapshot: the one matching
      *         $ownerEmail names the owner; every other becomes least-privilege staff.
      */
-    public function provision(string $ownerEmail, ?string $ownerPassword, array $people = []): array
+    public function provision(string $ownerEmail, ?string $ownerPassword, array $people = [], bool $adoptExistingOwner = false, bool $complimentaryPlan = true): array
     {
         $adminId = (int) User::query()->where('is_admin', true)->orderBy('id')->value('id');
         if ($adminId < 1) {
@@ -91,14 +91,18 @@ final class LuminaAuraProvisioner
                 'password' => $ownerPassword, 'status' => true, 'phone' => self::PHONE, 'is_customer' => true,
             ], true);
             $passwordSet = true;
-        } elseif (! Workspace::query()->where('owner_user_id', $owner->id)->where('name', self::WORKSPACE_NAME)->exists()) {
+        } elseif (! $adoptExistingOwner && ! Workspace::query()->where('owner_user_id', $owner->id)->where('name', self::WORKSPACE_NAME)->exists()) {
             throw new RuntimeException("Refusing: [{$ownerEmail}] already exists and does not own the Lumina Aura Workspace.");
         }
 
-        $owner->forceFill(['email_verified_at' => $owner->email_verified_at ?? now(), 'status' => true, 'timezone' => self::TIMEZONE])->save();
-
         $customer = Customer::query()->where('user_id', $owner->id)->firstOrFail();
-        $customer->forceFill(['company' => self::BUSINESS_NAME, 'website' => self::WEBSITE, 'city' => 'Thornton', 'state' => 'CO', 'country' => 'US', 'phone' => self::PHONE])->save();
+
+        // An ADOPTED existing owner (the real production login) is never modified: not their profile, timezone, verification
+        // state, company, phone or password. Lumina Aura's own facts live on its Business and Location.
+        if (! $adoptExistingOwner) {
+            $owner->forceFill(['email_verified_at' => $owner->email_verified_at ?? now(), 'status' => true, 'timezone' => self::TIMEZONE])->save();
+            $customer->forceFill(['company' => self::BUSINESS_NAME, 'website' => self::WEBSITE, 'city' => 'Thornton', 'state' => 'CO', 'country' => 'US', 'phone' => self::PHONE])->save();
+        }
 
         $workspace = Workspace::query()->where('owner_user_id', $owner->id)->where('name', self::WORKSPACE_NAME)->first()
             ?? $this->workspaces->createWorkspace((int) $owner->id, self::WORKSPACE_NAME);
@@ -122,7 +126,7 @@ final class LuminaAuraProvisioner
             'country_code' => 'US', 'public_address' => false,
         ]);
 
-        if (! DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->exists()) {
+        if ($complimentaryPlan && ! DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->exists()) {
             $this->entitlements->assignFirstPlan($workspace, WorkspacePlanTier::Growth, $adminId, 'GHL migration pilot (staging): complimentary Growth plan. No billing.', true, 0);
         }
 
