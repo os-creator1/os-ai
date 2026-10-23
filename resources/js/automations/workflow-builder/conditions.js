@@ -21,7 +21,9 @@ export const BUSINESS_FIELD_PREFIX = 'contact.field:'
 export const HAS_TAG_PREFIX = 'contact.has_tag:'
 
 export const TEXT_SUBJECTS = ['contact.first_name', 'contact.last_name', 'contact.email', 'contact.company']
-export const BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT, 'document.signed', 'document.paid']
+// Yes/no facts about the Business or the contact's deal (BusinessFactSubject) — what the pack's stop guards compile to.
+export const BUSINESS_FACT_SUBJECTS = ['contact.has_open_deal', 'business.open_now', 'business.quiet_hours_now', 'business.review_link_set', 'business.questionnaire_link_set']
+export const BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT, 'document.signed', 'document.paid', ...BUSINESS_FACT_SUBJECTS]
 export const GROUP_SUBJECTS = ['contact.in_group']
 
 // The subjects that read the deal, document, payment or appointment behind a
@@ -88,6 +90,11 @@ export const SUBJECT_LABELS = {
     'contact.company': 'Company',
     'contact.subscribed': 'Subscribed to texts',
     'contact.in_group': 'Contact group',
+    'contact.has_open_deal': 'Has an open deal',
+    'business.open_now': 'Business is open now',
+    'business.quiet_hours_now': 'It is quiet hours now',
+    'business.review_link_set': 'Review link is set up',
+    'business.questionnaire_link_set': 'Questionnaire link is set up',
 }
 
 const TEXT_OPERATORS = ['equals', 'not_equals', 'contains', 'not_contains', 'is_empty', 'is_not_empty']
@@ -117,6 +124,11 @@ const BOOLEAN_OPERATOR_LABELS = {
     'document.paid': { is_true: 'is paid', is_false: 'is not paid yet' },
     'contact.subscribed': { is_true: 'is subscribed', is_false: 'is not subscribed' },
     [REPLIED_SUBJECT]: { is_true: 'has replied', is_false: 'has not replied yet' },
+    'contact.has_open_deal': { is_true: 'yes', is_false: 'no (won, lost or none)' },
+    'business.open_now': { is_true: 'yes', is_false: 'no' },
+    'business.quiet_hours_now': { is_true: 'yes', is_false: 'no' },
+    'business.review_link_set': { is_true: 'yes', is_false: 'no' },
+    'business.questionnaire_link_set': { is_true: 'yes', is_false: 'no' },
 }
 
 const OPERAND_FREE = ['is_empty', 'is_not_empty', 'is_true', 'is_false']

@@ -956,6 +956,11 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, location
             config = readAction(currentNode.type, formEl)
         } else {
             config = readGeneric()
+
+            // A call task the node already creates (a Blueprint's "Call the lead" step) has no field here: keep it untouched.
+            if (currentNode.type === 'internal_notification' && currentNode.config && currentNode.config.task) {
+                config.task = currentNode.config.task
+            }
         }
 
         const node = currentNode

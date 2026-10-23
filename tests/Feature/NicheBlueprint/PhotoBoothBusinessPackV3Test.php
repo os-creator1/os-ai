@@ -150,4 +150,28 @@ class PhotoBoothBusinessPackV3Test extends TestCase
         $this->assertStringContainsString("return { mode, business_hours:", $js, 'Saving must write the send-window mode back.');
         $this->assertSame(__('automations.v2.wait_form.mode_until_send_window'), 'Until a good time to message');
     }
+
+    public function test_the_builder_offers_every_stop_guard_subject_and_keeps_a_notifications_call_task(): void
+    {
+        $conditions = file_get_contents(resource_path('js/automations/workflow-builder/conditions.js'));
+        $picker = file_get_contents(resource_path('views/customer/Automations/Workflows/partials/node-form-if-else.blade.php'));
+        $drawer = file_get_contents(resource_path('js/automations/workflow-builder/drawer.js'));
+
+        // Every subject an installed pack guard compiles to is a boolean subject the picker offers and the editor can label.
+        $subjects = ['contact.has_open_deal', 'business.open_now', 'business.quiet_hours_now', 'business.review_link_set', 'business.questionnaire_link_set'];
+        $registry = \App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry::BUSINESS_FACTS;
+        sort($registry);
+        $sorted = $subjects;
+        sort($sorted);
+        $this->assertSame($sorted, $registry);
+        foreach ($subjects as $subject) {
+            $this->assertStringContainsString("'{$subject}'", $conditions, "{$subject} missing from conditions.js");
+            $this->assertStringContainsString("'{$subject}': {", $conditions, "{$subject} has no operator wording");
+            $this->assertNotSame('automations.v2.if_else_form.subject_'.str_replace('.', '_', $subject), __('automations.v2.if_else_form.subject_'.str_replace('.', '_', $subject)), "{$subject} has no label");
+        }
+        $this->assertStringContainsString('...BUSINESS_FACT_SUBJECTS]', $conditions, 'They are in BOOLEAN_SUBJECTS.');
+        $this->assertStringContainsString("@foreach (['contact.has_open_deal'", $picker);
+
+        $this->assertStringContainsString('config.task = currentNode.config.task', $drawer, 'Saving a notification keeps its call task.');
+    }
 }
