@@ -110,110 +110,123 @@ final class PhotoBoothBusinessPackV3
         return $out;
     }
 
-    /** @return list<array{key: string, type: string, feature: string, payload: array<string, mixed>}> */
+    /**
+     * Every automated message waits for a send window first (never overnight, in the Business's timezone; also within
+     * recorded business hours for lead follow-ups), and every follow-up stops on a reply, an opt-out or a closed deal.
+     *
+     * @return list<array{key: string, type: string, feature: string, payload: array<string, mixed>}>
+     */
     public static function workflows(): array
     {
         $sig = "\n\n— {{business.name}}";
+        $window = ['type' => 'wait_for_send_window', 'business_hours' => true];
+        $quiet = ['type' => 'wait_for_send_window', 'business_hours' => false];
+        $stop = [['type' => 'end_if_unsubscribed'], ['type' => 'end_if_no_open_deal']];
+        $call = fn (string $title, int $hours) => ['type' => 'internal_notification', 'message' => $title, 'task' => ['title' => $title, 'due_in_hours' => $hours]];
 
         return [
             self::wf('pb3_wf_new_inquiry', 'New Inquiry Received', 'form_submitted', null, [
                 ['type' => 'add_tag', 'tag' => 'Inquiry'],
-                ['type' => 'internal_notification', 'message' => 'New inquiry received — call the lead and reply within the hour.'],
+                $call('Call {{contact.first_name}} about their new event inquiry', 1),
                 ['type' => 'end_if_unsubscribed'],
+                $quiet,
                 ['type' => 'send_email', 'subject' => 'Thanks for your inquiry, {{contact.first_name}}!', 'body' => "Hi {{contact.first_name}},\n\nThanks for reaching out to {{business.name}}. We are checking your date and will send availability and a quote shortly. If it is urgent, call or text {{business.phone}}.".$sig],
                 ['type' => 'wait', 'amount' => 5, 'unit' => 'minutes'],
                 ['type' => 'end_if_replied'],
+                $window,
                 ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, this is {{business.name}} — thanks for your inquiry! We are checking your date and will reply shortly. Reply STOP to opt out.'],
                 ['type' => 'wait', 'amount' => 1, 'unit' => 'days'],
                 ['type' => 'end_if_replied'],
-                ['type' => 'internal_notification', 'message' => 'No reply yet to the new inquiry — try calling again.'],
+                ['type' => 'end_if_no_open_deal'],
+                $call('No reply yet — call {{contact.first_name}} again about their inquiry', 2),
             ]),
             self::wf('pb3_wf_missed_call', 'Missed Call Follow-Up', 'opportunity_stage_changed', "Didn't Pick Up", [
-                ['type' => 'end_if_unsubscribed'],
+                ...$stop, $window,
                 ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, we tried to reach you about your event. When is a good time to talk? — {{business.name}}'],
                 ['type' => 'wait', 'amount' => 1, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_email', 'subject' => 'We tried to call you', 'body' => "Hi {{contact.first_name}},\n\nWe tried to call about your event inquiry. Reply with a good time and we will ring you, or text {{business.phone}}.".$sig],
                 ['type' => 'wait', 'amount' => 2, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
-                ['type' => 'internal_notification', 'message' => 'Still no answer after SMS and email — try one more call, then move to No Contact Made.'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'],
+                $call('Still no answer — try {{contact.first_name}} once more, then move to No Contact Made', 4),
             ]),
             self::wf('pb3_wf_inquiry_followup', 'Inquiry Follow-Up', 'opportunity_stage_changed', 'No Contact Made', [
-                ['type' => 'end_if_unsubscribed'],
+                ...$stop,
                 ['type' => 'wait', 'amount' => 2, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, just checking in — are you still looking for a photo booth for your event? — {{business.name}}'],
                 ['type' => 'wait', 'amount' => 3, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_email', 'subject' => 'Still planning your event?', 'body' => "Hi {{contact.first_name}},\n\nWe would love to be part of your event. Dates fill up quickly — reply and we will check availability for you.".$sig],
                 ['type' => 'wait', 'amount' => 4, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
-                ['type' => 'internal_notification', 'message' => 'No response after two follow-ups — consider moving to Nurture or Cold.'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'],
+                $call('No response after two follow-ups — call {{contact.first_name}} or move to Nurture/Cold', 4),
             ]),
             self::wf('pb3_wf_proposal_followup', 'Proposal Follow-Up', 'opportunity_stage_changed', 'Proposal Sent', [
-                ['type' => 'end_if_unsubscribed'],
+                ...$stop,
                 ['type' => 'wait', 'amount' => 2, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, did you get a chance to look at your proposal? Happy to answer any questions. — {{business.name}}'],
                 ['type' => 'wait', 'amount' => 3, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_email', 'subject' => 'Questions about your proposal?', 'body' => "Hi {{contact.first_name}},\n\nJust following up on the proposal we sent. If you would like to lock in your date or adjust anything, reply here.".$sig],
                 ['type' => 'wait', 'amount' => 4, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
-                ['type' => 'internal_notification', 'message' => 'Proposal unanswered for 9 days — call the client.'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'],
+                $call('Proposal unanswered for 9 days — call {{contact.first_name}}', 4),
             ]),
             self::wf('pb3_wf_booking_confirmed', 'Booking Confirmed', 'opportunity_stage_changed', 'Booking Confirmed', [
                 ['type' => 'add_tag', 'tag' => 'Client'],
-                ['type' => 'internal_notification', 'message' => 'Booking confirmed — send the event questionnaire if it has not gone out.'],
-                ['type' => 'end_if_unsubscribed'],
-                ['type' => 'send_email', 'subject' => 'Your booking is confirmed!', 'body' => "Hi {{contact.first_name}},\n\nYour booking with {{business.name}} is confirmed — thank you! Please complete the event questionnaire so we can prepare everything for your event.".$sig],
-                ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, your booking with {{business.name}} is confirmed! Check your email for the event questionnaire.'],
+                ['type' => 'internal_notification', 'message' => 'Booking confirmed — the event questionnaire goes out automatically once its link is set up.'],
+                ['type' => 'end_if_unsubscribed'], $quiet,
+                ['type' => 'send_email', 'subject' => 'Your booking is confirmed!', 'body' => "Hi {{contact.first_name}},\n\nYour booking with {{business.name}} is confirmed — thank you! We will send you a short event questionnaire so we can prepare everything.".$sig],
+                ['type' => 'end_if_no_questionnaire_link'],
+                ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, your booking with {{business.name}} is confirmed! Please complete your event questionnaire: {{business.questionnaire_link}}'],
             ]),
             self::wf('pb3_wf_questionnaire_submitted', 'Questionnaire Submitted', 'questionnaire_submitted', null, [
                 ['type' => 'add_tag', 'tag' => 'Questionnaire Submitted'],
                 ['type' => 'internal_notification', 'message' => 'Event questionnaire submitted — review details and start design approval if needed.'],
             ]),
             self::wf('pb3_wf_questionnaire_reminder', 'Questionnaire Reminder', 'opportunity_stage_changed', 'Booking Confirmed', [
-                ['type' => 'end_if_unsubscribed'],
+                ['type' => 'end_if_unsubscribed'], ['type' => 'end_if_no_questionnaire_link'],
                 ['type' => 'wait', 'amount' => 3, 'unit' => 'days'],
-                ['type' => 'end_if_tagged', 'tag' => 'Questionnaire Submitted'],
-                ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, a quick reminder to complete your event questionnaire so we can prepare for your event. — {{business.name}}'],
+                ['type' => 'end_if_tagged', 'tag' => 'Questionnaire Submitted'], ['type' => 'end_if_no_open_deal'], $quiet,
+                ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, a quick reminder to complete your event questionnaire so we can prepare for your event: {{business.questionnaire_link}} — {{business.name}}'],
                 ['type' => 'wait', 'amount' => 4, 'unit' => 'days'],
-                ['type' => 'end_if_tagged', 'tag' => 'Questionnaire Submitted'],
-                ['type' => 'send_email', 'subject' => 'Your event questionnaire', 'body' => "Hi {{contact.first_name}},\n\nWe still need your event questionnaire to finalize details. It only takes a couple of minutes.".$sig],
+                ['type' => 'end_if_tagged', 'tag' => 'Questionnaire Submitted'], ['type' => 'end_if_no_open_deal'], $quiet,
+                ['type' => 'send_email', 'subject' => 'Your event questionnaire', 'body' => "Hi {{contact.first_name}},\n\nWe still need your event questionnaire to finalize details. It only takes a couple of minutes: {{business.questionnaire_link}}".$sig],
                 ['type' => 'wait', 'amount' => 3, 'unit' => 'days'],
-                ['type' => 'end_if_tagged', 'tag' => 'Questionnaire Submitted'],
-                ['type' => 'internal_notification', 'message' => 'Questionnaire still outstanding after 10 days — call the client.'],
+                ['type' => 'end_if_tagged', 'tag' => 'Questionnaire Submitted'], ['type' => 'end_if_no_open_deal'],
+                $call('Questionnaire still outstanding after 10 days — call {{contact.first_name}}', 4),
             ]),
             self::wf('pb3_wf_event_prep', 'Event Preparation', 'opportunity_stage_changed', 'Ready For Event', [
                 ['type' => 'internal_notification', 'message' => 'Ready for event — confirm equipment, backdrop, arrival time and venue contact.'],
-                ['type' => 'end_if_unsubscribed'],
+                ['type' => 'end_if_unsubscribed'], $quiet,
                 ['type' => 'send_email', 'subject' => 'You are all set for your event', 'body' => "Hi {{contact.first_name}},\n\nEverything is ready for your event. We will arrive about an hour before your booth start time to set up. Questions? Text {{business.phone}}.".$sig],
             ]),
             self::wf('pb3_wf_event_completed', 'Event Completed', 'opportunity_stage_changed', 'Completed', [
                 ['type' => 'add_tag', 'tag' => 'Past Client'],
                 ['type' => 'internal_notification', 'message' => 'Event completed — deliver any content and confirm the final balance is settled.'],
                 ['type' => 'wait', 'amount' => 1, 'unit' => 'days'],
-                ['type' => 'end_if_unsubscribed'],
+                ['type' => 'end_if_unsubscribed'], $quiet,
                 ['type' => 'send_email', 'subject' => 'Thank you!', 'body' => "Hi {{contact.first_name}},\n\nThank you for choosing {{business.name}}. We hope your guests had a great time!".$sig],
             ]),
             self::wf('pb3_wf_review_request', 'Review Request', 'opportunity_stage_changed', 'Completed', [
+                ['type' => 'end_if_unsubscribed'], ['type' => 'end_if_no_review_link'],
                 ['type' => 'wait', 'amount' => 3, 'unit' => 'days'],
-                ['type' => 'end_if_unsubscribed'],
-                ['type' => 'end_if_tagged', 'tag' => 'Review Requested'],
+                ['type' => 'end_if_unsubscribed'], ['type' => 'end_if_tagged', 'tag' => 'Review Requested'], $window,
                 ['type' => 'add_tag', 'tag' => 'Review Requested'],
-                ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, thank you for choosing {{business.name}}! If you enjoyed it, a quick review helps us a lot — reply YES and we will send you the link.'],
+                ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, thank you for choosing {{business.name}}! If you enjoyed it, a quick review helps us a lot: {{business.review_link}}'],
             ]),
             self::wf('pb3_wf_inactive_nurture', 'Inactive Lead Nurture', 'opportunity_stage_changed', 'Nurture', [
-                ['type' => 'end_if_unsubscribed'],
+                ...$stop,
                 ['type' => 'wait', 'amount' => 7, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_email', 'subject' => 'Ideas for your next event', 'body' => "Hi {{contact.first_name}},\n\nPlanning an event? Here is what makes a 360 video booth a guest favorite — and how early to book. Reply any time and we will check availability.".$sig],
                 ['type' => 'wait', 'amount' => 14, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, {{business.name}} here — still planning an event? We would love to help. Reply STOP to opt out.'],
                 ['type' => 'wait', 'amount' => 30, 'unit' => 'days'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ['type' => 'end_if_no_open_deal'], $window,
                 ['type' => 'send_email', 'subject' => 'Dates are filling up', 'body' => "Hi {{contact.first_name}},\n\nPopular dates are booking out. If your plans are still open, reply and we will hold a date while you decide.".$sig],
             ]),
         ];

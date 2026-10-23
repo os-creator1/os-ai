@@ -80,6 +80,6 @@ class PhotoBoothBusinessPackV3Test extends TestCase
         $this->assertDoesNotMatchRegularExpression('/\$\d/', $json, 'No prices.');
         $this->assertDoesNotMatchRegularExpression('#https?://#', $json, 'No hard-coded URLs or review links.');
         $this->assertDoesNotMatchRegularExpression('/\+1\d{10}|@gmail\.|Lumina/i', $json, 'No customer-specific data.');
-        $this->assertDoesNotMatchRegularExpression('/\{\{(?!contact\.first_name|business\.name|business\.phone)/', $json, 'Only registered merge fields.');
+        $this->assertDoesNotMatchRegularExpression('/\{\{(?!contact\.first_name|business\.name|business\.phone|business\.review_link|business\.questionnaire_link)/', $json, 'Only registered merge fields.');
     }
 }

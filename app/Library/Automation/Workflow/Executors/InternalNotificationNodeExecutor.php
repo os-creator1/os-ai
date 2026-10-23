@@ -79,6 +79,18 @@ class InternalNotificationNodeExecutor implements NodeExecutor
 
         $message = ContactMergeFields::renderForEnrollment($message, $contact, $enrollment, $business);
 
+        // Optional manual task ("call the lead"): a real, idempotent record staff can see and complete, created before the
+        // notification so it exists even when nobody can be notified.
+        $task = is_array($config['task'] ?? null) ? $config['task'] : null;
+        if ($task !== null) {
+            $title = ContactMergeFields::renderForEnrollment((string) ($task['title'] ?? $message), $contact, $enrollment, $business);
+            $due = isset($task['due_in_hours']) ? \App\Library\Automation\Workflow\Runtime\BusinessSendWindow::forBusiness($business, true)->nextAllowed(\Illuminate\Support\Carbon::now()->addHours((int) $task['due_in_hours'])) : null;
+            app(\App\Library\Tasks\ContactTaskManager::class)->createForStep(
+                $business, $contact, (int) $enrollment->getKey(), (int) $node->getKey(), $title, $due,
+                $enrollment->business_location_id === null ? null : (int) $enrollment->business_location_id,
+            );
+        }
+
         if (trim($message) === '') {
             return NodeExecutionOutcome::skipped('rendered_content_empty');
         }

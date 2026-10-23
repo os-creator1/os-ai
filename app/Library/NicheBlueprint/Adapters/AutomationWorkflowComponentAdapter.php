@@ -49,7 +49,7 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         'payment_succeeded',
     ];
 
-    private const STEP_TYPES = ['add_tag', 'wait', 'send_sms', 'send_email', 'internal_notification', 'end_if_replied', 'end_if_unsubscribed', 'end_if_tagged'];
+    private const STEP_TYPES = ['add_tag', 'wait', 'send_sms', 'send_email', 'internal_notification', 'end_if_replied', 'end_if_unsubscribed', 'end_if_tagged', 'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link', 'wait_for_send_window'];
 
     /**
      * Guard steps compile to an If / Else whose YES path is an End and whose NO
@@ -61,6 +61,11 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         'end_if_replied' => 'contact.replied_since_enrollment',
         'end_if_unsubscribed' => 'contact.subscribed',
         'end_if_tagged' => 'contact.has_tag',
+        // Stop when the deal is won or lost (no open deal remains) — covers booked / lost / closed states.
+        'end_if_no_open_deal' => 'contact.has_open_deal',
+        // Never promise a link the Business has not set up.
+        'end_if_no_review_link' => 'business.review_link_set',
+        'end_if_no_questionnaire_link' => 'business.questionnaire_link_set',
     ];
 
     public function __construct(
@@ -112,7 +117,8 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             ->firstOrFail();
 
         $definition = $draft->definition;
-        $definition['root']['config'] = array_merge($definition['root']['config'], $this->triggerConfig($business, $parsed));
+        // Pack journeys are sequences of independent channels: log a failed step and carry on rather than halting the whole journey.
+        $definition['root']['config'] = array_merge($definition['root']['config'], ['failure_policy' => 'continue'], $this->triggerConfig($business, $parsed));
         $definition['root']['next'] = $this->buildSequence($business, $parsed['steps']);
 
         $this->drafts->autosave($draft, $definition, (int) $draft->definition_revision);
@@ -146,18 +152,21 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
 
         foreach ($steps as $i => $step) {
             if (isset(self::GUARD_SUBJECTS[$step['type']])) {
+                // Consecutive guards become ONE If / Else ("stop if ANY of these is true"): the engine allows only 5 levels
+                // of nesting and a guard's NO lane carries everything after it.
+                $conditions = [];
+                $k = $i;
+                while (isset($steps[$k]) && isset(self::GUARD_SUBJECTS[$steps[$k]['type']]) && count($conditions) < 5) {
+                    $conditions[] = $this->guardCondition($business, $steps[$k]);
+                    $k++;
+                }
+
                 $nodes[] = [
                     'key' => (string) Str::uuid(),
                     'type' => 'if_else',
-                    'config' => ['match' => 'all', 'conditions' => [[
-                        'subject' => $step['type'] === 'end_if_tagged'
-                            ? 'contact.has_tag:'.$this->resolveTag($business, $step['tag'])
-                            : self::GUARD_SUBJECTS[$step['type']],
-                        // "replied" and "tagged" end on true; "subscribed" ends on false.
-                        'operator' => $step['type'] === 'end_if_unsubscribed' ? 'is_false' : 'is_true',
-                    ]]],
+                    'config' => ['match' => 'any', 'conditions' => $conditions],
                     'yes' => [['key' => (string) Str::uuid(), 'type' => 'end', 'config' => [], 'next' => []]],
-                    'no' => $this->buildSequence($business, array_slice($steps, $i + 1)),
+                    'no' => $this->buildSequence($business, array_slice($steps, $k)),
                 ];
 
                 return $nodes;
@@ -167,6 +176,18 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
         }
 
         return $nodes;
+    }
+
+    /** @return array{subject: string, operator: string} */
+    private function guardCondition(Business $business, array $step): array
+    {
+        return [
+            'subject' => $step['type'] === 'end_if_tagged'
+                ? 'contact.has_tag:'.$this->resolveTag($business, $step['tag'])
+                : self::GUARD_SUBJECTS[$step['type']],
+            // "replied" and "tagged" end on true; "subscribed", "has an open deal" and "link is set" end on false.
+            'operator' => in_array($step['type'], ['end_if_replied', 'end_if_tagged'], true) ? 'is_true' : 'is_false',
+        ];
     }
 
     /** @return array<string, mixed> */
@@ -202,10 +223,11 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             'wait' => ['mode' => 'duration', 'amount' => $step['amount'], 'unit' => $step['unit']],
             'send_sms' => ['body' => $step['body']],
             'send_email' => ['subject' => $step['subject'], 'body' => $step['body']],
-            'internal_notification' => ['message' => $step['message']],
+            'internal_notification' => ['message' => $step['message']] + (isset($step['task']) ? ['task' => $step['task']] : []),
+            'wait_for_send_window' => ['mode' => 'until_send_window', 'business_hours' => (bool) $step['business_hours']],
         };
 
-        return ['key' => (string) Str::uuid(), 'type' => $step['type'], 'config' => $config, 'next' => []];
+        return ['key' => (string) Str::uuid(), 'type' => $step['type'] === 'wait_for_send_window' ? 'wait' : $step['type'], 'config' => $config, 'next' => []];
     }
 
     private function resolveTagId(Business $business, array $step): int
@@ -283,9 +305,12 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
                 ],
                 'send_sms' => ['type' => $type, 'body' => $this->requireString($raw, 'body', 1600)],
                 'send_email' => ['type' => $type, 'subject' => $this->requireString($raw, 'subject', 200), 'body' => $this->requireString($raw, 'body', 20000)],
-                'internal_notification' => ['type' => $type, 'message' => $this->requireString($raw, 'message', 255)],
+                'internal_notification' => ['type' => $type, 'message' => $this->requireString($raw, 'message', 255)]
+                    + (is_array($raw['task'] ?? null) ? ['task' => $raw['task']] : []),
                 'end_if_replied', 'end_if_unsubscribed' => ['type' => $type],
                 'end_if_tagged' => ['type' => $type, 'tag' => $this->requireString($raw, 'tag', 191)],
+                'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link' => ['type' => $type],
+                'wait_for_send_window' => ['type' => $type, 'business_hours' => (bool) ($raw['business_hours'] ?? false)],
             };
         }
 
