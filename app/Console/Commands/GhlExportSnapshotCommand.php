@@ -32,7 +32,20 @@ class GhlExportSnapshotCommand extends Command
         file_put_contents("{$dir}/_report.json", json_encode($result['report'], JSON_PRETTY_PRINT));
 
         $this->table(['dataset', 'http', 'rows'], collect($result['report'])->map(fn ($r, $k) => [$k, $r['status'], $r['count'] ?? 'UNVERIFIED'])->values()->all());
-        $this->info("Snapshot written to {$dir}");
+
+        $incomplete = GhlSnapshotExporter::incompleteDatasets($result['report']);
+        if ($incomplete !== []) {
+            foreach ($result['report'] as $name => $entry) {
+                foreach (array_slice($entry['failures'] ?? [], 0, 10) as $failure) {
+                    $this->warn("{$name}: ".json_encode($failure));
+                }
+            }
+            $this->error('INCOMPLETE / UNVERIFIED: '.implode(', ', $incomplete).". The partial files and failure details are kept in {$dir}/_report.json, but this export must NOT be imported or used as a backup. Re-run it.");
+
+            return self::FAILURE;
+        }
+
+        $this->info("Snapshot written to {$dir} (all required datasets verified complete)");
 
         return self::SUCCESS;
     }

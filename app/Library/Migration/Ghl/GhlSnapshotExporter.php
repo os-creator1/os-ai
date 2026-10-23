@@ -10,6 +10,10 @@ namespace App\Library\Migration\Ghl;
  * UNVERIFIED rather than silently skipped, so the migration can never claim
  * coverage it does not have. The snapshot is written to disk by the caller
  * (it contains personal data and must never be committed).
+ *
+ * A page or conversation that fails to download is never skipped quietly: the dataset's count becomes null (UNVERIFIED),
+ * its worst HTTP status is kept, and every failure is listed under `failures`. {@see self::incompleteDatasets()} is what
+ * the import commands use to refuse a partial export.
  */
 final class GhlSnapshotExporter
 {
@@ -30,11 +34,45 @@ final class GhlSnapshotExporter
         'media' => ['/medias/files', 'files', ['altType' => 'location', 'altId' => '{L}', 'type' => 'file', 'limit' => 100]],
     ];
 
+    /** Datasets an import cannot be trusted without. Others (surveys, workflows, media…) are informational and may be unreadable. */
+    public const REQUIRED = ['location', 'customFields', 'tags', 'pipelines', 'contacts', 'opportunities', 'conversations', 'messages'];
+
+    /**
+     * Required datasets that are not proven complete: unreadable, partially downloaded, or (a report from before failures
+     * were recorded) carrying no completeness evidence at all.
+     *
+     * @param  array<string, mixed>  $report
+     * @return list<string>
+     */
+    public static function incompleteDatasets(array $report): array
+    {
+        $bad = [];
+        foreach (self::REQUIRED as $name) {
+            $entry = $report[$name] ?? null;
+            if (! is_array($entry) || ($entry['count'] ?? null) === null || ! empty($entry['failures'])) {
+                $bad[] = $name;
+            } elseif (in_array($name, ['contacts', 'opportunities', 'conversations', 'messages'], true) && ! array_key_exists('failures', $entry)) {
+                $bad[] = $name; // legacy report: no evidence that every page was fetched
+            }
+        }
+
+        return $bad;
+    }
+
+    /** @return list<string> required datasets not proven complete by the `_report.json` in a snapshot directory (all of them when it is missing) */
+    public static function incompleteInDirectory(string $dir): array
+    {
+        $file = rtrim($dir, '/').'/_report.json';
+        $report = is_file($file) ? json_decode((string) file_get_contents($file), true) : null;
+
+        return self::incompleteDatasets(is_array($report) ? $report : []);
+    }
+
     public function __construct(private readonly GhlApiClient $client)
     {
     }
 
-    /** @return array{data: array<string, mixed>, report: array<string, array{status: int, count: int|null}>} */
+    /** @return array{data: array<string, mixed>, report: array<string, array{status: int, count: int|null, failures?: list<array<string, mixed>>}>} */
     public function export(string $locationId, bool $includeMessages = true): array
     {
         $data = [];
@@ -75,11 +113,16 @@ final class GhlSnapshotExporter
         $rows = [];
         $cursor = [];
         $status = 200;
+        $failures = [];
+        $pageNo = 0;
 
         do {
+            $pageNo++;
             $r = $this->client->get($path, $query + ['limit' => 100] + $cursor);
-            $status = $r->status;
             if (! $r->ok()) {
+                $status = $r->status;
+                $failures[] = ['page' => $pageNo, 'status' => $r->status];
+
                 break;
             }
             $page = $r->body[$key] ?? [];
@@ -90,7 +133,7 @@ final class GhlSnapshotExporter
                 : [];
         } while ($page !== [] && $cursor !== []);
 
-        $report[$name] = ['status' => $status, 'count' => $status < 300 ? count($rows) : null];
+        $report[$name] = ['status' => $status, 'count' => $failures === [] ? count($rows) : null, 'failures' => $failures];
 
         return $rows;
     }
@@ -100,11 +143,16 @@ final class GhlSnapshotExporter
         $convs = [];
         $after = null;
         $status = 200;
+        $failures = [];
+        $pageNo = 0;
 
         do {
+            $pageNo++;
             $r = $this->client->get('/conversations/search', ['locationId' => $locationId, 'limit' => 100, 'startAfterDate' => $after]);
-            $status = $r->status;
             if (! $r->ok()) {
+                $status = $r->status;
+                $failures[] = ['page' => $pageNo, 'status' => $r->status];
+
                 break;
             }
             $page = $r->body['conversations'] ?? [];
@@ -113,7 +161,7 @@ final class GhlSnapshotExporter
         } while (count($page) === 100 && $after !== null);
 
         $data['conversations'] = $convs;
-        $report['conversations'] = ['status' => $status, 'count' => $status < 300 ? count($convs) : null];
+        $report['conversations'] = ['status' => $status, 'count' => $failures === [] ? count($convs) : null, 'failures' => $failures];
 
         $data['messages'] = [];
         if (! $withMessages) {
@@ -121,12 +169,20 @@ final class GhlSnapshotExporter
         }
 
         $total = 0;
+        $failures = [];
+        $worst = 200;
         foreach ($convs as $c) {
             $last = null;
             $rows = [];
+            $pageNo = 0;
             do {
+                $pageNo++;
                 $r = $this->client->get("/conversations/{$c['id']}/messages", ['limit' => 100, 'lastMessageId' => $last]);
                 if (! $r->ok()) {
+                    // Keep what was downloaded, but never let a failed page pass as "no more messages".
+                    $worst = max($worst, $r->status);
+                    $failures[] = ['conversation' => (string) $c['id'], 'page' => $pageNo, 'status' => $r->status];
+
                     break;
                 }
                 $m = $r->body['messages'] ?? [];
@@ -136,7 +192,7 @@ final class GhlSnapshotExporter
             $data['messages'][$c['id']] = $rows;
             $total += count($rows);
         }
-        $report['messages'] = ['status' => $status, 'count' => $total];
+        $report['messages'] = ['status' => $worst, 'count' => $failures === [] ? $total : null, 'failures' => $failures];
     }
 
     private function appointments(string $locationId, array &$data, array &$report): void
@@ -155,6 +211,6 @@ final class GhlSnapshotExporter
             array_push($events, ...($r->body['events'] ?? []));
         }
         $data['appointments'] = $events;
-        $report['appointments'] = ['status' => $worst, 'count' => count($events)];
+        $report['appointments'] = ['status' => $worst, 'count' => $worst < 300 ? count($events) : null];
     }
 }

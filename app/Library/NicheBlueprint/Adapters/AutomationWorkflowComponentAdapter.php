@@ -14,6 +14,7 @@ use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\Business;
 use App\Models\CrmPipelineStage;
+use App\Models\Form;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -208,6 +209,16 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             return ['pipeline_id' => (int) $stage->pipeline_id, 'to_stage_id' => (int) $stage->id];
         }
 
+        if ($parsed['trigger_type'] === 'form_submitted' && $parsed['trigger_form'] !== null) {
+            $formId = Form::query()->where('business_id', $business->id)->where('name', $parsed['trigger_form'])->orderBy('id')->value('id');
+
+            if ($formId === null) {
+                throw new InvalidArgumentException("Install the form first: no form named \"{$parsed['trigger_form']}\" exists in this Business.");
+            }
+
+            return ['form_id' => (int) $formId];
+        }
+
         if ($parsed['trigger_type'] === 'contact_tag_added' && $parsed['trigger_tag'] !== null) {
             return ['tag_id' => $this->resolveTag($business, $parsed['trigger_tag'])];
         }
@@ -265,6 +276,7 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
 
         $triggerTag = $this->optionalString($payload, 'trigger_tag', 191);
         $triggerStage = $this->optionalString($payload, 'trigger_stage', 100);
+        $triggerForm = $this->optionalString($payload, 'trigger_form', 120);
 
         if ($trigger === 'opportunity_stage_changed' && $triggerStage === null) {
             throw new InvalidArgumentException('An "opportunity_stage_changed" trigger needs a "trigger_stage" (the stage name the deal moves into).');
@@ -314,7 +326,7 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             };
         }
 
-        return ['name' => $name, 'trigger_type' => $trigger, 'trigger_tag' => $triggerTag, 'trigger_stage' => $triggerStage, 'steps' => $steps];
+        return ['name' => $name, 'trigger_type' => $trigger, 'trigger_tag' => $triggerTag, 'trigger_stage' => $triggerStage, 'trigger_form' => $triggerForm, 'steps' => $steps];
     }
 
     public function surface(): string

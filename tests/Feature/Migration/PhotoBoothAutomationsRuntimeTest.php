@@ -270,4 +270,109 @@ class PhotoBoothAutomationsRuntimeTest extends TestCase
         $this->assertSame($before, [count($this->sent), count($this->tasks()), DB::table('automation_step_runs')->count()], 'Replaying a finished journey sends, creates and logs nothing more.');
         $this->assertGreaterThan(5, DB::table('automation_step_runs')->where('enrollment_id', $e->id)->count(), 'Every step is logged.');
     }
+
+    /** Hold a journey at its SECOND wait (the send-window hold after the 5-minute delay) and change the world there. */
+    private function duringWindowHold(callable $change): AutomationEnrollment
+    {
+        Carbon::setTestNow(Carbon::parse('2026-11-03 20:58', 'America/Denver'));
+        $n = 0;
+
+        return $this->drive($this->enroll('New Inquiry Received', $this->contact('C1')), function (AutomationEnrollment $e) use (&$n, $change) {
+            if (++$n === 2) {
+                $change();
+            }
+        });
+    }
+
+    public function test_a_reply_that_arrives_during_the_overnight_window_hold_cancels_the_text(): void
+    {
+        $ann = $this->contact('C1');
+        $done = $this->duringWindowHold(function () use ($ann) {
+            $box = DB::table('chat_boxes')->insertGetId(['uid' => (string) \Illuminate\Support\Str::uuid(), 'user_id' => $this->business->customer_id, 'business_id' => $this->business->id, 'from' => '17205028306', 'to' => $ann->phone, 'created_at' => now(), 'updated_at' => now(), 'reply_by_customer' => 1]);
+            DB::table('chat_box_messages')->insert(['box_id' => $box, 'message' => 'Call me', 'sms_type' => 'plain', 'direction' => 'incoming', 'send_by' => 'to', 'created_at' => now()->addMinute(), 'updated_at' => now()->addMinute()]);
+        });
+
+        $this->assertSame('completed', $done->status->value);
+        $this->assertSame([], $this->sent, 'A reply that lands while the text is parked until morning means it is never sent.');
+    }
+
+    public function test_an_opt_out_during_the_overnight_window_hold_cancels_the_text(): void
+    {
+        $ann = $this->contact('C1');
+        $this->duringWindowHold(fn () => DB::table('contacts')->where('id', $ann->id)->update(['status' => 'unsubscribe']));
+
+        $this->assertSame([], $this->sent, 'An opt-out that lands while the text is parked until morning means it is never sent.');
+    }
+
+    public function test_a_deal_closed_during_the_overnight_window_hold_cancels_the_text(): void
+    {
+        $ann = $this->contact('C1');
+        $this->duringWindowHold(fn () => DB::table('crm_opportunities')->where('contact_id', $ann->id)->update(['status' => 'won']));
+
+        $this->assertSame([], $this->sent, 'A deal won/lost while the text is parked until morning means it is never sent.');
+    }
+
+    public function test_an_unchanged_contact_still_gets_the_text_when_the_window_opens(): void
+    {
+        $this->duringWindowHold(fn () => null);
+
+        $this->assertCount(1, $this->sent);
+        $this->assertSame('2026-11-04 08:00', substr($this->sent[0]['at'], 0, 16));
+    }
+
+    public function test_submitting_the_installed_questionnaire_starts_only_the_questionnaire_workflow(): void
+    {
+        foreach (['New Inquiry Received', 'Questionnaire Submitted'] as $name) {
+            app(WorkflowPublisher::class)->publish(AutomationWorkflow::query()->where('business_id', $this->business->id)->where('name', $name)->firstOrFail(), $this->ownerId);
+        }
+        $location = $this->business->primaryLocation()->firstOrFail();
+        $manager = app(FormManager::class);
+        $questionnaire = Form::query()->where('business_id', $this->business->id)->where('name', 'Event questionnaire')->firstOrFail();
+        $manager->activate($this->business, $questionnaire);
+        $deployment = $manager->setDeployment($this->business, $questionnaire, $location, true, FormDeploymentSource::DirectLink);
+
+        $this->submit($deployment, ['text' => 'Ann Lee', 'email' => 'ann@example.test', 'phone' => '(720) 555-0101', 'select' => 'Yes']);
+
+        $count = fn (string $name) => AutomationEnrollment::query()->whereIn('workflow_id', AutomationWorkflow::query()->where('business_id', $this->business->id)->where('name', $name)->pluck('id'))->count();
+        $this->assertSame(1, $count('Questionnaire Submitted'), 'The questionnaire response completes the questionnaire workflow.');
+        $this->assertSame(0, $count('New Inquiry Received'), 'A questionnaire response is not a new inquiry.');
+    }
+
+    public function test_submitting_the_lead_form_starts_only_new_inquiry(): void
+    {
+        foreach (['New Inquiry Received', 'Questionnaire Submitted'] as $name) {
+            app(WorkflowPublisher::class)->publish(AutomationWorkflow::query()->where('business_id', $this->business->id)->where('name', $name)->firstOrFail(), $this->ownerId);
+        }
+        $manager = app(FormManager::class);
+        $lead = Form::query()->where('business_id', $this->business->id)->where('name', 'Check Availability')->firstOrFail();
+        $manager->activate($this->business, $lead);
+        $deployment = $manager->setDeployment($this->business, $lead, $this->business->primaryLocation()->firstOrFail(), true, FormDeploymentSource::DirectLink);
+
+        $this->submit($deployment, ['text' => 'New Lead', 'email' => 'lead@example.test', 'phone' => '(303) 555-0177', 'date' => '2027-06-12', 'multi_select' => ['Wedding']]);
+
+        $count = fn (string $name) => AutomationEnrollment::query()->whereIn('workflow_id', AutomationWorkflow::query()->where('business_id', $this->business->id)->where('name', $name)->pluck('id'))->count();
+        $this->assertSame(1, $count('New Inquiry Received'));
+        $this->assertSame(0, $count('Questionnaire Submitted'));
+    }
+
+    /** @param array<string, mixed> $byType answers keyed by field type (first field of that type) */
+    private function submit(\App\Models\FormDeployment $deployment, array $byType): void
+    {
+        $answers = [\App\Library\Forms\FormSubmissionService::TOKEN_FIELD => \App\Library\Forms\FormOperationToken::issue($deployment)];
+        foreach ($deployment->form->currentVersion()->fields as $field) {
+            $given = $byType[$field['type']] ?? null;
+            // Every REQUIRED question gets an answer (the first of a type gets the named value), or the response would be rejected.
+            $answers[$field['key']] = $given !== null && ! isset($answers['_used'.$field['type']])
+                ? $given
+                : ($field['required'] ?? false ? ($field['type'] === 'text' ? 'Answer' : ($byType[$field['type']] ?? 'Answer')) : null);
+            $answers['_used'.$field['type']] = true;
+            if ($answers[$field['key']] === null) {
+                unset($answers[$field['key']]);
+            }
+        }
+        $answers = array_filter($answers, fn ($v, $k) => ! str_starts_with((string) $k, '_used'), ARRAY_FILTER_USE_BOTH);
+
+        $this->post(route('public.forms.submit', [$deployment->uid]), $answers)->assertRedirect();
+        $this->assertSame(1, \App\Models\FormSubmission::query()->where('form_id', $deployment->form_id)->count(), 'The response was accepted.');
+    }
 }

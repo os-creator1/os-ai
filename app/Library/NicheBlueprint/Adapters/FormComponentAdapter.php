@@ -63,11 +63,14 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
             return $field;
         }, $parsed['fields']);
 
+        $named = fn (?string $text): ?string => $text === null ? null : str_replace('{business}', (string) $business->name, $text);
+        $fields = array_map(fn (array $f): array => ['label' => $named($f['label'])] + $f, $fields);
+
         $form = $this->forms->create($business, [
             'name' => $parsed['name'],
-            'intro' => $parsed['intro'],
+            'intro' => $named($parsed['intro']),
             'submit_label' => $parsed['submit_label'],
-            'success_message' => $parsed['success_message'],
+            'success_message' => $named($parsed['success_message']),
             'fields' => $fields,
             'design' => $parsed['design'],
             'create_opportunity' => $parsed['create_opportunity'],
@@ -142,7 +145,8 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
 
             $field = [
                 'key' => $key,
-                'label' => $this->requireString($raw, 'label', 120),
+                // Consent wording is a full sentence or two, not a short question label.
+                'label' => $this->requireString($raw, 'label', in_array($type, [FormFieldType::ConsentTransactional, FormFieldType::ConsentMarketing], true) ? 1000 : 120),
                 'type' => $type->value,
                 'required' => (bool) ($raw['required'] ?? false),
             ];

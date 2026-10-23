@@ -97,6 +97,7 @@ class LuminaProductionTest extends TestCase
         mkdir($dir);
         file_put_contents("{$dir}/contacts.json", json_encode([['id' => 'C1', 'firstNameRaw' => 'Ann', 'phone' => '(720) 555-0101', 'dateAdded' => '2026-01-01T00:00:00.000Z']]));
         file_put_contents("{$dir}/location.json", json_encode(['id' => 'L']));
+        file_put_contents("{$dir}/_report.json", json_encode($this->report()));
         $before = [DB::table('users')->count(), DB::table('businesses')->count(), DB::table('workspaces')->count()];
 
         try {
@@ -108,9 +109,77 @@ class LuminaProductionTest extends TestCase
             putenv(LuminaProductionGuard::OPT_IN_ENV);
             @unlink("{$dir}/contacts.json");
             @unlink("{$dir}/location.json");
+            @unlink("{$dir}/_report.json");
             @rmdir($dir);
         }
 
         $this->assertSame($before, [DB::table('users')->count(), DB::table('businesses')->count(), DB::table('workspaces')->count()]);
+    }
+
+    /** @return array<string, array<string, mixed>> a report proving every required dataset complete, with the given overrides */
+    private function report(array $override = []): array
+    {
+        $report = [];
+        foreach (\App\Library\Migration\Ghl\GhlSnapshotExporter::REQUIRED as $name) {
+            $report[$name] = ['status' => 200, 'count' => 1, 'failures' => []];
+        }
+
+        return array_replace($report, $override);
+    }
+
+    private function runWithSnapshot(?array $report, array $extra = []): \Illuminate\Testing\PendingCommand
+    {
+        $this->owner();
+        $this->app->instance(LuminaProductionGuard::class, $this->guard());
+        putenv(LuminaProductionGuard::OPT_IN_ENV.'=true');
+        $dir = sys_get_temp_dir().'/lumina-snap-'.uniqid();
+        mkdir($dir);
+        file_put_contents("{$dir}/contacts.json", json_encode([['id' => 'C1', 'firstNameRaw' => 'Ann', 'phone' => '(720) 555-0101', 'dateAdded' => '2026-01-01T00:00:00.000Z']]));
+        if ($report !== null) {
+            file_put_contents("{$dir}/_report.json", json_encode($report));
+        }
+        $this->snapDir = $dir;
+
+        return $this->artisan('lumina:production-provision', $extra + [
+            '--owner-email' => 'real-owner@example.test', '--confirm-database' => 'motiongrove_app', '--backup-reference' => 'bk-1',
+            '--confirm-phrase' => LuminaProductionGuard::PHRASE, '--snapshot' => $dir,
+        ]);
+    }
+
+    private ?string $snapDir = null;
+
+    protected function tearDown(): void
+    {
+        putenv(LuminaProductionGuard::OPT_IN_ENV);
+        foreach ($this->snapDir ? (glob($this->snapDir.'/*') ?: []) : [] as $f) {
+            @unlink($f);
+        }
+        $this->snapDir && @rmdir($this->snapDir);
+        parent::tearDown();
+    }
+
+    public function test_an_incomplete_snapshot_is_refused_for_apply_and_nothing_is_written(): void
+    {
+        $command = $this->runWithSnapshot($this->report(['messages' => ['status' => 403, 'count' => null, 'failures' => [['conversation' => 'v2', 'page' => 1, 'status' => 403]]]]), ['--apply' => true]);
+        $before = [DB::table('users')->count(), DB::table('businesses')->count(), DB::table('workspaces')->count()];
+
+        $command
+            ->expectsOutputToContain('INCOMPLETE / UNVERIFIED for: messages')
+            ->assertExitCode(1);
+
+        $this->assertSame($before, [DB::table('users')->count(), DB::table('businesses')->count(), DB::table('workspaces')->count()]);
+    }
+
+    public function test_a_snapshot_with_no_report_is_not_trusted_even_for_a_dry_run(): void
+    {
+        $this->runWithSnapshot(null)->expectsOutputToContain('INCOMPLETE / UNVERIFIED')->assertExitCode(1);
+    }
+
+    public function test_the_explicit_override_allows_only_the_dry_inspection_here_and_says_the_data_is_partial(): void
+    {
+        $this->runWithSnapshot($this->report(['contacts' => ['status' => 403, 'count' => null, 'failures' => [['page' => 2, 'status' => 403]]]]), ['--allow-incomplete' => true])
+            ->expectsOutputToContain('the imported data is PARTIAL')
+            ->expectsOutputToContain('PLAN counts')
+            ->assertExitCode(0);
     }
 }

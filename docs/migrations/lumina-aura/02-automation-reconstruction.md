@@ -76,3 +76,8 @@ All 11 workflows install as **drafts**; `published workflows = 0` is asserted by
 
 * **Browser inspection of GHL was not possible.** No authenticated GHL browser session exists in this environment and signing in would need the owner's credentials/MFA; I did not attempt it. Workflow definitions therefore remain **unverified**, and the per-workflow "inferred" labels above stand. The *New Inquiry Received* screenshots were not attached.
 * "After-hours follow-up" in the brief maps to quiet hours + (when set) business hours; the exact GHL after-hours branch text is unknown.
+
+## Form bindings and guard timing (review fixes)
+
+- **New Inquiry Received** starts only from the pack's `Check Availability` form and **Questionnaire Submitted** only from the `Event questionnaire` form (`trigger_form` binds each `form_submitted` workflow to one form by name). The questionnaire is a single-page form, so the multi-page-only `questionnaire_submitted` trigger could never fire for it, and an unbound `form_submitted` would have treated a questionnaire response as a new inquiry.
+- Every reply / opt-out / closed-deal / tag guard now sits **after** each send-window wait, immediately before the message, and every send is preceded by an opt-out check after the last wait. A reply, opt-out or won/lost deal that lands while a message is parked until morning cancels it (`PhotoBoothAutomationsRuntimeTest`).

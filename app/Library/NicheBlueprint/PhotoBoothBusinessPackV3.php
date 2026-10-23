@@ -47,6 +47,12 @@ final class PhotoBoothBusinessPackV3
         ['Awaiting Design Approval', 'awaiting_design_approval'], ['Ready For Event', 'ready_for_event'], ['Completed', 'completed'],
     ];
 
+    public const LEAD_FORM_NAME = 'Check Availability';
+
+    public const QUESTIONNAIRE_FORM_NAME = 'Event questionnaire';
+
+    public const EVENT_TYPES = ['Wedding', 'Birthday Party', 'Corporate Party', 'Brand Activation', 'Event', 'Party', 'Graduation Party', 'Fundraiser', 'Trade Show', 'Baby Shower'];
+
     /** @return list<array{key: string, type: string, feature: string, payload: array<string, mixed>}> */
     public static function components(): array
     {
@@ -60,13 +66,36 @@ final class PhotoBoothBusinessPackV3
             self::c('pb3_cf_power_confirmed', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Power available near booth', 'type' => 'select', 'options' => ['Yes', 'No', 'Not sure']]),
             self::c('pb3_cf_day_of_phone', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Event day coordinator phone', 'type' => 'text']),
             self::c('pb3_cf_backdrop', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Backdrop choice', 'type' => 'text']),
+            self::c('pb3_cf_event_date', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Event date', 'type' => 'date']),
+            self::c('pb3_cf_event_type', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Event type', 'type' => 'multi_select', 'options' => self::EVENT_TYPES]),
             self::c('pb3_cf_instagram', CustomFieldComponentAdapter::TYPE, 'crm', ['label' => 'Instagram handle', 'type' => 'text']),
 
             self::c('pb3_pipeline_inquiries', CrmPipelineComponentAdapter::TYPE, 'crm', self::pipeline('inquiries', 'Inquiries', self::INQUIRY_STAGES)),
             self::c('pb3_pipeline_bookings', CrmPipelineComponentAdapter::TYPE, 'crm', self::pipeline('bookings', 'Bookings', self::BOOKING_STAGES)),
 
+            // The lead form: "New Inquiry Received" is bound to THIS form only, so an Event questionnaire response can never start it.
+            self::c('pb3_form_lead', FormComponentAdapter::TYPE, 'forms', [
+                'name' => self::LEAD_FORM_NAME,
+                'intro' => 'Fill in the short form below to check availability for your event date!',
+                'submit_label' => 'Check availability now',
+                'success_message' => "Thank you. We'll confirm our availability shortly! One of our expert photo booth planners will contact you shortly to discuss the details for your event.",
+                'fields' => [
+                    ['key' => 'full_name', 'label' => 'Your name', 'type' => 'text', 'required' => true, 'contact_name' => true],
+                    ['key' => 'phone', 'label' => 'Phone', 'type' => 'phone', 'required' => true],
+                    ['key' => 'email', 'label' => 'Email', 'type' => 'email', 'required' => true],
+                    ['key' => 'event_date', 'label' => 'Event date', 'type' => 'date', 'required' => true, 'custom_field_label' => 'Event date'],
+                    ['key' => 'event_type', 'label' => 'What type of event are you planning?', 'type' => 'multi_select', 'required' => true, 'options' => self::EVENT_TYPES, 'custom_field_label' => 'Event type'],
+                    ['key' => 'notes', 'label' => 'Anything else we should know?', 'type' => 'textarea', 'required' => false],
+                    ['key' => 'consent_transactional', 'label' => 'By checking this box, I consent to receive transactional SMS/text messages and emails from {business} regarding my inquiry, event details, and service updates. Message frequency may vary. Msg & data rates may apply. Reply HELP for help or STOP to unsubscribe.', 'type' => 'consent_transactional', 'required' => false],
+                    ['key' => 'consent_marketing', 'label' => 'By checking this box, I agree to receive marketing and promotional messages from {business}, including special offers, discounts, and new product updates. Message frequency may vary. Msg & data rates may apply. Consent is not required for purchase. Reply STOP to unsubscribe.', 'type' => 'consent_marketing', 'required' => false],
+                ],
+                'design' => ['accent' => '#7c3aed', 'background' => '#ffffff'],
+                'create_opportunity' => true,
+                'pipeline_component_key' => 'pb3_pipeline_inquiries',
+            ]),
+
             self::c('pb3_form_questionnaire', FormComponentAdapter::TYPE, 'forms', [
-                'name' => 'Event questionnaire',
+                'name' => self::QUESTIONNAIRE_FORM_NAME,
                 'intro' => 'Help us get everything ready for your event.',
                 'submit_label' => 'Submit questionnaire',
                 'success_message' => 'Thank you! We have your event details.',
@@ -132,7 +161,7 @@ final class PhotoBoothBusinessPackV3
                 $quiet,
                 ['type' => 'send_email', 'subject' => 'Thanks for your inquiry, {{contact.first_name}}!', 'body' => "Hi {{contact.first_name}},\n\nThanks for reaching out to {{business.name}}. We are checking your date and will send availability and a quote shortly. If it is urgent, call or text {{business.phone}}.".$sig],
                 ['type' => 'wait', 'amount' => 5, 'unit' => 'minutes'],
-                ['type' => 'end_if_replied'],
+                ['type' => 'end_if_replied'], ...$stop,
                 $window,
                 ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, this is {{business.name}} — thanks for your inquiry! We are checking your date and will reply shortly. Reply STOP to opt out.'],
                 ['type' => 'wait', 'amount' => 1, 'unit' => 'days'],
@@ -182,7 +211,7 @@ final class PhotoBoothBusinessPackV3
                 ['type' => 'end_if_no_questionnaire_link'],
                 ['type' => 'send_sms', 'body' => 'Hi {{contact.first_name}}, your booking with {{business.name}} is confirmed! Please complete your event questionnaire: {{business.questionnaire_link}}'],
             ]),
-            self::wf('pb3_wf_questionnaire_submitted', 'Questionnaire Submitted', 'questionnaire_submitted', null, [
+            self::wf('pb3_wf_questionnaire_submitted', 'Questionnaire Submitted', 'form_submitted', null, [
                 ['type' => 'add_tag', 'tag' => 'Questionnaire Submitted'],
                 ['type' => 'internal_notification', 'message' => 'Event questionnaire submitted — review details and start design approval if needed.'],
             ]),
@@ -246,12 +275,74 @@ final class PhotoBoothBusinessPackV3
 
     private static function wf(string $key, string $name, string $trigger, ?string $stage, array $steps): array
     {
-        $payload = ['name' => $name, 'trigger_type' => $trigger, 'steps' => $steps];
+        $payload = ['name' => $name, 'trigger_type' => $trigger, 'steps' => self::optOutBeforeSends(self::guardsAfterWindow($steps))];
+        if ($trigger === 'form_submitted') {
+            // Bound to one form by name: a single-page form can never satisfy the multi-page `questionnaire_submitted` trigger.
+            $payload['trigger_form'] = $key === 'pb3_wf_questionnaire_submitted' ? self::QUESTIONNAIRE_FORM_NAME : self::LEAD_FORM_NAME;
+        }
         if ($stage !== null) {
             $payload['trigger_stage'] = $stage;
         }
 
         return self::c($key, AutomationWorkflowComponentAdapter::TYPE, 'automations', $payload);
+    }
+
+    /**
+     * A send-window wait can park a run for hours (overnight, or until business hours), so a reply, opt-out, tag or
+     * closed deal can land during it. Move every guard that sits directly before a window wait to directly after it,
+     * so the guards are evaluated immediately before the message is sent, not before the wait.
+     *
+     * @param  list<array<string, mixed>>  $steps
+     * @return list<array<string, mixed>>
+     */
+    private static function guardsAfterWindow(array $steps): array
+    {
+        $isGuard = fn (array $s): bool => str_starts_with($s['type'], 'end_if_');
+        $out = [];
+        $held = [];
+        foreach ($steps as $step) {
+            if ($isGuard($step)) {
+                $held[] = $step;
+
+                continue;
+            }
+            if ($step['type'] === 'wait_for_send_window') {
+                $out[] = $step;
+                array_push($out, ...$held);
+            } else {
+                array_push($out, ...$held);
+                $out[] = $step;
+            }
+            $held = [];
+        }
+        array_push($out, ...$held);
+
+        return $out;
+    }
+
+    /**
+     * After any wait, the first send is preceded by an opt-out check (consent can be withdrawn while a run is parked).
+     *
+     * @param  list<array<string, mixed>>  $steps
+     * @return list<array<string, mixed>>
+     */
+    private static function optOutBeforeSends(array $steps): array
+    {
+        $out = [];
+        $checked = false;
+        foreach ($steps as $step) {
+            if (in_array($step['type'], ['wait', 'wait_for_send_window'], true)) {
+                $checked = false;
+            } elseif ($step['type'] === 'end_if_unsubscribed') {
+                $checked = true;
+            } elseif (in_array($step['type'], ['send_sms', 'send_email'], true) && ! $checked) {
+                $out[] = ['type' => 'end_if_unsubscribed'];
+                $checked = true;
+            }
+            $out[] = $step;
+        }
+
+        return $out;
     }
 
     /** @return array{key: string, type: string, feature: string, payload: array<string, mixed>} */

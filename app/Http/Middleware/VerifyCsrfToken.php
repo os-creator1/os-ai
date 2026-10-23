@@ -49,6 +49,10 @@
             // signs the raw body, and that signature is verified before a
             // single row is inserted.
             'stripe/webhook/agency-subscriptions',
+            // Telnyx porting-order status events. Telnyx cannot hold a Laravel session or token; authenticity is the
+            // Ed25519 signature over `timestamp|body`, verified in TelnyxPortingWebhookController BEFORE anything is read
+            // or written (bad/missing signature => 403, nothing applied). This exact path only, never a wildcard.
+            'webhooks/telnyx-porting',
         ];
 
     }

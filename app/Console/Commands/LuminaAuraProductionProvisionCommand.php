@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Library\Migration\Ghl\GhlImportPlanner;
 use App\Library\Migration\Ghl\GhlImportWriter;
+use App\Library\Migration\Ghl\GhlSnapshotExporter;
 use App\Library\Migration\Lumina\LuminaAuraProvisioner;
 use App\Library\Migration\Lumina\LuminaProductionGuard;
 use App\Library\Migration\Lumina\LuminaWebsiteBuilder;
@@ -37,6 +38,7 @@ class LuminaAuraProductionProvisionCommand extends Command
         {--snapshot= : Directory written by ghl:export-snapshot (contains personal data; keep it off git)}
         {--assets= : Directory of the customer\'s original images, for the website}
         {--no-plan : Do not assign the complimentary plan (the Business then has no entitlements until one is assigned)}
+        {--allow-incomplete : Import a snapshot even though its _report.json does not prove it complete (partial data; only after reading the failures)}
         {--apply : Actually write. Without it nothing is changed}';
 
     protected $description = 'PRODUCTION: create the real Lumina Aura Business under an existing owner and import its GoHighLevel history. Guarded, additive, sends nothing.';
@@ -61,6 +63,20 @@ class LuminaAuraProductionProvisionCommand extends Command
         $this->line($business === null
             ? 'Lumina Aura does not exist yet: it would be CREATED (Workspace, Business, Location, pack, import, website).'
             : "Lumina Aura already exists (Business #{$business->id}): the run would only FILL IN what is missing (idempotent).");
+
+        // A partial export must never be imported by accident: refuse BEFORE anything is written unless explicitly overridden.
+        if ($snapshotDir = $this->option('snapshot')) {
+            $incomplete = GhlSnapshotExporter::incompleteInDirectory((string) $snapshotDir);
+            if ($incomplete !== []) {
+                $message = 'The snapshot is INCOMPLETE / UNVERIFIED for: '.implode(', ', $incomplete).'. See _report.json for the failures; re-run ghl:export-snapshot until it succeeds.';
+                if (! $this->option('allow-incomplete')) {
+                    $this->error($message.' Refusing (pass --allow-incomplete only if you have accepted that data is missing).');
+
+                    return self::FAILURE;
+                }
+                $this->warn($message.' Continuing because --allow-incomplete was passed: the imported data is PARTIAL.');
+            }
+        }
 
         if (! $this->option('apply')) {
             // A real dry run of the mapping: read the snapshot and print exactly what --apply would import. Pure computation;

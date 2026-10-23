@@ -82,4 +82,45 @@ class PhotoBoothBusinessPackV3Test extends TestCase
         $this->assertDoesNotMatchRegularExpression('/\+1\d{10}|@gmail\.|Lumina/i', $json, 'No customer-specific data.');
         $this->assertDoesNotMatchRegularExpression('/\{\{(?!contact\.first_name|business\.name|business\.phone|business\.review_link|business\.questionnaire_link)/', $json, 'Only registered merge fields.');
     }
+
+    public function test_every_send_is_guarded_after_its_last_wait_and_never_before_it(): void
+    {
+        foreach (PhotoBoothBusinessPackV3::workflows() as $component) {
+            $sinceWait = [];
+            foreach ($component['payload']['steps'] as $step) {
+                if ($step['type'] === 'wait' || $step['type'] === 'wait_for_send_window') {
+                    $sinceWait = [];
+
+                    continue;
+                }
+                if (str_starts_with($step['type'], 'end_if_')) {
+                    $sinceWait[] = $step['type'];
+                }
+                if (in_array($step['type'], ['send_sms', 'send_email'], true)) {
+                    // The opt-out is rechecked after the LAST wait (a window hold can last until morning); a send straight after another send shares that check.
+                    $this->assertContains('end_if_unsubscribed', $sinceWait, $component['key'].': a send is not preceded by an opt-out check after the last wait.');
+                }
+            }
+        }
+    }
+
+    public function test_no_guard_sits_directly_before_a_send_window_wait(): void
+    {
+        foreach (PhotoBoothBusinessPackV3::workflows() as $component) {
+            $steps = $component['payload']['steps'];
+            foreach ($steps as $i => $step) {
+                if ($step['type'] === 'wait_for_send_window' && $i > 0) {
+                    $this->assertFalse(str_starts_with($steps[$i - 1]['type'], 'end_if_'), $component['key'].': a guard is evaluated before a window hold instead of after it.');
+                }
+            }
+        }
+    }
+
+    public function test_workflows_are_bound_to_the_right_forms(): void
+    {
+        $by = array_column(array_map(fn ($c) => $c['payload'] + ['key' => $c['key']], PhotoBoothBusinessPackV3::workflows()), null, 'key');
+        $this->assertSame('form_submitted', $by['pb3_wf_questionnaire_submitted']['trigger_type']);
+        $this->assertSame('Event questionnaire', $by['pb3_wf_questionnaire_submitted']['trigger_form']);
+        $this->assertSame('Check Availability', $by['pb3_wf_new_inquiry']['trigger_form']);
+    }
 }

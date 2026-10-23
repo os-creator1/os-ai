@@ -3,17 +3,27 @@
 namespace App\Console\Commands;
 
 use App\Library\Migration\Ghl\GhlImportPlanner;
+use App\Library\Migration\Ghl\GhlSnapshotExporter;
 use Illuminate\Console\Command;
 
 class GhlPlanImportCommand extends Command
 {
-    protected $signature = 'ghl:plan-import {snapshot : Directory written by ghl:export-snapshot} {--out= : Write the full plan JSON here}';
+    protected $signature = 'ghl:plan-import {snapshot : Directory written by ghl:export-snapshot} {--out= : Write the full plan JSON here} {--allow-incomplete : Plan from a snapshot whose _report.json does not prove it complete}';
 
     protected $description = 'Dry run: map a GHL snapshot to a MotionGrove import plan and print counts and issues. Writes nothing to the database and sends nothing.';
 
     public function handle(): int
     {
         $dir = rtrim((string) $this->argument('snapshot'), '/');
+        $incomplete = GhlSnapshotExporter::incompleteInDirectory($dir);
+        if ($incomplete !== []) {
+            $this->warn('Snapshot is INCOMPLETE / UNVERIFIED for: '.implode(', ', $incomplete).'. The plan below is PARTIAL.');
+            if (! $this->option('allow-incomplete')) {
+                $this->error('Refusing to plan from a partial export (pass --allow-incomplete to see it anyway).');
+
+                return self::FAILURE;
+            }
+        }
         $snapshot = [];
         foreach (glob("{$dir}/*.json") as $file) {
             $name = basename($file, '.json');

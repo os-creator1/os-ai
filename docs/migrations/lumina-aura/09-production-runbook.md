@@ -58,7 +58,7 @@ read -rs -p "GHL Private Integration token: " GHL_PRIVATE_INTEGRATION_TOKEN; ech
 php8.3 artisan ghl:export-snapshot --location=7HLIWryaYyed99beyIB7 --out="$HOME/private/lumina/snapshot"
 unset GHL_PRIVATE_INTEGRATION_TOKEN
 ```
-`ghl:export-snapshot` prints one table; expect rows: contacts **51**, opportunities **37**, conversations **45**, messages **733**, workflows 26. (`workflows` shows 26 names only — GHL gives no definitions.) The token needs read scopes for contacts, opportunities, conversations, locations, custom fields, tags, users, calendars, forms/surveys, workflows, media. If a dataset prints `UNVERIFIED`, the token lacks that scope: re-issue it, do not proceed with partial data.
+`ghl:export-snapshot` prints one table; expect rows: contacts **51**, opportunities **37**, conversations **45**, messages **733**, workflows 26. (`workflows` shows 26 names only — GHL gives no definitions.) The token needs read scopes for contacts, opportunities, conversations, locations, custom fields, tags, users, calendars, forms/surveys, workflows, media. If a REQUIRED dataset (location, custom fields, tags, pipelines, contacts, opportunities, conversations, **messages**) prints `UNVERIFIED`, or any `<dataset>: {"page"/"conversation"…}` failure line appears, the command ends with `INCOMPLETE / UNVERIFIED: …` and a **non-zero exit**: a page failed to download (permission, rate limit or GHL outage). The partial files and every failure are kept in `_report.json`, but that export is **not a usable backup and is refused by `lumina:production-provision` and `ghl:plan-import`** (nothing is written). Fix the cause (re-issue the token with the missing read scope, or just wait and re-run) and export again until it prints `all required datasets verified complete`. `--allow-incomplete` exists on those two commands only for a person who has read the failures and accepts that data is missing; never use it for the real import. Informational datasets (surveys, workflows, media…) may legitimately print `UNVERIFIED` without blocking.
 
 ## Step 5 — Dry-run (writes nothing)
 Replace `<YOUR_PRODUCTION_LOGIN_EMAIL>` with the email you sign in to getmotiongrove.com with (the account that will own Lumina Aura). It must already exist; the tool never creates users.
@@ -94,11 +94,26 @@ What it does / guarantees (all enforced in code and tested): creates **one** new
 Expected last lines: `Safety audit clean…`, `IMPORTED: {"contacts_created":51,…"opportunities_created":37,"conversations_created":45,…}`, and `website public_id <uuid>`, `website pages 9`, `website assets 23`.
 **If it fails part-way:** do not delete anything. Re-run the identical command (it resumes by source id). If it still fails, send me the output.
 
-## Step 7 — Clean up the private copies (after step 8 passes)
+## Step 7 — Keep an independent copy, THEN clean up (after step 8 passes)
+The snapshot is the only complete, point-in-time copy of the customer's GHL data (GHL trial access will expire). **Do not delete it until it exists, verified, somewhere that is not this server.** The database import is a copy in a different shape (workflow definitions, for example, are never in it), not a replacement.
 ```bash
-rm -rf ~/private/lumina/snapshot ~/private/lumina/assets   # the data now lives in the database
+cd ~/private/lumina
+# 1. Confirm the export being archived is the verified-complete one.
+grep -c '"failures": \[\]' snapshot/_report.json     # must list every required dataset; no non-empty failures
+# 2. Encrypt (you choose the passphrase and keep it in your password manager - never in Forge, git or chat).
+tar -C ~/private/lumina -czf - snapshot | gpg --symmetric --cipher-algo AES256 -o lumina-ghl-snapshot-$(date +%F).tar.gz.gpg
+sha256sum lumina-ghl-snapshot-*.tar.gz.gpg | tee lumina-ghl-snapshot.sha256
+# 3. Copy it OFF the server to storage you control (your computer or private encrypted cloud storage), for example from your computer:
+#    scp forge@<server>:private/lumina/lumina-ghl-snapshot-*.tar.gz.gpg* .
+# 4. On the destination, prove it is intact AND recoverable before you trust it:
+#    sha256sum -c lumina-ghl-snapshot.sha256
+#    gpg -d lumina-ghl-snapshot-*.tar.gz.gpg | tar -tzf - | head      # lists contacts.json, messages.json, _report.json ...
 ```
-Keep the backup file until you are satisfied.
+Only after step 4 succeeds on the copy off the server may you remove the server's private copies:
+```bash
+rm -rf ~/private/lumina/snapshot ~/private/lumina/assets ~/private/lumina/lumina-ghl-snapshot-*
+```
+Keep the database backup file until you are satisfied. The same procedure (`ghl:export-snapshot --location=<id>`, completeness check, encrypt, copy off-server, verify) is how each of the other GHL customer accounts must be preserved before its trial expires; the exporter is read-only and location-scoped, so it needs no change.
 
 ## Step 8 — Verify (read-only)
 ```bash
