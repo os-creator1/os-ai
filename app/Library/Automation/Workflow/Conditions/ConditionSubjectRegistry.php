@@ -188,7 +188,9 @@ class ConditionSubjectRegistry
                 'business.quiet_hours_now' => fn ($business) => \App\Library\Automation\Workflow\Runtime\BusinessSendWindow::forBusiness($business)->isQuiet(\Illuminate\Support\Carbon::now()),
                 'business.review_link_set' => fn ($business) => \App\Library\Business\BusinessLinks::reviewLink($business) !== null,
                 'business.questionnaire_link_set' => fn ($business) => \App\Library\Business\BusinessLinks::questionnaireLink($business) !== null,
-                default => fn ($business, $contact) => DB::table('crm_opportunities')->where('business_id', $business->id)->where('contact_id', $contact->id)->where('status', 'open')->exists(),
+                // The deal that started the journey decides; only a journey with no deal falls back to "any open deal".
+                default => fn ($business, $contact, $enrollment) => app(FactConditionReader::class)->triggeringDealIsOpen($enrollment, $contact)
+                    ?? DB::table('crm_opportunities')->where('business_id', $business->id)->where('contact_id', $contact->id)->where('status', 'open')->exists(),
             });
         }
 

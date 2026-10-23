@@ -361,8 +361,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             ['name' => 'trigger_type', 'label' => 'Starts when', 'type' => 'select', 'required' => true,
                 'options' => array_combine(self::TRIGGERS, array_map(fn ($t) => WorkflowTriggerType::from($t)->label(), self::TRIGGERS))],
             ['name' => 'trigger_tag', 'label' => 'Trigger tag', 'type' => 'text', 'required' => false, 'help' => 'Only for "A tag is added".'],
+            ['name' => 'trigger_stage', 'label' => 'Trigger stage', 'type' => 'text', 'required' => false, 'help' => 'Only for "A deal changes stage": the stage name.'],
+            ['name' => 'trigger_form', 'label' => 'Trigger form', 'type' => 'text', 'required' => false, 'help' => 'Only for "A form is submitted": the form name (blank = any form).'],
             ['name' => 'steps', 'label' => 'Steps', 'type' => 'lines', 'required' => true,
-                'help' => "One step per line:\nadd_tag: Tag name\nwait: 1 day   (minutes / hours / days)\nsend_sms: message text\nsend_email: Subject | Body\nnotify: message for your team"],
+                'help' => "One step per line:\nadd_tag: Tag name\nwait: 1 day   (minutes / hours / days)\nsend_sms: message text\nsend_email: Subject | Body\nnotify: message for your team\nwait_for_send_window: quiet_hours | business_hours   (never overnight)\nend_if_replied: / end_if_unsubscribed: / end_if_no_open_deal: / end_if_tagged: Tag name"],
         ];
     }
 
@@ -380,7 +382,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
                 'wait' => $this->waitStep($rest),
                 'send_sms' => ['type' => 'send_sms', 'body' => $rest],
                 'send_email' => $this->emailStep($rest),
-                'notify', 'internal_notification' => ['type' => 'internal_notification', 'message' => $rest],
+                'notify', 'internal_notification' => $this->notifyStep($rest),
+                'wait_for_send_window' => ['type' => 'wait_for_send_window', 'business_hours' => in_array(strtolower($rest), ['business_hours', 'business hours'], true)],
+                'end_if_replied', 'end_if_unsubscribed', 'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link' => ['type' => $kind],
+                'end_if_tagged' => ['type' => 'end_if_tagged', 'tag' => $rest],
                 default => throw new InvalidArgumentException("Unknown step \"{$kind}\"."),
             };
         }
@@ -391,8 +396,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             'steps' => $steps,
         ];
 
-        if (trim((string) ($input['trigger_tag'] ?? '')) !== '') {
-            $payload['trigger_tag'] = trim((string) $input['trigger_tag']);
+        foreach (['trigger_tag', 'trigger_stage', 'trigger_form'] as $key) {
+            if (trim((string) ($input[$key] ?? '')) !== '') {
+                $payload[$key] = trim((string) $input[$key]);
+            }
         }
 
         $this->validateDescriptor($payload);
@@ -410,7 +417,10 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
                 'wait' => 'wait: '.$s['amount'].' '.$s['unit'],
                 'send_sms' => 'send_sms: '.$s['body'],
                 'send_email' => 'send_email: '.$s['subject'].' | '.$s['body'],
-                default => 'notify: '.($s['message'] ?? ''),
+                'wait_for_send_window' => 'wait_for_send_window: '.(! empty($s['business_hours']) ? 'business_hours' : 'quiet_hours'),
+                'end_if_tagged' => 'end_if_tagged: '.$s['tag'],
+                'end_if_replied', 'end_if_unsubscribed', 'end_if_no_open_deal', 'end_if_no_review_link', 'end_if_no_questionnaire_link' => $s['type'].':',
+                default => 'notify: '.($s['message'] ?? '').(isset($s['task']) ? ' | task='.$s['task']['title'].' | due_hours='.($s['task']['due_in_hours'] ?? '') : ''),
             };
         }
 
@@ -418,8 +428,24 @@ final class AutomationWorkflowComponentAdapter implements BlueprintComponentAdap
             'name' => $payload['name'] ?? '',
             'trigger_type' => $payload['trigger_type'] ?? '',
             'trigger_tag' => $payload['trigger_tag'] ?? '',
+            'trigger_stage' => $payload['trigger_stage'] ?? '',
+            'trigger_form' => $payload['trigger_form'] ?? '',
             'steps' => implode("\n", $lines),
         ];
+    }
+
+    /** "message" or "message | task=Title | due_hours=2": the call task a notification creates survives an edit. @return array<string, mixed> */
+    private function notifyStep(string $rest): array
+    {
+        $parts = array_map('trim', explode(' | task=', $rest, 2));
+        $step = ['type' => 'internal_notification', 'message' => $parts[0]];
+
+        if (isset($parts[1])) {
+            [$title, $due] = array_pad(explode(' | due_hours=', $parts[1], 2), 2, '');
+            $step['task'] = ['title' => trim($title)] + (trim($due) !== '' ? ['due_in_hours' => (int) $due] : []);
+        }
+
+        return $step;
     }
 
     /** @return array<string, mixed> */

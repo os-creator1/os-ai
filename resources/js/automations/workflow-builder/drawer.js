@@ -233,7 +233,9 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, location
         const durationFields = formEl.querySelector('[data-role="wf-wait-duration-fields"]')
         const datetimeFields = formEl.querySelector('[data-role="wf-wait-datetime-fields"]')
 
-        const mode = node.config.mode === 'until_datetime' ? 'until_datetime' : 'duration'
+        const windowFields = formEl.querySelector('[data-role="wf-wait-window-fields"]')
+        const knownModes = ['duration', 'until_datetime', 'until_send_window']
+        const mode = knownModes.includes(node.config.mode) ? node.config.mode : 'duration'
         modeInputs.forEach((input) => {
             input.checked = input.value === mode
         })
@@ -243,10 +245,13 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, location
         // The server accepts "YYYY-MM-DD HH:MM" or the T form a datetime-local input writes.
         formEl.querySelector('[data-field="at"]').value = node.config.at ? String(node.config.at).replace(' ', 'T').slice(0, 16) : ''
 
+        formEl.querySelector('[data-field="business_hours"]').checked = node.config.business_hours === true
+
         function sync() {
-            const isDuration = formEl.querySelector('input[name="wf-wait-mode"]:checked').value === 'duration'
-            durationFields.hidden = !isDuration
-            datetimeFields.hidden = isDuration
+            const selected = formEl.querySelector('input[name="wf-wait-mode"]:checked').value
+            durationFields.hidden = selected !== 'duration'
+            datetimeFields.hidden = selected !== 'until_datetime'
+            windowFields.hidden = selected !== 'until_send_window'
         }
 
         modeInputs.forEach((input) => input.addEventListener('change', sync))
@@ -811,6 +816,10 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, location
     function readWait() {
         const mode = formEl.querySelector('input[name="wf-wait-mode"]:checked').value
 
+        if (mode === 'until_send_window') {
+            return { mode, business_hours: formEl.querySelector('[data-field="business_hours"]').checked }
+        }
+
         if (mode === 'until_datetime') {
             return { mode, at: formEl.querySelector('[data-field="at"]').value.replace('T', ' ') }
         }
@@ -829,7 +838,8 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, location
             trigger_type: triggerType,
             enrollment_policy: formEl.querySelector('[data-role="wf-enrollment-policy"]').value,
             enrollment_policy_source: formEl.querySelector('[data-field="enrollment_policy_source"]').value,
-            failure_policy: 'halt',
+            // Preserve what the workflow already has: pack workflows continue past a failed step, and a save must not flip that.
+            failure_policy: (currentNode && currentNode.config && currentNode.config.failure_policy) || 'halt',
         }
 
         if (triggerType === 'contact_date_reached') {

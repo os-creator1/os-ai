@@ -378,6 +378,8 @@ return [
             'mode' => 'Wait',
             'mode_duration' => 'For a length of time',
             'mode_until_datetime' => 'Until a date and time',
+            'mode_until_send_window' => 'Until a good time to message',
+            'business_hours_only' => 'Only during business hours (otherwise only never overnight)',
             'amount' => 'How long',
             'unit' => 'Unit',
             'unit_minutes' => 'Minutes',

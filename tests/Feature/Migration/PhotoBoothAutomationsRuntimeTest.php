@@ -398,4 +398,46 @@ class PhotoBoothAutomationsRuntimeTest extends TestCase
         $this->assertSame('2026-11-05 08:00', substr($this->sent[0]['at'], 0, 16), 'Sent when the window really opens.');
     }
 
+    /** Ann gets a SECOND open deal; the journey is started by moving the first into "Proposal Sent". */
+    private function proposalJourneyWithTwoDeals(string $firstDealStatus): AutomationEnrollment
+    {
+        $ann = $this->contact('C1');
+        $first = \App\Models\CrmOpportunity::query()->where('business_id', $this->business->id)->where('contact_id', $ann->id)->firstOrFail();
+        $copy = (array) DB::table('crm_opportunities')->where('id', $first->id)->first();
+        unset($copy['id']);
+        $copy['uid'] = (string) \Illuminate\Support\Str::uuid();
+        DB::table('crm_opportunities')->insert($copy);
+
+        $workflow = AutomationWorkflow::query()->where('business_id', $this->business->id)->where('name', 'Proposal Follow-Up')->firstOrFail();
+        app(WorkflowPublisher::class)->publish($workflow, $this->ownerId);
+        $stage = \App\Models\CrmPipelineStage::query()->where('business_id', $this->business->id)->where('name', 'Proposal Sent')->firstOrFail();
+        app(\App\Library\Crm\CrmOpportunityService::class)->moveToStage($first, $stage, $this->ownerId);
+
+        $enrollment = AutomationEnrollment::query()->where('workflow_id', $workflow->id)->where('contact_id', $ann->id)->firstOrFail();
+        DB::table('crm_opportunities')->where('id', $first->id)->update(['status' => $firstDealStatus]);
+
+        return $this->drive($enrollment);
+    }
+
+    public function test_follow_ups_stop_when_the_triggering_deal_is_won_even_though_the_contact_has_another_open_deal(): void
+    {
+        $this->proposalJourneyWithTwoDeals('won');
+
+        $this->assertSame([], $this->sent, 'The OTHER open deal must not keep this deal\'s follow-ups running.');
+        $this->assertSame([], $this->tasks());
+    }
+
+    public function test_follow_ups_stop_when_the_triggering_deal_is_lost_even_though_the_contact_has_another_open_deal(): void
+    {
+        $this->proposalJourneyWithTwoDeals('lost');
+
+        $this->assertSame([], $this->sent);
+    }
+
+    public function test_follow_ups_continue_while_the_triggering_deal_is_still_open(): void
+    {
+        $this->proposalJourneyWithTwoDeals('open');
+
+        $this->assertNotEmpty($this->sent, 'Control: with its own deal open the journey still sends.');
+    }
 }

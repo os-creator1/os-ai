@@ -123,4 +123,31 @@ class PhotoBoothBusinessPackV3Test extends TestCase
         $this->assertSame('Event questionnaire', $by['pb3_wf_questionnaire_submitted']['trigger_form']);
         $this->assertSame('Check Availability', $by['pb3_wf_new_inquiry']['trigger_form']);
     }
+
+    public function test_the_editor_form_round_trips_waits_guards_tasks_and_triggers_of_every_pack_workflow(): void
+    {
+        $adapter = app(\App\Library\NicheBlueprint\Adapters\AutomationWorkflowComponentAdapter::class);
+        foreach (PhotoBoothBusinessPackV3::workflows() as $component) {
+            // Message bodies are multi-line and the one-line-per-step editor cannot hold those (unchanged, not part of this fix).
+            $payload = $component['payload'];
+            $payload['steps'] = array_values(array_filter($payload['steps'], fn ($st) => ! in_array($st['type'], ['send_sms', 'send_email'], true)));
+            $again = $adapter->payloadFromInput($adapter->inputFromPayload($payload));
+
+            $this->assertSame($payload['steps'], $again['steps'], $component['key'].': open-edit-save changed a step (e.g. a send-window wait became something else).');
+            $this->assertSame($payload['trigger_stage'] ?? null, $again['trigger_stage'] ?? null);
+            $this->assertSame($payload['trigger_form'] ?? null, $again['trigger_form'] ?? null);
+        }
+    }
+
+    public function test_the_visual_builder_offers_and_saves_the_send_window_wait(): void
+    {
+        $form = file_get_contents(resource_path('views/customer/Automations/Workflows/partials/node-form-wait.blade.php'));
+        $js = file_get_contents(resource_path('js/automations/workflow-builder/drawer.js'));
+
+        $this->assertStringContainsString('value="until_send_window"', $form);
+        $this->assertStringContainsString('data-field="business_hours"', $form);
+        $this->assertStringContainsString("knownModes = ['duration', 'until_datetime', 'until_send_window']", $js, 'Opening must not coerce the mode to a duration.');
+        $this->assertStringContainsString("return { mode, business_hours:", $js, 'Saving must write the send-window mode back.');
+        $this->assertSame(__('automations.v2.wait_form.mode_until_send_window'), 'Until a good time to message');
+    }
 }
