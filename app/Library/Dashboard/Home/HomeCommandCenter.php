@@ -215,6 +215,7 @@ final class HomeCommandCenter
             // null = the status read failed: UNKNOWN, never "not published".
             // Whether the Business HAS a usable website by the setup policy's own rule (published, or an external site that is configured):
             // true / false, or null when the status could not be read (unknown, never "missing").
+            'website' => $status === null || ! $status->known ? null : ['status' => $status->websiteStatus, 'domain' => $status->websiteActiveDomain],
             'websitePublished' => $status === null || ! $status->known ? null : $this->websiteUsable($business, $status),
             'actions' => $actions,
             'ask' => [
@@ -711,6 +712,7 @@ final class HomeCommandCenter
             'websiteMode' => $websiteMode,
             'hasCompletedExternalAudit' => $status->hasCompletedExternalAudit,
             'hasExternalWebsiteAddress' => filled($business->website_url),
+            'websiteActiveDomain' => $status->websiteActiveDomain,
             'hasLiveForm' => $status->hasLiveForm,
             'hasActiveWebsiteForm' => $status->hasActiveWebsiteForm,
             // Actor-scoped display detail only (never an input to readiness).

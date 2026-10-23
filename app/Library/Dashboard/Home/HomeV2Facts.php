@@ -11,9 +11,7 @@ use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Conversations\BusinessConversationReadModel;
 use App\Enums\Catalog\CatalogItemLifecycleState;
 use App\Models\CatalogItem;
-use App\Enums\Website\WebsiteDomainStatus;
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Facades\DB;
 use Throwable;
 
 /**
@@ -57,33 +55,7 @@ final class HomeV2Facts
             'contactImportRunning' => $this->safely(fn () => $this->analytics->contactImportRunning($business)),
             // Only asked for when it can matter (a Business still in setup): see history().
             'hasHistory' => $withHistory ? $this->history($business) : null,
-            'website' => $this->website($business),
         ];
-    }
-
-    /**
-     * The website's real publication state: its status and the hostname of its ACTIVE custom domain, if any. A domain that is pending,
-     * provisioning, failed or being removed is not live, so it is never reported. Null = could not be read (unknown).
-     *
-     * @return array{status: ?string, domain: ?string}|null
-     */
-    private function website(Business $business): ?array
-    {
-        try {
-            $site = DB::table('websites')->where('business_id', $business->id)->first(['id', 'status']);
-
-            if ($site === null) {
-                return ['status' => null, 'domain' => null];
-            }
-
-            $domain = DB::table('website_domains')->where('website_id', $site->id)->where('status', WebsiteDomainStatus::Active->value)->orderBy('id')->value('domain');
-
-            return ['status' => $site->status !== null ? (string) $site->status : null, 'domain' => $domain !== null ? (string) $domain : null];
-        } catch (Throwable $e) {
-            report($e);
-
-            return null;
-        }
     }
 
     /**

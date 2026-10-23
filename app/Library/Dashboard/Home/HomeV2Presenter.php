@@ -74,7 +74,7 @@ final class HomeV2Presenter
                 'revenue' => $this->revenuePrompt($home['actions'], $facts),
                 'chart' => $headlines === null ? null : $this->chart($headlines, $facts),
             ],
-            'done' => $this->done($home, $headlines, $facts['website'] ?? null),
+            'done' => $this->done($home, $headlines, $home['website'] ?? null),
             'suggested' => $this->suggested($home, $facts, $booking),
             'welcome' => $welcome,
             'chips' => $this->chips($home, $needsYou),

@@ -74,6 +74,7 @@ final class HomeSetupJourney
      *   hasCompletedExternalAudit: bool,
      *   hasLiveForm: bool,
      *   hasActiveWebsiteForm: bool,
+     *   websiteActiveDomain?: ?string,
      *   calendar?: bool,
      *   typeCount?: int,
      *   activeTypeCount?: int,
@@ -127,7 +128,8 @@ final class HomeSetupJourney
 
         if ($facts['websiteCapable']) {
             [$title, $outcome, $label] = match (true) {
-                $published => ['Your website is live', 'Your MotionGrove website is published.', 'Open website'],
+                $published && ($facts['websiteActiveDomain'] ?? null) !== null => ['Your website is live on ' . $facts['websiteActiveDomain'], 'Your website is published on your own domain.', 'Open website'],
+                $published => ['Your website is published on the MotionGrove preview', 'Your MotionGrove website is published on its preview address.', 'Open website'],
                 $externalChecked => ['Your existing website', 'We have checked your existing website. Open the website section to see the results.', 'Open website'],
                 $externalConnected => ['Your existing website', 'Your website address is saved and connected. It has not been checked for search yet; you can run that check from the website section whenever you like.', 'Open website'],
                 $mode === 'external' => ['Review your existing website', 'Your website address is saved but has not been checked yet. Open the website section to check it for search.', 'Review website'],
