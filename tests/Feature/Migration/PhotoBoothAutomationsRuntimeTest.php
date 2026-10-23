@@ -375,4 +375,27 @@ class PhotoBoothAutomationsRuntimeTest extends TestCase
         $this->post(route('public.forms.submit', [$deployment->uid]), $answers)->assertRedirect();
         $this->assertSame(1, \App\Models\FormSubmission::query()->where('form_id', $deployment->form_id)->count(), 'The response was accepted.');
     }
+
+    public function test_a_late_wake_after_the_window_has_closed_parks_again_instead_of_sending_overnight(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-11-03 22:30', 'America/Denver'));
+        $e = $this->enroll('Missed Call Follow-Up', $this->contact('C1'));
+        app(WorkflowAdvancer::class)->advance($e);
+        $e = $e->fresh();
+        $this->assertTrue($e->isWaiting());
+        $this->assertSame('2026-11-04 08:00', Carbon::parse((string) $e->resume_at, 'UTC')->setTimezone('America/Denver')->format('Y-m-d H:i'));
+
+        // Workers were down: the sweep only runs at 22:00 the next evening, long after the 08:00 wake was due.
+        Carbon::setTestNow(Carbon::parse('2026-11-04 22:00', 'America/Denver'));
+        app(WorkflowWakeService::class)->wakeDue();
+
+        $e = $e->fresh();
+        $this->assertSame([], $this->sent, 'Nothing is sent at 22:00 just because the wake was overdue.');
+        $this->assertTrue($e->isWaiting(), 'The run is parked again.');
+        $this->assertSame('2026-11-05 08:00', Carbon::parse((string) $e->resume_at, 'UTC')->setTimezone('America/Denver')->format('Y-m-d H:i'));
+
+        $this->drive($e);
+        $this->assertSame('2026-11-05 08:00', substr($this->sent[0]['at'], 0, 16), 'Sent when the window really opens.');
+    }
+
 }

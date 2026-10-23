@@ -182,4 +182,15 @@ class LuminaProductionTest extends TestCase
             ->expectsOutputToContain('PLAN counts')
             ->assertExitCode(0);
     }
+
+    public function test_an_owners_own_sending_server_does_not_abort_adoption(): void
+    {
+        $owner = $this->owner();
+        DB::table('sending_servers')->insert(['uid' => (string) \Illuminate\Support\Str::uuid(), 'user_id' => $owner->id, 'name' => 'Owner existing server', 'settings' => 'Twilio', 'created_at' => now(), 'updated_at' => now()]);
+
+        $result = app(LuminaAuraProvisioner::class)->provision('real-owner@example.test', null, [], adoptExistingOwner: true, complimentaryPlan: false);
+
+        $this->assertSame([], $result['violations'], 'The owner\'s pre-existing sending server is not Lumina\'s and must not abort the import.');
+        $this->assertSame(1, DB::table('sending_servers')->where('user_id', $owner->id)->count(), 'It is left untouched.');
+    }
 }

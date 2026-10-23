@@ -135,6 +135,12 @@ final class LuminaAuraProvisioner
 
         $context = new DemoContext($owner->fresh(), $customer->fresh(), $workspace->fresh(), $business->fresh(), $location->fresh(), $adminId, CarbonImmutable::now());
         $violations = $this->audit->violations($context);
+        if ($adoptExistingOwner) {
+            // These two checks are scoped to the OWNER's user id, not to the new Business. An existing production owner may
+            // legitimately have a sending server or calendar connection for their other work; nothing here uses them
+            // (Lumina's own mailbox/number/token checks stay in force).
+            unset($violations['sending_servers'], $violations['external_calendar_connections']);
+        }
 
         return [
             'context' => $context,
