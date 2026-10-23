@@ -74,7 +74,7 @@ final class HomeV2Presenter
                 'revenue' => $this->revenuePrompt($home['actions'], $facts),
                 'chart' => $headlines === null ? null : $this->chart($headlines, $facts),
             ],
-            'done' => $this->done($home, $headlines),
+            'done' => $this->done($home, $headlines, $facts['website'] ?? null),
             'suggested' => $this->suggested($home, $facts, $booking),
             'welcome' => $welcome,
             'chips' => $this->chips($home, $needsYou),
@@ -359,10 +359,11 @@ final class HomeV2Presenter
     // ── Done for you / Suggested next ───────────────────────────────────────────────────────────────────────────────
 
     /** @return array{rows: array<int, array<string, mixed>>, url: ?string} */
-    private function done(array $home, ?array $headlines): array
+    private function done(array $home, ?array $headlines, ?array $website): array
     {
         $rows = [];
         $seen = [];
+        $siteRow = null;
 
         // The completed list is selected before the handling cap (HomeCommandCenter::completedWork), never from the capped mix.
         foreach ($home['completedWork'] ?? [] as $row) {
@@ -382,12 +383,31 @@ final class HomeV2Presenter
             $seen[$signature] = true;
             $rows[] = ['key' => $row['key'], 'text' => $row['text'], 'at' => $row['at'], 'url' => $row['url']];
 
+            if ($row['key'] === 'website_version_published') {
+                $siteRow = ['title' => $this->websiteTitle($website), 'url' => $row['url']];
+            }
+
             if (count($rows) === self::MAX_DONE) {
                 break;
             }
         }
 
-        return ['rows' => $rows, 'url' => $headlines['resultsUrl'] ?? null];
+        // "See activity" follows the work shown: website publication opens the website page of this same Business; anything else
+        // stays on the Business's results (analytics remains reachable from its own navigation).
+        $url = ($siteRow['url'] ?? null) ?? ($headlines['resultsUrl'] ?? null);
+
+        return ['rows' => $rows, 'url' => $url, 'websiteTitle' => $siteRow['title'] ?? null];
+    }
+
+    /** What is really true of the site: never "live" on the client's own domain unless that domain is Active. */
+    private function websiteTitle(?array $website): string
+    {
+        return match (true) {
+            $website === null => 'Website updated',
+            ($website['status'] ?? null) === 'published' && ($website['domain'] ?? null) !== null => 'Your website is live on ' . $website['domain'],
+            ($website['status'] ?? null) === 'published' => 'Your website is published on the MotionGrove preview',
+            default => 'Your website is a draft and not published yet',
+        };
     }
 
     /**
