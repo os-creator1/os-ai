@@ -160,11 +160,12 @@ class TollFreeVerificationFlowTest extends TestCase
         $this->assertNull($fake->submittedRegistrations[0]->existingBrandId);
         $this->assertSame('Harbor Lane Studios LLC', $submitted->legal_business_name);
         $this->assertSame('12-3456789', $submitted->ein);
-        $this->assertNull($submitted->provider_brand_id);
+        // The earlier local attempt's brand reference is kept, never deleted.
+        $this->assertSame('brand_from_local_attempt', $submitted->provider_brand_id);
         $this->assertSame(PhoneNumberType::TollFree, $submitted->number_type);
     }
 
-    public function test_switching_the_number_type_keeps_captured_data_and_drops_the_other_regimes_ids(): void
+    public function test_switching_the_number_type_keeps_captured_data_and_every_provider_reference(): void
     {
         $business = $this->makeBusiness();
         $registration = $this->service()->captureDetails($business, $this->details(['number_type' => 'local']));
@@ -173,7 +174,7 @@ class TollFreeVerificationFlowTest extends TestCase
         $switched = $this->service()->captureDetails($business, ['number_type' => 'toll_free']);
 
         $this->assertSame(PhoneNumberType::TollFree, $switched->number_type);
-        $this->assertNull($switched->provider_brand_id);
+        $this->assertSame('brand_partial', $switched->provider_brand_id);
         $this->assertSame('Harbor Lane Studios LLC', $switched->legal_business_name);
         $this->assertSame('customer_care', $switched->use_case);
     }

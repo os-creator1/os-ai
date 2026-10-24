@@ -93,6 +93,7 @@ class TextMessagingController extends CustomerBaseController
         private readonly MessagingReadinessReader $readiness,
         private readonly RegistrationDefaultsResolver $registrationDefaults,
         private readonly RegistrationSubmissionValidator $registrationValidator,
+        private readonly \App\Library\Messaging\MessagingChargePreview $charges,
     ) {
     }
 
@@ -166,6 +167,8 @@ class TextMessagingController extends CustomerBaseController
             'criteria' => $validated,
             'candidate' => $candidate,
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
+            'numberPreview' => $this->charges->forNumberPurchase($business),
+            'localRegistrationPreview' => $this->charges->forLocalRegistration($business),
             // PR #295 Correction Round 1, item 2 — the browser never gets
             // the raw phone_number/provider_candidate_reference/number_type
             // fields back as independently-editable form inputs; it only
@@ -222,16 +225,24 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
         } catch (MessagingIdentityConflictException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'This Business already has a number set up.');
-        } catch (MessagingFundingUnavailableException) {
-            // Not yet configured (no rate/meter exists) — a platform gap,
-            // never something the customer can act on by adding funds.
-            return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
+        } catch (MessagingRegistrationRecoveryRequiredException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm this number order with our carrier partner. Please don\'t try again; our team has been alerted and will follow up. You have not been charged.');
+        } catch (MessagingFundingUnavailableException $e) {
+            \Illuminate\Support\Facades\Log::warning('Messaging number funding unavailable.', ['business_id' => $business->id, 'reason' => $e->reason]);
+
+            return $this->textMessagingError($workspaceUid, $businessUid, $e->reason === MessagingFundingUnavailableException::REASON_WALLET_CONFIGURATION
+                ? 'There is a problem with this Business\'s billing setup, so a number can\'t be bought yet. Nothing was charged. Please contact support.'
+                : 'Number pricing hasn\'t been set up on our side yet, so a number can\'t be bought right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
         } catch (MessagingInsufficientFundsException) {
             // Distinct from the above: a rate IS configured and the
             // customer's own wallet balance could not cover it — a real,
             // customer-actionable outcome that must never be confused with
             // "not available in this environment".
             return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to add this number. Add funds to your Business balance and try again.');
+        } catch (\RuntimeException) {
+            // The carrier refused the order outright (funds were released,
+            // nothing bought): a retry, or a different number, is safe.
+            return $this->textMessagingError($workspaceUid, $businessUid, 'The carrier couldn\'t complete this number order right now. You have not been charged. Please try again, or search for a different number.');
         }
 
         $message = 'Phone number added. Next, complete messaging registration so texts deliver reliably.';
@@ -690,6 +701,8 @@ class TextMessagingController extends CustomerBaseController
      */
     private function renderNoNumber(string $workspaceUid, string $businessUid, array $situation, ?PhoneNumberType $numberTypeLocked = null): View
     {
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+
         return view('customer.settings.text-messaging.states.no-number', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
@@ -699,6 +712,8 @@ class TextMessagingController extends CustomerBaseController
             'candidate' => null,
             'candidateToken' => null,
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
+            'numberPreview' => $this->charges->forNumberPurchase($business),
+            'localRegistrationPreview' => $this->charges->forLocalRegistration($business),
             // Review correction — non-null only for the verify-first local
             // sequence's "your business is verified, now choose your
             // number" render: the view hides the toll-free/local choice
@@ -738,6 +753,7 @@ class TextMessagingController extends CustomerBaseController
             'submissionIssues' => $registration->exists ? $this->registrationValidator->issues($registration) : [],
             'available' => ProvisioningAvailability::isConfigured(),
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor($registration->number_type ?? PhoneNumberType::Local),
+            'registrationPreview' => $this->charges->forLocalRegistration($business),
             // Review correction — an Approved registration with a genuine
             // number can still be stuck here, never Ready, while a local
             // number's own carrier-side campaign assignment has not yet

@@ -414,6 +414,17 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      */
     public function provisionNumber(Business $business, AvailableNumberCandidate $candidate): ProvisionedNumberResult
     {
+        // A number order whose outcome was never confirmed may have bought
+        // (and be billing) a number at the carrier: no second purchase
+        // until an operator reconciles it.
+        if (BusinessMessagingProvisioningIncident::query()
+            ->where('business_id', $business->id)
+            ->where('stage', self::INCIDENT_NUMBER_ORDER_UNKNOWN)
+            ->whereNull('resolved_at')
+            ->exists()) {
+            throw new MessagingRegistrationRecoveryRequiredException('An earlier number order has an unconfirmed carrier outcome.');
+        }
+
         $reservationId = $this->reserveFunding($business, self::FEATURE_NUMBER_PURCHASE);
 
         try {
@@ -427,10 +438,18 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $messagingProfileId = (string) $profileResponse->json('data.id');
 
-            $orderResponse = $this->client()->post(self::API_BASE . '/number_orders', [
-                'phone_numbers' => [['phone_number' => $candidate->providerCandidateReference]],
-                'messaging_profile_id' => $messagingProfileId,
-            ]);
+            try {
+                $orderResponse = $this->client()->post(self::API_BASE . '/number_orders', [
+                    'phone_numbers' => [['phone_number' => $candidate->providerCandidateReference]],
+                    'messaging_profile_id' => $messagingProfileId,
+                ]);
+            } catch (ConnectionException) {
+                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order request did not complete');
+            }
+
+            if ($orderResponse->serverError() || $orderResponse->status() === 408) {
+                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order status=' . $orderResponse->status());
+            }
 
             if (! $orderResponse->successful()) {
                 // The Messaging Profile above WAS genuinely created on
@@ -731,6 +750,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     public const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
     public const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
     public const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
+    public const INCIDENT_NUMBER_ORDER_UNKNOWN = 'number_order_outcome_unknown';
     public const INCIDENT_TOLLFREE_UNKNOWN = 'tollfree_verification_outcome_unknown';
 
     /**
@@ -910,6 +930,21 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $this->wallet->commit($reservationId);
 
         return new RegistrationSubmissionResult($brandId, $campaignId, null, MessagingRegistrationStatus::Pending);
+    }
+
+    private function unconfirmedNumberOrder(Business $business, AvailableNumberCandidate $candidate, string $messagingProfileId, string $detail): MessagingRegistrationRecoveryRequiredException
+    {
+        app(ProvisioningIncidentRecorder::class)->record(
+            business: $business,
+            stage: self::INCIDENT_NUMBER_ORDER_UNKNOWN,
+            messagingProfileId: $messagingProfileId,
+            providerPhoneNumberId: null,
+            phoneNumber: $candidate->phoneNumber,
+            numberType: $candidate->numberType->value,
+            errorMessage: $detail,
+        );
+
+        return new MessagingRegistrationRecoveryRequiredException('The number order outcome could not be confirmed.');
     }
 
     private function unconfirmedOutcome(Business $business, string $stage, ?string $brandId, string $detail): MessagingRegistrationRecoveryRequiredException

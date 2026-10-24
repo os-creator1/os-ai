@@ -100,7 +100,6 @@ class BusinessMessagingRegistrationService
         // Every field the brand request carries: if any changed, the
         // existing provider brand no longer matches the edited details.
         $brandIdentityChanged = false;
-        $typeChanged = isset($data['number_type']) && (string) ($data['number_type'] instanceof \BackedEnum ? $data['number_type']->value : $data['number_type']) !== (string) $registration->number_type?->value;
 
         foreach (['legal_business_name', 'entity_type', 'ein', 'address_line_1', 'city', 'region', 'postal_code', 'country_code', 'website_url', 'contact_email', 'contact_phone'] as $field) {
             if (! array_key_exists($field, $data)) {
@@ -143,7 +142,7 @@ class BusinessMessagingRegistrationService
             }
         }
 
-        if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged || $typeChanged) {
+        if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged) {
             $attributes['provider_brand_id'] = null;
             $attributes['provider_campaign_id'] = null;
             $attributes['provider_registration_id'] = null;
@@ -201,18 +200,16 @@ class BusinessMessagingRegistrationService
             // The owned number decides the regime. A registration saved as
             // local before a toll-free number was bought (or the reverse)
             // must never be submitted — and charged — under the wrong
-            // regime: switch the type, keep every captured field, and drop
-            // provider ids that belong to the other regime.
+            // regime: switch the type, keep every captured field and every
+            // provider id.
             $ownedType = $this->primaryNumberTypeFor($registration->business);
 
             if ($ownedType !== null && $ownedType !== $registration->number_type
                 && ($registration->provider_campaign_id === null || $registration->provider_campaign_id === '')) {
-                $registration->update([
-                    'number_type' => $ownedType->value,
-                    'provider_brand_id' => null,
-                    'provider_campaign_id' => null,
-                    'provider_registration_id' => null,
-                ]);
+                // Provider ids are kept (never silently deleted): each regime
+                // only ever reuses its own (brand/campaign for local, the
+                // verification id for toll-free).
+                $registration->update(['number_type' => $ownedType->value]);
                 $registration = $registration->fresh();
             }
 
@@ -226,14 +223,19 @@ class BusinessMessagingRegistrationService
 
             $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
 
-            $registration->update([
+            // A provider id the result does not carry (a toll-free result has
+            // no brand/campaign, a 10DLC result no verification id) is left
+            // as it is — never blanked, so references from another regime
+            // are never silently deleted.
+            $registration->update(array_merge(array_filter([
                 'provider_brand_id' => $result->providerBrandId,
                 'provider_campaign_id' => $result->providerCampaignId,
                 'provider_registration_id' => $result->providerRegistrationId,
+            ], fn ($id) => $id !== null), [
                 'status' => $result->status->value,
                 'submitted_at' => CarbonImmutable::now(),
                 'rejection_reason' => null,
-            ]);
+            ]));
 
             return $registration->fresh();
         } finally {

@@ -316,11 +316,17 @@
                         </ul>
                     </x-alert>
                 @else
-                    <p class="text-caption text-muted mb-2">Everything required is filled in. Submitting is a paid step; nothing is sent until you press the button.</p>
+                    <p class="text-caption text-muted mb-2">Everything required is filled in. Nothing is sent until you press the button.</p>
+                @endif
+                @php($isLocalRegistration = ($registration->number_type ?? null) === \App\Enums\Messaging\PhoneNumberType::Local)
+                @if($isLocalRegistration)
+                    @include('customer.settings.text-messaging._charge-summary', ['preview' => $registrationPreview, 'oneTimeLabel' => '10DLC registration and initial prepaid campaign fees (charged when you submit)', 'recurringLabel' => '10DLC campaign cost', 'unconfiguredText' => 'Registration pricing isn\'t set up on our side yet, so this can\'t be submitted right now. Nothing will be charged.'])
+                @else
+                    <p class="text-caption text-muted mb-2" data-role="toll-free-verification-cost">{{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }}</p>
                 @endif
                 <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspaceUid, $businessUid]) }}">
                     @csrf
-                    <x-button type="submit" variant="primary" :disabled="! $available">Submit for review</x-button>
+                    <x-button type="submit" variant="primary" :disabled="! $available || ($isLocalRegistration && (! $registrationPreview['configured'] || ! $registrationPreview['sufficient']))">Submit for review</x-button>
                 </form>
                 @unless($available)
                     <p class="text-caption text-muted mt-1 mb-0">Preview — submission isn't available in this environment yet.</p>

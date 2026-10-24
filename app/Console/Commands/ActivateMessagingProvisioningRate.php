@@ -16,8 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * The platform owner's one repeatable, auditable way to give a messaging
- * provisioning fee (10DLC registration, toll-free verification, number
- * purchase) a platform-wide meter and an owner-approved rate, through the
+ * provisioning fee (10DLC registration and campaign renewal, number purchase and
+ * rental renewal; toll-free verification is $0 and has no meter) a platform-wide meter and an owner-approved rate, through the
  * same UsageWalletManager rate/metering services every other meter uses.
  *
  * It never invents a price: the retail rate, provider cost, unit label,
@@ -34,12 +34,13 @@ class ActivateMessagingProvisioningRate extends Command
 {
     private const FEATURES = [
         '10dlc' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION,
-        'toll-free' => TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION,
         'number-purchase' => TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE,
+        'number-rental-renewal' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL,
+        'campaign-renewal' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL,
     ];
 
     protected $signature = 'messaging:activate-provisioning-rate
-        {feature : 10dlc | toll-free | number-purchase}
+        {feature : 10dlc | number-purchase | number-rental-renewal | campaign-renewal (toll-free verification is $0: no meter)}
         {retail-rate-micro : approved customer price per action, in micro-units (1000000 = 1.00)}
         {provider-cost-micro : approved provider cost per action, in micro-units}
         {unit-label : e.g. "per registration"}
