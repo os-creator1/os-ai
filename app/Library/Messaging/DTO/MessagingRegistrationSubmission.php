@@ -3,6 +3,7 @@
 namespace App\Library\Messaging\DTO;
 
 use App\Enums\Messaging\MessagingEntityType;
+use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Models\BusinessMessagingRegistration;
 
@@ -60,6 +61,12 @@ final readonly class MessagingRegistrationSubmission
          * that crashed before the fee was committed — never created twice.
          */
         public ?string $existingCampaignId = null,
+        /**
+         * Funding cycle: changes with every carrier rejection, so a fee
+         * committed for an earlier, rejected submission never counts as
+         * the fee for a resubmission.
+         */
+        public string $fundingCycle = '0',
     ) {
     }
 
@@ -87,12 +94,13 @@ final readonly class MessagingRegistrationSubmission
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
             phoneNumber: $phoneNumber,
-            existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
+            existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
                 ? (string) $registration->provider_brand_id
                 : null,
-            existingCampaignId: $registration->number_type === PhoneNumberType::Local && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== ''
+            existingCampaignId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== ''
                 ? (string) $registration->provider_campaign_id
                 : null,
+            fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
         );
     }
 }

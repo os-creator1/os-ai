@@ -197,6 +197,21 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertNull($edited->provider_campaign_id);
     }
 
+    public function test_submitting_a_rejected_registration_without_edits_starts_a_fresh_submission(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+        $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_old', 'provider_campaign_id' => 'camp_old']);
+
+        $submitted = $this->service()->submit($registration);
+
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertNull($fake->submittedRegistrations[0]->existingBrandId);
+        $this->assertNull($fake->submittedRegistrations[0]->existingCampaignId);
+        $this->assertNotSame('brand_old', $submitted->provider_brand_id);
+        $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->status);
+    }
+
     public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();

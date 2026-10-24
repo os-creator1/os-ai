@@ -988,6 +988,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         return \App\Models\BusinessMessagingRegistration::create([
             'business_id' => $business->id,
             'number_type' => 'local',
+            'entity_type' => 'ein',
             'status' => 'not_started',
         ]);
     }
@@ -1078,7 +1079,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $pendingId = app(UsageWalletManager::class)->reserve(
             $business,
             TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION,
-            'messaging-registration:' . $business->id . ':' . TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION . ':1',
+            'messaging-registration:' . $business->id . ':' . TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION . ':0:1',
         )->reservationId;
 
         Http::fake();
@@ -1090,5 +1091,73 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame('campaign_crash_1', $result->providerCampaignId);
         $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
         $this->assertSame('committed', DB::table('business_usage_reservations')->where('id', $pendingId)->value('status'));
+    }
+
+    public function test_committed_fee_with_saved_ids_after_a_failed_status_write_completes_without_a_fee_or_provider_call(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        $registration->update(['provider_brand_id' => 'brand_done_1', 'provider_campaign_id' => 'campaign_done_1']);
+        $wallet = app(UsageWalletManager::class);
+        $reservationId = $wallet->reserve($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, 'messaging-registration:' . $business->id . ':' . TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION . ':0:1')->reservationId;
+        $wallet->commit($reservationId);
+        Http::fake();
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+
+        Http::assertNothingSent();
+        $this->assertSame(MessagingRegistrationStatus::Pending, $result->status);
+        $this->assertSame('campaign_done_1', $result->providerCampaignId);
+        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    public function test_committed_fee_with_incomplete_saved_ids_is_blocked_with_a_recorded_incident(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        $wallet = app(UsageWalletManager::class);
+        $reservationId = $wallet->reserve($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, 'messaging-registration:' . $business->id . ':' . TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION . ':0:1')->reservationId;
+        $wallet->commit($reservationId);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+            $this->fail('Expected recovery-required.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException) {
+            // expected
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(1, DB::table('business_messaging_provisioning_incidents')->where('stage', '10dlc_funding_state_ambiguous')->whereNull('resolved_at')->count());
+    }
+
+    public function test_a_rejected_registration_never_reuses_its_rejected_ids_and_commits_only_after_a_real_submission(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_rejected', 'provider_campaign_id' => 'campaign_rejected']);
+
+        $submission = MessagingRegistrationSubmission::fromModel($registration->fresh());
+        $this->assertNull($submission->existingBrandId);
+        $this->assertNull($submission->existingCampaignId);
+
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_new_1']]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_new_1']]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($submission);
+
+        $this->assertSame('brand_new_1', $result->providerBrandId);
+        $this->assertSame(1, $this->brandRequestCount());
+        $this->assertSame(['committed'], DB::table('business_usage_reservations')->where('business_id', $business->id)->pluck('status')->all());
     }
 }

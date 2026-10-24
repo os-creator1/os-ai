@@ -155,6 +155,20 @@ class BusinessMessagingRegistrationService
                 throw new MessagingRegistrationAlreadySubmittedException('This registration has already been submitted.');
             }
 
+            // A Rejected registration resubmitted without edits starts a fresh
+            // submission: the rejected provider brand/campaign are never
+            // reused. rejected_at is kept — it identifies the funding cycle.
+            if ($registration->status === MessagingRegistrationStatus::Rejected) {
+                $registration->update([
+                    'status' => MessagingRegistrationStatus::NotStarted->value,
+                    'provider_brand_id' => null,
+                    'provider_campaign_id' => null,
+                    'provider_registration_id' => null,
+                    'rejection_reason' => null,
+                ]);
+                $registration = $registration->fresh();
+            }
+
             // Review correction — a toll-free submission's own request body
             // must name the already-owned number being verified
             // (MessagingRegistrationSubmission::$phoneNumber); a local (10DLC)

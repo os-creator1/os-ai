@@ -730,6 +730,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     private const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
     private const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
+    private const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
 
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
@@ -740,17 +741,22 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // incident — a brand/campaign may already exist at Telnyx.
         if (BusinessMessagingProvisioningIncident::query()
             ->where('business_id', $business->id)
-            ->whereIn('stage', [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN])
+            ->whereIn('stage', [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN, self::INCIDENT_FUNDING_AMBIGUOUS])
             ->whereNull('resolved_at')
             ->exists()) {
             throw new MessagingRegistrationRecoveryRequiredException('An earlier 10DLC submission has an unconfirmed provider outcome.');
         }
 
-        $reservationId = $this->reserveFunding(
-            $business,
-            self::FEATURE_TEN_DLC_REGISTRATION,
-            $this->registrationOperationKey($business, self::FEATURE_TEN_DLC_REGISTRATION),
-        );
+        $operationKey = $this->registrationOperationKey($business, self::FEATURE_TEN_DLC_REGISTRATION, $submission);
+
+        if ($operationKey === null) {
+            // This cycle's fee is already committed and the saved brand and
+            // campaign are the ones it paid for: only the local status
+            // transition is missing. No fee, no provider call.
+            return new RegistrationSubmissionResult($submission->existingBrandId, $submission->existingCampaignId, null, MessagingRegistrationStatus::Pending);
+        }
+
+        $reservationId = $this->reserveFunding($business, self::FEATURE_TEN_DLC_REGISTRATION, $operationKey);
 
         $brandId = $submission->existingBrandId;
 
@@ -879,19 +885,24 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     }
 
     /**
-     * Stable, registration-level funding identity. Each failed attempt
-     * releases its reservation (terminal), so the next attempt moves to the
-     * next suffix; an attempt whose reservation is still pending (a crash
-     * before release) is reused rather than duplicated. A committed
-     * reservation means this operation was already charged — never charge
-     * again.
+     * Stable, registration-level funding identity, scoped to the funding
+     * cycle (one per carrier rejection). Each failed attempt releases its
+     * reservation (terminal), so the next attempt moves to the next suffix;
+     * a still-pending one (a crash before release) is reused rather than
+     * duplicated.
+     *
+     * A committed reservation in this cycle means the fee was already
+     * charged. When the saved brand and campaign are present it is
+     * unambiguously the same successful submission and null is returned
+     * (nothing to reserve, nothing to send). Anything else is ambiguous:
+     * an incident is recorded and automatic retry stays blocked.
      */
-    private function registrationOperationKey(Business $business, string $featureKey): string
+    private function registrationOperationKey(Business $business, string $featureKey, MessagingRegistrationSubmission $submission): ?string
     {
         $repository = app(BusinessUsageReservationRepository::class);
 
         for ($attempt = 1; $attempt <= 50; $attempt++) {
-            $key = sprintf('messaging-registration:%d:%s:%d', $business->id, $featureKey, $attempt);
+            $key = sprintf('messaging-registration:%d:%s:%s:%d', $business->id, $featureKey, $submission->fundingCycle, $attempt);
             $existing = $repository->findByIdempotencyKey($key);
 
             if ($existing === null || $existing->status === UsageReservationStatus::Pending) {
@@ -899,11 +910,15 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             }
 
             if ($existing->status === UsageReservationStatus::Committed) {
-                throw new MessagingRegistrationRecoveryRequiredException('This registration was already charged.');
+                if ($submission->existingBrandId !== null && $submission->existingCampaignId !== null) {
+                    return null;
+                }
+
+                throw $this->unconfirmedOutcome($business, self::INCIDENT_FUNDING_AMBIGUOUS, $submission->existingBrandId, 'fee committed but saved provider ids are incomplete');
             }
         }
 
-        throw new MessagingRegistrationRecoveryRequiredException('Too many failed attempts for this registration.');
+        throw $this->unconfirmedOutcome($business, self::INCIDENT_FUNDING_AMBIGUOUS, $submission->existingBrandId, 'too many failed attempts in one funding cycle');
     }
 
     private function submitTollFreeVerification(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
