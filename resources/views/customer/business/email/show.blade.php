@@ -11,68 +11,181 @@
         $connectedLabel = $account?->provider?->label();
     @endphp
 
-    <div class="card">
-        <div class="card-body">
-            <h4 class="card-title">Your business email</h4>
-            <p class="card-text text-muted">
-                Connect the email account you already use for your business. Emails you send to your contacts
-                go out from that account, so replies reach the inbox you already read.
-            </p>
+    @php
+        $isConnectFlow = $account === null || in_array($state, ['disconnected', 'revoked', 'pending'], true);
+        $accountProvider = $account?->provider?->value;
+        $pageBadge = match (true) {
+            $state === 'pending' => 'Connection in progress',
+            $state === 'revoked' => 'Needs reconnecting',
+            $state === 'active' && ($inboundNeedsReauth || $account->inbound_failure === 'reauthorization_required') => 'Needs reauthorization',
+            $state === 'active' => 'Connected',
+            default => 'Not connected',
+        };
+        $pillFor = function (string $type, bool $usable) use ($state, $accountProvider): array {
+            if ($accountProvider === $type && $state === 'pending') {
+                return ['In progress', 'warn'];
+            }
+            if ($accountProvider === $type && $state === 'revoked') {
+                return ['Needs reauth', 'warn'];
+            }
+            if (! $usable) {
+                return ['Not available yet', 'muted'];
+            }
 
-            @if ($account === null || in_array($state, ['disconnected', 'revoked', 'pending'], true))
-                @if ($state === 'revoked')
-                    <x-alert variant="warning" data-role="email-connection-revoked">Your email provider ended this connection. Reconnect to send email again.</x-alert>
-                @elseif ($state === 'pending')
-                    <p class="mb-2">A connection is in progress. If you did not finish it, start again below.</p>
-                @endif
+            return ['Not connected', 'muted'];
+        };
+    @endphp
 
-                @if ($canManage)
-                    <div class="row" data-role="email-provider-options">
-                        @foreach ($providerOptions as $option)
-                            <div class="col-md-4 mb-1" data-role="email-provider-{{ $option['type'] }}">
-                                <h6>{{ $option['title'] }}</h6>
-                                <p class="text-muted small">{{ $option['help'] }}</p>
-                                @if ($option['usable'])
-                                    <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $option['type']]) }}">
-                                        @csrf
-                                        <button type="submit" class="btn btn-primary">{{ $account !== null ? 'Reconnect ' . $option['title'] : $option['button'] }}</button>
-                                    </form>
-                                @else
-                                    <x-alert variant="warning" data-role="email-provider-unavailable">{{ $option['unavailable'] }}</x-alert>
-                                @endif
+    <style>
+        .bemail { max-width: 62rem; }
+        .bemail-head { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin-bottom: .35rem; }
+        .bemail-head h4 { margin: 0; }
+        .bemail-pill { display: inline-block; padding: .15rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: #f1ede6; color: #5c564d; white-space: nowrap; }
+        .bemail-pill.warn { background: #fbefd0; color: #7a5600; }
+        .bemail-pill.ok { background: #dff3e4; color: #1e6b34; }
+        .bemail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+        .bemail-card { background: #fff; border: 1px solid #e6e1d8; border-radius: .9rem; padding: 1.25rem; }
+        .bemail-card-top { display: flex; align-items: flex-start; gap: .75rem; margin-bottom: .9rem; }
+        .bemail-card-top .bemail-icon { flex: none; width: 2.5rem; height: 2.5rem; border-radius: .6rem; background: #f6efe9; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #a8453a; }
+        .bemail-card-top .bemail-title { flex: 1; min-width: 0; }
+        .bemail-card-top .bemail-title strong { display: block; }
+        .bemail-card-top .bemail-title span { font-size: .8rem; color: #6f695f; }
+        .bemail-note { font-size: .82rem; color: #6f695f; margin: 0 0 .5rem; }
+        .bemail-notice { background: #fdf3df; border: 1px solid #f1dfb4; border-radius: .75rem; padding: .8rem 1rem; margin-bottom: 1rem; }
+        .bemail-notice strong { display: block; }
+        .bemail-notice span { font-size: .85rem; color: #6f695f; }
+        .bemail-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; }
+        .bemail-chips span { font-size: .75rem; padding: .15rem .6rem; border-radius: 999px; border: 1px solid #e6e1d8; background: #f8f6f2; color: #5c564d; }
+        .bemail-other { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 1.5rem; }
+        .bemail-row { display: flex; gap: .75rem; }
+        .bemail-row .bemail-port { flex: none; width: 6rem; }
+        .bemail-field-error { color: #b3261e; font-size: .8rem; margin-top: .2rem; }
+        .bemail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
+        @media (max-width: 767px) { .bemail-grid, .bemail-other { grid-template-columns: 1fr; } }
+    </style>
+
+    <div class="bemail">
+        <div class="bemail-head">
+            <h4>Business email</h4>
+            <span class="bemail-pill {{ $state === 'active' && $pageBadge === 'Connected' ? 'ok' : ($state === 'pending' || $state === 'revoked' || $pageBadge === 'Needs reauthorization' ? 'warn' : '') }}" data-role="email-status-badge">{{ $pageBadge }}</span>
+        </div>
+        <p class="text-muted mb-2">
+            Connect the email account you already use. Emails to your contacts go out from it, so replies land in the inbox you already read.
+        </p>
+
+        @if ($isConnectFlow)
+            @if ($state === 'revoked')
+                <x-alert variant="warning" data-role="email-connection-revoked">Your email provider ended this connection. Reconnect to send email again.</x-alert>
+            @elseif ($state === 'pending')
+                <div class="bemail-notice" data-role="email-connection-pending">
+                    <strong>Your {{ $accountProvider === 'microsoft' ? 'Microsoft' : 'Google' }} connection isn’t finished</strong>
+                    <span>If you closed the {{ $accountProvider === 'microsoft' ? 'Microsoft' : 'Google' }} window before approving access, start again with Reconnect {{ $accountProvider === 'microsoft' ? 'Microsoft' : 'Google' }}.</span>
+                </div>
+            @endif
+
+            @if ($canManage)
+                <div class="bemail-grid" data-role="email-provider-options">
+                    @foreach ($providerOptions as $option)
+                        @php [$pillText, $pillClass] = $pillFor($option['type'], $option['usable']); @endphp
+                        <div class="bemail-card" data-role="email-provider-{{ $option['type'] }}">
+                            <div class="bemail-card-top">
+                                <div class="bemail-icon">{{ substr($option['title'], 0, 1) }}</div>
+                                <div class="bemail-title">
+                                    <strong>{{ $option['title'] }}</strong>
+                                    <span>{{ rtrim($option['help'], '.') }}</span>
+                                </div>
+                                <span class="bemail-pill {{ $pillClass }}">{{ $pillText }}</span>
                             </div>
-                        @endforeach
+                            @if ($option['usable'])
+                                <p class="bemail-note">You sign in and approve access on {{ $option['title'] }}’s own page. MotionGrove never sees your {{ $option['title'] }} password.</p>
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $option['type']]) }}">
+                                    @csrf
+                                    <button type="submit" class="btn btn-primary">{{ $account !== null && $accountProvider === $option['type'] ? 'Reconnect ' . $option['title'] : $option['button'] }}</button>
+                                </form>
+                            @else
+                                <p class="bemail-note" data-role="email-provider-unavailable">{{ $option['unavailable'] }}</p>
+                                <a class="btn btn-outline-secondary" href="mailto:{{ config('mail.from.address') }}">Contact support</a>
+                            @endif
+                        </div>
+                    @endforeach
+                </div>
 
-                        <div class="col-md-4 mb-1" data-role="email-provider-imap">
-                            <h6>Other Email (IMAP / SMTP)</h6>
-                            <p class="text-muted small">
-                                Zoho Mail, Titan, Hostinger, cPanel hosting and other standard mailboxes. We always use an
-                                encrypted connection and verify the server's certificate. Gmail / Google Workspace and
-                                Outlook / Microsoft 365 do not accept ordinary passwords here, so use their buttons. Some
-                                providers need IMAP access switched on, or an app password, in their mail settings.
-                            </p>
-                            <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect_other', [$workspaceUid, $businessUid]) }}">
-                                @csrf
-                                <input class="form-control mb-1" type="email" name="email" placeholder="Email address" value="{{ old('email') }}" required>
-                                <input class="form-control mb-1" type="text" name="username" placeholder="Username (blank = the email address)" value="{{ old('username') }}" autocomplete="off">
-                                <input class="form-control mb-1" type="password" name="password" placeholder="Password or app password" autocomplete="new-password" required>
-                                <div class="d-flex gap-1 mb-1">
-                                    <input class="form-control" type="text" name="imap_host" placeholder="IMAP server (blank = detect)" value="{{ old('imap_host') }}">
-                                    <input class="form-control" style="max-width:5.5rem" type="number" name="imap_port" placeholder="993" value="{{ old('imap_port') }}">
-                                </div>
-                                <div class="d-flex gap-1 mb-1">
-                                    <input class="form-control" type="text" name="smtp_host" placeholder="SMTP server (blank = detect)" value="{{ old('smtp_host') }}">
-                                    <input class="form-control" style="max-width:5.5rem" type="number" name="smtp_port" placeholder="465" value="{{ old('smtp_port') }}">
-                                </div>
-                                <div class="form-text mb-1">IMAP port 993 (or 143) and SMTP port 465 (or 587). The connection is tested before it is saved.</div>
-                                <button type="submit" class="btn btn-primary">Connect Other Email</button>
-                            </form>
+                <div class="bemail-card" data-role="email-provider-imap">
+                    <div class="bemail-card-top">
+                        <div class="bemail-icon">@</div>
+                        <div class="bemail-title">
+                            <strong>Other email</strong>
+                            <span>Any standard mailbox, using IMAP and SMTP</span>
                         </div>
                     </div>
-                @else
-                    <p class="text-muted mb-0">You do not have permission to connect or change the email account. Ask the account owner to connect it or to grant you access.</p>
-                @endif
+                    <div class="bemail-other">
+                        <div>
+                            <div class="bemail-chips">
+                                <span>Zoho Mail</span><span>Titan</span><span>Hostinger</span><span>cPanel hosting</span><span>+ others</span>
+                            </div>
+                            <p class="bemail-note">We always use an encrypted connection and check the server’s certificate.</p>
+                            <p class="bemail-note">Using Gmail or Outlook? Use the Google or Microsoft option above — they don’t accept ordinary passwords here.</p>
+                            <p class="bemail-note">Some providers need IMAP turned on, or an app password, in their mail settings first.</p>
+                        </div>
+                        <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect_other', [$workspaceUid, $businessUid]) }}">
+                            @csrf
+                            <div class="mb-1">
+                                <label class="form-label" for="other-email">Email address</label>
+                                <input class="form-control" id="other-email" type="email" name="email" placeholder="you@yourbusiness.com" value="{{ old('email') }}" required>
+                                @error('email')<div class="bemail-field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="mb-1">
+                                <label class="form-label" for="other-username">Username (optional)</label>
+                                <input class="form-control" id="other-username" type="text" name="username" value="{{ old('username') }}" autocomplete="off">
+                                <div class="form-text">Leave blank to use the email address.</div>
+                                @error('username')<div class="bemail-field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="mb-1">
+                                <label class="form-label" for="other-password">Password or app password</label>
+                                <input class="form-control" id="other-password" type="password" name="password" autocomplete="new-password" required>
+                                @error('password')<div class="bemail-field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="mb-1">
+                                <div class="bemail-row">
+                                    <div class="flex-grow-1">
+                                        <label class="form-label" for="other-imap-host">IMAP server (incoming)</label>
+                                        <input class="form-control" id="other-imap-host" type="text" name="imap_host" placeholder="Detect automatically" value="{{ old('imap_host') }}">
+                                    </div>
+                                    <div class="bemail-port">
+                                        <label class="form-label" for="other-imap-port">Port</label>
+                                        <input class="form-control" id="other-imap-port" type="number" name="imap_port" placeholder="993" value="{{ old('imap_port') }}">
+                                    </div>
+                                </div>
+                                @error('imap_host')<div class="bemail-field-error">{{ $message }}</div>@enderror
+                                @error('imap_port')<div class="bemail-field-error">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="mb-1">
+                                <div class="bemail-row">
+                                    <div class="flex-grow-1">
+                                        <label class="form-label" for="other-smtp-host">SMTP server (outgoing)</label>
+                                        <input class="form-control" id="other-smtp-host" type="text" name="smtp_host" placeholder="Detect automatically" value="{{ old('smtp_host') }}">
+                                    </div>
+                                    <div class="bemail-port">
+                                        <label class="form-label" for="other-smtp-port">Port</label>
+                                        <input class="form-control" id="other-smtp-port" type="number" name="smtp_port" placeholder="465" value="{{ old('smtp_port') }}">
+                                    </div>
+                                </div>
+                                @error('smtp_host')<div class="bemail-field-error">{{ $message }}</div>@enderror
+                                @error('smtp_port')<div class="bemail-field-error">{{ $message }}</div>@enderror
+                                <div class="form-text">IMAP usually uses port 993 or 143. SMTP 465 or 587.</div>
+                            </div>
+                            <div class="bemail-actions">
+                                <button type="submit" class="btn btn-primary">Test and connect</button>
+                                <span class="bemail-note mb-0">We test the connection before saving it.</span>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             @else
+                <p class="text-muted mb-0">You do not have permission to connect or change the email account. Ask the account owner to connect it or to grant you access.</p>
+            @endif
+            @else
+                <div class="bemail-card mb-1">
                 <p class="mb-2">
                     Connected to <strong>{{ $connectedLabel }}</strong>
                     @if ($account->mailbox_email)
@@ -127,8 +240,8 @@
                         <button type="submit" class="btn btn-outline-danger">Disconnect</button>
                     </form>
                 @endif
+                </div>
             @endif
-        </div>
     </div>
 
     @if ($canSend)
