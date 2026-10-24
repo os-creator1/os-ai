@@ -522,10 +522,10 @@ class BusinessEmailImapTest extends TestCase
 
         $this->assertStringContainsString('email-provider-google', $html);
         $this->assertStringContainsString('email-provider-microsoft', $html);
-        $this->assertStringContainsString('Connect Other Email', $html);
+        $this->assertStringContainsString('Test and connect', $html);
         $this->assertSame(2, substr_count($html, 'data-role="email-provider-unavailable"'));
         $this->assertStringContainsString('sign-in is not set up on this platform yet', $html);
-        $this->assertStringContainsString('verify the server', $html);
+        $this->assertStringContainsString('check the server’s certificate', $html);
 
         config(['business_email.google.client_id' => 'g', 'business_email.microsoft.client_secret' => 's']);
         $this->configureEmailOAuth();
