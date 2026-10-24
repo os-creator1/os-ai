@@ -723,6 +723,12 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
+        // Checked before any wallet reservation: a campaign description is
+        // required, and the technical use-case key is never a substitute.
+        if ($submission->campaignDescription === null || trim($submission->campaignDescription) === '') {
+            throw new \RuntimeException('A 10DLC campaign description is required before submission.');
+        }
+
         $business = Business::query()->findOrFail($submission->businessId);
         $reservationId = $this->reserveFunding($business, self::FEATURE_TEN_DLC_REGISTRATION);
 
@@ -751,7 +757,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
                 'brandId' => $brandId,
                 'usecase' => $submission->useCase,
-                'description' => ($submission->campaignDescription !== null && trim($submission->campaignDescription) !== '') ? $submission->campaignDescription : $submission->useCase,
+                'description' => $submission->campaignDescription,
                 'sample1' => $submission->sampleMessage1,
                 'sample2' => $submission->sampleMessage2,
                 'messageFlow' => $submission->optInMethod,

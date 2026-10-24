@@ -49,7 +49,7 @@ final readonly class MessagingRegistrationSubmission
          * calling submit()).
          */
         public ?string $phoneNumber = null,
-        /** Customer-edited campaign description; null falls back to the use-case key. */
+        /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
         public ?string $campaignDescription = null,
     ) {
     }

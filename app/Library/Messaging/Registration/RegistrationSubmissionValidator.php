@@ -104,14 +104,56 @@ final class RegistrationSubmissionValidator
                 $issues[] = 'Your choice includes promotional messages, but neither sample message is a promotion. Add a promotional example.';
             }
 
-            if (stripos($one . ' ' . $two, 'stop') === false) {
-                $issues[] = 'Promotional sample messages need opt-out wording such as "Reply STOP to opt out".';
+            foreach ($promotional as $message) {
+                if (stripos($message, 'stop') === false) {
+                    $issues[] = 'Every promotional sample message needs opt-out wording such as "Reply STOP to opt out".';
+                }
             }
         }
+
+        $issues = array_merge($issues, $this->staleSuggestionIssues($registration));
 
         $brand = trim((string) $registration->legal_business_name);
         if ($brand !== '' && $one !== '' && $two !== '' && stripos($one . ' ' . $two, $this->firstWords($brand)) === false) {
             $issues[] = 'Include your business name in at least one sample message.';
+        }
+
+        return $issues;
+    }
+
+    /**
+     * An untouched suggestion written for a *different* messaging type is
+     * not silently accepted for the saved one.
+     *
+     * @return list<string>
+     */
+    private function staleSuggestionIssues(BusinessMessagingRegistration $registration): array
+    {
+        $own = RegistrationTemplateCatalog::choiceForUseCase($registration->use_case);
+
+        if ($own === null) {
+            return [];
+        }
+
+        $industry = $registration->business?->industry?->value;
+        $fields = ['campaign_description' => 'campaign description', 'opt_in_method' => 'message-flow description', 'sample_message_1' => 'sample message 1', 'sample_message_2' => 'sample message 2'];
+        $issues = [];
+
+        foreach (RegistrationTemplateCatalog::CHOICES as $choice => $definition) {
+            if ($choice === $own) {
+                continue;
+            }
+
+            $other = RegistrationTemplateCatalog::forUseCase($industry, $definition['use_case'], trim((string) $registration->legal_business_name), $registration->website_url);
+            $mine = RegistrationTemplateCatalog::forUseCase($industry, $registration->use_case, trim((string) $registration->legal_business_name), $registration->website_url);
+
+            foreach ($fields as $field => $label) {
+                $value = trim((string) $registration->{$field});
+
+                if ($value !== '' && $value === $other[$field] && $value !== $mine[$field]) {
+                    $issues[] = 'Your ' . $label . ' is still the suggestion for "' . $definition['label'] . '". Update it to match the messaging type you chose.';
+                }
+            }
         }
 
         return $issues;

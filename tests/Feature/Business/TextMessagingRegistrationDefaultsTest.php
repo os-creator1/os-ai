@@ -86,18 +86,29 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'business_id' => $business->id, 'number_type' => 'local', 'status' => 'not_started', 'use_case' => 'customer_care',
         ]);
 
-        $html = $this->get($this->showUrl($workspace, $business))->assertOk()->getContent();
+        $this->get($this->showUrl($workspace, $business))
+            ->assertOk()
+            ->assertViewHas('prefill', function (array $prefill): bool {
+                $v = $prefill['values'];
 
-        $this->assertStringContainsString('value="Sunset Photo Booths"', $html);
-        $this->assertStringContainsString('value="9 Sunset Ave"', $html);
-        $this->assertStringContainsString('value="hi@sunsetbooths.example"', $html);
-        $this->assertStringContainsString('Sunset Photo Booths sends customer-care texts to people who asked about photo booth rental', $html);
-        $this->assertStringContainsString('Booking confirmations', $html);
-        // Marketing copy and invented identity never appear for a care-only choice.
-        $this->assertStringNotContainsString('photo booth package promotions', $html);
-        $this->assertMatchesRegularExpression('/name="ein"[^>]*value=""/', $html);
-        $this->assertMatchesRegularExpression('/name="privacy_policy_url"[^>]*value=""/', $html);
-        $this->assertStringContainsString('needs your confirmation', $html);
+                return $v['legal_business_name'] === 'Sunset Photo Booths'
+                    && $v['address_line_1'] === '9 Sunset Ave'
+                    && $v['city'] === 'Austin'
+                    && $v['contact_email'] === 'hi@sunsetbooths.example'
+                    && $v['website_url'] === 'https://sunsetbooths.example'
+                    && str_contains($v['campaign_description'], 'Sunset Photo Booths sends customer-care texts to people who asked about photo booth rental')
+                    && str_contains($v['sample_message_1'], 'Sunset Photo Booths:')
+                    && ! str_contains($v['campaign_description'], 'promotional')
+                    && in_array('Booking confirmations', $prefill['topics'], true)
+                    && in_array('legal_business_name', $prefill['prefilled'], true);
+            })
+            ->assertSee('not verified')
+            ->assertSee('needs your confirmation');
+
+        // Legal identity is never invented.
+        $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertNull($registration->ein);
+        $this->assertNull($registration->privacy_policy_url);
     }
 
     public function test_three_plain_choices_map_to_supported_use_cases(): void
@@ -189,5 +200,28 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->post($submit)->assertSessionHas('status', 'error');
         $this->assertSame($brandId, $registration->fresh()->provider_brand_id);
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->fresh()->status);
+    }
+
+    public function test_changing_the_use_case_requires_reconfirming_consent_and_matching_copy(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        $this->post($this->updateUrl($workspace, $business), $this->payload());
+        $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertCount(count(RegistrationTemplateCatalog::CONSENT_ITEMS), $registration->consent_confirmations);
+
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['use_case' => 'marketing']))
+            ->assertSessionHas('status', 'success');
+
+        $registration = $registration->fresh();
+        $this->assertSame('marketing', $registration->use_case);
+        $this->assertSame([], $registration->consent_confirmations);
+
+        // Marketing needs a promotional sample that carries opt-out wording.
+        $this->post($this->updateUrl($workspace, $business), $this->payload([
+            'use_case' => 'marketing',
+            'sample_message_1' => 'Sunset Photo Booths: ask about our current package specials.',
+        ]));
+        $issues = app(\App\Library\Messaging\Registration\RegistrationSubmissionValidator::class)->issues($registration->fresh());
+        $this->assertContains('Every promotional sample message needs opt-out wording such as "Reply STOP to opt out".', $issues);
     }
 }

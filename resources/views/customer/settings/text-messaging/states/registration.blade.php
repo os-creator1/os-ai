@@ -138,6 +138,9 @@
                     <input type="text" class="form-control @error('legal_business_name') is-invalid @enderror" id="legal_business_name" name="legal_business_name"
                            value="{{ old('legal_business_name', $prefill['values']['legal_business_name']) }}" maxlength="191" required>
                     @error('legal_business_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    @if(in_array('legal_business_name', $prefill['prefilled'], true))
+                        <div class="text-caption text-warning" data-role="legal-name-note">Prefilled from your public business name — not verified. Replace it with the exact legal name on your registration or tax records.</div>
+                    @endif
                 </div>
 
                 <div class="mb-1">
@@ -280,7 +283,7 @@
 
                 <div class="mb-1" data-role="consent-checklist">
                     <label class="form-label">Consent checklist</label>
-                    <p class="text-caption text-muted mb-1">We have not checked your website. Check each item only once you have confirmed it there; unchecked items must be fixed before you can submit.</p>
+                    <p class="text-caption text-muted mb-1">We have not checked your website. Check each item only once you have confirmed it there; unchecked items must be fixed before you can submit. These are your own confirmations — we don't verify them, and checking them doesn't guarantee carrier approval.</p>
                     @foreach($consentItems as $key => $label)
                         <div class="form-check">
                             <input type="checkbox" class="form-check-input" id="consent_{{ $key }}" name="consent_confirmations[]" value="{{ $key }}"
@@ -353,6 +356,8 @@
                     $('[data-role="topics"]').text(next.topics.join(', '));
                     $('[data-role="suggested-topics"]').prop('hidden', false);
                 }
+                // Attestations were made for the previous messaging type.
+                if ((choice || null) !== lastChoice) { $('input[name="consent_confirmations[]"]').prop('checked', false); }
                 lastChoice = choice || null;
             });
         });

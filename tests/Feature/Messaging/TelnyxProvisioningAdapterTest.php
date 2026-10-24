@@ -145,6 +145,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             privacyPolicyUrl: 'https://harborlane.example/privacy',
             termsUrl: 'https://harborlane.example/terms',
             phoneNumber: $phoneNumber,
+            campaignDescription: 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
         );
     }
 

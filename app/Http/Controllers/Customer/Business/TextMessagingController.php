@@ -370,7 +370,16 @@ class TextMessagingController extends CustomerBaseController
 
         // An unchecked box is simply absent from the POST, so the stored
         // list is always exactly what the customer ticked on this save.
-        $validated['consent_confirmations'] = array_values($validated['consent_confirmations'] ?? []);
+        $validated['consent_confirmations'] = array_values(array_unique($validated['consent_confirmations'] ?? []));
+
+        // Consent attestations were made for the messaging type the
+        // customer had saved; a different type needs them re-confirmed.
+        $existing = $this->registrationFor($business);
+        $useCaseChanged = $existing !== null && $existing->use_case !== null && $existing->use_case !== $validated['use_case'];
+
+        if ($useCaseChanged) {
+            $validated['consent_confirmations'] = [];
+        }
         $validated['number_type'] = $numberType->value;
         $validated['country_code'] = 'US';
 
@@ -382,7 +391,9 @@ class TextMessagingController extends CustomerBaseController
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => 'Business details saved.',
+            'message' => $useCaseChanged
+                ? 'Business details saved. You changed the messaging type, so please re-confirm the consent checklist and review your sample messages.'
+                : 'Business details saved.',
         ]);
     }
 
