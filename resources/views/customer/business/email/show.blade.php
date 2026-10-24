@@ -56,6 +56,25 @@
                     <x-alert variant="warning" data-role="email-last-send-failed">The last send had a problem. If it keeps happening, reconnect your account.</x-alert>
                 @endif
 
+                @if ($inboundNeedsReauth)
+                    <x-alert variant="info" data-role="email-inbound-reauth">
+                        Receiving replies from this mailbox needs one more permission from Google.
+                        @if ($canManage)
+                            <form method="POST" class="d-inline-block ms-2"
+                                  action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $account->provider->value]) }}">
+                                @csrf
+                                <input type="hidden" name="reauthorize" value="1">
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Reauthorize to receive replies</button>
+                            </form>
+                        @else
+                            Ask the account owner to reauthorize the connection.
+                        @endif
+                    </x-alert>
+                @endif
+                @if ($account->inbound_failure === 'reauthorization_required' && $inboundReady)
+                    <x-alert variant="warning" data-role="email-inbound-failed">Google no longer allows us to read this mailbox. Reauthorize the connection to keep receiving replies.</x-alert>
+                @endif
+
                 @if ($canManage)
                     <form method="POST" action="{{ route('customer.workspaces.businesses.email.disconnect', [$workspaceUid, $businessUid]) }}">
                         @csrf
@@ -121,8 +140,13 @@
                     @foreach ($messages as $message)
                         <li class="mb-1">
                             <strong>{{ $message->subject }}</strong>
-                            to {{ $message->to_email }} —
-                            @if ($message->status->value === 'accepted')
+                            @if ($message->direction === 'inbound')
+                                from {{ $message->from_email }} — received
+                            @else
+                                to {{ $message->to_email }} —
+                            @endif
+                            @if ($message->direction === 'inbound')
+                            @elseif ($message->status->value === 'accepted')
                                 accepted by your email provider
                             @elseif ($message->status->value === 'failed')
                                 not sent: {{ $message->failure_category?->customerMessage() }}
@@ -132,6 +156,19 @@
                                 sending
                             @endif
                             <span class="text-muted">· {{ $message->created_at?->diffForHumans() }}</span>
+                            @if ($canSend && $message->status->value !== 'failed')
+                                <details class="mt-1">
+                                    <summary>Reply</summary>
+                                    <form method="POST" action="{{ route('customer.workspaces.businesses.email.reply', [$workspaceUid, $businessUid, $message->uid]) }}">
+                                        @csrf
+                                        <input type="hidden" name="send_token" value="{{ \Illuminate\Support\Str::uuid() }}">
+                                        <input class="form-control mb-1" type="text" name="subject" maxlength="200" required
+                                               value="{{ \Illuminate\Support\Str::startsWith(strtolower($message->subject), 're:') ? $message->subject : 'Re: ' . $message->subject }}">
+                                        <textarea class="form-control mb-1" name="body" rows="4" maxlength="20000" required></textarea>
+                                        <button type="submit" class="btn btn-sm btn-primary">Send reply</button>
+                                    </form>
+                                </details>
+                            @endif
                         </li>
                     @endforeach
                 </ul>

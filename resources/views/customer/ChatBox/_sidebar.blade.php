@@ -4,6 +4,12 @@
         <x-ds-icon name="x" />
     </span>
 
+    @if (request()->route('workspaceUid') && request()->route('businessUid'))
+        <div class="text-center pt-1" data-role="conversation-channels">
+            <a class="btn btn-sm btn-outline-primary" href="{{ route('customer.workspaces.businesses.conversations.email', [request()->route('workspaceUid'), request()->route('businessUid')]) }}">Email</a>
+        </div>
+    @endif
+
     <div class="text-center pt-1 pb-1">
         <div role="group" class="tab-group btn-group">
             <x-button variant="primary" size="sm" class="tab-button" data-filter="recents">{{ __('locale.labels.recents') }}</x-button>
