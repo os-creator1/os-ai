@@ -48,6 +48,8 @@ final class BusinessStatusRow
         public readonly bool $known = true,
         // True when the customer's onboarding wizard is bound to this very Business, so its steps edit THIS Business.
         public readonly bool $onboardingBound = false,
+        // Hostname of the website's Active custom domain; null = none (the site, if published, is on the MotionGrove preview).
+        public readonly ?string $websiteActiveDomain = null,
     ) {
     }
 
