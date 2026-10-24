@@ -94,8 +94,8 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
     --wd-tint: #faf6ec;
     --wd-accent-text: #6f5400;
     --wd-header-line: #ece7da;
-    --wd-announce-bg: #fac815;
-    --wd-announce-ink: #111111;
+    --wd-announce-bg: var(--wd-accent);
+    --wd-announce-ink: var(--wd-accent-ink);
 }
 
 /* Template 3 — Midnight Gold: near-black, one champagne-gold accent, pill buttons. */

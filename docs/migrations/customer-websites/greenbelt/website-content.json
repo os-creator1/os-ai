@@ -1,0 +1,1347 @@
+{
+ "note": "Content captured from the live greenbeltphotography.com (Boise ID). Binaries are NOT committed. Prices are the owner's published package/add-on prices. The testimonials are exactly as published on the owner's site (surname initials only; no source reviews were available to verify them) - confirm with the owner. BLOCKER: the site publishes NO Privacy Policy / Terms (footer links resolve to empty pages), and legal text is never written for an owner, so the site is built as an unpublished draft.",
+ "business": {
+  "id": 6,
+  "workspace_id": 6,
+  "name": "Greenbelt Photography",
+  "public_name": "Greenbelt Photo Booth",
+  "source_site": "https://greenbeltphotography.com/"
+ },
+ "template_key": "photo_booth_modern",
+ "brand_color": "#F4A28F",
+ "secondary_color": "#2A1D45",
+ "blockers": [
+  "The owner publishes no Privacy Policy / Terms & Conditions / Terms of Service on greenbeltphotography.com (the footer links resolve to empty pages). Supply the owner's own legal text or URLs, then re-run to publish."
+ ],
+ "legal_urls": {},
+ "contact": {
+  "phone": "(208) 703-1976",
+  "email": "kevin@greenbeltphotography.com"
+ },
+ "form": {
+  "business_label": "Greenbelt Photography",
+  "location_label": "Where is your event (city or venue)?",
+  "event_types": [
+   "Wedding",
+   "Corporate event",
+   "Party",
+   "Birthday",
+   "School event",
+   "Other"
+  ]
+ },
+ "services": [
+  {
+   "name": "Photo booth rental",
+   "description": "Luxury photo booth rental for weddings, corporate events, birthday parties, school dances and private celebrations in Boise and the Treasure Valley."
+  }
+ ],
+ "catalog": [
+  {
+   "key": "greenbelt_bronze",
+   "type": "package",
+   "name": "Bronze package",
+   "description": "2 full hours • 2 2x6 strips per session • Unlimited photo strips • Personalized strips and home screen",
+   "price_minor": 37500
+  },
+  {
+   "key": "greenbelt_silver",
+   "type": "package",
+   "name": "Silver package",
+   "description": "3 full hours • Unlimited photo strips • Professional booth attendant",
+   "price_minor": 53500
+  },
+  {
+   "key": "greenbelt_gold",
+   "type": "package",
+   "name": "Gold package",
+   "description": "4 full hours • Up to 4 photos per strip • Professional attendant",
+   "price_minor": 67500
+  },
+  {
+   "key": "greenbelt_platinum",
+   "type": "package",
+   "name": "Platinum package",
+   "description": "5 full hours • Unlimited sessions • Online gallery for free download • Prop box • Professional attendant",
+   "price_minor": 87500
+  }
+ ],
+ "assets": {
+  "logo": {
+   "sha256": "c1a200f04f0c8fefdcfd4066ae8df098d600571c389b52346cb77ffb64c42750",
+   "file": "greenbelt_photography_Idaho01-1920w.png",
+   "alt": "Greenbelt Photography & photobooths logo",
+   "purpose": "hero",
+   "title": "Logo",
+   "category": "Events",
+   "source_url": "https://lirp.cdn-website.com/a62188d5/dms3rep/multi/opt/greenbelt+photography+Idaho01-1920w.png",
+   "bytes": 50384
+  },
+  "hero": {
+   "sha256": "7292daf48c5907135a3da85a23dedf38ef1be72677480118e29d2a8afd9609a6",
+   "file": "059dae46-c0a8-4092-9c78-9df785ae5204.jpg",
+   "alt": "Guests with fun props at a Greenbelt Photo Booth",
+   "purpose": "hero",
+   "title": "Hero",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/059dae46-c0a8-4092-9c78-9df785ae5204.jpg",
+   "bytes": 4103632
+  },
+  "event_1": {
+   "sha256": "bea5619b98493a7b6f35f1d5ee08435b3c75321628606a9b7cb93a976bbda982",
+   "file": "67ba0ffb-8f83-4b9f-adc5-75203671b436.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 1",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/67ba0ffb-8f83-4b9f-adc5-75203671b436.jpg",
+   "bytes": 3884527
+  },
+  "event_2": {
+   "sha256": "427c8a091d0f8f33de0b680d8e00c980464d33c6c8573a8521fabd71b70bcf1a",
+   "file": "044d2be3-c09e-422d-b5f7-ef509f1ef928.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 2",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/044d2be3-c09e-422d-b5f7-ef509f1ef928.jpg",
+   "bytes": 4544994
+  },
+  "event_3": {
+   "sha256": "19d26cab5f48dbbd24fca7d7952388f1e3fa0b3f273a054a2631b8215cdaeaa5",
+   "file": "24a713ea-14fa-4384-a4af-a3dcbaa270a8.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 3",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/24a713ea-14fa-4384-a4af-a3dcbaa270a8.jpg",
+   "bytes": 4967342
+  },
+  "event_4": {
+   "sha256": "ba80560ea09695cf4d741327162d99b74505dc3e460bb4a7da03a2a5dc70072c",
+   "file": "525ead84-1865-40d6-b72a-724f4bbac98e.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 4",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/525ead84-1865-40d6-b72a-724f4bbac98e.jpg",
+   "bytes": 1823430
+  },
+  "event_5": {
+   "sha256": "99d0f0d0f88a98c4f6cdce74cacb549b0bae97e644dd0726856ed5460cbebd6f",
+   "file": "e14f7221-17ff-494c-b164-f43568b8fcd0.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 5",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/e14f7221-17ff-494c-b164-f43568b8fcd0.jpg",
+   "bytes": 4282080
+  },
+  "event_6": {
+   "sha256": "c0b07a88f6e4faf409806b12d786f271e2231211e162a65ed7f53eccfa18c485",
+   "file": "a610ef0b-75ad-4e08-a896-023b0ee50d8b.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 6",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/a610ef0b-75ad-4e08-a896-023b0ee50d8b.jpg",
+   "bytes": 2869114
+  },
+  "event_7": {
+   "sha256": "0878c57c9a8e4e713d66aa2bf4886b9cd94a7f4f5d92efa35beddf8304680aca",
+   "file": "fb40b073-4b32-4ce6-b7b7-9a5a458ead1a.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 7",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/fb40b073-4b32-4ce6-b7b7-9a5a458ead1a.jpg",
+   "bytes": 4473000
+  },
+  "event_8": {
+   "sha256": "6b8cc101cb89a914a2e1ed97642afa6910e523eb9fbab359750cc3ee02ca2020",
+   "file": "d59dbf27-249c-4665-a831-396c58efa6f5.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 8",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/d59dbf27-249c-4665-a831-396c58efa6f5.jpg",
+   "bytes": 5116990
+  },
+  "event_9": {
+   "sha256": "53da6769ef0730ab8b1239b2343b15a77714261e58d25fae1b876481414aa727",
+   "file": "a91b701f-3243-4617-b734-daf92d00a364.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 9",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/a91b701f-3243-4617-b734-daf92d00a364.jpg",
+   "bytes": 2652317
+  },
+  "event_10": {
+   "sha256": "4d5df5c50bd8a85887ebbeea9061a6fcedf80514129a38380b2c45a21f608b39",
+   "file": "a1b89344-b285-416f-97d4-db95dff4138d.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 10",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/a1b89344-b285-416f-97d4-db95dff4138d.jpg",
+   "bytes": 3221850
+  },
+  "event_11": {
+   "sha256": "bdbda62daf33fbdc969a598aa5752e9c548a67340d1ce46735797aecd35fbb23",
+   "file": "3d652652-f937-44bc-b81e-6ce744cc5ac4.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 11",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/3d652652-f937-44bc-b81e-6ce744cc5ac4.jpg",
+   "bytes": 5008351
+  },
+  "event_12": {
+   "sha256": "60b80c6fdfaec25bba77bfb3fc37406e518b167e86cbb2c31ad76fc7afb726a3",
+   "file": "523c8afb-3c2e-4098-b0cd-29ff6949fab5.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 12",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/523c8afb-3c2e-4098-b0cd-29ff6949fab5.jpg",
+   "bytes": 4807825
+  },
+  "event_13": {
+   "sha256": "3f5cc75f21511372a56cadba8a7776956026c178cb7dec7eb1014ee7d35367d0",
+   "file": "100e19a4-57c8-435f-9cb0-483fa0e49d96.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 13",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/100e19a4-57c8-435f-9cb0-483fa0e49d96.jpg",
+   "bytes": 5068470
+  },
+  "event_14": {
+   "sha256": "5ea8a23fa3b3442170218c735b4db435d989e0b4e696d8478b09603167ef713f",
+   "file": "5f30933c-697c-494a-a861-e43a3a5984be.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 14",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/5f30933c-697c-494a-a861-e43a3a5984be.jpg",
+   "bytes": 2387484
+  },
+  "event_15": {
+   "sha256": "cd8d392ca17dc9b5133379ebebba75f0f117c51d4ac31c9fc6ce2f4f67c68596",
+   "file": "22db10da-de96-4427-b2dd-feeb7848db13.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 15",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/22db10da-de96-4427-b2dd-feeb7848db13.jpg",
+   "bytes": 1903679
+  },
+  "event_16": {
+   "sha256": "e1bbb64df37e2b4c07e167b50d4da245b87317e73303e7e32fc98519f993aada",
+   "file": "6cbb5643-987d-45c6-97cf-d97fb5b5396d.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 16",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/6cbb5643-987d-45c6-97cf-d97fb5b5396d.jpg",
+   "bytes": 1781140
+  },
+  "event_17": {
+   "sha256": "b711686b2ea286c1a207d7474f29fe828ce5fd6e011a179415a1f9f94ead3aef",
+   "file": "6e6605cf-fb79-44df-8543-0f4b3de2e225.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 17",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/6e6605cf-fb79-44df-8543-0f4b3de2e225.jpg",
+   "bytes": 2026464
+  },
+  "event_18": {
+   "sha256": "fa7959fc96cb0910bcc337c85b7e642ecb6d17da6325c34a28de22bb31a95991",
+   "file": "ad9a9f8d-f48b-41c7-a0aa-045f69abaa3a.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 18",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/ad9a9f8d-f48b-41c7-a0aa-045f69abaa3a.jpg",
+   "bytes": 4620111
+  },
+  "event_19": {
+   "sha256": "4d44529ddad9d8fc7a189eb545d720ba570ce9ab25f412f903ab1f44b895e16e",
+   "file": "f99c2c08-c4f7-4f0c-b117-bc17d5b6eb70.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 19",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/f99c2c08-c4f7-4f0c-b117-bc17d5b6eb70.jpg",
+   "bytes": 3324539
+  },
+  "event_20": {
+   "sha256": "b6cc8fad85c1a88e77d7c054bbf748b0eef9fd60710cba8f9dd39a23b14c1d35",
+   "file": "a79d2bc6-b42c-4852-8e2f-dc9dabba3195.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 20",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/a79d2bc6-b42c-4852-8e2f-dc9dabba3195.jpg",
+   "bytes": 2761565
+  },
+  "event_21": {
+   "sha256": "8268570ad4bb4e8200a2f7d5ac5d16563cd5deef185296d5f18bee54affbfb56",
+   "file": "297c0517-dfbb-4daf-ab39-cbb4a661f809.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 21",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/297c0517-dfbb-4daf-ab39-cbb4a661f809.jpg",
+   "bytes": 4110804
+  },
+  "event_22": {
+   "sha256": "1857a4237c56076f9200cab53e3b5e68a6bdbee2cb5899cefdc98ef89d451b4f",
+   "file": "28e90607-1195-40b1-87c9-8fb452acafe7.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 22",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/28e90607-1195-40b1-87c9-8fb452acafe7.jpg",
+   "bytes": 3976713
+  },
+  "event_23": {
+   "sha256": "315aedd8454b1a7ed73bfd106bb265137d0382cf59fcce250c0ff1eb7a84d08d",
+   "file": "f9cdab66-00dd-4ab8-bd2a-357584ffda52.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 23",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/f9cdab66-00dd-4ab8-bd2a-357584ffda52.jpg",
+   "bytes": 1987595
+  },
+  "event_24": {
+   "sha256": "6c2ce9583b6cf9347d2f731ac5442f0fcef0989c07f3955ef446f32cb555121c",
+   "file": "4ba7105f-66bd-4a3c-b7d5-8e429e041552.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 24",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/4ba7105f-66bd-4a3c-b7d5-8e429e041552.jpg",
+   "bytes": 2837757
+  },
+  "event_25": {
+   "sha256": "60c3f9c885f0f6f4248a99ca9e5c1495dcb4b5c360a78f46fb5f5641bfabb308",
+   "file": "ed01c0b4-3154-41e4-baa6-5757c30d76fd.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 25",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/ed01c0b4-3154-41e4-baa6-5757c30d76fd.jpg",
+   "bytes": 4858108
+  },
+  "event_26": {
+   "sha256": "bb66b196ba1839c22bff5b779dd76e5ce4d10b99da673de49d0621791e7469d1",
+   "file": "3087ad51-44d3-4a86-9398-b5429046297e.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 26",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/3087ad51-44d3-4a86-9398-b5429046297e.jpg",
+   "bytes": 2890148
+  },
+  "event_27": {
+   "sha256": "7292daf48c5907135a3da85a23dedf38ef1be72677480118e29d2a8afd9609a6",
+   "file": "059dae46-c0a8-4092-9c78-9df785ae5204.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 27",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/059dae46-c0a8-4092-9c78-9df785ae5204.jpg",
+   "bytes": 4103632
+  },
+  "event_28": {
+   "sha256": "82dd2be32dff8ba3256fcc0935d94c7a70a1997604be1a751c253caa0b115c40",
+   "file": "f56277d2-c20b-4dd6-b381-7bf01bef8c7a.jpg",
+   "alt": "Guests posing with props at a Greenbelt Photo Booth",
+   "purpose": "gallery",
+   "title": "Event 28",
+   "category": "Events",
+   "source_url": "https://vibe.filesafe.space/1792849490764142666/attachments/f56277d2-c20b-4dd6-b381-7bf01bef8c7a.jpg",
+   "bytes": 4682609
+  }
+ },
+ "pages": {
+  "": {
+   "title": "Home",
+   "seo_title": "Greenbelt Photo Booth | Boise's Premier Photo Booth Rental",
+   "meta_description": "Top-rated photo booth rentals in Boise, Meridian & Eagle for weddings, corporate events, and parties. Book your unforgettable event experience today!",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Luxury photo booth rentals in Boise",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Luxury rentals for weddings, corporate events, birthdays, and private celebrations throughout Boise, Meridian, Eagle, and surrounding areas.",
+      "background_image": "@asset:hero",
+      "secondary_cta": {
+       "label": "See packages",
+       "url": "/packages"
+      }
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Looking for a luxury rental in Boise?",
+      "body": "Our modern photo booth experiences are designed for weddings, corporate events, birthday parties, school events, galas, and private celebrations throughout the Treasure Valley. From interactive digital experiences to studio-quality photography and instant sharing, our rentals create unforgettable moments your guests will love.\n\nPopular dates are now booking for 2026 & 2027!",
+      "image": "@asset:event_1",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Rentals for every event",
+      "items": [
+       {
+        "name": "Weddings",
+        "description": "Elegant backdrops, a guestbook keepsake and unlimited prints for your wedding.",
+        "image": "@asset:event_8"
+       },
+       {
+        "name": "Corporate",
+        "description": "Branded booths, lead capture and instant social sharing.",
+        "image": "@asset:event_5"
+       },
+       {
+        "name": "Party",
+        "description": "Birthdays, anniversaries, graduations and holiday parties.",
+        "image": "@asset:event_19"
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Luxury in Boise",
+      "body": "Our luxury rentals in Boise are designed to elevate weddings, corporate events, birthday parties, school dances, galas, and upscale celebrations throughout the Treasure Valley. Whether you're planning a modern celebration, elegant wedding, or high-energy corporate event, our booths combine premium technology, studio-quality imagery, instant sharing, stylish backdrops, and interactive entertainment your guests will remember long after the event ends.\n\nTrade shows - Brand activations - Corporate events - Virtual experiences - Weddings & engagements - Holiday parties - Birthday parties - Baby showers - Social gatherings"
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "Google reviews",
+      "items": [
+       {
+        "quote": "Greenbelt Photo Booths brought the perfect mix of fun and style to our event! Their booth and fun props were a huge hit - our guests couldn't stop talking about it.",
+        "author_name": "Emma S."
+       },
+       {
+        "quote": "Greenbelt Photo Booths captured unforgettable memories at our wedding, with beautiful photos we’ll cherish forever!",
+        "author_name": "Mike & Laura H."
+       },
+       {
+        "quote": "Greenbelt Photo Booths took our corporate event to the next level! The setup was effortless, and our guests had a blast snapping pics and sharing them on social media.",
+        "author_name": "Brandon D."
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Our packages are your party’s secret weapon",
+      "items": [
+       {
+        "name": "Bronze package",
+        "description": "2 full hours of fun • 2 2x6 strips per session • 4 photos per session • Unlimited photo strips • Personalized strips and home screen",
+        "price_label": "$375",
+        "image": "@asset:event_7"
+       },
+       {
+        "name": "Silver package",
+        "description": "3 full hours of fun • 2 2x6 strips per session • 4 photos per strip • Unlimited photo strips • Personalized strips and ready screen • Professional booth attendant",
+        "price_label": "$535",
+        "image": "@asset:event_3"
+       },
+       {
+        "name": "Gold package (popular)",
+        "description": "4 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per photo strip • Personalized photo strip and home screen • Professional attendant",
+        "price_label": "$675",
+        "image": "@asset:event_9"
+       },
+       {
+        "name": "Platinum package",
+        "description": "5 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per strip. Unlimited sessions. • Images and strips uploaded to a photo gallery (after the event) for free download and copyright free • Personalized photo strips and home screen • Use of prop box • Professional attendant",
+        "price_label": "$875",
+        "image": "@asset:event_10"
+       }
+      ]
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Turn your rental into a marketing machine",
+      "body": "Our branded rentals in Boise help businesses create interactive corporate activations, generate leads, increase social sharing, and leave lasting impressions at conferences, trade shows, and company events.\n\nGrow your list: capture emails & phone numbers. Capture new leads: everything is branded with your logo & shareable to social media. Get your brand out there in a big, fun way.\n\nLong term & short term rentals available.",
+      "image": "@asset:event_12",
+      "image_position": "left"
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "Boise photo booth event gallery",
+      "items": [
+       {
+        "image": "@asset:event_1"
+       },
+       {
+        "image": "@asset:event_2"
+       },
+       {
+        "image": "@asset:event_3"
+       },
+       {
+        "image": "@asset:event_4"
+       },
+       {
+        "image": "@asset:event_5"
+       },
+       {
+        "image": "@asset:event_6"
+       },
+       {
+        "image": "@asset:event_7"
+       },
+       {
+        "image": "@asset:event_8"
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Meet the team behind the rentals",
+      "body": "Hey, I'm Kevin! We specialize in luxury rentals for weddings, corporate events, birthday parties, school dances, and private celebrations throughout Boise and surrounding areas.\n\nOur team focuses on creating unforgettable guest experiences with premium lighting, instant sharing, studio-quality photography, and fully customized event details.\n\nProfessional setup & onsite support - Premium backdrops & custom overlays - Instant photo, GIF & video sharing"
+     }
+    },
+    {
+     "type": "faq",
+     "data": {
+      "heading": "FAQs",
+      "items": [
+       {
+        "question": "Do you travel outside Boise?",
+        "answer": "Yes! We regularly provide luxury rentals throughout Boise, Meridian, Eagle, Nampa, Caldwell, and surrounding areas for weddings, corporate events, parties, and private celebrations."
+       },
+       {
+        "question": "What types of events do you serve?",
+        "answer": "We provide luxury rentals for weddings, corporate events, birthday parties, school dances, brand activations, galas, holiday parties, baby showers, and private celebrations throughout the Treasure Valley."
+       },
+       {
+        "question": "How far in advance should I book my rental?",
+        "answer": "We recommend booking your rental as early as possible, especially for weddings and peak event weekends throughout Boise. Popular dates can book several months in advance."
+       },
+       {
+        "question": "Can you match my event theme?",
+        "answer": "Absolutely! We offer custom overlays, premium backdrops, glam filters, neon signs, hedge walls, shimmer walls, and personalized design options to perfectly match your event aesthetic and branding."
+       },
+       {
+        "question": "Do you set up and operate the booth during the event?",
+        "answer": "Yes! Our team handles delivery, setup, operation, and breakdown so you can enjoy a seamless, stress-free experience from start to finish."
+       },
+       {
+        "question": "Dimensions",
+        "answer": "We need at least 10 by 10 feet of space, access to a single power outlet, and level ground. Please note that our backdrop stands are 8 feet tall."
+       },
+       {
+        "question": "Can guests instantly share their photos?",
+        "answer": "Yes! Most of our experiences include instant text, email, AirDrop, or QR code sharing so guests can post and share their photos immediately."
+       },
+       {
+        "question": "Do you offer custom branding for corporate events?",
+        "answer": "Yes! We offer fully branded experiences including custom overlays, branded start screens, lead capture, logo placement, and social sharing features perfect for corporate activations and marketing events."
+       },
+       {
+        "question": "Why choose your rentals?",
+        "answer": "Our luxury experiences combine premium technology, studio-quality imagery, modern styling, and interactive entertainment to create unforgettable moments for guests throughout Boise."
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Photo booth rentals throughout Boise",
+      "body": "We proudly provide luxury rentals throughout Boise, Meridian, Eagle, Nampa, Caldwell, Kuna, and surrounding areas for weddings, corporate events, birthday parties, school dances, and private celebrations."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Venues we worked with in Boise",
+      "body": "Still Water Hollow - a beautiful indoor and outdoor wedding venue nestled in the Idaho countryside.\n\nStone Crossing - a private ten-acre estate for weddings and celebrations beneath the trees and open Idaho sky.\n\nCottage at Riverbend - a stunning and intimate Spanish-style cottage offering a beautiful riverside setting.\n\nChateau des Fleurs - elegant European-inspired estate with beautiful gardens and luxurious ballrooms.\n\nBoise Depot - historic Spanish-style architecture with stunning panoramic views of the city skyline."
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "packages": {
+   "title": "Packages",
+   "seo_title": "Photo Booth Packages & Pricing Boise | Greenbelt Photo Booth",
+   "meta_description": "Bronze, Silver, Gold and Platinum photo booth packages in Boise with unlimited strips, personalized prints and professional attendants. Add-ons available.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Packages & add-ons",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Our luxury rentals include studio-quality lighting, instant sharing, custom overlays, stylish backdrops and interactive experiences.",
+      "background_image": "@asset:event_7"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Packages",
+      "items": [
+       {
+        "name": "Bronze package",
+        "description": "2 full hours of fun • 2 2x6 strips per session • 4 photos per session • Unlimited photo strips • Personalized strips and home screen",
+        "price_label": "$375",
+        "image": "@asset:event_7"
+       },
+       {
+        "name": "Silver package",
+        "description": "3 full hours of fun • 2 2x6 strips per session • 4 photos per strip • Unlimited photo strips • Personalized strips and ready screen • Professional booth attendant",
+        "price_label": "$535",
+        "image": "@asset:event_3"
+       },
+       {
+        "name": "Gold package (popular)",
+        "description": "4 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per photo strip • Personalized photo strip and home screen • Professional attendant",
+        "price_label": "$675",
+        "image": "@asset:event_9"
+       },
+       {
+        "name": "Platinum package",
+        "description": "5 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per strip. Unlimited sessions. • Images and strips uploaded to a photo gallery (after the event) for free download and copyright free • Personalized photo strips and home screen • Use of prop box • Professional attendant",
+        "price_label": "$875",
+        "image": "@asset:event_10"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium add-ons in Boise",
+      "items": [
+       {
+        "name": "Extra time",
+        "description": "$100 per hour",
+        "price_label": "$100 per hour"
+       },
+       {
+        "name": "Idle time",
+        "description": "$25 per hour",
+        "price_label": "$25 per hour"
+       },
+       {
+        "name": "4x6 prints",
+        "description": "$50",
+        "price_label": "$50"
+       },
+       {
+        "name": "5x7 prints",
+        "description": "$100",
+        "price_label": "$100"
+       },
+       {
+        "name": "Custom USB",
+        "description": "$75",
+        "price_label": "$75"
+       },
+       {
+        "name": "Keepsake album",
+        "description": "$100",
+        "price_label": "$100"
+       },
+       {
+        "name": "2x6 bookmark sleeves",
+        "description": "100 for $50",
+        "price_label": "100 for $50"
+       },
+       {
+        "name": "2x6 acrylic \"L\" frames",
+        "description": "50 for $100",
+        "price_label": "50 for $100"
+       },
+       {
+        "name": "2x6 acrylic wave frames",
+        "description": "50 for $125",
+        "price_label": "50 for $125"
+       },
+       {
+        "name": "Prop box",
+        "description": "$60 (refund of $40 if most props are returned)",
+        "price_label": "$60"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "gallery": {
+   "title": "Gallery",
+   "seo_title": "Boise Photo Booth Event Gallery | Greenbelt Photo Booth",
+   "meta_description": "Unforgettable moments captured across Boise, Meridian, Eagle, and the Treasure Valley by Greenbelt Photo Booth.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Boise photo booth event gallery",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Unforgettable moments we've captured across Boise, Meridian, Eagle, and the Treasure Valley.",
+      "background_image": "@asset:event_2"
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "Favorite events",
+      "items": [
+       {
+        "image": "@asset:event_1"
+       },
+       {
+        "image": "@asset:event_2"
+       },
+       {
+        "image": "@asset:event_3"
+       },
+       {
+        "image": "@asset:event_4"
+       },
+       {
+        "image": "@asset:event_5"
+       },
+       {
+        "image": "@asset:event_6"
+       },
+       {
+        "image": "@asset:event_7"
+       },
+       {
+        "image": "@asset:event_8"
+       },
+       {
+        "image": "@asset:event_9"
+       },
+       {
+        "image": "@asset:event_10"
+       },
+       {
+        "image": "@asset:event_11"
+       },
+       {
+        "image": "@asset:event_12"
+       },
+       {
+        "image": "@asset:event_13"
+       },
+       {
+        "image": "@asset:event_14"
+       },
+       {
+        "image": "@asset:event_15"
+       },
+       {
+        "image": "@asset:event_16"
+       },
+       {
+        "image": "@asset:event_17"
+       },
+       {
+        "image": "@asset:event_18"
+       },
+       {
+        "image": "@asset:event_19"
+       },
+       {
+        "image": "@asset:event_20"
+       },
+       {
+        "image": "@asset:event_21"
+       },
+       {
+        "image": "@asset:event_22"
+       },
+       {
+        "image": "@asset:event_23"
+       },
+       {
+        "image": "@asset:event_24"
+       },
+       {
+        "image": "@asset:event_25"
+       },
+       {
+        "image": "@asset:event_26"
+       },
+       {
+        "image": "@asset:event_27"
+       },
+       {
+        "image": "@asset:event_28"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "wedding-photo-booth-rental": {
+   "title": "Wedding Photo Booth Rental",
+   "seo_title": "Wedding Photo Booth Rental Boise | Greenbelt Photo Booth",
+   "meta_description": "Make your special day unforgettable with a luxury photo booth experience. Studio-quality lighting, elegant backdrops, and instant prints your guests will c",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Wedding photo booth rental",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Make your special day unforgettable with a luxury photo booth experience. Studio-quality lighting, elegant backdrops, and instant prints your guests will cherish forever.",
+      "background_image": "@asset:event_7"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Why choose us for your wedding",
+      "items": [
+       {
+        "name": "Elegant backdrops",
+        "description": "Choose from our premium selection of backdrops to perfectly match your wedding aesthetic.",
+        "image": "@asset:event_8"
+       },
+       {
+        "name": "Guestbook memory",
+        "description": "Guests can leave a copy of their photo strip in a beautiful keepsake album with a personal note.",
+        "image": "@asset:event_6"
+       },
+       {
+        "name": "Instant keepsakes",
+        "description": "High-quality, unlimited prints so everyone goes home with a memory of your perfect day.",
+        "image": "@asset:event_7"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Packages",
+      "items": [
+       {
+        "name": "Bronze package",
+        "description": "2 full hours of fun • 2 2x6 strips per session • 4 photos per session • Unlimited photo strips • Personalized strips and home screen",
+        "price_label": "$375",
+        "image": "@asset:event_7"
+       },
+       {
+        "name": "Silver package",
+        "description": "3 full hours of fun • 2 2x6 strips per session • 4 photos per strip • Unlimited photo strips • Personalized strips and ready screen • Professional booth attendant",
+        "price_label": "$535",
+        "image": "@asset:event_3"
+       },
+       {
+        "name": "Gold package (popular)",
+        "description": "4 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per photo strip • Personalized photo strip and home screen • Professional attendant",
+        "price_label": "$675",
+        "image": "@asset:event_9"
+       },
+       {
+        "name": "Platinum package",
+        "description": "5 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per strip. Unlimited sessions. • Images and strips uploaded to a photo gallery (after the event) for free download and copyright free • Personalized photo strips and home screen • Use of prop box • Professional attendant",
+        "price_label": "$875",
+        "image": "@asset:event_10"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "corporate-photo-booth-rental": {
+   "title": "Corporate Photo Booth Rental",
+   "seo_title": "Corporate Photo Booth Rental Boise | Greenbelt Photo Booth",
+   "meta_description": "Elevate your next corporate event, trade show, or brand activation with our premium photo booth experiences. Capture leads, boost engagement, and create la",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Corporate photo booth rental",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Elevate your next corporate event, trade show, or brand activation with our premium photo booth experiences. Capture leads, boost engagement, and create lasting brand impressions.",
+      "background_image": "@asset:event_5"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Why choose us for your corporate event",
+      "items": [
+       {
+        "name": "Brand activations",
+        "description": "Fully custom branded photo booths, backdrops, and digital overlays to make your brand stand out.",
+        "image": "@asset:event_12"
+       },
+       {
+        "name": "Lead generation",
+        "description": "Capture emails and phone numbers seamlessly while guests interact with the booth.",
+        "image": "@asset:event_5"
+       },
+       {
+        "name": "Social sharing",
+        "description": "Instant digital sharing encourages attendees to post your branded content online.",
+        "image": "@asset:event_25"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Packages",
+      "items": [
+       {
+        "name": "Bronze package",
+        "description": "2 full hours of fun • 2 2x6 strips per session • 4 photos per session • Unlimited photo strips • Personalized strips and home screen",
+        "price_label": "$375",
+        "image": "@asset:event_7"
+       },
+       {
+        "name": "Silver package",
+        "description": "3 full hours of fun • 2 2x6 strips per session • 4 photos per strip • Unlimited photo strips • Personalized strips and ready screen • Professional booth attendant",
+        "price_label": "$535",
+        "image": "@asset:event_3"
+       },
+       {
+        "name": "Gold package (popular)",
+        "description": "4 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per photo strip • Personalized photo strip and home screen • Professional attendant",
+        "price_label": "$675",
+        "image": "@asset:event_9"
+       },
+       {
+        "name": "Platinum package",
+        "description": "5 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per strip. Unlimited sessions. • Images and strips uploaded to a photo gallery (after the event) for free download and copyright free • Personalized photo strips and home screen • Use of prop box • Professional attendant",
+        "price_label": "$875",
+        "image": "@asset:event_10"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "party-photo-booth-rental": {
+   "title": "Party Photo Booth Rental",
+   "seo_title": "Party Photo Booth Rental Boise | Greenbelt Photo Booth",
+   "meta_description": "Birthdays, anniversaries, graduations, and holiday parties! Bring the fun and keep your guests entertained all night long with our interactive photo booths",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Party photo booth rental",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Birthdays, anniversaries, graduations, and holiday parties! Bring the fun and keep your guests entertained all night long with our interactive photo booths.",
+      "background_image": "@asset:event_19"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Why choose us for your party",
+      "items": [
+       {
+        "name": "Fun props",
+        "description": "A huge selection of high-quality, fun props to get everyone laughing and posing.",
+        "image": "@asset:event_10"
+       },
+       {
+        "name": "Unlimited sessions",
+        "description": "Your guests can visit the booth as many times as they want during your rental period.",
+        "image": "@asset:event_19"
+       },
+       {
+        "name": "Digital sharing",
+        "description": "Text or email photos instantly so the fun can be shared on social media right away.",
+        "image": "@asset:event_20"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Packages",
+      "items": [
+       {
+        "name": "Bronze package",
+        "description": "2 full hours of fun • 2 2x6 strips per session • 4 photos per session • Unlimited photo strips • Personalized strips and home screen",
+        "price_label": "$375",
+        "image": "@asset:event_7"
+       },
+       {
+        "name": "Silver package",
+        "description": "3 full hours of fun • 2 2x6 strips per session • 4 photos per strip • Unlimited photo strips • Personalized strips and ready screen • Professional booth attendant",
+        "price_label": "$535",
+        "image": "@asset:event_3"
+       },
+       {
+        "name": "Gold package (popular)",
+        "description": "4 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per photo strip • Personalized photo strip and home screen • Professional attendant",
+        "price_label": "$675",
+        "image": "@asset:event_9"
+       },
+       {
+        "name": "Platinum package",
+        "description": "5 full hours of fun • 2 2x6 photo strips per session • Up to 4 photos per strip. Unlimited sessions. • Images and strips uploaded to a photo gallery (after the event) for free download and copyright free • Personalized photo strips and home screen • Use of prop box • Professional attendant",
+        "price_label": "$875",
+        "image": "@asset:event_10"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "service-areas": {
+   "title": "Service Areas",
+   "seo_title": "Photo Booth Rental Service Areas | Boise, Meridian, Eagle, Nampa, Caldwell, Kuna",
+   "meta_description": "Greenbelt Photo Booth serves Boise, Meridian, Eagle, Nampa, Caldwell, Kuna and the Treasure Valley.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rentals throughout Boise",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Serving Boise & surrounding areas.",
+      "background_image": "@asset:event_2"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Areas we serve",
+      "body": "We proudly provide luxury rentals throughout Boise, Meridian, Eagle, Nampa, Caldwell, Kuna, and surrounding areas for weddings, corporate events, birthday parties, school dances, and private celebrations."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Venues we worked with in Boise",
+      "body": "Still Water Hollow - a beautiful indoor and outdoor wedding venue nestled in the Idaho countryside.\n\nStone Crossing - a private ten-acre estate for weddings and celebrations beneath the trees and open Idaho sky.\n\nCottage at Riverbend - a stunning and intimate Spanish-style cottage offering a beautiful riverside setting.\n\nChateau des Fleurs - elegant European-inspired estate with beautiful gardens and luxurious ballrooms.\n\nBoise Depot - historic Spanish-style architecture with stunning panoramic views of the city skyline."
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "faq": {
+   "title": "FAQ",
+   "seo_title": "Photo Booth Rental FAQs | Greenbelt Photo Booth",
+   "meta_description": "Answers about travel, booking, themes, setup, space and branding for Greenbelt Photo Booth rentals in Boise.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Frequently asked questions",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "faq",
+     "data": {
+      "heading": "FAQs",
+      "items": [
+       {
+        "question": "Do you travel outside Boise?",
+        "answer": "Yes! We regularly provide luxury rentals throughout Boise, Meridian, Eagle, Nampa, Caldwell, and surrounding areas for weddings, corporate events, parties, and private celebrations."
+       },
+       {
+        "question": "What types of events do you serve?",
+        "answer": "We provide luxury rentals for weddings, corporate events, birthday parties, school dances, brand activations, galas, holiday parties, baby showers, and private celebrations throughout the Treasure Valley."
+       },
+       {
+        "question": "How far in advance should I book my rental?",
+        "answer": "We recommend booking your rental as early as possible, especially for weddings and peak event weekends throughout Boise. Popular dates can book several months in advance."
+       },
+       {
+        "question": "Can you match my event theme?",
+        "answer": "Absolutely! We offer custom overlays, premium backdrops, glam filters, neon signs, hedge walls, shimmer walls, and personalized design options to perfectly match your event aesthetic and branding."
+       },
+       {
+        "question": "Do you set up and operate the booth during the event?",
+        "answer": "Yes! Our team handles delivery, setup, operation, and breakdown so you can enjoy a seamless, stress-free experience from start to finish."
+       },
+       {
+        "question": "Dimensions",
+        "answer": "We need at least 10 by 10 feet of space, access to a single power outlet, and level ground. Please note that our backdrop stands are 8 feet tall."
+       },
+       {
+        "question": "Can guests instantly share their photos?",
+        "answer": "Yes! Most of our experiences include instant text, email, AirDrop, or QR code sharing so guests can post and share their photos immediately."
+       },
+       {
+        "question": "Do you offer custom branding for corporate events?",
+        "answer": "Yes! We offer fully branded experiences including custom overlays, branded start screens, lead capture, logo placement, and social sharing features perfect for corporate activations and marketing events."
+       },
+       {
+        "question": "Why choose your rentals?",
+        "answer": "Our luxury experiences combine premium technology, studio-quality imagery, modern styling, and interactive entertainment to create unforgettable moments for guests throughout Boise."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Let's plan your best party",
+      "body": "We're currently booking out for popular dates in 2026 & 2027. Reserve your date today!",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call (208) 703-1976",
+        "url": "tel:+12087031976"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "check-availability": {
+   "title": "Check availability",
+   "seo_title": "Check Availability | Greenbelt Photo Booth",
+   "meta_description": "Check availability for wedding, corporate and party photo booth rentals in Boise, Idaho and surrounding areas.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Check availability",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Fill in the short form below to check availability for your event date!"
+     }
+    },
+    {
+     "type": "forms_module_form",
+     "data": {
+      "heading": "Check availability",
+      "forms_module_deployment_uid": "@form"
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  }
+ },
+ "redirects": {}
+}

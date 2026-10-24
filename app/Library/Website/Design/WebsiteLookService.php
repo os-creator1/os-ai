@@ -27,7 +27,7 @@ use Illuminate\Validation\ValidationException;
 final class WebsiteLookService
 {
     /** Theme keys that belong to the owner, never to the template. */
-    public const OWNER_THEME_KEYS = ['brand_color', 'logo_asset_uid', 'hero_asset_uid', 'privacy_notice_url', 'terms_url'];
+    public const OWNER_THEME_KEYS = ['brand_color', 'secondary_color', 'logo_asset_uid', 'hero_asset_uid', 'privacy_notice_url', 'terms_url'];
 
     public function __construct(private readonly WebsiteAssetUploadService $uploads) {}
 
@@ -62,6 +62,30 @@ final class WebsiteLookService
         }
 
         $this->patchTheme($website, ['brand_color' => $hex]);
+    }
+
+    /**
+     * The optional secondary colour: the dark surface (hero, dark bands, announcement bar). Blank clears it.
+     *
+     * @throws ValidationException
+     */
+    public function setSecondaryColor(Website $website, ?string $value): void
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            $this->patchTheme($website, ['secondary_color' => null]);
+
+            return;
+        }
+
+        $hex = BrandColors::normalize($value);
+
+        if ($hex === null) {
+            throw ValidationException::withMessages(['secondary_color' => ['Enter a colour like #0a2540.']]);
+        }
+
+        $this->patchTheme($website, ['secondary_color' => $hex]);
     }
 
     /**

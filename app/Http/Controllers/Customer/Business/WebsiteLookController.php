@@ -68,6 +68,7 @@ class WebsiteLookController extends CustomerBaseController
         $request->validate([
             'template_key' => 'nullable|string|max:40',
             'brand_color' => 'nullable|string|max:20',
+            'secondary_color' => 'nullable|string|max:20',
             'logo' => ['nullable', 'file', new ValidWebsiteImageRule()],
             'hero' => ['nullable', 'file', new ValidWebsiteImageRule()],
             'logo_alt' => 'nullable|string|max:160',
@@ -103,6 +104,11 @@ class WebsiteLookController extends CustomerBaseController
                 if ($request->has('brand_color')) {
                     $this->look->setBrandColor($locked, $request->input('brand_color'));
                     $notes[] = 'Brand colour saved.';
+                }
+
+                if ($request->has('secondary_color')) {
+                    $this->look->setSecondaryColor($locked, $request->input('secondary_color'));
+                    $notes[] = 'Secondary colour saved.';
                 }
 
                 if ($request->has('privacy_notice_url') || $request->has('terms_url')) {

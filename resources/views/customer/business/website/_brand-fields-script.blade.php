@@ -9,16 +9,18 @@
         window.__websiteBrandColorSync = true;
 
         document.addEventListener('input', function (event) {
-            var picker = document.getElementById('look-brand-picker');
-            var text = document.getElementById('look-brand-color');
+            ['brand', 'secondary'].forEach(function (name) {
+                var picker = document.getElementById('look-' + name + '-picker');
+                var text = document.getElementById('look-' + name + '-color');
 
-            if (!picker || !text) { return; }
+                if (!picker || !text) { return; }
 
-            if (event.target === picker) {
-                text.value = picker.value;
-            } else if (event.target === text && /^#[0-9a-fA-F]{6}$/.test(text.value)) {
-                picker.value = text.value;
-            }
+                if (event.target === picker) {
+                    text.value = picker.value;
+                } else if (event.target === text && /^#[0-9a-fA-F]{6}$/.test(text.value)) {
+                    picker.value = text.value;
+                }
+            });
         });
 
         // Shows the chosen file's name beside a styled "Choose file" button (Website Settings look card).
