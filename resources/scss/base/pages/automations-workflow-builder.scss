@@ -342,7 +342,7 @@ $wf-panel-width: 24rem;
 .wf-link__line {
     display: block;
     width: 2px;
-    height: 0.875rem;
+    height: 0.625rem;
     background: var(--color-border-strong, #c9c6c0);
 }
 
@@ -529,9 +529,9 @@ $wf-panel-width: 24rem;
 
 .wf-split {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(2, max-content);
     width: max-content;
-    padding-top: 0.875rem;
+    padding-top: 0.625rem;
     position: relative;
 
     &::before {
@@ -551,7 +551,7 @@ $wf-panel-width: 24rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 0 1.25rem;
+    padding: 0 0.5rem;
     transition: opacity var(--duration-base, 180ms);
 
     &::before {
@@ -586,7 +586,7 @@ $wf-panel-width: 24rem;
 .wf-lane__line {
     display: block;
     width: 2px;
-    height: 0.75rem;
+    height: 0.5rem;
     background: var(--color-border-strong, #c9c6c0);
 }
 
