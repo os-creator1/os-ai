@@ -81,6 +81,7 @@ class TextMessagingController extends CustomerBaseController
         'appointment_reminders' => 'Appointment reminders',
         'two_factor' => 'Two-factor / one-time passcodes',
         'mixed' => 'Both service and promotional messages',
+        'low_volume_mixed' => 'Both service and promotional messages (Low Volume Mixed)',
     ];
 
     public function __construct(
@@ -169,6 +170,7 @@ class TextMessagingController extends CustomerBaseController
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             'numberPreview' => $this->charges->forNumberPurchase($business),
             'localRegistrationPreview' => $this->charges->forLocalRegistration($business),
+            'lowVolumeRegistrationPreview' => $this->charges->forLocalRegistration($business, 'low_volume_mixed'),
             // PR #295 Correction Round 1, item 2 — the browser never gets
             // the raw phone_number/provider_candidate_reference/number_type
             // fields back as independently-editable form inputs; it only
@@ -325,6 +327,10 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, $e->getMessage());
         }
 
+        // Mark local setup as active (the screen the customer is held on) —
+        // a plain timestamp; nothing about the saved details changes.
+        BusinessMessagingRegistration::query()->where('business_id', $business->id)->update(['local_setup_started_at' => now()]);
+
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
             'message' => 'Let\'s verify your business. Once approved, you\'ll choose your local number.',
@@ -373,7 +379,9 @@ class TextMessagingController extends CustomerBaseController
             'opt_in_method' => ['required', 'string', 'max:2000'],
             'campaign_description' => ['required', 'string', 'max:2000'],
             'consent_confirmations' => ['nullable', 'array'],
-            'consent_confirmations.*' => ['string', 'in:' . implode(',', array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS))],
+            'consent_confirmations.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS + RegistrationTemplateCatalog::LOW_VOLUME_CONSENT_ITEMS))],
+            'message_purposes' => ['nullable', 'array'],
+            'message_purposes.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::LOW_VOLUME_PURPOSES))],
             'sample_message_1' => ['required', 'string', 'max:500'],
             'sample_message_2' => ['required', 'string', 'max:500'],
             'privacy_policy_url' => ['required', 'url', 'max:255'],
@@ -388,6 +396,7 @@ class TextMessagingController extends CustomerBaseController
         // An unchecked box is simply absent from the POST, so the stored
         // list is always exactly what the customer ticked on this save.
         $validated['consent_confirmations'] = array_values(array_unique($validated['consent_confirmations'] ?? []));
+        $validated['message_purposes'] = $validated['use_case'] === 'low_volume_mixed' ? array_values(array_unique($validated['message_purposes'] ?? [])) : null;
 
         // Consent attestations were made for the messaging type the
         // customer had saved; a different type needs them re-confirmed.
@@ -412,6 +421,44 @@ class TextMessagingController extends CustomerBaseController
                 ? 'Business details saved. You changed the messaging type, so please re-confirm the consent checklist and review your sample messages.'
                 : 'Business details saved.',
         ]);
+    }
+
+    /**
+     * Steps back from local registration to the Local / Toll-free choice.
+     * A CSRF-protected, authorized state change that only clears the
+     * "in local setup" marker: every saved detail and carrier identifier is
+     * kept, so reopening local setup restores it. Refused (with an
+     * explanation) once the registration has a carrier commitment — it is
+     * Pending or Approved — because that cannot be abandoned from here.
+     */
+    public function leaveLocalSetup(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('buy_numbers');
+
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $this->guardNoExistingNumber($business);
+        $this->authorizeRegistrationMutation($business);
+        $registration = $this->registrationFor($business);
+
+        if ($registration !== null && ($registration->status === MessagingRegistrationStatus::Pending || $registration->isApproved())) {
+            return $this->textMessagingError($workspaceUid, $businessUid, $registration->isApproved()
+                ? 'Your local registration is approved and was paid for, so it stays on file — continue by choosing your local number. Contact support if you need to change course.'
+                : 'Your local registration has been submitted to the carrier and was paid for, so it can\'t be cancelled here. It is waiting for review; contact support if you need to change course.');
+        }
+
+        BusinessMessagingRegistration::query()->where('business_id', $business->id)->update(['local_setup_started_at' => null]);
+
+        $toTollFree = $request->input('then') === 'toll_free';
+        $carrierStarted = $registration !== null && filled($registration->provider_brand_id);
+
+        return redirect()
+            ->route('customer.workspaces.businesses.text-messaging.show', array_filter([$workspaceUid, $businessUid, 'focus' => $toTollFree ? 'toll_free' : null]))
+            ->with([
+                'status' => 'success',
+                'message' => ($toTollFree ? 'Local setup paused — let\'s get your toll-free number instead. ' : 'Local setup paused. ')
+                    . 'Your business details are saved and will be there if you come back.'
+                    . ($carrierStarted ? ' Note: a carrier brand registration was already started for this business, and it stays on file.' : ''),
+            ]);
     }
 
     public function submitRegistration(string $workspaceUid, string $businessUid): RedirectResponse
@@ -719,6 +766,7 @@ class TextMessagingController extends CustomerBaseController
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             'numberPreview' => $this->charges->forNumberPurchase($business),
             'localRegistrationPreview' => $this->charges->forLocalRegistration($business),
+            'lowVolumeRegistrationPreview' => $this->charges->forLocalRegistration($business, 'low_volume_mixed'),
             // Review correction — non-null only for the verify-first local
             // sequence's "your business is verified, now choose your
             // number" render: the view hides the toll-free/local choice
@@ -756,13 +804,16 @@ class TextMessagingController extends CustomerBaseController
             'useCaseChoices' => RegistrationTemplateCatalog::CHOICES,
             'selectedChoice' => RegistrationTemplateCatalog::choiceForUseCase($registration->use_case),
             'consentItems' => RegistrationTemplateCatalog::CONSENT_ITEMS,
+            'lowVolumeConsentItems' => RegistrationTemplateCatalog::LOW_VOLUME_CONSENT_ITEMS,
+            'lowVolumePurposes' => \App\Library\Messaging\Registration\CarrierRegistrationOptions::LOW_VOLUME_PURPOSES,
             'prefill' => $this->registrationDefaults->resolve($business, $situation['registration'] ?? null),
             'templateBrand' => $this->registrationDefaults->brandName($business, $situation['registration'] ?? null),
             'templatesByChoice' => $this->registrationDefaults->templatesByChoice($business, $situation['registration'] ?? null),
             'submissionIssues' => $registration->exists ? $this->registrationValidator->issues($registration) : [],
             'available' => ProvisioningAvailability::isConfigured(),
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor($registration->number_type ?? PhoneNumberType::Local),
-            'registrationPreview' => $this->charges->forLocalRegistration($business),
+            'registrationPreview' => $this->charges->forLocalRegistration($business, $registration->use_case),
+            'registrationPreviews' => ['standard' => $this->charges->forLocalRegistration($business), 'low_volume_mixed' => $this->charges->forLocalRegistration($business, 'low_volume_mixed')],
             // Review correction — an Approved registration with a genuine
             // number can still be stuck here, never Ready, while a local
             // number's own carrier-side campaign assignment has not yet

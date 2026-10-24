@@ -60,6 +60,9 @@ return [
     |                           of campaign fees (Telnyx bills them upfront)
     |   ten_dlc_campaign_renewal monthly campaign cost, charged only AFTER the three
     |                           prepaid months (local numbers)
+    |   ten_dlc_low_volume_registration / ten_dlc_low_volume_campaign_renewal
+    |                           the same two fees for the separate Low Volume Mixed
+    |                           campaign type (its own, lower, carrier costs)
     |
     | A paid purchase/registration is refused unless its recurring price is
     | configured too, so no ongoing carrier cost is ever left unbilled.
@@ -71,6 +74,8 @@ return [
         'number_purchase' => ['retail_micro' => env('MESSAGING_NUMBER_PURCHASE_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_PURCHASE_COST_MICRO'), 'unit' => 'per number'],
         'number_rental_renewal' => ['retail_micro' => env('MESSAGING_NUMBER_RENTAL_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_RENTAL_COST_MICRO'), 'unit' => 'per month'],
         'ten_dlc_registration' => ['retail_micro' => env('MESSAGING_10DLC_REGISTRATION_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_REGISTRATION_COST_MICRO'), 'unit' => 'per registration'],
+        'ten_dlc_low_volume_registration' => ['retail_micro' => env('MESSAGING_10DLC_LOW_VOLUME_REGISTRATION_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_LOW_VOLUME_REGISTRATION_COST_MICRO'), 'unit' => 'per registration'],
+        'ten_dlc_low_volume_campaign_renewal' => ['retail_micro' => env('MESSAGING_10DLC_LOW_VOLUME_CAMPAIGN_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_LOW_VOLUME_CAMPAIGN_COST_MICRO'), 'unit' => 'per month'],
         'ten_dlc_campaign_renewal' => ['retail_micro' => env('MESSAGING_10DLC_CAMPAIGN_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_CAMPAIGN_COST_MICRO'), 'unit' => 'per month'],
     ],
 

@@ -36,6 +36,16 @@ final class CarrierRegistrationOptions
         'photographer' => 'PROFESSIONAL', 'professional_services' => 'PROFESSIONAL', 'home_services' => 'CONSTRUCTION',
     ];
 
+    /**
+     * Low Volume Mixed: the customer's REAL messaging purposes (each maps to a
+     * TCR sub-use-case). Nothing is added for the customer — a purpose is only
+     * registered when they tick it.
+     */
+    public const LOW_VOLUME_PURPOSES = [
+        'care' => ['label' => 'Service and customer care (inquiries, quotes, booking confirmations, reminders)', 'sub_usecase' => 'CUSTOMER_CARE'],
+        'marketing' => ['label' => 'Promotions and marketing (specials, discounts, offers)', 'sub_usecase' => 'MARKETING'],
+    ];
+
     /** Internal use case => toll-free verification `useCase` enum value. */
     public const TOLL_FREE_USE_CASES = [
         'customer_care' => 'Conversational / Alerts',

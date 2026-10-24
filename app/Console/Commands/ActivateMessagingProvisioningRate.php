@@ -36,11 +36,13 @@ class ActivateMessagingProvisioningRate extends Command
         '10dlc' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION,
         'number-purchase' => TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE,
         'number-rental-renewal' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL,
+        '10dlc-low-volume' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION,
+        'campaign-renewal-low-volume' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_LOW_VOLUME_CAMPAIGN_RENEWAL,
         'campaign-renewal' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL,
     ];
 
     protected $signature = 'messaging:activate-provisioning-rate
-        {feature : 10dlc | number-purchase | number-rental-renewal | campaign-renewal (toll-free verification is $0: no meter)}
+        {feature : 10dlc | 10dlc-low-volume | number-purchase | number-rental-renewal | campaign-renewal | campaign-renewal-low-volume (toll-free verification is $0: no meter)}
         {retail-rate-micro : approved customer price per action, in micro-units (1000000 = 1.00)}
         {provider-cost-micro : approved provider cost per action, in micro-units}
         {unit-label : e.g. "per registration"}

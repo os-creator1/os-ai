@@ -120,7 +120,9 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertSame('customer_care', RegistrationTemplateCatalog::useCaseForChoice('care'));
         $this->assertSame('marketing', RegistrationTemplateCatalog::useCaseForChoice('marketing'));
         $this->assertSame('mixed', RegistrationTemplateCatalog::useCaseForChoice('both'));
-        $this->assertCount(3, RegistrationTemplateCatalog::CHOICES);
+        // Low Volume Mixed is its own choice, never an alias of ordinary Mixed.
+        $this->assertSame('low_volume_mixed', RegistrationTemplateCatalog::useCaseForChoice('low_volume'));
+        $this->assertCount(4, RegistrationTemplateCatalog::CHOICES);
 
         $marketing = RegistrationTemplateCatalog::forUseCase('photo_booth_service', 'marketing', 'Sunset Photo Booths', null);
         $care = RegistrationTemplateCatalog::forUseCase('photo_booth_service', 'customer_care', 'Sunset Photo Booths', null);

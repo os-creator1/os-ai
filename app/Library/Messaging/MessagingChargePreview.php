@@ -60,9 +60,9 @@ final class MessagingChargePreview
      *
      * @return array<string, mixed>
      */
-    public function forLocalRegistration(Business $business): array
+    public function forLocalRegistration(Business $business, ?string $useCase = null): array
     {
-        return $this->build($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL);
+        return $this->build($business, TelnyxProvisioningAdapter::registrationFeatureFor($useCase), NumberLifecycleManager::campaignRenewalFeatureFor($useCase));
     }
 
     /** @return array<string, mixed> */

@@ -35,6 +35,8 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     private const RENTAL = 2_000_000;     // 2.00 monthly rental
     private const REGISTRATION = 4_000_000; // 4.00 one-time 10DLC registration
     private const CAMPAIGN = 1_500_000;   // 1.50 monthly campaign
+    private const LVM_REGISTRATION = 9_000_000; // 9.00 one-time Low Volume Mixed registration
+    private const LVM_CAMPAIGN = 2_000_000;     // 2.00 monthly Low Volume Mixed campaign
 
     private $business;
     private $workspace;
@@ -43,6 +45,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     private int $orderStatus = 200;
     private string $tfStatus = 'Pending';
     private string $campaignStatus = 'PENDING';
+    private bool $lvmEligible = true;
 
     protected function setUp(): void
     {
@@ -69,6 +72,8 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
             'number_rental_renewal' => ['retail_micro' => (string) self::RENTAL, 'cost_micro' => '0', 'unit' => 'per month'],
             'ten_dlc_registration' => ['retail_micro' => (string) self::REGISTRATION, 'cost_micro' => '0', 'unit' => 'per registration'],
             'ten_dlc_campaign_renewal' => ['retail_micro' => (string) self::CAMPAIGN, 'cost_micro' => '0', 'unit' => 'per month'],
+            'ten_dlc_low_volume_registration' => ['retail_micro' => (string) self::LVM_REGISTRATION, 'cost_micro' => '0', 'unit' => 'per registration'],
+            'ten_dlc_low_volume_campaign_renewal' => ['retail_micro' => (string) self::LVM_CAMPAIGN, 'cost_micro' => '0', 'unit' => 'per month'],
         ]]);
 
         $this->artisan('messaging:sync-provisioning-rates')->assertSuccessful();
@@ -119,6 +124,9 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_flow_1']]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'camp_flow_1']]),
             'api.telnyx.com/v2/10dlc/campaign/*' => fn () => Http::response(['data' => ['campaignStatus' => $this->campaignStatus]]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder/brand/*' => fn () => $this->lvmEligible
+                ? Http::response(['usecase' => 'LOW_VOLUME', 'monthlyFee' => 1.5, 'minSubUsecases' => 0, 'maxSubUsecases' => 5])
+                : Http::response(['errors' => [['code' => '10016', 'title' => 'Brand not eligible']]], 422),
             '*' => Http::response(['data' => []]),
         ]);
     }
@@ -422,5 +430,227 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->order($search)->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing'));
         $this->assertSame(0, $this->posted('/number_orders'));
         $this->assertSame(10_000_000, $this->balance());
+    }
+
+    private function lowVolumePayload(array $overrides = []): array
+    {
+        return $this->payload(array_merge([
+            'use_case' => 'low_volume_mixed',
+            'message_purposes' => ['care', 'marketing'],
+            'campaign_description' => 'Sunset Photo Booths sends booking confirmations and event reminders, and occasional seasonal promotions, to people who opted in.',
+            'sample_message_1' => 'Sunset Photo Booths: your photo booth booking is confirmed for Saturday. Reply STOP to opt out.',
+            'sample_message_2' => 'Sunset Photo Booths: our seasonal specials are here, 15% off packages this month. Reply STOP to opt out.',
+            'consent_confirmations' => array_keys(
+                RegistrationTemplateCatalog::CONSENT_ITEMS + RegistrationTemplateCatalog::LOW_VOLUME_CONSENT_ITEMS
+            ),
+        ], $overrides));
+    }
+
+    public function test_low_volume_mixed_end_to_end_uses_its_own_prices_payload_and_billing(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(40_000_000);
+
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->lowVolumePayload())->assertSessionHas('status', 'success');
+
+        // The page shows the Low Volume Mixed prices, not the standard ones.
+        $page = $this->get($this->url('show'))->getContent();
+        $this->assertStringContainsString('Low Volume Mixed', $page);
+        $this->assertStringContainsString('USD 9.00', $page);
+        $this->assertStringContainsString('USD 2.00', $page);
+
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+
+        // Charged the Low Volume Mixed registration price exactly once — not the standard one.
+        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
+        Http::assertSent(fn ($request) => str_contains($request->url(), '/10dlc/campaignBuilder') && ! str_contains($request->url(), '/brand/')
+            && $request->method() === 'POST'
+            && $request['usecase'] === 'LOW_VOLUME' && $request['subUsecases'] === ['CUSTOMER_CARE', 'MARKETING']);
+        Http::assertSent(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), '/10dlc/campaignBuilder/brand/brand_flow_1/usecase/LOW_VOLUME'));
+
+        // Duplicate click: refused, nothing more charged or sent.
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+
+        // Approve, buy, then renewals: the prepaid window charges rental only; afterwards
+        // the Low Volume Mixed monthly price (never the standard one).
+        $this->campaignStatus = 'ACTIVE';
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+        $this->order($this->search('local', '512'));
+        $number = BusinessMessagingNumber::query()->firstOrFail();
+        $manager = app(NumberLifecycleManager::class);
+
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => now()->subDay()]);
+        $before = $this->balance();
+        $manager->attemptRenewal($number->fresh());
+        $this->assertSame($before - self::RENTAL, $this->balance());
+
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['submitted_at' => now()->subMonths(4)]);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => now()->subDays(2)]);
+        $before = $this->balance();
+        $manager->attemptRenewal($number->fresh());
+        $this->assertSame($before - self::RENTAL - self::LVM_CAMPAIGN, $this->balance());
+    }
+
+    public function test_low_volume_mixed_is_refused_when_telnyx_says_the_brand_is_not_eligible_and_never_charges(): void
+    {
+        $this->configureRates();
+        $this->lvmEligible = false;
+        $this->telnyx();
+        $this->fund(40_000_000);
+
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->lowVolumePayload());
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+
+        $this->assertSame(40_000_000, $this->balance());
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+
+        // Eligibility later granted: retry reuses the brand (no second brand) and charges once.
+        $this->lvmEligible = true;
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+    }
+
+    public function test_low_volume_mixed_needs_its_own_configured_prices_and_never_falls_back_to_the_standard_ones(): void
+    {
+        $this->configureRates();
+        DB::table('usage_meters')->where('meter_key', 'messaging_10dlc_low_volume_registration')->update(['is_metered' => 0]);
+        $this->telnyx();
+        $this->fund(40_000_000);
+
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->lowVolumePayload());
+        $page = $this->get($this->url('show'))->getContent();
+        $this->assertStringContainsString("this campaign type isn't set up", str_replace('&#039;', "'", $page));
+
+        $this->post($this->url('registration.submit'))->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing'));
+        $this->assertSame(40_000_000, $this->balance());
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+    }
+
+    public function test_low_volume_mixed_validation_requires_real_purposes_samples_and_consent_for_each(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(40_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+
+        // No purposes chosen, missing attestation.
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['message_purposes' => [], 'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS)]));
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $page = str_replace('&#039;', "'", $this->get($this->url('show'))->getContent());
+        $this->assertStringContainsString('Choose the message types you will really send', $page);
+        $this->assertStringContainsString('small sender', $page);
+
+        // Both purposes chosen but only promotional samples: the care sample is missing.
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['sample_message_1' => 'Sunset Photo Booths: 20% off specials today. Reply STOP to opt out.']));
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000, $this->balance());
+
+        // Care only: a promotional sample is refused (nothing invented for a second purpose).
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['message_purposes' => ['care'], 'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS + ['low_volume_attestation' => 'x', 'purpose_care_consent' => 'x'])]));
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+    }
+
+    public function test_low_volume_mixed_is_offered_for_local_but_not_for_toll_free(): void
+    {
+        $this->configureRates();
+        $this->post($this->url('registration.start-local-verification'));
+        $this->assertStringContainsString('value="low_volume_mixed"', $this->get($this->url('show'))->getContent());
+    }
+
+    // -----------------------------------------------------------------
+    // Navigation: the customer is never trapped in local registration.
+    // -----------------------------------------------------------------
+
+    public function test_local_registration_has_exits_at_the_top_and_stepping_back_keeps_every_detail(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+
+        $html = $this->get($this->url('show'))->getContent();
+        $this->assertStringContainsString('data-role="back-to-number-choices"', $html);
+        $this->assertStringContainsString('data-role="choose-toll-free-instead"', $html);
+        // The exit sits above the long form, not below it.
+        $this->assertLessThan(strpos($html, 'name="legal_business_name"'), strpos($html, 'data-role="back-to-number-choices"'));
+
+        // Step back: the ORIGINAL Local / Toll-free choice returns (no redirect loop to the form).
+        $this->post($this->url('registration.leave-local-setup'))->assertRedirect($this->url('show'))->assertSessionHas('status', 'success');
+        $choice = $this->get($this->url('show'))->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="toll-free-number-card"', $choice);
+        $this->assertStringContainsString('data-role="local-number-card"', $choice);
+        $this->assertStringNotContainsString('name="legal_business_name"', $choice);
+
+        // Nothing was deleted: the details are still saved.
+        $row = BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
+        $this->assertSame('Sunset Photo Booths LLC', $row->legal_business_name);
+        $this->assertSame('12-3456789', $row->ein);
+        $this->assertNull($row->local_setup_started_at);
+
+        // Refresh / direct navigation stay on the choice screen; the exit is POST-only.
+        $this->get($this->url('show'))->assertOk()->assertSee('data-role="local-number-card"', false);
+        $this->assertContains($this->get($this->url('registration.leave-local-setup'))->getStatusCode(), [404, 405]);
+
+        // Local again: the form is restored with the saved details.
+        $this->post($this->url('registration.start-local-verification'));
+        $this->get($this->url('show'))->assertOk()->assertSee('Sunset Photo Booths LLC')->assertSee('12-3456789');
+    }
+
+    public function test_choose_toll_free_instead_enters_the_normal_toll_free_purchase_flow(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(20_000_000);
+
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+
+        $this->post($this->url('registration.leave-local-setup'), ['then' => 'toll_free'])->assertSessionHas('status', 'success');
+        $page = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$this->workspace->uid, $this->business->uid, 'focus' => 'toll_free']))->getContent();
+        $this->assertStringContainsString('data-role="toll-free-focus-banner"', $page);
+        $this->assertStringNotContainsString('name="legal_business_name"', $page);
+
+        // Local -> toll-free -> local -> toll-free before any submission, details intact throughout.
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.leave-local-setup'), ['then' => 'toll_free']);
+        $this->order($this->search('toll_free'))->assertSessionHas('status', 'success');
+
+        $registration = BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
+        $this->assertSame('Sunset Photo Booths LLC', $registration->legal_business_name);
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->assertSame('toll_free', $registration->fresh()->number_type->value);
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(20_000_000 - self::PURCHASE, $this->balance());
+    }
+
+    public function test_a_submitted_local_registration_cannot_be_walked_away_from_and_the_page_explains_why(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(30_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $balance = $this->balance();
+
+        $this->post($this->url('registration.leave-local-setup'))->assertSessionHas('status', 'error')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'submitted to the carrier') && str_contains($m, 'paid for'));
+
+        $this->assertSame(MessagingRegistrationStatus::Pending, BusinessMessagingRegistration::where('business_id', $this->business->id)->first()->status);
+        $this->assertSame($balance, $this->balance());
+        // Still the registration screen: the commitment is not hidden.
+        $this->get($this->url('show'))->assertOk()->assertSee('Sunset Photo Booths LLC');
     }
 }

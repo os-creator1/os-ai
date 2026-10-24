@@ -77,6 +77,8 @@ final readonly class MessagingRegistrationSubmission
         public ?string $optInImageUrl = null,
         /** 10DLC brand industry vertical (provider enum value). */
         public ?string $brandVertical = null,
+        /** Low Volume Mixed: the customer's real purposes (care / marketing). @var list<string> */
+        public array $messagePurposes = [],
         /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
         public ?string $campaignDescription = null,
     ) {
@@ -120,6 +122,7 @@ final readonly class MessagingRegistrationSubmission
             messageVolume: $registration->message_volume,
             optInImageUrl: $registration->opt_in_image_url,
             brandVertical: $registration->brand_vertical,
+            messagePurposes: array_values((array) $registration->message_purposes),
             fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
             campaignDescription: $registration->campaign_description,
         );

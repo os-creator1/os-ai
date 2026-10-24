@@ -15,6 +15,13 @@
         'description' => 'Get a phone number so this Business can send and receive text messages. Pick the kind of number that suits you.',
     ])
 
+    @if(request('focus') === 'toll_free')
+        <x-alert variant="success" icon="check-circle" class="mb-2" data-role="toll-free-focus-banner">
+            <strong class="d-block">Let's get your toll-free number</strong>
+            Pick an area code if you like (optional), then find a number. You'll see the prices before you buy anything.
+        </x-alert>
+    @endif
+
     @unless($available)
         <div class="sr-callout sr-callout--warn" data-role="preview-notice" role="status">
             <x-ds-icon name="clock" size="16" />
@@ -135,7 +142,7 @@
                             @enderror
                         </div>
 
-                        <x-button type="submit" variant="primary" :disabled="! $available">Find a toll-free number</x-button>
+                        <x-button type="submit" variant="primary" :disabled="! $available" data-role="find-toll-free">Find a toll-free number</x-button>
                     </form>
                 </div>
             </div>
@@ -161,6 +168,9 @@
                     </div>
 
                     @include('customer.settings.text-messaging._charge-summary', ['preview' => $localRegistrationPreview, 'oneTimeLabel' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'recurringLabel' => '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Local registration pricing isn\'t set up on our side yet, so a local number can\'t be registered right now. Toll-free is available.'])
+                    @if($lowVolumeRegistrationPreview['configured'])
+                        <p class="text-caption text-muted mb-2" data-role="low-volume-note">Small business sending few texts? A lower-cost <strong>Low Volume Mixed</strong> option is available when you register: {{ $lowVolumeRegistrationPreview['one_time']['text'] }} to register, then {{ $lowVolumeRegistrationPreview['recurring']['text'] }} after the first three months. It has lower sending limits.</p>
+                    @endif
 
                     <form method="post" class="mt-auto pt-3" action="{{ route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspaceUid, $businessUid]) }}">
                         @csrf

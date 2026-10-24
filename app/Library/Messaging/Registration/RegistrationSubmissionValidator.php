@@ -82,6 +82,53 @@ final class RegistrationSubmissionValidator
         return array_values(array_unique($issues));
     }
 
+    /**
+     * Low Volume Mixed is only for a business that genuinely sends the
+     * purposes it registers: at least one real purpose, a sample for each,
+     * and never a purpose the customer did not choose.
+     *
+     * @param  array<int, string>  $promotional
+     * @param  array{0: string, 1: string}  $samples
+     * @return list<string>
+     */
+    private function lowVolumeIssues(BusinessMessagingRegistration $registration, array $promotional, array $samples): array
+    {
+        $issues = [];
+        $purposes = array_values(array_intersect(array_keys(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES), (array) $registration->message_purposes));
+
+        if ($purposes === []) {
+            return ['Choose the message types you will really send (service and customer care, promotions, or both).'];
+        }
+
+        $hasCare = in_array('care', $purposes, true);
+        $hasMarketing = in_array('marketing', $purposes, true);
+        $promoCount = count($promotional);
+
+        if ($hasCare && $promoCount === 2) {
+            $issues[] = 'You chose service texts, but both samples are promotions. Make one a service or customer-care example.';
+        }
+
+        if ($hasMarketing && $promoCount === 0) {
+            $issues[] = 'You chose promotional texts, but neither sample is a promotion. Add a promotional example.';
+        }
+
+        if (! $hasMarketing && $promoCount > 0) {
+            $issues[] = 'A sample message reads as a promotion, but you did not choose promotional texts. Reword it, or add promotions to your message types.';
+        }
+
+        if ($hasMarketing && ! $hasCare && $promoCount < 2) {
+            $issues[] = 'You chose only promotional texts, so both samples need to be promotions.';
+        }
+
+        foreach ($promotional as $message) {
+            if (stripos($message, 'stop') === false) {
+                $issues[] = 'Every promotional sample message needs opt-out wording such as "Reply STOP to opt out".';
+            }
+        }
+
+        return $issues;
+    }
+
     /** @return list<string> */
     private function carrierFieldIssues(BusinessMessagingRegistration $registration): array
     {
@@ -144,6 +191,10 @@ final class RegistrationSubmissionValidator
 
         if ($useCase === 'marketing' && count($promotional) < 2) {
             $issues[] = 'Promotional and marketing campaigns need both sample messages to be promotions. Reword the sample that is not.';
+        }
+
+        if ($useCase === 'low_volume_mixed') {
+            $issues = array_merge($issues, $this->lowVolumeIssues($registration, $promotional, [$one, $two]));
         }
 
         if ($useCase === 'mixed' && count($promotional) === 2) {
@@ -221,7 +272,7 @@ final class RegistrationSubmissionValidator
 
         $confirmed = is_array($registration->consent_confirmations) ? $registration->consent_confirmations : [];
 
-        foreach (RegistrationTemplateCatalog::CONSENT_ITEMS as $key => $label) {
+        foreach (RegistrationTemplateCatalog::consentItemsFor($registration->use_case, $registration->message_purposes) as $key => $label) {
             if (! in_array($key, $confirmed, true)) {
                 $issues[] = 'Confirm on your website, then check: ' . $label . '.';
             }

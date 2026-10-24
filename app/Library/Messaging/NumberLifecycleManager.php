@@ -77,6 +77,14 @@ class NumberLifecycleManager
     /** Recurring monthly 10DLC campaign cost, charged with a local number's rental renewal. */
     public const FEATURE_TEN_DLC_CAMPAIGN_RENEWAL = 'messaging_10dlc_campaign_renewal';
 
+    /** Low Volume Mixed campaigns have their own (lower) monthly cost — a separate meter, never the standard one. */
+    public const FEATURE_TEN_DLC_LOW_VOLUME_CAMPAIGN_RENEWAL = 'messaging_10dlc_low_volume_campaign_renewal';
+
+    public static function campaignRenewalFeatureFor(?string $useCase): string
+    {
+        return $useCase === 'low_volume_mixed' ? self::FEATURE_TEN_DLC_LOW_VOLUME_CAMPAIGN_RENEWAL : self::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL;
+    }
+
     private const NOT_CONFIGURED_EXCEPTIONS = [
         UsageWalletNotFoundException::class,
         NoActiveRateForFeatureException::class,
@@ -184,8 +192,8 @@ class NumberLifecycleManager
             // is tested — then release them all.
             $probeFeatures = [self::FEATURE_NUMBER_RENTAL_RENEWAL => sprintf('number_renewal_probe:%d:%s', $locked->id, $asOf->toDateString())];
 
-            if ($this->campaignChargeDue($locked)) {
-                $probeFeatures[self::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL] = sprintf('campaign_renewal_probe:%d:%s', $locked->id, $asOf->toDateString());
+            if (($probeCampaignFeature = $this->campaignFeatureDue($locked)) !== null) {
+                $probeFeatures[$probeCampaignFeature] = sprintf('campaign_renewal_probe:%d:%s', $locked->id, $asOf->toDateString());
             }
 
             $heldProbes = [];
@@ -279,9 +287,10 @@ class NumberLifecycleManager
             // silently skipped (that would absorb a carrier cost): nothing
             // at all is reserved or charged, and the renewal is reported
             // as NotConfigured so the platform owner can act.
-            $campaignDue = $this->campaignChargeDue($locked);
+            $campaignFeature = $this->campaignFeatureDue($locked);
+            $campaignDue = $campaignFeature !== null;
 
-            if ($campaignDue && app(MessagingChargePreview::class)->fee(self::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL) === null) {
+            if ($campaignDue && app(MessagingChargePreview::class)->fee($campaignFeature) === null) {
                 \Illuminate\Support\Facades\Log::warning('Number renewal blocked: the 10DLC campaign monthly price is not configured.', [
                     'business_messaging_number_id' => $locked->id,
                 ]);
@@ -318,7 +327,7 @@ class NumberLifecycleManager
             if ($campaignDue) {
                 $campaign = $this->wallet->reserve(
                     $business,
-                    self::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL,
+                    $campaignFeature,
                     sprintf('campaign_renewal:%d:%s', $locked->id, $locked->next_renewal_at->toDateString()),
                 );
 
@@ -394,10 +403,16 @@ class NumberLifecycleManager
      */
     public function campaignChargeDue(BusinessMessagingNumber $number): bool
     {
+        return $this->campaignFeatureDue($number) !== null;
+    }
+
+    /** The recurring campaign meter due on this renewal (standard or Low Volume Mixed), or null. */
+    public function campaignFeatureDue(BusinessMessagingNumber $number): ?string
+    {
         $type = $number->number_type instanceof \BackedEnum ? $number->number_type->value : (string) $number->number_type;
 
         if ($type !== 'local' || $number->next_renewal_at === null) {
-            return false;
+            return null;
         }
 
         $registration = \App\Models\BusinessMessagingRegistration::query()
@@ -407,13 +422,15 @@ class NumberLifecycleManager
             ->first();
 
         if ($registration === null) {
-            return false;
+            return null;
         }
 
         $started = $registration->submitted_at ?? $registration->approved_at;
 
-        return $started === null
+        $due = $started === null
             || $number->next_renewal_at->gte(Carbon::instance($started)->addMonthsNoOverflow((int) config('messaging.ten_dlc_prepaid_months', 3)));
+
+        return $due ? self::campaignRenewalFeatureFor($registration->use_case) : null;
     }
 
     /**
@@ -431,7 +448,7 @@ class NumberLifecycleManager
             $labels[] = 'Number rental: ' . $rental['text'];
         }
 
-        if ($this->campaignChargeDue($number) && ($campaign = $preview->fee(self::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL)) !== null) {
+        if (($campaignFeature = $this->campaignFeatureDue($number)) !== null && ($campaign = $preview->fee($campaignFeature)) !== null) {
             $labels[] = '10DLC campaign: ' . $campaign['text'];
         }
 

@@ -44,6 +44,8 @@ class BusinessMessagingRegistration extends Model
         'message_volume',
         'opt_in_image_url',
         'brand_vertical',
+        'message_purposes',
+        'local_setup_started_at',
         'use_case',
         'opt_in_method',
         'campaign_description',
@@ -70,6 +72,8 @@ class BusinessMessagingRegistration extends Model
         'submitted_at' => 'datetime',
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
+        'message_purposes' => 'array',
+        'local_setup_started_at' => 'datetime',
     ];
 
     public function business(): BelongsTo

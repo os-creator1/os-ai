@@ -22,6 +22,8 @@ class SyncMessagingProvisioningRates extends Command
         'number_rental_renewal' => 'number-rental-renewal',
         'ten_dlc_registration' => '10dlc',
         'ten_dlc_campaign_renewal' => 'campaign-renewal',
+        'ten_dlc_low_volume_registration' => '10dlc-low-volume',
+        'ten_dlc_low_volume_campaign_renewal' => 'campaign-renewal-low-volume',
     ];
 
     protected $signature = 'messaging:sync-provisioning-rates {--dry-run : report what would change; write nothing}';

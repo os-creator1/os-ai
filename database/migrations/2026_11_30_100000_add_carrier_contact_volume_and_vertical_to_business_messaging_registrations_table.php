@@ -22,13 +22,18 @@ return new class extends Migration
             $table->string('message_volume', 20)->nullable();
             $table->string('opt_in_image_url', 2083)->nullable();
             $table->string('brand_vertical', 40)->nullable();
+            // Low Volume Mixed: the real purposes the customer registers (care / marketing).
+            $table->json('message_purposes')->nullable();
+            // Set while the customer is actively in local registration, cleared when they
+            // step back to the number choices. Never deletes any saved detail.
+            $table->timestamp('local_setup_started_at')->nullable();
         });
     }
 
     public function down(): void
     {
         Schema::table('business_messaging_registrations', function (Blueprint $table): void {
-            $table->dropColumn(['contact_first_name', 'contact_last_name', 'message_volume', 'opt_in_image_url', 'brand_vertical']);
+            $table->dropColumn(['contact_first_name', 'contact_last_name', 'message_volume', 'opt_in_image_url', 'brand_vertical', 'message_purposes', 'local_setup_started_at']);
         });
     }
 };

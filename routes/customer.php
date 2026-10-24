@@ -2363,6 +2363,7 @@
             // toll-free, whose own carrier verification always requires an
             // already-owned number.
             Route::post('/registration/start-local-verification', 'Business\TextMessagingController@startLocalVerification')->name('registration.start-local-verification');
+            Route::post('/registration/leave-local-setup', 'Business\TextMessagingController@leaveLocalSetup')->name('registration.leave-local-setup');
 
             // STATE 2 — number acquired, messaging registration required.
             Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');

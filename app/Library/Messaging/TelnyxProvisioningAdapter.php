@@ -327,6 +327,13 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     public const FEATURE_TEN_DLC_REGISTRATION = 'messaging_10dlc_registration';
 
+    public const FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION = 'messaging_10dlc_low_volume_registration';
+
+    public static function registrationFeatureFor(?string $useCase): string
+    {
+        return $useCase === 'low_volume_mixed' ? self::FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION : self::FEATURE_TEN_DLC_REGISTRATION;
+    }
+
     public const FEATURE_TOLL_FREE_VERIFICATION = 'messaging_tollfree_verification';
 
     /**
@@ -772,6 +779,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         'customer_care' => ['usecase' => 'CUSTOMER_CARE'],
         'marketing' => ['usecase' => 'MARKETING'],
         'mixed' => ['usecase' => 'MIXED', 'sub' => ['CUSTOMER_CARE', 'MARKETING']],
+        // Telnyx/TCR "Low Volume Mixed" is its own use case (LOW_VOLUME), NOT
+        // MIXED. Its sub-use-cases are the customer's real purposes, and the
+        // brand's eligibility is checked against Telnyx before it is created.
+        'low_volume_mixed' => ['usecase' => 'LOW_VOLUME', 'purposes' => true],
         'account_notifications' => ['usecase' => 'ACCOUNT_NOTIFICATION'],
         'appointment_reminders' => ['usecase' => 'CUSTOMER_CARE'],
         'two_factor' => ['usecase' => '2FA'],
@@ -785,6 +796,24 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
         if ($useCase === null) {
             throw new \RuntimeException('This messaging type cannot be submitted as a 10DLC campaign.');
+        }
+
+        // Low Volume Mixed needs at least one real, valid purpose. Nothing is
+        // added on the customer's behalf to reach a cheaper campaign type.
+        $subUsecases = [];
+
+        if (($useCase['purposes'] ?? false) === true) {
+            foreach ($submission->messagePurposes as $purpose) {
+                if (isset(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES[$purpose])) {
+                    $subUsecases[] = CarrierRegistrationOptions::LOW_VOLUME_PURPOSES[$purpose]['sub_usecase'];
+                }
+            }
+
+            $subUsecases = array_values(array_unique($subUsecases));
+
+            if ($subUsecases === []) {
+                throw new \RuntimeException('Low Volume Mixed needs at least one message purpose.');
+            }
         }
 
         // Also before any wallet reservation: Mixed stays off until carrier
@@ -820,9 +849,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new MessagingRegistrationRecoveryRequiredException('An earlier 10DLC submission has an unconfirmed provider outcome.');
         }
 
-        $this->assertRecurringPriceConfigured(NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL);
+        $registrationFeature = self::registrationFeatureFor($submission->useCase);
+        $this->assertRecurringPriceConfigured(NumberLifecycleManager::campaignRenewalFeatureFor($submission->useCase));
 
-        $operationKey = $this->registrationOperationKey($business, self::FEATURE_TEN_DLC_REGISTRATION, $submission);
+        $operationKey = $this->registrationOperationKey($business, $registrationFeature, $submission);
 
         if ($operationKey === null) {
             // This cycle's fee is already committed and the saved brand and
@@ -831,7 +861,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationSubmissionResult($submission->existingBrandId, $submission->existingCampaignId, null, MessagingRegistrationStatus::Pending);
         }
 
-        $reservationId = $this->reserveFunding($business, self::FEATURE_TEN_DLC_REGISTRATION, $operationKey);
+        $reservationId = $this->reserveFunding($business, $registrationFeature, $operationKey);
 
         $brandId = $submission->existingBrandId;
 
@@ -884,6 +914,35 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $campaignId = $submission->existingCampaignId;
 
+            // Low Volume Mixed: ask Telnyx whether THIS brand qualifies for
+            // the use case before creating (and paying for) a campaign. A
+            // read-only call: any failure is a definitive refusal, never an
+            // unknown create outcome. The brand stays saved for a retry.
+            if ($campaignId === null && ($useCase['purposes'] ?? false) === true) {
+                try {
+                    $qualification = $this->client()->get(self::API_BASE . '/10dlc/campaignBuilder/brand/' . $brandId . '/usecase/' . $useCase['usecase']);
+                } catch (ConnectionException) {
+                    throw new \RuntimeException('Could not check the brand\'s eligibility for Low Volume Mixed.');
+                }
+
+                if (! $qualification->successful()) {
+                    throw new \RuntimeException('This brand is not eligible for a Low Volume Mixed campaign.');
+                }
+
+                $minSub = (int) $qualification->json('minSubUsecases', 0);
+                $maxSub = $qualification->json('maxSubUsecases');
+
+                if (count($subUsecases) < $minSub) {
+                    throw new \RuntimeException('Low Volume Mixed needs at least ' . $minSub . ' message purposes; none were added on your behalf.');
+                }
+
+                if ($maxSub !== null && (int) $maxSub === 0) {
+                    $subUsecases = [];
+                } elseif ($maxSub !== null) {
+                    $subUsecases = array_slice($subUsecases, 0, (int) $maxSub);
+                }
+            }
+
             // A previous attempt that already created and persisted the
             // campaign but never reached the fee commit only finishes the
             // funding step here — never a second campaign.
@@ -892,6 +951,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     'brandId' => $brandId,
                     'usecase' => $useCase['usecase'],
                     ...(isset($useCase['sub']) ? ['subUsecases' => $useCase['sub']] : []),
+                    ...(($useCase['purposes'] ?? false) === true && $subUsecases !== [] ? ['subUsecases' => $subUsecases] : []),
                     'description' => $submission->campaignDescription,
                     'sample1' => $submission->sampleMessage1,
                     'sample2' => $submission->sampleMessage2,
