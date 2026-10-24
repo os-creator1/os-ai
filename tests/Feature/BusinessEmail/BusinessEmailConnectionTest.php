@@ -173,7 +173,7 @@ class BusinessEmailConnectionTest extends TestCase
         $html = $this->get($url)->assertOk()->getContent();
         $this->assertStringNotContainsString('Connect Google', $html);
         $this->assertStringContainsString('sign-in is not set up on this platform yet', $html);
-        $this->assertStringContainsString('Connect Other Email', $html, 'the unavailable providers are explained, and Other Email stays available');
+        $this->assertStringContainsString('Test and connect', $html, 'the unavailable providers are explained, and Other Email stays available');
         $this->assertStringNotContainsString('Ask the account owner', $html);
     }
 
