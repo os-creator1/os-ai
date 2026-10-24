@@ -103,6 +103,18 @@ final class RegistrationSubmissionValidator
             $issues[] = 'A sample message reads as a promotion, but you chose service and customer-care messages. Reword it, or change your choice to Promotional or Both.';
         }
 
+        if ($useCase === 'mixed' && ! config('messaging.ten_dlc_mixed_enabled')) {
+            $issues[] = 'Registering both message types together is not available yet. Choose service and customer-care, or promotional and marketing.';
+        }
+
+        if ($useCase === 'marketing' && count($promotional) < 2) {
+            $issues[] = 'Promotional and marketing campaigns need both sample messages to be promotions. Reword the sample that is not.';
+        }
+
+        if ($useCase === 'mixed' && count($promotional) === 2) {
+            $issues[] = 'You chose both message types, but both samples are promotions. Make one a service or customer-care example.';
+        }
+
         if (in_array($useCase, ['marketing', 'mixed'], true)) {
             if ($promotional === []) {
                 $issues[] = 'Your choice includes promotional messages, but neither sample message is a promotion. Add a promotional example.';

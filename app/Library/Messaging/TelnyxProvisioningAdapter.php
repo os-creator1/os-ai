@@ -763,6 +763,12 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('This messaging type cannot be submitted as a 10DLC campaign.');
         }
 
+        // Also before any wallet reservation: Mixed stays off until carrier
+        // acceptance has been verified.
+        if ($useCase['usecase'] === 'MIXED' && ! config('messaging.ten_dlc_mixed_enabled')) {
+            throw new \RuntimeException('Mixed 10DLC campaigns are not enabled yet.');
+        }
+
         // Checked before any wallet reservation: a campaign description is
         // required, and the technical use-case key is never a substitute.
         if ($submission->campaignDescription === null || trim($submission->campaignDescription) === '') {

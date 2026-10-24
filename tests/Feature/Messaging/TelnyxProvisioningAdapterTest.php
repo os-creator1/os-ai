@@ -1168,9 +1168,32 @@ class TelnyxProvisioningAdapterTest extends TestCase
     // Provider use-case mapping and payload contract.
     // -----------------------------------------------------------------
 
+    public function test_mixed_is_refused_before_funding_while_the_mixed_flag_is_off(): void
+    {
+        $this->enableProvisioning();
+        $this->assertFalse((bool) config('messaging.ten_dlc_mixed_enabled'));
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        Http::fake();
+
+        $submission = $this->submission($business, PhoneNumberType::Local);
+        $mixed = new MessagingRegistrationSubmission(...array_merge(get_object_vars($submission), ['useCase' => 'mixed']));
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($mixed);
+            $this->fail('Mixed must be refused while disabled.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('not enabled', $e->getMessage());
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+    }
+
     public function test_internal_use_cases_map_to_provider_enum_values_and_keywords_have_no_spaces(): void
     {
         $this->enableProvisioning();
+        config(['messaging.ten_dlc_mixed_enabled' => true]);
 
         foreach (['customer_care' => ['CUSTOMER_CARE', null], 'marketing' => ['MARKETING', null], 'mixed' => ['MIXED', ['CUSTOMER_CARE', 'MARKETING']], 'appointment_reminders' => ['CUSTOMER_CARE', null]] as $internal => [$expected, $subs]) {
             $business = $this->business();

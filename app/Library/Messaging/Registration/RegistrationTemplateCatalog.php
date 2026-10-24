@@ -84,7 +84,7 @@ final class RegistrationTemplateCatalog
             'marketing' => [
                 'topics' => ['Session promotions', 'Seasonal mini-sessions', 'Discounts'],
                 'description' => '{brand} sends promotional texts to opted-in contacts about photo sessions, seasonal mini-sessions and discounts.',
-                'sample_1' => '{brand}: Mini-session openings are available. Reply YES for details. Msg frequency varies. Msg&data rates may apply. Reply STOP to opt out, HELP for help.',
+                'sample_1' => '{brand}: Mini-session specials are open. Reply YES for details. Msg frequency varies. Msg&data rates may apply. Reply STOP to opt out, HELP for help.',
                 'sample_2' => '{brand}: Ask about our current photo session specials. Reply STOP to opt out.',
             ],
         ],
