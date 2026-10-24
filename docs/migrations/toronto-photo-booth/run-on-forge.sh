@@ -78,19 +78,33 @@ MYSQL_PWD="$(envval DB_PASSWORD)" mysqldump --no-tablespaces -h"$DB_HOST_V" -P"$
 DUMP_STATUS=("${PIPESTATUS[@]}")
 set -e
 { [ "${DUMP_STATUS[0]}" -eq 0 ] && [ "${DUMP_STATUS[1]}" -eq 0 ]; } || die "mysqldump/gzip failed (exit ${DUMP_STATUS[0]}/${DUMP_STATUS[1]})"
+live_tables() {   # base tables in the production schema (read-only information_schema query; no PROCESS privilege needed)
+  MYSQL_PWD="$(envval DB_PASSWORD)" mysql -h"$DB_HOST_V" -P"$DB_PORT_V" -u"$DB_USER_V" -N -B \
+    -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$(envval DB_DATABASE)' AND table_type='BASE TABLE' ORDER BY table_name" | sort -u
+}
 verify_backup() {
+  # Completeness is judged against the live schema, not against an arbitrary size: a small production database
+  # legitimately compresses to well under 1 MB.
   [ -s "$BACKUP_REF" ] || die "backup file is missing or empty"
   gzip -t "$BACKUP_REF" || die "backup is not a valid gzip stream"
-  [ "$(stat -c %s "$BACKUP_REF")" -gt 1048576 ] || die "backup is implausibly small"
+  local c u t live dump missing
+  c="$(stat -c %s "$BACKUP_REF")"; u="$(zcat "$BACKUP_REF" | wc -c)"
+  [ "$u" -gt 65536 ] || die "backup expands to only $u bytes (compressed $c)"
   [ "$(zcat "$BACKUP_REF" | tail -n 5 | grep -c -- '-- Dump completed' || true)" -ge 1 ] || die "backup is truncated (no completion marker)"
-  local t; t="$(zcat "$BACKUP_REF" | grep -c '^CREATE TABLE' || true)"
-  [ "$t" -gt 100 ] || die "backup has only $t tables"
-  [ "$(zcat "$BACKUP_REF" | grep -c '^CREATE TABLE `users`' || true)" -ge 1 ] || die "backup has no users table"
-  echo "Backup validated: $BACKUP_REF ($(du -h "$BACKUP_REF" | cut -f1), $t tables)"
+  dump="$(zcat "$BACKUP_REF" | grep -o '^CREATE TABLE `[^`]*`' | sed -e 's/^CREATE TABLE `//' -e 's/`$//' | sort -u)"
+  t="$(printf '%s\n' "$dump" | grep -c . || true)"
+  printf '%s\n' "$dump" | grep -qx 'users' || die "backup has no users table"
+  live="$(live_tables)" || die "could not read the live table list"
+  [ "$(printf '%s\n' "$live" | grep -c . || true)" -gt 0 ] || die "live schema reports no tables"
+  missing="$(comm -23 <(printf '%s\n' "$live") <(printf '%s\n' "$dump") | head -n 5 | tr '\n' ' ')"
+  [ -z "$missing" ] || die "backup is missing live tables, e.g.: $missing"
+  echo "Backup validated: $BACKUP_REF (compressed $c bytes, uncompressed $u bytes, $t tables in dump, $(printf '%s\n' "$live" | grep -c .) live tables, all present)"
 }
 verify_backup
 BACKUP_VALID=1
 BACKUP_SHA="$(sha256sum "$BACKUP_REF" | cut -d' ' -f1)"
+printf '%s  %s\n' "$BACKUP_SHA" "$(basename "$BACKUP_REF")" > "$BACKUP_REF.sha256"
+echo "Backup SHA-256 recorded: $BACKUP_SHA ($BACKUP_REF.sha256)"
 
 COMMON=(--owner-email="$OWNER_EMAIL" --snapshot="$STAGE/snapshot" --assets="$STAGE/assets")
 echo "---- READ-ONLY DRY RUN (the command verifies snapshot, location and every website image itself) ----"
