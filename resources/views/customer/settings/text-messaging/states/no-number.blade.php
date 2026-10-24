@@ -74,7 +74,7 @@
                         <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.order', [$workspaceUid, $businessUid]) }}">
                             @csrf
                             <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'number purchase', 'recurringLabel' => 'number rental', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'your number — this is the first month of rental, charged when you buy it', 'recurringLabel' => 'number rental, billed each month starting next month', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
                             <x-button type="submit" variant="primary" :disabled="! $available || ! $numberPreview['configured'] || ! $numberPreview['sufficient']">Get this number</x-button>
                         </form>
                     </div>
@@ -160,7 +160,7 @@
                         <p>{{ \App\Library\Messaging\BusinessMessagingRegistrationService::LOCAL_COST_NOTICE }} The number itself is charged only when you complete that order, after you're verified.</p>
                     </div>
 
-                    @include('customer.settings.text-messaging._charge-summary', ['preview' => $localRegistrationPreview, 'oneTimeLabel' => '10DLC registration and initial prepaid campaign fees', 'recurringLabel' => '10DLC campaign', 'unconfiguredText' => 'Local registration pricing isn\'t set up on our side yet, so a local number can\'t be registered right now. Toll-free is available.'])
+                    @include('customer.settings.text-messaging._charge-summary', ['preview' => $localRegistrationPreview, 'oneTimeLabel' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'recurringLabel' => '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Local registration pricing isn\'t set up on our side yet, so a local number can\'t be registered right now. Toll-free is available.'])
 
                     <form method="post" class="mt-auto pt-3" action="{{ route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspaceUid, $businessUid]) }}">
                         @csrf
@@ -187,7 +187,7 @@
                                  can never be bound to a provider resource this
                                  platform did not itself just verify. --}}
                             <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'number purchase', 'recurringLabel' => 'number rental', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'your number — this is the first month of rental, charged when you buy it', 'recurringLabel' => 'number rental, billed each month starting next month', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
                             <p class="text-caption text-muted mb-2" data-role="number-cost-notice">
                                 Number rental and SMS usage are charged.
                                 @if(($criteria['number_type'] ?? null) === 'toll_free')

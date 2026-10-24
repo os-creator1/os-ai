@@ -69,6 +69,14 @@ final readonly class MessagingRegistrationSubmission
         public string $fundingCycle = '0',
         /** A toll-free verification request already accepted and saved by an earlier attempt. */
         public ?string $existingVerificationId = null,
+        public ?string $contactFirstName = null,
+        public ?string $contactLastName = null,
+        /** Toll-free verification: expected monthly volume (provider enum value). */
+        public ?string $messageVolume = null,
+        /** Toll-free verification: image URL showing the opt-in flow. */
+        public ?string $optInImageUrl = null,
+        /** 10DLC brand industry vertical (provider enum value). */
+        public ?string $brandVertical = null,
         /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
         public ?string $campaignDescription = null,
     ) {
@@ -107,6 +115,11 @@ final readonly class MessagingRegistrationSubmission
             existingVerificationId: $registration->number_type === PhoneNumberType::TollFree && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_registration_id !== null && $registration->provider_registration_id !== ''
                 ? (string) $registration->provider_registration_id
                 : null,
+            contactFirstName: $registration->contact_first_name,
+            contactLastName: $registration->contact_last_name,
+            messageVolume: $registration->message_volume,
+            optInImageUrl: $registration->opt_in_image_url,
+            brandVertical: $registration->brand_vertical,
             fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
             campaignDescription: $registration->campaign_description,
         );

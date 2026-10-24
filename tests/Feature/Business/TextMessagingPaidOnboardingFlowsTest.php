@@ -101,6 +101,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
             'sample_message_1' => 'Sunset Photo Booths: thanks for your inquiry, your quote is on its way. Reply STOP to opt out.',
             'sample_message_2' => 'Sunset Photo Booths: reminder that your event is this weekend. Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/privacy', 'terms_url' => 'https://sunsetbooths.example/sms-terms',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
         ], $overrides);
     }
@@ -241,17 +242,27 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->order($search)->assertSessionHas('status', 'success');
         $this->assertSame($balanceBeforeNumber - self::PURCHASE, $this->balance());
 
-        // Recurring: one renewal charges number rental AND the monthly campaign
-        // cost (separate reservations), and a replay never charges twice.
+        // Recurring. The registration price already covered the first three
+        // campaign months, so a renewal inside that window charges rental only.
         $number = BusinessMessagingNumber::query()->firstOrFail();
         DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => now()->subDay()]);
         $balanceBeforeRenewal = $this->balance();
 
         $manager = app(NumberLifecycleManager::class);
         $this->assertSame('succeeded', $manager->attemptRenewal($number->fresh())->value);
-        $this->assertSame($balanceBeforeRenewal - self::RENTAL - self::CAMPAIGN, $this->balance());
+        $this->assertSame($balanceBeforeRenewal - self::RENTAL, $this->balance());
+
+        // After the prepaid months, a renewal charges rental AND the monthly
+        // campaign cost (separate reservations), and a replay never charges twice.
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['submitted_at' => now()->subMonths(4)]);
+        // A later billing period (a different due date, as in production).
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => now()->subDays(2)]);
+        $balanceBeforeFull = $this->balance();
+
+        $this->assertSame('succeeded', $manager->attemptRenewal($number->fresh())->value);
+        $this->assertSame($balanceBeforeFull - self::RENTAL - self::CAMPAIGN, $this->balance());
         $manager->attemptRenewal($number->fresh());
-        $this->assertSame($balanceBeforeRenewal - self::RENTAL - self::CAMPAIGN, $this->balance());
+        $this->assertSame($balanceBeforeFull - self::RENTAL - self::CAMPAIGN, $this->balance());
     }
 
     public function test_a_failed_carrier_order_releases_the_funds_and_a_retry_buys_exactly_once(): void
@@ -339,6 +350,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->order($this->search('local', '512'));
 
         $number = BusinessMessagingNumber::query()->firstOrFail();
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['submitted_at' => now()->subMonths(4)]);
         DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => now()->subDay()]);
         // Enough for the rental alone, not for rental + campaign.
         $this->fund(self::RENTAL + 1);
@@ -347,5 +359,68 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         $this->assertSame(self::RENTAL + 1, $this->balance());
         $this->assertSame('suspended', $number->fresh()->status->value);
+    }
+
+    /** @return array{0: BusinessMessagingNumber, 1: NumberLifecycleManager} an approved local number whose prepaid months have ended */
+    private function approvedLocalNumberPastPrepaid(): array
+    {
+        $this->telnyx();
+        $this->fund(30_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+        $this->post($this->url('registration.submit'));
+        $this->campaignStatus = 'ACTIVE';
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+        $this->order($this->search('local', '512'));
+
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['submitted_at' => now()->subMonths(4)]);
+        $number = BusinessMessagingNumber::query()->firstOrFail();
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => now()->subDay()]);
+
+        return [$number, app(NumberLifecycleManager::class)];
+    }
+
+    public function test_a_renewal_never_silently_skips_a_required_campaign_charge_whose_price_was_removed(): void
+    {
+        $this->configureRates();
+        [$number, $manager] = $this->approvedLocalNumberPastPrepaid();
+
+        // The owner's campaign price disappears (meter deactivated) after the purchase.
+        DB::table('usage_meters')->where('meter_key', NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL)->update(['is_metered' => 0]);
+        $balance = $this->balance();
+
+        $this->assertSame('not_configured', $manager->attemptRenewal($number->fresh())->value);
+
+        $this->assertSame($balance, $this->balance());
+        $this->assertSame('active', $number->fresh()->status->value);
+    }
+
+    public function test_the_renewal_warning_lists_every_recurring_charge_including_the_campaign_cost(): void
+    {
+        $this->configureRates();
+        [$number, $manager] = $this->approvedLocalNumberPastPrepaid();
+
+        $labels = $manager->recurringChargeLabels($number->fresh());
+
+        $this->assertSame(['Number rental: USD 2.00 per month', '10DLC campaign: USD 1.50 per month'], $labels);
+
+        // Inside the prepaid window the campaign cost is not part of the renewal.
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['submitted_at' => now()]);
+        $this->assertSame(['Number rental: USD 2.00 per month'], $manager->recurringChargeLabels($number->fresh()));
+    }
+
+    public function test_a_number_cannot_be_bought_unless_its_monthly_rental_price_is_configured_too(): void
+    {
+        $this->configureRates();
+        DB::table('usage_meters')->where('meter_key', NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL)->update(['is_metered' => 0]);
+        $this->fund(10_000_000);
+        $this->telnyx();
+
+        $search = $this->search('toll_free');
+        $this->assertStringContainsString('data-configured="0"', $search->getContent());
+
+        $this->order($search)->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing'));
+        $this->assertSame(0, $this->posted('/number_orders'));
+        $this->assertSame(10_000_000, $this->balance());
     }
 }

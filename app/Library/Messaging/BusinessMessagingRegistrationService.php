@@ -379,7 +379,7 @@ class BusinessMessagingRegistrationService
      */
     public const TOLL_FREE_DISCLOSURE = 'Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.';
 
-    public const LOCAL_COST_NOTICE = 'Local numbers also need carrier 10DLC registration. Besides number rental and SMS usage, 10DLC means a registration fee, initial prepaid campaign fees, and ongoing campaign costs. The carrier sets those amounts, and they are charged in addition to the number and your texts.';
+    public const LOCAL_COST_NOTICE = 'Local numbers also need carrier 10DLC registration. Besides number rental and SMS usage, that means a one-time registration charge (the carrier\'s brand fee plus the first three months of campaign fees, which the carrier bills upfront), then a monthly campaign fee after those three months. The carrier sets those amounts.';
 
     public function chargeDisclosureFor(PhoneNumberType $numberType): string
     {

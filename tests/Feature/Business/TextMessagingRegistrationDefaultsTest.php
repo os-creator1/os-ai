@@ -64,6 +64,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'sample_message_2' => 'Sunset Photo Booths: reminder that your event is this weekend. Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/privacy',
             'terms_url' => 'https://sunsetbooths.example/sms-terms',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
         ], $overrides);
     }
@@ -168,6 +169,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'sample_message_1' => 'Sunset Photo Booths: 20% off all packages this month! Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/terms',
             'terms_url' => 'https://sunsetbooths.example/terms',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'campaign_description' => 'Sunset Photo Booths sends [describe your messages] to customers.',
         ]));
 

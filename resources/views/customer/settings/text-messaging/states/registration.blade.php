@@ -104,7 +104,7 @@
                 --}}
                 <p class="text-caption text-muted mt-2 mb-0">
                     Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step. {{ $verificationChargeDisclosure }}
-                    @if(($registration->number_type ?? null) === \App\Enums\Messaging\PhoneNumberType::Local)
+                    @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
                         {{ \App\Library\Messaging\BusinessMessagingRegistrationService::LOCAL_COST_NOTICE }}
                     @endif
                     @if($phoneNumber === null)
@@ -219,6 +219,54 @@
                     </div>
                 </div>
 
+                <div class="row" data-role="carrier-contact-fields">
+                    <div class="col-md-6 mb-1">
+                        <label class="form-label required" for="contact_first_name">Contact first name</label>
+                        <input type="text" class="form-control @error('contact_first_name') is-invalid @enderror" id="contact_first_name" name="contact_first_name"
+                               value="{{ old('contact_first_name', $registration->contact_first_name) }}" maxlength="100" required>
+                        @error('contact_first_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="col-md-6 mb-1">
+                        <label class="form-label required" for="contact_last_name">Contact last name</label>
+                        <input type="text" class="form-control @error('contact_last_name') is-invalid @enderror" id="contact_last_name" name="contact_last_name"
+                               value="{{ old('contact_last_name', $registration->contact_last_name) }}" maxlength="100" required>
+                        @error('contact_last_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                </div>
+
+                @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree)
+                    <div class="row" data-role="toll-free-carrier-fields">
+                        <div class="col-md-5 mb-1">
+                            <label class="form-label required" for="message_volume">Expected messages per month</label>
+                            <select class="form-select @error('message_volume') is-invalid @enderror" id="message_volume" name="message_volume" required>
+                                <option value="">Choose…</option>
+                                @foreach($messageVolumes as $value => $label)
+                                    <option value="{{ $value }}" @selected(old('message_volume', $registration->message_volume) === (string) $value)>{{ $label }}</option>
+                                @endforeach
+                            </select>
+                            @error('message_volume')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-md-7 mb-1">
+                            <label class="form-label required" for="opt_in_image_url">Link to a screenshot of your opt-in form</label>
+                            <input type="url" class="form-control @error('opt_in_image_url') is-invalid @enderror" id="opt_in_image_url" name="opt_in_image_url"
+                                   value="{{ old('opt_in_image_url', $registration->opt_in_image_url) }}" maxlength="2083" placeholder="https://… (an image of where customers agree to texts)" required>
+                            <p class="text-caption text-muted mb-0">The carrier requires an image showing how customers opt in.</p>
+                            @error('opt_in_image_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
+                @else
+                    <div class="mb-1" data-role="local-carrier-fields">
+                        <label class="form-label required" for="brand_vertical">Industry category</label>
+                        <select class="form-select @error('brand_vertical') is-invalid @enderror" id="brand_vertical" name="brand_vertical" required>
+                            <option value="">Choose…</option>
+                            @foreach($brandVerticals as $value => $label)
+                                <option value="{{ $value }}" @selected(old('brand_vertical', $prefill['values']['brand_vertical'] ?? '') === $value)>{{ $label }}</option>
+                            @endforeach
+                        </select>
+                        @error('brand_vertical')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                @endif
+
                 <div class="mb-1" data-role="use-case-choices">
                     <label class="form-label required">What will you use texting for?</label>
                     @foreach($useCaseChoices as $choice => $definition)
@@ -318,9 +366,9 @@
                 @else
                     <p class="text-caption text-muted mb-2">Everything required is filled in. Nothing is sent until you press the button.</p>
                 @endif
-                @php($isLocalRegistration = ($registration->number_type ?? null) === \App\Enums\Messaging\PhoneNumberType::Local)
+                @php($isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
                 @if($isLocalRegistration)
-                    @include('customer.settings.text-messaging._charge-summary', ['preview' => $registrationPreview, 'oneTimeLabel' => '10DLC registration and initial prepaid campaign fees (charged when you submit)', 'recurringLabel' => '10DLC campaign cost', 'unconfiguredText' => 'Registration pricing isn\'t set up on our side yet, so this can\'t be submitted right now. Nothing will be charged.'])
+                    @include('customer.settings.text-messaging._charge-summary', ['preview' => $registrationPreview, 'oneTimeLabel' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'recurringLabel' => '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Registration pricing isn\'t set up on our side yet, so this can\'t be submitted right now. Nothing will be charged.'])
                 @else
                     <p class="text-caption text-muted mb-2" data-role="toll-free-verification-cost">{{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }}</p>
                 @endif

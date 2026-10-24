@@ -19,6 +19,8 @@ class NumberRenewalWarningNotification extends Notification
     public function __construct(
         public readonly string $phoneNumber,
         public readonly ?Carbon $nextRenewalAt,
+        /** @var list<string> every recurring charge this renewal includes */
+        public readonly array $charges = [],
     ) {
     }
 
@@ -29,9 +31,14 @@ class NumberRenewalWarningNotification extends Notification
 
     public function toMail(object $notifiable): MailMessage
     {
-        return (new MailMessage)
+        $mail = (new MailMessage)
             ->subject('Your number renews soon and your balance may not cover it')
-            ->line("Your number {$this->phoneNumber} is due to renew on {$this->nextRenewalAt?->format('Y-m-d')}.")
-            ->line('Your current balance may not be enough to cover this renewal. Add funds before the renewal date to avoid a pause in new outbound messages.');
+            ->line("Your number {$this->phoneNumber} is due to renew on {$this->nextRenewalAt?->format('Y-m-d')}.");
+
+        foreach ($this->charges as $charge) {
+            $mail->line($charge);
+        }
+
+        return $mail->line('Your current balance may not be enough to cover this renewal. Add funds before the renewal date to avoid a pause in new outbound messages.');
     }
 }

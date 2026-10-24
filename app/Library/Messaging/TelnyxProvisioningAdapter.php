@@ -26,6 +26,7 @@ use App\Library\Messaging\DTO\RegistrationStatusQuery;
 use App\Library\Messaging\DTO\RegistrationStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
+use App\Library\Messaging\Registration\CarrierRegistrationOptions;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException;
@@ -425,6 +426,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new MessagingRegistrationRecoveryRequiredException('An earlier number order has an unconfirmed carrier outcome.');
         }
 
+        $this->assertRecurringPriceConfigured(NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL);
+
         $reservationId = $this->reserveFunding($business, self::FEATURE_NUMBER_PURCHASE);
 
         try {
@@ -790,6 +793,14 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('Mixed 10DLC campaigns are not enabled yet.');
         }
 
+        // Checked before any wallet reservation: values Telnyx requires and
+        // validates must be present and provider-valid.
+        if ($submission->existingBrandId === null
+            && (! isset(CarrierRegistrationOptions::BRAND_VERTICALS[(string) $submission->brandVertical])
+                || CarrierRegistrationOptions::stateCode($submission->region) === null)) {
+            throw new \RuntimeException('A 10DLC brand needs an industry category and a valid US state.');
+        }
+
         // Checked before any wallet reservation: a campaign description is
         // required, and the technical use-case key is never a substitute.
         if ($submission->campaignDescription === null || trim($submission->campaignDescription) === '') {
@@ -809,6 +820,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new MessagingRegistrationRecoveryRequiredException('An earlier 10DLC submission has an unconfirmed provider outcome.');
         }
 
+        $this->assertRecurringPriceConfigured(NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL);
+
         $operationKey = $this->registrationOperationKey($business, self::FEATURE_TEN_DLC_REGISTRATION, $submission);
 
         if ($operationKey === null) {
@@ -825,20 +838,25 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         try {
             if ($brandId === null) {
                 try {
-                    $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', [
+                    $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', array_filter([
                         'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
                         'displayName' => $submission->legalBusinessName,
                         'companyName' => $submission->legalBusinessName,
+                        'firstName' => $submission->contactFirstName,
+                        'lastName' => $submission->contactLastName,
                         'ein' => $submission->ein,
                         'email' => $submission->contactEmail,
                         'phone' => $submission->contactPhone,
                         'street' => $submission->addressLine1,
                         'city' => $submission->city,
-                        'state' => $submission->region,
+                        // Telnyx: "Must be 2 letters code for United States."
+                        'state' => CarrierRegistrationOptions::stateCode($submission->region),
                         'postalCode' => $submission->postalCode,
                         'country' => $submission->countryCode,
                         'website' => $submission->websiteUrl,
-                    ]);
+                        // Required by Telnyx; the customer's own choice, never inferred here.
+                        'vertical' => $submission->brandVertical,
+                    ], fn ($value) => $value !== null && $value !== ''));
                 } catch (ConnectionException $e) {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand request did not complete');
                 }
@@ -883,6 +901,20 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     'optinKeywords' => 'START,SUBSCRIBE',
                     'optoutKeywords' => 'STOP,UNSUBSCRIBE',
                     'helpKeywords' => 'HELP,INFO',
+                    // The registration's consent checklist is validated
+                    // (and customer-attested) before this point.
+                    'subscriberOptin' => true,
+                    'subscriberOptout' => true,
+                    'subscriberHelp' => true,
+                    'termsAndConditions' => true,
+                    'embeddedLink' => false,
+                    'embeddedPhone' => false,
+                    'numberPool' => false,
+                    'ageGated' => false,
+                    'directLending' => false,
+                    // Keeps the campaign alive across billing cycles while
+                    // the customer is billed its monthly campaign cost.
+                    'autoRenewal' => true,
                 ]);
             } catch (ConnectionException $e) {
                 throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign request did not complete');
@@ -930,6 +962,23 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $this->wallet->commit($reservationId);
 
         return new RegistrationSubmissionResult($brandId, $campaignId, null, MessagingRegistrationStatus::Pending);
+    }
+
+    /**
+     * A paid action with an ongoing carrier cost is never started unless
+     * that ongoing cost is priced too — otherwise the platform would absorb
+     * it. Refused before any funds are reserved or provider call is made.
+     */
+    private function assertRecurringPriceConfigured(string $recurringFeature): void
+    {
+        if (app(MessagingChargePreview::class)->fee($recurringFeature) === null) {
+            throw new MessagingFundingUnavailableException(
+                sprintf('The recurring price [%s] is not configured.', $recurringFeature),
+                0,
+                null,
+                MessagingFundingUnavailableException::REASON_PRICING_NOT_CONFIGURED,
+            );
+        }
     }
 
     private function unconfirmedNumberOrder(Business $business, AvailableNumberCandidate $candidate, string $messagingProfileId, string $detail): MessagingRegistrationRecoveryRequiredException
@@ -1015,6 +1064,19 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('Toll-free verification cannot be submitted without an already-owned number.');
         }
 
+        // Provider-required values, checked before any request: Telnyx
+        // validates these and a guessed value would only be rejected.
+        $tollFreeUseCase = CarrierRegistrationOptions::TOLL_FREE_USE_CASES[$submission->useCase] ?? null;
+
+        if ($submission->existingVerificationId === null
+            && ($tollFreeUseCase === null
+                || ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume])
+                || CarrierRegistrationOptions::stateName($submission->region) === null
+                || trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === ''
+                || ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL))) {
+            throw new \RuntimeException('Toll-free verification needs a mapped use case, a message volume, a US state, a contact name and an opt-in image URL.');
+        }
+
         $business = Business::query()->findOrFail($submission->businessId);
 
         // Toll-free verification is $0 through Telnyx: there is genuinely
@@ -1041,23 +1103,35 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         }
 
         try {
-            $response = $this->client()->post(self::API_BASE . '/messaging_tollfree/verification/requests', [
+            $response = $this->client()->post(self::API_BASE . '/messaging_tollfree/verification/requests', array_filter([
                 'businessName' => $submission->legalBusinessName,
+                'corporateWebsite' => $submission->websiteUrl,
                 'businessAddr1' => $submission->addressLine1,
+                'businessAddr2' => $submission->addressLine2,
                 'businessCity' => $submission->city,
-                'businessState' => $submission->region,
+                // Telnyx: "The full name of the state (not the 2 letter code)".
+                'businessState' => CarrierRegistrationOptions::stateName($submission->region),
                 'businessZip' => $submission->postalCode,
+                'businessContactFirstName' => $submission->contactFirstName,
+                'businessContactLastName' => $submission->contactLastName,
                 'businessContactEmail' => $submission->contactEmail,
                 'businessContactPhone' => $submission->contactPhone,
-                'websiteUrl' => $submission->websiteUrl,
-                'useCaseCategories' => [$submission->useCase],
-                'useCaseSummary' => $submission->useCase,
+                'messageVolume' => $submission->messageVolume,
+                'useCase' => $tollFreeUseCase,
+                'useCaseSummary' => $submission->campaignDescription,
                 'productionMessageContent' => $submission->sampleMessage1,
                 'optInWorkflow' => $submission->optInMethod,
-                'privacyPolicyUrl' => $submission->privacyPolicyUrl,
-                'termsAndConditionsUrl' => $submission->termsUrl,
+                'optInWorkflowImageURLs' => [['url' => $submission->optInImageUrl]],
+                'additionalInformation' => mb_substr((string) $submission->campaignDescription, 0, 500),
+                'businessRegistrationNumber' => $submission->entityType === MessagingEntityType::Ein ? $submission->ein : null,
+                'businessRegistrationType' => $submission->entityType === MessagingEntityType::Ein ? 'EIN' : null,
+                'businessRegistrationCountry' => $submission->entityType === MessagingEntityType::Ein ? 'US' : null,
+                'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
+                'privacyPolicyURL' => $submission->privacyPolicyUrl,
+                'termsAndConditionURL' => $submission->termsUrl,
+                'optInKeywords' => 'START,SUBSCRIBE',
                 'phoneNumbers' => [['phoneNumber' => $submission->phoneNumber]],
-            ]);
+            ], fn ($value) => $value !== null && $value !== ''));
         } catch (ConnectionException) {
             throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free request did not complete');
         }

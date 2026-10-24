@@ -119,6 +119,25 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $wallet->activateMetering($featureKey, $actorId, 'Test metering activation.');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => $availableMicro]);
+
+        // The paid actions also require their recurring price to be configured.
+        $companion = [
+            $featureKey === TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE ? \App\Library\Messaging\NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL : null,
+            $featureKey === TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION ? \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL : null,
+        ];
+
+        foreach (array_filter($companion) as $recurringKey) {
+            if (DB::table('usage_meters')->where('meter_key', $recurringKey)->exists()) {
+                continue;
+            }
+
+            app(UsageMeterRepository::class)->create([
+                'meter_key' => $recurringKey, 'feature_key' => PlatformFeature::MessagingTransport->value, 'business_id' => null,
+                'currency_id' => $currencyId, 'description' => 'Recurring fixture meter (test-only).', 'updated_by_user_id' => $actorId,
+            ]);
+            $wallet->setActiveRate($recurringKey, '500000', '0', 'per month', $currencyId, $actorId, 'Test rate activation.');
+            $wallet->activateMetering($recurringKey, $actorId, 'Test metering activation.');
+        }
     }
 
     private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null, ?string $existingBrandId = null): MessagingRegistrationSubmission
@@ -144,6 +163,11 @@ class TelnyxProvisioningAdapterTest extends TestCase
             sampleMessage2: 'Harbor Lane: reminder, your appointment is tomorrow.',
             privacyPolicyUrl: 'https://harborlane.example/privacy',
             termsUrl: 'https://harborlane.example/terms',
+            contactFirstName: 'Pat',
+            contactLastName: 'Owner',
+            messageVolume: '1,000',
+            optInImageUrl: 'https://example.com/opt-in.png',
+            brandVertical: 'ENTERTAINMENT',
             phoneNumber: $phoneNumber,
             existingBrandId: $existingBrandId,
             campaignDescription: 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
@@ -990,7 +1014,9 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'business_id' => $business->id,
             'number_type' => 'local',
             'entity_type' => 'ein',
-            'use_case' => 'customer_care',
+            'use_case' => 'customer_care', 'region' => 'OR',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000',
+            'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
             'status' => 'not_started',
         ]);

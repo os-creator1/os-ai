@@ -52,10 +52,17 @@ return [
     | `php artisan messaging:sync-provisioning-rates` (idempotent; run it
     | after changing these). Toll-free verification is $0 and has no entry.
     |
-    |   number_purchase         one-time, when a number is bought
-    |   number_rental_renewal   recurring monthly rental of each number
-    |   ten_dlc_registration    one-time 10DLC brand + initial prepaid campaign fees
-    |   ten_dlc_campaign_renewal recurring monthly 10DLC campaign cost (local numbers)
+    |   number_purchase         the first charge when a number is bought: this IS the
+    |                           first month's rental (no separate rental is taken
+    |                           until next month), plus any one-time setup
+    |   number_rental_renewal   monthly rental of each number, from month two on
+    |   ten_dlc_registration    one-time: carrier brand fee + the first three months
+    |                           of campaign fees (Telnyx bills them upfront)
+    |   ten_dlc_campaign_renewal monthly campaign cost, charged only AFTER the three
+    |                           prepaid months (local numbers)
+    |
+    | A paid purchase/registration is refused unless its recurring price is
+    | configured too, so no ongoing carrier cost is ever left unbilled.
     */
     'rates' => [
         'currency' => env('MESSAGING_RATE_CURRENCY', 'USD'),
@@ -66,6 +73,9 @@ return [
         'ten_dlc_registration' => ['retail_micro' => env('MESSAGING_10DLC_REGISTRATION_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_REGISTRATION_COST_MICRO'), 'unit' => 'per registration'],
         'ten_dlc_campaign_renewal' => ['retail_micro' => env('MESSAGING_10DLC_CAMPAIGN_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_CAMPAIGN_COST_MICRO'), 'unit' => 'per month'],
     ],
+
+    /** Months of campaign fees Telnyx bills upfront at registration (covered by the registration price). */
+    'ten_dlc_prepaid_months' => (int) env('MESSAGING_10DLC_PREPAID_MONTHS', 3),
 
     'default_provider' => 'telnyx',
 

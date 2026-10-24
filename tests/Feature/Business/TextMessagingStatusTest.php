@@ -50,6 +50,7 @@ class TextMessagingStatusTest extends TestCase
             'website_url' => 'https://example.com', 'contact_email' => 'o@example.com', 'contact_phone' => '+15035550100',
             'use_case' => 'customer_care', 'opt_in_method' => 'Opt in form.', 'sample_message_1' => 'Hi. Reply STOP to opt out.',
             'sample_message_2' => 'Hello. Reply STOP to opt out.', 'privacy_policy_url' => 'https://example.com/p', 'terms_url' => 'https://example.com/t',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ]);
     }
 

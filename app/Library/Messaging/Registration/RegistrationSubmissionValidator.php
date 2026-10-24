@@ -3,6 +3,7 @@
 namespace App\Library\Messaging\Registration;
 
 use App\Enums\Messaging\MessagingRegistrationStatus;
+use App\Enums\Messaging\PhoneNumberType;
 use App\Models\BusinessMessagingRegistration;
 
 /**
@@ -76,9 +77,43 @@ final class RegistrationSubmissionValidator
             $issues[] = 'The Privacy Policy and SMS Terms need separate pages.';
         }
 
-        $issues = array_merge($issues, $this->messageIssues($registration), $this->consentIssues($registration));
+        $issues = array_merge($issues, $this->carrierFieldIssues($registration), $this->messageIssues($registration), $this->consentIssues($registration));
 
         return array_values(array_unique($issues));
+    }
+
+    /** @return list<string> */
+    private function carrierFieldIssues(BusinessMessagingRegistration $registration): array
+    {
+        $issues = [];
+
+        foreach (['contact_first_name' => 'contact first name', 'contact_last_name' => 'contact last name'] as $field => $label) {
+            if (trim((string) $registration->{$field}) === '') {
+                $issues[] = 'Add your ' . $label . '.';
+            }
+        }
+
+        if (trim((string) $registration->region) !== '' && CarrierRegistrationOptions::stateCode($registration->region) === null) {
+            $issues[] = 'Your state must be a US state (for example TX or Texas).';
+        }
+
+        if ($registration->number_type === PhoneNumberType::TollFree) {
+            if (! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $registration->message_volume])) {
+                $issues[] = 'Choose your expected messages per month.';
+            }
+
+            if (! filter_var((string) $registration->opt_in_image_url, FILTER_VALIDATE_URL)) {
+                $issues[] = 'Add a link to a screenshot of your opt-in form (the carrier requires an image).';
+            }
+
+            if (! isset(CarrierRegistrationOptions::TOLL_FREE_USE_CASES[(string) $registration->use_case])) {
+                $issues[] = 'This messaging type can\'t be submitted for toll-free verification. Choose another.';
+            }
+        } elseif (! isset(CarrierRegistrationOptions::BRAND_VERTICALS[(string) $registration->brand_vertical])) {
+            $issues[] = 'Choose your industry category.';
+        }
+
+        return $issues;
     }
 
     /** @return list<string> */

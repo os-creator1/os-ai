@@ -378,6 +378,11 @@ class TextMessagingController extends CustomerBaseController
             'sample_message_2' => ['required', 'string', 'max:500'],
             'privacy_policy_url' => ['required', 'url', 'max:255'],
             'terms_url' => ['required', 'url', 'max:255'],
+            'contact_first_name' => ['nullable', 'string', 'max:100'],
+            'contact_last_name' => ['nullable', 'string', 'max:100'],
+            'message_volume' => ['nullable', 'string', \Illuminate\Validation\Rule::in(array_map('strval', array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::MESSAGE_VOLUMES)))],
+            'opt_in_image_url' => ['nullable', 'url', 'max:2083'],
+            'brand_vertical' => ['nullable', 'string', 'in:' . implode(',', array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::BRAND_VERTICALS))],
         ]);
 
         // An unchecked box is simply absent from the POST, so the stored
@@ -743,6 +748,10 @@ class TextMessagingController extends CustomerBaseController
             // model, so the form can read every field the same way
             // whether this is the first visit or the tenth.
             'registration' => $registration = $situation['registration'] ?? new BusinessMessagingRegistration(['status' => MessagingRegistrationStatus::NotStarted->value]),
+            // The owned number decides the regime shown; a saved row may predate it.
+            'formNumberType' => $this->numberTypeFor($business) ?? ($registration->number_type ?? PhoneNumberType::Local),
+            'messageVolumes' => \App\Library\Messaging\Registration\CarrierRegistrationOptions::MESSAGE_VOLUMES,
+            'brandVerticals' => \App\Library\Messaging\Registration\CarrierRegistrationOptions::BRAND_VERTICALS,
             'useCases' => self::US_USE_CASES,
             'useCaseChoices' => RegistrationTemplateCatalog::CHOICES,
             'selectedChoice' => RegistrationTemplateCatalog::choiceForUseCase($registration->use_case),

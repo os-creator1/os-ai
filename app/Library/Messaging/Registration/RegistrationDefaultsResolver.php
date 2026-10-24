@@ -19,6 +19,7 @@ final class RegistrationDefaultsResolver
         'legal_business_name', 'address_line_1', 'address_line_2', 'city', 'region', 'postal_code',
         'website_url', 'contact_email', 'contact_phone',
         'campaign_description', 'opt_in_method', 'sample_message_1', 'sample_message_2',
+        'contact_first_name', 'contact_last_name', 'message_volume', 'opt_in_image_url', 'brand_vertical',
     ];
 
     /**
@@ -37,6 +38,7 @@ final class RegistrationDefaultsResolver
             'website_url' => $business->website_url,
             'contact_email' => $business->email,
             'contact_phone' => $business->phone,
+            'brand_vertical' => CarrierRegistrationOptions::INDUSTRY_SUGGESTION[$business->industry?->value ?? ''] ?? null,
         ];
 
         $brand = $this->brandName($business, $registration);

@@ -58,10 +58,16 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
         ], $extra));
     }
 
+    /** A paid local registration also needs its recurring campaign price configured. */
+    private function activateCampaignRenewal(User $actor): void
+    {
+        $this->activate($actor, ['feature' => 'campaign-renewal', 'retail-rate-micro' => '1500000'])->assertSuccessful();
+    }
+
     private function registration(Business $business): MessagingRegistrationSubmission
     {
         $registration = BusinessMessagingRegistration::create([
-            'business_id' => $business->id, 'number_type' => 'local', 'entity_type' => 'ein', 'use_case' => 'customer_care',
+            'business_id' => $business->id, 'number_type' => 'local', 'entity_type' => 'ein', 'use_case' => 'customer_care', 'region' => 'OR', 'brand_vertical' => 'ENTERTAINMENT', 'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner',
             'campaign_description' => 'Harbor Lane sends appointment reminders.', 'status' => 'not_started',
         ]);
 
@@ -111,6 +117,25 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
         $this->assertSame(0, DB::table('usage_meters')->count());
     }
 
+    public function test_a_one_time_price_alone_is_not_enough_the_recurring_price_must_be_configured_too(): void
+    {
+        $this->activate($this->admin())->assertSuccessful();
+        $business = $this->business();
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 50_000_000]);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($this->registration($business));
+            $this->fail('Expected funding unavailable.');
+        } catch (MessagingFundingUnavailableException $e) {
+            $this->assertSame(MessagingFundingUnavailableException::REASON_PRICING_NOT_CONFIGURED, $e->reason);
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
     public function test_activation_creates_one_metered_platform_meter_and_is_idempotent(): void
     {
         $admin = $this->admin();
@@ -129,7 +154,9 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
 
     public function test_after_activation_an_unfunded_wallet_is_blocked_as_insufficient_funds_and_a_funded_one_is_charged_exactly_once(): void
     {
-        $this->activate($this->admin())->assertSuccessful();
+        $admin = $this->admin();
+        $this->activate($admin)->assertSuccessful();
+        $this->activateCampaignRenewal($admin);
 
         $unfunded = $this->business();
         Http::fake([
@@ -159,7 +186,9 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
 
     public function test_a_wallet_in_a_different_currency_is_reported_as_a_wallet_configuration_problem(): void
     {
-        $this->activate($this->admin())->assertSuccessful();
+        $admin = $this->admin();
+        $this->activate($admin)->assertSuccessful();
+        $this->activateCampaignRenewal($admin);
         $eur = Currency::create(['name' => 'Euro', 'code' => 'EUR', 'format' => 'E', 'status' => true]);
         $business = $this->business();
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);

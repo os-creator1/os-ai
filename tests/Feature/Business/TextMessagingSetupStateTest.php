@@ -67,8 +67,8 @@ class TextMessagingSetupStateTest extends TestCase
 
         // Local discloses 10DLC registration, prepaid campaign fees and ongoing costs up front.
         $this->assertStringContainsString('10DLC', $html);
-        $this->assertStringContainsString('initial prepaid campaign fees', $html);
-        $this->assertStringContainsString('ongoing campaign costs', $html);
+        $this->assertStringContainsString('first three months of campaign fees', $html);
+        $this->assertStringContainsString('monthly campaign fee after those three months', $html);
         $this->assertStringNotContainsStringIgnoringCase('texting is free', $html);
         $this->assertStringNotContainsStringIgnoringCase('free texting', $html);
     }
@@ -266,6 +266,7 @@ class TextMessagingSetupStateTest extends TestCase
             'sample_message_2' => 'Harbor Lane: reminder, your appointment is tomorrow.',
             'privacy_policy_url' => 'https://harborlane.example/privacy',
             'terms_url' => 'https://harborlane.example/terms',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ], $overrides);
     }
 
@@ -281,7 +282,6 @@ class TextMessagingSetupStateTest extends TestCase
         $response->assertSee('+14155550300');
         $response->assertSee('Not started');
         $response->assertSee('Business details');
-        $response->assertDontSee('10DLC', false);
         $response->assertSee('Messaging registration');
     }
 

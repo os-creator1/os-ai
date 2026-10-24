@@ -61,6 +61,6 @@ class SendNumberRenewalWarning extends Base implements ShouldQueueAfterCommit
             return;
         }
 
-        Notification::route('mail', $email)->notify(new NumberRenewalWarningNotification($number->phone_number, $number->next_renewal_at));
+        Notification::route('mail', $email)->notify(new NumberRenewalWarningNotification($number->phone_number, $number->next_renewal_at, app(\App\Library\Messaging\NumberLifecycleManager::class)->recurringChargeLabels($number)));
     }
 }

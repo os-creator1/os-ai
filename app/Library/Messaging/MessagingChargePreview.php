@@ -76,10 +76,12 @@ final class MessagingChargePreview
         return [
             'one_time' => $oneTime,
             'recurring' => $recurring,
-            // Paid submission is only offered with a configured one-time rate.
-            'configured' => $oneTime !== null,
+            // A paid action is only offered when BOTH its one-time and its
+            // recurring price are configured, so no recurring carrier cost
+            // can ever be left unbilled.
+            'configured' => $oneTime !== null && $recurring !== null,
             'balance_text' => DashboardMoney::format((string) $balanceMicro, $wallet?->currency?->code),
-            'sufficient' => $oneTime !== null && $balanceMicro >= $oneTime['micro'],
+            'sufficient' => $oneTime !== null && $recurring !== null && $balanceMicro >= $oneTime['micro'],
         ];
     }
 }
