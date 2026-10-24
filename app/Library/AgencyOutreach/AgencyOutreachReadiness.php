@@ -184,7 +184,7 @@ class AgencyOutreachReadiness
 
         if ($metered) {
             try {
-                $estimate = $this->costs->estimate($business, 'messaging_transport', '1');
+                $estimate = $this->costs->estimate($business, \App\Library\Messaging\MessageMeters::SMS_OUTBOUND, '1');
             } catch (Throwable) {
                 $estimate = null;
             }

@@ -26,19 +26,19 @@ final class ChargeCarrierFee
     /**
      * @return array{status: 'charged'|'already_charged'|'not_configured'|'refused', reason: ?string}
      */
-    public function charge(Business $business, int $carrierCostMicro, string $operationId): array
+    public function charge(Business $business, int $carrierCostMicro, string $operationId, string $feature = self::FEATURE): array
     {
         if ($carrierCostMicro < 1) {
             return ['status' => 'refused', 'reason' => 'amount_must_be_positive'];
         }
 
-        if ($this->preview->multiplier(self::FEATURE) === null) {
+        if ($this->preview->multiplier($feature) === null) {
             return ['status' => 'not_configured', 'reason' => null];
         }
 
         $result = $this->wallet->reserve(
             $business,
-            self::FEATURE,
+            $feature,
             sprintf('carrier_fee:%d:%s', $business->id, $operationId),
             bcdiv((string) $carrierCostMicro, '1000000', 6),
         );

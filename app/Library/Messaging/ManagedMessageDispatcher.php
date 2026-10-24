@@ -182,7 +182,7 @@ class ManagedMessageDispatcher
         // is thrown HERE, before the operation row and before any provider
         // contact, exactly like every other pre-flight refusal above. A no-op
         // while the messaging_transport meter is unmetered/unpriced.
-        $reservationId = $this->billing->reserve($business, $operationKey, $quantity);
+        $reservationId = $this->billing->reserve($business, $operationKey, $quantity, $messageType, (string) $number->number_type?->value);
 
         try {
             $operationId = $this->recordAttempt($business, (int) $identity->id, $operationKey, $messageType);

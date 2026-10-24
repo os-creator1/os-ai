@@ -36,7 +36,12 @@ class ActivateMessagingProvisioningRate extends Command
         '10dlc' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION,
         'number-purchase' => TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE,
         'number-rental-renewal' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL,
-        'message-segment' => \App\Enums\Entitlement\PlatformFeature::MessagingTransport->value,
+        'sms-outbound' => \App\Library\Messaging\MessageMeters::SMS_OUTBOUND,
+        'sms-inbound' => \App\Library\Messaging\MessageMeters::SMS_INBOUND,
+        'mms-outbound' => \App\Library\Messaging\MessageMeters::MMS_OUTBOUND,
+        'mms-inbound-local' => \App\Library\Messaging\MessageMeters::MMS_INBOUND_LOCAL,
+        'mms-inbound-toll-free' => \App\Library\Messaging\MessageMeters::MMS_INBOUND_TOLL_FREE,
+        'carrier-surcharge' => \App\Library\Messaging\MessageMeters::SURCHARGE,
         'carrier-pass-through' => \App\Library\Messaging\ChargeCarrierFee::FEATURE,
         '10dlc-brand' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_BRAND_REGISTRATION,
         '10dlc-low-volume' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION,
@@ -45,7 +50,7 @@ class ActivateMessagingProvisioningRate extends Command
     ];
 
     protected $signature = 'messaging:activate-provisioning-rate
-        {feature : message-segment | carrier-pass-through | 10dlc | 10dlc-brand | 10dlc-low-volume | number-purchase | number-rental-renewal | campaign-renewal | campaign-renewal-low-volume (toll-free verification is $0: no meter)}
+        {feature : sms-outbound | sms-inbound | mms-outbound | mms-inbound-local | mms-inbound-toll-free | carrier-surcharge | carrier-pass-through | 10dlc | 10dlc-brand | 10dlc-low-volume | number-purchase | number-rental-renewal | campaign-renewal | campaign-renewal-low-volume (toll-free verification is $0: no meter)}
         {retail-rate-micro : approved customer price per action, in micro-units (1000000 = 1.00)}
         {provider-cost-micro : approved provider cost per action, in micro-units}
         {unit-label : e.g. "per registration"}
@@ -97,6 +102,13 @@ class ActivateMessagingProvisioningRate extends Command
 
         if (in_array($meterKey, $passThrough, true) && ((int) $retail < 1_000_000 || (int) $retail > 2_000_000)) {
             $this->error("{$meterKey} is a pass-through fee: its retail-rate-micro is a multiplier on the carrier's price between 1000000 (cost, zero markup) and 2000000 (+100%), not a dollar amount.");
+
+            return self::FAILURE;
+        }
+
+        // The carrier surcharge is billed at exactly its actual cost: no markup, never a discount.
+        if ($meterKey === \App\Library\Messaging\MessageMeters::SURCHARGE && (int) $retail !== 1_000_000) {
+            $this->error('carrier-surcharge is billed at exactly the actual Telnyx surcharge: retail-rate-micro must be 1000000.');
 
             return self::FAILURE;
         }

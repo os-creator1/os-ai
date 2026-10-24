@@ -166,7 +166,7 @@ class ManagedTransportBillingTest extends TestCase
     /** What the platform owner does with the existing rate tooling: a meter, a rate, then metering on. */
     private function priceTransport(): void
     {
-        $key = PlatformFeature::MessagingTransport->value;
+        $key = \App\Library\Messaging\MessageMeters::SMS_OUTBOUND;
         $currencyId = Currency::query()->first()->id;
         $actorId = User::create([
             'first_name' => 'Test', 'last_name' => 'Actor', 'email' => 'actor' . uniqid() . '@example.test',
@@ -175,7 +175,7 @@ class ManagedTransportBillingTest extends TestCase
 
         $manager = app(UsageWalletManager::class);
         app(UsageMeterRepository::class)->create([
-            'meter_key' => $key, 'feature_key' => $key, 'business_id' => null,
+            'meter_key' => $key, 'feature_key' => PlatformFeature::MessagingTransport->value, 'business_id' => null,
             'currency_id' => $currencyId, 'description' => 'Managed messaging transport (per segment).', 'updated_by_user_id' => $actorId,
         ]);
         $manager->setActiveRate($key, (string) self::RATE_MICRO, '5000', 'per segment', $currencyId, $actorId, 'Fixture.');

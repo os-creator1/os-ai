@@ -5,27 +5,34 @@ namespace App\Library\Messaging;
 use App\Enums\Usage\UsageLedgerEntryType;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /**
- * Compares what was billed for each managed message with Telnyx's FINAL
- * cost for it (GET /v2/messages/{id}: `cost` — the carrier fee included —
- * is calculated asynchronously and is only trusted once `completed_at` is
- * set), and settles the difference at cost on the Business the message
- * belongs to.
+ * Settles every managed message to what it should cost:
  *
- * - Outbound messages are billed per segment up front at the configured
- *   rate; that charge is an ESTIMATE, never presented as the actual cost.
- *   Only outbound messages that were actually billed (a committed
- *   reservation) are reconciled.
- * - Inbound messages are not billed when received; their carrier cost is
- *   billed here, once, when it is known.
- * - Under-billing is settled through the explicit carrier pass-through
- *   charge (idempotent per message, its multiplier is the owner's markup —
- *   1.00 means none); over-billing is credited back through the audited
- *   manual-credit path. Without $apply nothing is charged or credited: rows
- *   are recorded as open for review.
+ *   expected = approved retail base x Telnyx's BILLABLE PARTS + Telnyx's ACTUAL carrier surcharge
+ *
+ * It never replaces the retail base with Telnyx's cost (that would erase the
+ * approved price) and never adds the provider's full cost on top of it: only
+ * the actual surcharge is added. Telnyx's message record
+ * (GET /v2/messages/{id}) is only trusted once `completed_at` is set and is
+ * read as: `parts` = billable parts; `cost_breakdown.carrier_fee.amount` =
+ * the surcharge for the message; `cost_breakdown.rate.amount` = Telnyx's own
+ * base rate; `cost.amount` = their total. The surcharge is the carrier_fee,
+ * or — only when it is absent — `cost - rate` (documented derivation). If
+ * those figures contradict each other, or neither is available, the
+ * message goes to a visible INCIDENT instead of a guess.
+ *
+ * Run automatically and safely: every settlement is idempotent (stable
+ * per-message, per-revision keys), retries are bounded, small variances are
+ * applied on their own, and anything larger than the configured limit, or
+ * unreadable, becomes an incident for an administrator. A later Telnyx
+ * billing adjustment is settled by its own delta via $recheckDays.
+ * BYO Telnyx traffic is never in the operations table as managed, so it is
+ * never reconciled or charged here.
  */
 final class MessageCostReconciler
 {
@@ -34,89 +41,313 @@ final class MessageCostReconciler
     public function __construct(
         private readonly ChargeCarrierFee $carrierFee,
         private readonly UsageWalletManager $wallet,
+        private readonly UsageMeterRepository $meters,
     ) {
     }
 
     /**
-     * @return array{examined: int, not_final: int, matched: int, undercharged: int, overcharged: int, settled: int, open: int, variance_micro: int}
+     * @return array{examined: int, not_final: int, matched: int, settled: int, open: int, incidents: int, variance_micro: int}
      */
-    public function run(int $days, bool $apply, ?int $actorUserId = null, int $limit = 500): array
+    public function run(int $days, bool $apply, ?int $actorUserId = null, int $limit = 500, int $recheckDays = 0): array
     {
-        $summary = ['examined' => 0, 'not_final' => 0, 'matched' => 0, 'undercharged' => 0, 'overcharged' => 0, 'settled' => 0, 'open' => 0, 'variance_micro' => 0];
+        $summary = ['examined' => 0, 'not_final' => 0, 'matched' => 0, 'settled' => 0, 'open' => 0, 'incidents' => 0, 'variance_micro' => 0];
+        $actorUserId ??= ($configured = config('messaging.reconciliation.actor_user_id')) !== null && ctype_digit((string) $configured) ? (int) $configured : null;
 
-        $operations = DB::table(ManagedMessageDispatcher::TABLE)
-            ->where('transport_mode', 'managed')
-            ->where('provider', 'telnyx')
-            ->whereNotNull('provider_message_id')
-            ->whereIn('status', ['accepted', 'delivered'])
-            ->where('occurred_at', '>=', now()->subDays($days))
-            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('messaging_cost_reconciliations')->whereColumn('messaging_cost_reconciliations.operation_id', ManagedMessageDispatcher::TABLE . '.id'))
-            ->orderBy('id')
-            ->limit($limit)
-            ->get();
+        $this->seed($days, $limit);
 
-        foreach ($operations as $operation) {
+        $rows = DB::table('messaging_cost_reconciliations')
+            ->where(function ($q) use ($recheckDays): void {
+                $q->where(function ($q): void {
+                    $q->whereIn('status', ['pending', 'open'])
+                        ->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()));
+                });
+
+                if ($recheckDays > 0) {
+                    $q->orWhere(fn ($q) => $q->whereIn('status', ['matched', 'settled'])->where('created_at', '>=', now()->subDays($recheckDays)));
+                }
+            })
+            ->orderBy('id')->limit($limit)->get();
+
+        foreach ($rows as $row) {
             $summary['examined']++;
 
-            $billed = $this->billedMicro($operation);
-
-            if ($billed === null) {
-                continue; // an outbound message that was never billed (transport unmetered) is not reconciled
+            try {
+                $this->process($row, $apply, $actorUserId, $summary);
+            } catch (\Throwable $e) {
+                $this->retry($row, 'processing_error', $e::class . ': ' . $e->getMessage(), $summary);
             }
-
-            $actual = $this->finalCostMicro((string) $operation->provider_message_id);
-
-            if ($actual === null) {
-                $summary['not_final']++;
-
-                continue;
-            }
-
-            $adjustment = $actual - $billed;
-            $summary['variance_micro'] += $adjustment;
-
-            DB::table('messaging_cost_reconciliations')->insert([
-                'business_id' => (int) $operation->business_id,
-                'operation_id' => (int) $operation->id,
-                'direction' => (string) $operation->direction,
-                'provider_message_id' => (string) $operation->provider_message_id,
-                'billed_micro' => $billed,
-                'carrier_cost_micro' => $actual,
-                'adjustment_micro' => $adjustment,
-                'status' => $adjustment === 0 ? 'matched' : ($adjustment > 0 ? 'undercharge_open' : 'overcharge_open'),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-
-            $adjustment === 0 ? $summary['matched']++ : ($adjustment > 0 ? $summary['undercharged']++ : $summary['overcharged']++);
         }
 
-        if ($apply) {
-            $summary['settled'] = $this->settleOpen($actorUserId);
-        }
-
-        $summary['open'] = DB::table('messaging_cost_reconciliations')->whereIn('status', ['undercharge_open', 'overcharge_open'])->count();
+        $summary['open'] = DB::table('messaging_cost_reconciliations')->where('status', 'open')->count();
+        $summary['incidents'] = DB::table('messaging_cost_reconciliations')->where('status', 'incident')->count();
 
         return $summary;
     }
 
-    /** What the Business was billed for this message; null when it was never billed and should not be reconciled. */
-    private function billedMicro(object $operation): ?int
+    /** Registers every billable managed message not yet tracked. */
+    private function seed(int $days, int $limit): void
     {
-        if ($operation->direction === 'inbound') {
-            return 0; // inbound is not billed at receipt
+        $operations = DB::table(ManagedMessageDispatcher::TABLE)
+            ->where('transport_mode', 'managed')
+            ->where('provider', 'telnyx')
+            ->whereNotNull('provider_message_id')
+            ->where(function ($q): void {
+                $q->where(fn ($q) => $q->where('direction', 'outbound')->whereIn('status', ['accepted', 'delivered', 'failed']))
+                    ->orWhere(fn ($q) => $q->where('direction', 'inbound'));
+            })
+            ->where('occurred_at', '>=', now()->subDays($days))
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('messaging_cost_reconciliations')->whereColumn('messaging_cost_reconciliations.operation_id', ManagedMessageDispatcher::TABLE . '.id'))
+            ->orderBy('id')->limit($limit)->get();
+
+        foreach ($operations as $op) {
+            if ($op->direction === 'outbound' && $this->committedReservation(ManagedTransportBilling::reservationKey((int) $op->business_id, (string) $op->operation_key)) === null) {
+                continue; // never billed (transport unmetered, or rejected): nothing to reconcile
+            }
+
+            DB::table('messaging_cost_reconciliations')->insertOrIgnore([
+                'business_id' => (int) $op->business_id,
+                'operation_id' => (int) $op->id,
+                'direction' => (string) $op->direction,
+                'provider_message_id' => (string) $op->provider_message_id,
+                'status' => 'pending',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
         }
-
-        $reservation = DB::table('business_usage_reservations')
-            ->where('idempotency_key', 'msg_transport:' . (int) $operation->business_id . ':' . $operation->operation_key)
-            ->where('status', 'committed')
-            ->first();
-
-        return $reservation?->final_amount_micro === null ? null : (int) $reservation->final_amount_micro;
     }
 
-    /** Telnyx's final cost for the message in micro-USD, or null while it is not final / not USD / not readable. */
-    private function finalCostMicro(string $providerMessageId): ?int
+    private function process(object $row, bool $apply, ?int $actorUserId, array &$summary): void
+    {
+        $op = DB::table(ManagedMessageDispatcher::TABLE)->where('id', $row->operation_id)->first();
+        $business = Business::query()->find($row->business_id);
+
+        if ($op === null || $business === null) {
+            $this->incident($row, 'operation_missing', 'The message operation or its Business no longer exists.', $summary);
+
+            return;
+        }
+
+        $record = $this->fetch((string) $row->provider_message_id);
+
+        if ($record === null) {
+            $this->retry($row, 'fetch_failed', 'The Telnyx message record could not be read.', $summary);
+
+            return;
+        }
+
+        if (($record['data']['completed_at'] ?? null) === null || ! isset($record['data']['cost']['amount'])) {
+            $summary['not_final']++;
+            $this->retry($row, 'cost_not_final', 'Telnyx has not finalised this message cost.', $summary);
+
+            return;
+        }
+
+        try {
+            $facts = $this->facts($record['data'], $op);
+        } catch (ReconciliationIncident $e) {
+            $this->incident($row, $e->incidentCode, $e->getMessage(), $summary);
+
+            return;
+        }
+
+        $outbound = $op->direction === 'outbound';
+        $numberType = $outbound ? null : DB::table('business_messaging_numbers')
+            ->where('business_messaging_identity_id', $op->business_messaging_identity_id)->orderByDesc('is_primary')->value('number_type');
+        $meterKey = MessageMeters::for((string) $op->message_type, (string) $op->direction, $numberType);
+        $parts = $facts['billable_parts'];
+
+        // The retail base per part and what has been billed so far.
+        if ($outbound) {
+            $reservation = $this->committedReservation(ManagedTransportBilling::reservationKey($business, (string) $op->operation_key));
+            $surchargeReservation = $this->committedReservation(ManagedTransportBilling::surchargeKey($business, (string) $op->operation_key));
+
+            if ($reservation === null) {
+                $this->incident($row, 'billing_missing', 'No committed charge exists for this accepted message.', $summary);
+
+                return;
+            }
+
+            $rate = (int) $reservation->retail_rate_micro;
+            $billed = (int) $reservation->final_amount_micro + (int) ($surchargeReservation->final_amount_micro ?? 0);
+        } else {
+            $active = $this->meters->findByMeterKey($meterKey);
+            $rateRow = $active?->active_rate_id !== null && $active->is_metered ? DB::table('business_usage_rates')->where('id', $active->active_rate_id)->first() : null;
+
+            if ($rateRow === null) {
+                $this->incident($row, 'meter_unpriced', "The {$meterKey} meter has no active rate, so this inbound message cannot be billed.", $summary);
+
+                return;
+            }
+
+            $rate = (int) $rateRow->retail_rate_micro;
+            $billed = $this->chargeInboundBase($business, $row, $meterKey, $parts);
+
+            if ($billed === null) {
+                $this->retry($row, 'wallet_shortfall', 'The wallet could not cover the inbound message base charge.', $summary);
+
+                return;
+            }
+        }
+
+        $base = (int) bcmul((string) $rate, (string) $parts, 0);
+        $expected = $base + $facts['surcharge_micro'];
+        $delta = $expected - ($billed + (int) $row->settled_micro);
+
+        DB::table('messaging_cost_reconciliations')->where('id', $row->id)->update([
+            'meter_key' => $meterKey,
+            'billable_parts' => $parts,
+            'billed_micro' => $billed,
+            'carrier_cost_micro' => $facts['cost_micro'],
+            'surcharge_micro' => $facts['surcharge_micro'],
+            'expected_micro' => $expected,
+            'adjustment_micro' => $delta,
+            'updated_at' => now(),
+        ]);
+
+        if ($delta === 0) {
+            $this->finish($row, (int) $row->settled_micro !== 0 ? 'settled' : 'matched');
+            $summary['matched']++;
+
+            return;
+        }
+
+        $summary['variance_micro'] += $delta;
+
+        if (abs($delta) > (int) config('messaging.reconciliation.max_auto_adjustment_micro')) {
+            $this->incident($row, 'variance_exceeds_auto_limit', "Settlement of {$delta} micro-USD exceeds the automatic limit; an administrator must review it.", $summary);
+
+            return;
+        }
+
+        if (! $apply) {
+            DB::table('messaging_cost_reconciliations')->where('id', $row->id)->update(['status' => 'open']);
+
+            return;
+        }
+
+        $revision = (int) $row->revision + 1;
+
+        if ($delta > 0) {
+            $outcome = $this->carrierFee->charge($business, $delta, sprintf('msg-recon-%d-r%d', $row->operation_id, $revision), MessageMeters::SURCHARGE);
+
+            if (in_array($outcome['status'], ['charged', 'already_charged'], true)) {
+                $this->applied($row, $delta, $revision);
+                $summary['settled']++;
+            } elseif ($outcome['status'] === 'not_configured') {
+                $this->incident($row, 'surcharge_meter_unpriced', 'The carrier surcharge meter has no active rate, so the settlement cannot be billed.', $summary);
+            } else {
+                $this->retry($row, 'wallet_shortfall', 'The wallet could not cover the settlement: ' . ($outcome['reason'] ?? 'refused'), $summary);
+            }
+
+            return;
+        }
+
+        if ($actorUserId === null) {
+            $this->incident($row, 'credit_actor_missing', 'An over-charge needs a credit but MESSAGING_RECONCILIATION_ACTOR_USER_ID is not set.', $summary);
+
+            return;
+        }
+
+        $this->wallet->issueManualCredit(
+            $business,
+            UsageLedgerEntryType::ManualCredit,
+            abs($delta),
+            $actorUserId,
+            'Message cost reconciliation: message ' . $row->provider_message_id . ' billed above its final retail charge.',
+            self::deterministicUuid(sprintf('msg-recon-credit-%d-r%d', $row->operation_id, $revision)),
+        );
+        $this->applied($row, $delta, $revision);
+        $summary['settled']++;
+    }
+
+    /**
+     * Reads the facts the settlement needs from a Telnyx message record.
+     *
+     * @return array{billable_parts: int, cost_micro: int, surcharge_micro: int}
+     *
+     * @throws ReconciliationIncident
+     */
+    private function facts(array $data, object $op): array
+    {
+        $cost = $data['cost'] ?? null;
+
+        if (! is_array($cost) || ($cost['currency'] ?? null) !== 'USD' || ! $this->isAmount($cost['amount'] ?? null)) {
+            throw new ReconciliationIncident('cost_unreadable', 'The message cost is missing, not USD or not a decimal amount.');
+        }
+
+        $type = strtolower((string) ($data['type'] ?? ''));
+        $direction = strtolower((string) ($data['direction'] ?? ''));
+
+        if (($type !== '' && $type !== $op->message_type) || ($direction !== '' && $direction !== $op->direction)) {
+            throw new ReconciliationIncident('record_mismatch', "Telnyx reports a {$direction} {$type} but the operation is a {$op->direction} {$op->message_type}.");
+        }
+
+        $parts = $data['parts'] ?? null;
+
+        if (! is_int($parts) && ! (is_string($parts) && ctype_digit($parts))) {
+            throw new ReconciliationIncident('parts_missing', 'Telnyx did not report the billable parts for this message.');
+        }
+
+        $parts = (int) $parts;
+        $costMicro = $this->micro($cost['amount']);
+        $breakdown = is_array($data['cost_breakdown'] ?? null) ? $data['cost_breakdown'] : [];
+        $fee = is_array($breakdown['carrier_fee'] ?? null) ? ($breakdown['carrier_fee']['amount'] ?? null) : null;
+        $rate = is_array($breakdown['rate'] ?? null) ? ($breakdown['rate']['amount'] ?? null) : null;
+
+        if ($fee !== null && ! $this->isAmount($fee) || $rate !== null && ! $this->isAmount($rate)) {
+            throw new ReconciliationIncident('breakdown_unreadable', 'The cost breakdown contains a non-decimal amount.');
+        }
+
+        if ($fee !== null && $rate !== null && abs($costMicro - ($this->micro($fee) + $this->micro($rate))) > 10) {
+            throw new ReconciliationIncident('breakdown_mismatch', 'The total cost does not equal rate + carrier fee.');
+        }
+
+        if ($fee !== null) {
+            $surcharge = $this->micro($fee);
+        } elseif ($rate !== null) {
+            $surcharge = $costMicro - $this->micro($rate); // documented derivation: total minus Telnyx's own base rate
+        } elseif ($costMicro === 0) {
+            $surcharge = 0;
+        } else {
+            throw new ReconciliationIncident('surcharge_unavailable', 'Telnyx reported only a total cost, so the carrier surcharge cannot be separated from it.');
+        }
+
+        if ($surcharge < 0) {
+            throw new ReconciliationIncident('surcharge_negative', 'The derived carrier surcharge is negative.');
+        }
+
+        // A message Telnyx did not charge for (e.g. never delivered, cost 0) is not billed either.
+        $billable = $costMicro > 0 ? max(1, $parts) : 0;
+
+        return ['billable_parts' => $billable, 'cost_micro' => $costMicro, 'surcharge_micro' => $costMicro > 0 ? $surcharge : 0];
+    }
+
+    /** Charges (once) the retail base of an inbound message; returns what that base charge amounts to, or null when the wallet refused. */
+    private function chargeInboundBase(Business $business, object $row, string $meterKey, int $parts): ?int
+    {
+        if ($parts === 0) {
+            return 0;
+        }
+
+        $key = sprintf('msg_in:%d:%d', $business->id, $row->operation_id);
+        $result = $this->wallet->reserve($business, $meterKey, $key, (string) $parts);
+
+        if (! $result->granted || $result->reservationId === null) {
+            return null;
+        }
+
+        $this->wallet->commit($result->reservationId, (string) $parts);
+
+        return (int) ($this->committedReservation($key)->final_amount_micro ?? 0);
+    }
+
+    private function committedReservation(string $key): ?object
+    {
+        return DB::table('business_usage_reservations')->where('idempotency_key', $key)->where('status', 'committed')->first();
+    }
+
+    /** @return array<string, mixed>|null */
+    private function fetch(string $providerMessageId): ?array
     {
         try {
             $response = Http::withToken((string) config('services.telnyx.api_key'))->timeout(20)->acceptJson()->get(self::API . $providerMessageId);
@@ -124,68 +355,71 @@ final class MessageCostReconciler
             return null;
         }
 
-        if (! $response->successful()) {
-            return null;
-        }
+        return $response->successful() && is_array($response->json('data')) ? $response->json() : null;
+    }
 
-        $cost = $response->json('data.cost');
-        $amount = is_array($cost) ? ($cost['amount'] ?? null) : null;
+    private function isAmount(mixed $value): bool
+    {
+        return is_string($value) && preg_match('/^\d{1,9}(\.\d{1,8})?$/', $value) === 1;
+    }
 
-        if (! is_array($cost) || ($cost['currency'] ?? null) !== 'USD' || $response->json('data.completed_at') === null
-            || ! is_string($amount) || preg_match('/^\d{1,9}(\.\d{1,8})?$/', $amount) !== 1) {
-            return null;
-        }
-
+    private function micro(string $amount): int
+    {
         return (int) bcmul(bcadd($amount, '0', 6), '1000000', 0);
     }
 
-    private function settleOpen(?int $actorUserId): int
+    private function applied(object $row, int $delta, int $revision): void
     {
-        $settled = 0;
+        DB::table('messaging_cost_reconciliations')->where('id', $row->id)->update([
+            'settled_micro' => (int) $row->settled_micro + $delta,
+            'revision' => $revision,
+            'status' => 'settled',
+            'settled_at' => now(),
+            'incident_code' => null,
+            'last_error' => null,
+            'updated_at' => now(),
+        ]);
+    }
 
-        foreach (DB::table('messaging_cost_reconciliations')->whereIn('status', ['undercharge_open', 'overcharge_open'])->orderBy('id')->get() as $row) {
-            $business = Business::query()->find($row->business_id);
+    private function finish(object $row, string $status): void
+    {
+        DB::table('messaging_cost_reconciliations')->where('id', $row->id)->update(['status' => $status, 'incident_code' => null, 'last_error' => null, 'updated_at' => now()]);
+    }
 
-            if ($business === null) {
-                continue;
-            }
+    /** A bounded retry: backs off, and becomes a visible incident once the attempts are spent. */
+    private function retry(object $row, string $code, string $message, array &$summary): void
+    {
+        $attempts = (int) $row->attempts + 1;
 
-            if ($row->adjustment_micro > 0) {
-                $outcome = $this->carrierFee->charge($business, (int) $row->adjustment_micro, 'msg-recon-' . $row->operation_id);
+        if ($attempts >= max(1, (int) config('messaging.reconciliation.max_attempts'))) {
+            $this->incident($row, $code, $message . " (gave up after {$attempts} attempts)", $summary, $attempts);
 
-                if (in_array($outcome['status'], ['charged', 'already_charged'], true)) {
-                    $this->mark($row->id, 'undercharge_billed');
-                    $settled++;
-                }
-
-                continue;
-            }
-
-            if ($actorUserId === null) {
-                continue; // a credit is an audited administrator action
-            }
-
-            $this->wallet->issueManualCredit(
-                $business,
-                UsageLedgerEntryType::ManualCredit,
-                abs((int) $row->adjustment_micro),
-                $actorUserId,
-                'Message cost reconciliation: billed more than the carrier\'s final cost for message ' . $row->provider_message_id . '.',
-                self::deterministicUuid('msg-recon-credit-' . $row->operation_id),
-            );
-            $this->mark($row->id, 'overcharge_credited');
-            $settled++;
+            return;
         }
 
-        return $settled;
+        DB::table('messaging_cost_reconciliations')->where('id', $row->id)->update([
+            'status' => in_array($row->status, ['matched', 'settled'], true) ? $row->status : 'pending',
+            'attempts' => $attempts,
+            'next_attempt_at' => now()->addMinutes(max(1, (int) config('messaging.reconciliation.retry_minutes')) * $attempts),
+            'last_error' => mb_substr($code . ': ' . $message, 0, 1000),
+            'updated_at' => now(),
+        ]);
     }
 
-    private function mark(int $id, string $status): void
+    private function incident(object $row, string $code, string $message, array &$summary, ?int $attempts = null): void
     {
-        DB::table('messaging_cost_reconciliations')->where('id', $id)->update(['status' => $status, 'settled_at' => now(), 'updated_at' => now()]);
+        DB::table('messaging_cost_reconciliations')->where('id', $row->id)->update([
+            'status' => 'incident',
+            'incident_code' => $code,
+            'last_error' => mb_substr($message, 0, 1000),
+            'attempts' => $attempts ?? (int) $row->attempts,
+            'updated_at' => now(),
+        ]);
+
+        Log::error('Messaging cost reconciliation incident', ['reconciliation_id' => $row->id, 'business_id' => $row->business_id, 'operation_id' => $row->operation_id, 'code' => $code, 'message' => $message]);
     }
 
-    /** A stable UUID for an idempotent credit (the same message always maps to the same operation id). */
+    /** A stable UUID for an idempotent credit (the same message revision always maps to the same operation id). */
     private static function deterministicUuid(string $seed): string
     {
         $h = md5($seed);

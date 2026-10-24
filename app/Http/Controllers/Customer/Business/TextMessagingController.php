@@ -12,6 +12,7 @@ use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsPresenter;
 use App\Library\AgencyOutreach\MessagingReadinessReader;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
+use App\Library\Messaging\ProvisioningPilot;
 use App\Library\Messaging\BusinessMessagingProvisioningService;
 use App\Library\Messaging\BusinessMessagingRegistrationService;
 use App\Library\Messaging\CandidateToken;
@@ -157,13 +158,17 @@ class TextMessagingController extends CustomerBaseController
             areaCode: $validated['area_code'] ?? null,
         );
 
+        if (! $this->provisioningOpenFor($business)) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available for this Business yet.');
+        }
+
         $candidates = $this->provisioning->searchNumbers($criteria);
         $candidate = $candidates[0] ?? null;
 
         return view('customer.settings.text-messaging.states.no-number', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
-            'available' => $this->provisioning->isAvailable(),
+            'available' => $this->provisioningOpenFor($business),
             'searched' => true,
             'criteria' => $validated,
             'candidate' => $candidate,
@@ -200,8 +205,8 @@ class TextMessagingController extends CustomerBaseController
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $this->guardNoExistingNumber($business);
 
-        if (! $this->provisioning->isAvailable()) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
+        if (! $this->provisioningOpenFor($business)) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available for this Business yet.');
         }
 
         $validated = $request->validate([
@@ -475,7 +480,7 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Complete the business details below before submitting.');
         }
 
-        if (! ProvisioningAvailability::isConfigured()) {
+        if (! $this->provisioningOpenFor($business) || ! ProvisioningAvailability::isConfigured()) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Messaging registration is not available in this environment yet.');
         }
 
@@ -755,6 +760,12 @@ class TextMessagingController extends CustomerBaseController
     /**
      * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
+    /** Real provisioning is pilot-restricted: configured AND this Business is enabled. */
+    private function provisioningOpenFor(Business $business): bool
+    {
+        return ProvisioningPilot::allows($business) && $this->provisioning->isAvailable();
+    }
+
     private function renderNoNumber(string $workspaceUid, string $businessUid, array $situation, ?PhoneNumberType $numberTypeLocked = null): View
     {
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
@@ -762,7 +773,7 @@ class TextMessagingController extends CustomerBaseController
         return view('customer.settings.text-messaging.states.no-number', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
-            'available' => $this->provisioning->isAvailable(),
+            'available' => $this->provisioningOpenFor($business),
             'searched' => false,
             'criteria' => [],
             'candidate' => null,
@@ -814,7 +825,7 @@ class TextMessagingController extends CustomerBaseController
             'templateBrand' => $this->registrationDefaults->brandName($business, $situation['registration'] ?? null),
             'templatesByChoice' => $this->registrationDefaults->templatesByChoice($business, $situation['registration'] ?? null),
             'submissionIssues' => $registration->exists ? $this->registrationValidator->issues($registration) : [],
-            'available' => ProvisioningAvailability::isConfigured(),
+            'available' => $this->provisioningOpenFor($business) && ProvisioningAvailability::isConfigured(),
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor($registration->number_type ?? PhoneNumberType::Local),
             'registrationPreview' => $this->charges->forLocalRegistration($business, $registration->use_case),
             'registrationPreviews' => ['standard' => $this->charges->forLocalRegistration($business), 'low_volume_mixed' => $this->charges->forLocalRegistration($business, 'low_volume_mixed')],

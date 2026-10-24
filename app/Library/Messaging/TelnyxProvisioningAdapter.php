@@ -533,6 +533,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      */
     public function provisionNumber(Business $business, AvailableNumberCandidate $candidate): ProvisionedNumberResult
     {
+        ProvisioningPilot::assertOpen($business);
+
         // A number order whose outcome was never confirmed may have bought
         // (and be billing) a number at the carrier: no second purchase
         // until an operator reconciles it.
@@ -632,7 +634,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $providerPhoneNumberId = (string) ($orderResponse->json('data.phone_numbers.0.id') ?? $orderResponse->json('data.id'));
         } catch (\Throwable $e) {
-            $this->wallet->release($reservationId);
+            $this->settleAfterFailure($reservationId, $e);
 
             throw $e;
         }
@@ -651,6 +653,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     public function submitRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
+        ProvisioningPilot::assertOpen($submission->businessId);
+
         if ($submission->numberType === PhoneNumberType::TollFree) {
             return $this->submitTollFreeVerification($submission);
         }
@@ -1212,10 +1216,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     ->update(['provider_campaign_id' => $campaignId]);
             }
         } catch (\Throwable $e) {
-            $this->wallet->release($reservationId);
+            $this->settleAfterFailure($reservationId, $e);
 
             if ($brandReservationId !== null) {
-                $this->wallet->release($brandReservationId);
+                $this->settleAfterFailure($brandReservationId, $e);
             }
 
             throw $e;
@@ -1304,6 +1308,24 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         }
 
         return '';
+    }
+
+    /**
+     * A definite failure hands the held funds back. An UNCONFIRMED provider
+     * outcome (the order or campaign may exist and be billing at the
+     * carrier) keeps the charge: a real carrier cost is never absorbed by
+     * releasing the hold, and the operator who resolves the incident
+     * credits it back only if the carrier confirms nothing was created.
+     */
+    private function settleAfterFailure(int $reservationId, \Throwable $e): void
+    {
+        if ($e instanceof MessagingRegistrationRecoveryRequiredException) {
+            $this->wallet->commit($reservationId);
+
+            return;
+        }
+
+        $this->wallet->release($reservationId);
     }
 
     private function unconfirmedNumberOrder(Business $business, AvailableNumberCandidate $candidate, string $messagingProfileId, string $detail): MessagingRegistrationRecoveryRequiredException
