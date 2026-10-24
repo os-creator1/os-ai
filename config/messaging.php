@@ -44,6 +44,29 @@ return [
     */
     'ten_dlc_mixed_enabled' => env('MESSAGING_10DLC_MIXED_ENABLED', false),
 
+    /*
+    | Owner-approved retail prices for the messaging provisioning fees,
+    | in micro-units of the billing currency (1,000,000 = 1.00). Nothing is
+    | invented: a fee with any value unset stays unconfigured, customers see
+    | "pricing not set up", and nothing can be charged for it. Applied by
+    | `php artisan messaging:sync-provisioning-rates` (idempotent; run it
+    | after changing these). Toll-free verification is $0 and has no entry.
+    |
+    |   number_purchase         one-time, when a number is bought
+    |   number_rental_renewal   recurring monthly rental of each number
+    |   ten_dlc_registration    one-time 10DLC brand + initial prepaid campaign fees
+    |   ten_dlc_campaign_renewal recurring monthly 10DLC campaign cost (local numbers)
+    */
+    'rates' => [
+        'currency' => env('MESSAGING_RATE_CURRENCY', 'USD'),
+        'actor_user_id' => env('MESSAGING_RATE_ACTOR_USER_ID'),
+        'approved_by' => env('MESSAGING_RATE_APPROVED_BY'),
+        'number_purchase' => ['retail_micro' => env('MESSAGING_NUMBER_PURCHASE_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_PURCHASE_COST_MICRO'), 'unit' => 'per number'],
+        'number_rental_renewal' => ['retail_micro' => env('MESSAGING_NUMBER_RENTAL_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_RENTAL_COST_MICRO'), 'unit' => 'per month'],
+        'ten_dlc_registration' => ['retail_micro' => env('MESSAGING_10DLC_REGISTRATION_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_REGISTRATION_COST_MICRO'), 'unit' => 'per registration'],
+        'ten_dlc_campaign_renewal' => ['retail_micro' => env('MESSAGING_10DLC_CAMPAIGN_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_CAMPAIGN_COST_MICRO'), 'unit' => 'per month'],
+    ],
+
     'default_provider' => 'telnyx',
 
     'webhook_rejection_retention_days' => env('MESSAGING_WEBHOOK_REJECTION_RETENTION_DAYS', 30),

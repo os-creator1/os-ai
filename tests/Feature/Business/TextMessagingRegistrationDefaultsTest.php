@@ -209,12 +209,14 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
     {
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
         \Illuminate\Support\Facades\Http::fake();
+        \App\Models\Currency::query()->firstOrCreate(['code' => 'USD'], ['name' => 'US Dollar', 'format' => '$', 'status' => true]);
         [$business, $workspace] = $this->registrationState();
         \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->delete();
         $submit = route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]);
 
         $this->post($this->updateUrl($workspace, $business), $this->payload());
-        $this->post($submit)->assertSessionHas('status', 'error')->assertSessionMissing('errors');
+        $this->post($submit)->assertSessionHas('status', 'error')->assertSessionMissing('errors')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing') && ! str_contains($m, 'enough funds'));
 
         \Illuminate\Support\Facades\Http::assertNothingSent();
         $this->assertSame(MessagingRegistrationStatus::NotStarted, BusinessMessagingRegistration::where('business_id', $business->id)->first()->status);

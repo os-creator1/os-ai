@@ -121,11 +121,15 @@ class BusinessMessagingRegistrationService
         // edited here: changing what it was submitted with would either
         // reuse an invalidated campaign or create a duplicate.
         if ($registration->status !== MessagingRegistrationStatus::Rejected
-            && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== '') {
-            $campaignFields = ['use_case', 'campaign_description', 'sample_message_1', 'sample_message_2', 'opt_in_method', 'privacy_policy_url', 'terms_url'];
+            && (($registration->provider_campaign_id !== null && $registration->provider_campaign_id !== '')
+                || ($registration->provider_registration_id !== null && $registration->provider_registration_id !== ''))) {
+            $campaignFields = ['number_type', 'use_case', 'campaign_description', 'sample_message_1', 'sample_message_2', 'opt_in_method', 'privacy_policy_url', 'terms_url'];
 
             foreach ($campaignFields as $field) {
-                if (array_key_exists($field, $data) && (string) $data[$field] !== (string) $registration->{$field}) {
+                $currentValue = $registration->{$field};
+                $currentValue = $currentValue instanceof \BackedEnum ? $currentValue->value : $currentValue;
+
+                if (array_key_exists($field, $data) && (string) $data[$field] !== (string) $currentValue) {
                     $brandIdentityChanged = true;
                     break;
                 }
@@ -193,6 +197,22 @@ class BusinessMessagingRegistrationService
                 $registration = $registration->fresh();
             }
 
+            // The owned number decides the regime. A registration saved as
+            // local before a toll-free number was bought (or the reverse)
+            // must never be submitted — and charged — under the wrong
+            // regime: switch the type, keep every captured field and every
+            // provider id.
+            $ownedType = $this->primaryNumberTypeFor($registration->business);
+
+            if ($ownedType !== null && $ownedType !== $registration->number_type
+                && ($registration->provider_campaign_id === null || $registration->provider_campaign_id === '')) {
+                // Provider ids are kept (never silently deleted): each regime
+                // only ever reuses its own (brand/campaign for local, the
+                // verification id for toll-free).
+                $registration->update(['number_type' => $ownedType->value]);
+                $registration = $registration->fresh();
+            }
+
             // Review correction — a toll-free submission's own request body
             // must name the already-owned number being verified
             // (MessagingRegistrationSubmission::$phoneNumber); a local (10DLC)
@@ -203,14 +223,19 @@ class BusinessMessagingRegistrationService
 
             $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
 
-            $registration->update([
+            // A provider id the result does not carry (a toll-free result has
+            // no brand/campaign, a 10DLC result no verification id) is left
+            // as it is — never blanked, so references from another regime
+            // are never silently deleted.
+            $registration->update(array_merge(array_filter([
                 'provider_brand_id' => $result->providerBrandId,
                 'provider_campaign_id' => $result->providerCampaignId,
                 'provider_registration_id' => $result->providerRegistrationId,
+            ], fn ($id) => $id !== null), [
                 'status' => $result->status->value,
                 'submitted_at' => CarbonImmutable::now(),
                 'rejection_reason' => null,
-            ]);
+            ]));
 
             return $registration->fresh();
         } finally {
@@ -237,6 +262,21 @@ class BusinessMessagingRegistrationService
         $lock = Cache::lock('messaging-registration-submit:' . $registration->id, 120);
 
         return $lock->get() ? static fn () => $lock->release() : null;
+    }
+
+    private function primaryNumberTypeFor(Business $business): ?PhoneNumberType
+    {
+        $identity = $this->identities->resolveForBusiness($business);
+
+        if ($identity === null) {
+            return null;
+        }
+
+        try {
+            return $this->identities->resolvePrimaryNumber($identity)->number_type;
+        } catch (MessagingIdentityConflictException) {
+            return null;
+        }
     }
 
     private function primaryPhoneNumberFor(Business $business): ?string
@@ -337,13 +377,19 @@ class BusinessMessagingRegistrationService
      * configured, which is the true state of every environment today (no
      * owner has approved a commercial rate for either feature key yet).
      */
+    public const TOLL_FREE_DISCLOSURE = 'Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.';
+
+    public const LOCAL_COST_NOTICE = 'Local numbers also need carrier 10DLC registration. Besides number rental and SMS usage, 10DLC means a registration fee, initial prepaid campaign fees, and ongoing campaign costs. The carrier sets those amounts, and they are charged in addition to the number and your texts.';
+
     public function chargeDisclosureFor(PhoneNumberType $numberType): string
     {
-        $meterKey = $numberType === PhoneNumberType::TollFree
-            ? TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION
-            : TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION;
+        // Toll-free verification has no fee and no billing meter — never
+        // looked up, so nothing configured elsewhere can leak into it.
+        if ($numberType === PhoneNumberType::TollFree) {
+            return self::TOLL_FREE_DISCLOSURE;
+        }
 
-        $meter = $this->meters->findByMeterKey($meterKey);
+        $meter = $this->meters->findByMeterKey(TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
 
         if ($meter === null || ! $meter->is_metered || $meter->activeRate === null) {
             return 'No fee is currently configured for business verification in this environment.';

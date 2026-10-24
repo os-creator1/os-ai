@@ -46,9 +46,31 @@ class TextMessagingSetupStateTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Get a phone number');
-        $response->assertDontSee('Telnyx', false);
         $response->assertDontSee('Twilio', false);
-        $response->assertDontSee('10DLC', false);
+    }
+
+    public function test_toll_free_is_the_recommended_first_choice_and_costs_are_disclosed_honestly(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))
+            ->assertOk()->getContent();
+
+        // Toll-free leads and is marked recommended; local stays available.
+        $this->assertLessThan(strpos($html, 'data-role="local-number-card"'), strpos($html, 'data-role="toll-free-number-card"'));
+        $this->assertStringContainsString('data-role="recommended-badge"', $html);
+        $this->assertStringContainsString('Continue with a local number', $html);
+
+        // The $0 verification claim never implies texting is free.
+        $this->assertStringContainsString('Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.', $html);
+
+        // Local discloses 10DLC registration, prepaid campaign fees and ongoing costs up front.
+        $this->assertStringContainsString('10DLC', $html);
+        $this->assertStringContainsString('initial prepaid campaign fees', $html);
+        $this->assertStringContainsString('ongoing campaign costs', $html);
+        $this->assertStringNotContainsStringIgnoringCase('texting is free', $html);
+        $this->assertStringNotContainsStringIgnoringCase('free texting', $html);
     }
 
     public function test_without_configured_credentials_state_one_renders_a_truthful_inert_preview(): void

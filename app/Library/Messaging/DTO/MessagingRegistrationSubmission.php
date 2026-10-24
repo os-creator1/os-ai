@@ -67,6 +67,8 @@ final readonly class MessagingRegistrationSubmission
          * the fee for a resubmission.
          */
         public string $fundingCycle = '0',
+        /** A toll-free verification request already accepted and saved by an earlier attempt. */
+        public ?string $existingVerificationId = null,
         /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
         public ?string $campaignDescription = null,
     ) {
@@ -101,6 +103,9 @@ final readonly class MessagingRegistrationSubmission
                 : null,
             existingCampaignId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== ''
                 ? (string) $registration->provider_campaign_id
+                : null,
+            existingVerificationId: $registration->number_type === PhoneNumberType::TollFree && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_registration_id !== null && $registration->provider_registration_id !== ''
+                ? (string) $registration->provider_registration_id
                 : null,
             fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
             campaignDescription: $registration->campaign_description,

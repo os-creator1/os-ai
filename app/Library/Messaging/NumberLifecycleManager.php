@@ -74,6 +74,9 @@ class NumberLifecycleManager
 {
     public const FEATURE_NUMBER_RENTAL_RENEWAL = 'messaging_number_rental_renewal';
 
+    /** Recurring monthly 10DLC campaign cost, charged with a local number's rental renewal. */
+    public const FEATURE_TEN_DLC_CAMPAIGN_RENEWAL = 'messaging_10dlc_campaign_renewal';
+
     private const NOT_CONFIGURED_EXCEPTIONS = [
         UsageWalletNotFoundException::class,
         NoActiveRateForFeatureException::class,
@@ -261,7 +264,45 @@ class NumberLifecycleManager
                 return NumberRenewalOutcome::InsufficientFunds;
             }
 
+            // A local number's approved 10DLC campaign has its own recurring
+            // monthly cost, charged with the rental — a separate meter and a
+            // separate reservation, never folded into the rental rate. With
+            // no campaign rate configured nothing extra is charged. If the
+            // campaign charge cannot be covered, the rental reservation is
+            // released and the number is treated exactly like an unpaid
+            // renewal (no partial charge).
+            $campaignReservationId = null;
+
+            if ($this->hasApprovedLocalCampaign($locked)) {
+                try {
+                    $campaign = $this->wallet->reserve(
+                        $business,
+                        self::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL,
+                        sprintf('campaign_renewal:%d:%s', $locked->id, $locked->next_renewal_at->toDateString()),
+                    );
+                } catch (\Throwable $e) {
+                    if (! $this->isNotConfiguredException($e)) {
+                        throw $e;
+                    }
+
+                    $campaign = null;
+                }
+
+                if ($campaign !== null && (! $campaign->granted || $campaign->reservationId === null)) {
+                    $this->wallet->release($reservation->reservationId);
+                    $this->suspendLocked($locked);
+
+                    return NumberRenewalOutcome::InsufficientFunds;
+                }
+
+                $campaignReservationId = $campaign?->reservationId;
+            }
+
             $this->wallet->commit($reservation->reservationId);
+
+            if ($campaignReservationId !== null) {
+                $this->wallet->commit($campaignReservationId);
+            }
 
             DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
                 // Idempotent per period (contract S-8): a replayed sweep for
@@ -309,6 +350,17 @@ class NumberLifecycleManager
 
             $this->suspendLocked($locked);
         });
+    }
+
+    private function hasApprovedLocalCampaign(BusinessMessagingNumber $number): bool
+    {
+        $type = $number->number_type instanceof \BackedEnum ? $number->number_type->value : (string) $number->number_type;
+
+        return $type === 'local' && \App\Models\BusinessMessagingRegistration::query()
+            ->where('business_id', $number->identity->business_id)
+            ->where('number_type', 'local')
+            ->where('status', 'approved')
+            ->exists();
     }
 
     private function suspendLocked(BusinessMessagingNumber $locked): void
