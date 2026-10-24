@@ -49,6 +49,8 @@ final readonly class MessagingRegistrationSubmission
          * calling submit()).
          */
         public ?string $phoneNumber = null,
+        /** Customer-edited campaign description; null falls back to the use-case key. */
+        public ?string $campaignDescription = null,
     ) {
     }
 
@@ -76,6 +78,7 @@ final readonly class MessagingRegistrationSubmission
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
             phoneNumber: $phoneNumber,
+            campaignDescription: $registration->campaign_description,
         );
     }
 }

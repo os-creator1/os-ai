@@ -751,7 +751,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
                 'brandId' => $brandId,
                 'usecase' => $submission->useCase,
-                'description' => $submission->useCase,
+                'description' => ($submission->campaignDescription !== null && trim($submission->campaignDescription) !== '') ? $submission->campaignDescription : $submission->useCase,
                 'sample1' => $submission->sampleMessage1,
                 'sample2' => $submission->sampleMessage2,
                 'messageFlow' => $submission->optInMethod,

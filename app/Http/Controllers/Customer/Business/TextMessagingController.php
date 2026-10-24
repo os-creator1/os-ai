@@ -26,6 +26,9 @@ use App\Library\Messaging\Exceptions\PortOutRequestAlreadyActiveException;
 use App\Library\Messaging\Exceptions\PortOutRequestNumberNotPortableException;
 use App\Library\Messaging\PortOutRequestManager;
 use App\Library\Messaging\ProvisioningAvailability;
+use App\Library\Messaging\Registration\RegistrationDefaultsResolver;
+use App\Library\Messaging\Registration\RegistrationSubmissionValidator;
+use App\Library\Messaging\Registration\RegistrationTemplateCatalog;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Models\Business;
 use App\Models\BusinessMessagingNumber;
@@ -75,7 +78,7 @@ class TextMessagingController extends CustomerBaseController
         'account_notifications' => 'Account notifications',
         'appointment_reminders' => 'Appointment reminders',
         'two_factor' => 'Two-factor / one-time passcodes',
-        'mixed' => 'A mix of the above',
+        'mixed' => 'Both service and promotional messages',
     ];
 
     public function __construct(
@@ -86,6 +89,8 @@ class TextMessagingController extends CustomerBaseController
         private readonly CustomerShellComposer $shell,
         private readonly PortOutRequestManager $portOutRequests,
         private readonly MessagingReadinessReader $readiness,
+        private readonly RegistrationDefaultsResolver $registrationDefaults,
+        private readonly RegistrationSubmissionValidator $registrationValidator,
     ) {
     }
 
@@ -99,7 +104,7 @@ class TextMessagingController extends CustomerBaseController
 
         return match ($situation['state']) {
             'ready' => $this->renderReady($workspaceUid, $businessUid, $situation),
-            'registration_required' => $this->renderRegistration($workspaceUid, $businessUid, $situation),
+            'registration_required' => $this->renderRegistration($workspaceUid, $businessUid, $situation, $business),
             // Review correction — a Business whose local (10DLC) business
             // verification is already Approved but has no number yet
             // (Telnyx genuinely supports completing brand+campaign
@@ -354,12 +359,18 @@ class TextMessagingController extends CustomerBaseController
             'contact_phone' => ['required', 'string', 'max:32'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
             'opt_in_method' => ['required', 'string', 'max:2000'],
+            'campaign_description' => ['required', 'string', 'max:2000'],
+            'consent_confirmations' => ['nullable', 'array'],
+            'consent_confirmations.*' => ['string', 'in:' . implode(',', array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS))],
             'sample_message_1' => ['required', 'string', 'max:500'],
             'sample_message_2' => ['required', 'string', 'max:500'],
             'privacy_policy_url' => ['required', 'url', 'max:255'],
             'terms_url' => ['required', 'url', 'max:255'],
         ]);
 
+        // An unchecked box is simply absent from the POST, so the stored
+        // list is always exactly what the customer ticked on this save.
+        $validated['consent_confirmations'] = array_values($validated['consent_confirmations'] ?? []);
         $validated['number_type'] = $numberType->value;
         $validated['country_code'] = 'US';
 
@@ -389,6 +400,16 @@ class TextMessagingController extends CustomerBaseController
 
         if (! ProvisioningAvailability::isConfigured()) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Messaging registration is not available in this environment yet.');
+        }
+
+        $issues = $this->registrationValidator->issues($registration);
+
+        if ($issues !== []) {
+            return $this->textMessagingError(
+                $workspaceUid,
+                $businessUid,
+                'Not submitted yet — ' . count($issues) . ' item(s) need your attention under "Before you submit". Nothing was charged.',
+            );
         }
 
         $this->registrations->submit($registration);
@@ -661,7 +682,7 @@ class TextMessagingController extends CustomerBaseController
     /**
      * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
-    private function renderRegistration(string $workspaceUid, string $businessUid, array $situation): View
+    private function renderRegistration(string $workspaceUid, string $businessUid, array $situation, Business $business): View
     {
         return view('customer.settings.text-messaging.states.registration', [
             'workspaceUid' => $workspaceUid,
@@ -673,6 +694,12 @@ class TextMessagingController extends CustomerBaseController
             // whether this is the first visit or the tenth.
             'registration' => $registration = $situation['registration'] ?? new BusinessMessagingRegistration(['status' => MessagingRegistrationStatus::NotStarted->value]),
             'useCases' => self::US_USE_CASES,
+            'useCaseChoices' => RegistrationTemplateCatalog::CHOICES,
+            'selectedChoice' => RegistrationTemplateCatalog::choiceForUseCase($registration->use_case),
+            'consentItems' => RegistrationTemplateCatalog::CONSENT_ITEMS,
+            'prefill' => $this->registrationDefaults->resolve($business, $situation['registration'] ?? null),
+            'templatesByChoice' => $this->registrationDefaults->templatesByChoice($business, $situation['registration'] ?? null),
+            'submissionIssues' => $registration->exists ? $this->registrationValidator->issues($registration) : [],
             'available' => ProvisioningAvailability::isConfigured(),
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor($registration->number_type ?? PhoneNumberType::Local),
             // Review correction — an Approved registration with a genuine

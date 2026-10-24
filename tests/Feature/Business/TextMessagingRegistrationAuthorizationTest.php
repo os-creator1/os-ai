@@ -69,6 +69,8 @@ class TextMessagingRegistrationAuthorizationTest extends TestCase
             'contact_phone' => '+15035550100',
             'use_case' => 'appointment_reminders',
             'opt_in_method' => 'Customers check a box on our booking form.',
+            'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
+            'consent_confirmations' => array_keys(\App\Library\Messaging\Registration\RegistrationTemplateCatalog::CONSENT_ITEMS),
             'sample_message_1' => 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.',
             'sample_message_2' => 'Harbor Lane: reminder, your appointment is tomorrow.',
             'privacy_policy_url' => 'https://harborlane.example/privacy',
