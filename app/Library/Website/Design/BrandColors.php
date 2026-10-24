@@ -56,17 +56,25 @@ final class BrandColors
         ];
     }
 
-    /** A style attribute value of CSS custom properties, or '' when there is no usable brand colour. */
-    public static function inlineStyle(?string $value): string
+    /**
+     * A style attribute value of CSS custom properties, or '' when there is no usable brand colour. The optional
+     * secondary colour adds --wd-secondary* tokens (same derived-contrast rules); without one nothing is emitted,
+     * so a site that never set it renders exactly as before.
+     */
+    public static function inlineStyle(?string $value, ?string $secondary = null): string
     {
         $tokens = self::tokens($value);
+        $style = $tokens === null ? '' : '--wd-accent:' . $tokens['accent'] . ';--wd-accent-ink:' . $tokens['accent_ink']
+            . ';--wd-accent-text:' . $tokens['accent_text'] . ';--wd-accent-glow:' . $tokens['accent_glow'] . ';';
 
-        if ($tokens === null) {
-            return '';
+        $second = self::tokens($secondary);
+
+        if ($second !== null) {
+            $style .= '--wd-secondary:' . $second['accent'] . ';--wd-secondary-ink:' . $second['accent_ink']
+                . ';--wd-secondary-text:' . $second['accent_text'] . ';--wd-secondary-glow:' . $second['accent_glow'] . ';';
         }
 
-        return '--wd-accent:' . $tokens['accent'] . ';--wd-accent-ink:' . $tokens['accent_ink']
-            . ';--wd-accent-text:' . $tokens['accent_text'] . ';--wd-accent-glow:' . $tokens['accent_glow'] . ';';
+        return $style;
     }
 
     public static function contrast(string $foreground, string $background): float
