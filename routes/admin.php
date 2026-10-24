@@ -944,6 +944,7 @@
             Route::delete('plan/complimentary', 'WorkspaceEntitlementController@revokeComplimentary')->name('plan.complimentary.revoke');
             Route::post('plan/additional-slots', 'WorkspaceEntitlementController@updateAdditionalSlots')->name('plan.additional-slots');
             Route::post('entitlement-overrides', 'WorkspaceEntitlementController@storeOverride')->name('entitlement-overrides.store');
+            Route::put('module-access', 'WorkspaceEntitlementController@updateModuleAccess')->name('module-access.update');
             Route::delete('entitlement-overrides/{featureKey}', 'WorkspaceEntitlementController@revertOverride')->name('entitlement-overrides.revert');
         });
 
