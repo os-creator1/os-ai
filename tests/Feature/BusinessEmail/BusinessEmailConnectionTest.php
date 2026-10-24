@@ -435,6 +435,109 @@ class BusinessEmailConnectionTest extends TestCase
         $this->assertSame(State::Pending, $this->account($business)->state);
     }
 
+    // ---- reauthorization (additional consent) without downtime -----------
+
+    private function reauthorizeState(object $workspace, object $business): string
+    {
+        $response = $this->post($this->connectUrl($workspace, $business), ['reauthorize' => 1]);
+        $response->assertRedirect();
+        parse_str((string) parse_url((string) $response->headers->get('Location'), PHP_URL_QUERY), $query);
+
+        return (string) $query['state'];
+    }
+
+    private function storedToken(object $business): ?string
+    {
+        $raw = DB::table('business_email_accounts')->where('business_id', $business->id)->value('refresh_token_encrypted');
+
+        return $raw === null ? null : Crypt::decryptString($raw);
+    }
+
+    public function test_reauthorization_keeps_the_account_active_and_sending_until_the_verified_callback_replaces_the_credential(): void
+    {
+        [, $business, $workspace] = $this->owner();
+        $this->activeAccount($business);
+        $contact = $this->contactWithEmails($business, ['pat@example.com']);
+
+        $state = $this->reauthorizeState($workspace, $business);
+
+        // Consent is pending, yet the previous credential is intact and usable.
+        $account = $this->account($business);
+        $this->assertSame(State::Active, $account->state);
+        $this->assertSame('stored-refresh-token', $this->storedToken($business));
+        $sent = app(\App\Library\BusinessEmail\BusinessEmailSender::class)->send(new \App\DTO\BusinessEmail\BusinessEmailSendRequest($business, $contact, 'Hi', 'Body', 'during-reauth'));
+        $this->assertSame(\App\Enums\BusinessEmail\BusinessEmailMessageStatus::Accepted, $sent->status);
+
+        $this->fakeGoogle->codeExchangeRefreshToken = 'new-refresh-token';
+        $this->fakeGoogle->codeExchangeScopes = 'fake-send-scope fake-read-scope';
+        $this->get($this->callbackUrl('google', ['state' => $state, 'code' => 'c']))->assertRedirect();
+
+        $account = $this->account($business);
+        $this->assertSame(State::Active, $account->state);
+        $this->assertSame('new-refresh-token', $this->storedToken($business));
+        $this->assertStringContainsString('fake-read-scope', (string) $account->granted_scopes);
+        $this->assertNull($account->oauth_state_nonce);
+        $this->assertNotSame('new-refresh-token', DB::table('business_email_accounts')->where('id', $account->id)->value('refresh_token_encrypted'), 'stored encrypted');
+    }
+
+    public function test_cancelled_failed_or_wrong_mailbox_reauthorization_preserves_the_previous_connection(): void
+    {
+        [, $business, $workspace] = $this->owner();
+        $this->activeAccount($business);
+
+        // Cancelled at the provider.
+        $state = $this->reauthorizeState($workspace, $business);
+        $this->get($this->callbackUrl('google', ['state' => $state, 'error' => 'access_denied']))->assertRedirect();
+        $this->assertSame(0, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
+
+        // Provider refuses (e.g. send permission unticked).
+        $state = $this->reauthorizeState($workspace, $business);
+        $this->fakeGoogle->codeExchangeFailure = new BusinessEmailProviderException(Category::PermissionDenied, 'send_scope_not_granted');
+        $this->get($this->callbackUrl('google', ['state' => $state, 'code' => 'c']))->assertRedirect();
+        $this->fakeGoogle->codeExchangeFailure = null;
+
+        // No refresh token in the new grant.
+        $state = $this->reauthorizeState($workspace, $business);
+        $this->fakeGoogle->codeExchangeRefreshToken = null;
+        $this->get($this->callbackUrl('google', ['state' => $state, 'code' => 'c']))->assertRedirect();
+
+        // A different mailbox than the connected one.
+        $state = $this->reauthorizeState($workspace, $business);
+        $this->fakeGoogle->codeExchangeRefreshToken = 'other-refresh-token';
+        $this->fakeGoogle->mailbox = 'someone.else@elsewhere.test';
+        $this->get($this->callbackUrl('google', ['state' => $state, 'code' => 'c']))->assertRedirect();
+
+        // An expired/unknown state exchanges nothing.
+        $this->get($this->callbackUrl('google', ['state' => 'garbage', 'code' => 'c']))->assertNotFound();
+
+        $account = $this->account($business);
+        $this->assertSame(State::Active, $account->state);
+        $this->assertTrue($account->isActive());
+        $this->assertSame('stored-refresh-token', $this->storedToken($business));
+        $this->assertSame('owner@business.test', $account->mailbox_email);
+    }
+
+    public function test_a_reauthorization_that_loses_a_race_with_disconnect_cannot_resurrect_the_credential(): void
+    {
+        [, $business, $workspace] = $this->owner();
+        $this->activeAccount($business);
+        $state = $this->reauthorizeState($workspace, $business);
+
+        $stale = $this->account($business);
+        app(BusinessEmailAccountManager::class)->disconnect($this->account($business));
+
+        $this->expectException(BusinessEmailConcurrencyException::class);
+        $this->fakeGoogle->codeExchangeRefreshToken = 'new-refresh-token';
+
+        try {
+            app(BusinessEmailAccountManager::class)->completeConnect($stale, 'c');
+        } finally {
+            $this->assertSame(State::Disconnected, $this->account($business)->state);
+            $this->assertNull($this->storedToken($business));
+            unset($state);
+        }
+    }
+
     // ---- disconnect / reconnect -----------------------------------------
 
     public function test_disconnect_destroys_the_credential_revokes_at_the_provider_and_stops_sending(): void

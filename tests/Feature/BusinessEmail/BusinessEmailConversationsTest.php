@@ -192,6 +192,26 @@ class BusinessEmailConversationsTest extends TestCase
         $this->assertSame($this->locB->id, (int) BusinessEmailMessage::query()->where('direction', 'outbound')->value('location_id'));
     }
 
+    public function test_untrusted_email_content_is_escaped_never_rendered_as_html(): void
+    {
+        $message = $this->seed($this->locA, '<script>alert("subject")</script>', 't-x', 'x@example.com');
+        $message->forceFill([
+            'from_name' => '<img src=x onerror=alert(1)>',
+            'body_text' => "<script>alert('body')</script>\n<a href=\"javascript:alert(2)\">click</a>",
+        ])->save();
+        $this->authenticateAs($this->owner);
+
+        foreach ([$this->convUrl(), $this->convUrl('t-x'), route('customer.workspaces.businesses.email.show', [$this->workspace->uid, $this->business->uid])] as $url) {
+            $html = $this->get($url)->assertOk()->getContent();
+
+            $this->assertStringNotContainsString('<script>alert', $html, $url);
+            $this->assertStringNotContainsString('<img src=x', $html, $url);
+            $this->assertStringNotContainsString('<a href="javascript:', $html, $url);
+        }
+
+        $this->assertStringContainsString('&lt;script&gt;alert(&#039;body&#039;)&lt;/script&gt;', $this->get($this->convUrl('t-x'))->getContent());
+    }
+
     public function test_sms_conversation_routes_are_unchanged_by_the_email_tab(): void
     {
         $match = fn (string $method, string $uri) => Route::getRoutes()->match(Request::create($uri, $method))->getName();

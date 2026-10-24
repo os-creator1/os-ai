@@ -329,6 +329,19 @@ class BusinessEmailInboundSyncTest extends TestCase
         $this->assertSame('18a', $message->providerThreadId);
         $this->assertSame('Plain body', $message->bodyText);
         $this->assertSame(['INBOX', 'UNREAD'], $message->labels);
+
+        // An HTML-only message is reduced to inert text: no tags, no script bodies.
+        $html = $provider->parseMessage([
+            'id' => '18d', 'labelIds' => ['INBOX'],
+            'payload' => [
+                'mimeType' => 'text/html',
+                'headers' => [['name' => 'From', 'value' => 'pat@example.com'], ['name' => 'Subject', 'value' => "Hi\r\nBcc: evil@example.com"]],
+                'body' => ['data' => rtrim(strtr(base64_encode('<p onclick="x()">Hello</p><script>alert(1)</script><style>p{}</style>'), '+/', '-_'), '=')],
+            ],
+        ]);
+
+        $this->assertSame('Hello', $html->bodyText);
+        $this->assertStringNotContainsString("\n", $html->subject, 'header injection characters are removed');
     }
 
     public function test_the_gmail_adapter_syncs_incrementally_from_the_persisted_history_cursor_and_threads_replies(): void

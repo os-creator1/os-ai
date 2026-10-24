@@ -214,7 +214,9 @@ class BusinessEmailController extends CustomerBaseController
         $businessUid = (string) $business->uid;
 
         if ($request->query('error') !== null || $request->query('code') === null) {
-            return $this->back($workspaceUid, $businessUid, 'error', 'The email provider did not complete the connection.');
+            return $this->back($workspaceUid, $businessUid, 'error', $account->state === \App\Enums\BusinessEmail\BusinessEmailAccountState::Active
+                ? 'The email provider did not complete the new authorization. Your existing connection is unchanged.'
+                : 'The email provider did not complete the connection.');
         }
 
         try {
