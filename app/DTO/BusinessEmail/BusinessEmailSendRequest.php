@@ -4,6 +4,7 @@ namespace App\DTO\BusinessEmail;
 
 use App\Enums\BusinessEmail\BusinessEmailSource;
 use App\Models\Business;
+use App\Models\BusinessEmailMessage;
 use App\Models\BusinessLocation;
 use App\Models\Contacts;
 
@@ -28,6 +29,8 @@ final class BusinessEmailSendRequest
         public readonly ?BusinessLocation $location = null,
         public readonly ?int $sentByUserId = null,
         public readonly ?int $automationStepRunId = null,
+        /** Makes this a reply: same thread, RFC reply headers, counterpart address. */
+        public readonly ?BusinessEmailMessage $replyTo = null,
     ) {
     }
 }

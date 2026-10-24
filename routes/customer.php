@@ -1294,6 +1294,7 @@
                 ->name('connect');
             Route::post('/disconnect', 'Business\BusinessEmailController@disconnect')->name('disconnect');
             Route::post('/send', 'Business\BusinessEmailController@send')->middleware('throttle:20,1')->name('send');
+            Route::post('/messages/{messageUid}/reply', 'Business\BusinessEmailController@reply')->middleware('throttle:20,1')->name('reply');
         });
 
         /*

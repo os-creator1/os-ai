@@ -53,14 +53,19 @@ final class BusinessEmailAccountManager
      * @throws \App\Exceptions\BusinessEmail\BusinessEmailConfigurationException
      * @throws BusinessEmailConcurrencyException
      * @throws LogicException when an active account already exists
+     *
+     * $reauthorize lets the owner of an ACTIVE mailbox run consent again
+     * (e.g. to grant the inbound read permission). The stored credential is
+     * only replaced when the new consent completes with the send permission;
+     * until then the account is pending and cannot send.
      */
-    public function beginConnect(Business $business, int $actorUserId, BusinessEmailProviderType $provider): string
+    public function beginConnect(Business $business, int $actorUserId, BusinessEmailProviderType $provider, bool $reauthorize = false): string
     {
         $this->oauthConfig->assertUsable($provider);
 
         $account = $this->findForBusiness($business);
 
-        if ($account !== null && $account->state === BusinessEmailAccountState::Active) {
+        if ($account !== null && $account->state === BusinessEmailAccountState::Active && ! $reauthorize) {
             throw new LogicException('An email account is already connected; disconnect it before connecting a different one.');
         }
 
@@ -79,6 +84,7 @@ final class BusinessEmailAccountManager
                 'external_account_id' => null,
                 'display_name' => null,
                 'failure_classification' => null,
+                'inbound_failure' => null,
             ]);
         }
 
@@ -148,6 +154,7 @@ final class BusinessEmailAccountManager
             'connected_at' => now(),
             'last_refreshed_at' => now(),
             'failure_classification' => null,
+            'inbound_failure' => null,
             'revoked_at' => null,
             'disconnected_at' => null,
         ]);

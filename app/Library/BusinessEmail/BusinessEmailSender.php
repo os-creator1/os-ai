@@ -89,7 +89,9 @@ final class BusinessEmailSender
             return $this->continueExisting($existing, $request);
         }
 
-        $location = $this->resolveLocation($request, $contact);
+        $reply = $this->authoritativeReply($request, $contact);
+
+        $location = $this->resolveLocation($request, $contact, $reply);
 
         $account = $this->senders->defaultFor($business, $location);
 
@@ -97,7 +99,7 @@ final class BusinessEmailSender
             throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::DisconnectedAccount);
         }
 
-        $to = $this->contacts->singleAddressFor($contact);
+        $to = $reply !== null ? $this->replyAddress($reply) : $this->contacts->singleAddressFor($contact);
 
         if ($to === null) {
             throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::RecipientInvalid);
@@ -105,7 +107,7 @@ final class BusinessEmailSender
 
         $this->assertWithinSendLimits($business, $contact);
 
-        $message = $this->createQueued($request, $contact, $operationKey, $account, $location, $to, $subject, $body);
+        $message = $this->createQueued($request, $contact, $operationKey, $account, $location, $to, $subject, $body, $reply);
 
         // ONE invariant for both paths to a recorded row. createQueued() returns
         // either the row THIS request inserted or, when it lost a concurrent
@@ -204,9 +206,20 @@ final class BusinessEmailSender
      *
      * Never re-derived from the Contact afterwards.
      */
-    private function resolveLocation(BusinessEmailSendRequest $request, Contacts $contact): BusinessLocation
+    private function resolveLocation(BusinessEmailSendRequest $request, Contacts $contact, ?BusinessEmailMessage $reply = null): BusinessLocation
     {
         $business = $request->business;
+
+        // A reply stays in the Location its conversation already lives in.
+        if ($request->location === null && $reply !== null) {
+            $location = BusinessLocation::query()->find($reply->location_id);
+
+            if ($location !== null
+                && (int) $location->business_id === (int) $business->id
+                && $this->lifecycleValue($location) === BusinessLocationLifecycleState::Active->value) {
+                return $location;
+            }
+        }
 
         if ($request->location !== null) {
             $location = BusinessLocation::query()->find($request->location->id);
@@ -239,6 +252,36 @@ final class BusinessEmailSender
 
         return $single;
     }
+    /**
+     * The message being answered, re-read inside this Business and required to
+     * belong to the same Contact. Anything else is indistinguishable from an
+     * unknown message.
+     */
+    private function authoritativeReply(BusinessEmailSendRequest $request, Contacts $contact): ?BusinessEmailMessage
+    {
+        if ($request->replyTo === null) {
+            return null;
+        }
+
+        $reply = BusinessEmailMessage::query()
+            ->where('id', $request->replyTo->id)
+            ->where('business_id', $request->business->id)
+            ->where('contact_id', $contact->id)
+            ->first();
+
+        if ($reply === null) {
+            throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::ContactUnavailable);
+        }
+
+        return $reply;
+    }
+
+    /** The other party of a recorded message. */
+    private function replyAddress(BusinessEmailMessage $reply): ?string
+    {
+        return BusinessEmailContactResolver::normalize($reply->direction === 'inbound' ? $reply->from_email : $reply->to_email);
+    }
+
     private function lifecycleValue(BusinessLocation $location): string
     {
         $state = $location->lifecycle_state;
@@ -257,7 +300,7 @@ final class BusinessEmailSender
 
         $perBusiness = (int) config('business_email.send.per_business_per_hour', 200);
 
-        if (BusinessEmailMessage::query()->where('business_id', $business->id)->where('created_at', '>=', $since)->count() >= $perBusiness) {
+        if (BusinessEmailMessage::query()->where('business_id', $business->id)->where('direction', 'outbound')->where('created_at', '>=', $since)->count() >= $perBusiness) {
             throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::SendLimitExceeded);
         }
 
@@ -266,10 +309,18 @@ final class BusinessEmailSender
         if (BusinessEmailMessage::query()
             ->where('business_id', $business->id)
             ->where('contact_id', $contact->id)
+            ->where('direction', 'outbound')
             ->where('created_at', '>=', $since)
             ->count() >= $perContact) {
             throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::SendLimitExceeded);
         }
+    }
+
+    private function referencesFor(BusinessEmailMessage $reply): ?string
+    {
+        $chain = trim((string) $reply->references_header . ' ' . (string) $reply->internet_message_id);
+
+        return $chain === '' ? null : substr($chain, -2000);
     }
 
     private function createQueued(
@@ -281,6 +332,7 @@ final class BusinessEmailSender
         string $to,
         string $subject,
         string $body,
+        ?BusinessEmailMessage $reply = null,
     ): BusinessEmailMessage {
         try {
             return BusinessEmailMessage::create([
@@ -298,6 +350,9 @@ final class BusinessEmailSender
                 'to_email' => $to,
                 'subject' => $subject,
                 'body_text' => $body,
+                'provider_thread_id' => $reply?->provider_thread_id,
+                'in_reply_to' => $reply?->internet_message_id,
+                'references_header' => $reply === null ? null : $this->referencesFor($reply),
                 'status' => BusinessEmailMessageStatus::Queued->value,
                 'attempts' => 0,
             ]);
@@ -326,6 +381,7 @@ final class BusinessEmailSender
     {
         return match ($message->status) {
             BusinessEmailMessageStatus::Accepted,
+            BusinessEmailMessageStatus::Received,
             BusinessEmailMessageStatus::Unconfirmed => $message,
             BusinessEmailMessageStatus::Sending => $this->resolveSendingReplay($message),
             BusinessEmailMessageStatus::Queued => $this->attempt($message, $request),
@@ -415,6 +471,9 @@ final class BusinessEmailSender
                 toEmail: (string) $message->to_email,
                 subject: (string) $message->subject,
                 bodyText: (string) $message->body_text,
+                inReplyTo: $message->in_reply_to,
+                references: $message->references_header,
+                threadId: $message->provider_thread_id,
             ));
         } catch (BusinessEmailProviderException $exception) {
             $this->finalizeFailure(

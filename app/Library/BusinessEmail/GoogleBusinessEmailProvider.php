@@ -2,6 +2,8 @@
 
 namespace App\Library\BusinessEmail;
 
+use App\DTO\BusinessEmail\BusinessEmailInboundBatch;
+use App\DTO\BusinessEmail\BusinessEmailInboundMessage;
 use App\DTO\BusinessEmail\BusinessEmailOutbound;
 use App\DTO\BusinessEmail\BusinessEmailProviderCapabilities;
 use App\DTO\BusinessEmail\BusinessEmailProviderSendResult;
@@ -10,6 +12,7 @@ use App\Enums\BusinessEmail\BusinessEmailFailureCategory;
 use App\Enums\BusinessEmail\BusinessEmailProviderType;
 use App\Exceptions\BusinessEmail\BusinessEmailProviderException;
 use App\Library\BusinessEmail\Contracts\BusinessEmailProvider;
+use App\Library\BusinessEmail\Contracts\InboundBusinessEmailProvider;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -21,13 +24,15 @@ use Illuminate\Support\Str;
  * (`users.messages.send`). Direct HTTP, no Google SDK, so every response
  * shape is normalized at this one boundary.
  *
- * Scopes (config/business_email.php): `openid email` to identify the mailbox
- * and `gmail.send` to send. NO mailbox-read scope. Google lets a user untick
- * individual permissions on the consent screen, so a grant that came back
- * WITHOUT gmail.send fails closed (PermissionDenied) rather than activating
- * an account that cannot send.
+ * Scopes (config/business_email.php): `openid email` to identify the mailbox,
+ * `gmail.send` to send and `gmail.readonly` (restricted) for inbound sync.
+ * Google lets a user untick individual permissions on the consent screen, so
+ * a grant that came back WITHOUT gmail.send fails closed (PermissionDenied)
+ * rather than activating an account that cannot send. A grant without
+ * gmail.readonly still connects for sending; inbound sync simply stays off
+ * until the owner reauthorizes.
  */
-final class GoogleBusinessEmailProvider implements BusinessEmailProvider
+final class GoogleBusinessEmailProvider implements BusinessEmailProvider, InboundBusinessEmailProvider
 {
     private const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 
@@ -38,6 +43,10 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider
     private const USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
 
     private const SEND_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
+
+    private const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
+
+    private const READ_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 
     private const SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send';
 
@@ -52,7 +61,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider
 
     public function capabilities(): BusinessEmailProviderCapabilities
     {
-        return new BusinessEmailProviderCapabilities(revocableGrant: true);
+        return new BusinessEmailProviderCapabilities(inboundSync: true, revocableGrant: true);
     }
 
     public function authorizationUrl(string $state, bool $forceConsent): string
@@ -141,9 +150,14 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider
         [$mime, $messageId] = $this->buildMime($email);
 
         try {
-            $response = $this->http($accessToken)->asJson()->post(self::SEND_ENDPOINT, [
-                'raw' => rtrim(strtr(base64_encode($mime), '+/', '-_'), '='),
-            ]);
+            $payload = ['raw' => rtrim(strtr(base64_encode($mime), '+/', '-_'), '=')];
+
+            // Keeps the reply in the same Gmail conversation.
+            if ($email->threadId !== null && $email->threadId !== '') {
+                $payload['threadId'] = $email->threadId;
+            }
+
+            $response = $this->http($accessToken)->asJson()->post(self::SEND_ENDPOINT, $payload);
         } catch (ConnectionException $exception) {
             throw BusinessEmailProviderErrorMapper::fromTransport($exception, requestSent: true);
         }
@@ -161,6 +175,241 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider
             // the best available internet identity, never as a delivery claim.
             internetMessageId: $messageId,
         );
+    }
+
+    public function inboundScope(): string
+    {
+        return self::READ_SCOPE;
+    }
+
+    public function fetchInbound(string $accessToken, ?string $cursor, int $limit): BusinessEmailInboundBatch
+    {
+        $limit = max(1, $limit);
+        $hasMore = false;
+
+        if ($cursor === null || $cursor === '') {
+            [$ids, $newCursor] = $this->initialIds($accessToken, $limit);
+        } else {
+            try {
+                [$ids, $newCursor, $hasMore] = $this->historyIds($accessToken, $cursor, $limit);
+            } catch (BusinessEmailProviderException $exception) {
+                // A history id older than ~a week is gone (404): fall back to a
+                // bounded resync; stored messages are skipped by their ids.
+                if (! $this->isNotFound($exception)) {
+                    throw $exception;
+                }
+
+                [$ids, $newCursor] = $this->initialIds($accessToken, $limit);
+            }
+        }
+
+        $messages = [];
+
+        foreach ($ids as $id) {
+            $message = $this->fetchMessage($accessToken, $id);
+
+            if ($message !== null) {
+                $messages[] = $message;
+            }
+        }
+
+        return new BusinessEmailInboundBatch($messages, $newCursor, $hasMore);
+    }
+
+    /** @return array{0: list<string>, 1: string|null} ids and the cursor taken BEFORE listing */
+    private function initialIds(string $accessToken, int $limit): array
+    {
+        $profile = $this->getJson(self::API . '/profile', $accessToken);
+        $cursor = isset($profile['historyId']) ? (string) $profile['historyId'] : null;
+
+        $days = max(1, (int) config('business_email.inbound.initial_days', 7));
+        $max = min($limit, max(1, (int) config('business_email.inbound.initial_max_messages', 50)));
+
+        $list = $this->getJson(self::API . '/messages?' . http_build_query([
+            'q' => 'in:inbox newer_than:' . $days . 'd',
+            'maxResults' => $max,
+        ]), $accessToken);
+
+        $ids = [];
+
+        foreach ((array) ($list['messages'] ?? []) as $row) {
+            if (isset($row['id'])) {
+                $ids[] = (string) $row['id'];
+            }
+        }
+
+        // Oldest first, so a conversation is stored in the order it happened.
+        return [array_reverse($ids), $cursor];
+    }
+
+    /** @return array{0: list<string>, 1: string|null, 2: bool} */
+    private function historyIds(string $accessToken, string $cursor, int $limit): array
+    {
+        $json = $this->getJson(self::API . '/history?' . http_build_query([
+            'startHistoryId' => $cursor,
+            'historyTypes' => 'messageAdded',
+            'labelId' => 'INBOX',
+            'maxResults' => 100,
+        ]), $accessToken);
+
+        $ids = [];
+        $lastRecord = null;
+
+        foreach ((array) ($json['history'] ?? []) as $record) {
+            $lastRecord = isset($record['id']) ? (string) $record['id'] : $lastRecord;
+
+            foreach ((array) ($record['messagesAdded'] ?? []) as $added) {
+                if (isset($added['message']['id'])) {
+                    $ids[(string) $added['message']['id']] = true;
+                }
+            }
+        }
+
+        $ids = array_keys($ids);
+        $hasMore = isset($json['nextPageToken']) || count($ids) > $limit;
+        $ids = array_slice($ids, 0, $limit);
+
+        // More pages: advance only as far as the records read; the rest is
+        // returned by the next run. Otherwise the mailbox's current history id.
+        $newCursor = $hasMore ? ($lastRecord ?? $cursor) : (isset($json['historyId']) ? (string) $json['historyId'] : $cursor);
+
+        return [$ids, $newCursor, $hasMore];
+    }
+
+    private function fetchMessage(string $accessToken, string $id): ?BusinessEmailInboundMessage
+    {
+        try {
+            $json = $this->getJson(self::API . '/messages/' . rawurlencode($id) . '?format=full', $accessToken);
+        } catch (BusinessEmailProviderException $exception) {
+            // Deleted between listing and fetching: nothing to import.
+            if ($this->isNotFound($exception)) {
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        return $this->parseMessage($json);
+    }
+
+    /**
+     * @param array<string, mixed> $json a Gmail `users.messages` resource, format=full
+     */
+    public function parseMessage(array $json): ?BusinessEmailInboundMessage
+    {
+        $id = (string) ($json['id'] ?? '');
+
+        if ($id === '') {
+            return null;
+        }
+
+        $headers = [];
+
+        foreach ((array) ($json['payload']['headers'] ?? []) as $header) {
+            $name = strtolower((string) ($header['name'] ?? ''));
+
+            if ($name !== '' && ! isset($headers[$name])) {
+                $headers[$name] = (string) ($header['value'] ?? '');
+            }
+        }
+
+        $from = $this->parseAddress($headers['from'] ?? '');
+        $to = $this->parseAddress($headers['to'] ?? '');
+
+        if ($from['email'] === null) {
+            return null;
+        }
+
+        $received = isset($json['internalDate']) && is_numeric($json['internalDate'])
+            ? \Carbon\Carbon::createFromTimestampMs((int) $json['internalDate'])
+            : null;
+
+        $maxBody = max(100, (int) config('business_email.inbound.max_body_length', 20000));
+
+        return new BusinessEmailInboundMessage(
+            providerMessageId: substr($id, 0, 191),
+            providerThreadId: isset($json['threadId']) ? substr((string) $json['threadId'], 0, 191) : null,
+            internetMessageId: $this->headerValue($headers['message-id'] ?? null, 255),
+            inReplyTo: $this->headerValue($headers['in-reply-to'] ?? null, 255),
+            references: $this->headerValue($headers['references'] ?? null, 2000),
+            fromEmail: $from['email'],
+            fromName: $from['name'] !== null ? mb_substr($from['name'], 0, 191) : null,
+            toEmail: $to['email'] ?? '',
+            subject: mb_substr($this->clean($this->decodeWords($headers['subject'] ?? '')), 0, 255),
+            bodyText: mb_substr($this->extractBody((array) ($json['payload'] ?? [])), 0, $maxBody),
+            receivedAt: $received,
+            labels: array_values(array_map('strval', (array) ($json['labelIds'] ?? []))),
+        );
+    }
+
+    private function isNotFound(BusinessEmailProviderException $exception): bool
+    {
+        return in_array(strtolower((string) $exception->providerCode), ['notfound', 'not_found', '404'], true);
+    }
+
+    private function headerValue(?string $value, int $max): ?string
+    {
+        $value = $value === null ? '' : $this->clean($value);
+
+        return $value === '' ? null : substr($value, 0, $max);
+    }
+
+    /** @return array{email: string|null, name: string|null} first address of an address header */
+    private function parseAddress(string $header): array
+    {
+        $header = $this->decodeWords($header);
+
+        if (preg_match('/^\s*"?([^"<]*?)"?\s*<([^>]+)>/', $header, $m) === 1) {
+            $email = $m[2];
+            $name = trim($m[1]);
+        } else {
+            $email = trim(explode(',', $header)[0]);
+            $name = '';
+        }
+
+        return [
+            'email' => BusinessEmailContactResolver::normalize($email),
+            'name' => $name !== '' ? $this->clean($name) : null,
+        ];
+    }
+
+    private function decodeWords(string $value): string
+    {
+        return str_contains($value, '=?') ? (string) iconv_mime_decode($value, ICONV_MIME_DECODE_CONTINUE_ON_ERROR, 'UTF-8') : $value;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function extractBody(array $payload): string
+    {
+        $plain = $this->findPart($payload, 'text/plain');
+
+        if ($plain !== null) {
+            return trim($plain);
+        }
+
+        $html = $this->findPart($payload, 'text/html');
+
+        return $html === null ? '' : trim(html_entity_decode(strip_tags((string) preg_replace('#<(script|style)\b.*?</\1>#is', '', $html)), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    }
+
+    /** @param array<string, mixed> $part */
+    private function findPart(array $part, string $mime): ?string
+    {
+        if (($part['mimeType'] ?? null) === $mime && isset($part['body']['data'])) {
+            $decoded = base64_decode(strtr((string) $part['body']['data'], '-_', '+/'), false);
+
+            return $decoded === false ? null : str_replace("\0", '', $decoded);
+        }
+
+        foreach ((array) ($part['parts'] ?? []) as $child) {
+            $found = is_array($child) ? $this->findPart($child, $mime) : null;
+
+            if ($found !== null) {
+                return $found;
+            }
+        }
+
+        return null;
     }
 
     public function revokeGrant(string $refreshToken): void
@@ -200,6 +449,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider
             'Subject: ' . $this->encodeWord($this->clean($email->subject)),
             'Message-ID: ' . $messageId,
             'Date: ' . now()->toRfc2822String(),
+            ...$this->threadHeaders($email),
             'MIME-Version: 1.0',
             'Content-Type: text/plain; charset=UTF-8',
             'Content-Transfer-Encoding: base64',
@@ -208,6 +458,20 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider
         $body = chunk_split(base64_encode($email->bodyText), 76, "\r\n");
 
         return [implode("\r\n", $headers) . "\r\n\r\n" . $body, $messageId];
+    }
+
+    /** @return list<string> */
+    private function threadHeaders(BusinessEmailOutbound $email): array
+    {
+        $headers = [];
+
+        if ($email->inReplyTo !== null && $email->inReplyTo !== '') {
+            $headers[] = 'In-Reply-To: ' . $this->clean($email->inReplyTo);
+            $references = trim($this->clean((string) $email->references));
+            $headers[] = 'References: ' . ($references !== '' ? $references : $this->clean($email->inReplyTo));
+        }
+
+        return $headers;
     }
 
     private function clean(string $value): string
