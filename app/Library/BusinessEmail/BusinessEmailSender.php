@@ -105,7 +105,7 @@ final class BusinessEmailSender
             throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::RecipientInvalid);
         }
 
-        $this->assertWithinSendLimits($business, $contact);
+        $this->assertWithinSendLimits($business, $contact, $to);
 
         $message = $this->createQueued($request, $contact, $operationKey, $account, $location, $to, $subject, $body, $reply);
 
@@ -130,8 +130,18 @@ final class BusinessEmailSender
      * The authoritative Contact: read by id, constrained to the request
      * Business, fresh from the database every time.
      */
-    private function authoritativeContact(BusinessEmailSendRequest $request): Contacts
+    private function authoritativeContact(BusinessEmailSendRequest $request): ?Contacts
     {
+        // Only a reply may go to a sender who is not (yet) a Contact: its
+        // recipient is the stored message's counterpart, never caller input.
+        if ($request->contact === null && $request->replyTo !== null) {
+            return null;
+        }
+
+        if ($request->contact === null) {
+            throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::ContactUnavailable);
+        }
+
         $contact = Contacts::query()
             ->where('id', $request->contact->id)
             ->where('business_id', $request->business->id)
@@ -157,11 +167,11 @@ final class BusinessEmailSender
     private function assertSameLogicalRequest(
         BusinessEmailMessage $message,
         BusinessEmailSendRequest $request,
-        Contacts $contact,
+        ?Contacts $contact,
         string $subject,
         string $body,
     ): void {
-        $same = (int) $message->contact_id === (int) $contact->id
+        $same = (int) $message->contact_id === (int) $contact?->id
             && (string) $message->subject === $subject
             && (string) $message->body_text === $body
             && $message->source === $request->source
@@ -206,7 +216,7 @@ final class BusinessEmailSender
      *
      * Never re-derived from the Contact afterwards.
      */
-    private function resolveLocation(BusinessEmailSendRequest $request, Contacts $contact, ?BusinessEmailMessage $reply = null): BusinessLocation
+    private function resolveLocation(BusinessEmailSendRequest $request, ?Contacts $contact, ?BusinessEmailMessage $reply = null): BusinessLocation
     {
         $business = $request->business;
 
@@ -233,7 +243,7 @@ final class BusinessEmailSender
             return $location;
         }
 
-        if ($contact->location_id !== null) {
+        if ($contact?->location_id !== null) {
             $location = BusinessLocation::query()->find($contact->location_id);
 
             if ($location !== null
@@ -257,7 +267,7 @@ final class BusinessEmailSender
      * belong to the same Contact. Anything else is indistinguishable from an
      * unknown message.
      */
-    private function authoritativeReply(BusinessEmailSendRequest $request, Contacts $contact): ?BusinessEmailMessage
+    private function authoritativeReply(BusinessEmailSendRequest $request, ?Contacts $contact): ?BusinessEmailMessage
     {
         if ($request->replyTo === null) {
             return null;
@@ -266,7 +276,7 @@ final class BusinessEmailSender
         $reply = BusinessEmailMessage::query()
             ->where('id', $request->replyTo->id)
             ->where('business_id', $request->business->id)
-            ->where('contact_id', $contact->id)
+            ->when($contact !== null, fn ($q) => $q->where('contact_id', $contact->id), fn ($q) => $q->whereNull('contact_id'))
             ->first();
 
         if ($reply === null) {
@@ -294,7 +304,7 @@ final class BusinessEmailSender
      * bad workflow (or an impatient user) cannot turn into thousands of
      * emails. A soft bound under concurrency, by design.
      */
-    private function assertWithinSendLimits(Business $business, Contacts $contact): void
+    private function assertWithinSendLimits(Business $business, ?Contacts $contact, string $to): void
     {
         $since = now()->subHour();
 
@@ -308,7 +318,7 @@ final class BusinessEmailSender
 
         if (BusinessEmailMessage::query()
             ->where('business_id', $business->id)
-            ->where('contact_id', $contact->id)
+            ->when($contact !== null, fn ($q) => $q->where('contact_id', $contact->id), fn ($q) => $q->where('to_email', $to))
             ->where('direction', 'outbound')
             ->where('created_at', '>=', $since)
             ->count() >= $perContact) {
@@ -325,7 +335,7 @@ final class BusinessEmailSender
 
     private function createQueued(
         BusinessEmailSendRequest $request,
-        Contacts $contact,
+        ?Contacts $contact,
         string $operationKey,
         BusinessEmailAccount $account,
         BusinessLocation $location,
@@ -339,7 +349,7 @@ final class BusinessEmailSender
                 'business_id' => $request->business->id,
                 'location_id' => $location->id,
                 'business_email_account_id' => $account->id,
-                'contact_id' => $contact->id,
+                'contact_id' => $contact?->id,
                 'direction' => 'outbound',
                 'source' => $request->source->value,
                 'automation_step_run_id' => $request->automationStepRunId,

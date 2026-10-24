@@ -21,7 +21,8 @@ final class BusinessEmailSendRequest
 {
     public function __construct(
         public readonly Business $business,
-        public readonly Contacts $contact,
+        /** Null only for a reply to a sender who is not a Contact. */
+        public readonly ?Contacts $contact,
         public readonly string $subject,
         public readonly string $bodyText,
         public readonly string $operationKey,

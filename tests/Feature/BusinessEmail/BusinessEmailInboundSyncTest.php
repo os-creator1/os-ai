@@ -272,6 +272,30 @@ class BusinessEmailInboundSyncTest extends TestCase
         $this->assertSame('reauthorization_required', $account->fresh()->inbound_failure);
     }
 
+    public function test_unmatched_mail_in_a_multi_location_business_is_left_unresolved_not_filed_under_the_primary_location(): void
+    {
+        [, $business] = $this->emailTenant();
+        $this->makeLocation($business, 'Second Location');
+        $account = $this->syncable($business);
+
+        $this->feed([$this->inbound('g-1', 'stranger@example.com')]);
+        $this->syncer()->sync($account);
+
+        $row = BusinessEmailMessage::query()->where('business_id', $business->id)->firstOrFail();
+        $this->assertNull($row->location_id);
+        $this->assertNull($row->contact_id);
+
+        // A contact with a proven Location still routes normally.
+        $second = \App\Models\BusinessLocation::query()->where('business_id', $business->id)->where('name', 'Second Location')->firstOrFail();
+        $contact = $this->contactWithEmails($business, ['pat@example.com'], $second->id);
+        $this->feed([$this->inbound('g-2', 'pat@example.com', 't-2')]);
+        $this->syncer()->sync($account->fresh());
+
+        $routed = BusinessEmailMessage::query()->where('provider_message_id', 'g-2')->firstOrFail();
+        $this->assertSame($second->id, (int) $routed->location_id);
+        $this->assertSame($contact->id, (int) $routed->contact_id);
+    }
+
     public function test_the_gmail_payload_is_parsed_into_sender_recipient_subject_ids_and_text(): void
     {
         $provider = new GoogleBusinessEmailProvider(app(\App\Library\BusinessEmail\BusinessEmailOAuthConfig::class));

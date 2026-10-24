@@ -1792,6 +1792,8 @@
         Route::prefix('{workspaceUid}/businesses/{businessUid}/conversations')->name('businesses.conversations.')->group(function () {
             Route::get('/', 'ChatBoxController@index')->name('index');
             Route::get('/new', 'ChatBoxController@new')->name('new');
+            // Email threads from the connected mailbox (email ledger, not chat_boxes).
+            Route::get('/email', 'Business\EmailConversationsController@index')->name('email');
             Route::post('/sent', 'ChatBoxController@sent')->name('sent');
             Route::post('/load', 'ChatBoxController@loadChatUsers')->name('load');
             Route::post('/{uid}/messages', 'ChatBoxController@messages')->name('messages');

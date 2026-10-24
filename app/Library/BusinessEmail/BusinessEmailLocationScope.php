@@ -40,6 +40,31 @@ final class BusinessEmailLocationScope
     }
 
     /**
+     * Narrows a business_email_messages query (already scoped to ONE Business)
+     * to what this actor may see: rows in their Location reach, plus rows whose
+     * Location is unresolved (NULL) ONLY when the actor can reach every
+     * Location of the Business. An unresolved inbound email is therefore never
+     * shown to a user limited to some Locations.
+     */
+    public function restrictMessages(\Illuminate\Database\Eloquent\Builder $query, int $userId, Business $business): void
+    {
+        $reachable = $this->accessibleLocationIds($userId, $business);
+
+        $hasUnreachable = BusinessLocation::query()
+            ->where('business_id', $business->id)
+            ->when($reachable !== [], fn ($q) => $q->whereNotIn('id', $reachable))
+            ->exists();
+
+        $query->where(function ($where) use ($reachable, $hasUnreachable): void {
+            $where->whereIn('location_id', $reachable);
+
+            if (! $hasUnreachable) {
+                $where->orWhereNull('location_id');
+            }
+        });
+    }
+
+    /**
      * May this actor act on this (already tenancy-verified) Contact? A Contact
      * with a persisted Location must be in the actor's Location reach,
      * re-derived from persistence; a NULL-Location Contact is not denied here.

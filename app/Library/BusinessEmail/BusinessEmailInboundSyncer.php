@@ -16,7 +16,6 @@ use App\Models\Contacts;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 /**
  * The ONE inbound synchronizer: reads new inbox mail for one connected
@@ -174,16 +173,11 @@ final class BusinessEmailInboundSyncer
 
         $location = $this->resolveLocation($business, $contact, $thread);
 
-        if ($location === null) {
-            Log::warning('Inbound business email skipped: no Location could be proven.', ['business_id' => $business->id]);
-
-            return false;
-        }
-
         try {
             BusinessEmailMessage::create([
                 'business_id' => $business->id,
-                'location_id' => $location->id,
+                // NULL = ownership unproven; see BusinessEmailLocationScope::restrictMessages().
+                'location_id' => $location?->id,
                 'business_email_account_id' => $account->id,
                 'contact_id' => $contact?->id,
                 'direction' => 'inbound',
@@ -245,9 +239,9 @@ final class BusinessEmailInboundSyncer
             }
         }
 
-        $primary = BusinessLocation::query()->where('business_id', $business->id)->where('is_primary', true)->first();
-
-        return $primary !== null ? $this->activeLocation($business, (int) $primary->id) : null;
+        // Several active Locations and no proof which one owns this mail:
+        // unresolved, never an arbitrary (e.g. primary) Location.
+        return null;
     }
 
     private function activeLocation(Business $business, int $id): ?BusinessLocation

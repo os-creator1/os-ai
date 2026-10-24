@@ -18,6 +18,9 @@ class ReplyBusinessEmailRequest extends FormRequest
         return [
             'subject' => ['required', 'string', 'max:' . (int) config('business_email.send.max_subject_length', 200)],
             'body' => ['required', 'string', 'max:' . (int) config('business_email.send.max_body_length', 20000)],
+            // Only needed to file an unresolved-Location thread under a Location.
+            'location_uid' => ['nullable', 'string', 'max:64'],
+            'return_to' => ['nullable', 'in:conversations'],
             'send_token' => ['required', 'uuid'],
         ];
     }

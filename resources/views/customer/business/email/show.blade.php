@@ -156,7 +156,7 @@
                                 sending
                             @endif
                             <span class="text-muted">· {{ $message->created_at?->diffForHumans() }}</span>
-                            @if ($canSend && $message->contact_id !== null && $message->status->value !== 'failed')
+                            @if ($canSend && $message->status->value !== 'failed')
                                 <details class="mt-1">
                                     <summary>Reply</summary>
                                     <form method="POST" action="{{ route('customer.workspaces.businesses.email.reply', [$workspaceUid, $businessUid, $message->uid]) }}">

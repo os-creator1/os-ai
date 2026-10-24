@@ -93,9 +93,10 @@ class BusinessEmailController extends CustomerBaseController
         // neither leaks another Location's records and neither is N+1.
         $accessible = $this->locations->accessibleLocationIds((int) Auth::id(), $business);
 
-        $messages = BusinessEmailMessage::query()
-            ->where('business_id', $business->id)
-            ->whereIn('location_id', $accessible)
+        $messageQuery = BusinessEmailMessage::query()->where('business_id', $business->id);
+        $this->locations->restrictMessages($messageQuery, (int) Auth::id(), $business);
+
+        $messages = $messageQuery
             ->orderByDesc('id')
             ->limit(self::RECENT_MESSAGES)
             ->get(['id', 'uid', 'direction', 'contact_id', 'from_email', 'to_email', 'subject', 'status', 'failure_category', 'created_at']);
@@ -316,28 +317,43 @@ class BusinessEmailController extends CustomerBaseController
     public function reply(ReplyBusinessEmailRequest $request, string $workspaceUid, string $businessUid, string $messageUid): RedirectResponse
     {
         $this->authorize('chat_box');
-        $this->authorize('view_contact');
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
 
-        $accessible = $this->locations->accessibleLocationIds((int) Auth::id(), $business);
-
-        $original = BusinessEmailMessage::query()
+        $originalQuery = BusinessEmailMessage::query()
             ->where('business_id', $business->id)
-            ->where('uid', $messageUid)
-            ->whereIn('location_id', $accessible)
-            ->first();
+            ->where('uid', $messageUid);
+        $this->locations->restrictMessages($originalQuery, (int) Auth::id(), $business);
+        $original = $originalQuery->first();
 
         abort_if($original === null, 404);
 
+        // A sender who is not a Contact is fine: the recipient is the stored
+        // message's counterpart (never browser input) and no Contact is created.
         $contact = $original->contact_id !== null
             ? Contacts::query()->where('business_id', $business->id)->find($original->contact_id)
             : null;
 
-        if ($contact === null) {
-            return $this->back($workspaceUid, $businessUid, 'error', 'This sender is not one of your contacts yet. Add them as a contact to reply from here.');
+        // A contact-linked thread additionally needs the contact permission.
+        if ($original->contact_id !== null) {
+            $this->authorize('view_contact');
         }
 
-        abort_if(! $this->locations->contactAccessible((int) Auth::id(), $contact), 404);
+        abort_if($original->contact_id !== null && ($contact === null || ! $this->locations->contactAccessible((int) Auth::id(), $contact)), 404);
+
+        $location = null;
+        $locationUid = (string) $request->validated('location_uid', '');
+
+        if ($locationUid !== '') {
+            $accessible = $this->locations->accessibleLocationIds((int) Auth::id(), $business);
+            $location = $this->locations->activeLocations($business, $accessible)['selectable']->firstWhere('uid', $locationUid);
+
+            abort_if($location === null, 404);
+        }
+
+        $back = fn (string $status, string $message) => $request->validated('return_to') === 'conversations'
+            ? redirect()->route('customer.workspaces.businesses.conversations.email', [$workspaceUid, $businessUid, 'thread' => $original->provider_thread_id ?? $original->uid])
+                ->with(['status' => $status, 'message' => $message])
+            : $this->back($workspaceUid, $businessUid, $status, $message);
 
         try {
             $message = $this->sender->send(new BusinessEmailSendRequest(
@@ -347,16 +363,17 @@ class BusinessEmailController extends CustomerBaseController
                 bodyText: (string) $request->validated('body'),
                 operationKey: 'reply:' . $request->validated('send_token'),
                 source: BusinessEmailSource::Manual,
+                location: $location,
                 sentByUserId: (int) Auth::id(),
                 replyTo: $original,
             ));
         } catch (BusinessEmailSendRefusedException $exception) {
-            return $this->back($workspaceUid, $businessUid, 'error', $exception->userMessage());
+            return $back('error', $exception->userMessage());
         }
 
         return $message->status === BusinessEmailMessageStatus::Accepted
-            ? $this->back($workspaceUid, $businessUid, 'success', 'Reply sent.')
-            : $this->back($workspaceUid, $businessUid, 'error', $message->failure_category?->customerMessage() ?? 'The reply could not be sent.');
+            ? $back('success', 'Reply sent.')
+            : $back('error', $message->failure_category?->customerMessage() ?? 'The reply could not be sent.');
     }
 
     /** Same 401 a missing permission has always been on the tenant-addressed routes. */
