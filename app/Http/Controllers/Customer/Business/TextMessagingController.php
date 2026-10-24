@@ -491,6 +491,8 @@ class TextMessagingController extends CustomerBaseController
             $this->registrations->submit($registration);
         } catch (MessagingRegistrationAlreadySubmittedException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been submitted and is awaiting review.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException $e) {
+            return $this->textMessagingError($workspaceUid, $businessUid, $e->getMessage());
         } catch (MessagingRegistrationRecoveryRequiredException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm the status of your registration with our carrier partner. Please don\'t resubmit; our team has been alerted and will follow up.');
         } catch (MessagingFundingUnavailableException $e) {

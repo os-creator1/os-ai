@@ -360,7 +360,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/campaign/campaign_fixture_2' => Http::response(['data' => ['campaignStatus' => 'ACTIVE']]),
+            'api.telnyx.com/v2/10dlc/campaign/campaign_fixture_2' => Http::response(['campaignId' => 'campaign_fixture_2', 'campaignStatus' => 'MNO_PROVISIONED', 'status' => 'ACTIVE']),
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
@@ -1272,6 +1272,90 @@ class TelnyxProvisioningAdapterTest extends TestCase
             $this->fail('Expected refusal.');
         } catch (\RuntimeException) {
             // expected
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Provider response shapes: the Telnyx 10DLC and toll-free verification
+    // endpoints return ROOT-level objects (no `data` envelope).
+    // -----------------------------------------------------------------
+
+    public function test_root_level_telnyx_responses_are_read_for_brand_campaign_and_verification_ids(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => '4b20017f-8da9-a992-a6c0-683072fb7729', 'tcrBrandId' => 'BXYZ123', 'identityStatus' => 'UNVERIFIED', 'status' => 'REGISTRATION_PENDING', 'mock' => false]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['campaignId' => 'c8d1a4f0-fixture', 'brandId' => '4b20017f-8da9-a992-a6c0-683072fb7729', 'usecase' => 'CUSTOMER_CARE', 'subUsecases' => [], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => 'TCR_PENDING', 'submissionStatus' => 'CREATED']),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+
+        $this->assertSame('4b20017f-8da9-a992-a6c0-683072fb7729', $result->providerBrandId);
+        $this->assertSame('c8d1a4f0-fixture', $result->providerCampaignId);
+        $this->assertSame('4b20017f-8da9-a992-a6c0-683072fb7729', DB::table('business_messaging_registrations')->where('business_id', $business->id)->value('provider_brand_id'));
+    }
+
+    public function test_a_root_level_toll_free_verification_response_is_read(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['id' => '8b2f3a52-2a62-4f4e-a3f1-5d3c7a9c1e10', 'verificationRequestId' => 'vr-fixture', 'verificationStatus' => 'In Progress', 'businessName' => 'Harbor Lane Studios LLC'])]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18885550142'));
+
+        $this->assertSame('8b2f3a52-2a62-4f4e-a3f1-5d3c7a9c1e10', $result->providerRegistrationId);
+    }
+
+    public function test_campaign_status_follows_the_documented_root_level_fields_conservatively(): void
+    {
+        $this->enableProvisioning();
+        $query = new RegistrationStatusQuery(numberType: PhoneNumberType::Local, providerBrandId: 'b', providerCampaignId: 'camp_status', providerRegistrationId: null);
+
+        $expect = [
+            'pending while the registry reviews' => [['campaignStatus' => 'TCR_PENDING', 'status' => 'ACTIVE'], MessagingRegistrationStatus::Pending, null],
+            'pending when accepted but not yet provisioned' => [['campaignStatus' => 'MNO_ACCEPTED', 'status' => 'ACTIVE'], MessagingRegistrationStatus::Pending, null],
+            'approved only when carriers provisioned it' => [['campaignStatus' => 'MNO_PROVISIONED', 'status' => 'ACTIVE'], MessagingRegistrationStatus::Approved, null],
+            'rejected by a carrier, with the reason' => [['campaignStatus' => 'MNO_REJECTED', 'failureReasons' => 'Sample message mismatch'], MessagingRegistrationStatus::Rejected, 'Sample message mismatch'],
+            'rejected by the registry' => [['campaignStatus' => 'TCR_FAILED', 'submissionStatus' => 'FAILED', 'failureReasons' => 'Brand not vetted'], MessagingRegistrationStatus::Rejected, 'Brand not vetted'],
+            'expired is not approved' => [['campaignStatus' => 'TCR_EXPIRED', 'status' => 'EXPIRED'], MessagingRegistrationStatus::Rejected, 'The carrier campaign expired or was suspended.'],
+            'ACTIVE alone is never trusted as approval' => [['status' => 'ACTIVE'], MessagingRegistrationStatus::Pending, null],
+            'an unknown value is pending' => [['campaignStatus' => 'SOMETHING_NEW'], MessagingRegistrationStatus::Pending, null],
+        ];
+
+        $current = [];
+        Http::fake(['api.telnyx.com/v2/10dlc/campaign/camp_status' => function () use (&$current) { return Http::response($current + ['campaignId' => 'camp_status']); }]);
+
+        foreach ($expect as $label => [$body, $status, $reason]) {
+            $current = $body;
+
+            $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus($query);
+
+            $this->assertSame($status, $result->status, $label);
+            $this->assertSame($reason, $result->rejectionReason, $label);
+        }
+    }
+
+    public function test_low_volume_mixed_with_a_single_purpose_is_refused_before_funding_or_any_request(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        $registration->update(['use_case' => 'low_volume_mixed', 'message_purposes' => ['care']]);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+            $this->fail('Expected refusal.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException $e) {
+            $this->assertStringContainsString('at least two different kinds', $e->getMessage());
         }
 
         Http::assertNothingSent();

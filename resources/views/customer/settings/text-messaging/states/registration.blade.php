@@ -309,7 +309,7 @@
                         <div>
                             <strong class="d-block">Low Volume Mixed — for small businesses</strong>
                             <p class="mb-1">A separate, lower-cost carrier campaign type for a business that sends only a small number of texts. Carriers limit how fast and how much it can send, and it is not for growing or high-volume senders. Fees are shown below before you submit; number rental and text usage are separate.</p>
-                            <p class="mb-1"><strong>Tick only the message types you will really send.</strong> We register exactly what you choose and nothing more — you need a sample message and your opt-in details for each.</p>
+                            <p class="mb-1"><strong>Low Volume Mixed is only for a business that really sends BOTH kinds of text.</strong> Tick both and give a sample message and your opt-in details for each. If you only send one kind, choose that message type above instead — we never relabel single-purpose traffic to lower the fee.</p>
                             @foreach($lowVolumePurposes as $key => $purpose)
                                 <div class="form-check">
                                     <input type="checkbox" class="form-check-input" id="purpose_{{ $key }}" name="message_purposes[]" value="{{ $key }}"

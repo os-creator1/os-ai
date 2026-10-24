@@ -43,9 +43,12 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
     /** Mutable mocked carrier answers, read at request time. */
     private int $orderStatus = 200;
-    private string $tfStatus = 'Pending';
-    private string $campaignStatus = 'PENDING';
+    private string $tfStatus = 'In Progress';
+    private string $campaignStatus = 'TCR_PENDING';
     private bool $lvmEligible = true;
+    private int $campaignCreateStatus = 200;
+    /** @var array<string, mixed> the mocked qualify-by-usecase answer (root-level UsecaseMetadata) */
+    private array $qualification = ['usecase' => 'LOW_VOLUME', 'monthlyFee' => 1.5, 'quarterlyFee' => 4.5, 'annualFee' => 18, 'minSubUsecases' => 2, 'maxSubUsecases' => 5, 'mnoMetadata' => []];
 
     protected function setUp(): void
     {
@@ -119,13 +122,15 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
             'api.telnyx.com/v2/number_orders' => fn () => $this->orderStatus === 200
                 ? Http::response(['data' => ['phone_numbers' => [['id' => 'pn_flow_1']]]])
                 : Http::response(['errors' => []], $this->orderStatus),
-            'api.telnyx.com/v2/messaging_tollfree/verification/requests/*' => fn () => Http::response(['data' => ['verificationStatus' => $this->tfStatus]]),
-            'api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_flow_1']]),
-            'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_flow_1']]),
-            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'camp_flow_1']]),
-            'api.telnyx.com/v2/10dlc/campaign/*' => fn () => Http::response(['data' => ['campaignStatus' => $this->campaignStatus]]),
+            'api.telnyx.com/v2/messaging_tollfree/verification/requests/*' => fn () => Http::response(['id' => '8b2f3a52-2a62-4f4e-a3f1-5d3c7a9c1e10', 'verificationRequestId' => 'a6e0-fixture', 'verificationStatus' => $this->tfStatus, 'businessName' => 'Sunset Photo Booths LLC']),
+            'api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['id' => 'tfv_flow_1', 'verificationRequestId' => 'vr_flow_1', 'verificationStatus' => 'In Progress', 'businessName' => 'Sunset Photo Booths LLC']),
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => 'brand_flow_1', 'tcrBrandId' => 'BXYZ', 'displayName' => 'Sunset Photo Booths LLC', 'identityStatus' => 'UNVERIFIED', 'status' => 'REGISTRATION_PENDING', 'mock' => false]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => fn () => $this->campaignCreateStatus === 200
+                ? Http::response(['campaignId' => 'camp_flow_1', 'brandId' => 'brand_flow_1', 'usecase' => 'LOW_VOLUME', 'subUsecases' => ['CUSTOMER_CARE', 'MARKETING'], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => 'TCR_PENDING', 'submissionStatus' => 'CREATED'])
+                : Http::response(['errors' => [['code' => '10002', 'title' => 'Invalid sample']]], $this->campaignCreateStatus),
+            'api.telnyx.com/v2/10dlc/campaign/*' => fn () => Http::response(['campaignId' => 'camp_flow_1', 'brandId' => 'brand_flow_1', 'usecase' => 'CUSTOMER_CARE', 'subUsecases' => [], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => $this->campaignStatus, 'status' => 'ACTIVE', 'submissionStatus' => 'CREATED']),
             'api.telnyx.com/v2/10dlc/campaignBuilder/brand/*' => fn () => $this->lvmEligible
-                ? Http::response(['usecase' => 'LOW_VOLUME', 'monthlyFee' => 1.5, 'minSubUsecases' => 0, 'maxSubUsecases' => 5])
+                ? Http::response($this->qualification)
                 : Http::response(['errors' => [['code' => '10016', 'title' => 'Brand not eligible']]], 422),
             '*' => Http::response(['data' => []]),
         ]);
@@ -240,7 +245,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertSame(1, $this->posted('/10dlc/brand'));
 
         // Carrier approval, then the number.
-        $this->campaignStatus = 'ACTIVE';
+        $this->campaignStatus = 'MNO_PROVISIONED';
         app(BusinessMessagingRegistrationService::class)->refreshAllPending();
         $registration = BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
         $this->assertSame(MessagingRegistrationStatus::Approved, $registration->status);
@@ -353,7 +358,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
         $this->post($this->url('registration.submit'));
-        $this->campaignStatus = 'ACTIVE';
+        $this->campaignStatus = 'MNO_PROVISIONED';
         app(BusinessMessagingRegistrationService::class)->refreshAllPending();
         $this->order($this->search('local', '512'));
 
@@ -377,7 +382,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
         $this->post($this->url('registration.submit'));
-        $this->campaignStatus = 'ACTIVE';
+        $this->campaignStatus = 'MNO_PROVISIONED';
         app(BusinessMessagingRegistrationService::class)->refreshAllPending();
         $this->order($this->search('local', '512'));
 
@@ -478,7 +483,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         // Approve, buy, then renewals: the prepaid window charges rental only; afterwards
         // the Low Volume Mixed monthly price (never the standard one).
-        $this->campaignStatus = 'ACTIVE';
+        $this->campaignStatus = 'MNO_PROVISIONED';
         app(BusinessMessagingRegistrationService::class)->refreshAllPending();
         $this->order($this->search('local', '512'));
         $number = BusinessMessagingNumber::query()->firstOrFail();
@@ -546,7 +551,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->post($this->url('registration.update'), $this->lowVolumePayload(['message_purposes' => [], 'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS)]));
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $page = str_replace('&#039;', "'", $this->get($this->url('show'))->getContent());
-        $this->assertStringContainsString('Choose the message types you will really send', $page);
+        $this->assertStringContainsString('only for a business that really sends both', $page);
         $this->assertStringContainsString('small sender', $page);
 
         // Both purposes chosen but only promotional samples: the care sample is missing.
@@ -555,10 +560,12 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertSame(0, $this->posted('/10dlc/brand'));
         $this->assertSame(40_000_000, $this->balance());
 
-        // Care only: a promotional sample is refused (nothing invented for a second purpose).
-        $this->post($this->url('registration.update'), $this->lowVolumePayload(['message_purposes' => ['care'], 'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS + ['low_volume_attestation' => 'x', 'purpose_care_consent' => 'x'])]));
+        // A single purpose is never "mixed": refused, not relabelled to get a cheaper fee.
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['message_purposes' => ['care']]));
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertStringContainsString('only for a business that really sends both', str_replace('&#039;', "'", $this->get($this->url('show'))->getContent()));
         $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000, $this->balance());
     }
 
     public function test_low_volume_mixed_is_offered_for_local_but_not_for_toll_free(): void
@@ -652,5 +659,84 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertSame($balance, $this->balance());
         // Still the registration screen: the commitment is not hidden.
         $this->get($this->url('show'))->assertOk()->assertSee('Sunset Photo Booths LLC');
+    }
+
+    /** @return array{0: string} submits a fully valid Low Volume Mixed registration and returns the flash message */
+    private function submitLowVolume(): string
+    {
+        $this->post($this->url('registration.submit'));
+
+        return (string) session('message');
+    }
+
+    private function startLowVolume(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(40_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->lowVolumePayload());
+    }
+
+    public function test_declared_purposes_outside_the_carrier_limits_are_rejected_never_truncated(): void
+    {
+        $this->startLowVolume();
+
+        // The carrier allows fewer purposes than declared: reject, never drop one.
+        $this->qualification['maxSubUsecases'] = 1;
+        $message = $this->submitLowVolume();
+        $this->assertStringContainsString('at most 1', $message);
+        $this->assertStringContainsString('none of your purposes was dropped', $message);
+
+        // The carrier needs more than were declared: reject, never invent one.
+        $this->qualification['maxSubUsecases'] = 5;
+        $this->qualification['minSubUsecases'] = 3;
+        $this->assertStringContainsString('at least 3', $this->submitLowVolume());
+
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(40_000_000, $this->balance());
+
+        // Within limits: both purposes are sent exactly as declared.
+        $this->qualification['minSubUsecases'] = 2;
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        Http::assertSent(fn ($request) => $request->method() === 'POST' && str_ends_with($request->url(), '/10dlc/campaignBuilder')
+            && $request['subUsecases'] === ['CUSTOMER_CARE', 'MARKETING']);
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+    }
+
+    public function test_missing_or_unexpected_qualification_fields_are_refused_conservatively(): void
+    {
+        $this->startLowVolume();
+
+        foreach ([
+            ['usecase' => 'LOW_VOLUME'],                                                   // limits missing
+            ['usecase' => 'LOW_VOLUME', 'minSubUsecases' => '2', 'maxSubUsecases' => 'five'], // wrong types
+            ['usecase' => 'LOW_VOLUME', 'minSubUsecases' => -1, 'maxSubUsecases' => 5],     // nonsensical
+            ['usecase' => 'MIXED', 'minSubUsecases' => 2, 'maxSubUsecases' => 5],           // not the use case we asked about
+            ['data' => ['minSubUsecases' => 2, 'maxSubUsecases' => 5, 'usecase' => 'LOW_VOLUME']], // not the documented root-level shape
+        ] as $answer) {
+            $this->qualification = $answer;
+            $this->assertStringContainsString("couldn't confirm the carrier's rules", str_replace('&#039;', "'", $this->submitLowVolume()));
+        }
+
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(40_000_000, $this->balance());
+    }
+
+    public function test_a_carrier_that_refuses_the_campaign_after_qualification_releases_the_funds_and_a_retry_reuses_the_brand(): void
+    {
+        $this->startLowVolume();
+        $this->campaignCreateStatus = 422;
+
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(40_000_000, $this->balance());
+
+        $this->campaignCreateStatus = 200;
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
     }
 }

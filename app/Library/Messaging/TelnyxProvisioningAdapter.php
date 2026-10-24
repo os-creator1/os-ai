@@ -29,6 +29,7 @@ use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Registration\CarrierRegistrationOptions;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException;
 use App\Library\Usage\UsageWalletManager;
 use App\Enums\Usage\UsageReservationStatus;
@@ -811,8 +812,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $subUsecases = array_values(array_unique($subUsecases));
 
-            if ($subUsecases === []) {
-                throw new \RuntimeException('Low Volume Mixed needs at least one message purpose.');
+            if (count($subUsecases) < 2) {
+                throw new MessagingRegistrationNotEligibleException('Low Volume Mixed is for a business that genuinely sends at least two different kinds of text (service and promotional). Choose the standard campaign type that matches what you send.');
             }
         }
 
@@ -899,7 +900,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     throw new \RuntimeException('Telnyx rejected the 10DLC brand submission.');
                 }
 
-                $brandId = (string) $brandResponse->json('data.brandId', $brandResponse->json('data.id'));
+                $brandId = $this->providerValue($brandResponse, ['brandId', 'data.brandId', 'data.id']);
 
                 if ($brandId === '') {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand accepted without an id');
@@ -926,20 +927,26 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 }
 
                 if (! $qualification->successful()) {
-                    throw new \RuntimeException('This brand is not eligible for a Low Volume Mixed campaign.');
+                    throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. Nothing was charged. Choose a standard service or promotional campaign instead.');
                 }
 
-                $minSub = (int) $qualification->json('minSubUsecases', 0);
+                // UsecaseMetadata is a root-level object. Unknown or malformed
+                // limits are never guessed at: refuse rather than send a
+                // campaign the registry may reject (or that drops a purpose).
+                $minSub = $qualification->json('minSubUsecases');
                 $maxSub = $qualification->json('maxSubUsecases');
 
-                if (count($subUsecases) < $minSub) {
-                    throw new \RuntimeException('Low Volume Mixed needs at least ' . $minSub . ' message purposes; none were added on your behalf.');
+                if (! is_int($minSub) || ! is_int($maxSub) || $minSub < 0 || $maxSub < 0
+                    || $this->providerValue($qualification, ['usecase']) !== $useCase['usecase']) {
+                    throw new MessagingRegistrationNotEligibleException('We couldn\'t confirm the carrier\'s rules for Low Volume Mixed right now. Nothing was charged. Please try again later.');
                 }
 
-                if ($maxSub !== null && (int) $maxSub === 0) {
-                    $subUsecases = [];
-                } elseif ($maxSub !== null) {
-                    $subUsecases = array_slice($subUsecases, 0, (int) $maxSub);
+                if (count($subUsecases) < $minSub) {
+                    throw new MessagingRegistrationNotEligibleException('The carrier needs at least ' . $minSub . ' distinct message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. Nothing was charged. Choose the standard campaign type that matches what you send.');
+                }
+
+                if (count($subUsecases) > $maxSub) {
+                    throw new MessagingRegistrationNotEligibleException('The carrier allows at most ' . $maxSub . ' message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. Nothing was charged and none of your purposes was dropped. Choose a campaign type that fits what you send.');
                 }
             }
 
@@ -1001,7 +1008,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             }
 
             if ($campaignResponse !== null) {
-                $campaignId = (string) $campaignResponse->json('data.campaignId', $campaignResponse->json('data.id'));
+                $campaignId = $this->providerValue($campaignResponse, ['campaignId', 'data.campaignId', 'data.id']);
 
                 if ($campaignId === '') {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign accepted without an id');
@@ -1039,6 +1046,27 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 MessagingFundingUnavailableException::REASON_PRICING_NOT_CONFIGURED,
             );
         }
+    }
+
+    /**
+     * Telnyx's 10DLC and toll-free verification endpoints return a ROOT-level
+     * object (no `data` envelope — confirmed in the API reference: brandId,
+     * campaignId, id, campaignStatus, verificationStatus). A legacy `data.`
+     * wrapper is still read as a fallback; a blank value is treated as absent.
+     *
+     * @param  list<string>  $paths  tried in order
+     */
+    private function providerValue(\Illuminate\Http\Client\Response $response, array $paths): string
+    {
+        foreach ($paths as $path) {
+            $value = $response->json($path);
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return trim((string) $value);
+            }
+        }
+
+        return '';
     }
 
     private function unconfirmedNumberOrder(Business $business, AvailableNumberCandidate $candidate, string $messagingProfileId, string $detail): MessagingRegistrationRecoveryRequiredException
@@ -1204,7 +1232,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('Telnyx rejected the toll-free verification submission.');
         }
 
-        $requestId = (string) $response->json('data.id', $response->json('data.verificationId'));
+        $requestId = $this->providerValue($response, ['id', 'data.id', 'data.verificationId']);
 
         if ($requestId === '') {
             throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free accepted without an id');
@@ -1259,17 +1287,31 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
-        $status = strtoupper((string) $response->json('data.campaignStatus', $response->json('data.status', '')));
+        // GET /10dlc/campaign/{id} returns a root-level campaign object:
+        // `campaignStatus` (TCR_/TELNYX_/MNO_ stages), `status` (ACTIVE or
+        // EXPIRED) and `submissionStatus`. Only a campaign the carriers have
+        // actually provisioned (MNO_PROVISIONED) is Approved; an absent or
+        // unknown value is Pending, never guessed Approved.
+        $campaignStatus = strtoupper($this->providerValue($response, ['campaignStatus', 'data.campaignStatus']));
+        $status = strtoupper($this->providerValue($response, ['status', 'data.status']));
+        $submission = strtoupper($this->providerValue($response, ['submissionStatus', 'data.submissionStatus']));
 
-        $isApproved = $status === 'ACTIVE' || $status === 'APPROVED' || $status === 'VERIFIED';
-        $isRejected = str_contains($status, 'REJECTED') || str_contains($status, 'FAILED') || str_contains($status, 'DECLINED');
-
-        if ($isApproved) {
+        if ($campaignStatus === 'MNO_PROVISIONED') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
         }
 
-        if ($isRejected) {
-            return new RegistrationStatusResult(MessagingRegistrationStatus::Rejected, $this->extractReason($response, ['data.failureReasons', 'data.reasons']));
+        $failed = in_array($campaignStatus, ['TCR_FAILED', 'TELNYX_FAILED', 'MNO_REJECTED', 'MNO_PROVISIONING_FAILED'], true)
+            || $submission === 'FAILED';
+
+        if ($failed) {
+            return new RegistrationStatusResult(
+                MessagingRegistrationStatus::Rejected,
+                $this->extractReason($response, ['failureReasons', 'data.failureReasons', 'data.reasons']),
+            );
+        }
+
+        if (in_array($campaignStatus, ['TCR_EXPIRED', 'TCR_SUSPENDED'], true) || $status === 'EXPIRED') {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Rejected, 'The carrier campaign expired or was suspended.');
         }
 
         return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
@@ -1287,7 +1329,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
-        $status = strtolower((string) $response->json('data.verificationStatus', $response->json('data.status', '')));
+        $status = strtolower($this->providerValue($response, ['verificationStatus', 'data.verificationStatus', 'data.status']));
 
         if ($status === 'verified') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
@@ -1302,7 +1344,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             // already tries.
             return new RegistrationStatusResult(
                 MessagingRegistrationStatus::Rejected,
-                $this->extractReason($response, ['data.declineReason', 'data.rejectionReason', 'data.reason']),
+                $this->extractReason($response, ['reason', 'declineReason', 'data.declineReason', 'data.rejectionReason', 'data.reason']),
             );
         }
 

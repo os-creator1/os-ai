@@ -96,28 +96,21 @@ final class RegistrationSubmissionValidator
         $issues = [];
         $purposes = array_values(array_intersect(array_keys(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES), (array) $registration->message_purposes));
 
-        if ($purposes === []) {
-            return ['Choose the message types you will really send (service and customer care, promotions, or both).'];
+        // Low Volume Mixed is defined for several genuine, distinct purposes.
+        // A single purpose is never "mixed": that traffic belongs in its own
+        // (standard) campaign type, and is never relabelled to get a lower fee.
+        if (count($purposes) < count(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES)) {
+            return ['Low Volume Mixed is only for a business that really sends both service texts and promotional texts. Tick both, or choose the single message type you send instead.'];
         }
 
-        $hasCare = in_array('care', $purposes, true);
-        $hasMarketing = in_array('marketing', $purposes, true);
         $promoCount = count($promotional);
 
-        if ($hasCare && $promoCount === 2) {
-            $issues[] = 'You chose service texts, but both samples are promotions. Make one a service or customer-care example.';
+        if ($promoCount === 2) {
+            $issues[] = 'Both samples are promotions. One sample must be a service or customer-care example.';
         }
 
-        if ($hasMarketing && $promoCount === 0) {
-            $issues[] = 'You chose promotional texts, but neither sample is a promotion. Add a promotional example.';
-        }
-
-        if (! $hasMarketing && $promoCount > 0) {
-            $issues[] = 'A sample message reads as a promotion, but you did not choose promotional texts. Reword it, or add promotions to your message types.';
-        }
-
-        if ($hasMarketing && ! $hasCare && $promoCount < 2) {
-            $issues[] = 'You chose only promotional texts, so both samples need to be promotions.';
+        if ($promoCount === 0) {
+            $issues[] = 'Neither sample is a promotion. One sample must be a promotional example.';
         }
 
         foreach ($promotional as $message) {

@@ -46,13 +46,8 @@ final class RegistrationTemplateCatalog
             return self::CONSENT_ITEMS;
         }
 
-        $extra = ['low_volume_attestation' => self::LOW_VOLUME_CONSENT_ITEMS['low_volume_attestation']];
-
-        foreach ((array) $purposes as $purpose) {
-            if (isset(self::LOW_VOLUME_CONSENT_ITEMS['purpose_' . $purpose . '_consent'])) {
-                $extra['purpose_' . $purpose . '_consent'] = self::LOW_VOLUME_CONSENT_ITEMS['purpose_' . $purpose . '_consent'];
-            }
-        }
+        // Both purposes are always required, so both consent confirmations are.
+        $extra = self::LOW_VOLUME_CONSENT_ITEMS;
 
         return self::CONSENT_ITEMS + $extra;
     }
