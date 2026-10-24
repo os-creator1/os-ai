@@ -78,7 +78,7 @@ abstract class TestCase extends BaseTestCase
         Http::preventStrayRequests();
 
         // Real provisioning is pilot-restricted in production; tests exercise it open.
-        config(['messaging.provisioning_open_to_all' => true, 'messaging.number_sms_addon_monthly_cost_micro' => 0]);
+        config(['messaging.provisioning_open_to_all' => true, 'messaging.number_sms_addon_monthly_cost_micro' => 0, 'messaging.require_paid_billing' => false]);
     }
 
     /**

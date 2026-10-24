@@ -310,7 +310,11 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->telnyx();
 
         $search = $this->search('toll_free');
-        $this->order($search)->assertSessionHas('status', 'error');
+        $first = $this->order($search);
+        $first->assertSessionHas('status', 'error');
+        $text = (string) session('message');
+        $this->assertStringContainsString('awaiting confirmation from the carrier', $text);
+        $this->assertStringNotContainsString('have not been charged', $text, 'A kept charge must never be described as no charge.');
         $this->order($search)->assertSessionHas('status', 'error');
 
         $this->assertSame(1, $this->posted('/number_orders'));

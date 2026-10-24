@@ -55,7 +55,8 @@ then become incidents.
 Real number purchases and registrations are refused for every Business unless
 `MESSAGING_PILOT_BUSINESS_IDS` lists it (comma-separated ids) or `MESSAGING_PROVISIONING_OPEN_TO_ALL=true`.
 Other customers see that setup is not available yet. The existing switches
-`MESSAGING_MANAGED_ENABLED` / provisioning-enabled remain required as well.
+`MANAGED_MESSAGING_ENABLED=true` and `MANAGED_MESSAGING_PROVISIONING_ENABLED=true` remain required as well
+(both default false).
 
 ## Registration and campaign charges
 A held fee is released only on a definite failure. If the carrier outcome is UNCONFIRMED (a number order

@@ -37,6 +37,13 @@ class ManagedTransportBilling
     ) {
     }
 
+    public const DENIAL_BILLING_NOT_CONFIGURED = 'messaging_billing_not_configured';
+
+    public static function requiresBilling(): bool
+    {
+        return (bool) config('messaging.require_paid_billing', true);
+    }
+
     public function isMetered(string $meterKey = MessageMeters::SMS_OUTBOUND): bool
     {
         $meter = $this->meters->findByMeterKey($meterKey);
@@ -58,7 +65,12 @@ class ManagedTransportBilling
     {
         $meterKey = MessageMeters::for($messageType, 'outbound', $numberType);
 
-        if (! $this->isMetered($meterKey)) {
+        if (! $this->isMetered($meterKey) || (self::requiresBilling() && ! $this->isMetered(MessageMeters::SURCHARGE))) {
+            if (self::requiresBilling()) {
+                // Fail closed: real paid messaging is never sent for free.
+                throw new MessagingInsufficientFundsException(self::DENIAL_BILLING_NOT_CONFIGURED);
+            }
+
             return null;
         }
 

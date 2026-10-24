@@ -119,6 +119,13 @@ return [
         'retry_minutes' => (int) env('MESSAGING_RECONCILIATION_RETRY_MINUTES', 120),
     ],
 
+    /**
+     * Fail closed for paid messaging: while the managed switches are on, a managed SMS/MMS is REFUSED (before any
+     * carrier contact) unless its retail meter and the carrier-surcharge meter are metered and priced. Only set this
+     * to false for tests/local development, never in production - otherwise an unpriced meter sends for free.
+     */
+    'require_paid_billing' => (bool) env('MESSAGING_REQUIRE_PAID_BILLING', true),
+
     /** Largest single upfront or monthly number price (micro-USD) that will be sold; dearer special numbers are never offered. */
     'number_price_ceiling_micro' => (int) env('MESSAGING_NUMBER_PRICE_CEILING_MICRO', 25_000_000),
 

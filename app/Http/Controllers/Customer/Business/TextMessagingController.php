@@ -233,7 +233,7 @@ class TextMessagingController extends CustomerBaseController
         } catch (MessagingIdentityConflictException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'This Business already has a number set up.');
         } catch (MessagingRegistrationRecoveryRequiredException) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm this number order with our carrier partner. Please don\'t try again; our team has been alerted and will follow up. You have not been charged.');
+            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm this number order with our carrier partner. Please don\'t try again; our team has been alerted and will follow up. The charge for this order is awaiting confirmation from the carrier: if the carrier confirms no number was bought it is refunded in full, and you will not be charged twice.');
         } catch (MessagingFundingUnavailableException $e) {
             \Illuminate\Support\Facades\Log::warning('Messaging number funding unavailable.', ['business_id' => $business->id, 'reason' => $e->reason]);
 
@@ -501,7 +501,7 @@ class TextMessagingController extends CustomerBaseController
         } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException $e) {
             return $this->textMessagingError($workspaceUid, $businessUid, $e->getMessage());
         } catch (MessagingRegistrationRecoveryRequiredException) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm the status of your registration with our carrier partner. Please don\'t resubmit; our team has been alerted and will follow up.');
+            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm the status of your registration with our carrier partner. Please don\'t resubmit; our team has been alerted and will follow up. Any registration fee is awaiting confirmation from the carrier: if the carrier confirms nothing was created it is refunded in full, and you will not be charged twice.');
         } catch (MessagingFundingUnavailableException $e) {
             // Platform-side configuration, never the customer's balance —
             // logged without customer data so the platform owner can act.
