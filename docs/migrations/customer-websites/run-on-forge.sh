@@ -70,5 +70,5 @@ read -r -p "Type exactly [$PHRASE] to build $KEY: " TYPED
 [ "$TYPED" = "$PHRASE" ] || die "confirmation phrase did not match"
 verify_backup
 CUSTOMER_SITES_PRODUCTION_WRITE=true php artisan customer-websites:build "$KEY" --assets="$STAGE/assets" \
-  --confirm-database=GetMotionGrove --backup-reference="$BACKUP_REF" --confirm-phrase="$PHRASE" --apply
+  --confirm-database=GetMotionGrove --backup-reference="$BACKUP_REF" --confirm-phrase="$PHRASE" ${ACCEPT_CONTACT_MISMATCH:+--accept-contact-mismatch} --apply
 echo "Done. Backup kept at $BACKUP_REF. Open the preview_url printed in REPORT above to review the site."

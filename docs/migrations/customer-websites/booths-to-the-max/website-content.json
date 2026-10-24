@@ -9,7 +9,7 @@
  },
  "template_key": "photo_booth_modern",
  "brand_color": "#188BF6",
- "secondary_color": "#061633",
+ "secondary_brand_color": "#061633",
  "blockers": [],
  "legal_urls": {
   "privacy": "https://www.boothstothemax.com/Privacy-Policy",
@@ -327,181 +327,161 @@
    "bytes": 1134762
   },
   "event_27": {
-   "sha256": "0460c84420d7a3f20fa22b97f4a33a31aed9ec2505e8ff61b7b09d7457a426d5",
-   "file": "6981c5ee1f68d199d148ce87.gif",
-   "alt": "Guests posing at a Booths To The Max photo booth",
-   "purpose": "gallery",
-   "title": "Event 27",
-   "category": "Events",
-   "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5ee1f68d199d148ce87.gif",
-   "bytes": 1574367
-  },
-  "event_28": {
    "sha256": "940123d09443efde449a791b212c6031ab737fe50dc6aa49fa21d8c0d97697a7",
    "file": "6981c5ef1f68d159f348ceb4.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 28",
+   "title": "Event 27",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5ef1f68d159f348ceb4.jpg",
    "bytes": 1607045
   },
-  "event_29": {
+  "event_28": {
    "sha256": "e8cb353fd30b27874b3df74ace53a1e42292c67b0a10c38ac9a0dffa7cbebf7a",
    "file": "6981c5f00e1466a531f63b4d.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 29",
+   "title": "Event 28",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f00e1466a531f63b4d.jpg",
    "bytes": 1496004
   },
-  "event_30": {
+  "event_29": {
    "sha256": "88a201250e874fcb3627ecd3ee9a000bc808b26faaedf2711bd724950fae0263",
    "file": "6981c5f14734d558c0c86658.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 30",
+   "title": "Event 29",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f14734d558c0c86658.jpg",
    "bytes": 1723598
   },
-  "event_31": {
+  "event_30": {
    "sha256": "a5acfcea9551987c6499d259c2189ea4d4164ed3766e800590ec43e5348eed9c",
    "file": "6981c5f24734d5cbe2c8666b.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 31",
+   "title": "Event 30",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f24734d5cbe2c8666b.jpg",
    "bytes": 2050289
   },
-  "event_32": {
+  "event_31": {
    "sha256": "69167810eec88e988e388518b9f5db92fd18b6e6198fbe78e4aa256161d0bb41",
    "file": "6981c5f30e14662db7f63bb2.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 32",
+   "title": "Event 31",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f30e14662db7f63bb2.jpg",
    "bytes": 1946889
   },
-  "event_33": {
-   "sha256": "02d99e71aeb6460ac5cc594afef685720d8e5ebff194d7cabe14deaa3ac09d28",
-   "file": "6981c5f44734d5231cc866b5.gif",
-   "alt": "Guests posing at a Booths To The Max photo booth",
-   "purpose": "gallery",
-   "title": "Event 33",
-   "category": "Birthdays",
-   "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f44734d5231cc866b5.gif",
-   "bytes": 1608168
-  },
-  "event_34": {
+  "event_32": {
    "sha256": "24714d64e9cbdb43a92f86ef87c14f7acfab3e9e8ee80b6042ac9dbc90bc408c",
    "file": "6981c5f60e1466557bf63c26.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 34",
+   "title": "Event 32",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f60e1466557bf63c26.jpg",
    "bytes": 734540
   },
-  "event_35": {
+  "event_33": {
    "sha256": "715be3ef49f8268ad4151a4c4b20b7bba948e430bc0c1d6987be2bf74e1b5f00",
    "file": "6981c5f78fbac398417714a2.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 35",
+   "title": "Event 33",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f78fbac398417714a2.jpg",
    "bytes": 2215140
   },
-  "event_36": {
+  "event_34": {
    "sha256": "171ccd9471653dcd99f925b252d19ef9fa59214d083aa679c6fc2747f1dbf0ca",
    "file": "6981c5f80e14663b47f63c78.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 36",
+   "title": "Event 34",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5f80e14663b47f63c78.jpg",
    "bytes": 2225908
   },
-  "event_37": {
+  "event_35": {
    "sha256": "20f547dd066126a765683df7515f73d5903a2ce76a0391371c08712eb4da7b2b",
    "file": "6981c5fc1f68d10b9548d0cf.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 37",
+   "title": "Event 35",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5fc1f68d10b9548d0cf.jpg",
    "bytes": 2524830
   },
-  "event_38": {
+  "event_36": {
    "sha256": "f363dae35471fb7204ef4627792bae26a0c107070c288e54cf8234ecd222b377",
    "file": "6981c5fd0e1466e0d2f63d3d.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 38",
+   "title": "Event 36",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5fd0e1466e0d2f63d3d.jpg",
    "bytes": 1949193
   },
-  "event_39": {
+  "event_37": {
    "sha256": "d4c7bb948ca5723accb67e0c2f9a6f28053669de1966fa1d53f888ebba5cdd54",
    "file": "6981c5fe4734d53f59c86858.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 39",
+   "title": "Event 37",
    "category": "Events",
    "source_url": "https://storage.googleapis.com/msgsndr/0q66d8UWnxotu4OOwicX/media/6981c5fe4734d53f59c86858.jpg",
    "bytes": 1582251
   },
-  "event_40": {
+  "event_38": {
    "sha256": "5ecc7404c3ddcb4ba80dfe389679bd8696671b3881b1725bbf7b2cb3b25464f6",
    "file": "6981c7858fbac3562877551e.jpg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 40",
+   "title": "Event 38",
    "category": "Events",
    "source_url": "https://assets.cdn.filesafe.space/0q66d8UWnxotu4OOwicX/media/6981c7858fbac3562877551e.jpg",
    "bytes": 80571
   },
-  "event_41": {
+  "event_39": {
    "sha256": "ce3d8218bc56010dcf66b32dbc58fae3512b41c9036d3b6266190ab16b18d120",
    "file": "b0328cf9-7bd6-4b1a-967f-6a7ba47589f6.jpeg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 41",
+   "title": "Event 39",
    "category": "Weddings",
    "source_url": "https://assets.cdn.filesafe.space/0q66d8UWnxotu4OOwicX/media/b0328cf9-7bd6-4b1a-967f-6a7ba47589f6.jpeg",
    "bytes": 116539
   },
-  "event_42": {
+  "event_40": {
    "sha256": "fda2e28c3847dc235aa3f89136e7fd308bab203aca06f2cd1449922500290cb9",
    "file": "754dcd6f-ff13-45c3-80d3-25aa765dbbff.jpeg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 42",
+   "title": "Event 40",
    "category": "Weddings",
    "source_url": "https://assets.cdn.filesafe.space/0q66d8UWnxotu4OOwicX/media/754dcd6f-ff13-45c3-80d3-25aa765dbbff.jpeg",
    "bytes": 154322
   },
-  "event_43": {
+  "event_41": {
    "sha256": "90d79f4f26f779b1e11c115fd4d61dd7ba2630ed5060d19fe1c2828a79f01f8d",
    "file": "d02f0b74-d23d-4838-b32e-50409a73d537.webp",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 43",
+   "title": "Event 41",
    "category": "Events",
    "source_url": "https://assets.cdn.filesafe.space/0q66d8UWnxotu4OOwicX/media/d02f0b74-d23d-4838-b32e-50409a73d537.webp",
    "bytes": 53638
   },
-  "event_44": {
+  "event_42": {
    "sha256": "e7fd1adeb9de42775dec0cb686a92064d5fcd60320a70ee56f7aedb63632c5ac",
    "file": "b69234a6-29ab-4ddd-a386-b0e3bb571352.jpeg",
    "alt": "Guests posing at a Booths To The Max photo booth",
    "purpose": "gallery",
-   "title": "Event 44",
+   "title": "Event 42",
    "category": "Events",
    "source_url": "https://assets.cdn.filesafe.space/0q66d8UWnxotu4OOwicX/media/b69234a6-29ab-4ddd-a386-b0e3bb571352.jpeg",
    "bytes": 88319
@@ -611,7 +591,7 @@
   "": {
    "title": "Home",
    "seo_title": "Luxury Photo Booth Rental Orange County | Booths To The Max",
-   "meta_description": "Luxury DSLR photo booth rentals across Orange County for weddings, corporate events, birthday parties and private celebrations. Booths To The Max - check availability today.",
+   "meta_description": "Luxury DSLR photo booth rentals across Orange County for weddings, corporate events and parties. Booths To The Max - check availability.",
    "sections": [
     {
      "type": "hero",
@@ -1107,7 +1087,15 @@
        },
        {
         "image": "@asset:event_24"
-       },
+       }
+      ]
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "More favorite events",
+      "items": [
        {
         "image": "@asset:event_25"
        },
@@ -1161,12 +1149,6 @@
        },
        {
         "image": "@asset:event_42"
-       },
-       {
-        "image": "@asset:event_43"
-       },
-       {
-        "image": "@asset:event_44"
        }
       ]
      }
@@ -1429,7 +1411,7 @@
   },
   "service-areas": {
    "title": "Service Areas",
-   "seo_title": "Photo Booth Rental Service Areas | Orange County, Anaheim, Irvine, Newport Beach",
+   "seo_title": "Photo Booth Rental Service Areas | Orange County, CA",
    "meta_description": "Booths To The Max serves Orange County, Anaheim, Irvine, Huntington Beach, Newport Beach, Costa Mesa and Laguna Beach.",
    "sections": [
     {

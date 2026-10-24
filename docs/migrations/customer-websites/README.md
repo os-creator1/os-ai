@@ -12,11 +12,13 @@ Business Pack migration, and it never creates a Business, Workspace or Location.
 
 Transparent Photo Booths (#5) is **not** included: no verified official website was available. Toronto and Lumina are untouched.
 
-## Secondary colour (website studio)
+## Secondary colour
 
-The look card used to expose one colour. It now also has **Secondary colour** (`secondary_color` in the website theme). It drives the
-dark surface: hero, dark bands, cards' ink/muted tones and the announcement bar (the Classic Gold template keeps its accent-coloured
-bar). Only a plain `#rrggbb` is accepted; ink is derived for WCAG contrast. Blank = the template's own colour.
+Uses the dedicated implementation (`claude/trusting-pascal-x0wpms`: theme key `secondary_brand_color`, `WebsiteLookService::setSecondaryColor`,
+`--wd-secondary*` tokens and `.wd-has-secondary` styling, with its own feature tests). This branch only supplies the value per site; it
+adds no second setting. Note: that implementation styles secondary *accents* (badges, secondary buttons, footer headings, card rules);
+the dark bands keep each template's own dark colour (Booths To The Max `#061633` and Greenbelt `#2A1D45` already match; Classic Gold's
+`#1B1B1B` is close to Kaleb's `#232323`).
 
 ## What a run writes (website side only)
 
@@ -33,9 +35,8 @@ draft and the gap is reported. Publication is to the platform preview path only:
 
 1. Merge this branch to `main` after review and deploy normally (nothing runs on deploy; no migration).
 2. Upload `<key>-assets.tgz` to `/home/forge/`. Their SHA-256 values are pinned in `bundles.sha256` (checked before extraction).
-3. Dry run (read-only, takes and validates a DB backup): `bash docs/migrations/customer-websites/run-on-forge.sh kaleb-hill`
-   (copy the script to `~/run-on-forge.sh` if preferred). It proves target/Business/Workspace/name, lists the plan and any missing asset.
-4. Apply: `bash ~/run-on-forge.sh kaleb-hill --apply` (re-verifies the backup, asks you to type `BUILD CUSTOMER WEBSITES IN PRODUCTION`).
+3. Dry run (read-only, takes and validates a DB backup): `bash ~/customer-sites-run.sh kaleb-hill` (upload the script from `docs/migrations/customer-websites/run-on-forge.sh`; the name avoids Toronto's `~/run-on-forge.sh`). It proves target/Business/Workspace/name, compares the Business phone/email with the owner's published details (read-only; a mismatch blocks `--apply` unless `ACCEPT_CONTACT_MISMATCH=1`), lists the plan and any missing asset.
+4. Apply: `bash ~/customer-sites-run.sh kaleb-hill --apply` (re-verifies the backup, asks you to type `BUILD CUSTOMER WEBSITES IN PRODUCTION`).
 5. Review the printed `REPORT` (pages, assets stored, preview_url) and open the preview on desktop and mobile; submit the form once with a
    test contact you control, then delete that test contact/opportunity.
 

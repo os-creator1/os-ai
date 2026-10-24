@@ -71,7 +71,7 @@ final class CustomerWebsiteBuilder
     public function load(string $contentPath): array
     {
         $content = is_file($contentPath) ? json_decode((string) file_get_contents($contentPath), true) : null;
-        foreach (['business', 'template_key', 'brand_color', 'secondary_color', 'assets', 'pages', 'form', 'services'] as $key) {
+        foreach (['business', 'template_key', 'brand_color', 'secondary_brand_color', 'assets', 'pages', 'form', 'services'] as $key) {
             if (! is_array($content) || ! array_key_exists($key, $content)) {
                 throw new RuntimeException("Website content file is invalid: missing [{$key}].");
             }
@@ -143,7 +143,23 @@ final class CustomerWebsiteBuilder
             'blockers' => $content['blockers'] ?? [],
             'would_publish' => $missing === [] && ($content['blockers'] ?? []) === [],
             'crm' => $this->crmFingerprint($business),
+            'contact' => $this->contactCheck($business, $content),
         ];
+    }
+
+    /**
+     * The site's phone/email come from the Business record. Compare (read-only) with the owner's published contact details.
+     *
+     * @return array{business: array<string, ?string>, source: array<string, mixed>, ok: bool}
+     */
+    public function contactCheck(Business $business, array $content): array
+    {
+        $source = (array) ($content['contact'] ?? []);
+        $digits = static fn (?string $v): string => substr(preg_replace('/\D+/', '', (string) $v) ?? '', -10);
+        $phoneOk = $digits($source['phone'] ?? null) !== '' && $digits($source['phone'] ?? null) === $digits($business->phone);
+        $emailOk = ($source['email'] ?? '') !== '' && mb_strtolower(trim((string) $business->email)) === mb_strtolower(trim((string) $source['email']));
+
+        return ['business' => ['phone' => $business->phone ?: null, 'email' => $business->email ?: null], 'source' => $source, 'phone_match' => $phoneOk, 'email_match' => $emailOk, 'ok' => $phoneOk && $emailOk];
     }
 
     /** @return array{website: Website, report: array<string, int|string>, missing: list<string>} */
@@ -165,10 +181,13 @@ final class CustomerWebsiteBuilder
             $website = $this->starter->createShellFromTemplate($business, $template)->fresh();
         }
         $this->look->setBrandColor($website, $content['brand_color']);
-        $this->look->setSecondaryColor($website, $content['secondary_color']);
+        $this->look->setSecondaryColor($website, $content['secondary_brand_color']);
         $website = $website->fresh();
 
         foreach ($content['assets'] as $role => $entry) {
+            if (in_array($role, ['logo', 'hero'], true)) {
+                continue; // stored once, by the look service below, so they are not duplicated in media
+            }
             $this->assets[$role] = $this->storeAsset($website, $role, $files[$entry['sha256']], $entry);
         }
 
@@ -180,6 +199,11 @@ final class CustomerWebsiteBuilder
             $this->look->setHero($website, $this->upload($files[$content['assets']['hero']['sha256']], 'hero'), $content['assets']['hero']['alt']);
         }
         $website = $website->fresh();
+        foreach (['logo' => 'logo_asset_uid', 'hero' => 'hero_asset_uid'] as $role => $themeKey) {
+            if (isset($content['assets'][$role], $website->theme[$themeKey])) {
+                $this->assets[$role] = WebsiteAsset::query()->where('website_id', $website->id)->where('uid', $website->theme[$themeKey])->firstOrFail();
+            }
+        }
         $legal = $content['legal_urls'] ?? [];
         if (($legal['privacy'] ?? null) !== null || ($legal['terms'] ?? null) !== null) {
             $this->look->setLegalLinks($website, $legal['privacy'] ?? null, $legal['terms'] ?? null);

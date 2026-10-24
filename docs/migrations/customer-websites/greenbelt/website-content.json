@@ -9,7 +9,7 @@
  },
  "template_key": "photo_booth_modern",
  "brand_color": "#F4A28F",
- "secondary_color": "#2A1D45",
+ "secondary_brand_color": "#2A1D45",
  "blockers": [
   "The owner publishes no Privacy Policy / Terms & Conditions / Terms of Service on greenbeltphotography.com (the footer links resolve to empty pages). Supply the owner's own legal text or URLs, then re-run to publish."
  ],
@@ -841,7 +841,15 @@
        },
        {
         "image": "@asset:event_24"
-       },
+       }
+      ]
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "More favorite events",
+      "items": [
        {
         "image": "@asset:event_25"
        },
@@ -1175,7 +1183,7 @@
   },
   "service-areas": {
    "title": "Service Areas",
-   "seo_title": "Photo Booth Rental Service Areas | Boise, Meridian, Eagle, Nampa, Caldwell, Kuna",
+   "seo_title": "Photo Booth Rental Service Areas | Boise, Idaho",
    "meta_description": "Greenbelt Photo Booth serves Boise, Meridian, Eagle, Nampa, Caldwell, Kuna and the Treasure Valley.",
    "sections": [
     {

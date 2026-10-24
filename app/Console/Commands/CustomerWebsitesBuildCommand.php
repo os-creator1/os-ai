@@ -29,6 +29,7 @@ class CustomerWebsitesBuildCommand extends Command
         {--confirm-database= : Must equal the connected database name exactly}
         {--backup-reference= : Path of a verified database backup file taken before this run}
         {--confirm-phrase= : Exactly "BUILD CUSTOMER WEBSITES IN PRODUCTION"}
+        {--accept-contact-mismatch : Build even though the Business phone/email differ from the owner published contact details (never modified)}
         {--apply : Actually write. Without it nothing is changed}';
 
     protected $description = 'PRODUCTION: build an existing customer\'s website from reviewed content. Guarded, additive, idempotent, sends nothing.';
@@ -65,6 +66,14 @@ class CustomerWebsitesBuildCommand extends Command
             $this->{$apply ? 'error' : 'warn'}('Assets missing or --assets not given: '.json_encode($plan['assets_missing']));
             if ($apply) {
                 $this->error('ABORT: nothing was written.');
+
+                return self::FAILURE;
+            }
+        }
+        if (! $plan['contact']['ok']) {
+            $this->warn('CONTACT MISMATCH between the Business record and the owner\'s published details: '.json_encode($plan['contact']).'. The Business record is never modified.');
+            if ($apply && ! $this->option('accept-contact-mismatch')) {
+                $this->error('ABORT: nothing was written (review the contact details, then pass --accept-contact-mismatch if the Business record is right).');
 
                 return self::FAILURE;
             }

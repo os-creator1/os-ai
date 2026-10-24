@@ -9,7 +9,7 @@
  },
  "template_key": "photo_booth_modern",
  "brand_color": "#FAC815",
- "secondary_color": "#232323",
+ "secondary_brand_color": "#232323",
  "blockers": [],
  "legal_urls": {
   "privacy": "https://kalebhillphotobooth.com/privacypolicy",
@@ -560,8 +560,8 @@
  "pages": {
   "": {
    "title": "Home",
-   "seo_title": "Mississippi Photo Booth Rental | Wedding, Corporate & Party Photo Booths",
-   "meta_description": "Luxury wedding, corporate and party photo booth rentals in Petal and throughout Mississippi, West Alabama and East Louisiana. Kaleb Hill Photo Booth - check availability today.",
+   "seo_title": "Mississippi Photo Booth Rental | Weddings, Corporate & Parties",
+   "meta_description": "Luxury wedding, corporate and party photo booth rentals in Petal and across Mississippi. Kaleb Hill Photo Booth - check availability.",
    "sections": [
     {
      "type": "hero",
@@ -760,7 +760,7 @@
   },
   "magic-mirror-photo-booth": {
    "title": "Magic Mirror Photo Booth",
-   "seo_title": "Magic Mirror Photo Booth Rental Petal, Mississippi | Kaleb Hill Photo Booth",
+   "seo_title": "Magic Mirror Photo Booth Rental in Petal, MS | Kaleb Hill",
    "meta_description": "Premium Magic Mirror photo booth experiences in Petal and surrounding Mississippi areas for weddings, corporate events and parties.",
    "sections": [
     {
@@ -850,8 +850,8 @@
   },
   "backdrops": {
    "title": "Backdrops",
-   "seo_title": "Photo Booth Backdrops Mississippi | Premium Event & Wedding Backdrop Options",
-   "meta_description": "Premium photo booth backdrops included in all packages: wood, gold, curtains, silver, flowers and brick. Luxury wedding, corporate and party backdrops in Mississippi.",
+   "seo_title": "Photo Booth Backdrops Mississippi | Premium Event Backdrops",
+   "meta_description": "Premium photo booth backdrops included in all packages: wood, gold, curtains, silver, flowers and brick.",
    "sections": [
     {
      "type": "hero",
@@ -918,7 +918,7 @@
   },
   "gallery": {
    "title": "Gallery",
-   "seo_title": "Photo Booth Gallery Mississippi | Wedding, Corporate & Party Event Photos",
+   "seo_title": "Photo Booth Gallery Mississippi | Wedding, Corporate & Party",
    "meta_description": "Browse wedding, corporate and party photo booth experiences throughout Mississippi by Kaleb Hill Photo Booth.",
    "sections": [
     {
@@ -1009,7 +1009,15 @@
        },
        {
         "image": "@asset:event_24"
-       },
+       }
+      ]
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "More favorite events",
+      "items": [
        {
         "image": "@asset:event_25"
        },
@@ -1349,7 +1357,7 @@
   },
   "service-areas": {
    "title": "Service Areas",
-   "seo_title": "Photo Booth Rental Service Areas | Petal, Hattiesburg, Biloxi, Jackson, Mississippi",
+   "seo_title": "Photo Booth Rental Service Areas | Mississippi",
    "meta_description": "Kaleb Hill Photo Booth serves Petal, Ocean Springs, Hattiesburg, Laurel, Biloxi, Gulfport and Jackson, plus West Alabama and East Louisiana.",
    "sections": [
     {
