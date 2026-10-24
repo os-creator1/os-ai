@@ -9,6 +9,7 @@
         $lookTheme = $website->theme ?? [];
         $lookAssets = $website->assets()->whereIn('uid', array_filter([$lookTheme['logo_asset_uid'] ?? null, $lookTheme['hero_asset_uid'] ?? null]))->get()->keyBy('uid');
         $brandColor = $lookTheme['brand_color'] ?? null;
+        $secondaryColor = $lookTheme['secondary_brand_color'] ?? null;
         $privacyNoticeUrl = $lookTheme['privacy_notice_url'] ?? null;
         $termsUrl = $lookTheme['terms_url'] ?? null;
         $logo = isset($lookTheme['logo_asset_uid'], $lookAssets[$lookTheme['logo_asset_uid']]) ? ['url' => $lookAssets[$lookTheme['logo_asset_uid']]->url(), 'alt' => $lookAssets[$lookTheme['logo_asset_uid']]->alt_text] : null;
@@ -22,12 +23,21 @@
             @csrf
 
             <div class="website-look-field">
-                <label class="website-look-label" for="look-brand-color">Brand colour</label>
+                <label class="website-look-label" for="look-brand-color">Primary colour</label>
                 <div class="website-look-color">
                     <input type="color" class="website-look-swatch" id="look-brand-picker" value="{{ $brandColor ?: '#1a56db' }}" title="Pick a colour" aria-label="Pick a brand colour">
                     <input type="text" class="form-control" id="look-brand-color" name="brand_color" value="{{ old('brand_color', $brandColor) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
                 </div>
                 @error('brand_color') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
+            </div>
+
+            <div class="website-look-field">
+                <label class="website-look-label" for="look-secondary-color">Secondary colour</label>
+                <div class="website-look-color">
+                    <input type="color" class="website-look-swatch" id="look-secondary-picker" value="{{ $secondaryColor ?: '#6b7280' }}" title="Pick a colour" aria-label="Pick a secondary colour">
+                    <input type="text" class="form-control" id="look-secondary-color" name="secondary_brand_color" value="{{ old('secondary_brand_color', $secondaryColor) }}" placeholder="Template default" maxlength="20" inputmode="text" autocomplete="off">
+                </div>
+                @error('secondary_brand_color') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
             </div>
 
             <div class="website-look-field">

@@ -1,7 +1,7 @@
 {{--
     Website V1 final — the owner's safe look tokens: ONE brand colour, a logo
     and a hero image. Shared by the Review screen and Studio; posts to
-    website.look.update (WebsiteLookController). Expects $brandColor, $logo, $hero; an optional
+    website.look.update (WebsiteLookController). Expects $brandColor, optional $secondaryColor, $logo, $hero; an optional
     $lookHeading adds a small heading (Studio's card already has its own title).
 --}}
 @if (! empty($lookHeading))
@@ -10,12 +10,18 @@
 
 <div class="row g-3 align-items-start">
     <div class="col-md-4">
-        <label class="form-label" for="look-brand-color">Brand colour</label>
+        <label class="form-label" for="look-brand-color">Primary colour</label>
         <div class="input-group">
             <input type="color" class="form-control form-control-color" id="look-brand-picker" value="{{ $brandColor ?: '#1a56db' }}" title="Pick a colour" aria-label="Pick a brand colour">
             <input type="text" class="form-control" id="look-brand-color" name="brand_color" value="{{ old('brand_color', $brandColor) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
         </div>
         @error('brand_color') <div class="text-danger small">{{ $message }}</div> @enderror
+        <label class="form-label mt-2" for="look-secondary-color">Secondary colour</label>
+        <div class="input-group">
+            <input type="color" class="form-control form-control-color" id="look-secondary-picker" value="{{ ($secondaryColor ?? null) ?: '#6b7280' }}" title="Pick a colour" aria-label="Pick a secondary colour">
+            <input type="text" class="form-control" id="look-secondary-color" name="secondary_brand_color" value="{{ old('secondary_brand_color', $secondaryColor ?? null) }}" placeholder="Template default" maxlength="20" inputmode="text" autocomplete="off">
+        </div>
+        @error('secondary_brand_color') <div class="text-danger small">{{ $message }}</div> @enderror
     </div>
 
     <div class="col-md-4">

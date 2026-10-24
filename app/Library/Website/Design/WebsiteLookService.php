@@ -13,7 +13,7 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Website V1 final — the owner's safe customisation of a template's look:
- * ONE brand colour, a logo and a hero image. Nothing else about the design
+ * a primary and an optional secondary brand colour, a logo and a hero image. Nothing else about the design
  * (layout, fonts, section order, palette) is ever owner-controlled.
  *
  * The three values live in the Website's `theme` JSON next to the template's
@@ -27,7 +27,7 @@ use Illuminate\Validation\ValidationException;
 final class WebsiteLookService
 {
     /** Theme keys that belong to the owner, never to the template. */
-    public const OWNER_THEME_KEYS = ['brand_color', 'logo_asset_uid', 'hero_asset_uid', 'privacy_notice_url', 'terms_url'];
+    public const OWNER_THEME_KEYS = ['brand_color', 'secondary_brand_color', 'logo_asset_uid', 'hero_asset_uid', 'privacy_notice_url', 'terms_url'];
 
     public function __construct(private readonly WebsiteAssetUploadService $uploads) {}
 
@@ -62,6 +62,31 @@ final class WebsiteLookService
         }
 
         $this->patchTheme($website, ['brand_color' => $hex]);
+    }
+
+    /**
+     * The optional secondary brand colour. Stored under its own key, independent of `brand_color` (and of the
+     * template's own `secondary_color` token); blank clears it so the design falls back to its primary-only look.
+     *
+     * @throws ValidationException
+     */
+    public function setSecondaryColor(Website $website, ?string $value): void
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            $this->patchTheme($website, ['secondary_brand_color' => null]);
+
+            return;
+        }
+
+        $hex = BrandColors::normalize($value);
+
+        if ($hex === null) {
+            throw ValidationException::withMessages(['secondary_brand_color' => ['Enter a colour like #1a56db.']]);
+        }
+
+        $this->patchTheme($website, ['secondary_brand_color' => $hex]);
     }
 
     /**

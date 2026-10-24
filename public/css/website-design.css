@@ -616,3 +616,18 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-footer-centered .wd-footer-legal { justify-content: center; }
 .wd .website-form-privacy { margin: 0.25rem 0 0; font-size: 0.9rem; text-align: center; }
 .wd .website-form-privacy a { color: inherit; text-decoration: underline; text-underline-offset: 0.2em; }
+
+/* Optional secondary brand colour (theme.secondary_brand_color). Every rule is gated on .wd-has-secondary, so a site
+   that never set one renders exactly as before. --wd-sa is the secondary colour as text/line on the current surface
+   (contrast-derived in BrandColors); explicit section colours keep winning because they set their own inline values. */
+.wd-has-secondary { --wd-sa: var(--wd-secondary-text); }
+.wd-has-secondary .wd-tone-light, .wd-has-secondary .wd-tone-tint, .wd-has-secondary .wd-hero-centered, .wd-has-secondary .wd-hero-split-soft { --wd-sa: var(--wd-secondary-text); }
+.wd-has-secondary .wd-tone-dark, .wd-has-secondary .wd-hero, .wd-has-secondary .wd-footer, .wd-has-secondary.wd-luxury .wd-tone-tint { --wd-sa: var(--wd-secondary-glow); }
+.wd-has-secondary .wd-hero-centered, .wd-has-secondary .wd-hero-split-soft { --wd-sa: var(--wd-secondary-text); }
+.wd-has-secondary .wd-tone-accent { --wd-sa: var(--wd-accent-ink); }
+.wd-has-secondary .wd-btn-secondary { color: var(--wd-sa); border-color: var(--wd-sa); }
+.wd-has-secondary .wd-badge { background: var(--wd-secondary); color: var(--wd-secondary-ink); }
+.wd-has-secondary .wd-services-event-tiles .wd-card-linked::after { background: var(--wd-secondary); color: var(--wd-secondary-ink); }
+.wd-has-secondary .wd-hero-centered .wd-hero-copy::before { background: var(--wd-secondary); }
+.wd-has-secondary.wd-modern .website-testimonial-card { border-left-color: var(--wd-secondary); }
+.wd-has-secondary .wd-footer-heading { color: var(--wd-secondary-glow); }
