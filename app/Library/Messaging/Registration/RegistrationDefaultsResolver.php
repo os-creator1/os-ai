@@ -79,11 +79,14 @@ final class RegistrationDefaultsResolver
      * Templates for each of the three choices, so the page can offer the
      * matching copy the moment the customer picks one.
      *
+     * The brand is left as the literal "{brand}" token: the page substitutes
+     * whatever the legal-name input holds at the moment of switching.
+     *
      * @return array<string, array<string, mixed>>
      */
     public function templatesByChoice(Business $business, ?BusinessMessagingRegistration $registration): array
     {
-        $brand = $this->brandName($business, $registration);
+        $brand = '{brand}';
         $website = $this->firstFilled($registration?->website_url, $business->website_url);
         $byChoice = [];
 

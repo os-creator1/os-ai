@@ -224,4 +224,25 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $issues = app(\App\Library\Messaging\Registration\RegistrationSubmissionValidator::class)->issues($registration->fresh());
         $this->assertContains('Every promotional sample message needs opt-out wording such as "Reply STOP to opt out".', $issues);
     }
+
+    public function test_page_templates_keep_a_brand_token_so_suggestions_follow_the_typed_legal_name(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        $business->forceFill(['industry' => BusinessIndustry::PhotoBoothService->value])->save();
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['legal_business_name' => 'Sunset Booths LLC']));
+
+        $this->get($this->showUrl($workspace, $business))
+            ->assertViewHas('templateBrand', 'Sunset Booths LLC')
+            ->assertViewHas('templatesByChoice', function (array $templates): bool {
+                foreach (['care', 'marketing', 'both'] as $choice) {
+                    foreach (['campaign_description', 'sample_message_1', 'sample_message_2'] as $field) {
+                        if (! str_contains($templates[$choice][$field], '{brand}')) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            });
+    }
 }

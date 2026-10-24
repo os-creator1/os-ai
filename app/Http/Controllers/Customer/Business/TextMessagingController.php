@@ -709,6 +709,7 @@ class TextMessagingController extends CustomerBaseController
             'selectedChoice' => RegistrationTemplateCatalog::choiceForUseCase($registration->use_case),
             'consentItems' => RegistrationTemplateCatalog::CONSENT_ITEMS,
             'prefill' => $this->registrationDefaults->resolve($business, $situation['registration'] ?? null),
+            'templateBrand' => $this->registrationDefaults->brandName($business, $situation['registration'] ?? null),
             'templatesByChoice' => $this->registrationDefaults->templatesByChoice($business, $situation['registration'] ?? null),
             'submissionIssues' => $registration->exists ? $this->registrationValidator->issues($registration) : [],
             'available' => ProvisioningAvailability::isConfigured(),

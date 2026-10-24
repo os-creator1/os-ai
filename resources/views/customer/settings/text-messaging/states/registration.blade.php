@@ -339,20 +339,29 @@
             $('input[name="entity_type"]').on('change', syncEinField);
             syncEinField();
             var templates = @json($templatesByChoice);
+            // Brand the currently displayed suggestions were generated with.
+            var lastBrand = @json($templateBrand);
             var lastChoice = $('input[name="use_case"]:checked').data('choice') || null;
             var fieldMap = {campaign_description: 'campaign_description', opt_in_method: 'opt_in_method', sample_message_1: 'sample_message_1', sample_message_2: 'sample_message_2'};
+            function render(text, brand) { return String(text).split('{brand}').join(brand); }
             // Swap in the new choice's suggestion only where the field is
-            // empty or still holds the previous suggestion — edited text is kept.
+            // empty or still exactly the previous suggestion (for the brand it
+            // was generated with, or the current one) — edited text is kept.
+            // The new text uses the legal name currently typed in the form.
             $('input[name="use_case"]').on('change', function () {
                 var choice = $(this).data('choice');
                 var next = choice ? templates[choice] : null;
                 var prev = lastChoice ? templates[lastChoice] : null;
+                var typed = $.trim($('#legal_business_name').val());
+                var brand = typed !== '' ? typed : lastBrand;
                 if (next) {
                     $.each(fieldMap, function (id, key) {
                         var $el = $('#' + id);
                         var cur = $.trim($el.val());
-                        if (cur === '' || (prev && cur === prev[key])) { $el.val(next[key]); }
+                        var untouched = cur === '' || (prev && (cur === render(prev[key], lastBrand) || cur === render(prev[key], brand)));
+                        if (untouched) { $el.val(render(next[key], brand)); }
                     });
+                    lastBrand = brand;
                     $('[data-role="topics"]').text(next.topics.join(', '));
                     $('[data-role="suggested-topics"]').prop('hidden', false);
                 }
