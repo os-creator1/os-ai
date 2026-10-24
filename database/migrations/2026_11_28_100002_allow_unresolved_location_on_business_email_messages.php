@@ -26,8 +26,18 @@ return new class extends Migration
         // inbound-only and re-created by the next sync, so they are removed.
         \Illuminate\Support\Facades\DB::table('business_email_messages')->whereNull('location_id')->delete();
 
+        // MySQL 8 refuses to make a foreign-key column NOT NULL in place
+        // (error 1832), so the constraint is dropped and restored around it.
+        Schema::table('business_email_messages', function (Blueprint $table) {
+            $table->dropForeign('bem_location_foreign');
+        });
+
         Schema::table('business_email_messages', function (Blueprint $table) {
             $table->unsignedBigInteger('location_id')->nullable(false)->change();
+        });
+
+        Schema::table('business_email_messages', function (Blueprint $table) {
+            $table->foreign('location_id', 'bem_location_foreign')->references('id')->on('business_locations')->restrictOnDelete();
         });
     }
 };
