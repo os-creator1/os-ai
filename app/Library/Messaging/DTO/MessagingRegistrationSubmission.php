@@ -67,6 +67,10 @@ final readonly class MessagingRegistrationSubmission
          * the fee for a resubmission.
          */
         public string $fundingCycle = '0',
+        /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
+        public ?string $campaignDescription = null,
+        /** @var list<string> the customer's own RegistrationTemplateCatalog::CONSENT_ITEMS attestations */
+        public array $consentConfirmations = [],
     ) {
     }
 
@@ -101,6 +105,8 @@ final readonly class MessagingRegistrationSubmission
                 ? (string) $registration->provider_campaign_id
                 : null,
             fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
+            campaignDescription: $registration->campaign_description,
+            consentConfirmations: is_array($registration->consent_confirmations) ? array_values($registration->consent_confirmations) : [],
         );
     }
 }

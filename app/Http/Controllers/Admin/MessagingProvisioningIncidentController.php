@@ -8,6 +8,7 @@ use App\Models\BusinessMessagingProvisioningIncident;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Phone Numbers + A2P lane — the support/ops reconciliation surface for
@@ -49,11 +50,30 @@ class MessagingProvisioningIncidentController extends AdminBaseController
 
     public function resolve(ResolveMessagingProvisioningIncidentRequest $request, int $incident): RedirectResponse
     {
-        $resolved = $this->incidents->resolve(
-            $incident,
-            (int) Auth::id(),
-            $request->validated('resolution_note'),
-        );
+        $record = BusinessMessagingProvisioningIncident::query()->find($incident);
+        $state = $request->validated('provider_state');
+
+        $resolved = DB::transaction(function () use ($record, $state, $request, $incident): int {
+            // Write the reconciled provider state back first, so the retry
+            // this resolution unblocks reuses what exists instead of
+            // creating a duplicate. Funding-ambiguous resolution (fee
+            // committed, ids saved) lets the saved ids complete without a
+            // second charge.
+            if ($record !== null && $state !== null && $record->resolved_at === null) {
+                $ids = [
+                    'provider_brand_id' => $state === 'nothing_created' ? null : $request->validated('provider_brand_id'),
+                    'provider_campaign_id' => $state === 'brand_and_campaign_created' ? $request->validated('provider_campaign_id') : null,
+                ];
+
+                DB::table('business_messaging_registrations')->where('business_id', $record->business_id)->update($ids);
+            }
+
+            return $this->incidents->resolve(
+                $incident,
+                (int) Auth::id(),
+                $request->validated('resolution_note'),
+            );
+        });
 
         if ($resolved === 0) {
             return redirect()

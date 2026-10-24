@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests\Admin;
 
+use App\Library\Messaging\TelnyxProvisioningAdapter;
+use App\Models\BusinessMessagingProvisioningIncident;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -28,9 +30,27 @@ class ResolveMessagingProvisioningIncidentRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
+        $rules = [
             'reconciliation_confirmed' => ['required', 'accepted'],
             'resolution_note' => ['required', 'string', 'max:5000'],
         ];
+
+        // An unknown 10DLC outcome means a brand/campaign may already exist
+        // at the provider. A note alone must never re-open submission: the
+        // operator records what the provider actually holds, and that state
+        // is written back to the registration so a retry reuses it.
+        $incident = BusinessMessagingProvisioningIncident::query()->find((int) $this->route('incident'));
+
+        if ($incident !== null && in_array($incident->stage, TelnyxProvisioningAdapter::UNCONFIRMED_OUTCOME_STAGES, true)) {
+            $allowed = $incident->stage === TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS
+                ? 'brand_and_campaign_created'
+                : 'nothing_created,brand_created,brand_and_campaign_created';
+
+            $rules['provider_state'] = ['required', 'in:' . $allowed];
+            $rules['provider_brand_id'] = ['required_if:provider_state,brand_created,brand_and_campaign_created', 'nullable', 'string', 'max:191'];
+            $rules['provider_campaign_id'] = ['required_if:provider_state,brand_and_campaign_created', 'nullable', 'string', 'max:191'];
+        }
+
+        return $rules;
     }
 }

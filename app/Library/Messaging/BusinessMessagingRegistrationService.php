@@ -16,6 +16,7 @@ use App\Models\BusinessMessagingRegistration;
 use App\Repositories\Contracts\UsageMeterRepository;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException;
 
 /**
@@ -115,6 +116,29 @@ class BusinessMessagingRegistrationService
             }
         }
 
+        // A saved campaign is only reusable for the exact content it was
+        // created with: any change to what the campaign request carries
+        // (type, description, flow, samples, policy links, attested
+        // declarations) means a new campaign, never the old one.
+        $campaignContentChanged = false;
+
+        foreach (['use_case', 'campaign_description', 'opt_in_method', 'sample_message_1', 'sample_message_2', 'privacy_policy_url', 'terms_url', 'consent_confirmations'] as $field) {
+            if (! array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $normalize = static fn ($v) => is_array($v) ? json_encode(array_values($v)) : (string) $v;
+
+            if ($normalize($data[$field]) !== $normalize($registration->{$field})) {
+                $campaignContentChanged = true;
+                break;
+            }
+        }
+
+        if ($campaignContentChanged) {
+            $attributes['provider_campaign_id'] = null;
+        }
+
         if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged) {
             $attributes['provider_brand_id'] = null;
             $attributes['provider_campaign_id'] = null;
@@ -142,7 +166,7 @@ class BusinessMessagingRegistrationService
         // registration that is already Pending/Approved must never be
         // submitted again. Status is re-read under the lock so a double
         // click or a retry after a lost response is a harmless no-op.
-        $lock = Cache::lock('messaging-registration-submit:' . $registration->id, 120);
+        $lock = $this->submissionLock($registration->id);
 
         if (! $lock->get()) {
             throw new MessagingRegistrationAlreadySubmittedException('A submission for this registration is already in progress.');
@@ -309,5 +333,36 @@ class BusinessMessagingRegistrationService
         $unit = $rate->unit_label !== null && $rate->unit_label !== '' ? ' per ' . $rate->unit_label : '';
 
         return sprintf('Business verification currently costs %s%s.', $amount, $unit);
+    }
+
+    /**
+     * Cross-worker, cross-host mutual exclusion. On MySQL/MariaDB this is a
+     * server-side advisory lock (GET_LOCK) that is shared by every worker
+     * and freed automatically if the holder's connection dies; the cache
+     * lock is only the fallback for other drivers (tests).
+     */
+    private function submissionLock(int $registrationId): object
+    {
+        $name = 'messaging-registration-submit:' . $registrationId;
+
+        if (in_array(DB::connection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+            return new class ($name) {
+                public function __construct(private readonly string $name)
+                {
+                }
+
+                public function get(): bool
+                {
+                    return (int) (DB::selectOne('SELECT GET_LOCK(?, 0) AS acquired', [$this->name])->acquired ?? 0) === 1;
+                }
+
+                public function release(): void
+                {
+                    DB::selectOne('SELECT RELEASE_LOCK(?)', [$this->name]);
+                }
+            };
+        }
+
+        return Cache::lock($name, 120);
     }
 }

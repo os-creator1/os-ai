@@ -121,7 +121,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => $availableMicro]);
     }
 
-    private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null, ?string $existingBrandId = null): MessagingRegistrationSubmission
+    private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null, ?string $existingBrandId = null, string $useCase = 'customer_care'): MessagingRegistrationSubmission
     {
         return new MessagingRegistrationSubmission(
             businessId: $business->id,
@@ -138,7 +138,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             websiteUrl: 'https://harborlane.example',
             contactEmail: 'owner@harborlane.example',
             contactPhone: '+15035550100',
-            useCase: 'appointment_reminders',
+            useCase: $useCase,
             optInMethod: 'Customers check a box on our booking form.',
             sampleMessage1: 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.',
             sampleMessage2: 'Harbor Lane: reminder, your appointment is tomorrow.',
@@ -146,6 +146,8 @@ class TelnyxProvisioningAdapterTest extends TestCase
             termsUrl: 'https://harborlane.example/terms',
             phoneNumber: $phoneNumber,
             existingBrandId: $existingBrandId,
+            campaignDescription: 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
+            consentConfirmations: array_keys(\App\Library\Messaging\Registration\RegistrationTemplateCatalog::CONSENT_ITEMS),
         );
     }
 
@@ -249,6 +251,59 @@ class TelnyxProvisioningAdapterTest extends TestCase
             && $request->url() === 'https://api.telnyx.com/v2/10dlc/campaignBuilder');
         Http::assertNotSent(fn ($request) => str_contains($request->url(), '/10dlc/campaign')
             && ! str_contains($request->url(), '/10dlc/campaignBuilder'));
+    }
+
+    public function test_10dlc_campaign_sends_telnyx_use_case_values_and_keeps_the_stored_description_and_samples(): void
+    {
+        $this->enableProvisioning();
+
+        foreach (['customer_care' => 'CUSTOMER_CARE', 'marketing' => 'MARKETING', 'mixed' => 'MIXED'] as $internal => $telnyx) {
+            $business = $this->business();
+
+            if ($internal === 'customer_care') {
+                $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+            } else {
+                // The fixture meter/rate already exist; only the new Business needs a wallet.
+                app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+                DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 10_000_000]);
+            }
+
+            Http::fake([
+                'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_' . $internal]]),
+                'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_' . $internal]]),
+            ]);
+
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local, useCase: $internal));
+
+            Http::assertSent(fn ($request) => str_ends_with($request->url(), '/10dlc/campaignBuilder')
+                && $request['usecase'] === $telnyx
+                && $request['description'] === 'Harbor Lane sends appointment confirmations and reminders to customers who booked.'
+                && $request['sample1'] === 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.'
+                && $request['sample2'] === 'Harbor Lane: reminder, your appointment is tomorrow.'
+                && ($telnyx === 'MIXED'
+                    ? $request['subUsecases'] === ['CUSTOMER_CARE', 'MARKETING']
+                    : ! isset($request['subUsecases']))
+                && $request['subscriberOptin'] === true
+                && $request['subscriberOptout'] === true
+                && $request['subscriberHelp'] === true);
+        }
+    }
+
+    public function test_10dlc_submission_with_an_unsupported_use_case_is_refused_before_any_provider_request(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local, useCase: 'appointment_reminders'));
+            $this->fail('An unsupported use case must be refused.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Unsupported 10DLC use case', $e->getMessage());
+        }
+
+        Http::assertNothingSent();
     }
 
     public function test_toll_free_submission_hits_the_corrected_endpoint_once_funded(): void
@@ -990,6 +1045,8 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'number_type' => 'local',
             'entity_type' => 'ein',
             'status' => 'not_started',
+            'use_case' => 'customer_care',
+            'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
         ]);
     }
 

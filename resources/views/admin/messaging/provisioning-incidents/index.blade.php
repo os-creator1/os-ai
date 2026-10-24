@@ -35,6 +35,18 @@
                                     <td style="min-width: 260px;">
                                         <form method="POST" action="{{ route('admin.messaging-provisioning-incidents.resolve', $incident->id) }}">
                                             @csrf
+                                            @if(in_array($incident->stage, \App\Library\Messaging\TelnyxProvisioningAdapter::UNCONFIRMED_OUTCOME_STAGES, true))
+                                                <select name="provider_state" class="form-select form-select-sm mb-1" required>
+                                                    <option value="" disabled selected>What exists at Telnyx? (check the portal)</option>
+                                                    @if($incident->stage !== \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS)
+                                                        <option value="nothing_created">No brand or campaign exists</option>
+                                                        <option value="brand_created">Brand exists, no campaign</option>
+                                                    @endif
+                                                    <option value="brand_and_campaign_created">Brand and campaign exist</option>
+                                                </select>
+                                                <input type="text" name="provider_brand_id" class="form-control form-control-sm mb-1" placeholder="Telnyx brand ID (if one exists)" maxlength="191">
+                                                <input type="text" name="provider_campaign_id" class="form-control form-control-sm mb-1" placeholder="Telnyx campaign ID (if one exists)" maxlength="191">
+                                            @endif
                                             <input type="text" name="resolution_note" class="form-control form-control-sm transition-fast mb-1" placeholder="What was reconciled, and how" required maxlength="5000">
                                             <div class="form-check mb-1">
                                                 <input type="checkbox" class="form-check-input" id="reconciliation-confirmed-{{ $incident->id }}" name="reconciliation_confirmed" value="1" required>

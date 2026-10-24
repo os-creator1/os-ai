@@ -428,4 +428,45 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
         $this->assertNull($incident->resolved_by_user_id);
         $this->assertNull($incident->resolution_note);
     }
+
+    public function test_an_unknown_10dlc_outcome_incident_cannot_be_resolved_with_a_note_alone(): void
+    {
+        $business = $this->makeBusiness();
+        $incident = $this->recordIncident($business, ['stage' => \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN]);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
+            'resolution_note' => 'Looked at it, seems fine.',
+        ])->assertSessionHasErrors('provider_state');
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
+            'resolution_note' => 'Brand exists in the Telnyx portal.',
+            'provider_state' => 'brand_created',
+        ])->assertSessionHasErrors('provider_brand_id');
+
+        $this->assertNull($incident->fresh()->resolved_at);
+    }
+
+    public function test_resolving_an_unknown_10dlc_outcome_records_the_provider_state_on_the_registration(): void
+    {
+        $business = $this->makeBusiness();
+        \App\Models\BusinessMessagingRegistration::create(['business_id' => $business->id, 'number_type' => 'local', 'status' => 'not_started', 'provider_brand_id' => 'stale']);
+        $incident = $this->recordIncident($business, ['stage' => \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN]);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
+            'resolution_note' => 'Portal shows brand B1 with campaign C1 in review.',
+            'provider_state' => 'brand_and_campaign_created',
+            'provider_brand_id' => 'B1',
+            'provider_campaign_id' => 'C1',
+        ])->assertSessionHas('flash_success');
+
+        $registration = \App\Models\BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertSame('B1', $registration->provider_brand_id);
+        $this->assertSame('C1', $registration->provider_campaign_id);
+        $this->assertNotNull($incident->fresh()->resolved_at);
+    }
 }

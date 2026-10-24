@@ -518,4 +518,24 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
 
         $this->assertSame('No fee is currently configured for business verification in this environment.', $tollFreeDisclosure);
     }
+
+    public function test_a_submission_held_by_another_database_session_is_refused_without_a_provider_call(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+
+        // A different connection stands in for another worker/host holding the lock.
+        $other = \Illuminate\Support\Facades\DB::connectUsing('lock_probe', config('database.connections.' . config('database.default')));
+        $name = 'messaging-registration-submit:' . $registration->id;
+        $other->selectOne('SELECT GET_LOCK(?, 0)', [$name]);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected MessagingRegistrationAlreadySubmittedException.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException) {
+            $this->assertCount(0, $fake->submittedRegistrations);
+        } finally {
+            $other->selectOne('SELECT RELEASE_LOCK(?)', [$name]);
+        }
+    }
 }

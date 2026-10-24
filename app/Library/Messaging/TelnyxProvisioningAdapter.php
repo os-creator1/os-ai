@@ -728,12 +728,41 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $status;
     }
 
-    private const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
-    private const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
-    private const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
+    public const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
+    public const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
+    public const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
+
+    /** Incident stages whose resolution requires documented provider-state reconciliation. */
+    public const UNCONFIRMED_OUTCOME_STAGES = [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN, self::INCIDENT_FUNDING_AMBIGUOUS];
+
+    /**
+     * Internal use-case key => Telnyx 10DLC campaignBuilder `usecase` value.
+     * Stored values stay lowercase; this is only the outgoing API boundary.
+     */
+    public const TEN_DLC_USE_CASES = [
+        'customer_care' => 'CUSTOMER_CARE',
+        'marketing' => 'MARKETING',
+        'mixed' => 'MIXED',
+    ];
+
+    /** The "Both" selection: customer care plus marketing. */
+    public const MIXED_SUB_USE_CASES = ['CUSTOMER_CARE', 'MARKETING'];
 
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
+        // Checked before any wallet reservation: a campaign description is
+        // required, and the technical use-case key is never a substitute.
+        if ($submission->campaignDescription === null || trim($submission->campaignDescription) === '') {
+            throw new \RuntimeException('A 10DLC campaign description is required before submission.');
+        }
+
+        // Also before funding: an unsupported use case is never forwarded.
+        $telnyxUseCase = self::TEN_DLC_USE_CASES[$submission->useCase] ?? null;
+
+        if ($telnyxUseCase === null) {
+            throw new \RuntimeException('Unsupported 10DLC use case "' . $submission->useCase . '"; choose customer care, marketing or both.');
+        }
+
         $business = Business::query()->findOrFail($submission->businessId);
 
         // An earlier attempt whose provider outcome was never confirmed
@@ -810,8 +839,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             try {
                 $campaignResponse = $campaignId !== null ? null : $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
                     'brandId' => $brandId,
-                    'usecase' => $submission->useCase,
-                    'description' => $submission->useCase,
+                    'usecase' => $telnyxUseCase,
+                    'description' => $submission->campaignDescription,
                     'sample1' => $submission->sampleMessage1,
                     'sample2' => $submission->sampleMessage2,
                     'messageFlow' => $submission->optInMethod,
@@ -820,7 +849,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     'optinKeywords' => 'START, SUBSCRIBE',
                     'optoutKeywords' => 'STOP, UNSUBSCRIBE',
                     'helpKeywords' => 'HELP, INFO',
-                ]);
+                ] + $this->campaignDeclarations($submission, $telnyxUseCase));
             } catch (ConnectionException $e) {
                 throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign request did not complete');
             }
@@ -867,6 +896,30 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $this->wallet->commit($reservationId);
 
         return new RegistrationSubmissionResult($brandId, $campaignId, null, MessagingRegistrationStatus::Pending);
+    }
+
+    /**
+     * Mixed campaigns must name their sub-use-cases (Telnyx OpenAPI
+     * CampaignRequest.subUsecases, camelCase like every other field of this
+     * request). Subscriber opt-in/out/help declarations are sent only when
+     * the customer attested them on the consent checklist — never assumed.
+     *
+     * @return array<string, mixed>
+     */
+    private function campaignDeclarations(MessagingRegistrationSubmission $submission, string $telnyxUseCase): array
+    {
+        $confirmed = $submission->consentConfirmations;
+        $declarations = [
+            'subscriberOptin' => in_array('separate_optional_consent', $confirmed, true),
+            'subscriberOptout' => in_array('stop_help', $confirmed, true),
+            'subscriberHelp' => in_array('stop_help', $confirmed, true),
+        ];
+
+        if ($telnyxUseCase === 'MIXED') {
+            $declarations['subUsecases'] = self::MIXED_SUB_USE_CASES;
+        }
+
+        return $declarations;
     }
 
     private function unconfirmedOutcome(Business $business, string $stage, ?string $brandId, string $detail): MessagingRegistrationRecoveryRequiredException
