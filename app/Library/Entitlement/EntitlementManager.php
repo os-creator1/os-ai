@@ -2253,6 +2253,27 @@ final class EntitlementManager
         });
     }
 
+    /**
+     * Read-only: the feature keys each of the Workspace's Businesses has
+     * switched off for itself (BusinessFeatureToggle), for the admin Module
+     * Access display. Admin-only callers; mutates nothing.
+     *
+     * @return array<string, list<string>> Business name => feature keys
+     */
+    public function businessDisabledFeatureKeysForWorkspace(Workspace $workspace): array
+    {
+        $result = [];
+
+        foreach ($workspace->businesses()->get(['id', 'name']) as $business) {
+            $result[(string) $business->name] = array_map(
+                'strval',
+                $this->toggleRepository->allForBusiness((int) $business->id)->keys()->all(),
+            );
+        }
+
+        return $result;
+    }
+
     private function writeOverrideTransition(
         int $workspaceId,
         string $featureKey,

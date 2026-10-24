@@ -25,6 +25,7 @@ class AdminWorkspaceModuleAccessTest extends TestCase
 {
     use CreatesCustomerContextFixtures;
     use RefreshDatabase;
+    use \Tests\Feature\GoogleAds\Reporting\Concerns\SeedsGoogleAdsReportingData;
 
     private User $admin;
 
@@ -259,5 +260,79 @@ class AdminWorkspaceModuleAccessTest extends TestCase
             WorkspaceEntitlementOverrideState::Allow,
             \App\Models\WorkspaceEntitlementOverride::query()->where('workspace_id', $workspace->id)->where('feature_key', 'ads_module')->firstOrFail()->state,
         );
+    }
+
+    public function test_a_failure_midway_rolls_back_every_module_change_in_the_request(): void
+    {
+        [, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->actAsPlatformAdmin();
+
+        $transitionsBefore = DB::table('workspace_entitlement_transitions')->where('workspace_id', $workspace->id)->count();
+
+        // Ads (4 rows) and CRM are written before the third entry fails.
+        try {
+            app(\App\Library\Entitlement\EntitlementManager::class)->applyWorkspaceModuleAccess(
+                $workspace,
+                ['ads' => 'disabled', 'crm' => 'disabled', 'forms' => 'bogus'],
+                $this->admin->id,
+                'Atomicity check.',
+            );
+            $this->fail('The invalid state must abort the whole request.');
+        } catch (\InvalidArgumentException) {
+            // expected
+        }
+
+        $this->assertSame([], $this->overrideRows($workspace));
+        $this->assertSame($transitionsBefore, DB::table('workspace_entitlement_transitions')->where('workspace_id', $workspace->id)->count());
+
+        // A key that is not a customer module (and a Planned one) is refused the same way.
+        $this->expectException(\InvalidArgumentException::class);
+        app(\App\Library\Entitlement\EntitlementManager::class)->applyWorkspaceModuleAccess(
+            $workspace, ['agency_package_capabilities' => 'enabled'], $this->admin->id, 'Unavailable.',
+        );
+    }
+
+    public function test_disabling_and_restoring_ads_preserves_ads_data_and_integrations(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $account = $this->adsAccountFor($business);
+        $this->seedCampaign($account, '111', 'Wedding Photo Booth');
+
+        $tables = ['businesses', 'workspace_plan_assignments', 'business_google_connections', 'google_ads_accounts', 'google_ads_campaigns'];
+        $snapshot = fn (): array => array_map(
+            fn (string $t): array => DB::table($t)->orderBy('id')->get()->map(fn ($r) => (array) $r)->all(),
+            array_combine($tables, $tables),
+        );
+        $before = $snapshot();
+        $this->assertNotEmpty($before['google_ads_campaigns']);
+
+        $this->actAsPlatformAdmin();
+        $this->saveModules($workspace, ['ads' => 'disabled']);
+
+        $this->authenticateAs($customer);
+        $this->get($this->adsUrl($workspace, $business))->assertNotFound();
+
+        $this->assertEquals($before, $snapshot(), 'Disabling Ads must not modify or delete any stored data or integration.');
+
+        $this->actAsPlatformAdmin();
+        $this->saveModules($workspace, ['ads' => 'default']);
+        $this->authenticateAs($customer);
+        $this->get($this->adsUrl($workspace, $business))->assertOk();
+
+        $this->assertEquals($before, $snapshot());
+    }
+
+    public function test_the_admin_display_shows_business_level_restrictions(): void
+    {
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->actAsPlatformAdmin();
+
+        app(\App\Library\Entitlement\EntitlementManager::class)
+            ->disableBusinessFeature($business, PlatformFeature::Forms, (int) $workspace->owner_user_id, 'Customer choice.');
+
+        $html = $this->get(route('admin.workspaces.show', $workspace))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/data-module="forms".*?data-effective="off".*?Turned off by the business/s', $html);
+        $this->assertMatchesRegularExpression('/data-module="crm".*?data-effective="on"/s', $html);
     }
 }

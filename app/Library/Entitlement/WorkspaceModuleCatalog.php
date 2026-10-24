@@ -215,19 +215,26 @@ final class WorkspaceModuleCatalog
      * summary EntitlementManager already produced (same precedence as
      * decide(): override, else plan mapping, then plan status). A module is
      * on when any of its keys is entitled, matching how AdsFeatureAccess and
-     * the SEO gates treat their keys. Per-Business toggles are not included.
+     * the SEO gates treat their keys.
      *
-     * @return array{on: bool, reason: string}
+     * Business-level restrictions (the customer's own per-Business feature
+     * toggles, `disabled_for_business` in decide()) are layered on top: a
+     * Business is restricted when every key that would otherwise grant the
+     * module is switched off for it.
+     *
+     * @param  array<string, list<string>>  $businessDisabledKeys  Business name => feature keys switched off for it
+     * @return array{on: bool, reason: string, restricted: list<string>}
      */
-    public static function effective(string $moduleId, WorkspaceEntitlementSummary $summary): array
+    public static function effective(string $moduleId, WorkspaceEntitlementSummary $summary, array $businessDisabledKeys = []): array
     {
         if (! $summary->isAssigned) {
-            return ['on' => false, 'reason' => 'No plan assigned'];
+            return ['on' => false, 'reason' => 'No plan assigned', 'restricted' => []];
         }
 
         $viaPlan = false;
         $viaOverride = false;
         $denied = false;
+        $entitledKeys = [];
 
         foreach (self::MODULES[$moduleId]['keys'] as $key) {
             if (! PlatformFeatureRegistry::isAvailable($key)) {
@@ -240,23 +247,41 @@ final class WorkspaceModuleCatalog
                 $denied = true;
             } elseif ($override === WorkspaceEntitlementOverrideState::Allow) {
                 $viaOverride = true;
+                $entitledKeys[] = $key;
             } elseif (in_array($key, $summary->planFeatureKeys, true)) {
                 $viaPlan = true;
+                $entitledKeys[] = $key;
             }
         }
 
         if (! $viaPlan && ! $viaOverride) {
-            return ['on' => false, 'reason' => $denied ? 'Disabled by platform admin' : 'Not included in plan'];
+            return ['on' => false, 'reason' => $denied ? 'Disabled by platform admin' : 'Not included in plan', 'restricted' => []];
         }
 
         if ($summary->status === WorkspacePlanAssignmentStatus::Suspended) {
-            return ['on' => false, 'reason' => 'Plan suspended'];
+            return ['on' => false, 'reason' => 'Plan suspended', 'restricted' => []];
         }
 
         if ($summary->status === WorkspacePlanAssignmentStatus::Inactive) {
-            return ['on' => false, 'reason' => 'Plan inactive'];
+            return ['on' => false, 'reason' => 'Plan inactive', 'restricted' => []];
         }
 
-        return ['on' => true, 'reason' => $viaOverride && ! $viaPlan ? 'Enabled by platform admin' : 'Included in plan'];
+        $restricted = [];
+
+        foreach ($businessDisabledKeys as $businessName => $offKeys) {
+            if (array_diff($entitledKeys, $offKeys) === []) {
+                $restricted[] = (string) $businessName;
+            }
+        }
+
+        if ($businessDisabledKeys !== [] && count($restricted) === count($businessDisabledKeys)) {
+            return ['on' => false, 'reason' => 'Turned off by the business', 'restricted' => $restricted];
+        }
+
+        return [
+            'on' => true,
+            'reason' => $viaOverride && ! $viaPlan ? 'Enabled by platform admin' : 'Included in plan',
+            'restricted' => $restricted,
+        ];
     }
 }

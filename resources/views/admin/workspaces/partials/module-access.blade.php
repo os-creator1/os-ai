@@ -27,7 +27,7 @@
                             @foreach (Modules::modules() as $moduleId => $module)
                                 @php
                                     $stored = Modules::storedState($moduleId, $entitlementSummary->overrides);
-                                    $effective = Modules::effective($moduleId, $entitlementSummary);
+                                    $effective = Modules::effective($moduleId, $entitlementSummary, $businessDisabledKeys ?? []);
                                     $canEnable = Modules::canEnable($moduleId);
                                     $choices = [Modules::STATE_DEFAULT => 'Plan default'];
                                     if ($canEnable) {
@@ -42,7 +42,7 @@
                                     </div>
                                     <div class="d-flex align-items-center gap-2">
                                         <x-badge :variant="$effective['on'] ? 'success' : 'danger'" data-effective="{{ $effective['on'] ? 'on' : 'off' }}">
-                                            {{ $effective['on'] ? 'On' : 'Off' }} · {{ $effective['reason'] }}
+                                            {{ $effective['on'] ? 'On' : 'Off' }} · {{ $effective['reason'] }}@if ($effective['on'] && $effective['restricted']) · off for {{ implode(', ', $effective['restricted']) }} (turned off by the business)@endif
                                         </x-badge>
                                         <div class="btn-group" role="group" aria-label="{{ $module['label'] }} access">
                                             @if ($stored === Modules::STATE_MIXED)
