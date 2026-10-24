@@ -76,13 +76,13 @@ class BusinessEmailProviderAdapterTest extends TestCase
         parse_str((string) parse_url($url, PHP_URL_QUERY), $q);
 
         $this->assertStringStartsWith('https://accounts.google.com/o/oauth2/v2/auth?', $url);
-        $this->assertSame('openid email https://www.googleapis.com/auth/gmail.send', $q['scope']);
+        $this->assertSame('openid email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly', $q['scope']);
         $this->assertSame('offline', $q['access_type']);
         $this->assertSame('consent', $q['prompt']);
         $this->assertSame('STATE', $q['state']);
         $this->assertSame('https://app.example.test/email/oauth/google/callback', $q['redirect_uri']);
         $this->assertArrayNotHasKey('include_granted_scopes', $q, 'A Calendar/Business Profile grant is never folded into the email grant.');
-        $this->assertStringNotContainsString('readonly', $url);
+        $this->assertStringContainsString('gmail.readonly', $url, 'inbound sync needs the (restricted) mailbox-read scope');
         $this->assertStringNotContainsString('calendar', $url);
     }
 
@@ -396,7 +396,8 @@ class BusinessEmailProviderAdapterTest extends TestCase
             $this->assertTrue($capabilities->plainTextSend);
             $this->assertFalse($capabilities->htmlSend);
             $this->assertFalse($capabilities->attachments);
-            $this->assertFalse($capabilities->inboundSync);
+            // Only the Google adapter reads mail; Microsoft inbound is not implemented.
+            $this->assertSame($provider instanceof GoogleBusinessEmailProvider, $capabilities->inboundSync);
         }
     }
 }

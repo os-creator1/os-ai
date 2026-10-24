@@ -13,7 +13,9 @@ use App\Models\BusinessEmailAccount;
 use App\Models\BusinessEmailMessage;
 use App\Models\BusinessLocation;
 use App\Models\Contacts;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -38,6 +40,9 @@ final class BusinessEmailInboundSyncer
 {
     public const NEEDS_REAUTHORIZATION = 'reauthorization_required';
 
+    /** MySQL errors meaning "this row's data was refused": too long, bad charset/value, out of range, truncated. */
+    private const DATA_ERROR_CODES = [1265, 1292, 1300, 1366, 1406, 1264, 1267, 1271];
+
     public function __construct(
         private readonly BusinessEmailAccountManager $accounts,
         private readonly BusinessEmailProviderRegistry $providers,
@@ -45,18 +50,24 @@ final class BusinessEmailInboundSyncer
     ) {
     }
 
+    /** Can this account's PROVIDER synchronize inbound mail at all? (Microsoft cannot yet.) */
+    public function supportsInbound(BusinessEmailAccount $account): bool
+    {
+        $provider = $this->providers->for($account->provider);
+
+        return $provider instanceof InboundBusinessEmailProvider && $provider->capabilities()->inboundSync;
+    }
+
     /** Does this account's stored grant include the mailbox-read permission? */
     public function canSync(BusinessEmailAccount $account): bool
     {
-        if (! $account->isActive()) {
+        if (! $account->isActive() || ! $this->supportsInbound($account)) {
             return false;
         }
 
         $provider = $this->providers->for($account->provider);
 
-        return $provider instanceof InboundBusinessEmailProvider
-            && $provider->capabilities()->inboundSync
-            && in_array($provider->inboundScope(), preg_split('/\s+/', (string) $account->granted_scopes) ?: [], true);
+        return in_array($provider->inboundScope(), preg_split('/\s+/', (string) $account->granted_scopes) ?: [], true);
     }
 
     /**
@@ -115,8 +126,28 @@ final class BusinessEmailInboundSyncer
                 return $result;
             }
 
+            foreach ($batch->unparsed as $providerMessageId) {
+                $this->recordSkipped($account, $providerMessageId, 'unparseable');
+                $result['skipped']++;
+            }
+
             foreach ($batch->messages as $message) {
-                $this->store($business, $account, $message) ? $result['stored']++ : $result['skipped']++;
+                try {
+                    $this->store($business, $account, $message) ? $result['stored']++ : $result['skipped']++;
+                } catch (QueryException $exception) {
+                    // Only a rejection of THIS message's data is message-level.
+                    // Anything else (lost connection, deadlock, lock wait) is a
+                    // recoverable system failure: rethrow, keep the cursor.
+                    if (! in_array((int) ($exception->errorInfo[1] ?? 0), self::DATA_ERROR_CODES, true)) {
+                        throw $exception;
+                    }
+
+                    $this->recordSkipped($account, $message->providerMessageId, 'data_rejected:' . (int) $exception->errorInfo[1]);
+                    $result['skipped']++;
+                } catch (\Throwable $exception) {
+                    $this->recordSkipped($account, $message->providerMessageId, 'error:' . class_basename($exception));
+                    $result['skipped']++;
+                }
             }
 
             $result['has_more'] = $batch->hasMore;
@@ -256,6 +287,32 @@ final class BusinessEmailInboundSyncer
         $value = $state instanceof \BackedEnum ? (string) $state->value : (string) $state;
 
         return $value === BusinessLocationLifecycleState::Active->value ? $location : null;
+    }
+
+    /**
+     * A message that could not be stored must not hold the mailbox hostage.
+     * Only its provider id and a reason are kept (never subject, sender or
+     * body), so an operator can find it in Gmail and re-import it after a fix
+     * (clearing nothing is needed: the id is simply not in the ledger).
+     */
+    private function recordSkipped(BusinessEmailAccount $account, string $providerMessageId, string $reason): void
+    {
+        DB::table('business_email_accounts')
+            ->where('id', $account->id)
+            ->update([
+                'inbound_skipped_count' => DB::raw('inbound_skipped_count + 1'),
+                'inbound_last_skipped_id' => substr($providerMessageId, 0, 191),
+                'inbound_last_skipped_reason' => substr($reason, 0, 64),
+                'inbound_last_skipped_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+        Log::warning('Inbound business email message skipped.', [
+            'account_id' => $account->id,
+            'business_id' => $account->business_id,
+            'provider_message_id' => $providerMessageId,
+            'reason' => $reason,
+        ]);
     }
 
     private function recordFailure(BusinessEmailAccount $account, string $classification): void

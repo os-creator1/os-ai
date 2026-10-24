@@ -538,6 +538,23 @@ class BusinessEmailConnectionTest extends TestCase
         }
     }
 
+    public function test_only_a_provider_that_supports_inbound_is_asked_for_the_inbound_permission(): void
+    {
+        [, $business, $workspace] = $this->owner();
+        $show = route('customer.workspaces.businesses.email.show', [$workspace->uid, $business->uid]);
+
+        // A send-only Google grant is asked to reauthorize.
+        $this->activeAccount($business);
+        $this->assertStringContainsString('email-inbound-reauth', $this->get($show)->assertOk()->getContent());
+
+        // A Microsoft account is never told it needs a Google permission.
+        $this->account($business)->delete();
+        $this->activeAccount($business, BusinessEmailProviderType::Microsoft);
+        $html = $this->get($show)->assertOk()->getContent();
+        $this->assertStringNotContainsString('email-inbound-reauth', $html);
+        $this->assertStringNotContainsString('from Google', $html);
+    }
+
     // ---- disconnect / reconnect -----------------------------------------
 
     public function test_disconnect_destroys_the_credential_revokes_at_the_provider_and_stops_sending(): void

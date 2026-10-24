@@ -34,6 +34,7 @@ class BusinessEmailMessage extends Model
         'claimed_at' => 'datetime',
         'next_attempt_at' => 'datetime',
         'accepted_at' => 'datetime',
+        'received_at' => 'datetime',
         'attempts' => 'integer',
     ];
 

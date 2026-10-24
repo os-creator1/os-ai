@@ -65,6 +65,8 @@ return [
         'max_messages_per_run' => 50,
         'sync_every_minutes' => 5,
         'max_body_length' => 20000,
+        // Hard storage bound (bytes) for one stored body; body_text is a TEXT column.
+        'max_body_bytes' => 60000,
     ],
 
     'send' => [

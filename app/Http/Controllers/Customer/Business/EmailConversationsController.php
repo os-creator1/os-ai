@@ -34,7 +34,7 @@ class EmailConversationsController extends CustomerBaseController
     ) {
     }
 
-    public function index(Request $request, string $workspaceUid, string $businessUid): View
+    public function threads(Request $request, string $workspaceUid, string $businessUid): View
     {
         $this->authorize('chat_box');
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Conversations->value);

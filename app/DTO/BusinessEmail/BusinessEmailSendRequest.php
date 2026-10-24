@@ -31,7 +31,7 @@ final class BusinessEmailSendRequest
         public readonly ?int $sentByUserId = null,
         public readonly ?int $automationStepRunId = null,
         /** Makes this a reply: same thread, RFC reply headers, counterpart address. */
-        public readonly ?BusinessEmailMessage $replyTo = null,
+        public readonly ?BusinessEmailMessage $inResponseTo = null,
     ) {
     }
 }

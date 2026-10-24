@@ -134,7 +134,7 @@ final class BusinessEmailSender
     {
         // Only a reply may go to a sender who is not (yet) a Contact: its
         // recipient is the stored message's counterpart, never caller input.
-        if ($request->contact === null && $request->replyTo !== null) {
+        if ($request->contact === null && $request->inResponseTo !== null) {
             return null;
         }
 
@@ -269,12 +269,12 @@ final class BusinessEmailSender
      */
     private function authoritativeReply(BusinessEmailSendRequest $request, ?Contacts $contact): ?BusinessEmailMessage
     {
-        if ($request->replyTo === null) {
+        if ($request->inResponseTo === null) {
             return null;
         }
 
         $reply = BusinessEmailMessage::query()
-            ->where('id', $request->replyTo->id)
+            ->where('id', $request->inResponseTo->id)
             ->where('business_id', $request->business->id)
             ->when($contact !== null, fn ($q) => $q->where('contact_id', $contact->id), fn ($q) => $q->whereNull('contact_id'))
             ->first();

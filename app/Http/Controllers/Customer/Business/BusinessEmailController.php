@@ -118,7 +118,7 @@ class BusinessEmailController extends CustomerBaseController
             'messages' => $messages,
             // Inbound mail needs the read permission; older connections must reauthorize.
             'inboundReady' => $account !== null && $this->inbound->canSync($account),
-            'inboundNeedsReauth' => $account?->isActive() === true && ! $this->inbound->canSync($account),
+            'inboundNeedsReauth' => $account?->isActive() === true && $this->inbound->supportsInbound($account) && ! $this->inbound->canSync($account),
             'sendToken' => (string) Str::uuid(),
         ]);
     }
@@ -367,7 +367,7 @@ class BusinessEmailController extends CustomerBaseController
                 source: BusinessEmailSource::Manual,
                 location: $location,
                 sentByUserId: (int) Auth::id(),
-                replyTo: $original,
+                inResponseTo: $original,
             ));
         } catch (BusinessEmailSendRefusedException $exception) {
             return $back('error', $exception->userMessage());

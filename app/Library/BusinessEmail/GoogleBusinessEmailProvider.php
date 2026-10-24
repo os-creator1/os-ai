@@ -204,16 +204,27 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
         }
 
         $messages = [];
+        $unparsed = [];
 
         foreach ($ids as $id) {
-            $message = $this->fetchMessage($accessToken, $id);
+            try {
+                $message = $this->fetchMessage($accessToken, $id);
+            } catch (BusinessEmailProviderException $exception) {
+                throw $exception;
+            } catch (\Throwable) {
+                // A message that cannot be parsed must not block the mailbox:
+                // report its id (never its content) so the syncer can record it.
+                $unparsed[] = $id;
+
+                continue;
+            }
 
             if ($message !== null) {
                 $messages[] = $message;
             }
         }
 
-        return new BusinessEmailInboundBatch($messages, $newCursor, $hasMore);
+        return new BusinessEmailInboundBatch($messages, $newCursor, $hasMore, $unparsed);
     }
 
     /** @return array{0: list<string>, 1: string|null} ids and the cursor taken BEFORE listing */
@@ -242,7 +253,17 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
         return [array_reverse($ids), $cursor];
     }
 
-    /** @return array{0: list<string>, 1: string|null, 2: bool} */
+    /**
+     * One page of history, consumed WHOLE RECORDS at a time. A history record
+     * is the atomic unit: the cursor only ever advances to the id of the last
+     * record whose messages are all in the returned list, so a batch limit can
+     * never skip a message. A single record larger than the limit is taken
+     * whole (progress is always made). Records at or before the cursor are
+     * ignored, so a provider that returns the boundary record again cannot
+     * stall the sync; duplicates are harmless anyway (idempotent store).
+     *
+     * @return array{0: list<string>, 1: string|null, 2: bool} ids, next cursor, more to read
+     */
     private function historyIds(string $accessToken, string $cursor, int $limit): array
     {
         $json = $this->getJson(self::API . '/history?' . http_build_query([
@@ -253,27 +274,49 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
         ]), $accessToken);
 
         $ids = [];
-        $lastRecord = null;
+        $lastTaken = null;
+        $remaining = false;
 
         foreach ((array) ($json['history'] ?? []) as $record) {
-            $lastRecord = isset($record['id']) ? (string) $record['id'] : $lastRecord;
+            $recordId = isset($record['id']) ? (string) $record['id'] : null;
+
+            if ($recordId === null || ! ctype_digit($recordId) || (ctype_digit($cursor) && (int) $recordId <= (int) $cursor)) {
+                continue;
+            }
+
+            $recordIds = [];
 
             foreach ((array) ($record['messagesAdded'] ?? []) as $added) {
                 if (isset($added['message']['id'])) {
-                    $ids[(string) $added['message']['id']] = true;
+                    $recordIds[(string) $added['message']['id']] = true;
                 }
             }
+
+            $newIds = array_diff(array_keys($recordIds), array_keys($ids));
+
+            if ($ids !== [] && count($ids) + count($newIds) > $limit) {
+                $remaining = true;
+
+                break;
+            }
+
+            foreach ($newIds as $id) {
+                $ids[$id] = true;
+            }
+
+            $lastTaken = $recordId;
         }
 
-        $ids = array_keys($ids);
-        $hasMore = isset($json['nextPageToken']) || count($ids) > $limit;
-        $ids = array_slice($ids, 0, $limit);
+        $hasMore = $remaining || isset($json['nextPageToken']);
 
-        // More pages: advance only as far as the records read; the rest is
-        // returned by the next run. Otherwise the mailbox's current history id.
-        $newCursor = $hasMore ? ($lastRecord ?? $cursor) : (isset($json['historyId']) ? (string) $json['historyId'] : $cursor);
+        if (! $hasMore) {
+            // Everything on the last page was taken: jump to the mailbox's current history id.
+            return [array_keys($ids), isset($json['historyId']) ? (string) $json['historyId'] : ($lastTaken ?? $cursor), false];
+        }
 
-        return [$ids, $newCursor, $hasMore];
+        // More to read (records left on this page, or further pages): resume
+        // from the last record fully taken. Never beyond it.
+        return [array_keys($ids), $lastTaken ?? $cursor, true];
     }
 
     private function fetchMessage(string $accessToken, string $id): ?BusinessEmailInboundMessage
@@ -309,7 +352,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
             $name = strtolower((string) ($header['name'] ?? ''));
 
             if ($name !== '' && ! isset($headers[$name])) {
-                $headers[$name] = (string) ($header['value'] ?? '');
+                $headers[$name] = $this->utf8((string) ($header['value'] ?? ''), null);
             }
         }
 
@@ -325,6 +368,9 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
             : null;
 
         $maxBody = max(100, (int) config('business_email.inbound.max_body_length', 20000));
+        // Bound by STORAGE bytes: body_text is a TEXT column (65,535 bytes) and
+        // multibyte characters take up to 4 bytes each.
+        $maxBytes = min(65000, max(100, (int) config('business_email.inbound.max_body_bytes', 60000)));
 
         return new BusinessEmailInboundMessage(
             providerMessageId: substr($id, 0, 191),
@@ -336,7 +382,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
             fromName: $from['name'] !== null ? mb_substr($from['name'], 0, 191) : null,
             toEmail: $to['email'] ?? '',
             subject: mb_substr($this->clean($this->decodeWords($headers['subject'] ?? '')), 0, 255),
-            bodyText: mb_substr($this->extractBody((array) ($json['payload'] ?? [])), 0, $maxBody),
+            bodyText: mb_strcut(mb_substr($this->extractBody((array) ($json['payload'] ?? [])), 0, $maxBody), 0, $maxBytes, 'UTF-8'),
             receivedAt: $received,
             labels: array_values(array_map('strval', (array) ($json['labelIds'] ?? []))),
         );
@@ -351,7 +397,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
     {
         $value = $value === null ? '' : $this->clean($value);
 
-        return $value === '' ? null : substr($value, 0, $max);
+        return $value === '' ? null : mb_strcut($value, 0, $max, 'UTF-8');
     }
 
     /** @return array{email: string|null, name: string|null} first address of an address header */
@@ -375,7 +421,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
 
     private function decodeWords(string $value): string
     {
-        return str_contains($value, '=?') ? (string) iconv_mime_decode($value, ICONV_MIME_DECODE_CONTINUE_ON_ERROR, 'UTF-8') : $value;
+        return str_contains($value, '=?') ? $this->utf8((string) iconv_mime_decode($value, ICONV_MIME_DECODE_CONTINUE_ON_ERROR, 'UTF-8'), null) : $value;
     }
 
     /** @param array<string, mixed> $payload */
@@ -398,7 +444,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
         if (($part['mimeType'] ?? null) === $mime && isset($part['body']['data'])) {
             $decoded = base64_decode(strtr((string) $part['body']['data'], '-_', '+/'), false);
 
-            return $decoded === false ? null : str_replace("\0", '', $decoded);
+            return $decoded === false ? null : $this->utf8($decoded, $this->declaredCharset($part));
         }
 
         foreach ((array) ($part['parts'] ?? []) as $child) {
@@ -410,6 +456,46 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
         }
 
         return null;
+    }
+
+    /** @param array<string, mixed> $part */
+    private function declaredCharset(array $part): ?string
+    {
+        foreach ((array) ($part['headers'] ?? []) as $header) {
+            if (strtolower((string) ($header['name'] ?? '')) === 'content-type'
+                && preg_match('/charset\s*=\s*"?([A-Za-z0-9_.:-]+)"?/i', (string) ($header['value'] ?? ''), $m) === 1) {
+                return $m[1];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Valid UTF-8 for any input. Declared charset first; otherwise (or when
+     * the declaration is unknown / wrong) valid UTF-8 is kept as-is, and
+     * anything else is read as Windows-1252, the superset of Latin-1 that
+     * mail clients actually produce. Never throws, and NUL / invalid
+     * sequences cannot reach the database.
+     */
+    private function utf8(string $value, ?string $charset): string
+    {
+        $charset = $charset === null ? null : strtoupper(trim($charset));
+        $converted = null;
+
+        if ($charset !== null && $charset !== '' && ! in_array($charset, ['UTF-8', 'UTF8', 'US-ASCII', 'ASCII'], true)) {
+            try {
+                $converted = mb_convert_encoding($value, 'UTF-8', $charset);
+            } catch (\Throwable) {
+                $converted = null;
+            }
+        }
+
+        if ($converted === null) {
+            $converted = mb_check_encoding($value, 'UTF-8') ? $value : mb_convert_encoding($value, 'UTF-8', 'Windows-1252');
+        }
+
+        return str_replace("\0", '', mb_scrub((string) $converted, 'UTF-8'));
     }
 
     public function revokeGrant(string $refreshToken): void

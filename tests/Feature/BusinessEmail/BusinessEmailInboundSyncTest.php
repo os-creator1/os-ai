@@ -120,7 +120,7 @@ class BusinessEmailInboundSyncTest extends TestCase
 
         // Our reply goes to the customer, in the same thread, with RFC headers.
         $reply = app(BusinessEmailSender::class)->send(new BusinessEmailSendRequest(
-            $business, $contact, 'Re: Quote', 'Thanks!', 'reply-1', replyTo: $inbound,
+            $business, $contact, 'Re: Quote', 'Thanks!', 'reply-1', inResponseTo: $inbound,
         ));
 
         $this->assertSame(Status::Accepted, $reply->status);
@@ -193,7 +193,7 @@ class BusinessEmailInboundSyncTest extends TestCase
         $this->expectException(\App\Exceptions\BusinessEmail\BusinessEmailSendRefusedException::class);
 
         try {
-            app(BusinessEmailSender::class)->send(new BusinessEmailSendRequest($businessA, $contactA, 'Re', 'x', 'op-x', replyTo: $foreign));
+            app(BusinessEmailSender::class)->send(new BusinessEmailSendRequest($businessA, $contactA, 'Re', 'x', 'op-x', inResponseTo: $foreign));
         } finally {
             $this->assertSame(0, $this->fakeGoogle->callCount('send'));
             unset($contactB);
@@ -371,5 +371,174 @@ class BusinessEmailInboundSyncTest extends TestCase
         ));
         $this->assertStringContainsString("In-Reply-To: <a@x>\r\n", $mime);
         $this->assertStringContainsString("References: <a@x>\r\n", $mime);
+    }
+
+    private function b64(string $raw): string
+    {
+        return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+    }
+
+    private function adapter(): GoogleBusinessEmailProvider
+    {
+        return new GoogleBusinessEmailProvider(app(\App\Library\BusinessEmail\BusinessEmailOAuthConfig::class));
+    }
+
+    public function test_a_non_utf8_message_is_decoded_by_its_declared_charset_and_stores_cleanly(): void
+    {
+        $latin1 = "Caf\xE9 cr\xE8me \x93quoted\x94";
+
+        $message = $this->adapter()->parseMessage([
+            'id' => 'l1', 'labelIds' => ['INBOX'],
+            'payload' => [
+                'mimeType' => 'text/plain',
+                // Raw (non-UTF-8) header bytes as well as a Latin-1 body.
+                'headers' => [
+                    ['name' => 'From', 'value' => "Ren\xE9 <rene@example.com>"],
+                    ['name' => 'Subject', 'value' => "Re\xE7u"],
+                    ['name' => 'Content-Type', 'value' => 'text/plain; charset="ISO-8859-1"'],
+                ],
+                'body' => ['data' => $this->b64($latin1)],
+            ],
+        ]);
+
+        $this->assertNotNull($message);
+        foreach ([$message->bodyText, $message->subject, (string) $message->fromName] as $value) {
+            $this->assertTrue(mb_check_encoding($value, 'UTF-8'));
+        }
+        $this->assertStringContainsString('Café crème', $message->bodyText);
+        $this->assertSame('René', $message->fromName);
+
+        // An unknown / wrong declared charset still yields valid UTF-8.
+        $unknown = $this->adapter()->parseMessage([
+            'id' => 'l2', 'labelIds' => ['INBOX'],
+            'payload' => [
+                'mimeType' => 'text/plain',
+                'headers' => [['name' => 'From', 'value' => 'a@example.com'], ['name' => 'Content-Type', 'value' => 'text/plain; charset=x-no-such-charset']],
+                'body' => ['data' => $this->b64("bad \xFF\xFE bytes")],
+            ],
+        ]);
+        $this->assertTrue(mb_check_encoding($unknown->bodyText, 'UTF-8'));
+
+        // And it really stores and renders through the ledger.
+        [, $business] = $this->emailTenant();
+        $account = $this->syncable($business);
+        $this->feed([$message]);
+        $this->assertSame(1, $this->syncer()->sync($account)['stored']);
+    }
+
+    public function test_an_oversized_multibyte_body_is_capped_by_storage_bytes_and_stays_valid_utf8(): void
+    {
+        $emoji = str_repeat("\u{1F600}", 20000); // 80,000 bytes in 20,000 characters
+
+        $message = $this->adapter()->parseMessage([
+            'id' => 'big', 'labelIds' => ['INBOX'],
+            'payload' => [
+                'mimeType' => 'text/plain',
+                'headers' => [['name' => 'From', 'value' => 'a@example.com'], ['name' => 'Content-Type', 'value' => 'text/plain; charset=UTF-8']],
+                'body' => ['data' => $this->b64($emoji)],
+            ],
+        ]);
+
+        $this->assertLessThanOrEqual(60000, strlen($message->bodyText));
+        $this->assertTrue(mb_check_encoding($message->bodyText, 'UTF-8'));
+        $this->assertNotSame('', $message->bodyText);
+
+        [, $business] = $this->emailTenant();
+        $account = $this->syncable($business);
+        $this->feed([$message]);
+        $this->assertSame(1, $this->syncer()->sync($account)['stored']);
+        $this->assertLessThanOrEqual(65535, strlen((string) BusinessEmailMessage::query()->value('body_text')));
+    }
+
+    public function test_an_unparseable_message_is_recorded_by_id_only_and_does_not_block_the_rest_of_the_mailbox(): void
+    {
+        [, $business] = $this->emailTenant();
+        $account = $this->syncable($business);
+        DB::table('business_email_accounts')->where('id', $account->id)->update(['inbound_cursor' => 'h-0']);
+
+        $this->fakeGoogle->inboundScript[] = new BusinessEmailInboundBatch([$this->inbound('good-1')], 'h-9', false, ['poison-1']);
+        $result = $this->syncer()->sync($account->fresh());
+
+        $this->assertSame(1, $result['stored']);
+        $fresh = $account->fresh();
+        $this->assertSame('h-9', $fresh->inbound_cursor, 'the cursor moves past the poison message');
+        $this->assertSame(1, (int) $fresh->inbound_skipped_count);
+        $this->assertSame('poison-1', $fresh->inbound_last_skipped_id);
+        $this->assertSame('unparseable', $fresh->inbound_last_skipped_reason);
+        $this->assertSame(1, BusinessEmailMessage::query()->where('provider_message_id', 'good-1')->count());
+    }
+
+    /** Records in a Gmail history page; the message endpoint answers for any id. */
+    private function fakeHistory(array $records, ?string $nextPageToken = null): void
+    {
+        // Earlier stubs would otherwise win over this one.
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        Http::preventStrayRequests();
+        Http::fake(function ($request) use ($records, $nextPageToken) {
+            if (str_contains($request->url(), '/history')) {
+                return Http::response(array_filter(['historyId' => '200', 'history' => $records, 'nextPageToken' => $nextPageToken]));
+            }
+
+            preg_match('#/messages/([^/?]+)#', $request->url(), $m);
+
+            return Http::response(['id' => $m[1], 'threadId' => 't-' . $m[1], 'labelIds' => ['INBOX'], 'payload' => ['headers' => [['name' => 'From', 'value' => 'pat@example.com']]]]);
+        });
+    }
+
+    private function record(string $id, array $messageIds): array
+    {
+        return ['id' => $id, 'messagesAdded' => array_map(fn ($m) => ['message' => ['id' => $m]], $messageIds)];
+    }
+
+    public function test_history_pagination_never_skips_messages_when_the_batch_limit_is_smaller_than_the_page(): void
+    {
+        $provider = $this->adapter();
+        $records = [$this->record('101', ['a', 'b']), $this->record('102', ['c', 'd']), $this->record('103', ['e'])];
+        $this->fakeHistory($records); // no nextPageToken
+
+        $first = $provider->fetchInbound('token', '100', 3);
+        $this->assertSame(['a', 'b'], array_map(fn ($m) => $m->providerMessageId, $first->messages));
+        $this->assertSame('101', $first->cursor, 'cursor stops at the last record fully taken');
+        $this->assertTrue($first->hasMore, 'more remains even without a nextPageToken');
+
+        // Resume from the saved cursor: the boundary record may be returned again and is ignored.
+        $second = $provider->fetchInbound('token', $first->cursor, 3);
+        $this->assertSame(['c', 'd', 'e'], array_map(fn ($m) => $m->providerMessageId, $second->messages));
+        $this->assertSame('200', $second->cursor);
+        $this->assertFalse($second->hasMore);
+    }
+
+    public function test_history_pagination_with_a_next_page_token_resumes_from_the_last_record_and_a_huge_record_is_taken_whole(): void
+    {
+        $provider = $this->adapter();
+
+        $this->fakeHistory([$this->record('101', ['a']), $this->record('102', ['b'])], 'page-2');
+        $paged = $provider->fetchInbound('token', '100', 50);
+        $this->assertSame(['a', 'b'], array_map(fn ($m) => $m->providerMessageId, $paged->messages));
+        $this->assertSame('102', $paged->cursor, 'not the mailbox head: more pages remain');
+        $this->assertTrue($paged->hasMore);
+
+        // One record with more ids than the limit is atomic: taken whole so progress is guaranteed.
+        $this->fakeHistory([$this->record('300', ['x1', 'x2', 'x3', 'x4', 'x5'])]);
+        $whole = $provider->fetchInbound('token', '299', 2);
+        $this->assertCount(5, $whole->messages);
+        $this->assertSame('200', $whole->cursor);
+    }
+
+    public function test_the_continuation_job_is_queued_only_while_more_remains_and_is_not_swallowed_by_its_own_lock(): void
+    {
+        $this->assertInstanceOf(\Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing::class, new \App\Jobs\BusinessEmail\SyncBusinessEmailInboxJob(1));
+
+        [, $business] = $this->emailTenant();
+        $account = $this->syncable($business);
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $this->fakeGoogle->inboundScript[] = new BusinessEmailInboundBatch([$this->inbound('g-1')], 'h-1', true);
+        (new \App\Jobs\BusinessEmail\SyncBusinessEmailInboxJob($account->id))->handle($this->syncer());
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\BusinessEmail\SyncBusinessEmailInboxJob::class, 1);
+
+        $this->fakeGoogle->inboundScript[] = new BusinessEmailInboundBatch([$this->inbound('g-2')], 'h-2', false);
+        (new \App\Jobs\BusinessEmail\SyncBusinessEmailInboxJob($account->id))->handle($this->syncer());
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\BusinessEmail\SyncBusinessEmailInboxJob::class, 1);
     }
 }

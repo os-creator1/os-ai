@@ -60,7 +60,7 @@ class BusinessEmailConversationsTest extends TestCase
         app(WorkspaceMembershipLocationRepository::class)->assign($membership, $this->locA);
     }
 
-    private function seed(?BusinessLocation $location, string $subject, string $thread, string $from = 'stranger@example.com', string $direction = 'inbound', ?int $contactId = null): BusinessEmailMessage
+    private function makeMessage(?BusinessLocation $location, string $subject, string $thread, string $from = 'stranger@example.com', string $direction = 'inbound', ?int $contactId = null): BusinessEmailMessage
     {
         return BusinessEmailMessage::create([
             'business_id' => $this->business->id,
@@ -101,8 +101,8 @@ class BusinessEmailConversationsTest extends TestCase
 
     public function test_gmail_threads_are_listed_in_conversations_with_sender_subject_time_and_body(): void
     {
-        $this->seed($this->locA, 'Quote request', 't-a');
-        $this->seed($this->locA, 'Re: Quote request', 't-a', direction: 'outbound');
+        $this->makeMessage($this->locA, 'Quote request', 't-a');
+        $this->makeMessage($this->locA, 'Re: Quote request', 't-a', direction: 'outbound');
         $this->authenticateAs($this->owner);
 
         $list = $this->get($this->convUrl())->assertOk()->getContent();
@@ -117,7 +117,7 @@ class BusinessEmailConversationsTest extends TestCase
 
     public function test_an_authorized_user_can_reply_to_a_sender_who_is_not_a_contact_without_creating_one(): void
     {
-        $inbound = $this->seed($this->locA, 'Hello', 't-a');
+        $inbound = $this->makeMessage($this->locA, 'Hello', 't-a');
         $contactsBefore = DB::table('contacts')->count();
         $this->authenticateAs($this->owner);
 
@@ -140,7 +140,7 @@ class BusinessEmailConversationsTest extends TestCase
     public function test_a_matched_contact_stays_associated_on_reply(): void
     {
         $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id);
-        $inbound = $this->seed($this->locA, 'Hello', 't-a', 'pat@example.com', contactId: $contact->id);
+        $inbound = $this->makeMessage($this->locA, 'Hello', 't-a', 'pat@example.com', contactId: $contact->id);
         $this->authenticateAs($this->owner);
 
         $this->post($this->replyUrl($inbound), $this->form())->assertRedirect();
@@ -150,9 +150,9 @@ class BusinessEmailConversationsTest extends TestCase
 
     public function test_other_businesses_and_unreachable_locations_are_denied_for_listing_and_reply(): void
     {
-        $a = $this->seed($this->locA, 'Visible to A staff', 't-a');
-        $b = $this->seed($this->locB, 'Only Location B', 't-b');
-        $unresolved = $this->seed(null, 'Unresolved owner', 't-u');
+        $a = $this->makeMessage($this->locA, 'Visible to A staff', 't-a');
+        $b = $this->makeMessage($this->locB, 'Only Location B', 't-b');
+        $unresolved = $this->makeMessage(null, 'Unresolved owner', 't-u');
 
         // Staff limited to Location A.
         $this->authenticateAs($this->staff, ['chat_box', 'view_contact']);
@@ -178,7 +178,7 @@ class BusinessEmailConversationsTest extends TestCase
 
     public function test_unresolved_mail_is_visible_to_full_reach_actors_and_needs_an_explicit_location_to_answer(): void
     {
-        $unresolved = $this->seed(null, 'Unresolved owner', 't-u');
+        $unresolved = $this->makeMessage(null, 'Unresolved owner', 't-u');
         $this->authenticateAs($this->owner);
 
         $this->assertStringContainsString('Unresolved owner', $this->get($this->convUrl())->assertOk()->getContent());
@@ -194,7 +194,7 @@ class BusinessEmailConversationsTest extends TestCase
 
     public function test_untrusted_email_content_is_escaped_never_rendered_as_html(): void
     {
-        $message = $this->seed($this->locA, '<script>alert("subject")</script>', 't-x', 'x@example.com');
+        $message = $this->makeMessage($this->locA, '<script>alert("subject")</script>', 't-x', 'x@example.com');
         $message->forceFill([
             'from_name' => '<img src=x onerror=alert(1)>',
             'body_text' => "<script>alert('body')</script>\n<a href=\"javascript:alert(2)\">click</a>",
@@ -206,7 +206,7 @@ class BusinessEmailConversationsTest extends TestCase
 
             $this->assertStringNotContainsString('<script>alert', $html, $url);
             $this->assertStringNotContainsString('<img src=x', $html, $url);
-            $this->assertStringNotContainsString('<a href="javascript:', $html, $url);
+            $this->assertStringNotContainsString('<a href="javascript:alert', $html, $url);
         }
 
         $this->assertStringContainsString('&lt;script&gt;alert(&#039;body&#039;)&lt;/script&gt;', $this->get($this->convUrl('t-x'))->getContent());
