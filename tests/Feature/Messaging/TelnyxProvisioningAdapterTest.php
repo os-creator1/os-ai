@@ -146,6 +146,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             termsUrl: 'https://harborlane.example/terms',
             phoneNumber: $phoneNumber,
             existingBrandId: $existingBrandId,
+            campaignDescription: 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
         );
     }
 
@@ -989,6 +990,8 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'business_id' => $business->id,
             'number_type' => 'local',
             'entity_type' => 'ein',
+            'use_case' => 'customer_care',
+            'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
             'status' => 'not_started',
         ]);
     }
@@ -1159,5 +1162,70 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame('brand_new_1', $result->providerBrandId);
         $this->assertSame(1, $this->brandRequestCount());
         $this->assertSame(['committed'], DB::table('business_usage_reservations')->where('business_id', $business->id)->pluck('status')->all());
+    }
+
+    // -----------------------------------------------------------------
+    // Provider use-case mapping and payload contract.
+    // -----------------------------------------------------------------
+
+    public function test_internal_use_cases_map_to_provider_enum_values_and_keywords_have_no_spaces(): void
+    {
+        $this->enableProvisioning();
+
+        foreach (['customer_care' => ['CUSTOMER_CARE', null], 'marketing' => ['MARKETING', null], 'mixed' => ['MIXED', ['CUSTOMER_CARE', 'MARKETING']], 'appointment_reminders' => ['CUSTOMER_CARE', null]] as $internal => [$expected, $subs]) {
+            $business = $this->business();
+            $registration = $this->localRegistration($business);
+
+            if (! DB::table('usage_meters')->where('meter_key', TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION)->exists()) {
+                $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+            } else {
+                app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+                DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 100_000_000]);
+            }
+
+            $registration->update(['use_case' => $internal]);
+
+            Http::fake([
+                'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_map_' . $internal]]),
+                'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'camp_map_' . $internal]]),
+            ]);
+
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+
+            Http::assertSent(function ($request) use ($expected, $subs) {
+                if (! str_contains($request->url(), '/10dlc/campaignBuilder')) {
+                    return false;
+                }
+
+                $data = $request->data();
+
+                return $data['usecase'] === $expected
+                    && ($data['subUsecases'] ?? null) === $subs
+                    && $data['optinKeywords'] === 'START,SUBSCRIBE'
+                    && $data['optoutKeywords'] === 'STOP,UNSUBSCRIBE'
+                    && $data['helpKeywords'] === 'HELP,INFO'
+                    && $data['description'] !== $expected;
+            });
+        }
+    }
+
+    public function test_an_unmapped_use_case_is_refused_before_funding_or_any_provider_request(): void
+    {
+        $this->enableProvisioning();
+        Http::fake();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        $registration->update(['use_case' => 'something_invented']);
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+            $this->fail('Expected refusal.');
+        } catch (\RuntimeException) {
+            // expected
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
     }
 }

@@ -212,6 +212,51 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->status);
     }
 
+    public function test_a_saved_campaign_cannot_be_edited_into_a_different_submission(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['provider_brand_id' => 'brand_1', 'provider_campaign_id' => 'camp_1']);
+
+        try {
+            $this->service()->captureDetails($business, $this->payload(['sample_message_1' => 'Harbor Lane: a brand new sample. Reply STOP to unsubscribe.']));
+            $this->fail('Expected refusal.');
+        } catch (MessagingRegistrationImmutableException) {
+            // expected
+        }
+
+        $fresh = $registration->fresh();
+        $this->assertSame('camp_1', $fresh->provider_campaign_id);
+        $this->assertNotSame('Harbor Lane: a brand new sample. Reply STOP to unsubscribe.', $fresh->sample_message_1);
+    }
+
+    public function test_a_second_worker_cannot_submit_while_the_shared_lock_is_held(): void
+    {
+        if (\Illuminate\Support\Facades\DB::connection()->getDriverName() !== 'mysql') {
+            $this->markTestSkipped('The shared submit lock is a MySQL session lock.');
+        }
+
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+
+        $config = config('database.connections.' . config('database.default'));
+        $other = new \PDO(sprintf('mysql:host=%s;port=%s;dbname=%s', $config['host'], $config['port'], $config['database']), $config['username'], $config['password']);
+        $held = $other->query("SELECT GET_LOCK('msgreg-submit:" . $registration->id . "', 0)")->fetchColumn();
+        $this->assertSame(1, (int) $held);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected refusal while the lock is held.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException) {
+            // expected
+        } finally {
+            $other->query("SELECT RELEASE_LOCK('msgreg-submit:" . $registration->id . "')");
+        }
+
+        $this->assertCount(0, $fake->submittedRegistrations);
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $registration->fresh()->status);
+    }
+
     public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();

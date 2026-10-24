@@ -35,6 +35,17 @@
                                     <td style="min-width: 260px;">
                                         <form method="POST" action="{{ route('admin.messaging-provisioning-incidents.resolve', $incident->id) }}">
                                             @csrf
+                                            @if (in_array($incident->stage, [\App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS], true))
+                                                <select name="provider_resolution" class="form-select form-select-sm mb-1" required>
+                                                    <option value="">How was the provider outcome verified?</option>
+                                                    <option value="verified_provider_id">It exists at the provider — I will enter its ID</option>
+                                                    @if ($incident->stage !== \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS)
+                                                        <option value="confirmed_not_created">I confirmed it was NOT created (a retry may create it)</option>
+                                                    @endif
+                                                </select>
+                                                <input type="text" name="provider_brand_id" class="form-control form-control-sm mb-1" placeholder="Verified brand ID" maxlength="191">
+                                                <input type="text" name="provider_campaign_id" class="form-control form-control-sm mb-1" placeholder="Verified campaign ID" maxlength="191">
+                                            @endif
                                             <input type="text" name="resolution_note" class="form-control form-control-sm transition-fast mb-1" placeholder="What was reconciled, and how" required maxlength="5000">
                                             <div class="form-check mb-1">
                                                 <input type="checkbox" class="form-check-input" id="reconciliation-confirmed-{{ $incident->id }}" name="reconciliation_confirmed" value="1" required>

@@ -428,4 +428,78 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
         $this->assertNull($incident->resolved_by_user_id);
         $this->assertNull($incident->resolution_note);
     }
+
+    // =================================================================
+    // Unknown 10DLC provider outcomes — never closed by a generic note.
+    // =================================================================
+
+    private function unknownOutcomeIncident(Business $business, string $stage): BusinessMessagingProvisioningIncident
+    {
+        \App\Models\BusinessMessagingRegistration::create(['business_id' => $business->id, 'number_type' => 'local', 'status' => 'not_started']);
+
+        return $this->recordIncident($business, ['stage' => $stage]);
+    }
+
+    public function test_a_generic_note_cannot_resolve_an_unknown_provider_outcome(): void
+    {
+        $incident = $this->unknownOutcomeIncident($this->makeBusiness(), \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
+            'resolution_note' => 'Looked fine to me.',
+        ])->assertSessionHas('flash_error');
+
+        $this->assertNull($incident->fresh()->resolved_at);
+    }
+
+    public function test_a_verified_provider_id_is_saved_to_the_registration_and_audited(): void
+    {
+        $business = $this->makeBusiness();
+        $incident = $this->unknownOutcomeIncident($business, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
+            'provider_resolution' => 'verified_provider_id',
+            'provider_brand_id' => 'BXYZ123',
+            'resolution_note' => 'Found the brand in the Telnyx portal.',
+        ])->assertSessionHas('flash_success');
+
+        $this->assertSame('BXYZ123', \App\Models\BusinessMessagingRegistration::where('business_id', $business->id)->value('provider_brand_id'));
+        $this->assertStringStartsWith('[verified_provider_id brand=BXYZ123]', $incident->fresh()->resolution_note);
+    }
+
+    public function test_verifying_an_existing_provider_resource_requires_its_id(): void
+    {
+        $incident = $this->unknownOutcomeIncident($this->makeBusiness(), \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
+            'provider_resolution' => 'verified_provider_id',
+            'resolution_note' => 'It exists, trust me.',
+        ]);
+
+        $this->assertNull($incident->fresh()->resolved_at);
+    }
+
+    public function test_confirming_not_created_is_recorded_and_allowed_for_a_brand_outcome_but_not_for_committed_funding(): void
+    {
+        $business = $this->makeBusiness();
+        $brandIncident = $this->unknownOutcomeIncident($business, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN);
+        $fundingIncident = $this->recordIncident($business, ['stage' => \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS]);
+        $this->actingAsAdmin();
+
+        foreach ([$brandIncident, $fundingIncident] as $incident) {
+            $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+                'reconciliation_confirmed' => '1',
+                'provider_resolution' => 'confirmed_not_created',
+                'resolution_note' => 'Searched the brand list; nothing under this EIN.',
+            ]);
+        }
+
+        $this->assertStringStartsWith('[confirmed_not_created]', $brandIncident->fresh()->resolution_note);
+        $this->assertNull($fundingIncident->fresh()->resolved_at);
+    }
 }

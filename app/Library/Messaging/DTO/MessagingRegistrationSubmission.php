@@ -67,6 +67,8 @@ final readonly class MessagingRegistrationSubmission
          * the fee for a resubmission.
          */
         public string $fundingCycle = '0',
+        /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
+        public ?string $campaignDescription = null,
     ) {
     }
 
@@ -101,6 +103,7 @@ final readonly class MessagingRegistrationSubmission
                 ? (string) $registration->provider_campaign_id
                 : null,
             fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
+            campaignDescription: $registration->campaign_description,
         );
     }
 }

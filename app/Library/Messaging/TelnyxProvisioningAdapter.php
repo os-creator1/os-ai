@@ -728,12 +728,47 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $status;
     }
 
-    private const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
-    private const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
-    private const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
+    public const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
+    public const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
+    public const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
+
+    /**
+     * Internal use-case key => Telnyx/TCR campaign `usecase` enum value.
+     * Telnyx documents the field only as "must be of defined valid types"
+     * (see GET /10dlc/enum/usecase); the TCR values it passes through are
+     * upper-case, so the internal lower-case keys are never sent as-is.
+     * Appointment reminders have no TCR use case of their own and are
+     * customer care. MIXED additionally carries its two sub-use-cases.
+     * The exact acceptance of each value for a given brand is the
+     * carrier's decision and was not verifiable against a live account.
+     *
+     * @var array<string, array{usecase: string, sub?: list<string>}>
+     */
+    private const TEN_DLC_USE_CASES = [
+        'customer_care' => ['usecase' => 'CUSTOMER_CARE'],
+        'marketing' => ['usecase' => 'MARKETING'],
+        'mixed' => ['usecase' => 'MIXED', 'sub' => ['CUSTOMER_CARE', 'MARKETING']],
+        'account_notifications' => ['usecase' => 'ACCOUNT_NOTIFICATION'],
+        'appointment_reminders' => ['usecase' => 'CUSTOMER_CARE'],
+        'two_factor' => ['usecase' => '2FA'],
+    ];
 
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
+        // Checked before any wallet reservation: an unmapped use case must
+        // never reach the provider as a guessed value.
+        $useCase = self::TEN_DLC_USE_CASES[$submission->useCase] ?? null;
+
+        if ($useCase === null) {
+            throw new \RuntimeException('This messaging type cannot be submitted as a 10DLC campaign.');
+        }
+
+        // Checked before any wallet reservation: a campaign description is
+        // required, and the technical use-case key is never a substitute.
+        if ($submission->campaignDescription === null || trim($submission->campaignDescription) === '') {
+            throw new \RuntimeException('A 10DLC campaign description is required before submission.');
+        }
+
         $business = Business::query()->findOrFail($submission->businessId);
 
         // An earlier attempt whose provider outcome was never confirmed
@@ -810,16 +845,17 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             try {
                 $campaignResponse = $campaignId !== null ? null : $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
                     'brandId' => $brandId,
-                    'usecase' => $submission->useCase,
-                    'description' => $submission->useCase,
+                    'usecase' => $useCase['usecase'],
+                    ...(isset($useCase['sub']) ? ['subUsecases' => $useCase['sub']] : []),
+                    'description' => $submission->campaignDescription,
                     'sample1' => $submission->sampleMessage1,
                     'sample2' => $submission->sampleMessage2,
                     'messageFlow' => $submission->optInMethod,
                     'privacyPolicyLink' => $submission->privacyPolicyUrl,
                     'termsAndConditionsLink' => $submission->termsUrl,
-                    'optinKeywords' => 'START, SUBSCRIBE',
-                    'optoutKeywords' => 'STOP, UNSUBSCRIBE',
-                    'helpKeywords' => 'HELP, INFO',
+                    'optinKeywords' => 'START,SUBSCRIBE',
+                    'optoutKeywords' => 'STOP,UNSUBSCRIBE',
+                    'helpKeywords' => 'HELP,INFO',
                 ]);
             } catch (ConnectionException $e) {
                 throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign request did not complete');

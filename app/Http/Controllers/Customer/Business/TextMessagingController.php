@@ -28,6 +28,9 @@ use App\Library\Messaging\Exceptions\PortOutRequestAlreadyActiveException;
 use App\Library\Messaging\Exceptions\PortOutRequestNumberNotPortableException;
 use App\Library\Messaging\PortOutRequestManager;
 use App\Library\Messaging\ProvisioningAvailability;
+use App\Library\Messaging\Registration\RegistrationDefaultsResolver;
+use App\Library\Messaging\Registration\RegistrationSubmissionValidator;
+use App\Library\Messaging\Registration\RegistrationTemplateCatalog;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Models\Business;
 use App\Models\BusinessMessagingNumber;
@@ -77,7 +80,7 @@ class TextMessagingController extends CustomerBaseController
         'account_notifications' => 'Account notifications',
         'appointment_reminders' => 'Appointment reminders',
         'two_factor' => 'Two-factor / one-time passcodes',
-        'mixed' => 'A mix of the above',
+        'mixed' => 'Both service and promotional messages',
     ];
 
     public function __construct(
@@ -88,6 +91,8 @@ class TextMessagingController extends CustomerBaseController
         private readonly CustomerShellComposer $shell,
         private readonly PortOutRequestManager $portOutRequests,
         private readonly MessagingReadinessReader $readiness,
+        private readonly RegistrationDefaultsResolver $registrationDefaults,
+        private readonly RegistrationSubmissionValidator $registrationValidator,
     ) {
     }
 
@@ -101,7 +106,7 @@ class TextMessagingController extends CustomerBaseController
 
         return match ($situation['state']) {
             'ready' => $this->renderReady($workspaceUid, $businessUid, $situation),
-            'registration_required' => $this->renderRegistration($workspaceUid, $businessUid, $situation),
+            'registration_required' => $this->renderRegistration($workspaceUid, $businessUid, $situation, $business),
             // Review correction — a Business whose local (10DLC) business
             // verification is already Approved but has no number yet
             // (Telnyx genuinely supports completing brand+campaign
@@ -356,12 +361,27 @@ class TextMessagingController extends CustomerBaseController
             'contact_phone' => ['required', 'string', 'max:32'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
             'opt_in_method' => ['required', 'string', 'max:2000'],
+            'campaign_description' => ['required', 'string', 'max:2000'],
+            'consent_confirmations' => ['nullable', 'array'],
+            'consent_confirmations.*' => ['string', 'in:' . implode(',', array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS))],
             'sample_message_1' => ['required', 'string', 'max:500'],
             'sample_message_2' => ['required', 'string', 'max:500'],
             'privacy_policy_url' => ['required', 'url', 'max:255'],
             'terms_url' => ['required', 'url', 'max:255'],
         ]);
 
+        // An unchecked box is simply absent from the POST, so the stored
+        // list is always exactly what the customer ticked on this save.
+        $validated['consent_confirmations'] = array_values(array_unique($validated['consent_confirmations'] ?? []));
+
+        // Consent attestations were made for the messaging type the
+        // customer had saved; a different type needs them re-confirmed.
+        $existing = $this->registrationFor($business);
+        $useCaseChanged = $existing !== null && $existing->use_case !== null && $existing->use_case !== $validated['use_case'];
+
+        if ($useCaseChanged) {
+            $validated['consent_confirmations'] = [];
+        }
         $validated['number_type'] = $numberType->value;
         $validated['country_code'] = 'US';
 
@@ -373,7 +393,9 @@ class TextMessagingController extends CustomerBaseController
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => 'Business details saved.',
+            'message' => $useCaseChanged
+                ? 'Business details saved. You changed the messaging type, so please re-confirm the consent checklist and review your sample messages.'
+                : 'Business details saved.',
         ]);
     }
 
@@ -393,7 +415,17 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Messaging registration is not available in this environment yet.');
         }
 
-        try {
+        $issues = $this->registrationValidator->issues($registration);
+
+        if ($issues !== []) {
+            return $this->textMessagingError(
+                $workspaceUid,
+                $businessUid,
+                'Not submitted yet — ' . count($issues) . ' item(s) need your attention under "Before you submit". Nothing was charged.',
+            );
+        }
+
+                try {
             $this->registrations->submit($registration);
         } catch (MessagingRegistrationAlreadySubmittedException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been submitted and is awaiting review.');
@@ -403,6 +435,10 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Messaging registration is not available for this Business yet. Please contact support.');
         } catch (MessagingInsufficientFundsException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to submit this registration. Add funds to your Business balance and try again.');
+        } catch (\RuntimeException) {
+            // A provider rejection or an internal refusal (e.g. a messaging
+            // type with no carrier mapping): never a raw server error.
+            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t complete this submission right now. Please review your details and try again, or contact support if it keeps happening.');
         }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
@@ -673,7 +709,7 @@ class TextMessagingController extends CustomerBaseController
     /**
      * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
-    private function renderRegistration(string $workspaceUid, string $businessUid, array $situation): View
+    private function renderRegistration(string $workspaceUid, string $businessUid, array $situation, Business $business): View
     {
         return view('customer.settings.text-messaging.states.registration', [
             'workspaceUid' => $workspaceUid,
@@ -685,6 +721,13 @@ class TextMessagingController extends CustomerBaseController
             // whether this is the first visit or the tenth.
             'registration' => $registration = $situation['registration'] ?? new BusinessMessagingRegistration(['status' => MessagingRegistrationStatus::NotStarted->value]),
             'useCases' => self::US_USE_CASES,
+            'useCaseChoices' => RegistrationTemplateCatalog::CHOICES,
+            'selectedChoice' => RegistrationTemplateCatalog::choiceForUseCase($registration->use_case),
+            'consentItems' => RegistrationTemplateCatalog::CONSENT_ITEMS,
+            'prefill' => $this->registrationDefaults->resolve($business, $situation['registration'] ?? null),
+            'templateBrand' => $this->registrationDefaults->brandName($business, $situation['registration'] ?? null),
+            'templatesByChoice' => $this->registrationDefaults->templatesByChoice($business, $situation['registration'] ?? null),
+            'submissionIssues' => $registration->exists ? $this->registrationValidator->issues($registration) : [],
             'available' => ProvisioningAvailability::isConfigured(),
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor($registration->number_type ?? PhoneNumberType::Local),
             // Review correction — an Approved registration with a genuine

@@ -16,6 +16,7 @@ use App\Models\BusinessMessagingRegistration;
 use App\Repositories\Contracts\UsageMeterRepository;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException;
 
 /**
@@ -115,6 +116,28 @@ class BusinessMessagingRegistrationService
             }
         }
 
+        // A campaign already created at the provider (saved by a crashed
+        // attempt that has not yet finished) cannot be re-created or
+        // edited here: changing what it was submitted with would either
+        // reuse an invalidated campaign or create a duplicate.
+        if ($registration->status !== MessagingRegistrationStatus::Rejected
+            && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== '') {
+            $campaignFields = ['use_case', 'campaign_description', 'sample_message_1', 'sample_message_2', 'opt_in_method', 'privacy_policy_url', 'terms_url'];
+
+            foreach ($campaignFields as $field) {
+                if (array_key_exists($field, $data) && (string) $data[$field] !== (string) $registration->{$field}) {
+                    $brandIdentityChanged = true;
+                    break;
+                }
+            }
+
+            if ($brandIdentityChanged) {
+                throw new MessagingRegistrationImmutableException(
+                    'A submission for this registration is being finalized, so its details can\'t be edited right now. Please contact support if it does not complete.',
+                );
+            }
+        }
+
         if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged) {
             $attributes['provider_brand_id'] = null;
             $attributes['provider_campaign_id'] = null;
@@ -136,15 +159,16 @@ class BusinessMessagingRegistrationService
     {
         $adapter = app(MessagingProvisioningAdapter::class);
 
-        // Retry safety: the provider calls and the wallet reservation are
-        // not idempotent across requests (each reserve() uses a fresh key),
-        // so only one submission per registration may be in flight, and a
-        // registration that is already Pending/Approved must never be
-        // submitted again. Status is re-read under the lock so a double
-        // click or a retry after a lost response is a harmless no-op.
-        $lock = Cache::lock('messaging-registration-submit:' . $registration->id, 120);
+        // Retry safety: only one submission per registration may be in
+        // flight, and a registration that is already Pending/Approved must
+        // never be submitted again. Status is re-read under the lock so a
+        // double click or a retry after a lost response is a harmless
+        // no-op. The lock is a MySQL session lock (shared by every worker
+        // and host, no expiry, freed when the connection dies) rather than
+        // a per-host cache file.
+        $release = $this->acquireSubmitLock($registration);
 
-        if (! $lock->get()) {
+        if ($release === null) {
             throw new MessagingRegistrationAlreadySubmittedException('A submission for this registration is already in progress.');
         }
 
@@ -190,8 +214,29 @@ class BusinessMessagingRegistrationService
 
             return $registration->fresh();
         } finally {
-            $lock->release();
+            $release();
         }
+    }
+
+    /** @return (callable(): void)|null null when another worker holds the lock */
+    private function acquireSubmitLock(BusinessMessagingRegistration $registration): ?callable
+    {
+        if (DB::connection()->getDriverName() === 'mysql') {
+            $name = 'msgreg-submit:' . $registration->id;
+            $connection = DB::connection();
+
+            if ((int) ($connection->selectOne('SELECT GET_LOCK(?, 0) AS acquired', [$name])->acquired ?? 0) !== 1) {
+                return null;
+            }
+
+            return static function () use ($connection, $name): void {
+                $connection->selectOne('SELECT RELEASE_LOCK(?) AS released', [$name]);
+            };
+        }
+
+        $lock = Cache::lock('messaging-registration-submit:' . $registration->id, 120);
+
+        return $lock->get() ? static fn () => $lock->release() : null;
     }
 
     private function primaryPhoneNumberFor(Business $business): ?string
