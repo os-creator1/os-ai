@@ -219,6 +219,7 @@
                 <div class="mb-1" data-role="use-case-choices">
                     <label class="form-label required">What will you use texting for?</label>
                     @foreach($useCaseChoices as $choice => $definition)
+                        @continue($definition['use_case'] === 'mixed' && ! config('messaging.ten_dlc_mixed_enabled') && $useCase !== 'mixed')
                         <div class="form-check">
                             <input type="radio" class="form-check-input" id="use_case_{{ $choice }}" name="use_case" value="{{ $definition['use_case'] }}" data-choice="{{ $choice }}"
                                    {{ $useCase === $definition['use_case'] ? 'checked' : '' }} required>

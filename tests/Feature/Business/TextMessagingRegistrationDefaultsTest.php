@@ -267,6 +267,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
 
     public function test_mixed_and_marketing_need_matching_sample_messages(): void
     {
+        config(['messaging.ten_dlc_mixed_enabled' => true]);
         [$business, $workspace] = $this->registrationState();
         $validator = app(\App\Library\Messaging\Registration\RegistrationSubmissionValidator::class);
         $promo = 'Sunset Photo Booths: ask about our current package specials. Reply STOP to opt out.';

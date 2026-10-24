@@ -35,6 +35,15 @@ return [
     */
     'managed_messaging_provisioning_enabled' => env('MANAGED_MESSAGING_PROVISIONING_ENABLED', false),
 
+    /*
+    | Mixed ("Both") 10DLC campaigns. Telnyx's OpenAPI confirms the
+    | `subUsecases` field and a per-use-case min/max, but which sub-use-cases
+    | a brand may declare is answered per brand at runtime, and carrier
+    | acceptance cannot be confirmed without a live submission. Off until
+    | that has been verified; Customer Care and Marketing are unaffected.
+    */
+    'ten_dlc_mixed_enabled' => env('MESSAGING_10DLC_MIXED_ENABLED', false),
+
     'default_provider' => 'telnyx',
 
     'webhook_rejection_retention_days' => env('MESSAGING_WEBHOOK_REJECTION_RETENTION_DAYS', 30),

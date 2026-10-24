@@ -80,6 +80,10 @@ final class RegistrationSubmissionValidator
             $issues[] = 'Choose one of the three messaging types: service and customer-care, promotional and marketing, or both.';
         }
 
+        if ($registration->use_case === 'mixed' && ! config('messaging.ten_dlc_mixed_enabled')) {
+            $issues[] = 'Registering both message types together is not available yet. Choose service and customer-care, or promotional and marketing.';
+        }
+
         $issues = array_merge($issues, $this->messageIssues($registration), $this->consentIssues($registration));
 
         return array_values(array_unique($issues));

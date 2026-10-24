@@ -253,9 +253,29 @@ class TelnyxProvisioningAdapterTest extends TestCase
             && ! str_contains($request->url(), '/10dlc/campaignBuilder'));
     }
 
+    public function test_mixed_is_refused_before_funding_while_the_mixed_flag_is_off(): void
+    {
+        $this->enableProvisioning();
+        config(['messaging.ten_dlc_mixed_enabled' => false]);
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local, useCase: 'mixed'));
+            $this->fail('Mixed must be refused while disabled.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('not enabled', $e->getMessage());
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+    }
+
     public function test_10dlc_campaign_sends_telnyx_use_case_values_and_keeps_the_stored_description_and_samples(): void
     {
         $this->enableProvisioning();
+        config(['messaging.ten_dlc_mixed_enabled' => true]);
 
         foreach (['customer_care' => 'CUSTOMER_CARE', 'marketing' => 'MARKETING', 'mixed' => 'MIXED'] as $internal => $telnyx) {
             $business = $this->business();

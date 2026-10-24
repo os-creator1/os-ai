@@ -759,6 +759,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // Also before funding: an unsupported use case is never forwarded.
         $telnyxUseCase = self::TEN_DLC_USE_CASES[$submission->useCase] ?? null;
 
+        if ($telnyxUseCase === 'MIXED' && ! config('messaging.ten_dlc_mixed_enabled')) {
+            throw new \RuntimeException('Mixed 10DLC campaigns are not enabled yet.');
+        }
+
         if ($telnyxUseCase === null) {
             throw new \RuntimeException('Unsupported 10DLC use case "' . $submission->useCase . '"; choose customer care, marketing or both.');
         }
