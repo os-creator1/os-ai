@@ -16,12 +16,6 @@
             <input type="text" class="form-control" id="look-brand-color" name="brand_color" value="{{ old('brand_color', $brandColor) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
         </div>
         @error('brand_color') <div class="text-danger small">{{ $message }}</div> @enderror
-        <label class="form-label mt-2" for="look-secondary-color">Secondary colour</label>
-        <div class="input-group">
-            <input type="color" class="form-control form-control-color" id="look-secondary-picker" value="{{ ($secondaryColor ?? null) ?: '#111111' }}" title="Pick a colour" aria-label="Pick a secondary colour">
-            <input type="text" class="form-control" id="look-secondary-color" name="secondary_color" value="{{ old('secondary_color', $secondaryColor ?? null) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
-        </div>
-        @error('secondary_color') <div class="text-danger small">{{ $message }}</div> @enderror
     </div>
 
     <div class="col-md-4">

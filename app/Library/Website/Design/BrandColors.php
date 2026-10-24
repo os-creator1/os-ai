@@ -13,9 +13,6 @@ namespace App\Library\Website\Design;
  *  - accent_text   the accent as TEXT on a light background (darkened until AA)
  *  - accent_glow   the accent as TEXT on a dark background (lightened until AA)
  *
- * The optional SECONDARY colour (`secondary_color`) is the dark surface: it replaces the design's dark bands (hero, dark
- * sections, cards) and the readable ink/muted tones derived from it. Same rule: a plain hex or nothing.
- *
  * A value that is not a plain #rgb/#rrggbb hex is ignored (null), so the
  * design's own accent is used and nothing owner-typed ever reaches a style
  * attribute unvalidated.
@@ -59,47 +56,17 @@ final class BrandColors
         ];
     }
 
-    /**
-     * @return array{dark: string, dark_ink: string, dark_muted: string, dark_line: string}|null
-     */
-    public static function secondaryTokens(?string $value): ?array
-    {
-        $hex = self::normalize($value);
-
-        if ($hex === null) {
-            return null;
-        }
-
-        $ink = self::contrast($hex, '#ffffff') >= self::contrast($hex, '#000000') ? '#ffffff' : '#000000';
-        $muted = self::mix($ink, $hex, 0.25);
-
-        return [
-            'dark' => $hex,
-            'dark_ink' => $ink,
-            'dark_muted' => $muted,
-            'dark_line' => 'rgba(' . implode(',', self::rgb($ink)) . ',0.18)',
-        ];
-    }
-
-    /** A style attribute value of CSS custom properties, or '' when there is no usable brand or secondary colour. */
-    public static function inlineStyle(?string $value, ?string $secondary = null, bool $announceFollowsSecondary = true): string
+    /** A style attribute value of CSS custom properties, or '' when there is no usable brand colour. */
+    public static function inlineStyle(?string $value): string
     {
         $tokens = self::tokens($value);
-        $style = $tokens === null ? '' : '--wd-accent:' . $tokens['accent'] . ';--wd-accent-ink:' . $tokens['accent_ink']
-            . ';--wd-accent-text:' . $tokens['accent_text'] . ';--wd-accent-glow:' . $tokens['accent_glow'] . ';';
 
-        $dark = self::secondaryTokens($secondary);
-
-        if ($dark !== null) {
-            $style .= '--wd-dark:' . $dark['dark'] . ';--wd-dark-ink:' . $dark['dark_ink'] . ';--wd-dark-muted:' . $dark['dark_muted']
-                . ';--wd-dark-line:' . $dark['dark_line'] . ';';
-
-            if ($announceFollowsSecondary) {
-                $style .= '--wd-announce-bg:' . $dark['dark'] . ';--wd-announce-ink:' . $dark['dark_ink'] . ';';
-            }
+        if ($tokens === null) {
+            return '';
         }
 
-        return $style;
+        return '--wd-accent:' . $tokens['accent'] . ';--wd-accent-ink:' . $tokens['accent_ink']
+            . ';--wd-accent-text:' . $tokens['accent_text'] . ';--wd-accent-glow:' . $tokens['accent_glow'] . ';';
     }
 
     public static function contrast(string $foreground, string $background): float

@@ -9,7 +9,6 @@
         $lookTheme = $website->theme ?? [];
         $lookAssets = $website->assets()->whereIn('uid', array_filter([$lookTheme['logo_asset_uid'] ?? null, $lookTheme['hero_asset_uid'] ?? null]))->get()->keyBy('uid');
         $brandColor = $lookTheme['brand_color'] ?? null;
-        $secondaryColor = $lookTheme['secondary_color'] ?? null;
         $privacyNoticeUrl = $lookTheme['privacy_notice_url'] ?? null;
         $termsUrl = $lookTheme['terms_url'] ?? null;
         $logo = isset($lookTheme['logo_asset_uid'], $lookAssets[$lookTheme['logo_asset_uid']]) ? ['url' => $lookAssets[$lookTheme['logo_asset_uid']]->url(), 'alt' => $lookAssets[$lookTheme['logo_asset_uid']]->alt_text] : null;
@@ -29,16 +28,6 @@
                     <input type="text" class="form-control" id="look-brand-color" name="brand_color" value="{{ old('brand_color', $brandColor) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
                 </div>
                 @error('brand_color') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
-            </div>
-
-            <div class="website-look-field">
-                <label class="website-look-label" for="look-secondary-color">Secondary colour</label>
-                <div class="website-look-color">
-                    <input type="color" class="website-look-swatch" id="look-secondary-picker" value="{{ $secondaryColor ?: '#111111' }}" title="Pick a colour" aria-label="Pick a secondary colour">
-                    <input type="text" class="form-control" id="look-secondary-color" name="secondary_color" value="{{ old('secondary_color', $secondaryColor) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
-                </div>
-                <div class="text-caption mt-50">Used for dark sections, the hero and the announcement bar.</div>
-                @error('secondary_color') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
             </div>
 
             <div class="website-look-field">
