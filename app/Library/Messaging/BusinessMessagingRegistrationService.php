@@ -65,6 +65,15 @@ class BusinessMessagingRegistrationService
             );
         }
 
+        // A submitted-and-awaiting-review registration must not be reset to
+        // NotStarted by an edit: that would re-open it for a second
+        // submission against the carrier.
+        if ($registration !== null && $registration->status === MessagingRegistrationStatus::Pending) {
+            throw new MessagingRegistrationImmutableException(
+                'This registration has already been submitted and is awaiting review, so its details can no longer be edited.',
+            );
+        }
+
         $attributes = array_merge($data, ['business_id' => $business->id]);
 
         if ($registration === null) {
@@ -87,9 +96,24 @@ class BusinessMessagingRegistrationService
 
         // A brand the carrier rejected, or one created for different
         // legal details, must never be reused for the edited submission.
-        $brandIdentityChanged = (isset($data['legal_business_name']) && $data['legal_business_name'] !== $registration->legal_business_name)
-            || (array_key_exists('ein', $data) && $data['ein'] !== $registration->ein)
-            || (isset($data['entity_type']) && (string) $data['entity_type'] !== (string) ($registration->entity_type?->value ?? $registration->entity_type));
+        // Every field the brand request carries: if any changed, the
+        // existing provider brand no longer matches the edited details.
+        $brandIdentityChanged = false;
+
+        foreach (['legal_business_name', 'entity_type', 'ein', 'address_line_1', 'city', 'region', 'postal_code', 'country_code', 'website_url', 'contact_email', 'contact_phone'] as $field) {
+            if (! array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $current = $registration->{$field};
+            $current = $current instanceof \BackedEnum ? $current->value : $current;
+            $incoming = $data[$field] instanceof \BackedEnum ? $data[$field]->value : $data[$field];
+
+            if ((string) $incoming !== (string) $current) {
+                $brandIdentityChanged = true;
+                break;
+            }
+        }
 
         if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged) {
             $attributes['provider_brand_id'] = null;

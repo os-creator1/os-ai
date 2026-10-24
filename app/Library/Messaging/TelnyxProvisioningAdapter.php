@@ -776,7 +776,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 }
 
                 if (! $brandResponse->successful()) {
-                    if ($brandResponse->serverError()) {
+                    if ($brandResponse->serverError() || $brandResponse->status() === 408) {
                         throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand status=' . $brandResponse->status());
                     }
 
@@ -796,8 +796,13 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     ->update(['provider_brand_id' => $brandId]);
             }
 
+            $campaignId = $submission->existingCampaignId;
+
+            // A previous attempt that already created and persisted the
+            // campaign but never reached the fee commit only finishes the
+            // funding step here — never a second campaign.
             try {
-                $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
+                $campaignResponse = $campaignId !== null ? null : $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
                     'brandId' => $brandId,
                     'usecase' => $submission->useCase,
                     'description' => $submission->useCase,
@@ -814,8 +819,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign request did not complete');
             }
 
-            if (! $campaignResponse->successful()) {
-                if ($campaignResponse->serverError()) {
+            if ($campaignResponse !== null && ! $campaignResponse->successful()) {
+                if ($campaignResponse->serverError() || $campaignResponse->status() === 408) {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign status=' . $campaignResponse->status());
                 }
 
@@ -834,7 +839,19 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 throw new \RuntimeException('Telnyx rejected the 10DLC campaign submission.');
             }
 
-            $campaignId = (string) $campaignResponse->json('data.campaignId', $campaignResponse->json('data.id'));
+            if ($campaignResponse !== null) {
+                $campaignId = (string) $campaignResponse->json('data.campaignId', $campaignResponse->json('data.id'));
+
+                if ($campaignId === '') {
+                    throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign accepted without an id');
+                }
+
+                // Durable before the fee commit: a crash between provider
+                // success and commit must not lead to a second campaign.
+                BusinessMessagingRegistration::query()
+                    ->where('business_id', $business->id)
+                    ->update(['provider_campaign_id' => $campaignId]);
+            }
         } catch (\Throwable $e) {
             $this->wallet->release($reservationId);
 

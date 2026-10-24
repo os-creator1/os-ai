@@ -367,8 +367,8 @@ class TextMessagingController extends CustomerBaseController
 
         try {
             $this->registrations->captureDetails($business, $validated);
-        } catch (MessagingRegistrationImmutableException) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been approved and can no longer be edited.');
+        } catch (MessagingRegistrationImmutableException $e) {
+            return $this->textMessagingError($workspaceUid, $businessUid, $e->getMessage());
         }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([

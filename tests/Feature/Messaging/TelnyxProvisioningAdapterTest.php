@@ -1064,4 +1064,31 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame(1, DB::table('business_messaging_provisioning_incidents')->where('stage', '10dlc_brand_outcome_unknown')->whereNull('resolved_at')->count());
         $this->assertSame(0, DB::table('business_usage_reservations')->where('status', 'pending')->count());
     }
+
+    public function test_a_crash_after_provider_success_reuses_the_pending_reservation_and_creates_nothing_twice(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        // State left by a crash after the campaign succeeded and was
+        // persisted, but before the fee commit: ids saved, reservation pending.
+        $registration->update(['provider_brand_id' => 'brand_crash_1', 'provider_campaign_id' => 'campaign_crash_1']);
+        $pendingId = app(UsageWalletManager::class)->reserve(
+            $business,
+            TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION,
+            'messaging-registration:' . $business->id . ':' . TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION . ':1',
+        )->reservationId;
+
+        Http::fake();
+
+        $submission = MessagingRegistrationSubmission::fromModel($registration->fresh());
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($submission);
+
+        Http::assertNothingSent();
+        $this->assertSame('campaign_crash_1', $result->providerCampaignId);
+        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+        $this->assertSame('committed', DB::table('business_usage_reservations')->where('id', $pendingId)->value('status'));
+    }
 }

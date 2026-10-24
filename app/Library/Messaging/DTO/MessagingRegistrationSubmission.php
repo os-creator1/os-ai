@@ -55,6 +55,11 @@ final readonly class MessagingRegistrationSubmission
          * second brand is never created. Always null for toll-free.
          */
         public ?string $existingBrandId = null,
+        /**
+         * A campaign already created and persisted by an earlier attempt
+         * that crashed before the fee was committed — never created twice.
+         */
+        public ?string $existingCampaignId = null,
     ) {
     }
 
@@ -84,6 +89,9 @@ final readonly class MessagingRegistrationSubmission
             phoneNumber: $phoneNumber,
             existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
                 ? (string) $registration->provider_brand_id
+                : null,
+            existingCampaignId: $registration->number_type === PhoneNumberType::Local && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== ''
+                ? (string) $registration->provider_campaign_id
                 : null,
         );
     }

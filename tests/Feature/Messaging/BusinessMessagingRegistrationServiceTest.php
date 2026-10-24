@@ -170,6 +170,33 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertSame($submitted->provider_brand_id, $registration->fresh()->provider_brand_id);
     }
 
+    public function test_a_pending_registration_cannot_be_edited_back_into_a_resubmittable_state(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $submitted = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+
+        $this->expectException(MessagingRegistrationImmutableException::class);
+
+        try {
+            $this->service()->captureDetails($business, $this->payload(['legal_business_name' => 'Other LLC']));
+        } finally {
+            $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->fresh()->status);
+        }
+    }
+
+    public function test_editing_brand_details_after_a_rejection_clears_the_stale_provider_brand(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_old', 'provider_campaign_id' => 'camp_old']);
+
+        $edited = $this->service()->captureDetails($business, $this->payload());
+
+        $this->assertNull($edited->provider_brand_id);
+        $this->assertNull($edited->provider_campaign_id);
+    }
+
     public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();
