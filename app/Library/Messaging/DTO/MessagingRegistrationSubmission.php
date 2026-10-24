@@ -3,6 +3,7 @@
 namespace App\Library\Messaging\DTO;
 
 use App\Enums\Messaging\MessagingEntityType;
+use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Models\BusinessMessagingRegistration;
 
@@ -49,6 +50,25 @@ final readonly class MessagingRegistrationSubmission
          * calling submit()).
          */
         public ?string $phoneNumber = null,
+        /**
+         * A 10DLC brand this registration already created at the provider
+         * on an earlier, partly-failed attempt — reused on retry so a
+         * second brand is never created. Always null for toll-free.
+         */
+        public ?string $existingBrandId = null,
+        /**
+         * A campaign already created and persisted by an earlier attempt
+         * that crashed before the fee was committed — never created twice.
+         */
+        public ?string $existingCampaignId = null,
+        /**
+         * Funding cycle: changes with every carrier rejection, so a fee
+         * committed for an earlier, rejected submission never counts as
+         * the fee for a resubmission.
+         */
+        public string $fundingCycle = '0',
+        /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
+        public ?string $campaignDescription = null,
     ) {
     }
 
@@ -76,6 +96,14 @@ final readonly class MessagingRegistrationSubmission
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
             phoneNumber: $phoneNumber,
+            existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
+                ? (string) $registration->provider_brand_id
+                : null,
+            existingCampaignId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== ''
+                ? (string) $registration->provider_campaign_id
+                : null,
+            fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
+            campaignDescription: $registration->campaign_description,
         );
     }
 }

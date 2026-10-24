@@ -152,6 +152,111 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
      * the Business's own primary number, never leave it null when one
      * genuinely exists.
      */
+    public function test_retrying_an_already_submitted_registration_is_refused_without_a_second_provider_call(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+
+        $submitted = $this->service()->submit($registration);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected MessagingRegistrationAlreadySubmittedException.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException) {
+            // expected
+        }
+
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertSame($submitted->provider_brand_id, $registration->fresh()->provider_brand_id);
+    }
+
+    public function test_a_pending_registration_cannot_be_edited_back_into_a_resubmittable_state(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $submitted = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+
+        $this->expectException(MessagingRegistrationImmutableException::class);
+
+        try {
+            $this->service()->captureDetails($business, $this->payload(['legal_business_name' => 'Other LLC']));
+        } finally {
+            $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->fresh()->status);
+        }
+    }
+
+    public function test_editing_brand_details_after_a_rejection_clears_the_stale_provider_brand(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_old', 'provider_campaign_id' => 'camp_old']);
+
+        $edited = $this->service()->captureDetails($business, $this->payload());
+
+        $this->assertNull($edited->provider_brand_id);
+        $this->assertNull($edited->provider_campaign_id);
+    }
+
+    public function test_submitting_a_rejected_registration_without_edits_starts_a_fresh_submission(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+        $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_old', 'provider_campaign_id' => 'camp_old']);
+
+        $submitted = $this->service()->submit($registration);
+
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertNull($fake->submittedRegistrations[0]->existingBrandId);
+        $this->assertNull($fake->submittedRegistrations[0]->existingCampaignId);
+        $this->assertNotSame('brand_old', $submitted->provider_brand_id);
+        $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->status);
+    }
+
+    public function test_a_saved_campaign_cannot_be_edited_into_a_different_submission(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['provider_brand_id' => 'brand_1', 'provider_campaign_id' => 'camp_1']);
+
+        try {
+            $this->service()->captureDetails($business, $this->payload(['sample_message_1' => 'Harbor Lane: a brand new sample. Reply STOP to unsubscribe.']));
+            $this->fail('Expected refusal.');
+        } catch (MessagingRegistrationImmutableException) {
+            // expected
+        }
+
+        $fresh = $registration->fresh();
+        $this->assertSame('camp_1', $fresh->provider_campaign_id);
+        $this->assertNotSame('Harbor Lane: a brand new sample. Reply STOP to unsubscribe.', $fresh->sample_message_1);
+    }
+
+    public function test_a_second_worker_cannot_submit_while_the_shared_lock_is_held(): void
+    {
+        if (\Illuminate\Support\Facades\DB::connection()->getDriverName() !== 'mysql') {
+            $this->markTestSkipped('The shared submit lock is a MySQL session lock.');
+        }
+
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+
+        $config = config('database.connections.' . config('database.default'));
+        $other = new \PDO(sprintf('mysql:host=%s;port=%s;dbname=%s', $config['host'], $config['port'], $config['database']), $config['username'], $config['password']);
+        $held = $other->query("SELECT GET_LOCK('msgreg-submit:" . $registration->id . "', 0)")->fetchColumn();
+        $this->assertSame(1, (int) $held);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected refusal while the lock is held.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException) {
+            // expected
+        } finally {
+            $other->query("SELECT RELEASE_LOCK('msgreg-submit:" . $registration->id . "')");
+        }
+
+        $this->assertCount(0, $fake->submittedRegistrations);
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $registration->fresh()->status);
+    }
+
     public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();

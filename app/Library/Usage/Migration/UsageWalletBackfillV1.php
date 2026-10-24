@@ -74,6 +74,30 @@ class UsageWalletBackfillV1
         );
     }
 
+    /**
+     * Read-only preview: every Business lacking a wallet and whether its
+     * currency would resolve. Writes nothing.
+     *
+     * @return list<array{business_id: int, currency_code: string, resolvable: bool, classification: ?string}>
+     */
+    public function preview(): array
+    {
+        $rows = [];
+
+        foreach ($this->unwalletedBusinessQuery()->orderBy('businesses.id')->get(['businesses.id', 'businesses.currency_code']) as $business) {
+            $resolved = $this->resolveCurrencyId((int) $business->id, (string) $business->currency_code);
+
+            $rows[] = [
+                'business_id' => (int) $business->id,
+                'currency_code' => (string) $business->currency_code,
+                'resolvable' => ! is_array($resolved),
+                'classification' => is_array($resolved) ? $resolved['classification'] : null,
+            ];
+        }
+
+        return $rows;
+    }
+
     private function unwalletedBusinessQuery()
     {
         return DB::table('businesses')

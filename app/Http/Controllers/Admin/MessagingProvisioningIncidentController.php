@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Requests\Admin\ResolveMessagingProvisioningIncidentRequest;
 use App\Library\Messaging\ProvisioningIncidentRecorder;
+use App\Library\Messaging\TelnyxProvisioningAdapter;
 use App\Models\BusinessMessagingProvisioningIncident;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -49,11 +50,39 @@ class MessagingProvisioningIncidentController extends AdminBaseController
 
     public function resolve(ResolveMessagingProvisioningIncidentRequest $request, int $incident): RedirectResponse
     {
-        $resolved = $this->incidents->resolve(
-            $incident,
-            (int) Auth::id(),
-            $request->validated('resolution_note'),
-        );
+        $unknownOutcomeStages = [
+            TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN,
+            TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN,
+            TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS,
+        ];
+        $stage = BusinessMessagingProvisioningIncident::query()->whereKey($incident)->value('stage');
+
+        if (in_array($stage, $unknownOutcomeStages, true)) {
+            // A generic note can never close an unknown provider outcome:
+            // the operator must record a verified provider ID or confirm
+            // the provider operation did not succeed.
+            $type = (string) $request->input('provider_resolution');
+
+            if (! in_array($type, ['verified_provider_id', 'confirmed_not_created'], true)) {
+                return redirect()->route('admin.messaging-provisioning-incidents.index')
+                    ->with('flash_error', 'Choose how this provider outcome was verified: an existing provider ID, or confirmed not created.');
+            }
+
+            $resolved = $this->incidents->resolveUnknownOutcome(
+                $incident,
+                (int) Auth::id(),
+                $type,
+                $request->input('provider_brand_id'),
+                $request->input('provider_campaign_id'),
+                $request->validated('resolution_note'),
+            );
+        } else {
+            $resolved = $this->incidents->resolve(
+                $incident,
+                (int) Auth::id(),
+                $request->validated('resolution_note'),
+            );
+        }
 
         if ($resolved === 0) {
             return redirect()

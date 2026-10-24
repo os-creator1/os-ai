@@ -15,6 +15,9 @@ use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
 use App\Repositories\Contracts\UsageMeterRepository;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException;
 
 /**
  * Text messaging setup/number/compliance hub — STATE 2's capture/submit/
@@ -63,6 +66,15 @@ class BusinessMessagingRegistrationService
             );
         }
 
+        // A submitted-and-awaiting-review registration must not be reset to
+        // NotStarted by an edit: that would re-open it for a second
+        // submission against the carrier.
+        if ($registration !== null && $registration->status === MessagingRegistrationStatus::Pending) {
+            throw new MessagingRegistrationImmutableException(
+                'This registration has already been submitted and is awaiting review, so its details can no longer be edited.',
+            );
+        }
+
         $attributes = array_merge($data, ['business_id' => $business->id]);
 
         if ($registration === null) {
@@ -83,6 +95,55 @@ class BusinessMessagingRegistrationService
         $attributes['status'] = MessagingRegistrationStatus::NotStarted->value;
         $attributes['rejection_reason'] = null;
 
+        // A brand the carrier rejected, or one created for different
+        // legal details, must never be reused for the edited submission.
+        // Every field the brand request carries: if any changed, the
+        // existing provider brand no longer matches the edited details.
+        $brandIdentityChanged = false;
+
+        foreach (['legal_business_name', 'entity_type', 'ein', 'address_line_1', 'city', 'region', 'postal_code', 'country_code', 'website_url', 'contact_email', 'contact_phone'] as $field) {
+            if (! array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $current = $registration->{$field};
+            $current = $current instanceof \BackedEnum ? $current->value : $current;
+            $incoming = $data[$field] instanceof \BackedEnum ? $data[$field]->value : $data[$field];
+
+            if ((string) $incoming !== (string) $current) {
+                $brandIdentityChanged = true;
+                break;
+            }
+        }
+
+        // A campaign already created at the provider (saved by a crashed
+        // attempt that has not yet finished) cannot be re-created or
+        // edited here: changing what it was submitted with would either
+        // reuse an invalidated campaign or create a duplicate.
+        if ($registration->status !== MessagingRegistrationStatus::Rejected
+            && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== '') {
+            $campaignFields = ['use_case', 'campaign_description', 'sample_message_1', 'sample_message_2', 'opt_in_method', 'privacy_policy_url', 'terms_url'];
+
+            foreach ($campaignFields as $field) {
+                if (array_key_exists($field, $data) && (string) $data[$field] !== (string) $registration->{$field}) {
+                    $brandIdentityChanged = true;
+                    break;
+                }
+            }
+
+            if ($brandIdentityChanged) {
+                throw new MessagingRegistrationImmutableException(
+                    'A submission for this registration is being finalized, so its details can\'t be edited right now. Please contact support if it does not complete.',
+                );
+            }
+        }
+
+        if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged) {
+            $attributes['provider_brand_id'] = null;
+            $attributes['provider_campaign_id'] = null;
+            $attributes['provider_registration_id'] = null;
+        }
+
         $registration->update($attributes);
 
         return $registration->fresh();
@@ -98,26 +159,84 @@ class BusinessMessagingRegistrationService
     {
         $adapter = app(MessagingProvisioningAdapter::class);
 
-        // Review correction — a toll-free submission's own request body
-        // must name the already-owned number being verified
-        // (MessagingRegistrationSubmission::$phoneNumber); a local (10DLC)
-        // submission has no such requirement and may genuinely be
-        // submitted before any number exists, so $phoneNumber stays null
-        // there — never resolved, never required.
-        $phoneNumber = $this->primaryPhoneNumberFor($registration->business);
+        // Retry safety: only one submission per registration may be in
+        // flight, and a registration that is already Pending/Approved must
+        // never be submitted again. Status is re-read under the lock so a
+        // double click or a retry after a lost response is a harmless
+        // no-op. The lock is a MySQL session lock (shared by every worker
+        // and host, no expiry, freed when the connection dies) rather than
+        // a per-host cache file.
+        $release = $this->acquireSubmitLock($registration);
 
-        $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
+        if ($release === null) {
+            throw new MessagingRegistrationAlreadySubmittedException('A submission for this registration is already in progress.');
+        }
 
-        $registration->update([
-            'provider_brand_id' => $result->providerBrandId,
-            'provider_campaign_id' => $result->providerCampaignId,
-            'provider_registration_id' => $result->providerRegistrationId,
-            'status' => $result->status->value,
-            'submitted_at' => CarbonImmutable::now(),
-            'rejection_reason' => null,
-        ]);
+        try {
+            $registration = $registration->fresh();
 
-        return $registration->fresh();
+            if ($registration->status === MessagingRegistrationStatus::Pending || $registration->status === MessagingRegistrationStatus::Approved) {
+                throw new MessagingRegistrationAlreadySubmittedException('This registration has already been submitted.');
+            }
+
+            // A Rejected registration resubmitted without edits starts a fresh
+            // submission: the rejected provider brand/campaign are never
+            // reused. rejected_at is kept — it identifies the funding cycle.
+            if ($registration->status === MessagingRegistrationStatus::Rejected) {
+                $registration->update([
+                    'status' => MessagingRegistrationStatus::NotStarted->value,
+                    'provider_brand_id' => null,
+                    'provider_campaign_id' => null,
+                    'provider_registration_id' => null,
+                    'rejection_reason' => null,
+                ]);
+                $registration = $registration->fresh();
+            }
+
+            // Review correction — a toll-free submission's own request body
+            // must name the already-owned number being verified
+            // (MessagingRegistrationSubmission::$phoneNumber); a local (10DLC)
+            // submission has no such requirement and may genuinely be
+            // submitted before any number exists, so $phoneNumber stays null
+            // there — never resolved, never required.
+            $phoneNumber = $this->primaryPhoneNumberFor($registration->business);
+
+            $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
+
+            $registration->update([
+                'provider_brand_id' => $result->providerBrandId,
+                'provider_campaign_id' => $result->providerCampaignId,
+                'provider_registration_id' => $result->providerRegistrationId,
+                'status' => $result->status->value,
+                'submitted_at' => CarbonImmutable::now(),
+                'rejection_reason' => null,
+            ]);
+
+            return $registration->fresh();
+        } finally {
+            $release();
+        }
+    }
+
+    /** @return (callable(): void)|null null when another worker holds the lock */
+    private function acquireSubmitLock(BusinessMessagingRegistration $registration): ?callable
+    {
+        if (DB::connection()->getDriverName() === 'mysql') {
+            $name = 'msgreg-submit:' . $registration->id;
+            $connection = DB::connection();
+
+            if ((int) ($connection->selectOne('SELECT GET_LOCK(?, 0) AS acquired', [$name])->acquired ?? 0) !== 1) {
+                return null;
+            }
+
+            return static function () use ($connection, $name): void {
+                $connection->selectOne('SELECT RELEASE_LOCK(?) AS released', [$name]);
+            };
+        }
+
+        $lock = Cache::lock('messaging-registration-submit:' . $registration->id, 120);
+
+        return $lock->get() ? static fn () => $lock->release() : null;
     }
 
     private function primaryPhoneNumberFor(Business $business): ?string
