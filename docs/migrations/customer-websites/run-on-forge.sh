@@ -5,6 +5,14 @@
 # <key> is one of: kaleb-hill | booths-to-the-max | greenbelt. Every validation fails closed before anything is written.
 set -Eeuo pipefail
 trap 'echo "ABORT: command failed at line $LINENO (nothing further was run)." >&2' ERR
+# Remove ONLY the backup file this run created, and only while it has not passed verification. Earlier backups are never touched.
+BACKUP_OWNED=0; BACKUP_VALID=0; BACKUP_REF=""
+cleanup() {
+  if [ "$BACKUP_OWNED" = 1 ] && [ "$BACKUP_VALID" != 1 ] && [ -n "$BACKUP_REF" ] && [ -f "$BACKUP_REF" ]; then
+    rm -f -- "$BACKUP_REF"; echo "Removed the incomplete backup created by this run: $BACKUP_REF" >&2
+  fi
+}
+trap cleanup EXIT
 die() { echo "ABORT: $*" >&2; exit 1; }
 
 KEY="${1:-}"; APPLY=0
@@ -47,17 +55,42 @@ echo "Bundle checksums verified."
 # ---- backup: dump, then prove it is complete and readable ----
 mkdir -p "$HOME/backups"
 BACKUP_REF="$HOME/backups/motiongrove-pre-$KEY-$(date +%Y%m%d-%H%M%S).sql.gz"
-MYSQL_PWD="$(envval DB_PASSWORD)" mysqldump -h"$DB_HOST_V" -P"$DB_PORT_V" -u"$DB_USER_V" --single-transaction --quick --routines --triggers "$(envval DB_DATABASE)" | gzip > "$BACKUP_REF"
+[ ! -e "$BACKUP_REF" ] || die "backup path already exists: $BACKUP_REF"
+BACKUP_OWNED=1
+# --no-tablespaces: the DB user lacks the PROCESS privilege (tablespace metadata is not needed to restore this dump).
+set +e
+MYSQL_PWD="$(envval DB_PASSWORD)" mysqldump --no-tablespaces -h"$DB_HOST_V" -P"$DB_PORT_V" -u"$DB_USER_V" --single-transaction --quick --routines --triggers "$(envval DB_DATABASE)" | gzip > "$BACKUP_REF"
+DUMP_STATUS=("${PIPESTATUS[@]}")
+set -e
+{ [ "${DUMP_STATUS[0]}" -eq 0 ] && [ "${DUMP_STATUS[1]}" -eq 0 ]; } || die "mysqldump/gzip failed (exit ${DUMP_STATUS[0]}/${DUMP_STATUS[1]})"
+live_tables() {   # base tables in the production schema (read-only information_schema query; no PROCESS privilege needed)
+  MYSQL_PWD="$(envval DB_PASSWORD)" mysql -h"$DB_HOST_V" -P"$DB_PORT_V" -u"$DB_USER_V" -N -B \
+    -e "SELECT table_name FROM information_schema.tables WHERE table_schema='$(envval DB_DATABASE)' AND table_type='BASE TABLE' ORDER BY table_name" | sort -u
+}
 verify_backup() {
+  # Completeness is judged against the live schema, not against an arbitrary size: a small production database
+  # legitimately compresses to well under 1 MB. Every pipeline here is pipefail/SIGPIPE-safe (output is captured first).
   [ -s "$BACKUP_REF" ] || die "backup file is missing or empty"
   gzip -t "$BACKUP_REF" || die "backup is not a valid gzip stream"
-  [ "$(stat -c %s "$BACKUP_REF")" -gt 1048576 ] || die "backup is implausibly small"
-  zcat "$BACKUP_REF" | tail -n 5 | grep -q -- '-- Dump completed' || die "backup is truncated (no completion marker)"
-  local t; t="$(zcat "$BACKUP_REF" | grep -c '^CREATE TABLE')"
-  [ "$t" -gt 100 ] || die "backup has only $t tables"
+  local c u t live dump tail5 missing
+  c="$(stat -c %s "$BACKUP_REF")"; u="$(zcat "$BACKUP_REF" | wc -c)"
+  [ "$u" -gt 65536 ] || die "backup expands to only $u bytes (compressed $c)"
+  tail5="$(zcat "$BACKUP_REF" | tail -n 5)"
+  [ "$(printf '%s\n' "$tail5" | grep -c -- '-- Dump completed' || true)" -ge 1 ] || die "backup is truncated (no completion marker)"
+  dump="$(zcat "$BACKUP_REF" | grep -o '^CREATE TABLE `[^`]*`' | sed -e 's/^CREATE TABLE `//' -e 's/`$//' | sort -u)"
+  t="$(printf '%s\n' "$dump" | grep -c . || true)"
+  printf '%s\n' "$dump" | grep -qx 'users' || die "backup has no users table"
+  live="$(live_tables)" || die "could not read the live table list"
+  [ "$(printf '%s\n' "$live" | grep -c . || true)" -gt 0 ] || die "live schema reports no tables"
+  missing="$(comm -23 <(printf '%s\n' "$live") <(printf '%s\n' "$dump") | head -n 5 | tr '\n' ' ')"
+  [ -z "$missing" ] || die "backup is missing live tables, e.g.: $missing"
+  echo "Backup validated: $BACKUP_REF (compressed $c bytes, uncompressed $u bytes, $t tables in dump, $(printf '%s\n' "$live" | grep -c .) live tables, all present)"
 }
 verify_backup
-echo "Backup verified: $BACKUP_REF"
+BACKUP_VALID=1
+BACKUP_SHA="$(sha256sum "$BACKUP_REF" | cut -d' ' -f1)"
+printf '%s  %s\n' "$BACKUP_SHA" "$(basename "$BACKUP_REF")" > "$BACKUP_REF.sha256"
+echo "Backup SHA-256 recorded: $BACKUP_SHA ($BACKUP_REF.sha256)"
 
 if [ "$APPLY" -eq 0 ]; then
   php artisan customer-websites:build "$KEY" --assets="$STAGE/assets"
@@ -68,6 +101,7 @@ fi
 PHRASE="BUILD CUSTOMER WEBSITES IN PRODUCTION"
 read -r -p "Type exactly [$PHRASE] to build $KEY: " TYPED
 [ "$TYPED" = "$PHRASE" ] || die "confirmation phrase did not match"
+[ "$(sha256sum "$BACKUP_REF" | cut -d' ' -f1)" = "$BACKUP_SHA" ] || die "backup changed after validation"
 verify_backup
 CUSTOMER_SITES_PRODUCTION_WRITE=true php artisan customer-websites:build "$KEY" --assets="$STAGE/assets" \
   --confirm-database=GetMotionGrove --backup-reference="$BACKUP_REF" --confirm-phrase="$PHRASE" ${ACCEPT_CONTACT_MISMATCH:+--accept-contact-mismatch} --apply
