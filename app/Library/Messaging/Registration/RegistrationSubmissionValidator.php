@@ -76,6 +76,10 @@ final class RegistrationSubmissionValidator
             $issues[] = 'The Privacy Policy and SMS Terms need separate pages.';
         }
 
+        if (is_string($registration->use_case) && $registration->use_case !== '' && RegistrationTemplateCatalog::choiceForUseCase($registration->use_case) === null) {
+            $issues[] = 'Choose one of the three messaging types: service and customer-care, promotional and marketing, or both.';
+        }
+
         $issues = array_merge($issues, $this->messageIssues($registration), $this->consentIssues($registration));
 
         return array_values(array_unique($issues));

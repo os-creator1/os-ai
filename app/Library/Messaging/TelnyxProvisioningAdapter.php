@@ -721,12 +721,29 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $status;
     }
 
+    /**
+     * Internal use-case key => Telnyx 10DLC campaignBuilder `usecase` value.
+     * Stored values stay lowercase; this is only the outgoing API boundary.
+     */
+    public const TEN_DLC_USE_CASES = [
+        'customer_care' => 'CUSTOMER_CARE',
+        'marketing' => 'MARKETING',
+        'mixed' => 'MIXED',
+    ];
+
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
         // Checked before any wallet reservation: a campaign description is
         // required, and the technical use-case key is never a substitute.
         if ($submission->campaignDescription === null || trim($submission->campaignDescription) === '') {
             throw new \RuntimeException('A 10DLC campaign description is required before submission.');
+        }
+
+        // Also before funding: an unsupported use case is never forwarded.
+        $telnyxUseCase = self::TEN_DLC_USE_CASES[$submission->useCase] ?? null;
+
+        if ($telnyxUseCase === null) {
+            throw new \RuntimeException('Unsupported 10DLC use case "' . $submission->useCase . '"; choose customer care, marketing or both.');
         }
 
         $business = Business::query()->findOrFail($submission->businessId);
@@ -756,7 +773,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
                 'brandId' => $brandId,
-                'usecase' => $submission->useCase,
+                'usecase' => $telnyxUseCase,
                 'description' => $submission->campaignDescription,
                 'sample1' => $submission->sampleMessage1,
                 'sample2' => $submission->sampleMessage2,
