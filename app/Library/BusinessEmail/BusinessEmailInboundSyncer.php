@@ -65,9 +65,20 @@ final class BusinessEmailInboundSyncer
             return false;
         }
 
-        $provider = $this->providers->for($account->provider);
+        $needed = $this->providers->for($account->provider)->inboundScope();
 
-        return in_array($provider->inboundScope(), preg_split('/\s+/', (string) $account->granted_scopes) ?: [], true);
+        // A provider with no OAuth scope (IMAP) is always allowed once connected.
+        if ($needed === '') {
+            return true;
+        }
+
+        $normalize = static fn (string $scope): string => strtolower(basename(trim($scope)));
+
+        return in_array(
+            $normalize($needed),
+            array_map($normalize, preg_split('/\s+/', (string) $account->granted_scopes, -1, PREG_SPLIT_NO_EMPTY) ?: []),
+            true,
+        );
     }
 
     /**
@@ -156,7 +167,7 @@ final class BusinessEmailInboundSyncer
                 ->where('id', $account->id)
                 ->where('state', 'active')
                 ->update([
-                    'inbound_cursor' => $batch->cursor !== null ? substr($batch->cursor, 0, 64) : $account->inbound_cursor,
+                    'inbound_cursor' => $batch->cursor !== null ? substr($batch->cursor, 0, 2000) : $account->inbound_cursor,
                     'inbound_synced_at' => now(),
                     'inbound_failure' => null,
                     'updated_at' => now(),

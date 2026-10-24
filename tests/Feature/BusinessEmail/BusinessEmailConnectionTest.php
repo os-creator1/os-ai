@@ -172,7 +172,8 @@ class BusinessEmailConnectionTest extends TestCase
         config(['business_email.google.client_id' => null, 'business_email.microsoft.client_id' => null]);
         $html = $this->get($url)->assertOk()->getContent();
         $this->assertStringNotContainsString('Connect Google', $html);
-        $this->assertStringContainsString('are not set up on this platform yet', $html);
+        $this->assertStringContainsString('sign-in is not set up on this platform yet', $html);
+        $this->assertStringContainsString('Connect Other Email', $html, 'the unavailable providers are explained, and Other Email stays available');
         $this->assertStringNotContainsString('Ask the account owner', $html);
     }
 

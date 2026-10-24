@@ -326,6 +326,21 @@ final class BusinessEmailSender
         }
     }
 
+    /** The provider id of the ledger row this message answers (by RFC Message-ID, inside this Business). */
+    private function repliedProviderMessageId(BusinessEmailMessage $message): ?string
+    {
+        if ($message->in_reply_to === null || $message->in_reply_to === '') {
+            return null;
+        }
+
+        return BusinessEmailMessage::query()
+            ->where('business_id', $message->business_id)
+            ->where('internet_message_id', $message->in_reply_to)
+            ->whereNotNull('provider_message_id')
+            ->orderByDesc('id')
+            ->value('provider_message_id');
+    }
+
     private function referencesFor(BusinessEmailMessage $reply): ?string
     {
         $chain = trim((string) $reply->references_header . ' ' . (string) $reply->internet_message_id);
@@ -484,6 +499,7 @@ final class BusinessEmailSender
                 inReplyTo: $message->in_reply_to,
                 references: $message->references_header,
                 threadId: $message->provider_thread_id,
+                replyToProviderMessageId: $this->repliedProviderMessageId($message),
             ));
         } catch (BusinessEmailProviderException $exception) {
             $this->finalizeFailure(

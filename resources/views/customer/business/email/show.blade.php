@@ -27,17 +27,48 @@
                 @endif
 
                 @if ($canManage)
-                    @forelse ($providers as $provider)
-                        <form method="POST" class="d-inline-block me-2"
-                              action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $provider->value]) }}">
-                            @csrf
-                            <button type="submit" class="btn btn-primary">
-                                {{ $account !== null ? 'Reconnect' : 'Connect' }} {{ $provider->label() }}
-                            </button>
-                        </form>
-                    @empty
-                        <p class="text-muted mb-0">Google and Microsoft email connections are not set up on this platform yet, so a mailbox cannot be connected right now. Please contact support.</p>
-                    @endforelse
+                    <div class="row" data-role="email-provider-options">
+                        @foreach ($providerOptions as $option)
+                            <div class="col-md-4 mb-1" data-role="email-provider-{{ $option['type'] }}">
+                                <h6>{{ $option['title'] }}</h6>
+                                <p class="text-muted small">{{ $option['help'] }}</p>
+                                @if ($option['usable'])
+                                    <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $option['type']]) }}">
+                                        @csrf
+                                        <button type="submit" class="btn btn-primary">{{ $account !== null ? 'Reconnect ' . $option['title'] : $option['button'] }}</button>
+                                    </form>
+                                @else
+                                    <x-alert variant="warning" data-role="email-provider-unavailable">{{ $option['unavailable'] }}</x-alert>
+                                @endif
+                            </div>
+                        @endforeach
+
+                        <div class="col-md-4 mb-1" data-role="email-provider-imap">
+                            <h6>Other Email (IMAP / SMTP)</h6>
+                            <p class="text-muted small">
+                                Zoho Mail, Titan, Hostinger, cPanel hosting and other standard mailboxes. We always use an
+                                encrypted connection and verify the server's certificate. Gmail / Google Workspace and
+                                Outlook / Microsoft 365 do not accept ordinary passwords here, so use their buttons. Some
+                                providers need IMAP access switched on, or an app password, in their mail settings.
+                            </p>
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect_other', [$workspaceUid, $businessUid]) }}">
+                                @csrf
+                                <input class="form-control mb-1" type="email" name="email" placeholder="Email address" value="{{ old('email') }}" required>
+                                <input class="form-control mb-1" type="text" name="username" placeholder="Username (blank = the email address)" value="{{ old('username') }}" autocomplete="off">
+                                <input class="form-control mb-1" type="password" name="password" placeholder="Password or app password" autocomplete="new-password" required>
+                                <div class="d-flex gap-1 mb-1">
+                                    <input class="form-control" type="text" name="imap_host" placeholder="IMAP server (blank = detect)" value="{{ old('imap_host') }}">
+                                    <input class="form-control" style="max-width:5.5rem" type="number" name="imap_port" placeholder="993" value="{{ old('imap_port') }}">
+                                </div>
+                                <div class="d-flex gap-1 mb-1">
+                                    <input class="form-control" type="text" name="smtp_host" placeholder="SMTP server (blank = detect)" value="{{ old('smtp_host') }}">
+                                    <input class="form-control" style="max-width:5.5rem" type="number" name="smtp_port" placeholder="465" value="{{ old('smtp_port') }}">
+                                </div>
+                                <div class="form-text mb-1">IMAP port 993 (or 143) and SMTP port 465 (or 587). The connection is tested before it is saved.</div>
+                                <button type="submit" class="btn btn-primary">Connect Other Email</button>
+                            </form>
+                        </div>
+                    </div>
                 @else
                     <p class="text-muted mb-0">You do not have permission to connect or change the email account. Ask the account owner to connect it or to grant you access.</p>
                 @endif
@@ -52,13 +83,28 @@
                 @if ($account->connected_at)
                     <p class="text-muted mb-2">Connected {{ $account->connected_at->diffForHumans() }}.</p>
                 @endif
+                @if ($account->provider->value === 'imap' && $imapSummary !== null)
+                    <p class="text-muted mb-2" data-role="email-imap-summary">Receiving: {{ $imapSummary['imap'] }} · Sending: {{ $imapSummary['smtp'] }} (encrypted, certificate verified)</p>
+                @endif
+                <p class="mb-2" data-role="email-health">
+                    @if ($account->inbound_failure)
+                        <span class="text-warning">Receiving problem:</span> {{ $inboundFailureText }}
+                    @elseif ($account->inbound_synced_at)
+                        Receiving is working. Last checked {{ $account->inbound_synced_at->diffForHumans() }}.
+                    @elseif ($inboundReady)
+                        Receiving is set up and will start shortly.
+                    @endif
+                    @if ((int) $account->inbound_skipped_count > 0)
+                        <span class="text-muted">· {{ (int) $account->inbound_skipped_count }} message(s) could not be imported.</span>
+                    @endif
+                </p>
                 @if ($account->failure_classification)
                     <x-alert variant="warning" data-role="email-last-send-failed">The last send had a problem. If it keeps happening, reconnect your account.</x-alert>
                 @endif
 
                 @if ($inboundNeedsReauth)
                     <x-alert variant="info" data-role="email-inbound-reauth">
-                        Receiving replies from this mailbox needs one more permission from Google.
+                        Receiving replies from this mailbox needs one more permission from {{ $account->provider->value === 'microsoft' ? 'Microsoft' : 'Google' }}.
                         @if ($canManage)
                             <form method="POST" class="d-inline-block ms-2"
                                   action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $account->provider->value]) }}">
@@ -72,7 +118,7 @@
                     </x-alert>
                 @endif
                 @if ($account->inbound_failure === 'reauthorization_required' && $inboundReady)
-                    <x-alert variant="warning" data-role="email-inbound-failed">Google no longer allows us to read this mailbox. Reauthorize the connection to keep receiving replies.</x-alert>
+                    <x-alert variant="warning" data-role="email-inbound-failed">Your email provider no longer allows us to read this mailbox. Reauthorize the connection to keep receiving replies.</x-alert>
                 @endif
 
                 @if ($canManage)

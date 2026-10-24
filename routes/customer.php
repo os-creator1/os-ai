@@ -1292,6 +1292,7 @@
                 ->whereIn('provider', ['google', 'microsoft'])
                 ->middleware('throttle:10,1')
                 ->name('connect');
+            Route::post('/connect-other', 'Business\BusinessEmailController@connectOther')->middleware('throttle:10,1')->name('connect_other');
             Route::post('/disconnect', 'Business\BusinessEmailController@disconnect')->name('disconnect');
             Route::post('/send', 'Business\BusinessEmailController@send')->middleware('throttle:20,1')->name('send');
             Route::post('/messages/{messageUid}/reply', 'Business\BusinessEmailController@reply')->middleware('throttle:20,1')->name('reply');

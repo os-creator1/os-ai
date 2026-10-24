@@ -43,8 +43,20 @@ return [
         'client_secret' => env('BUSINESS_EMAIL_MICROSOFT_CLIENT_SECRET'),
         'redirect' => env('BUSINESS_EMAIL_MICROSOFT_REDIRECT'),
         'tenant' => env('BUSINESS_EMAIL_MICROSOFT_TENANT', 'common'),
-        // Identify the mailbox (User.Read) and send (Mail.Send). No Mail.Read.
-        'scopes' => ['offline_access', 'User.Read', 'Mail.Send'],
+        // Identify the mailbox (User.Read), send (Mail.Send) and read incoming
+        // mail (Mail.Read, delegated: only the signed-in user's own mailbox).
+        // Connections made before Mail.Read existed keep sending and are asked
+        // to reauthorize before inbound sync starts.
+        'scopes' => ['offline_access', 'User.Read', 'Mail.Send', 'Mail.Read'],
+    ],
+
+    // "Other email": any standard IMAP/SMTP mailbox. TLS and certificate
+    // verification are mandatory; only these ports are accepted.
+    'imap' => [
+        'imap_ports' => [993, 143],
+        'smtp_ports' => [465, 587],
+        'connect_timeout_seconds' => 8,
+        'io_timeout_seconds' => 20,
     ],
 
     'oauth' => [

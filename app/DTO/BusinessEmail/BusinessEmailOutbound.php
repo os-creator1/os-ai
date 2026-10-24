@@ -18,6 +18,8 @@ final class BusinessEmailOutbound
         public readonly ?string $inReplyTo = null,
         public readonly ?string $references = null,
         public readonly ?string $threadId = null,
+        /** Provider id of the message being answered, for providers that thread by reply (Graph createReply). */
+        public readonly ?string $replyToProviderMessageId = null,
     ) {
     }
 }
