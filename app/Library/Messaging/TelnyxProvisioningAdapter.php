@@ -12,6 +12,7 @@ use App\Exceptions\Usage\UsageMeterBusinessScopeMismatchException;
 use App\Exceptions\Usage\UsageMeterCurrencyMismatchException;
 use App\Exceptions\Usage\UsageMeterNotMeteredException;
 use App\Exceptions\Usage\UsageMeterRateIntegrityException;
+use App\Exceptions\Usage\BusinessCurrencyUnresolvableException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
@@ -977,8 +978,15 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     private function reserveFunding(Business $business, string $featureKey): int
     {
         try {
+            // A Business whose creation-time listener failed (or that
+            // predates the wallet backfill) has no wallet row. Provision it
+            // through the canonical idempotent, race-safe initializer — the
+            // wallet starts at a zero balance, so the funding check below
+            // still refuses an unfunded Business exactly as before.
+            $this->wallet->initializeWalletForNewBusiness($business->id);
+
             $result = $this->wallet->reserve($business, $featureKey, (string) Str::uuid());
-        } catch (UsageWalletNotFoundException|NoActiveRateForFeatureException|UsageMeterNotMeteredException|UsageMeterBusinessScopeMismatchException|UsageMeterCurrencyMismatchException|UsageMeterRateIntegrityException $e) {
+        } catch (BusinessCurrencyUnresolvableException|UsageWalletNotFoundException|NoActiveRateForFeatureException|UsageMeterNotMeteredException|UsageMeterBusinessScopeMismatchException|UsageMeterCurrencyMismatchException|UsageMeterRateIntegrityException $e) {
             throw new MessagingFundingUnavailableException(sprintf(
                 'Funding is not yet configured for [%s]: %s',
                 $featureKey,

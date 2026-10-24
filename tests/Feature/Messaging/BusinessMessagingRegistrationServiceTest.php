@@ -152,6 +152,24 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
      * the Business's own primary number, never leave it null when one
      * genuinely exists.
      */
+    public function test_retrying_an_already_submitted_registration_is_refused_without_a_second_provider_call(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+
+        $submitted = $this->service()->submit($registration);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected MessagingRegistrationAlreadySubmittedException.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException) {
+            // expected
+        }
+
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertSame($submitted->provider_brand_id, $registration->fresh()->provider_brand_id);
+    }
+
     public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();

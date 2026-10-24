@@ -20,6 +20,7 @@ use App\Library\Messaging\Exceptions\InvalidCandidateTokenException;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
 use App\Library\Messaging\Exceptions\PortOutRequestAlreadyActiveException;
@@ -391,7 +392,15 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Messaging registration is not available in this environment yet.');
         }
 
-        $this->registrations->submit($registration);
+        try {
+            $this->registrations->submit($registration);
+        } catch (MessagingRegistrationAlreadySubmittedException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been submitted and is awaiting review.');
+        } catch (MessagingFundingUnavailableException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Messaging registration is not available for this Business yet. Please contact support.');
+        } catch (MessagingInsufficientFundsException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to submit this registration. Add funds to your Business balance and try again.');
+        }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',

@@ -919,4 +919,62 @@ class TelnyxProvisioningAdapterTest extends TestCase
 
         $this->assertSame(CampaignAssignmentOutcome::Requested, $result->outcome);
     }
+
+    // -----------------------------------------------------------------
+    // Missing-wallet recovery — a Business with no business_usage_wallets
+    // row is provisioned through the canonical initializer, never a raw
+    // "wallet not found" failure, and is never given free balance.
+    // -----------------------------------------------------------------
+
+    public function test_a_business_missing_its_wallet_is_provisioned_and_still_blocked_when_unfunded(): void
+    {
+        $this->enableProvisioning();
+        Http::fake();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, 0);
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->delete();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local));
+            $this->fail('Expected MessagingInsufficientFundsException.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingInsufficientFundsException) {
+            // expected: wallet re-created at zero balance, funding still required
+        }
+
+        $this->assertSame(1, DB::table('business_usage_wallets')->where('business_id', $business->id)->count());
+        $this->assertSame(0, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+        Http::assertNothingSent();
+    }
+
+    public function test_wallet_initialization_is_idempotent_and_never_duplicates_a_wallet(): void
+    {
+        $business = $this->business();
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->delete();
+
+        $manager = app(UsageWalletManager::class);
+        $manager->initializeWalletForNewBusiness($business->id);
+        $manager->initializeWalletForNewBusiness($business->id);
+
+        // The unique business_id index backs the race path (the duplicate-key
+        // loser returns quietly); true cross-process concurrency is not
+        // exercised here.
+        $this->assertSame(1, DB::table('business_usage_wallets')->where('business_id', $business->id)->count());
+    }
+
+    public function test_a_funded_10dlc_submission_charges_exactly_once_on_the_wallet(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_2']]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_fixture_2']]),
+        ]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local));
+
+        Http::assertSentCount(2);
+        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
 }

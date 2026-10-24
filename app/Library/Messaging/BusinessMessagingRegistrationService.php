@@ -15,6 +15,8 @@ use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
 use App\Repositories\Contracts\UsageMeterRepository;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Cache;
+use App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException;
 
 /**
  * Text messaging setup/number/compliance hub — STATE 2's capture/submit/
@@ -98,26 +100,48 @@ class BusinessMessagingRegistrationService
     {
         $adapter = app(MessagingProvisioningAdapter::class);
 
-        // Review correction — a toll-free submission's own request body
-        // must name the already-owned number being verified
-        // (MessagingRegistrationSubmission::$phoneNumber); a local (10DLC)
-        // submission has no such requirement and may genuinely be
-        // submitted before any number exists, so $phoneNumber stays null
-        // there — never resolved, never required.
-        $phoneNumber = $this->primaryPhoneNumberFor($registration->business);
+        // Retry safety: the provider calls and the wallet reservation are
+        // not idempotent across requests (each reserve() uses a fresh key),
+        // so only one submission per registration may be in flight, and a
+        // registration that is already Pending/Approved must never be
+        // submitted again. Status is re-read under the lock so a double
+        // click or a retry after a lost response is a harmless no-op.
+        $lock = Cache::lock('messaging-registration-submit:' . $registration->id, 120);
 
-        $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
+        if (! $lock->get()) {
+            throw new MessagingRegistrationAlreadySubmittedException('A submission for this registration is already in progress.');
+        }
 
-        $registration->update([
-            'provider_brand_id' => $result->providerBrandId,
-            'provider_campaign_id' => $result->providerCampaignId,
-            'provider_registration_id' => $result->providerRegistrationId,
-            'status' => $result->status->value,
-            'submitted_at' => CarbonImmutable::now(),
-            'rejection_reason' => null,
-        ]);
+        try {
+            $registration = $registration->fresh();
 
-        return $registration->fresh();
+            if ($registration->status === MessagingRegistrationStatus::Pending || $registration->status === MessagingRegistrationStatus::Approved) {
+                throw new MessagingRegistrationAlreadySubmittedException('This registration has already been submitted.');
+            }
+
+            // Review correction — a toll-free submission's own request body
+            // must name the already-owned number being verified
+            // (MessagingRegistrationSubmission::$phoneNumber); a local (10DLC)
+            // submission has no such requirement and may genuinely be
+            // submitted before any number exists, so $phoneNumber stays null
+            // there — never resolved, never required.
+            $phoneNumber = $this->primaryPhoneNumberFor($registration->business);
+
+            $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
+
+            $registration->update([
+                'provider_brand_id' => $result->providerBrandId,
+                'provider_campaign_id' => $result->providerCampaignId,
+                'provider_registration_id' => $result->providerRegistrationId,
+                'status' => $result->status->value,
+                'submitted_at' => CarbonImmutable::now(),
+                'rejection_reason' => null,
+            ]);
+
+            return $registration->fresh();
+        } finally {
+            $lock->release();
+        }
     }
 
     private function primaryPhoneNumberFor(Business $business): ?string
