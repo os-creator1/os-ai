@@ -24,3 +24,15 @@
 - History is consumed whole records at a time; the cursor never passes an unfetched message. Continuation is a
   `ShouldBeUniqueUntilProcessing` job re-queued only while more remains; the 5-minute scheduler is the safety net.
 - Google restricted-scope (`gmail.readonly`) production verification is an external compliance requirement.
+
+## Microsoft and "Other email" (IMAP/SMTP)
+- **Microsoft** (Outlook.com, Hotmail, Microsoft 365, Exchange Online): scopes now include `Mail.Read`. Inbound uses Graph
+  *delta* on the Inbox, one server page per run; the cursor is the Graph `nextLink`/`deltaLink` and is only followed if it
+  points at `graph.microsoft.com`. Replies use `createReply` (falls back to a plain message if the original is gone).
+  Existing connections keep sending and show "Reauthorize" until `Mail.Read` is granted. Attachments are not imported.
+  Azure app registration must add the delegated `Mail.Read` permission (admin consent may be required by some tenants).
+- **Other email**: one encrypted credential blob (`ImapSettings`) in the existing credential column. Public DNS names only,
+  ports 993/143 and 465/587, TLS + certificate verification mandatory, connection to the vetted IP (anti-SSRF / anti-rebinding),
+  both directions tested before saving. Threads are derived from RFC `References`/`In-Reply-To`.
+  Providers that need OAuth or have IMAP disabled (Gmail/Workspace, Outlook/Microsoft 365, many consumer hosts) are told so.
+- Not done: importing mail sent from outside the app, attachments, multiple mailboxes per business.

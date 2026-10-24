@@ -63,6 +63,10 @@ final class BusinessEmailAccountManager
      */
     public function beginConnect(Business $business, int $actorUserId, BusinessEmailProviderType $provider, bool $reauthorize = false): string
     {
+        if ($provider === BusinessEmailProviderType::Imap) {
+            throw new LogicException('Other email is connected with its own form, not with an OAuth sign-in.');
+        }
+
         $this->oauthConfig->assertUsable($provider);
 
         $account = $this->findForBusiness($business);
@@ -104,6 +108,54 @@ final class BusinessEmailAccountManager
         $state = $this->stateSigner->issue($account->fresh());
 
         return $this->providers->for($provider)->authorizationUrl($state, true);
+    }
+
+    /**
+     * Connects (or credential-refreshes) an "Other email" mailbox whose
+     * settings the CALLER has already validated AND tested against the real
+     * servers. There is no OAuth round trip: the validated settings blob is
+     * written through the same encrypted-credential/optimistic-lock path.
+     *
+     * An ACTIVE account may only be updated for the SAME mailbox (new
+     * password/server), and the old credential keeps working until this
+     * write; switching mailbox is a disconnect first.
+     *
+     * @throws LogicException|BusinessEmailConcurrencyException
+     */
+    public function connectWithCredentials(Business $business, int $actorUserId, BusinessEmailProviderType $provider, string $mailboxEmail, string $credentialBlob): BusinessEmailAccount
+    {
+        $account = $this->findForBusiness($business);
+
+        if ($account === null) {
+            $account = $this->createPending($business, $actorUserId, $provider);
+        } elseif ($account->state === BusinessEmailAccountState::Active) {
+            if ($account->provider !== $provider || strtolower((string) $account->mailbox_email) !== strtolower($mailboxEmail)) {
+                throw new LogicException('An email account is already connected; disconnect it before connecting a different one.');
+            }
+        }
+
+        $reconnecting = $account->state === BusinessEmailAccountState::Active;
+
+        $this->transition($account, BusinessEmailAccountState::Active, [
+            'provider' => $provider->value,
+            'connected_by_user_id' => $actorUserId,
+            'refresh_token_encrypted' => $credentialBlob,
+            'granted_scopes' => null,
+            'mailbox_email' => strtolower($mailboxEmail),
+            'display_name' => $account->display_name,
+            'connected_at' => $reconnecting && $account->connected_at !== null ? $account->connected_at : now(),
+            'last_refreshed_at' => now(),
+            'failure_classification' => null,
+            'inbound_failure' => null,
+            'oauth_state_nonce' => null,
+            'oauth_state_expires_at' => null,
+            'revoked_at' => null,
+            'disconnected_at' => null,
+            // A different mailbox/server restarts the inbound window.
+            'inbound_cursor' => $reconnecting ? $account->inbound_cursor : null,
+        ]);
+
+        return $account->fresh();
     }
 
     /**

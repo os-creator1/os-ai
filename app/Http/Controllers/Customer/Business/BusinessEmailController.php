@@ -12,6 +12,8 @@ use App\Exceptions\BusinessEmail\BusinessEmailProviderException;
 use App\Exceptions\BusinessEmail\BusinessEmailSendRefusedException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Exceptions\BusinessEmail\BusinessEmailImapException;
+use App\Http\Requests\BusinessEmail\ConnectOtherEmailRequest;
 use App\Http\Requests\BusinessEmail\ReplyBusinessEmailRequest;
 use App\Http\Requests\BusinessEmail\SendBusinessEmailRequest;
 use App\Library\BusinessEmail\BusinessEmailAccountManager;
@@ -20,7 +22,11 @@ use App\Library\BusinessEmail\BusinessEmailInboundSyncer;
 use App\Library\BusinessEmail\BusinessEmailLocationScope;
 use App\Library\BusinessEmail\BusinessEmailOAuthConfig;
 use App\Library\BusinessEmail\BusinessEmailOAuthStateSigner;
+use App\Library\BusinessEmail\BusinessEmailProviderRegistry;
 use App\Library\BusinessEmail\BusinessEmailSender;
+use App\Library\BusinessEmail\Imap\ImapPresets;
+use App\Library\BusinessEmail\Imap\ImapSettings;
+use App\Library\BusinessEmail\ImapBusinessEmailProvider;
 use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Models\Business;
 use App\Models\BusinessEmailMessage;
@@ -69,6 +75,7 @@ class BusinessEmailController extends CustomerBaseController
         private readonly BusinessEmailLocationScope $locations,
         private readonly WorkspaceManagementAuthority $authority,
         private readonly BusinessEmailInboundSyncer $inbound,
+        private readonly BusinessEmailProviderRegistry $registry,
     ) {
     }
 
@@ -109,9 +116,9 @@ class BusinessEmailController extends CustomerBaseController
             'account' => $account,
             'canManage' => $canManage,
             'canSend' => $canSend,
-            'providers' => collect(BusinessEmailProviderType::cases())
-                ->filter(fn (BusinessEmailProviderType $provider) => $this->oauthConfig->isUsable($provider))
-                ->values(),
+            'providerOptions' => $this->providerOptions(),
+            'imapSummary' => $this->imapSummary($account),
+            'inboundFailureText' => $this->inboundFailureText($account?->inbound_failure),
             'contacts' => $canSend ? $this->contacts->emailableContacts($business, 50, $accessible) : [],
             // Asked for only when there is a real choice to make.
             'locationChoices' => $locationChoices['activeTotal'] > 1 ? $locationChoices['selectable'] : collect(),
@@ -121,6 +128,118 @@ class BusinessEmailController extends CustomerBaseController
             'inboundNeedsReauth' => $account?->isActive() === true && $this->inbound->supportsInbound($account) && ! $this->inbound->canSync($account),
             'sendToken' => (string) Str::uuid(),
         ]);
+    }
+
+    /**
+     * The OAuth providers are ALWAYS listed. One that is not configured on this
+     * platform is shown as unavailable with the reason, never silently hidden.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function providerOptions(): array
+    {
+        $options = [];
+
+        foreach ([
+            [BusinessEmailProviderType::Google, 'Google', 'Gmail and Google Workspace.', 'Connect Google'],
+            [BusinessEmailProviderType::Microsoft, 'Microsoft', 'Outlook.com, Hotmail, Microsoft 365 and Exchange Online.', 'Connect Microsoft'],
+        ] as [$type, $title, $help, $button]) {
+            $options[] = [
+                'type' => $type->value,
+                'title' => $title,
+                'help' => $help,
+                'button' => $button,
+                'usable' => $this->oauthConfig->isUsable($type),
+                'unavailable' => $title . ' sign-in is not set up on this platform yet. Please contact support; you can use "Connect Other Email" meanwhile if your mailbox supports IMAP/SMTP.',
+            ];
+        }
+
+        return $options;
+    }
+
+    /** @return array{imap: string, smtp: string}|null */
+    private function imapSummary(?\App\Models\BusinessEmailAccount $account): ?array
+    {
+        if ($account === null || ! $account->isActive() || $account->provider !== BusinessEmailProviderType::Imap) {
+            return null;
+        }
+
+        try {
+            $settings = ImapSettings::fromBlob((string) $account->refresh_token_encrypted);
+        } catch (BusinessEmailImapException) {
+            return null;
+        }
+
+        return ['imap' => $settings->imapHost . ':' . $settings->imapPort, 'smtp' => $settings->smtpHost . ':' . $settings->smtpPort];
+    }
+
+    private function inboundFailureText(?string $failure): string
+    {
+        return match ($failure) {
+            null, '' => '',
+            BusinessEmailInboundSyncer::NEEDS_REAUTHORIZATION => 'the provider no longer lets us read this mailbox. Reauthorize the connection.',
+            'authentication_expired' => 'the provider rejected the saved sign-in. Reconnect the mailbox.',
+            'provider_rate_limited' => 'the provider is limiting requests; we will retry automatically.',
+            'temporary_provider_failure' => 'the provider is not answering; we will retry automatically.',
+            default => 'the last check did not finish; we will retry automatically.',
+        };
+    }
+
+    /**
+     * "Connect Other Email": validate, auto-detect blank server settings, TEST
+     * both directions against the real servers, and only then store the
+     * encrypted credential. A failed test changes nothing.
+     */
+    public function connectOther(ConnectOtherEmailRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        [$workspace, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
+        $this->authorizeManage($workspace);
+
+        $input = $request->validated();
+        $input['username'] = trim((string) ($input['username'] ?? '')) !== '' ? $input['username'] : (string) $input['email'];
+        $flash = ['status' => 'error'];
+
+        $needsDetection = trim((string) ($input['imap_host'] ?? '')) === '' || trim((string) ($input['smtp_host'] ?? '')) === '';
+
+        if ($needsDetection) {
+            $detected = app(ImapPresets::class)->detect(strtolower(trim((string) $input['email'])));
+
+            if ($detected['use_oauth'] !== null || $detected['settings'] === null) {
+                return $this->backWithInput($workspaceUid, $businessUid, $request, $detected['note'] ?? 'We could not work out your mail server settings. Enter the IMAP and SMTP servers your provider gave you.');
+            }
+
+            foreach ($detected['settings'] as $key => $value) {
+                if (trim((string) ($input[$key] ?? '')) === '') {
+                    $input[$key] = $value;
+                }
+            }
+        }
+
+        try {
+            $settings = ImapSettings::validated($input);
+            $provider = $this->registry->for(BusinessEmailProviderType::Imap);
+            assert($provider instanceof ImapBusinessEmailProvider);
+            $provider->testConnection($settings);
+        } catch (BusinessEmailImapException $exception) {
+            Log::info('Other email connection test failed.', ['business_id' => $business->id, 'reason' => $exception->reason]);
+
+            return $this->backWithInput($workspaceUid, $businessUid, $request, $exception->customerMessage());
+        }
+
+        try {
+            $this->accounts->connectWithCredentials($business, (int) Auth::id(), BusinessEmailProviderType::Imap, $settings->email, $settings->toBlob());
+        } catch (BusinessEmailConcurrencyException $exception) {
+            return $this->back($workspaceUid, $businessUid, 'error', $exception->userMessage());
+        } catch (LogicException $exception) {
+            return $this->back($workspaceUid, $businessUid, 'error', $exception->getMessage());
+        }
+
+        return $this->back($workspaceUid, $businessUid, 'success', 'Email account connected. Receiving and sending both passed the connection test.');
+    }
+
+    private function backWithInput(string $workspaceUid, string $businessUid, Request $request, string $message): RedirectResponse
+    {
+        return $this->back($workspaceUid, $businessUid, 'error', $message)->withInput($request->except(['password']));
     }
 
     /** CSRF-protected POST: it mutates connection state and the nonce. */

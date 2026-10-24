@@ -86,14 +86,13 @@ class BusinessEmailProviderAdapterTest extends TestCase
         $this->assertStringNotContainsString('calendar', $url);
     }
 
-    public function test_microsoft_requests_only_identity_and_send_scopes(): void
+    public function test_microsoft_requests_identity_send_and_mail_read_scopes(): void
     {
         $url = $this->microsoft()->authorizationUrl('STATE', true);
         parse_str((string) parse_url($url, PHP_URL_QUERY), $q);
 
         $this->assertStringStartsWith('https://login.microsoftonline.com/common/oauth2/v2.0/authorize?', $url);
-        $this->assertSame('offline_access User.Read Mail.Send', $q['scope']);
-        $this->assertStringNotContainsString('Mail.Read ', $q['scope'] . ' ');
+        $this->assertSame('offline_access User.Read Mail.Send Mail.Read', $q['scope']);
         $this->assertStringNotContainsString('Calendars', $url);
         $this->assertSame('consent', $q['prompt']);
     }
@@ -396,8 +395,8 @@ class BusinessEmailProviderAdapterTest extends TestCase
             $this->assertTrue($capabilities->plainTextSend);
             $this->assertFalse($capabilities->htmlSend);
             $this->assertFalse($capabilities->attachments);
-            // Only the Google adapter reads mail; Microsoft inbound is not implemented.
-            $this->assertSame($provider instanceof GoogleBusinessEmailProvider, $capabilities->inboundSync);
+            // Google and Microsoft both read mail now (delta / history).
+            $this->assertTrue($capabilities->inboundSync);
         }
     }
 }
