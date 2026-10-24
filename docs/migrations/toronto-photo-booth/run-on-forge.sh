@@ -6,6 +6,14 @@
 set -Eeuo pipefail
 trap 'echo "ABORT: command failed at line $LINENO (nothing further was run)." >&2' ERR
 die() { echo "ABORT: $*" >&2; exit 1; }
+# Remove ONLY the backup file this run created, and only while it has not passed verification. Earlier backups are never touched.
+BACKUP_OWNED=0; BACKUP_VALID=0; BACKUP_REF=""
+cleanup() {
+  if [ "$BACKUP_OWNED" = 1 ] && [ "$BACKUP_VALID" != 1 ] && [ -n "$BACKUP_REF" ] && [ -f "$BACKUP_REF" ]; then
+    rm -f -- "$BACKUP_REF"; echo "Removed the incomplete backup created by this run: $BACKUP_REF" >&2
+  fi
+}
+trap cleanup EXIT
 
 APP_DIR="${APP_DIR:-/home/forge/getmotiongrove.com/current}"
 BUNDLE="${BUNDLE:-$HOME/toronto-prod-bundle.tgz}"
@@ -62,18 +70,26 @@ echo "Snapshot report verified for GHL location $GHL_LOCATION."
 # ---- backup: dump, then prove it is complete and readable ----
 mkdir -p "$HOME/backups"
 BACKUP_REF="$HOME/backups/motiongrove-pre-toronto-$(date +%Y%m%d-%H%M%S).sql.gz"
-MYSQL_PWD="$(envval DB_PASSWORD)" mysqldump -h"$DB_HOST_V" -P"$DB_PORT_V" -u"$DB_USER_V" --single-transaction --quick --routines --triggers "$(envval DB_DATABASE)" | gzip > "$BACKUP_REF"
+[ ! -e "$BACKUP_REF" ] || die "backup path already exists: $BACKUP_REF"
+BACKUP_OWNED=1
+# --no-tablespaces: the DB user lacks the PROCESS privilege (tablespace metadata is not needed to restore this dump).
+set +e
+MYSQL_PWD="$(envval DB_PASSWORD)" mysqldump --no-tablespaces -h"$DB_HOST_V" -P"$DB_PORT_V" -u"$DB_USER_V" --single-transaction --quick --routines --triggers "$(envval DB_DATABASE)" | gzip > "$BACKUP_REF"
+DUMP_STATUS=("${PIPESTATUS[@]}")
+set -e
+{ [ "${DUMP_STATUS[0]}" -eq 0 ] && [ "${DUMP_STATUS[1]}" -eq 0 ]; } || die "mysqldump/gzip failed (exit ${DUMP_STATUS[0]}/${DUMP_STATUS[1]})"
 verify_backup() {
   [ -s "$BACKUP_REF" ] || die "backup file is missing or empty"
   gzip -t "$BACKUP_REF" || die "backup is not a valid gzip stream"
   [ "$(stat -c %s "$BACKUP_REF")" -gt 1048576 ] || die "backup is implausibly small"
-  zcat "$BACKUP_REF" | tail -n 5 | grep -q -- '-- Dump completed' || die "backup is truncated (no completion marker)"
+  [ "$(zcat "$BACKUP_REF" | tail -n 5 | grep -c -- '-- Dump completed' || true)" -ge 1 ] || die "backup is truncated (no completion marker)"
   local t; t="$(zcat "$BACKUP_REF" | grep -c '^CREATE TABLE' || true)"
   [ "$t" -gt 100 ] || die "backup has only $t tables"
-  zcat "$BACKUP_REF" | grep -q '^CREATE TABLE `users`' || die "backup has no users table"
+  [ "$(zcat "$BACKUP_REF" | grep -c '^CREATE TABLE `users`' || true)" -ge 1 ] || die "backup has no users table"
   echo "Backup validated: $BACKUP_REF ($(du -h "$BACKUP_REF" | cut -f1), $t tables)"
 }
 verify_backup
+BACKUP_VALID=1
 BACKUP_SHA="$(sha256sum "$BACKUP_REF" | cut -d' ' -f1)"
 
 COMMON=(--owner-email="$OWNER_EMAIL" --snapshot="$STAGE/snapshot" --assets="$STAGE/assets")
