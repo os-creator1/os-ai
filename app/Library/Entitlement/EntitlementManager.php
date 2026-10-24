@@ -2181,6 +2181,78 @@ final class EntitlementManager
         });
     }
 
+    /**
+     * Platform-admin "Module Access": applies a customer-facing module state
+     * (default / enabled / disabled — WorkspaceModuleCatalog) as the
+     * underlying per-feature override rows, atomically. It adds no second
+     * permission system: every key is written through createOrChangeOverride()
+     * / revertOverride(), so the platform-admin check, the Allow-requires-
+     * Available floor, the audit transition rows (actor, Workspace, feature,
+     * from/to) and the change events are exactly the existing ones. Plans,
+     * prices and Stripe subscriptions are never touched, and no customer data
+     * is deleted — a module is only gated, so restoring it restores access.
+     *
+     * @param  array<string, string>  $moduleStates  module id => default|enabled|disabled
+     * @return int number of feature override rows created, changed or reverted
+     */
+    public function applyWorkspaceModuleAccess(
+        Workspace $workspace,
+        array $moduleStates,
+        int $actorUserId,
+        string $reason,
+    ): int {
+        return DB::transaction(function () use ($workspace, $moduleStates, $actorUserId, $reason) {
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($workspace->id);
+            }
+
+            $this->assertPlatformAdministrator($actorUserId);
+
+            if (trim($reason) === '') {
+                throw new InvalidArgumentException('A non-empty reason is required to change Workspace module access.');
+            }
+
+            $changed = 0;
+
+            foreach ($moduleStates as $moduleId => $state) {
+                if (! WorkspaceModuleCatalog::has($moduleId)) {
+                    throw new InvalidArgumentException("Unknown module [{$moduleId}].");
+                }
+
+                if (! in_array($state, [WorkspaceModuleCatalog::STATE_DEFAULT, WorkspaceModuleCatalog::STATE_ENABLED, WorkspaceModuleCatalog::STATE_DISABLED], true)) {
+                    throw new InvalidArgumentException("Invalid state [{$state}] for module [{$moduleId}].");
+                }
+
+                if ($state === WorkspaceModuleCatalog::STATE_ENABLED && ! WorkspaceModuleCatalog::canEnable($moduleId)) {
+                    throw new UnavailablePlatformFeatureOverrideException($moduleId);
+                }
+
+                foreach (WorkspaceModuleCatalog::targetOverrides($moduleId, $state) as $featureKey => $target) {
+                    $feature = PlatformFeature::from($featureKey);
+                    $existing = $this->overrideRepository->findByWorkspaceAndFeature($lockedWorkspace->id, $featureKey);
+
+                    if ($target === null) {
+                        if ($existing !== null) {
+                            $this->revertOverride($lockedWorkspace, $feature, $actorUserId);
+                            $changed++;
+                        }
+
+                        continue;
+                    }
+
+                    if ($existing === null || $existing->state !== $target) {
+                        $this->createOrChangeOverride($lockedWorkspace, $feature, $target, $actorUserId, $reason);
+                        $changed++;
+                    }
+                }
+            }
+
+            return $changed;
+        });
+    }
+
     private function writeOverrideTransition(
         int $workspaceId,
         string $featureKey,

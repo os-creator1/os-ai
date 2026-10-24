@@ -407,4 +407,8 @@
             </div>
         </section>
     @endcan
+
+    @can('manage workspace plans')
+        @include('admin.workspaces.partials.module-access')
+    @endcan
 @endsection

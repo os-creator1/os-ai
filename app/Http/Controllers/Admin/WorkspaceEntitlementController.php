@@ -24,6 +24,7 @@ use App\Http\Requests\Admin\Workspace\GrantWorkspaceComplimentaryStatusRequest;
 use App\Http\Requests\Admin\Workspace\RevokeWorkspaceComplimentaryStatusRequest;
 use App\Http\Requests\Admin\Workspace\StoreWorkspaceEntitlementOverrideRequest;
 use App\Http\Requests\Admin\Workspace\UpdateWorkspaceAdditionalSlotsRequest;
+use App\Http\Requests\Admin\Workspace\UpdateWorkspaceModuleAccessRequest;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\Workspace;
 use Illuminate\Http\RedirectResponse;
@@ -214,6 +215,34 @@ class WorkspaceEntitlementController extends AdminBaseController
         }
 
         return $this->mutationSuccessRedirect($workspace, 'Workspace entitlement override reverted.');
+    }
+
+    /**
+     * Module Access: one audited save for the whole module list. Only modules
+     * whose state actually differs from what is stored are written, so an
+     * untouched module never produces audit noise.
+     */
+    public function updateModuleAccess(UpdateWorkspaceModuleAccessRequest $request, Workspace $workspace): RedirectResponse
+    {
+        $this->authorize('manage workspace plans');
+
+        try {
+            $changed = $this->entitlementManager->applyWorkspaceModuleAccess(
+                $workspace,
+                $request->requestedModuleStates(),
+                (int) Auth::id(),
+                $request->validated('reason'),
+            );
+        } catch (WorkspaceNotFoundException) {
+            abort(404);
+        } catch (Throwable $e) {
+            return $this->mutationErrorRedirect($workspace, $e);
+        }
+
+        return $this->mutationSuccessRedirect(
+            $workspace,
+            $changed === 0 ? 'Module access unchanged.' : 'Module access saved.',
+        );
     }
 
     private function mutationSuccessRedirect(Workspace $workspace, string $message): RedirectResponse
