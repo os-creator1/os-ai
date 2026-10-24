@@ -31,12 +31,15 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
 
-    private const PURCHASE = 1_000_000;   // 1.00 one-time number purchase
-    private const RENTAL = 2_000_000;     // 2.00 monthly rental
-    private const REGISTRATION = 4_000_000; // 4.00 one-time 10DLC registration
-    private const CAMPAIGN = 1_500_000;   // 1.50 monthly campaign
-    private const LVM_REGISTRATION = 9_000_000; // 9.00 one-time Low Volume Mixed registration
-    private const LVM_CAMPAIGN = 2_000_000;     // 2.00 monthly Low Volume Mixed campaign
+    // Carrier cost passes through at a 1.00 multiplier (zero markup): the number's quote is
+    // upfront 0.25 + monthly 1.00, so the first charge is 1.25 and rental renews at 1.00.
+    private const PURCHASE = 1_250_000;
+    private const RENTAL = 1_000_000;
+    private const BRAND = 4_500_000;                // carrier brand fee, charged when the brand is created
+    private const REGISTRATION = 30_000_000;        // 3 prepaid months of a standard campaign
+    private const CAMPAIGN = 10_000_000;            // standard campaign, monthly after the prepaid months
+    private const LVM_REGISTRATION = 4_500_000;     // 3 prepaid months of Low Volume Mixed
+    private const LVM_CAMPAIGN = 1_500_000;         // Low Volume Mixed, monthly after the prepaid months
 
     private $business;
     private $workspace;
@@ -46,6 +49,8 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     private string $tfStatus = 'In Progress';
     private string $campaignStatus = 'TCR_PENDING';
     private bool $lvmEligible = true;
+    /** The mocked carrier quote for the number (cost_information strings). */
+    private array $numberCost = ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD'];
     private int $campaignCreateStatus = 200;
     /** @var array<string, mixed> the mocked qualify-by-usecase answer (root-level UsecaseMetadata) */
     private array $qualification = ['usecase' => 'LOW_VOLUME', 'monthlyFee' => 1.5, 'quarterlyFee' => 4.5, 'annualFee' => 18, 'minSubUsecases' => 2, 'maxSubUsecases' => 5, 'mnoMetadata' => []];
@@ -71,8 +76,9 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $admin = User::create(['first_name' => 'Owner', 'last_name' => 'Admin', 'email' => 'owner' . uniqid() . '@example.test', 'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin']);
         config(['messaging.rates' => [
             'currency' => 'USD', 'actor_user_id' => (string) $admin->id, 'approved_by' => 'Owner, test fixture',
-            'number_purchase' => ['retail_micro' => (string) self::PURCHASE, 'cost_micro' => '0', 'unit' => 'per number'],
-            'number_rental_renewal' => ['retail_micro' => (string) self::RENTAL, 'cost_micro' => '0', 'unit' => 'per month'],
+            'number_purchase' => ['retail_micro' => '1000000', 'cost_micro' => '0', 'unit' => 'per 1.00 of carrier cost'],
+            'number_rental_renewal' => ['retail_micro' => '1000000', 'cost_micro' => '0', 'unit' => 'per 1.00 of carrier cost'],
+            'ten_dlc_brand_registration' => ['retail_micro' => (string) self::BRAND, 'cost_micro' => '0', 'unit' => 'per brand'],
             'ten_dlc_registration' => ['retail_micro' => (string) self::REGISTRATION, 'cost_micro' => '0', 'unit' => 'per registration'],
             'ten_dlc_campaign_renewal' => ['retail_micro' => (string) self::CAMPAIGN, 'cost_micro' => '0', 'unit' => 'per month'],
             'ten_dlc_low_volume_registration' => ['retail_micro' => (string) self::LVM_REGISTRATION, 'cost_micro' => '0', 'unit' => 'per registration'],
@@ -117,7 +123,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     private function telnyx(): void
     {
         Http::fake([
-            'api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [['phone_number' => '+18885550123']]]),
+            'api.telnyx.com/v2/available_phone_numbers*' => fn () => Http::response(['data' => [['record_type' => 'available_phone_number', 'phone_number' => '+18885550123', 'best_effort' => false, 'cost_information' => $this->numberCost, 'features' => [['name' => 'sms']]]]]),
             'api.telnyx.com/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_flow_1']]),
             'api.telnyx.com/v2/number_orders' => fn () => $this->orderStatus === 200
                 ? Http::response(['data' => ['phone_numbers' => [['id' => 'pn_flow_1']]]])
@@ -160,8 +166,8 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $search = $this->search('toll_free');
         $html = $search->getContent();
         $this->assertStringContainsString('data-role="charge-summary"', $html);
-        $this->assertStringContainsString('USD 1.00', $html);
-        $this->assertStringContainsString('USD 2.00', $html);
+        $this->assertStringContainsString('USD 1.25', $html);
+        $this->assertStringContainsString('USD 1.00 per month', $html);
         $this->assertStringContainsString('Add funds', $html);
         $this->assertStringContainsString('Toll-free verification is $0 through Telnyx', $html);
 
@@ -224,8 +230,8 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->post($this->url('registration.update'), $this->payload());
 
         $page = $this->get($this->url('show'))->getContent();
-        $this->assertStringContainsString('USD 4.00', $page);
-        $this->assertStringContainsString('USD 1.50', $page);
+        $this->assertStringContainsString('USD 34.50', $page);
+        $this->assertStringContainsString('USD 10.00', $page);
 
         // Missing funds: refused before any carrier request.
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error')
@@ -233,15 +239,15 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertSame(0, $this->posted('/10dlc/brand'));
 
         // Funded: charged exactly once; brand and campaign each created once.
-        $this->fund(30_000_000);
+        $this->fund(60_000_000);
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
-        $this->assertSame(30_000_000 - self::REGISTRATION, $this->balance());
+        $this->assertSame(60_000_000 - self::BRAND - self::REGISTRATION, $this->balance());
         $this->assertSame(1, $this->posted('/10dlc/brand'));
         $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
 
         // Duplicate click: refused, no second fee or request.
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
-        $this->assertSame(30_000_000 - self::REGISTRATION, $this->balance());
+        $this->assertSame(60_000_000 - self::BRAND - self::REGISTRATION, $this->balance());
         $this->assertSame(1, $this->posted('/10dlc/brand'));
 
         // Carrier approval, then the number.
@@ -354,7 +360,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     {
         $this->configureRates();
         $this->telnyx();
-        $this->fund(30_000_000);
+        $this->fund(60_000_000);
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
         $this->post($this->url('registration.submit'));
@@ -378,7 +384,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     private function approvedLocalNumberPastPrepaid(): array
     {
         $this->telnyx();
-        $this->fund(30_000_000);
+        $this->fund(60_000_000);
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
         $this->post($this->url('registration.submit'));
@@ -415,11 +421,11 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         $labels = $manager->recurringChargeLabels($number->fresh());
 
-        $this->assertSame(['Number rental: USD 2.00 per month', '10DLC campaign: USD 1.50 per month'], $labels);
+        $this->assertSame(['Number rental: USD 1.00 per month', '10DLC campaign: USD 10.00 per month'], $labels);
 
         // Inside the prepaid window the campaign cost is not part of the renewal.
         DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['submitted_at' => now()]);
-        $this->assertSame(['Number rental: USD 2.00 per month'], $manager->recurringChargeLabels($number->fresh()));
+        $this->assertSame(['Number rental: USD 1.00 per month'], $manager->recurringChargeLabels($number->fresh()));
     }
 
     public function test_a_number_cannot_be_bought_unless_its_monthly_rental_price_is_configured_too(): void
@@ -464,12 +470,12 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $page = $this->get($this->url('show'))->getContent();
         $this->assertStringContainsString('Low Volume Mixed', $page);
         $this->assertStringContainsString('USD 9.00', $page);
-        $this->assertStringContainsString('USD 2.00', $page);
+        $this->assertStringContainsString('USD 1.50', $page);
 
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
 
         // Charged the Low Volume Mixed registration price exactly once — not the standard one.
-        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
         $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
         Http::assertSent(fn ($request) => str_contains($request->url(), '/10dlc/campaignBuilder') && ! str_contains($request->url(), '/brand/')
             && $request->method() === 'POST'
@@ -479,7 +485,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         // Duplicate click: refused, nothing more charged or sent.
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
-        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
 
         // Approve, buy, then renewals: the prepaid window charges rental only; afterwards
         // the Low Volume Mixed monthly price (never the standard one).
@@ -512,7 +518,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->post($this->url('registration.update'), $this->lowVolumePayload());
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
 
-        $this->assertSame(40_000_000, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // the carrier brand exists, so its fee stays earned
         $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
         $this->assertSame(1, $this->posted('/10dlc/brand'));
 
@@ -520,7 +526,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->lvmEligible = true;
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame(1, $this->posted('/10dlc/brand'));
-        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
     }
 
     public function test_low_volume_mixed_needs_its_own_configured_prices_and_never_falls_back_to_the_standard_ones(): void
@@ -646,7 +652,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     {
         $this->configureRates();
         $this->telnyx();
-        $this->fund(30_000_000);
+        $this->fund(60_000_000);
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
@@ -694,7 +700,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertStringContainsString('at least 3', $this->submitLowVolume());
 
         $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
-        $this->assertSame(40_000_000, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // the carrier brand exists, so its fee stays earned
 
         // Within limits: both purposes are sent exactly as declared.
         $this->qualification['minSubUsecases'] = 2;
@@ -702,7 +708,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         Http::assertSent(fn ($request) => $request->method() === 'POST' && str_ends_with($request->url(), '/10dlc/campaignBuilder')
             && $request['subUsecases'] === ['CUSTOMER_CARE', 'MARKETING']);
         $this->assertSame(1, $this->posted('/10dlc/brand'));
-        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
     }
 
     public function test_missing_or_unexpected_qualification_fields_are_refused_conservatively(): void
@@ -721,7 +727,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         }
 
         $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
-        $this->assertSame(40_000_000, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // the carrier brand exists, so its fee stays earned
     }
 
     public function test_a_carrier_that_refuses_the_campaign_after_qualification_releases_the_funds_and_a_retry_reuses_the_brand(): void
@@ -730,13 +736,54 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->campaignCreateStatus = 422;
 
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
-        $this->assertSame(40_000_000, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // the carrier brand exists, so its fee stays earned
 
         $this->campaignCreateStatus = 200;
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame(1, $this->posted('/10dlc/brand'));
-        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
         $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
-        $this->assertSame(40_000_000 - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
+    }
+
+    public function test_a_price_change_between_search_and_order_requires_the_customer_to_confirm_again(): void
+    {
+        $this->configureRates();
+        $this->fund(10_000_000);
+        $this->telnyx();
+
+        $search = $this->search('toll_free');
+        $this->assertStringContainsString('USD 1.25', $search->getContent());
+
+        // Telnyx re-prices the number after the customer saw the quote.
+        $this->numberCost = ['upfront_cost' => '0.25', 'monthly_cost' => '2.00', 'currency' => 'USD'];
+
+        $this->order($search)->assertSessionHas('status', 'error')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'changed') && str_contains($m, 'confirm the new price'));
+        $this->assertSame(0, $this->posted('/number_orders'));
+        $this->assertSame(10_000_000, $this->balance());
+
+        // A fresh search shows and charges the new price.
+        $second = $this->search('toll_free');
+        $this->assertStringContainsString('USD 2.25', $second->getContent());
+        $this->order($second)->assertSessionHas('status', 'success');
+        $this->assertSame(10_000_000 - 2_250_000, $this->balance());
+        $this->assertSame(2_000_000, (int) BusinessMessagingNumber::query()->value('monthly_cost_micro'));
+    }
+
+    public function test_the_recorded_quote_drives_the_first_renewal_charge_and_never_charges_the_first_month_twice(): void
+    {
+        $this->configureRates();
+        $this->fund(10_000_000);
+        $this->telnyx();
+
+        $this->order($this->search('toll_free'))->assertSessionHas('status', 'success');
+        $this->assertSame(10_000_000 - self::PURCHASE, $this->balance()); // upfront 0.25 + first month 1.00
+
+        $number = BusinessMessagingNumber::query()->firstOrFail();
+        $this->assertSame([250_000, 1_000_000, 'USD'], [(int) $number->upfront_cost_micro, (int) $number->monthly_cost_micro, $number->cost_currency]);
+        // The first month is already paid: renewal is not due until next month.
+        $this->assertTrue($number->next_renewal_at->isFuture());
+        $this->assertSame([], app(NumberLifecycleManager::class)->numbersDueForRenewal()->all());
     }
 }

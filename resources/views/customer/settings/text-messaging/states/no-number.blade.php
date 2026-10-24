@@ -81,7 +81,7 @@
                         <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.order', [$workspaceUid, $businessUid]) }}">
                             @csrf
                             <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'your number — this is the first month of rental, charged when you buy it', 'recurringLabel' => 'number rental, billed each month starting next month', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'this number, charged when you buy it: the carrier\'s upfront cost plus the first month\'s rental at the price quoted today', 'recurringLabel' => 'rental of this number, billed each month starting next month at that same quoted price', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
                             <x-button type="submit" variant="primary" :disabled="! $available || ! $numberPreview['configured'] || ! $numberPreview['sufficient']">Get this number</x-button>
                         </form>
                     </div>
@@ -197,7 +197,7 @@
                                  can never be bound to a provider resource this
                                  platform did not itself just verify. --}}
                             <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'your number — this is the first month of rental, charged when you buy it', 'recurringLabel' => 'number rental, billed each month starting next month', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'this number, charged when you buy it: the carrier\'s upfront cost plus the first month\'s rental at the price quoted today', 'recurringLabel' => 'rental of this number, billed each month starting next month at that same quoted price', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
                             <p class="text-caption text-muted mb-2" data-role="number-cost-notice">
                                 Number rental and SMS usage are charged.
                                 @if(($criteria['number_type'] ?? null) === 'toll_free')

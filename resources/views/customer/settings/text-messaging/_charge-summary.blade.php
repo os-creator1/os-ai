@@ -10,7 +10,7 @@
         @if(! $preview['configured'])
             <p class="mb-0">{{ $unconfiguredText }}</p>
         @else
-            <p class="mb-1"><strong>One-time:</strong> {{ $oneTimeLabel }} — {{ $preview['one_time']['text'] }}</p>
+            <p class="mb-1"><strong>One-time:</strong> {{ $oneTimeLabel }} — {{ $preview['one_time']['text'] }}@if(isset($preview['one_time']['detail'])) <span class="text-caption text-muted">({{ $preview['one_time']['detail'] }})</span>@endif</p>
             <p class="mb-1"><strong>Then monthly:</strong> {{ $recurringLabel }} — {{ $preview['recurring']['text'] ?? 'not priced yet; we will tell you before anything recurring is charged' }}</p>
             <p class="mb-1">Text messages you send are billed separately, per message. Your balance: {{ $preview['balance_text'] }}.</p>
             @unless($preview['sufficient'])

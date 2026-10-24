@@ -39,6 +39,8 @@ class NumberRenewalWarningNotification extends Notification
             $mail->line($charge);
         }
 
+        $mail->line('The renewal charge is the carrier\'s own price for the number'.($this->charges === [] ? '' : ' (listed above)').', passed through at cost.');
+
         return $mail->line('Your current balance may not be enough to cover this renewal. Add funds before the renewal date to avoid a pause in new outbound messages.');
     }
 }

@@ -62,6 +62,7 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
     private function activateCampaignRenewal(User $actor): void
     {
         $this->activate($actor, ['feature' => 'campaign-renewal', 'retail-rate-micro' => '1500000'])->assertSuccessful();
+        $this->activate($actor, ['feature' => '10dlc-brand', 'retail-rate-micro' => '1000000', 'unit-label' => 'per brand'])->assertSuccessful();
     }
 
     private function registration(Business $business): MessagingRegistrationSubmission
@@ -180,8 +181,9 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
 
         app(TelnyxProvisioningAdapter::class)->submitRegistration($this->registration($funded));
 
-        $this->assertSame(['committed'], DB::table('business_usage_reservations')->where('business_id', $funded->id)->pluck('status')->all());
-        $this->assertSame(6_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $funded->id)->value('available_balance_micro'));
+        $this->assertSame(['committed', 'committed'], DB::table('business_usage_reservations')->where('business_id', $funded->id)->pluck('status')->all());
+        // 10.00 - 4.00 prepaid campaign months - 1.00 brand fee.
+        $this->assertSame(5_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $funded->id)->value('available_balance_micro'));
     }
 
     public function test_a_wallet_in_a_different_currency_is_reported_as_a_wallet_configuration_problem(): void

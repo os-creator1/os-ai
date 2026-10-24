@@ -36,13 +36,16 @@ class ActivateMessagingProvisioningRate extends Command
         '10dlc' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION,
         'number-purchase' => TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE,
         'number-rental-renewal' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL,
+        'message-segment' => \App\Enums\Entitlement\PlatformFeature::MessagingTransport->value,
+        'carrier-pass-through' => \App\Library\Messaging\ChargeCarrierFee::FEATURE,
+        '10dlc-brand' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_BRAND_REGISTRATION,
         '10dlc-low-volume' => TelnyxProvisioningAdapter::FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION,
         'campaign-renewal-low-volume' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_LOW_VOLUME_CAMPAIGN_RENEWAL,
         'campaign-renewal' => \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL,
     ];
 
     protected $signature = 'messaging:activate-provisioning-rate
-        {feature : 10dlc | 10dlc-low-volume | number-purchase | number-rental-renewal | campaign-renewal | campaign-renewal-low-volume (toll-free verification is $0: no meter)}
+        {feature : message-segment | carrier-pass-through | 10dlc | 10dlc-brand | 10dlc-low-volume | number-purchase | number-rental-renewal | campaign-renewal | campaign-renewal-low-volume (toll-free verification is $0: no meter)}
         {retail-rate-micro : approved customer price per action, in micro-units (1000000 = 1.00)}
         {provider-cost-micro : approved provider cost per action, in micro-units}
         {unit-label : e.g. "per registration"}
@@ -82,6 +85,18 @@ class ActivateMessagingProvisioningRate extends Command
 
         if (! ctype_digit($providerCost)) {
             $this->error('provider-cost-micro must be a whole number (0 or more).');
+
+            return self::FAILURE;
+        }
+
+        // Pass-through fees take a MULTIPLIER on the carrier's real price, never a
+        // dollar amount: 1,000,000 is exactly the carrier cost (zero markup). Below it
+        // would silently absorb a carrier cost; far above it is almost certainly a
+        // dollar amount typed in the wrong field.
+        $passThrough = [TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE, \App\Library\Messaging\NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL, \App\Library\Messaging\ChargeCarrierFee::FEATURE];
+
+        if (in_array($meterKey, $passThrough, true) && ((int) $retail < 1_000_000 || (int) $retail > 2_000_000)) {
+            $this->error("{$meterKey} is a pass-through fee: its retail-rate-micro is a multiplier on the carrier's price between 1000000 (cost, zero markup) and 2000000 (+100%), not a dollar amount.");
 
             return self::FAILURE;
         }

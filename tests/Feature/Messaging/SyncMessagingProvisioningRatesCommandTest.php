@@ -83,4 +83,15 @@ class SyncMessagingProvisioningRatesCommandTest extends TestCase
 
         $this->assertSame(0, DB::table('usage_meters')->where('meter_key', 'messaging_number_purchase')->count());
     }
+
+    public function test_a_pass_through_fee_must_be_a_multiplier_not_a_dollar_amount_and_never_below_cost(): void
+    {
+        foreach (['25000000' /* a $25 typed into a multiplier field */, '900000' /* would absorb a carrier cost */] as $bad) {
+            $this->schedule(['number_purchase' => ['retail_micro' => $bad, 'cost_micro' => '0', 'unit' => 'per 1.00 of carrier cost']]);
+
+            $this->artisan('messaging:sync-provisioning-rates')->assertFailed();
+        }
+
+        $this->assertSame(0, DB::table('usage_meters')->where('meter_key', 'messaging_number_purchase')->count());
+    }
 }

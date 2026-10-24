@@ -45,6 +45,49 @@ final class MessagingChargePreview
     }
 
     /**
+     * The owner's multiplier on a pass-through carrier cost: the meter's
+     * retail rate per 1.00 of carrier cost, as a factor (1.0 = zero
+     * markup). Null when the fee is not configured.
+     */
+    public function multiplier(string $meterKey): ?float
+    {
+        $meter = $this->meters->findByMeterKey($meterKey);
+
+        if ($meter === null || ! $meter->is_metered || $meter->activeRate === null) {
+            return null;
+        }
+
+        return ((int) $meter->activeRate->retail_rate_micro) / 1_000_000;
+    }
+
+    /**
+     * Buying a specific number: the real, quoted carrier price (today =
+     * upfront + first month, then the monthly rental from next month), with
+     * the owner's multiplier applied (zero markup by default).
+     *
+     * @return array<string, mixed>
+     */
+    public function forNumberQuote(Business $business, \App\Library\Messaging\DTO\AvailableNumberCandidate $candidate): array
+    {
+        $purchase = $this->multiplier(TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE);
+        $rental = $this->multiplier(NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL);
+        $wallet = $this->wallets->findByBusinessId((int) $business->id);
+        $balanceMicro = $wallet === null ? 0 : (int) $wallet->available_balance_micro;
+
+        $configured = $purchase !== null && $rental !== null && $candidate->hasQuote();
+        $todayMicro = $configured ? (int) round($candidate->initialCostMicro() * $purchase) : 0;
+        $monthlyMicro = $configured ? (int) round((int) $candidate->monthlyCostMicro * $rental) : 0;
+
+        return [
+            'one_time' => $configured ? ['micro' => $todayMicro, 'text' => DashboardMoney::format((string) $todayMicro, 'USD')] : null,
+            'recurring' => $configured ? ['micro' => $monthlyMicro, 'text' => DashboardMoney::format((string) $monthlyMicro, 'USD') . ' per month'] : null,
+            'configured' => $configured,
+            'balance_text' => DashboardMoney::format((string) $balanceMicro, $wallet?->currency?->code),
+            'sufficient' => $configured && $balanceMicro >= $todayMicro,
+        ];
+    }
+
+    /**
      * Buying a number: a one-time purchase charge, then monthly rental.
      *
      * @return array<string, mixed>
@@ -62,7 +105,28 @@ final class MessagingChargePreview
      */
     public function forLocalRegistration(Business $business, ?string $useCase = null): array
     {
-        return $this->build($business, TelnyxProvisioningAdapter::registrationFeatureFor($useCase), NumberLifecycleManager::campaignRenewalFeatureFor($useCase));
+        $brand = $this->fee(TelnyxProvisioningAdapter::FEATURE_TEN_DLC_BRAND_REGISTRATION);
+        $prepaid = $this->fee(TelnyxProvisioningAdapter::registrationFeatureFor($useCase));
+        $recurring = $this->fee(NumberLifecycleManager::campaignRenewalFeatureFor($useCase));
+        $wallet = $this->wallets->findByBusinessId((int) $business->id);
+        $balanceMicro = $wallet === null ? 0 : (int) $wallet->available_balance_micro;
+        $configured = $brand !== null && $prepaid !== null && $recurring !== null;
+        $totalMicro = $configured ? $brand['micro'] + $prepaid['micro'] : 0;
+
+        return [
+            // Charged when you submit: the carrier brand fee plus the three
+            // campaign months the carrier bills upfront. Review charges, if the
+            // carrier ever bills one, are billed separately and explicitly.
+            'one_time' => $configured ? [
+                'micro' => $totalMicro,
+                'text' => DashboardMoney::format((string) $totalMicro, 'USD'),
+                'detail' => 'carrier brand fee ' . $brand['text'] . ' + first three campaign months ' . $prepaid['text'],
+            ] : null,
+            'recurring' => $recurring,
+            'configured' => $configured,
+            'balance_text' => DashboardMoney::format((string) $balanceMicro, $wallet?->currency?->code),
+            'sufficient' => $configured && $balanceMicro >= $totalMicro,
+        ];
     }
 
     /** @return array<string, mixed> */

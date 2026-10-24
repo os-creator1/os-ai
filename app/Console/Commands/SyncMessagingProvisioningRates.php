@@ -20,6 +20,9 @@ class SyncMessagingProvisioningRates extends Command
     private const MAP = [
         'number_purchase' => 'number-purchase',
         'number_rental_renewal' => 'number-rental-renewal',
+        'carrier_pass_through' => 'carrier-pass-through',
+        'message_segment' => 'message-segment',
+        'ten_dlc_brand_registration' => '10dlc-brand',
         'ten_dlc_registration' => '10dlc',
         'ten_dlc_campaign_renewal' => 'campaign-renewal',
         'ten_dlc_low_volume_registration' => '10dlc-low-volume',

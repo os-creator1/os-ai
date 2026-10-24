@@ -45,24 +45,34 @@ return [
     'ten_dlc_mixed_enabled' => env('MESSAGING_10DLC_MIXED_ENABLED', false),
 
     /*
-    | Owner-approved retail prices for the messaging provisioning fees,
-    | in micro-units of the billing currency (1,000,000 = 1.00). Nothing is
-    | invented: a fee with any value unset stays unconfigured, customers see
-    | "pricing not set up", and nothing can be charged for it. Applied by
-    | `php artisan messaging:sync-provisioning-rates` (idempotent; run it
-    | after changing these). Toll-free verification is $0 and has no entry.
+    | Owner-approved fee schedule, in micro-units of the billing currency
+    | (1,000,000 = 1.00), applied by `php artisan messaging:sync-provisioning-rates`
+    | (idempotent). Nothing is invented: a fee with any value unset stays
+    | unconfigured, customers see "pricing not set up", and nothing can be
+    | charged for it. Toll-free verification is $0 and has no entry.
     |
-    |   number_purchase         the first charge when a number is bought: this IS the
-    |                           first month's rental (no separate rental is taken
-    |                           until next month), plus any one-time setup
-    |   number_rental_renewal   monthly rental of each number, from month two on
-    |   ten_dlc_registration    one-time: carrier brand fee + the first three months
-    |                           of campaign fees (Telnyx bills them upfront)
-    |   ten_dlc_campaign_renewal monthly campaign cost, charged only AFTER the three
-    |                           prepaid months (local numbers)
+    | PASS-THROUGH fees (zero markup): the carrier's real price is read at the
+    | time — per number from Telnyx's search quote — and the rate here is only
+    | the owner's MULTIPLIER on it. 1000000 = exactly the carrier cost (0%
+    | markup); 1100000 would be +10%. Never put a dollar amount in these.
+    |
+    |   number_purchase          multiplier on (upfront cost + FIRST month's rental) at order
+    |   number_rental_renewal    multiplier on each number's own monthly cost, from month two
+    |   message_segment          ESTIMATED price per outbound message segment, charged when the
+    |                            carrier accepts the message and then RECONCILED to Telnyx's final
+    |                            per-message cost (messaging:reconcile-costs). Inbound is billed
+    |                            only by that reconciliation.
+    |   carrier_pass_through     multiplier on an explicitly billed carrier charge (e.g. a
+    |                            campaign review) — see messaging:charge-carrier-fee
+    |
+    | FIXED fees (carrier's published at-cost amounts; verify on invoices):
+    |
+    |   ten_dlc_brand_registration     carrier brand fee, charged when the brand is created
+    |   ten_dlc_registration           first three campaign months (the carrier bills them
+    |                                  upfront) for standard campaign types
+    |   ten_dlc_campaign_renewal       monthly campaign cost after those three months
     |   ten_dlc_low_volume_registration / ten_dlc_low_volume_campaign_renewal
-    |                           the same two fees for the separate Low Volume Mixed
-    |                           campaign type (its own, lower, carrier costs)
+    |                                  the same two for the separate Low Volume Mixed type
     |
     | A paid purchase/registration is refused unless its recurring price is
     | configured too, so no ongoing carrier cost is ever left unbilled.
@@ -71,13 +81,22 @@ return [
         'currency' => env('MESSAGING_RATE_CURRENCY', 'USD'),
         'actor_user_id' => env('MESSAGING_RATE_ACTOR_USER_ID'),
         'approved_by' => env('MESSAGING_RATE_APPROVED_BY'),
-        'number_purchase' => ['retail_micro' => env('MESSAGING_NUMBER_PURCHASE_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_PURCHASE_COST_MICRO'), 'unit' => 'per number'],
-        'number_rental_renewal' => ['retail_micro' => env('MESSAGING_NUMBER_RENTAL_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_RENTAL_COST_MICRO'), 'unit' => 'per month'],
+        'number_purchase' => ['retail_micro' => env('MESSAGING_NUMBER_PURCHASE_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_PURCHASE_COST_MICRO'), 'unit' => 'per 1.00 of carrier cost'],
+        'message_segment' => ['retail_micro' => env('MESSAGING_SEGMENT_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_SEGMENT_COST_MICRO'), 'unit' => 'per message segment (estimate)'],
+        'carrier_pass_through' => ['retail_micro' => env('MESSAGING_CARRIER_PASS_THROUGH_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_CARRIER_PASS_THROUGH_COST_MICRO'), 'unit' => 'per 1.00 of carrier cost'],
+        'number_rental_renewal' => ['retail_micro' => env('MESSAGING_NUMBER_RENTAL_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_NUMBER_RENTAL_COST_MICRO'), 'unit' => 'per 1.00 of carrier cost'],
         'ten_dlc_registration' => ['retail_micro' => env('MESSAGING_10DLC_REGISTRATION_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_REGISTRATION_COST_MICRO'), 'unit' => 'per registration'],
+        'ten_dlc_brand_registration' => ['retail_micro' => env('MESSAGING_10DLC_BRAND_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_BRAND_COST_MICRO'), 'unit' => 'per brand'],
         'ten_dlc_low_volume_registration' => ['retail_micro' => env('MESSAGING_10DLC_LOW_VOLUME_REGISTRATION_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_LOW_VOLUME_REGISTRATION_COST_MICRO'), 'unit' => 'per registration'],
         'ten_dlc_low_volume_campaign_renewal' => ['retail_micro' => env('MESSAGING_10DLC_LOW_VOLUME_CAMPAIGN_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_LOW_VOLUME_CAMPAIGN_COST_MICRO'), 'unit' => 'per month'],
         'ten_dlc_campaign_renewal' => ['retail_micro' => env('MESSAGING_10DLC_CAMPAIGN_RETAIL_MICRO'), 'cost_micro' => env('MESSAGING_10DLC_CAMPAIGN_COST_MICRO'), 'unit' => 'per month'],
     ],
+
+    /** Largest single upfront or monthly number price (micro-USD) that will be sold; dearer special numbers are never offered. */
+    'number_price_ceiling_micro' => (int) env('MESSAGING_NUMBER_PRICE_CEILING_MICRO', 25_000_000),
+
+    /** At-cost monthly SMS-capability add-on per number (micro-USD) when Telnyx bills it on top of cost_information; 0 until verified on an invoice. */
+    'number_sms_addon_monthly_cost_micro' => (int) env('MESSAGING_NUMBER_SMS_ADDON_MONTHLY_COST_MICRO', 0),
 
     /** Months of campaign fees Telnyx bills upfront at registration (covered by the registration price). */
     'ten_dlc_prepaid_months' => (int) env('MESSAGING_10DLC_PREPAID_MONTHS', 3),

@@ -168,7 +168,7 @@ class TextMessagingController extends CustomerBaseController
             'criteria' => $validated,
             'candidate' => $candidate,
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
-            'numberPreview' => $this->charges->forNumberPurchase($business),
+            'numberPreview' => $candidate !== null ? $this->charges->forNumberQuote($business, $candidate) : $this->charges->forNumberPurchase($business),
             'localRegistrationPreview' => $this->charges->forLocalRegistration($business),
             'lowVolumeRegistrationPreview' => $this->charges->forLocalRegistration($business, 'low_volume_mixed'),
             // PR #295 Correction Round 1, item 2 — the browser never gets
@@ -235,12 +235,14 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, $e->reason === MessagingFundingUnavailableException::REASON_WALLET_CONFIGURATION
                 ? 'There is a problem with this Business\'s billing setup, so a number can\'t be bought yet. Nothing was charged. Please contact support.'
                 : 'Number pricing hasn\'t been set up on our side yet, so a number can\'t be bought right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
-        } catch (MessagingInsufficientFundsException) {
-            // Distinct from the above: a rate IS configured and the
-            // customer's own wallet balance could not cover it — a real,
-            // customer-actionable outcome that must never be confused with
-            // "not available in this environment".
-            return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to add this number. Add funds to your Business balance and try again.');
+        } catch (\App\Library\Messaging\Exceptions\NumberPriceChangedException $e) {
+            return $this->textMessagingError($workspaceUid, $businessUid, $e->getMessage());
+        } catch (MessagingInsufficientFundsException $e) {
+            // A rate IS configured and the wallet refused: a plain shortfall
+            // keeps its Add-funds wording; any other refusal (spending
+            // limit, paused activity, an Agency payer without consent, debt)
+            // says what actually happened instead of blaming the balance.
+            return $this->textMessagingError($workspaceUid, $businessUid, $this->fundingRefusalMessage($e, 'to add this number'));
         } catch (\RuntimeException) {
             // The carrier refused the order outright (funds were released,
             // nothing bought): a retry, or a different number, is safe.
@@ -506,8 +508,8 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, $e->reason === MessagingFundingUnavailableException::REASON_WALLET_CONFIGURATION
                 ? 'There is a problem with this Business\'s billing setup, so registration can\'t be submitted yet. Nothing was charged. Please contact support.'
                 : 'Registration pricing hasn\'t been set up on our side yet, so this can\'t be submitted right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
-        } catch (MessagingInsufficientFundsException) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to submit this registration. Add funds to your Business balance and try again.');
+        } catch (MessagingInsufficientFundsException $e) {
+            return $this->textMessagingError($workspaceUid, $businessUid, $this->fundingRefusalMessage($e, 'to submit this registration'));
         } catch (\RuntimeException) {
             // A provider rejection or an internal refusal (e.g. a messaging
             // type with no carrier mapping): never a raw server error.
@@ -922,6 +924,17 @@ class TextMessagingController extends CustomerBaseController
             'retainedNumbers' => $situation['retainedNumbers'],
             'portOutRequestsByNumberId' => $situation['portOutRequestsByNumberId'],
         ]);
+    }
+
+    private function fundingRefusalMessage(MessagingInsufficientFundsException $e, string $purpose): string
+    {
+        $reason = $e->denialReason;
+
+        if ($reason === null || $reason === 'insufficient_balance') {
+            return 'Your Business doesn\'t have enough funds ' . $purpose . '. Add funds to your Business balance and try again.';
+        }
+
+        return app(\App\Library\Usage\UsageWalletManager::class)->customerMessageForDenial($reason);
     }
 
     private function textMessagingError(string $workspaceUid, string $businessUid, string $message): RedirectResponse
