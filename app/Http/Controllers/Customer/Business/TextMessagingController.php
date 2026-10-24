@@ -431,8 +431,17 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been submitted and is awaiting review.');
         } catch (MessagingRegistrationRecoveryRequiredException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm the status of your registration with our carrier partner. Please don\'t resubmit; our team has been alerted and will follow up.');
-        } catch (MessagingFundingUnavailableException) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'Messaging registration is not available for this Business yet. Please contact support.');
+        } catch (MessagingFundingUnavailableException $e) {
+            // Platform-side configuration, never the customer's balance —
+            // logged without customer data so the platform owner can act.
+            \Illuminate\Support\Facades\Log::warning('Messaging registration funding unavailable.', [
+                'business_id' => $business->id,
+                'reason' => $e->reason,
+            ]);
+
+            return $this->textMessagingError($workspaceUid, $businessUid, $e->reason === MessagingFundingUnavailableException::REASON_WALLET_CONFIGURATION
+                ? 'There is a problem with this Business\'s billing setup, so registration can\'t be submitted yet. Nothing was charged. Please contact support.'
+                : 'Registration pricing hasn\'t been set up on our side yet, so this can\'t be submitted right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
         } catch (MessagingInsufficientFundsException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to submit this registration. Add funds to your Business balance and try again.');
         } catch (\RuntimeException) {

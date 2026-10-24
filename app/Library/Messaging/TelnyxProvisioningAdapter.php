@@ -1161,11 +1161,15 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $result = $this->wallet->reserve($business, $featureKey, $idempotencyKey ?? (string) Str::uuid());
         } catch (BusinessCurrencyUnresolvableException|UsageWalletNotFoundException|NoActiveRateForFeatureException|UsageMeterNotMeteredException|UsageMeterBusinessScopeMismatchException|UsageMeterCurrencyMismatchException|UsageMeterRateIntegrityException $e) {
+            $pricingMissing = $e instanceof NoActiveRateForFeatureException || $e instanceof UsageMeterNotMeteredException;
+
             throw new MessagingFundingUnavailableException(sprintf(
                 'Funding is not yet configured for [%s]: %s',
                 $featureKey,
                 $e->getMessage(),
-            ), 0, $e);
+            ), 0, $e, $pricingMissing
+                ? MessagingFundingUnavailableException::REASON_PRICING_NOT_CONFIGURED
+                : MessagingFundingUnavailableException::REASON_WALLET_CONFIGURATION);
         }
 
         if (! $result->granted || $result->reservationId === null) {
