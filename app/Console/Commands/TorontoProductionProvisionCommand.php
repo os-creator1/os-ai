@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Library\Migration\Ghl\GhlImportPlanner;
 use App\Library\Migration\Ghl\GhlImportWriter;
+use App\Library\Migration\Toronto\TorontoImportPreflight;
 use App\Library\Migration\Toronto\TorontoProductionGuard;
 use App\Library\Migration\Toronto\TorontoProvisioner;
 use App\Library\Migration\Toronto\TorontoWebsiteBuilder;
@@ -41,7 +42,7 @@ class TorontoProductionProvisionCommand extends Command
 
     protected $description = 'PRODUCTION: create the Toronto Photo Booth customer and import its GoHighLevel history and website. Guarded, additive, sends nothing.';
 
-    public function handle(TorontoProductionGuard $guard, TorontoProvisioner $provisioner, GhlImportWriter $writer, TorontoWebsiteBuilder $site): int
+    public function handle(TorontoProductionGuard $guard, TorontoImportPreflight $preflight, TorontoProvisioner $provisioner, GhlImportWriter $writer, TorontoWebsiteBuilder $site): int
     {
         $email = strtolower(trim((string) $this->option('owner-email')));
         $apply = (bool) $this->option('apply');
@@ -62,6 +63,31 @@ class TorontoProductionProvisionCommand extends Command
         }
         $this->info("Target OK: env={$state['app_env']} host={$state['app_host']} database={$state['db_name']}");
 
+        // Fail closed BEFORE any database read or write: every input the import needs must exist and verify.
+        $snapshotDir = $this->option('snapshot');
+        $assetsDir = $this->option('assets');
+        $websiteWanted = ! $this->option('skip-website');
+        $errors = [];
+        $snapshot = [];
+        if ($snapshotDir === null && ! $apply) {
+            $this->warn('No --snapshot given: the import plan was not checked.');
+        } else {
+            ['snapshot' => $snapshot, 'errors' => $errors] = $preflight->snapshot($snapshotDir === null ? null : (string) $snapshotDir);
+        }
+        if ($websiteWanted && ($apply || $assetsDir !== null)) {
+            $errors = array_merge($errors, $preflight->assets($assetsDir === null ? null : (string) $assetsDir, base_path('docs/migrations/toronto-photo-booth/website-content.json')));
+        } elseif ($websiteWanted) {
+            $this->warn('No --assets given: the website images were not checked.');
+        }
+        if ($errors !== []) {
+            foreach ($errors as $error) {
+                $this->error('PREFLIGHT: '.$error);
+            }
+            $this->error('ABORT: inputs failed verification; nothing was written.');
+
+            return self::FAILURE;
+        }
+
         // Cross-tenant check: does this business already exist anywhere, and is it where we expect?
         $ours = Workspace::query()->where('name', TorontoProvisioner::WORKSPACE_NAME)->whereHas('owner', fn ($q) => $q->where('email', $email))->first();
         $ourBusinessIds = $ours === null ? [] : Business::query()->where('workspace_id', $ours->id)->pluck('id')->all();
@@ -76,14 +102,21 @@ class TorontoProductionProvisionCommand extends Command
         }
         $this->line($ours === null ? 'Toronto Photo Booth does not exist yet: it would be CREATED.' : "Toronto Photo Booth already exists (Workspace #{$ours->id}): only missing records are filled in (idempotent).");
 
-        $plan = null;
-        if ($dir = $this->option('snapshot')) {
-            $plan = $this->plan((string) $dir);
-            if ($plan === null) {
-                return self::FAILURE;
-            }
+        $plan = $snapshot === [] ? null : $this->plan($snapshot);
+        if ($plan !== null) {
             $this->line('PLAN counts : '.json_encode($plan['counts']));
             $this->line('PLAN issues : '.json_encode(array_count_values(array_column($plan['issues'], 'code'))));
+            $blocking = array_filter($plan['issues'], fn ($i) => ($i['severity'] ?? '') === 'error');
+            if ($apply && $plan['contacts'] === []) {
+                $this->error('ABORT: the import plan contains no contacts. Nothing was written.');
+
+                return self::FAILURE;
+            }
+            if ($apply && $blocking !== []) {
+                $this->error('ABORT: the import plan has '.count($blocking).' error-severity issue(s): '.json_encode(array_count_values(array_column($blocking, 'code'))).'. Nothing was written.');
+
+                return self::FAILURE;
+            }
         }
 
         if (! $apply) {
@@ -116,12 +149,13 @@ class TorontoProductionProvisionCommand extends Command
         }
         $this->info('Safety audit clean: no messaging number, sender, mail account, token, domain or published workflow.');
 
-        if ($plan !== null) {
+        {
             $this->line('DRY RUN : '.json_encode($writer->import($plan, $ctx->business, $ctx->location, TorontoProvisioner::PHONE, true)['counts']));
             $this->info('IMPORTED: '.json_encode($writer->import($plan, $ctx->business, $ctx->location, TorontoProvisioner::PHONE, false)['counts']));
         }
 
-        if (! $this->option('skip-website') && ($assets = $this->option('assets'))) {
+        if ($websiteWanted) {
+            $assets = (string) $assetsDir;
             try {
                 $built = $site->build($ctx->business, $ctx->location, (int) $ctx->owner->id, (string) $assets, base_path('docs/migrations/toronto-photo-booth/website-content.json'));
             } catch (\Illuminate\Validation\ValidationException $e) {
@@ -138,25 +172,12 @@ class TorontoProductionProvisionCommand extends Command
         return self::SUCCESS;
     }
 
-    /** @return array<string, mixed>|null */
-    private function plan(string $dir): ?array
+    /**
+     * @param  array<string, mixed>  $snapshot  already verified by TorontoImportPreflight
+     * @return array<string, mixed>
+     */
+    private function plan(array $snapshot): array
     {
-        $incomplete = \App\Library\Migration\Ghl\GhlSnapshotExporter::incompleteInDirectory($dir);
-        if ($incomplete !== []) {
-            $this->error('The snapshot is INCOMPLETE / UNVERIFIED for: '.implode(', ', $incomplete).'. Refusing.');
-
-            return null;
-        }
-        $snapshot = [];
-        foreach (glob(rtrim($dir, '/').'/*.json') ?: [] as $file) {
-            $snapshot[basename($file, '.json')] = json_decode((string) file_get_contents($file), true) ?? [];
-        }
-        if (($snapshot['location']['id'] ?? null) !== TorontoProvisioner::SOURCE_LOCATION) {
-            $this->error('ABORT: the snapshot is not from GHL location '.TorontoProvisioner::SOURCE_LOCATION.'.');
-
-            return null;
-        }
-
         if (! $this->option('include-ghl-samples')) {
             $isSample = fn (array $c) => str_starts_with(mb_strtolower((string) ($c['contactName'] ?? $c['firstName'] ?? '')), '(example)');
             $drop = collect($snapshot['contacts'] ?? [])->filter($isSample)->pluck('id')->all();
