@@ -22,7 +22,8 @@ class SeedPhotoBoothBusinessPackV3Command extends Command
 {
     protected $signature = 'blueprint:seed-photo-booth-v3
         {--actor= : Platform administrator user id to publish as; defaults to the first admin user found}
-        {--draft-only : Leave the result as a draft instead of publishing}';
+        {--draft-only : Leave the result as a draft instead of publishing}
+        {--consolidate : First drop, from the NEW DRAFT only, the earlier-version components Business Pack V3 supersedes (overlapping form, inquiry/booking/review automations, Sales pipeline, single-select Event fields)}';
 
     protected $description = 'Add the Photo Booth Business Pack v3 (Inquiries/Bookings pipelines, fields, tags, forms, 10+ draft workflows) and publish it.';
 
@@ -46,6 +47,19 @@ class SeedPhotoBoothBusinessPackV3Command extends Command
         $draft = $workspace->draftFor($blueprint, $actor);
         $existing = NicheBlueprintComponent::query()->where('blueprint_version_id', $draft->id)->pluck('component_key')->all();
         $added = 0;
+        $removed = [];
+
+        if ($this->option('consolidate')) {
+            // Drafts only: removeDraftComponent refuses a published version, and the published rows are never touched.
+            foreach (NicheBlueprintComponent::query()->where('blueprint_version_id', $draft->id)->whereIn('component_key', PhotoBoothBusinessPackV3::SUPERSEDED_EARLIER_KEYS)->get() as $superseded) {
+                $publisher->removeDraftComponent($actor, $superseded);
+                $removed[] = $superseded->component_key;
+            }
+            $existing = NicheBlueprintComponent::query()->where('blueprint_version_id', $draft->id)->pluck('component_key')->all();
+            if ($removed !== []) {
+                $this->line('Dropped from the draft: '.implode(', ', $removed));
+            }
+        }
 
         // Pipelines precede the stage-triggered workflows that resolve their stages.
         foreach (PhotoBoothBusinessPackV3::components() as $i => $component) {
@@ -66,7 +80,7 @@ class SeedPhotoBoothBusinessPackV3Command extends Command
             return self::SUCCESS;
         }
 
-        if ($added === 0 && ! $hadDraft) {
+        if ($added === 0 && $removed === [] && ! $hadDraft) {
             $publisher->deleteDraftVersion($actor, $draft);
             $this->info('Nothing to do: the published version already carries every Business Pack v3 component.');
 

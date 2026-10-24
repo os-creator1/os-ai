@@ -47,6 +47,18 @@ final class PhotoBoothBusinessPackV3
         ['Awaiting Design Approval', 'awaiting_design_approval'], ['Ready For Event', 'ready_for_event'], ['Completed', 'completed'],
     ];
 
+    /**
+     * Blueprint components of the earlier Photo Booth versions that Business Pack V3 supersedes. A CONSOLIDATED draft drops them
+     * (never from a published version): the V3 lead form with consents replaces the V2 form of the same name, the V3 stage-driven
+     * journeys replace the V2 inquiry / booking / review automations, Inquiries + Bookings replace the V1 "Sales pipeline",
+     * and V3's Event date / Event type (multi-select, the type GHL data uses) replace V2's single-select Event type.
+     * Everything not listed (tags, venue/guest fields, booking type, packages, documents, website, SEO, citations) is kept.
+     */
+    public const SUPERSEDED_EARLIER_KEYS = [
+        'photo_booth_form_availability', 'photo_booth_auto_new_inquiry', 'photo_booth_auto_booked', 'photo_booth_auto_review',
+        'photo_booth_default_pipeline', 'photo_booth_cf_event_date', 'photo_booth_cf_event_type',
+    ];
+
     public const LEAD_FORM_NAME = 'Check Availability';
 
     public const QUESTIONNAIRE_FORM_NAME = 'Event questionnaire';
