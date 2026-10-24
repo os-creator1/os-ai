@@ -157,15 +157,20 @@ class TorontoProductionProvisionCommand extends Command
         if ($websiteWanted) {
             $assets = (string) $assetsDir;
             try {
-                $built = $site->build($ctx->business, $ctx->location, (int) $ctx->owner->id, (string) $assets, base_path('docs/migrations/toronto-photo-booth/website-content.json'));
+                $built = $site->build($ctx->business, $ctx->location, (int) $ctx->user->id, (string) $assets, base_path('docs/migrations/toronto-photo-booth/website-content.json'));
             } catch (\Illuminate\Validation\ValidationException $e) {
-                $this->error('Website validation failed: '.json_encode($e->errors()));
+                $this->error('Website validation failed: '.json_encode($e->errors()).' The imported records are untouched; re-run to resume (idempotent).');
+
+                return self::FAILURE;
+            } catch (Throwable $e) {
+                $this->error('Website build failed: '.$e->getMessage().' The imported records are untouched; re-run to resume (idempotent).');
 
                 return self::FAILURE;
             }
             foreach ($built['report'] as $k => $v) {
                 $this->line(str_pad("  website {$k}", 30).$v);
             }
+            $this->info('Preview URL: '.rtrim((string) config('app.url'), '/').'/sites/'.$built['report']['public_id'].' (status: '.$built['report']['status'].'; published: '.$built['report']['published'].')');
             $this->line($built['missing'] === [] ? '' : 'Assets not found in --assets: '.implode(', ', $built['missing']));
         }
 
