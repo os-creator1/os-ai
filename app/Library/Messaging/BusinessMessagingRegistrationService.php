@@ -85,6 +85,18 @@ class BusinessMessagingRegistrationService
         $attributes['status'] = MessagingRegistrationStatus::NotStarted->value;
         $attributes['rejection_reason'] = null;
 
+        // A brand the carrier rejected, or one created for different
+        // legal details, must never be reused for the edited submission.
+        $brandIdentityChanged = (isset($data['legal_business_name']) && $data['legal_business_name'] !== $registration->legal_business_name)
+            || (array_key_exists('ein', $data) && $data['ein'] !== $registration->ein)
+            || (isset($data['entity_type']) && (string) $data['entity_type'] !== (string) ($registration->entity_type?->value ?? $registration->entity_type));
+
+        if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged) {
+            $attributes['provider_brand_id'] = null;
+            $attributes['provider_campaign_id'] = null;
+            $attributes['provider_registration_id'] = null;
+        }
+
         $registration->update($attributes);
 
         return $registration->fresh();

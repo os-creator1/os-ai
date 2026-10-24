@@ -49,6 +49,12 @@ final readonly class MessagingRegistrationSubmission
          * calling submit()).
          */
         public ?string $phoneNumber = null,
+        /**
+         * A 10DLC brand this registration already created at the provider
+         * on an earlier, partly-failed attempt — reused on retry so a
+         * second brand is never created. Always null for toll-free.
+         */
+        public ?string $existingBrandId = null,
     ) {
     }
 
@@ -76,6 +82,9 @@ final readonly class MessagingRegistrationSubmission
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
             phoneNumber: $phoneNumber,
+            existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
+                ? (string) $registration->provider_brand_id
+                : null,
         );
     }
 }

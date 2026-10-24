@@ -121,7 +121,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => $availableMicro]);
     }
 
-    private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null): MessagingRegistrationSubmission
+    private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null, ?string $existingBrandId = null): MessagingRegistrationSubmission
     {
         return new MessagingRegistrationSubmission(
             businessId: $business->id,
@@ -145,6 +145,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             privacyPolicyUrl: 'https://harborlane.example/privacy',
             termsUrl: 'https://harborlane.example/terms',
             phoneNumber: $phoneNumber,
+            existingBrandId: $existingBrandId,
         );
     }
 
@@ -976,5 +977,91 @@ class TelnyxProvisioningAdapterTest extends TestCase
 
         Http::assertSentCount(2);
         $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Partial-submission recovery.
+    // -----------------------------------------------------------------
+
+    private function localRegistration(Business $business): \App\Models\BusinessMessagingRegistration
+    {
+        return \App\Models\BusinessMessagingRegistration::create([
+            'business_id' => $business->id,
+            'number_type' => 'local',
+            'status' => 'not_started',
+        ]);
+    }
+
+    private function retrySubmission(Business $business): MessagingRegistrationSubmission
+    {
+        $brandId = DB::table('business_messaging_registrations')->where('business_id', $business->id)->value('provider_brand_id');
+
+        return $this->submission($business, PhoneNumberType::Local, null, $brandId);
+    }
+
+    private function brandRequestCount(): int
+    {
+        return Http::recorded(fn ($request) => str_contains($request->url(), '/10dlc/brand'))->count();
+    }
+
+    public function test_a_retry_after_brand_success_and_campaign_failure_reuses_the_brand_and_never_double_reserves(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_9']]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::sequence()
+                ->push(['errors' => []], 422)
+                ->push(['errors' => []], 422)
+                ->push(['data' => ['campaignId' => 'campaign_fixture_9']]),
+        ]);
+
+        for ($i = 0; $i < 2; $i++) {
+            try {
+                app(TelnyxProvisioningAdapter::class)->submitRegistration($this->retrySubmission($business));
+                $this->fail('Expected the campaign rejection.');
+            } catch (\RuntimeException) {
+                // expected; brand persisted before the campaign step
+            }
+        }
+
+        $this->assertSame('brand_fixture_9', DB::table('business_messaging_registrations')->where('business_id', $business->id)->value('provider_brand_id'));
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->retrySubmission($business));
+
+        $this->assertSame('brand_fixture_9', $result->providerBrandId);
+        $this->assertSame('campaign_fixture_9', $result->providerCampaignId);
+        $this->assertSame(1, $this->brandRequestCount());
+
+        $statuses = DB::table('business_usage_reservations')
+            ->where('idempotency_key', 'like', 'messaging-registration:%')
+            ->orderBy('idempotency_key')->pluck('status')->all();
+        $this->assertSame(['released', 'released', 'committed'], $statuses);
+    }
+
+    public function test_an_unconfirmed_brand_outcome_blocks_blind_resubmission(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        Http::fake(['api.telnyx.com/v2/10dlc/brand' => Http::response([], 503)]);
+
+        for ($i = 0; $i < 2; $i++) {
+            try {
+                app(TelnyxProvisioningAdapter::class)->submitRegistration($this->retrySubmission($business));
+                $this->fail('Expected recovery-required.');
+            } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException) {
+                // expected
+            }
+        }
+
+        $this->assertSame(1, $this->brandRequestCount());
+        $this->assertSame(1, DB::table('business_messaging_provisioning_incidents')->where('stage', '10dlc_brand_outcome_unknown')->whereNull('resolved_at')->count());
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('status', 'pending')->count());
     }
 }

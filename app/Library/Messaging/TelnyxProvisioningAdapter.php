@@ -28,8 +28,14 @@ use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException;
 use App\Library\Usage\UsageWalletManager;
+use App\Enums\Usage\UsageReservationStatus;
 use App\Models\Business;
+use App\Models\BusinessMessagingProvisioningIncident;
+use App\Models\BusinessMessagingRegistration;
+use App\Repositories\Contracts\BusinessUsageReservationRepository;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -722,48 +728,99 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $status;
     }
 
+    private const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
+    private const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
+
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
         $business = Business::query()->findOrFail($submission->businessId);
-        $reservationId = $this->reserveFunding($business, self::FEATURE_TEN_DLC_REGISTRATION);
+
+        // An earlier attempt whose provider outcome was never confirmed
+        // blocks every automatic retry until an operator resolves the
+        // incident — a brand/campaign may already exist at Telnyx.
+        if (BusinessMessagingProvisioningIncident::query()
+            ->where('business_id', $business->id)
+            ->whereIn('stage', [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN])
+            ->whereNull('resolved_at')
+            ->exists()) {
+            throw new MessagingRegistrationRecoveryRequiredException('An earlier 10DLC submission has an unconfirmed provider outcome.');
+        }
+
+        $reservationId = $this->reserveFunding(
+            $business,
+            self::FEATURE_TEN_DLC_REGISTRATION,
+            $this->registrationOperationKey($business, self::FEATURE_TEN_DLC_REGISTRATION),
+        );
+
+        $brandId = $submission->existingBrandId;
 
         try {
-            $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', [
-                'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
-                'displayName' => $submission->legalBusinessName,
-                'companyName' => $submission->legalBusinessName,
-                'ein' => $submission->ein,
-                'email' => $submission->contactEmail,
-                'phone' => $submission->contactPhone,
-                'street' => $submission->addressLine1,
-                'city' => $submission->city,
-                'state' => $submission->region,
-                'postalCode' => $submission->postalCode,
-                'country' => $submission->countryCode,
-                'website' => $submission->websiteUrl,
-            ]);
+            if ($brandId === null) {
+                try {
+                    $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', [
+                        'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
+                        'displayName' => $submission->legalBusinessName,
+                        'companyName' => $submission->legalBusinessName,
+                        'ein' => $submission->ein,
+                        'email' => $submission->contactEmail,
+                        'phone' => $submission->contactPhone,
+                        'street' => $submission->addressLine1,
+                        'city' => $submission->city,
+                        'state' => $submission->region,
+                        'postalCode' => $submission->postalCode,
+                        'country' => $submission->countryCode,
+                        'website' => $submission->websiteUrl,
+                    ]);
+                } catch (ConnectionException $e) {
+                    throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand request did not complete');
+                }
 
-            if (! $brandResponse->successful()) {
-                throw new \RuntimeException('Telnyx rejected the 10DLC brand submission.');
+                if (! $brandResponse->successful()) {
+                    if ($brandResponse->serverError()) {
+                        throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand status=' . $brandResponse->status());
+                    }
+
+                    throw new \RuntimeException('Telnyx rejected the 10DLC brand submission.');
+                }
+
+                $brandId = (string) $brandResponse->json('data.brandId', $brandResponse->json('data.id'));
+
+                if ($brandId === '') {
+                    throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand accepted without an id');
+                }
+
+                // Durable before the next external step: a later campaign
+                // failure must never lose the brand this call just created.
+                BusinessMessagingRegistration::query()
+                    ->where('business_id', $business->id)
+                    ->update(['provider_brand_id' => $brandId]);
             }
 
-            $brandId = (string) $brandResponse->json('data.brandId', $brandResponse->json('data.id'));
-
-            $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
-                'brandId' => $brandId,
-                'usecase' => $submission->useCase,
-                'description' => $submission->useCase,
-                'sample1' => $submission->sampleMessage1,
-                'sample2' => $submission->sampleMessage2,
-                'messageFlow' => $submission->optInMethod,
-                'privacyPolicyLink' => $submission->privacyPolicyUrl,
-                'termsAndConditionsLink' => $submission->termsUrl,
-                'optinKeywords' => 'START, SUBSCRIBE',
-                'optoutKeywords' => 'STOP, UNSUBSCRIBE',
-                'helpKeywords' => 'HELP, INFO',
-            ]);
+            try {
+                $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
+                    'brandId' => $brandId,
+                    'usecase' => $submission->useCase,
+                    'description' => $submission->useCase,
+                    'sample1' => $submission->sampleMessage1,
+                    'sample2' => $submission->sampleMessage2,
+                    'messageFlow' => $submission->optInMethod,
+                    'privacyPolicyLink' => $submission->privacyPolicyUrl,
+                    'termsAndConditionsLink' => $submission->termsUrl,
+                    'optinKeywords' => 'START, SUBSCRIBE',
+                    'optoutKeywords' => 'STOP, UNSUBSCRIBE',
+                    'helpKeywords' => 'HELP, INFO',
+                ]);
+            } catch (ConnectionException $e) {
+                throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign request did not complete');
+            }
 
             if (! $campaignResponse->successful()) {
+                if ($campaignResponse->serverError()) {
+                    throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign status=' . $campaignResponse->status());
+                }
+
+                // Definitive rejection: the brand stays persisted on the
+                // registration and the next attempt reuses it.
                 app(ProvisioningIncidentRecorder::class)->record(
                     business: $business,
                     stage: '10dlc_brand_created_but_campaign_failed',
@@ -787,6 +844,49 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $this->wallet->commit($reservationId);
 
         return new RegistrationSubmissionResult($brandId, $campaignId, null, MessagingRegistrationStatus::Pending);
+    }
+
+    private function unconfirmedOutcome(Business $business, string $stage, ?string $brandId, string $detail): MessagingRegistrationRecoveryRequiredException
+    {
+        app(ProvisioningIncidentRecorder::class)->record(
+            business: $business,
+            stage: $stage,
+            messagingProfileId: null,
+            providerPhoneNumberId: null,
+            phoneNumber: null,
+            numberType: PhoneNumberType::Local->value,
+            errorMessage: trim(($brandId !== null ? 'brand_id=' . $brandId . ' ' : '') . $detail),
+        );
+
+        return new MessagingRegistrationRecoveryRequiredException('The provider outcome could not be confirmed.');
+    }
+
+    /**
+     * Stable, registration-level funding identity. Each failed attempt
+     * releases its reservation (terminal), so the next attempt moves to the
+     * next suffix; an attempt whose reservation is still pending (a crash
+     * before release) is reused rather than duplicated. A committed
+     * reservation means this operation was already charged — never charge
+     * again.
+     */
+    private function registrationOperationKey(Business $business, string $featureKey): string
+    {
+        $repository = app(BusinessUsageReservationRepository::class);
+
+        for ($attempt = 1; $attempt <= 50; $attempt++) {
+            $key = sprintf('messaging-registration:%d:%s:%d', $business->id, $featureKey, $attempt);
+            $existing = $repository->findByIdempotencyKey($key);
+
+            if ($existing === null || $existing->status === UsageReservationStatus::Pending) {
+                return $key;
+            }
+
+            if ($existing->status === UsageReservationStatus::Committed) {
+                throw new MessagingRegistrationRecoveryRequiredException('This registration was already charged.');
+            }
+        }
+
+        throw new MessagingRegistrationRecoveryRequiredException('Too many failed attempts for this registration.');
     }
 
     private function submitTollFreeVerification(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
@@ -975,7 +1075,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      * path stays impossible until an owner-approved rate activates it. A
      * later slice that adds the rate needs no code change here.
      */
-    private function reserveFunding(Business $business, string $featureKey): int
+    private function reserveFunding(Business $business, string $featureKey, ?string $idempotencyKey = null): int
     {
         try {
             // A Business whose creation-time listener failed (or that
@@ -985,7 +1085,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             // still refuses an unfunded Business exactly as before.
             $this->wallet->initializeWalletForNewBusiness($business->id);
 
-            $result = $this->wallet->reserve($business, $featureKey, (string) Str::uuid());
+            $result = $this->wallet->reserve($business, $featureKey, $idempotencyKey ?? (string) Str::uuid());
         } catch (BusinessCurrencyUnresolvableException|UsageWalletNotFoundException|NoActiveRateForFeatureException|UsageMeterNotMeteredException|UsageMeterBusinessScopeMismatchException|UsageMeterCurrencyMismatchException|UsageMeterRateIntegrityException $e) {
             throw new MessagingFundingUnavailableException(sprintf(
                 'Funding is not yet configured for [%s]: %s',
