@@ -125,6 +125,26 @@ class WebsiteLookAndReviewTest extends TestCase
         $this->assertArrayNotHasKey('brand_color', $website->fresh()->theme);
     }
 
+    public function test_the_secondary_colour_is_independent_validated_and_clearable(): void
+    {
+        [, $business, $workspace, $website] = $this->atReview();
+
+        $this->look($workspace, $business, ['brand_color' => '#112233'])->assertSessionHasNoErrors();
+        $this->look($workspace, $business, ['secondary_brand_color' => 'red'])->assertSessionHasErrors('secondary_brand_color');
+        $this->assertArrayNotHasKey('secondary_brand_color', $website->fresh()->theme);
+
+        $this->look($workspace, $business, ['secondary_brand_color' => '#F50'])->assertSessionHasNoErrors();
+        $this->assertSame('#ff5500', $website->fresh()->theme['secondary_brand_color']);
+        $this->assertSame('#112233', $website->fresh()->theme['brand_color']);
+
+        $this->look($workspace, $business, ['brand_color' => '#445566'])->assertSessionHasNoErrors();
+        $this->assertSame('#ff5500', $website->fresh()->theme['secondary_brand_color']);
+
+        $this->look($workspace, $business, ['secondary_brand_color' => ''])->assertSessionHasNoErrors();
+        $this->assertArrayNotHasKey('secondary_brand_color', $website->fresh()->theme);
+        $this->assertSame('#445566', $website->fresh()->theme['brand_color']);
+    }
+
     public function test_a_logo_picked_from_a_file_input_is_stored_previewed_given_alt_text_and_replaceable(): void
     {
         [, $business, $workspace, $website] = $this->atReview();
