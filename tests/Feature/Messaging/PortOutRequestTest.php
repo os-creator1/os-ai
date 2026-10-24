@@ -632,7 +632,7 @@ class PortOutRequestTest extends TestCase
      */
     private function usageBillingSubmenu(): array
     {
-        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Number Operations')['submenu'] ?? [];
+        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Messaging Operations')['submenu'] ?? [];
 
         return json_decode(json_encode($submenu));
     }
@@ -644,7 +644,7 @@ class PortOutRequestTest extends TestCase
         $html = view('panels.submenu', ['menu' => $this->usageBillingSubmenu()])->render();
 
         $this->assertStringContainsString(url(config('app.admin_path') . '/messaging-port-out-requests'), $html);
-        $this->assertStringContainsString('Messaging Port-Out Requests', $html);
+        $this->assertStringContainsString('Port-Out Requests', $html);
     }
 
     public function test_a_non_admin_backend_account_cannot_find_the_port_out_requests_link(): void

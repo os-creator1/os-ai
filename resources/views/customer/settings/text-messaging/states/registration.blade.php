@@ -104,6 +104,9 @@
                 --}}
                 <p class="text-caption text-muted mt-2 mb-0">
                     Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step. {{ $verificationChargeDisclosure }}
+                    @if(($registration->number_type ?? null) === \App\Enums\Messaging\PhoneNumberType::Local)
+                        {{ \App\Library\Messaging\BusinessMessagingRegistrationService::LOCAL_COST_NOTICE }}
+                    @endif
                     @if($phoneNumber === null)
                         A charge for your number begins once you choose it, after your verification is approved.
                     @else

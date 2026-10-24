@@ -307,12 +307,11 @@ class TextMessagingController extends CustomerBaseController
                 'number_type' => PhoneNumberType::Local->value,
                 'country_code' => 'US',
             ]);
-        } catch (MessagingRegistrationImmutableException) {
-            // Unreachable in practice (an Approved registration with no
-            // number belongs to the 'number_required' state, which never
-            // links back to this action), but never trusted from the
-            // caller's own state alone.
-            return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been approved and can no longer be edited.');
+        } catch (MessagingRegistrationImmutableException $e) {
+            // An Approved registration with no number belongs to the
+            // 'number_required' state, which never links back to this
+            // action; a Pending or finalizing one must not be switched.
+            return $this->textMessagingError($workspaceUid, $businessUid, $e->getMessage());
         }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([

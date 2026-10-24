@@ -731,6 +731,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     public const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
     public const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
     public const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
+    public const INCIDENT_TOLLFREE_UNKNOWN = 'tollfree_verification_outcome_unknown';
 
     /**
      * Internal use-case key => Telnyx/TCR campaign `usecase` enum value.
@@ -782,7 +783,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // incident — a brand/campaign may already exist at Telnyx.
         if (BusinessMessagingProvisioningIncident::query()
             ->where('business_id', $business->id)
-            ->whereIn('stage', [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN, self::INCIDENT_FUNDING_AMBIGUOUS])
+            ->whereIn('stage', [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN, self::INCIDENT_FUNDING_AMBIGUOUS, self::INCIDENT_TOLLFREE_UNKNOWN])
             ->whereNull('resolved_at')
             ->exists()) {
             throw new MessagingRegistrationRecoveryRequiredException('An earlier 10DLC submission has an unconfirmed provider outcome.');
@@ -980,7 +981,29 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         }
 
         $business = Business::query()->findOrFail($submission->businessId);
-        $reservationId = $this->reserveFunding($business, self::FEATURE_TOLL_FREE_VERIFICATION);
+
+        // Toll-free verification is $0 through Telnyx: there is genuinely
+        // no fee to reserve, so this path never touches the usage wallet
+        // (and so needs no billing meter, and can never charge). The
+        // carrier verification itself is still submitted — Pending until
+        // Telnyx approves it. Number rental and SMS usage are billed
+        // through their own paths, unchanged.
+
+        // A request the provider already accepted on an earlier attempt
+        // (saved before the status write) is never submitted twice.
+        if ($submission->existingVerificationId !== null) {
+            return new RegistrationSubmissionResult(null, null, $submission->existingVerificationId, MessagingRegistrationStatus::Pending);
+        }
+
+        // An earlier attempt whose provider outcome was never confirmed
+        // blocks automatic retry until an operator resolves the incident.
+        if (BusinessMessagingProvisioningIncident::query()
+            ->where('business_id', $business->id)
+            ->where('stage', self::INCIDENT_TOLLFREE_UNKNOWN)
+            ->whereNull('resolved_at')
+            ->exists()) {
+            throw new MessagingRegistrationRecoveryRequiredException('An earlier toll-free verification submission has an unconfirmed provider outcome.');
+        }
 
         try {
             $response = $this->client()->post(self::API_BASE . '/messaging_tollfree/verification/requests', [
@@ -1000,19 +1023,29 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'termsAndConditionsUrl' => $submission->termsUrl,
                 'phoneNumbers' => [['phoneNumber' => $submission->phoneNumber]],
             ]);
-
-            if (! $response->successful()) {
-                throw new \RuntimeException('Telnyx rejected the toll-free verification submission.');
-            }
-
-            $requestId = (string) $response->json('data.id', $response->json('data.verificationId'));
-        } catch (\Throwable $e) {
-            $this->wallet->release($reservationId);
-
-            throw $e;
+        } catch (ConnectionException) {
+            throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free request did not complete');
         }
 
-        $this->wallet->commit($reservationId);
+        if (! $response->successful()) {
+            if ($response->serverError() || $response->status() === 408) {
+                throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free status=' . $response->status());
+            }
+
+            throw new \RuntimeException('Telnyx rejected the toll-free verification submission.');
+        }
+
+        $requestId = (string) $response->json('data.id', $response->json('data.verificationId'));
+
+        if ($requestId === '') {
+            throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free accepted without an id');
+        }
+
+        // Durable before the local status write: a crash after this point
+        // must never lead to a second verification request.
+        BusinessMessagingRegistration::query()
+            ->where('business_id', $business->id)
+            ->update(['provider_registration_id' => $requestId]);
 
         // PR #295 Correction Round 1, item 7 — toll-free has no
         // brand/campaign concept; the single opaque id goes into its own

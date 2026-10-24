@@ -522,11 +522,11 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertSame('No fee is currently configured for business verification in this environment.', $disclosure);
     }
 
-    public function test_charge_disclosure_for_toll_free_states_no_fee_configured_when_no_rate_exists(): void
+    public function test_charge_disclosure_for_toll_free_states_verification_is_free_but_number_and_usage_are_charged(): void
     {
         $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
 
-        $this->assertSame('No fee is currently configured for business verification in this environment.', $disclosure);
+        $this->assertSame('Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.', $disclosure);
     }
 
     public function test_charge_disclosure_for_local_shows_the_real_configured_rate_never_an_invented_one(): void
@@ -540,27 +540,13 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertStringNotContainsString('No fee is currently configured', $disclosure);
     }
 
-    public function test_charge_disclosure_for_toll_free_shows_the_real_configured_rate_never_an_invented_one(): void
-    {
-        $this->configureRateFor(TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION, '1500000', 'verification');
-
-        $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
-
-        $this->assertStringContainsString('USD 1.50', $disclosure);
-        $this->assertStringContainsString('per verification', $disclosure);
-        $this->assertStringNotContainsString('No fee is currently configured', $disclosure);
-    }
-
-    /**
-     * The two feature keys are genuinely distinct meters — configuring one
-     * regime's rate must never leak into the other's disclosure.
-     */
     public function test_charge_disclosure_keeps_local_and_toll_free_rates_independent(): void
     {
         $this->configureRateFor(TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, '2500000', 'registration');
 
         $tollFreeDisclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
 
-        $this->assertSame('No fee is currently configured for business verification in this environment.', $tollFreeDisclosure);
+        $this->assertStringNotContainsString('2.50', $tollFreeDisclosure);
+        $this->assertStringContainsString('$0', $tollFreeDisclosure);
     }
 }
