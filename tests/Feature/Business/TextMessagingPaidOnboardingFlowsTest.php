@@ -314,7 +314,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->order($search)->assertSessionHas('status', 'error');
 
         $this->assertSame(1, $this->posted('/number_orders'));
-        $this->assertSame(10_000_000, $this->balance());
+        $this->assertSame(10_000_000 - self::PURCHASE, $this->balance(), 'an unconfirmed order may be billing: the charge is kept, not absorbed');
         $this->assertSame(1, DB::table('business_messaging_provisioning_incidents')->where('stage', 'number_order_outcome_unknown')->whereNull('resolved_at')->count());
     }
 

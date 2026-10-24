@@ -158,7 +158,7 @@ class TextMessagingController extends CustomerBaseController
             areaCode: $validated['area_code'] ?? null,
         );
 
-        if (! $this->provisioningOpenFor($business)) {
+        if (! ProvisioningPilot::allows($business)) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available for this Business yet.');
         }
 

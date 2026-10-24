@@ -1518,7 +1518,8 @@ class TelnyxProvisioningAdapterTest extends TestCase
                 // expected
             }
 
-            $this->assertSame(20_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'), $status);
+            // A definite failure hands the hold back; an unconfirmed order may be billing, so its charge is kept.
+            $this->assertSame(20_000_000 - ($status === 'pending' ? 1_250_000 : 0), (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'), $status);
             $this->assertSame($incidents, DB::table('business_messaging_provisioning_incidents')->where('business_id', $business->id)->where('stage', TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN)->count(), $status);
         }
     }
