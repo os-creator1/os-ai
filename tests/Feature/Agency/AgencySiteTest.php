@@ -831,4 +831,86 @@ class AgencySiteTest extends TestCase
         $this->assertTrue(BookingType::query()->whereKey($existing->id)->exists());
         $this->assertSame($rules, \App\Models\StaffAvailabilityRule::query()->count(), 'hours already existed, so none were added');
     }
+
+    // ------------------------------------------------------- the marketing stylesheet reaches the page
+
+    /** The href of the page's marketing stylesheet link. */
+    private function stylesheetHref(string $html): string
+    {
+        $this->assertSame(1, preg_match('#<link rel="stylesheet" href="([^"]*marketing\.css[^"]*)"#', $html, $m), 'the page links the marketing stylesheet');
+
+        return html_entity_decode($m[1]);
+    }
+
+    public function test_a_draft_preview_links_a_stylesheet_that_actually_loads_before_the_site_is_published(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner, 'Northwind Digital', '#1a73e8');
+        $site = $this->openEditor($agency, $owner);
+        $this->assertFalse($site->isLive());
+
+        $html = $this->get($this->url('preview', $agency, ['page' => 'home']))->assertOk()->getContent();
+
+        // The marketing layout, not a bare document: its stylesheet, fonts, script and body structure are all present.
+        $href = $this->stylesheetHref($html);
+        $this->assertStringContainsString('/agency/site/preview-css/marketing.css', $href);
+        $this->assertStringContainsString('fonts.googleapis.com', $html);
+        $this->assertMatchesRegularExpression('#<script src="[^"]*marketing/js/marketing\.js[^"]*" defer>#', $html);
+
+        // The link resolves for the signed-in owner (this is what used to 404 and leave the page unstyled).
+        $css = $this->get($href)->assertOk();
+        $this->assertStringContainsString('text/css', (string) $css->headers->get('Content-Type'));
+        $this->assertStringContainsString('no-store', (string) $css->headers->get('Cache-Control'));
+        $body = $css->getContent();
+        $this->assertGreaterThan(10000, strlen($body), 'the full marketing stylesheet, not a stub');
+        $this->assertStringContainsString('#1a73e8', $body, "the Agency's colour is applied");
+        $this->assertStringNotContainsStringIgnoringCase('#b4514a', $body, 'the platform colour is gone');
+
+        // The unpublished site's public stylesheet stays private.
+        $this->get(route('agency.site.css', $site->public_id))->assertNotFound();
+    }
+
+    public function test_the_preview_stylesheet_follows_the_draft_and_is_for_the_agency_team_only(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner, 'Northwind Digital', '#1a73e8');
+        $this->openEditor($agency, $owner);
+        $href = $this->stylesheetHref($this->get($this->url('preview', $agency, ['page' => 'pricing']))->getContent());
+
+        // A changed brand colour shows up in the preview stylesheet at once (draft, never cached).
+        $this->brand($agency, $owner, 'Northwind Digital', '#0b7a3b');
+        $newHref = $this->stylesheetHref($this->get($this->url('preview', $agency, ['page' => 'home']))->getContent());
+        $this->assertStringContainsString('#0b7a3b', $this->get($newHref)->assertOk()->getContent());
+
+        // Outsiders get nothing: not logged in, or a different agency's owner.
+        auth()->logout();
+        $this->get($href)->assertUnauthorized();
+        [$other, $otherOwner] = $this->agency('Other Agency');
+        $this->authenticateAs($otherOwner);
+        $this->get($href)->assertStatus(404);
+    }
+
+    public function test_a_published_site_links_the_public_stylesheet_and_every_page_has_one(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->brand($agency, $owner, 'Northwind Digital', '#1a73e8');
+        $site = $this->openEditor($agency, $owner);
+        $uuid = $this->bookableType($agency, $owner)->public_booking_uuid;
+        $this->save($agency, ['x.goal' => 'book_call', 'x.booking_type_uid' => $uuid, 'links.privacy' => 'https://northwind.example/privacy', 'links.terms' => 'https://northwind.example/terms'])->assertOk();
+        $this->postJson($this->url('publish', $agency))->assertOk();
+        auth()->logout();
+
+        foreach (['home', 'product', 'solutions', 'how-it-works', 'pricing'] as $page) {
+            $html = $this->get($page === 'home' ? route('agency.site.home', $site->public_id) : route('agency.site.page', [$site->public_id, $page]))->assertOk()->getContent();
+            $href = $this->stylesheetHref($html);
+
+            $this->assertStringContainsString('/w/'.$site->public_id.'/css/marketing.css', $href, $page);
+            $css = $this->get($href)->assertOk();
+            $this->assertStringContainsString('text/css', (string) $css->headers->get('Content-Type'));
+            $this->assertStringContainsString('#1a73e8', $css->getContent());
+        }
+
+        // The preview URL is not what the public site uses.
+        $this->assertStringNotContainsString('preview-css', $this->get(route('agency.site.home', $site->public_id))->getContent());
+    }
 }
