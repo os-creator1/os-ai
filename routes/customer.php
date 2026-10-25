@@ -1048,6 +1048,7 @@
         // White Label -> Landing Page editor (draft preview + JSON saves). Its own family, listed beside
         // `agency.white-label.` in ViewAsProhibitedActions.
         Route::prefix('{workspaceUid}/agency/site')->name('agency.site.')->group(function () {
+            Route::get('preview-css/marketing.css', 'Agency\AgencySiteController@previewCss')->name('preview-css');
             Route::get('preview/{page?}', 'Agency\AgencySiteController@preview')->name('preview');
             Route::post('save', 'Agency\AgencySiteController@save')->middleware('throttle:120,1')->name('save');
             Route::post('step', 'Agency\AgencySiteController@step')->middleware('throttle:120,1')->name('step');
