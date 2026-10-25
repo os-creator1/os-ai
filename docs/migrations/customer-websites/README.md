@@ -9,8 +9,16 @@ Business Pack migration, and it never creates a Business, Workspace or Location.
 | `kaleb-hill` | #3 / #3 Kaleb Hill Photography | kalebhillphotobooth.com | `#FAC815` / `#232323` |
 | `booths-to-the-max` | #4 / #4 Booths To The Max | boothstothemax.com | `#188BF6` / `#061633` |
 | `greenbelt` | #6 / #6 Greenbelt Photography | greenbeltphotography.com | `#F4A28F` / `#2A1D45` |
+| `transparent` | #5 / #5 Transparent Photo Booths | transparentphotobooths.com/home | `#188BF6` / `#061633` |
 
-Transparent Photo Booths (#5) is **not** included: no verified official website was available. Toronto and Lumina are untouched.
+Toronto and Lumina are untouched.
+
+### Transparent (#5) notes
+
+- 20 pages (the platform caps a website at 20): Home, Photo Booths (with FAQs), Backdrops, Gallery, Wedding/Corporate/Party, About (Meet Katie), Service Areas, the seven source-supported local pages (Spokane, Spokane Valley, Liberty Lake, Airway, Cheney, Coeur d'Alene, Post Falls), Check availability and the three legal pages. FAQs also appear on Home.
+- Two booths only (Digital, Polaroid). No prices (none published). Reviews are the source's three; the longest sits in a text block because testimonials cap at 400 characters.
+- Eleven images on the source site are byte-identical to Booths To The Max photos (template carry-over) and were excluded. The Polaroid booth uses the source's own "guests holding custom photo booth prints" photo; confirm with the owner.
+- The source identifies `transparent occasion rentals LLC`, +1 425 789 7018, katecraig2002@yahoo.com. The dry run compares the Business record with these; a mismatch blocks `--apply`.
 
 ## Secondary colour
 

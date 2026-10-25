@@ -2,7 +2,7 @@
 # Customer website build: guarded production run. Run ON the Forge server as `forge` (see README.md).
 #   bash ~/run-on-forge.sh <key>            -> read-only: verify target + bundle, take/validate a backup, dry-run the plan
 #   bash ~/run-on-forge.sh <key> --apply    -> the same, re-verify the backup, then WRITE (asks you to type the confirmation phrase)
-# <key> is one of: kaleb-hill | booths-to-the-max | greenbelt. Every validation fails closed before anything is written.
+# <key> is one of: kaleb-hill | booths-to-the-max | greenbelt | transparent. Every validation fails closed before anything is written.
 set -Eeuo pipefail
 trap 'echo "ABORT: command failed at line $LINENO (nothing further was run)." >&2' ERR
 # Remove ONLY the backup file this run created, and only while it has not passed verification. Earlier backups are never touched.
@@ -16,7 +16,7 @@ trap cleanup EXIT
 die() { echo "ABORT: $*" >&2; exit 1; }
 
 KEY="${1:-}"; APPLY=0
-case "$KEY" in kaleb-hill|booths-to-the-max|greenbelt) ;; *) die "first argument must be kaleb-hill, booths-to-the-max or greenbelt" ;; esac
+case "$KEY" in kaleb-hill|booths-to-the-max|greenbelt|transparent) ;; *) die "first argument must be kaleb-hill, booths-to-the-max, greenbelt or transparent" ;; esac
 case "${2:-}" in "") ;; "--apply") APPLY=1 ;; *) die "unknown argument [${2}] (only --apply is accepted)" ;; esac
 
 APP_DIR="${APP_DIR:-/home/forge/getmotiongrove.com/current}"
