@@ -479,18 +479,28 @@ adds `add_header X-Frame-Options "SAMEORIGIN";` (with `X-XSS-Protection` and `X-
 so every response, including the form, carried it. Browsers that honour `frame-ancestors` ignore `X-Frame-Options` when
 both are present, but remove the ambiguity at the server so Safari and older engines behave identically.
 
-Minimal operator change on the platform site (Forge > Site > Nginx configuration; **not** a global removal):
+Minimal operator change on the platform site (Forge > Site > Nginx configuration; **not** a global removal). A `map`
+is valid ONLY in the `http` context, never inside `server {}` or `location {}`. In Forge's site file everything outside
+the `server { ... }` block is already inside `http`, so put the `map` at the top of that file, above `server {`
+(or in the site's `before` include, which Forge includes at the same level):
 
 ```nginx
-# http context (Forge: the site's "before" include, or nginx.conf http {}):
+# TOP of the site file, OUTSIDE server { } (http context). The variable name must be unique across all sites on the box.
 map $request_uri $mg_x_frame_options {
     default                                  "SAMEORIGIN";
     ~^/forms/[0-9a-f-]{36}(/|\?|$)            "";   # public form links: framing is governed by the app's CSP frame-ancestors
 }
 
-# server block: replace  add_header X-Frame-Options "SAMEORIGIN";  with
-add_header X-Frame-Options $mg_x_frame_options;     # an empty value sends no header
+server {
+    # ... replace  add_header X-Frame-Options "SAMEORIGIN";  with:
+    add_header X-Frame-Options $mg_x_frame_options;     # an empty value sends no header
+    # ...
+}
 ```
+
+Run `nginx -t` before reloading; an error such as `"map" directive is not allowed here` means it landed inside `server`
+or `location`. If the same `add_header` also appears in a `location` block of the site, change it there too (a
+`location` with its own `add_header` does not inherit the server-level ones).
 
 Every other path (login, admin, CRM, customer app, marketing site) keeps `X-Frame-Options: SAMEORIGIN`. Verify:
 
@@ -500,8 +510,9 @@ curl -sI https://<platform host>/forms/<deploymentUid> | grep -i -e x-frame-opti
 curl -sI https://<platform host>/login | grep -i x-frame-options        # expect: SAMEORIGIN
 ```
 
-The form POST needs no session cookie from the iframe (CSRF exemption `forms/*`; the signed operation token, honeypot
-and throttle protect it), because a cross-site iframe receives no `SameSite=Lax` session cookie.
+The form POST needs no session cookie from the iframe: only `POST /forms/{deploymentUid}` is exempt from CSRF (nested
+paths are not), and the signed operation token, honeypot and throttle protect it. Validation messages are rendered in
+the POST response itself (HTTP 422), so they appear without a session cookie either.
 
 ---
 

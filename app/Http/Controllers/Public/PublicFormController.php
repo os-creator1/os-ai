@@ -16,6 +16,8 @@ use App\Models\FormSubmission;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Http\Response;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 /**
@@ -81,7 +83,7 @@ class PublicFormController extends Controller
         return $this->renderPage($context, $token, $pageKey, $session?->answers ?? []);
     }
 
-    public function submit(Request $request, string $deploymentUid): RedirectResponse
+    public function submit(Request $request, string $deploymentUid): RedirectResponse|Response
     {
         // Authority first, before any guest input is inspected.
         $this->resolveOrNotFound($deploymentUid);
@@ -94,6 +96,8 @@ class PublicFormController extends Controller
             $result = $this->submissions->submit($deploymentUid, $request->all());
         } catch (FormUnavailableException) {
             abort(404);
+        } catch (ValidationException $e) {
+            return $this->invalid($request, $deploymentUid, $e);
         }
 
         if (! $result->isFinal()) {
@@ -159,6 +163,40 @@ class PublicFormController extends Controller
                 ? route('public.forms.page', [$context->deployment->uid, $token, $pages[$index - 1]['key']])
                 : null,
         ]);
+    }
+
+    /**
+     * A refused submission is answered with the form itself (422), the visitor's answers and the messages in the body.
+     * The public form is framed by the customer's own site, where the browser withholds the session cookie, so the
+     * usual redirect-back-with-flashed-errors would show a fresh, silent form. Nothing here depends on a session, and
+     * the same signed token (or a new one when it no longer verifies) carries the flow on.
+     */
+    private function invalid(Request $request, string $deploymentUid, ValidationException $e): Response
+    {
+        $context = $this->resolveOrNotFound($deploymentUid);
+        $token = $request->input(FormSubmissionService::TOKEN_FIELD);
+        $claims = FormOperationToken::claims($context->deployment, $token);
+
+        try {
+            $context = $claims === null ? $context : $this->resolver->pin($context, $claims['version_id']);
+        } catch (FormUnavailableException) {
+            $claims = null;
+        }
+
+        if ($claims === null) {
+            $token = FormOperationToken::issue($context->deployment, $context->version);
+        }
+
+        $pageKey = (string) $request->input(FormSubmissionService::PAGE_FIELD);
+        $pageKey = $context->version->pageIndex($pageKey) !== null ? $pageKey : $context->version->pageKeys()[0];
+
+        $answers = collect($request->except([
+            FormSubmissionService::TOKEN_FIELD, FormSubmissionService::PAGE_FIELD, FormSubmissionService::HONEYPOT_FIELD, '_token',
+        ]))->filter(fn ($value) => is_string($value) || is_array($value))->all();
+
+        $view = $this->renderPage($context, (string) $token, $pageKey, $answers)->withErrors($e->errors());
+
+        return response($view->render(), 422);
     }
 
     private function resolveOrNotFound(string $deploymentUid): FormDeploymentContext

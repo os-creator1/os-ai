@@ -156,8 +156,47 @@ class FormEmbedFramingTest extends TestCase
         $uid = '11111111-1111-4111-8111-111111111111';
 
         $this->assertTrue($middleware->exempt(Request::create('/forms/'.$uid, 'POST')));
+        $this->assertFalse($middleware->exempt(Request::create('/forms/'.$uid.'/thanks', 'POST')), 'nested paths stay protected');
+        $this->assertFalse($middleware->exempt(Request::create('/forms/'.$uid.'/s/token/page_1', 'POST')));
+        $this->assertFalse($middleware->exempt(Request::create('/forms/not-a-uuid', 'POST')));
+        $this->assertFalse($middleware->exempt(Request::create('/forms/'.$uid, 'DELETE')));
         $this->assertFalse($middleware->exempt(Request::create('/login', 'POST')));
         $this->assertFalse($middleware->exempt(Request::create('/customer/workspaces/x/businesses/y/website/forms', 'POST')));
         $this->assertFalse($middleware->exempt(Request::create('/admin/forms/'.$uid, 'POST')));
+    }
+
+    public function test_other_content_security_policy_directives_are_preserved_and_only_frame_ancestors_is_replaced(): void
+    {
+        $reference = $this->offered($this->business, $this->location);
+        $this->websiteWithDomain($this->business, 'quotes.example.com');
+        $request = Request::create('/forms/'.$reference->uid);
+        $request->setRouteResolver(fn () => (new \Illuminate\Routing\Route('GET', 'forms/{deploymentUid}', []))->bind($request));
+
+        $response = app(\App\Http\Middleware\FrameFormForAuthorizedWebsite::class)->handle($request, fn () => response('ok')
+            ->header('Content-Security-Policy', "default-src 'self'; frame-ancestors 'none'; img-src https:")
+            ->header('X-Frame-Options', 'SAMEORIGIN'));
+
+        $this->assertSame(
+            ["default-src 'self'; img-src https:; frame-ancestors 'self' https://quotes.example.com"],
+            $response->headers->all('Content-Security-Policy'),
+        );
+        $this->assertNull($response->headers->get('X-Frame-Options'));
+    }
+
+    public function test_validation_errors_and_answers_are_in_the_post_response_without_any_session(): void
+    {
+        $reference = $this->offered($this->business, $this->location);
+        $token = \App\Library\Forms\FormOperationToken::issue($reference);
+
+        $response = $this
+            ->post(route('public.forms.submit', [$reference->uid]), [
+                \App\Library\Forms\FormSubmissionService::TOKEN_FIELD => $token,
+                'email' => 'not-an-email',
+            ]);
+
+        $response->assertStatus(422)->assertHeader('Content-Security-Policy')->assertSessionMissing('errors');
+        $this->assertStringContainsString('data-role="public-form-errors"', $response->getContent());
+        $this->assertStringContainsString('value="not-an-email"', $response->getContent());
+        $this->assertStringContainsString($token, $response->getContent());
     }
 }

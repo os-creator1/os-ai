@@ -31,12 +31,43 @@ class FrameFormForAuthorizedWebsite
         $uid = (string) $request->route('deploymentUid');
         $policy = $this->ancestors->policyFor($uid);
 
-        $response->headers->set('Content-Security-Policy', $policy);
+        $this->applyFrameAncestors($response, $policy);
 
         if ($policy !== "frame-ancestors 'self'") {
             $response->headers->remove('X-Frame-Options');
         }
 
         return $response;
+    }
+
+    /**
+     * Sets `frame-ancestors` while keeping every other directive of any Content-Security-Policy already on the
+     * response. This route family owns framing, so an existing `frame-ancestors` is replaced (several enforced
+     * policies are intersected by the browser, so a stale one left behind would silently re-block the form).
+     */
+    private function applyFrameAncestors(Response $response, string $frameAncestors): void
+    {
+        $policies = [];
+
+        foreach ($response->headers->all('Content-Security-Policy') as $line) {
+            foreach (explode(',', (string) $line) as $policy) {
+                $directives = array_filter(
+                    array_map('trim', explode(';', $policy)),
+                    fn (string $directive) => $directive !== '' && ! preg_match('/^frame-ancestors(\s|$)/i', $directive),
+                );
+
+                if ($directives !== []) {
+                    $policies[] = implode('; ', $directives);
+                }
+            }
+        }
+
+        if ($policies === []) {
+            $policies[] = $frameAncestors;
+        } else {
+            $policies[0] .= '; '.$frameAncestors;
+        }
+
+        $response->headers->set('Content-Security-Policy', $policies, true);
     }
 }
