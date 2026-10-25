@@ -143,7 +143,8 @@ class ForgeDomainProvisioner
             self::API_BASE."/orgs/{$org}/servers/{$serverId}/sites/{$siteId}/domains/{$forgeDomainId}/certificates",
             [
                 'type' => 'letsencrypt',
-                'letsencrypt' => ['verification_method' => 'http-01'],
+                // key_type is REQUIRED by Forge API v2 (CertificateKeyType enum: ecdsa | rsa); http-01 stays the method.
+                'letsencrypt' => ['verification_method' => 'http-01', 'key_type' => 'ecdsa'],
             ],
         );
 
