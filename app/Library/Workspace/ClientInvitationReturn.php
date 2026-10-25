@@ -17,6 +17,16 @@ final class ClientInvitationReturn
 {
     public const KEY = 'pending_client_invitation';
 
+    /** Settings → Team invitations use the same remember-and-return mechanism under their own key. */
+    public const MEMBER_KEY = 'pending_member_invitation';
+
+    public static function rememberMember(string $uid, string $token): void
+    {
+        if (self::valid($uid, $token)) {
+            session()->put(self::MEMBER_KEY, ['uid' => $uid, 'token' => $token]);
+        }
+    }
+
     public static function remember(string $uid, string $token): void
     {
         if (self::valid($uid, $token)) {
@@ -27,6 +37,12 @@ final class ClientInvitationReturn
     /** The claim URL to return to, once; the memory is consumed so it can never loop. */
     public static function pull(): ?string
     {
+        $member = session()->pull(self::MEMBER_KEY);
+
+        if (is_array($member) && self::valid((string) ($member['uid'] ?? ''), (string) ($member['token'] ?? ''))) {
+            return route('workspace-invitations.claim', ['uid' => $member['uid'], 'token' => $member['token']]);
+        }
+
         $pending = session()->pull(self::KEY);
 
         if (! is_array($pending) || ! self::valid((string) ($pending['uid'] ?? ''), (string) ($pending['token'] ?? ''))) {
@@ -36,9 +52,14 @@ final class ClientInvitationReturn
         return route('client-invitations.claim', ['uid' => $pending['uid'], 'token' => $pending['token']]);
     }
 
+    public static function forgetMember(): void
+    {
+        session()->forget(self::MEMBER_KEY);
+    }
+
     public static function forget(): void
     {
-        session()->forget(self::KEY);
+        session()->forget([self::KEY, self::MEMBER_KEY]);
     }
 
     private static function valid(string $uid, string $token): bool
