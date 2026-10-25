@@ -72,4 +72,20 @@ class WebsiteDomain extends Model
     {
         return '_platform-verify.'.$this->domain;
     }
+
+    /**
+     * The same record name as most DNS providers want it typed: relative to the zone, because they append the domain
+     * themselves. `_platform-verify` for an apex domain, `_platform-verify.www` for www.example.com. Display only;
+     * verification always checks verificationTxtHost() for an exact token match. The zone is guessed as the last two
+     * labels (three for common second-level suffixes like co.uk); the full hostname is shown beside it so a wrong guess
+     * is never silent.
+     */
+    public function verificationTxtHostRelative(): string
+    {
+        $labels = explode('.', strtolower($this->domain));
+        $zoneLabels = count($labels) >= 3 && strlen(end($labels)) === 2 && in_array($labels[count($labels) - 2], ['co', 'com', 'org', 'net', 'gov', 'ac', 'edu'], true) ? 3 : 2;
+        $sub = array_slice($labels, 0, max(0, count($labels) - $zoneLabels));
+
+        return '_platform-verify'.($sub === [] ? '' : '.'.implode('.', $sub));
+    }
 }

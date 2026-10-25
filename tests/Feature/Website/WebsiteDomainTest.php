@@ -135,8 +135,7 @@ class WebsiteDomainTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.domains.verify', [$workspace->uid, $business->uid, $domain->uid]))
             ->assertRedirect()
-            ->assertSessionHas('status', 'error')
-            ->assertSessionHas('message');
+            ->assertSessionMissing('message', 'the miss is shown once, inside the domain card, not as a second banner');
 
         $domain->refresh();
         $this->assertSame(WebsiteDomainStatus::PendingVerification, $domain->status);
@@ -455,11 +454,84 @@ class WebsiteDomainTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.website.domains.index', [$workspace->uid, $business->uid]))
             ->assertOk()
-            ->assertSee('_platform-verify.instructions.test', false)
+            ->assertSee('Full record name: _platform-verify.instructions.test', false)
             ->assertSee($domain->verification_token, false)
-            ->assertSee('Waiting on DNS verification', false)
+            ->assertSee('Not public yet', false)
             ->assertDontSee('is now live', false)
             ->assertDontSee('badge-success', false);
+    }
+
+    public function test_the_verification_card_is_one_compact_record_row_with_copyable_host_and_value(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->publish($website);
+        $this->fakeDnsVerifier();
+        $this->fakeDomainProvisioner();
+        $this->authenticateAsCustomer($customer);
+        $ids = [$workspace->uid, $business->uid];
+
+        $this->post(route('customer.workspaces.businesses.website.domains.store', $ids), ['domain' => 'example.com'])->assertRedirect();
+        $this->post(route('customer.workspaces.businesses.website.domains.store', $ids), ['domain' => 'www.shop.co.uk'])->assertRedirect();
+        $domain = $website->domains()->where('domain', 'example.com')->sole();
+
+        $html = $this->get(route('customer.workspaces.businesses.website.domains.index', $ids))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($html, 'data-testid="dns-host">_platform-verify</span>'), 'Apex domain: the host is just _platform-verify.');
+        $this->assertStringContainsString('data-testid="dns-host">_platform-verify.www</span>', $html, 'A www host is typed relative to its zone.');
+        $this->assertStringContainsString('data-copy="_platform-verify"', $html);
+        $this->assertStringContainsString('data-copy="' . $domain->verification_token . '"', $html);
+        $this->assertStringContainsString('Add this record at your domain provider', $html);
+        $this->assertStringContainsString('Automatic', $html);
+        $this->assertStringContainsString('Enter only', $html);
+        $this->assertStringContainsString('Check again', $html);
+        foreach (['Domain added', 'Prove you own it', 'Secure certificate', 'Live'] as $step) {
+            $this->assertStringContainsString($step, $html);
+        }
+        $this->assertStringContainsString('<details class="mg-connect"', $html, 'Connect another domain is collapsed by default.');
+        $this->assertDoesNotMatchRegularExpression('/data-testid="connect-another"\s+open/', $html);
+    }
+
+    public function test_a_missed_check_is_shown_once_as_a_pill_and_never_as_a_second_banner(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->publish($website);
+        $this->fakeDnsVerifier(false);
+        $this->fakeDomainProvisioner();
+        $this->authenticateAsCustomer($customer);
+        $ids = [$workspace->uid, $business->uid];
+        $this->post(route('customer.workspaces.businesses.website.domains.store', $ids), ['domain' => 'miss.test'])->assertRedirect();
+        $domain = $website->domains()->sole();
+
+        $response = $this->post(route('customer.workspaces.businesses.website.domains.verify', [...$ids, $domain->uid]));
+        $response->assertRedirect(route('customer.workspaces.businesses.website.domains.index', $ids));
+        $response->assertSessionMissing('message');
+
+        $html = $this->get(route('customer.workspaces.businesses.website.domains.index', $ids))->assertOk()->getContent();
+        $this->assertSame(1, substr_count($html, 'Not found yet'));
+        $this->assertStringNotContainsString("We couldn't find that TXT record", $html);
+        $this->assertStringContainsString('Checked', $html);
+        $this->assertSame(WebsiteDomainStatus::PendingVerification, $domain->fresh()->status, 'Still fail-closed.');
+    }
+
+    public function test_a_failed_add_keeps_the_connect_form_open_with_the_typed_value(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->publish($website);
+        $this->fakeDnsVerifier();
+        $this->fakeDomainProvisioner();
+        $this->authenticateAsCustomer($customer);
+        $ids = [$workspace->uid, $business->uid];
+        $this->post(route('customer.workspaces.businesses.website.domains.store', $ids), ['domain' => 'first.test'])->assertRedirect();
+
+        $index = route('customer.workspaces.businesses.website.domains.index', $ids);
+        $this->from($index)->post(route('customer.workspaces.businesses.website.domains.store', $ids), ['domain' => 'not a domain!'])->assertRedirect($index)->assertSessionHasErrors('domain');
+        $html = $this->get($index)->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/data-testid="connect-another"\s+open/', $html);
+        $this->assertStringContainsString('value="not a domain!"', $html);
     }
 
     public function test_website_domain_service_instance_uses_bound_fakes_never_real_network_calls(): void

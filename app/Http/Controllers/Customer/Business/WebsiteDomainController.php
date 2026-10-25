@@ -73,14 +73,12 @@ class WebsiteDomainController extends CustomerBaseController
 
         $domain = $this->domains->checkVerification($domain);
 
-        $message = $domain->status->value === 'verified'
-            ? 'DNS ownership verified. You can now request a certificate.'
-            : ($domain->failure_reason ?? 'Verification is not complete yet.');
+        $route = redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]);
 
-        return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid])->with([
-            'status' => $domain->status->value === 'verified' ? 'success' : 'error',
-            'message' => $message,
-        ]);
+        // A miss is shown once, inside the domain's own card ("Not found yet"); only a success is flashed.
+        return $domain->status->value === 'verified'
+            ? $route->with(['status' => 'success', 'message' => 'DNS ownership verified. You can now request a certificate.'])
+            : $route;
     }
 
     public function provision(string $workspaceUid, string $businessUid, string $domainUid): RedirectResponse
