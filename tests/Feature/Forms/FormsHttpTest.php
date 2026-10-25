@@ -591,13 +591,15 @@ class FormsHttpTest extends TestCase
         $this->assertSame(0, \App\Models\Contacts::count());
     }
 
-    public function test_invalid_answers_go_back_with_errors_and_store_nothing(): void
+    public function test_invalid_answers_are_answered_with_the_form_errors_and_answers_in_the_response_and_store_nothing(): void
     {
-        $url = route('public.forms.show', [$this->atDowntown->uid]);
+        // No redirect and no flashed session: the form is framed cross-site, where no session cookie survives.
+        $response = $this->post(route('public.forms.submit', [$this->atDowntown->uid]), $this->submitInput($this->atDowntown, ['email' => 'nope']))
+            ->assertStatus(422)
+            ->assertSessionMissing('errors');
 
-        $this->from($url)->post(route('public.forms.submit', [$this->atDowntown->uid]), $this->submitInput($this->atDowntown, ['email' => 'nope']))
-            ->assertRedirect($url)
-            ->assertSessionHasErrors('email');
+        $this->assertStringContainsString('data-role="public-form-errors"', $response->getContent());
+        $this->assertStringContainsString('value="nope"', $response->getContent());
 
         $this->assertSame(0, FormSubmission::count());
     }
