@@ -1150,6 +1150,7 @@
         Route::post('{workspaceUid}/members/{memberUid}/role', 'Workspace\WorkspaceController@updateMemberRole')->name('members.role');
         Route::post('{workspaceUid}/members/{memberUid}/access', 'Workspace\WorkspaceController@updateMemberAccess')->name('members.access');
         Route::post('{workspaceUid}/members/{memberUid}/deactivate', 'Workspace\WorkspaceController@deactivateMember')->name('members.deactivate');
+        Route::post('{workspaceUid}/members/{memberUid}/remove', 'Workspace\WorkspaceController@removeMember')->name('members.remove');
         Route::post('{workspaceUid}/members/{memberUid}/reactivate', 'Workspace\WorkspaceController@reactivateMember')->name('members.reactivate');
 
         // Settings → Team invitations (people with no account yet): resend / revoke a pending one.

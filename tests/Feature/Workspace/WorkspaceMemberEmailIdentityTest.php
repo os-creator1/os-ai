@@ -321,6 +321,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
             'customer.workspaces.members.access',
             'customer.workspaces.members.deactivate',
             'customer.workspaces.members.reactivate',
+            'customer.workspaces.members.remove',
             'customer.workspaces.members.role',
             'customer.workspaces.members.store',
         ], $memberRoutes);

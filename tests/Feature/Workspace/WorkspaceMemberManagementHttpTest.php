@@ -1472,11 +1472,11 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $html = $response->getContent();
 
         $this->assertDoesNotMatchRegularExpression(
-            '/data-member-action="deactivate" data-member-uid="' . preg_quote($adminTarget->user->uid, '/') . '"/',
+            '/data-member-action="remove" data-member-uid="' . preg_quote($adminTarget->user->uid, '/') . '"/',
             $html
         );
         $this->assertMatchesRegularExpression(
-            '/data-member-action="deactivate" data-member-uid="' . preg_quote($staffTarget->user->uid, '/') . '"/',
+            '/data-member-action="remove" data-member-uid="' . preg_quote($staffTarget->user->uid, '/') . '"/',
             $html
         );
     }

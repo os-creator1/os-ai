@@ -18,6 +18,7 @@ use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\CrossWorkspaceAssignmentException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
+use App\Exceptions\Workspace\CannotRemoveSelfException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
 use App\Exceptions\Workspace\InvalidBusinessAccessScopeAssignmentException;
 use App\Exceptions\Workspace\OwnerCannotBeMemberException;
@@ -1177,6 +1178,31 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
+     * "Delete member": logically removes one membership (access ends at once,
+     * the person leaves the Members list, audit snapshot kept). The User
+     * account and their other Workspaces are untouched. Authority failures
+     * (Staff, Admin removing an Admin) and self-removal resolve to the same 404.
+     */
+    public function removeMember(string $workspaceUid, string $memberUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $membership = $this->resolveAccessibleMembership($workspace, $memberUid);
+
+        try {
+            $this->workspaceManager->removeMember($actorUserId, $membership);
+        } catch (UnauthorizedWorkspaceManagementException|CannotRemoveSelfException) {
+            abort(404);
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.team.show', $workspaceUid)
+            ->with('flash_success', 'Member deleted.');
+    }
+
+    /**
      * Reactivates one membership -- same target-role authority rule as
      * deactivateMember(). WorkspaceManager::reactivateMember() restores
      * effective access purely by flipping is_active back to true; no
@@ -1247,7 +1273,8 @@ class WorkspaceController extends CustomerBaseController
 
         $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, (int) $targetUser->id);
 
-        if ($membership === null) {
+        // A removed member is gone from this Workspace's management surface: same 404 as an unknown uid.
+        if ($membership === null || $membership->removed_at !== null) {
             abort(404);
         }
 
@@ -1667,7 +1694,7 @@ class WorkspaceController extends CustomerBaseController
         $ownerUserId = (int) $workspace->owner_user_id;
 
         return $this->membershipRepository->allForWorkspace($workspace)
-            ->reject(fn (WorkspaceMembership $membership) => (int) $membership->user_id === $ownerUserId)
+            ->reject(fn (WorkspaceMembership $membership) => (int) $membership->user_id === $ownerUserId || $membership->removed_at !== null)
             ->sortBy('id')
             ->values()
             ->map(function (WorkspaceMembership $membership) use ($businessUidsById) {

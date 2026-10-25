@@ -125,6 +125,33 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
         return $membership;
     }
 
+    public function markRemoved(WorkspaceMembership $membership, \DateTimeInterface $at): WorkspaceMembership
+    {
+        $membership->is_active = false;
+        $membership->removed_at = $at;
+        $membership->save();
+        $this->forgetMembershipCache($membership);
+
+        return $membership;
+    }
+
+    public function reinstate(
+        WorkspaceMembership $membership,
+        WorkspaceMembershipRole $role,
+        WorkspaceBusinessAccessScope $scope,
+        LocationAccessScope $locationScope
+    ): WorkspaceMembership {
+        $membership->role = $role;
+        $membership->business_access_scope = $scope;
+        $membership->location_access_scope = $locationScope;
+        $membership->is_active = true;
+        $membership->removed_at = null;
+        $membership->save();
+        $this->forgetMembershipCache($membership);
+
+        return $membership;
+    }
+
     private function forgetMembershipCache(WorkspaceMembership $membership): void
     {
         $this->forgetRequestCache("membership:find:{$membership->workspace_id}:{$membership->user_id}");

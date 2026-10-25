@@ -27,6 +27,37 @@
     $peopleCount = count($directory) + (! empty($teamOwner) ? 1 : 0);
 @endphp
 
+
+<style>
+    .sr-member { display: block; }
+    .sr-member__details { width: 100%; }
+    .sr-member__summary { display: flex; align-items: center; gap: .6rem; cursor: pointer; list-style: none; flex-wrap: wrap; }
+    .sr-member__summary::-webkit-details-marker { display: none; }
+    .sr-member__summary--static { cursor: default; }
+    .sr-member__name { flex: 1 1 8rem; min-width: 0; }
+    .sr-member__manage { display: inline-flex; align-items: center; gap: .25rem; margin-left: auto; font-size: .85rem; color: var(--bs-secondary-color, #6b7280); }
+    .sr-member__details[open] .sr-member__manage svg { transform: rotate(180deg); }
+    .sr-member__panel { margin-top: .75rem; padding: .85rem 1rem; border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: .5rem; display: grid; gap: .9rem; }
+    .sr-member__inline { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .sr-member__inline select { width: auto; min-width: 8rem; }
+    .sr-member__access { display: grid; gap: .5rem; }
+    .sr-seg { display: inline-flex; border: 1px solid var(--bs-border-color, #d1d5db); border-radius: .4rem; overflow: hidden; width: fit-content; max-width: 100%; }
+    .sr-seg label { margin: 0; cursor: pointer; }
+    .sr-seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .sr-seg span { display: block; padding: .3rem .7rem; font-size: .85rem; }
+    .sr-seg input:checked + span { background: var(--bs-primary, #4f46e5); color: #fff; }
+    .sr-bizpick { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .sr-bizpick__item { margin: 0; cursor: pointer; }
+    .sr-bizpick__item input { position: absolute; opacity: 0; pointer-events: none; }
+    .sr-bizpick__item span { display: inline-block; padding: .2rem .65rem; border: 1px solid var(--bs-border-color, #d1d5db); border-radius: 999px; font-size: .85rem; }
+    .sr-bizpick__item input:checked + span { border-color: var(--bs-primary, #4f46e5); background: rgba(79, 70, 229, .1); font-weight: 600; }
+    .sr-bizpick__item input:checked + span::before { content: "\2713\00a0"; }
+    .sr-bizpick__item input:focus-visible + span, .sr-seg input:focus-visible + span { outline: 2px solid var(--bs-primary, #4f46e5); outline-offset: 1px; }
+    .sr-member__access:has(input[value="all"]:checked) .sr-bizpick { display: none; }
+    .sr-member__delete { display: flex; justify-content: flex-end; }
+    @media (max-width: 575.98px) { .sr-member__manage { margin-left: 0; } .sr-member__inline select { flex: 1 1 8rem; } }
+</style>
+
 <div class="col-12">
     <div class="sr-page sr-page--narrow">
         <a href="{{ route('customer.workspaces.settings.show', request()->route('workspaceUid')) }}" class="sr-back">
@@ -165,76 +196,80 @@
                     @php
                         $viewerCanManageLifecycle = $viewerIsOwner || $member['role'] !== 'Admin';
                         $viewerCanSeeMembersCompleteAccess = empty(array_diff($member['assigned_business_uids'], $manageableBusinessUids));
+                        $canManage = $viewerCanManageLifecycle || $viewerIsOwner;
+                        $deleteConfirm = 'Delete this member from ' . $teamHeadingContext . '? They will immediately lose access. Their personal MotionGrove account will not be deleted, and their access to other Workspaces is unaffected.';
                     @endphp
-                    <li class="sr-list__row" style="align-items:flex-start" data-member-uid="{{ $member['uid'] }}">
-                        <span class="sr-avatar">{{ $initialsOf($member['name']) }}</span>
-                        <div class="sr-list__main">
-                            <div class="sr-list__name">
-                                {{ $member['name'] }}
+                    <li class="sr-list__row sr-member" data-member-uid="{{ $member['uid'] }}">
+                        <details class="sr-member__details">
+                            <summary class="sr-member__summary @unless ($canManage) sr-member__summary--static @endunless">
+                                <span class="sr-avatar">{{ $initialsOf($member['name']) }}</span>
+                                <span class="sr-list__name sr-member__name">{{ $member['name'] }}</span>
                                 <span class="sr-chip">{{ $member['role'] }}</span>
                                 @if ($member['is_active'])
                                     <span class="sr-chip sr-chip--success">Active</span>
                                 @else
                                     <span class="sr-chip">Inactive</span>
                                 @endif
-                            </div>
-                            <div class="sr-list__sub">
-                                {{ $member['scope'] }}@if ($member['scope'] === 'Selected Businesses') ({{ $member['assigned_business_count'] }})@endif
-                            </div>
+                                @if ($canManage)
+                                    <span class="sr-member__manage">Manage <x-ds-icon name="chevron-down" size="14" aria-hidden="true" /></span>
+                                @endif
+                            </summary>
 
-                            @if ($viewerCanManageLifecycle || $viewerIsOwner)
-                                <details class="mt-2">
-                                    <summary class="sr-linkbtn d-inline-block" style="cursor:pointer">Manage</summary>
-                                    <div class="mt-2 d-grid gap-2">
-                                        @if ($member['is_active'])
-                                            @if ($viewerIsOwner)
-                                                <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="d-flex gap-2 align-items-center flex-wrap">
-                                                    @csrf
-                                                    <label class="sr-label mb-0" for="role-{{ $member['uid'] }}">Role</label>
-                                                    <select name="role" id="role-{{ $member['uid'] }}" class="form-select form-select-sm w-auto">
-                                                        <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
-                                                        <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
-                                                    </select>
-                                                    <x-button type="submit" variant="secondary" size="sm">Change role</x-button>
-                                                </form>
-                                            @endif
-
-                                            @if ($viewerCanSeeMembersCompleteAccess)
-                                                <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="d-flex gap-2 align-items-center flex-wrap">
-                                                    @csrf
-                                                    <label class="sr-label mb-0" for="scope-{{ $member['uid'] }}">Business access</label>
-                                                    <select name="business_access_scope" id="scope-{{ $member['uid'] }}" class="form-select form-select-sm w-auto">
-                                                        <option value="all" @selected($member['scope'] === 'All Businesses')>All Businesses</option>
-                                                        <option value="selected" @selected($member['scope'] === 'Selected Businesses')>Selected Businesses</option>
-                                                    </select>
-                                                    @foreach ($manageableBusinesses ?? [] as $business)
-                                                        <div class="form-check form-check-inline mb-0">
-                                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
-                                                            <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                                        </div>
-                                                    @endforeach
-                                                    <x-button type="submit" variant="secondary" size="sm">Update access</x-button>
-                                                </form>
-                                            @else
-                                                <p class="sr-hint mb-0">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
-                                            @endif
-
-                                            @if ($viewerCanManageLifecycle)
-                                                <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
-                                                    @csrf
-                                                    <button type="submit" class="btn btn-sm btn-sr-danger-outline">Deactivate</button>
-                                                </form>
-                                            @endif
-                                        @elseif ($viewerCanManageLifecycle)
-                                            <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}">
+                            @if ($canManage)
+                                <div class="sr-member__panel">
+                                    @if ($member['is_active'])
+                                        @if ($viewerIsOwner)
+                                            <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="sr-member__section sr-member__inline">
                                                 @csrf
-                                                <button type="submit" class="btn btn-sm btn-outline-secondary">Reactivate</button>
+                                                <label class="sr-label" for="role-{{ $member['uid'] }}">Role</label>
+                                                <select name="role" id="role-{{ $member['uid'] }}" class="form-select form-select-sm">
+                                                    <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
+                                                    <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
+                                                </select>
+                                                <x-button type="submit" variant="secondary" size="sm">Save</x-button>
                                             </form>
                                         @endif
-                                    </div>
-                                </details>
+
+                                        @if ($viewerCanSeeMembersCompleteAccess)
+                                            <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="sr-member__section sr-member__access">
+                                                @csrf
+                                                <span class="sr-label">Business access</span>
+                                                <div class="sr-seg">
+                                                    <label><input type="radio" name="business_access_scope" value="all" @checked($member['scope'] === 'All Businesses')><span>All Businesses</span></label>
+                                                    <label><input type="radio" name="business_access_scope" value="selected" @checked($member['scope'] === 'Selected Businesses')><span>Selected Businesses</span></label>
+                                                </div>
+                                                <div class="sr-bizpick" data-role="business-picker">
+                                                    @foreach ($manageableBusinesses ?? [] as $business)
+                                                        <label class="sr-bizpick__item">
+                                                            <input type="checkbox" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" name="business_uids[]" value="{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
+                                                            <span>{{ $business['name'] }}</span>
+                                                        </label>
+                                                    @endforeach
+                                                </div>
+                                                <div><x-button type="submit" variant="secondary" size="sm">Save changes</x-button></div>
+                                            </form>
+                                        @else
+                                            <p class="sr-hint mb-0">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
+                                        @endif
+                                    @elseif ($viewerCanManageLifecycle)
+                                        <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}" class="sr-member__section">
+                                            @csrf
+                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Reactivate</button>
+                                        </form>
+                                    @endif
+
+                                    @if ($viewerCanManageLifecycle)
+                                        <form method="POST" data-member-action="remove" data-member-uid="{{ $member['uid'] }}" class="sr-member__delete"
+                                              data-confirm="{{ $deleteConfirm }}" onsubmit="return confirm(this.dataset.confirm)">
+                                            @csrf
+                                            <button type="submit" class="btn btn-sm btn-sr-danger-outline d-inline-flex align-items-center gap-1">
+                                                <x-ds-icon name="trash" size="14" aria-hidden="true" /> Delete member
+                                            </button>
+                                        </form>
+                                    @endif
+                                </div>
                             @endif
-                        </div>
+                        </details>
                     </li>
                 @endforeach
             </ul>

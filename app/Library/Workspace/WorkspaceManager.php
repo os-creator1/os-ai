@@ -19,12 +19,14 @@ use App\Events\Workspace\WorkspaceMembershipBusinessUnassigned;
 use App\Events\Workspace\WorkspaceMembershipCreated;
 use App\Events\Workspace\WorkspaceMembershipDeactivated;
 use App\Events\Workspace\WorkspaceMembershipReactivated;
+use App\Events\Workspace\WorkspaceMembershipRemoved;
 use App\Events\Workspace\WorkspaceMembershipRoleChanged;
 use App\Events\Workspace\WorkspaceOwnershipTransferred;
 use App\Events\Workspace\WorkspaceReactivated;
 use App\Events\Workspace\WorkspaceRenamed;
 use App\Exceptions\Workspace\BusinessAssignmentRequiresSelectedScopeException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\CannotRemoveSelfException;
 use App\Exceptions\Workspace\CrossWorkspaceAssignmentException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
@@ -47,6 +49,8 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
 use App\Models\WorkspaceMembershipBusiness;
+use App\Models\WorkspaceMembershipLocation;
+use App\Models\WorkspaceMembershipRemoval;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\CustomerRepository;
@@ -367,7 +371,11 @@ class WorkspaceManager
 
             if ($existing !== null) {
                 if (! $existing->is_active) {
-                    throw new WorkspaceMembershipAlreadyExistsException($lockedWorkspace->id, $memberUserId, false);
+                    if ($existing->removed_at === null) {
+                        throw new WorkspaceMembershipAlreadyExistsException($lockedWorkspace->id, $memberUserId, false);
+                    }
+
+                    return $this->reinstateRemovedMember($actorUserId, $lockedWorkspace, $existing, $role, $scope, $locationScope, $normalizedIds);
                 }
 
                 $idsMatch = true;
@@ -408,6 +416,138 @@ class WorkspaceManager
             }
 
             return $membership;
+        });
+    }
+
+    /**
+     * Intentional re-add of a previously REMOVED member (never of a merely
+     * deactivated one). Authority over the requested role was already
+     * asserted by addMember(), under the Workspace lock. Nothing from the
+     * old membership is restored: the requested role, scopes and Business
+     * set replace it. The old assignment rows are replaced while the row is
+     * still inactive, and the row only becomes active in the single save that
+     * also writes the new role and scopes, so the old access is never live.
+     *
+     * @param  array<int, int>  $normalizedIds
+     */
+    private function reinstateRemovedMember(
+        int $actorUserId,
+        Workspace $workspace,
+        WorkspaceMembership $membership,
+        WorkspaceMembershipRole $role,
+        WorkspaceBusinessAccessScope $scope,
+        LocationAccessScope $locationScope,
+        array $normalizedIds,
+    ): WorkspaceMembership {
+        $this->membershipBusinessRepository->syncForMembership(
+            $membership,
+            $scope === WorkspaceBusinessAccessScope::Selected ? $normalizedIds : [],
+        );
+        WorkspaceMembershipLocation::query()->where('workspace_membership_id', $membership->id)->delete();
+
+        $this->membershipRepository->reinstate($membership, $role, $scope, $locationScope);
+
+        WorkspaceMembershipRemoval::query()
+            ->where('workspace_membership_id', $membership->id)
+            ->whereNull('reinstated_at')
+            ->update(['reinstated_at' => now(), 'reinstated_by_user_id' => $actorUserId]);
+
+        WorkspaceMembershipCreated::dispatch(
+            $membership->id,
+            $workspace->id,
+            (int) $membership->user_id,
+            $actorUserId,
+            $role->value,
+            $scope->value,
+        );
+
+        if ($scope === WorkspaceBusinessAccessScope::Selected) {
+            foreach ($normalizedIds as $businessId) {
+                WorkspaceMembershipBusinessAssigned::dispatch($membership->id, $workspace->id, $businessId, $actorUserId);
+            }
+        }
+
+        return $membership;
+    }
+
+    /**
+     * Logically removes a member from the Workspace ("Delete member").
+     * Access ends immediately (is_active=false; membership state is re-read
+     * on every access evaluation) and the member leaves the Members list
+     * (removed_at). The row, its unique key and the User account are kept,
+     * and a workspace_membership_removals row snapshots the role, scopes and
+     * Business/Location assignments held at removal. Authority is the same as
+     * deactivateMember(); additionally nobody removes their own membership.
+     */
+    public function removeMember(int $actorUserId, WorkspaceMembership $membership): WorkspaceMembership
+    {
+        return DB::transaction(function () use ($actorUserId, $membership) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            $this->assertHasAuthorityOverRole($actorUserId, $lockedWorkspace, $lockedMembership->role);
+
+            if ((int) $lockedMembership->user_id === $actorUserId) {
+                throw new CannotRemoveSelfException($lockedWorkspace->id, $actorUserId);
+            }
+
+            if ($lockedMembership->removed_at !== null) {
+                return $lockedMembership;
+            }
+
+            $now = now();
+            $wasActive = (bool) $lockedMembership->is_active;
+
+            WorkspaceMembershipRemoval::query()->create([
+                'workspace_membership_id' => $lockedMembership->id,
+                'workspace_id' => $lockedWorkspace->id,
+                'user_id' => $lockedMembership->user_id,
+                'removed_by_user_id' => $actorUserId,
+                'role' => $lockedMembership->role->value,
+                'business_access_scope' => $lockedMembership->business_access_scope->value,
+                'location_access_scope' => $lockedMembership->location_access_scope?->value,
+                'business_ids' => $this->membershipBusinessRepository->assignedBusinessIds($lockedMembership)->sort()->values()->all(),
+                'location_ids' => WorkspaceMembershipLocation::query()
+                    ->where('workspace_membership_id', $lockedMembership->id)
+                    ->orderBy('business_location_id')
+                    ->pluck('business_location_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all(),
+                'removed_at' => $now,
+            ]);
+
+            $this->membershipRepository->markRemoved($lockedMembership, $now);
+
+            if ($wasActive) {
+                WorkspaceMembershipDeactivated::dispatch($lockedMembership->id, $lockedWorkspace->id, $lockedMembership->user_id, $actorUserId);
+            }
+
+            WorkspaceMembershipRemoved::dispatch($lockedMembership->id, $lockedWorkspace->id, $lockedMembership->user_id, $actorUserId);
+
+            return $lockedMembership;
         });
     }
 
@@ -586,6 +726,11 @@ class WorkspaceManager
 
             if ($lockedMembership->is_active) {
                 return $lockedMembership;
+            }
+
+            // A removed member is never silently restored: only a fresh, authorized addMember() re-grants access.
+            if ($lockedMembership->removed_at !== null) {
+                throw new InactiveWorkspaceMembershipMutationException($lockedMembership->id);
             }
 
             $updated = $this->membershipRepository->setActive($lockedMembership, true);
