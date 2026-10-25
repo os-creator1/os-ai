@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer\Business;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Website\Design\BrandColors;
 use App\Library\Website\Design\WebsiteLookService;
 use App\Library\Website\Design\WebsiteTemplatePreviewRenderer;
 use App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator;
@@ -69,6 +70,7 @@ class WebsiteLookController extends CustomerBaseController
             'template_key' => 'nullable|string|max:40',
             'brand_color' => 'nullable|string|max:20',
             'secondary_brand_color' => 'nullable|string|max:20',
+            ...array_fill_keys(BrandColors::PALETTE_KEYS, 'nullable|string|max:20'),
             'logo' => ['nullable', 'file', new ValidWebsiteImageRule()],
             'hero' => ['nullable', 'file', new ValidWebsiteImageRule()],
             'logo_alt' => 'nullable|string|max:160',
@@ -109,6 +111,13 @@ class WebsiteLookController extends CustomerBaseController
                 if ($request->has('secondary_brand_color')) {
                     $this->look->setSecondaryColor($locked, $request->input('secondary_brand_color'));
                     $notes[] = 'Secondary colour saved.';
+                }
+
+                foreach (BrandColors::PALETTE_KEYS as $paletteKey) {
+                    if ($request->has($paletteKey)) {
+                        $this->look->setPaletteColor($locked, $paletteKey, $request->input($paletteKey));
+                        $notes[] = 'Colours saved.';
+                    }
                 }
 
                 if ($request->has('privacy_notice_url') || $request->has('terms_url')) {
