@@ -69,7 +69,9 @@ final class SiteContextFactory
             pageUrl: $pageUrl,
             signupUrl: fn (string $planUid) => route('agency.site.signup', [$publicId, $planUid]),
             loginUrl: $preview ? route('login') : route('agency.site.login', $publicId),
-            cssUrl: route('agency.site.css', $publicId).'?v='.substr(md5($primary.($brand?->secondary_color ?? '')), 0, 8),
+            // A draft preview must not use the published stylesheet route: that 404s until the site is live.
+            cssUrl: ($preview ? route('customer.workspaces.agency.site.preview-css', $previewWorkspaceUid) : route('agency.site.css', $publicId))
+                .'?v='.substr(md5($primary.($brand?->secondary_color ?? '')), 0, 8),
             preview: $preview,
         );
     }
