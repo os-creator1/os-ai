@@ -467,6 +467,42 @@ through Laravel for every host, Website custom domains included**:
 - `CACHE_DRIVER` must be shared across PHP workers/hosts (the active-domain list and Website
   snapshots are cached); with several app servers use Redis, not `file`.
 
+### 6.6 Public forms embedded on a customer's website (`X-Frame-Options`)
+
+A customer's Website embeds its Forms-module form as an iframe of `https://<platform host>/forms/{deploymentUid}`
+(`public.forms._embed`). The application answers those routes with `Content-Security-Policy: frame-ancestors 'self'
+<https://active-custom-domain ...>` (`FrameFormForAuthorizedWebsite`, only for a Website-source deployment of the
+Business that owns the published Website) and sends no `X-Frame-Options` of its own.
+
+**Where the blocking header came from:** the Laravel app never set it for these routes. Forge's default site template
+adds `add_header X-Frame-Options "SAMEORIGIN";` (with `X-XSS-Protection` and `X-Content-Type-Options`) at server level,
+so every response, including the form, carried it. Browsers that honour `frame-ancestors` ignore `X-Frame-Options` when
+both are present, but remove the ambiguity at the server so Safari and older engines behave identically.
+
+Minimal operator change on the platform site (Forge > Site > Nginx configuration; **not** a global removal):
+
+```nginx
+# http context (Forge: the site's "before" include, or nginx.conf http {}):
+map $request_uri $mg_x_frame_options {
+    default                                  "SAMEORIGIN";
+    ~^/forms/[0-9a-f-]{36}(/|\?|$)            "";   # public form links: framing is governed by the app's CSP frame-ancestors
+}
+
+# server block: replace  add_header X-Frame-Options "SAMEORIGIN";  with
+add_header X-Frame-Options $mg_x_frame_options;     # an empty value sends no header
+```
+
+Every other path (login, admin, CRM, customer app, marketing site) keeps `X-Frame-Options: SAMEORIGIN`. Verify:
+
+```sh
+curl -sI https://<platform host>/forms/<deploymentUid> | grep -i -e x-frame-options -e content-security-policy
+#   expect: no x-frame-options; content-security-policy: frame-ancestors 'self' https://<customer domain>
+curl -sI https://<platform host>/login | grep -i x-frame-options        # expect: SAMEORIGIN
+```
+
+The form POST needs no session cookie from the iframe (CSRF exemption `forms/*`; the signed operation token, honeypot
+and throttle protect it), because a cross-site iframe receives no `SameSite=Lax` session cookie.
+
 ---
 
 ## 7. Storage

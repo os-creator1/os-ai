@@ -53,6 +53,13 @@
             // Ed25519 signature over `timestamp|body`, verified in TelnyxPortingWebhookController BEFORE anything is read
             // or written (bad/missing signature => 403, nothing applied). This exact path only, never a wildcard.
             'webhooks/telnyx-porting',
+            // A public form is framed by the customer's own website, which is a different site from this app: the
+            // browser sends the iframe no session cookie, so a session CSRF token can never match and every real
+            // quote request would be refused with a 419. The one mutation here (POST forms/{deploymentUid}) is anonymous and
+            // creates no authenticated state; it is protected by the HMAC-signed, deployment- and version-pinned
+            // operation token the form carries (FormOperationToken, verified before anything is read), the honeypot and
+            // the 10/minute throttle. The pattern matches only the root-level public `forms/` URLs; the customer app's forms routes live under their own prefixes.
+            'forms/*',
         ];
 
     }
