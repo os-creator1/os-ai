@@ -8,6 +8,7 @@ use App\Library\Workspace\ClientInvitationReturn;
 use App\Library\Workspace\WorkspaceMemberInvitationManager;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Models\WorkspaceMemberInvitation;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -85,7 +86,7 @@ class WorkspaceMemberInvitationClaimController extends Controller
         Auth::login($user);
         $request->session()->regenerate();
 
-        return $this->joined((int) $user->id);
+        return $this->joined((int) $user->id, $uid);
     }
 
     /** POST — a signed-in person with the invited email confirms. */
@@ -100,15 +101,19 @@ class WorkspaceMemberInvitationClaimController extends Controller
             return $this->invalid('accept', $uid, $e);
         }
 
-        return $this->joined((int) $user->id);
+        return $this->joined((int) $user->id, $uid);
     }
 
-    private function joined(int $userId): RedirectResponse
+    private function joined(int $userId, string $invitationUid): RedirectResponse
     {
         // The Business Home is where a team member works. The account overview is not for selected-scope staff,
         // so a single authorized Business is opened directly; with several, the normal context resolver chooses
         // among the ones this person may legitimately open — never an unrelated one.
-        $this->landing->rememberSole($userId);
+        // Target the account this invitation joined, so a person who already has another Business is not left on it.
+        // Access is re-checked against the finalized membership; the invitation itself grants no navigation.
+        $workspaceId = WorkspaceMemberInvitation::query()->where('uid', $invitationUid)->value('workspace_id');
+        $workspaceUid = $workspaceId !== null ? Workspace::query()->whereKey($workspaceId)->value('uid') : null;
+        $this->landing->rememberSole($userId, $workspaceUid);
 
         return redirect()
             ->route('user.home')

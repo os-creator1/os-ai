@@ -515,6 +515,30 @@ class WorkspaceMemberInvitationTest extends TestCase
         $this->assertNull(session('customer_context.business'), 'With two legitimate Businesses nothing is picked for them.');
     }
 
+    public function test_an_existing_user_with_business_a_who_accepts_an_invitation_to_business_b_lands_on_business_b(): void
+    {
+        Notification::fake();
+        [$ownerB, $workspaceB] = $this->ownerAndWorkspace();
+        $businessB = $this->activeBusiness($this->customerRowFor($ownerB)->id, $workspaceB->id);
+
+        // The address has no account when invited, so a pending invitation is created; it registers elsewhere afterwards.
+        $this->invite($workspaceB, 'multi@example.test', ['business_access_scope' => 'selected', 'business_uids' => [$businessB->uid]]);
+        [$uid, $token] = $this->claimParts($this->sentMail());
+        $user = $this->customerAccount('multi@example.test');
+        $workspaceA = $this->createWorkspace($user, ['name' => 'Account A']);
+        $businessA = $this->activeBusiness($this->customerRowFor($user)->id, $workspaceA->id);
+        auth()->logout();
+        $this->flushSession();
+        $this->actingAs($user);
+        $this->withSession(['customer_context' => ['workspace' => $workspaceA->uid, 'business' => $businessA->uid, 'accountFrame' => false]]);
+
+        $this->post(route('workspace-invitations.accept', [$uid, $token]))->assertRedirect(route('user.home'));
+
+        $this->assertSame($businessB->uid, session('customer_context.business'));
+        $this->assertSame($workspaceB->uid, session('customer_context.workspace'));
+        $this->assertTrue(app(WorkspaceManager::class)->userCanAccessBusiness($user->id, $businessB));
+    }
+
     private function activeBusiness(int $customerId, int $workspaceId): Business
     {
         $business = $this->createBusinessForCustomer($customerId, $workspaceId);

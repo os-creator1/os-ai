@@ -48,6 +48,12 @@ final class SoleBusinessLanding
         }
 
         if (count($found) !== 1) {
+            // Several Businesses in the joined account: pin only the (visible, active) account so the normal
+            // Business selection runs inside it. No Business is guessed.
+            if ($workspaceUid !== null && count($found) > 1) {
+                $this->preference->remember($workspaceUid, null);
+            }
+
             return false;
         }
 
