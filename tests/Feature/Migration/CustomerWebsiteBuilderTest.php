@@ -275,6 +275,6 @@ class CustomerWebsiteBuilderTest extends TestCase
     /** @return array<string, array{0: string, 1: bool}> */
     public static function shippedKeys(): array
     {
-        return ['kaleb' => ['kaleb-hill', true], 'max' => ['booths-to-the-max', true], 'greenbelt' => ['greenbelt', false]];
+        return ['kaleb' => ['kaleb-hill', true], 'max' => ['booths-to-the-max', true], 'greenbelt' => ['greenbelt', false], 'transparent' => ['transparent', true]];
     }
 }
