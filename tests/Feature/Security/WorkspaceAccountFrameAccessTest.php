@@ -53,11 +53,14 @@ class WorkspaceAccountFrameAccessTest extends TestCase
         // Business under the current topology (see the class docblock above)
         // and is legitimately visible — only the Workspace/account-level
         // name "Northwind Agency" must never leak to a Selected-scope member.
-        $index = $this->get(route('customer.workspaces.index'))->assertOk();
-        $this->assertStringNotContainsString('Northwind Agency', $index->getContent());
+        // Business-only staff are sent to their Business Home instead of an
+        // account list; nothing account-level is rendered for them.
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('user.home'));
+        $home = $this->get(route('user.home'))->assertOk();
+        $this->assertStringNotContainsString('Northwind Agency', $home->getContent());
         // The overview is never linked (the client's own Business links share
         // the /workspaces/{uid}/businesses/… prefix, so match the whole href).
-        $this->assertStringNotContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $index->getContent());
+        $this->assertStringNotContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $home->getContent());
 
         // Their own assigned Business stays fully reachable.
         $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $agencyBusiness->uid]))->assertOk();
@@ -71,7 +74,8 @@ class WorkspaceAccountFrameAccessTest extends TestCase
         $this->authenticateAs($scopedAdmin);
 
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
-        $this->assertStringNotContainsString('Harbor Lane<', $this->get(route('customer.workspaces.index'))->assertOk()->getContent());
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('user.home'));
+        $this->assertStringNotContainsString('Harbor Lane<', $this->get(route('user.home'))->assertOk()->getContent());
         $this->get(route('customer.workspaces.businesses.contacts.index', [$workspace->uid, $business->uid]))->assertOk();
     }
 
