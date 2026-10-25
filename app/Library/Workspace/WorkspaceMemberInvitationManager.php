@@ -134,7 +134,8 @@ class WorkspaceMemberInvitationManager
                 throw new WorkspaceMembershipAlreadyExistsException((int) $locked->id, (int) $existingUser->id, true);
             }
 
-            $pendingKey = $locked->id . '|' . $normalized;
+            // Hashed so the unique key is short and fixed-length whatever the address length (the column is varchar(191)).
+            $pendingKey = $locked->id . '|' . sha1($normalized);
             $current = WorkspaceMemberInvitation::query()->where('pending_key', $pendingKey)->lockForUpdate()->first();
 
             if ($current !== null) {

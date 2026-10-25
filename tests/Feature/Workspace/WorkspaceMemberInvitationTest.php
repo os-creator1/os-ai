@@ -93,7 +93,24 @@ class WorkspaceMemberInvitationTest extends TestCase
         $this->assertStringContainsString('Staff', $html);
         $this->assertStringContainsString($mail->actionUrl, str_replace('&amp;', '&', $html));
         $this->assertStringContainsString(now()->addDays(7)->format('F j, Y'), $html, 'The expiry date is shown.');
-        $this->assertStringContainsString((string) config('app.name'), $html, 'The shared platform brand (name and, when configured, logo) frames the email.');
+        $this->assertStringContainsString('MotionGrove', $html);
+        $this->assertStringNotContainsStringIgnoringCase('Business OS', $html, 'The header and footer never fall back to the retired name.');
+    }
+
+    public function test_the_platform_mail_brand_never_falls_back_to_the_retired_name_and_agency_brands_are_unaffected(): void
+    {
+        foreach (['AI Business OS', 'ai business os', 'Laravel', '  ', ''] as $unset) {
+            config(['app.name' => $unset]);
+            $this->assertSame('MotionGrove', \App\Library\Mail\MailBrand::platform()->name, "'$unset'");
+            $this->assertStringContainsString('MotionGrove. All rights reserved.', implode(' ', \App\Library\Mail\MailBrand::business('Harbor Lane', null, null)->footerLines));
+        }
+
+        config(['app.name' => 'Acme Platform']);
+        $this->assertSame('Acme Platform', \App\Library\Mail\MailBrand::platform()->name, 'An owner-configured name is respected.');
+
+        $agency = \App\Library\Mail\MailBrand::agency('Bright Agency', '#336699', null);
+        $this->assertSame('Bright Agency', $agency->name);
+        $this->assertSame('agency', $agency->kind);
     }
 
     public function test_viewing_the_team_page_never_creates_or_sends_anything(): void
@@ -135,6 +152,9 @@ class WorkspaceMemberInvitationTest extends TestCase
         $this->assertNotNull($user->email_verified_at, 'The emailed single-use link proved they own the address.');
         $this->assertTrue($user->is_customer);
         $this->assertAuthenticatedAs($user);
+        auth()->logout();
+        $this->assertTrue(\Illuminate\Support\Facades\Auth::validate(['email' => 'new@example.test', 'password' => 'a-strong-pass-1']), 'They can sign in with the password they chose.');
+        $this->actingAs($user);
         $membership = WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $user->id)->firstOrFail();
         $this->assertSame(WorkspaceMembershipRole::Staff, $membership->role);
         $this->assertSame(WorkspaceMemberInvitationStatus::Accepted, WorkspaceMemberInvitation::firstOrFail()->status);
