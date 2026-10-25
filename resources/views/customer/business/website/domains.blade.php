@@ -104,8 +104,8 @@
             </div>
             <div class="mg-steps4">
                 <div class="mg-step4"><span class="mg-num">1</span><div><b>Add your domain</b><span class="mg-muted">One you've already bought.</span></div></div>
-                <div class="mg-step4"><span class="mg-num">2</span><div><b>Prove you own it</b><span class="mg-muted">Add one record at your domain provider.</span></div></div>
-                <div class="mg-step4"><span class="mg-num">3</span><div><b>We secure it</b><span class="mg-muted">A free certificate, set up for you.</span></div></div>
+                <div class="mg-step4"><span class="mg-num">2</span><div><b>Connect DNS</b><span class="mg-muted">Add two records at your domain provider.</span></div></div>
+                <div class="mg-step4"><span class="mg-num">3</span><div><b>We secure it</b><span class="mg-muted">HTTPS is set up automatically.</span></div></div>
                 <div class="mg-step4"><span class="mg-num">4</span><div><b>You're live</b><span class="mg-muted">Nothing is public until then.</span></div></div>
             </div>
         </div>
@@ -114,19 +114,16 @@
             @php
                 $instructions = $instructionsByDomainUid[$domain->uid];
                 $status = $domain->status->value;
-                // Persisted lifecycle -> the four-step progress bar. Index of the current step (0-based); 4 = all done.
+                // Three customer-facing steps: 1 Connect DNS, 2 Securing, 3 Live. Index of the current one; 3 = all done.
                 $current = match ($status) {
-                    'pending_verification' => 1,
-                    'verified', 'provisioning' => 2,
-                    'active' => 4,
+                    'pending_verification' => 0,
+                    'verified', 'provisioning' => 1,
+                    'active' => 3,
+                    'failed' => $domain->verified_at !== null ? 1 : 0,
                     default => null,
                 };
-                $steps = [
-                    ['Domain added', 'Done'],
-                    ['Prove you own it', 'Add a TXT record'],
-                    ['Secure certificate', $status === 'verified' ? 'Point traffic, then request' : 'Free, automatic'],
-                    ['Live', 'Visitors can see your site'],
-                ];
+                $steps = [['Connect DNS', 'Add two records'], ['Securing', 'Automatic'], ['Live', 'Visitors can see your site']];
+                $checkUrl = route('customer.workspaces.businesses.website.domains.verify', [...$domainIds, $domain->uid]);
             @endphp
             <div class="mg-card" data-testid="domain-card" data-domain-status="{{ $status }}">
                 <div class="mg-domain-head">
@@ -142,11 +139,11 @@
                         </div>
                         <div class="mg-status-line {{ $status === 'active' ? 'is-live' : ($status === 'failed' ? 'is-bad' : '') }}" data-testid="domain-status-line"><i aria-hidden="true"></i>
                             @switch($status)
-                                @case('pending_verification') Not public yet @break
-                                @case('verified') DNS verified &middot; not public yet @break
-                                @case('provisioning') Certificate provisioning &middot; not public yet @break
+                                @case('pending_verification') Waiting for your DNS records @break
+                                @case('verified') DNS connected &middot; securing your domain @break
+                                @case('provisioning') Securing your domain &middot; not public yet @break
                                 @case('active') Live @if (! $domain->is_primary) &middot; redirects to the primary domain @endif @break
-                                @case('failed') Failed @break
+                                @case('failed') Needs attention @break
                                 @case('removing') Removal pending @break
                             @endswitch
                         </div>
@@ -167,84 +164,79 @@
                 </div>
 
                 @if ($current !== null)
-                    <div class="mg-progress" aria-label="Domain setup progress">
+                    <div class="mg-progress" style="grid-template-columns:repeat(3,minmax(0,1fr))" aria-label="Domain setup progress">
                         @foreach ($steps as $i => [$stepTitle, $stepSub])
-                            <div class="{{ $i < $current ? 'is-done' : ($i === $current ? 'is-current' : '') }}" @if ($i === $current) aria-current="step" @endif>
-                                <b>{{ $i + 1 }}. {{ $stepTitle }}</b>{{ $i === 0 ? 'Done' : $stepSub }}
+                            <div class="{{ $i < $current ? 'is-done' : ($i === $current ? ($status === 'failed' ? 'is-failed' : 'is-current') : '') }}" @if ($i === $current) aria-current="step" @endif>
+                                <b>{{ $i + 1 }}. {{ $stepTitle }}</b>{{ $i < $current ? 'Done' : $stepSub }}
                             </div>
                         @endforeach
                     </div>
                 @endif
 
-                {{-- A verification miss is shown ONCE, as the pill below; the stored reason is only surfaced for later (certificate) failures. --}}
-                @if ($domain->failure_reason && $status !== 'pending_verification')
-                    <div class="px-4 pb-3"><x-alert variant="danger" class="mb-0">{{ $domain->failure_reason }}</x-alert></div>
+                {{-- One message per domain: its own status, here. --}}
+                @if ($domain->failure_reason && in_array($status, ['failed', 'verified', 'provisioning'], true))
+                    <div class="px-4 pb-3"><x-alert variant="{{ $status === 'failed' ? 'danger' : 'info' }}" class="mb-0">{{ $domain->failure_reason }}</x-alert></div>
                 @endif
 
                 @if ($status === 'pending_verification')
-                    @php
-                        $hostShown = $domain->verificationTxtHostRelative();
-                        $miss = $domain->last_checked_at !== null && $domain->failure_reason !== null;
-                    @endphp
                     <div class="mg-dns" data-testid="dns-record">
-                        <strong>Add this record at your domain provider</strong>
-                        <div class="mg-rec" role="table" aria-label="TXT record to add">
-                            <div class="mg-rec-grid mg-rec-head" role="row"><span>Type</span><span>Host</span><span>Value</span><span>TTL</span></div>
-                            <div class="mg-rec-grid" role="row" title="Full record name: {{ $instructions['ownership']['host'] }}">
-                                <div><span class="mg-rec-mobile">Type</span><x-badge variant="neutral">{{ $instructions['ownership']['type'] }}</x-badge></div>
-                                <div><span class="mg-rec-mobile">Host</span>
-                                    <div class="mg-rec-field"><span class="mg-mono" data-testid="dns-host">{{ $hostShown }}</span>
-                                        <button type="button" class="mg-copy" data-copy="{{ $hostShown }}" data-copy-label="host" aria-label="Copy host"><x-ds-icon name="copy" size="16" /></button></div></div>
-                                <div><span class="mg-rec-mobile">Value</span>
-                                    <div class="mg-rec-field"><span class="mg-mono" data-testid="dns-value">{{ $instructions['ownership']['value'] }}</span>
-                                        <button type="button" class="mg-copy" data-copy="{{ $instructions['ownership']['value'] }}" data-copy-label="value" aria-label="Copy value"><x-ds-icon name="copy" size="16" /></button></div></div>
-                                <div><span class="mg-rec-mobile">TTL</span><span class="mg-muted">Automatic</span></div>
+                        @if (! $domainsReady || ! $instructions['ready'])
+                            <strong>We're finishing setup for custom domains</strong>
+                            <p class="mg-muted mb-0" data-testid="dns-not-ready">Please don't change your DNS yet. This page will show your two records as soon as everything is ready on our side.</p>
+                        @else
+                            <strong>Connect DNS</strong>
+                            <p class="mg-muted mb-0">Add these two records at your domain provider. Leave your email (MX, SPF, DKIM, DMARC) records as they are.</p>
+                            <div class="mg-rec" role="table" aria-label="DNS records to add">
+                                <div class="mg-rec-grid mg-rec-head" role="row"><span>Type</span><span>Host</span><span>Value</span><span>TTL</span></div>
+                                @foreach ($instructions['records'] as $record)
+                                    @php $ok = $record['type'] === 'A' ? $domain->dns_a_ok : $domain->dns_cname_ok; @endphp
+                                    <div class="mg-rec-grid" role="row" data-testid="dns-row-{{ strtolower($record['type']) }}" @if (! $loop->first) style="border-top:1px solid var(--color-border,#E5E1DA)" @endif>
+                                        <div><span class="mg-rec-mobile">Type</span><x-badge variant="neutral">{{ $record['type'] }}</x-badge></div>
+                                        <div><span class="mg-rec-mobile">Host</span>
+                                            <div class="mg-rec-field"><span class="mg-mono">{{ $record['host'] }}</span>
+                                                <button type="button" class="mg-copy" data-copy="{{ $record['host'] }}" data-copy-label="host" aria-label="Copy host"><x-ds-icon name="copy" size="16" /></button></div></div>
+                                        <div><span class="mg-rec-mobile">Value</span>
+                                            <div class="mg-rec-field"><span class="mg-mono" data-testid="dns-value-{{ strtolower($record['type']) }}">{{ $record['value'] }}</span>
+                                                <button type="button" class="mg-copy" data-copy="{{ $record['value'] }}" data-copy-label="value" aria-label="Copy value"><x-ds-icon name="copy" size="16" /></button></div></div>
+                                        <div><span class="mg-rec-mobile">TTL</span><span class="mg-muted">{{ $record['ttl'] }}</span>
+                                            @if ($domain->last_checked_at) <span class="mg-pill {{ $ok ? 'is-ok' : 'is-miss' }}" data-testid="dns-pill-{{ strtolower($record['type']) }}">{{ $ok ? 'Found' : 'Not found yet' }}</span> @endif</div>
+                                    </div>
+                                @endforeach
                             </div>
-                        </div>
-                        <p class="mg-note"><x-ds-icon name="info" size="14" /> <span>Enter only <span class="mg-mono">{{ $hostShown }}</span> as the host. Most providers add your domain automatically.</span></p>
-                        <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.verify', [...$domainIds, $domain->uid]) }}" class="mg-check">
-                            @csrf
-                            <x-button type="submit" variant="primary" icon="refresh-cw">Check again</x-button>
-                            @if ($miss)
-                                <span class="mg-pill is-miss" data-testid="verify-status">Not found yet</span>
-                            @else
-                                <span class="mg-pill" data-testid="verify-status">Waiting for the record</span>
-                            @endif
-                            <span class="mg-muted">{{ $domain->last_checked_at ? 'Checked ' . $domain->last_checked_at->diffForHumans() . ' · ' : '' }}changes can take a few minutes</span>
-                        </form>
-                    </div>
-                @elseif ($status === 'verified')
-                    @php $records = [['Type', 'CNAME', false], ['Host / Name', $instructions['traffic']['host'], true], ['Value', $instructions['traffic']['cname_target'] ?? 'provided at deployment time', true]]; @endphp
-                    <div class="mg-dns">
-                        <strong>Ownership verified. Now point this domain at us</strong> <span class="mg-pill is-ok">Verified</span>
-                        <p class="mg-muted mb-0">This lets the certificate request succeed.</p>
-                        @include('customer.business.website._dns-records', ['records' => $records])
-                        <p class="mg-muted">Using an apex domain that can't use CNAME? Use an A record to <span class="mg-mono">{{ $instructions['traffic']['a_record_ip'] ?? 'provided at deployment time' }}</span> instead.</p>
-                        <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.provision', [...$domainIds, $domain->uid]) }}">
-                            @csrf
-                            <x-button type="submit" variant="primary">Request certificate</x-button>
-                        </form>
-                    </div>
-                @elseif ($status === 'provisioning')
-                    <div class="mg-dns">
-                        <p class="mg-muted">Certificate requested &mdash; this can take a few minutes.</p>
-                        <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.checkCertificate', [...$domainIds, $domain->uid]) }}">
-                            @csrf
-                            <x-button type="submit" variant="primary" icon="refresh-cw">Check certificate status</x-button>
-                        </form>
-                    </div>
-                @elseif ($status === 'active')
-                    <div class="mg-dns">
-                        <p class="mg-muted mb-2">This domain is live{{ $domain->activated_at ? ' since ' . $domain->activated_at->diffForHumans() : '' }}.</p>
-                        @if (! $domain->is_primary)
-                            <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.makePrimary', [...$domainIds, $domain->uid]) }}">
+                            <p class="mg-note"><x-ds-icon name="info" size="14" /> <span>Replacing your current website records moves your live traffic to MotionGrove. Your site here is published and ready. HTTPS switches on a few minutes after both records resolve, so visitors may see a browser security warning until then.</span></p>
+                            <form method="POST" action="{{ $checkUrl }}" class="mg-check">
                                 @csrf
-                                <x-button type="submit" variant="secondary">Make this the primary address</x-button>
+                                <x-button type="submit" variant="primary" icon="refresh-cw">Check again</x-button>
+                                <span class="mg-muted">We check automatically, so you can close this page. {{ $domain->last_checked_at ? 'Checked ' . $domain->last_checked_at->diffForHumans() . '. ' : '' }}Changes can take a few minutes.</span>
                             </form>
                         @endif
                     </div>
+                @elseif (in_array($status, ['verified', 'provisioning'], true))
+                    <div class="mg-dns">
+                        <strong>Securing your domain</strong>
+                        <p class="mg-muted mb-0" data-testid="securing">We're setting up your secure connection (HTTPS) for {{ $domain->domain }} and www.{{ $domain->domain }}. This is automatic and usually takes a few minutes. Nothing for you to do, and you can close this page.</p>
+                    </div>
+                @elseif ($status === 'active')
+                    <div class="mg-dns">
+                        <p class="mg-muted mb-2">Your website is live at <span class="mg-mono">{{ $domain->domain }}</span>@if ($domain->activated_at) since {{ $domain->activated_at->diffForHumans() }}@endif. <span class="mg-mono">www.{{ $domain->domain }}</span> redirects to it.</p>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a href="https://{{ $domain->domain }}" target="_blank" rel="noopener" class="btn btn-primary d-inline-flex align-items-center gap-1" data-testid="open-website">Open website <x-ds-icon name="external-link" size="14" /></a>
+                            @if (! $domain->is_primary)
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.makePrimary', [...$domainIds, $domain->uid]) }}">
+                                    @csrf
+                                    <x-button type="submit" variant="secondary">Make this the primary address</x-button>
+                                </form>
+                            @endif
+                        </div>
+                    </div>
                 @elseif ($status === 'failed')
-                    <div class="mg-dns"><p class="mg-muted mb-0">Remove this domain and add it again to retry from the start.</p></div>
+                    <div class="mg-dns">
+                        <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.retry', [...$domainIds, $domain->uid]) }}" class="mg-check">
+                            @csrf
+                            <x-button type="submit" variant="primary" icon="refresh-cw">Try again</x-button>
+                            <span class="mg-muted">We'll re-check your DNS records and continue from there.</span>
+                        </form>
+                    </div>
                 @elseif ($status === 'removing')
                     <div class="mg-dns"><p class="mg-muted mb-0">This domain is no longer served, but we couldn't confirm its removal with our hosting provider yet, so its address is still reserved. Try again above.</p></div>
                 @endif

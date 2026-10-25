@@ -296,4 +296,18 @@ class ForgeDomainProvisionerTest extends TestCase
         // the legacy shared-alias-list design this replaces.
         Http::assertNotSent(fn ($request) => $request->url() !== 'https://'.self::BASE.'/domains/555');
     }
+
+    public function test_it_reports_whether_every_forge_credential_is_present_without_revealing_any(): void
+    {
+        $provisioner = new \App\Library\Website\Domains\ForgeDomainProvisioner();
+        $full = ['api_token' => 't', 'organization_slug' => 'o', 'server_id' => '1', 'site_id' => '2'];
+
+        config(['services.forge' => $full]);
+        $this->assertTrue($provisioner->isConfigured());
+
+        foreach (array_keys($full) as $missing) {
+            config(['services.forge' => array_merge($full, [$missing => null])]);
+            $this->assertFalse($provisioner->isConfigured(), $missing);
+        }
+    }
 }

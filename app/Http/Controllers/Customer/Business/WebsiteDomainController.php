@@ -42,6 +42,7 @@ class WebsiteDomainController extends CustomerBaseController
             'businessUid' => $businessUid,
             'website' => $website,
             'domains' => $domains,
+            'domainsReady' => $this->domains->ready(),
             'instructionsByDomainUid' => $domains->mapWithKeys(
                 fn (WebsiteDomain $domain) => [$domain->uid => $this->domains->dnsInstructions($domain)]
             ),
@@ -60,10 +61,11 @@ class WebsiteDomainController extends CustomerBaseController
 
         return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => "Domain added. Add the TXT record shown for {$domain->domain} to prove you own it, then check verification.",
+            'message' => "Domain added. Add the two DNS records shown for {$domain->domain}; we take it from there.",
         ]);
     }
 
+    /** "Check again": runs the same automatic step the scheduler runs, now. Nothing to flash: the card shows the state. */
     public function verify(string $workspaceUid, string $businessUid, string $domainUid): RedirectResponse
     {
         $this->authorize('website');
@@ -71,50 +73,22 @@ class WebsiteDomainController extends CustomerBaseController
         $website = $this->resolveWebsite($business);
         $domain = $this->resolveDomain($website, $domainUid);
 
-        $domain = $this->domains->checkVerification($domain);
+        $this->domains->advance($domain, true);
 
-        $route = redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]);
-
-        // A miss is shown once, inside the domain's own card ("Not found yet"); only a success is flashed.
-        return $domain->status->value === 'verified'
-            ? $route->with(['status' => 'success', 'message' => 'DNS ownership verified. You can now request a certificate.'])
-            : $route;
+        return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]);
     }
 
-    public function provision(string $workspaceUid, string $businessUid, string $domainUid): RedirectResponse
+    /** "Try again" on a Failed domain: starts over from the DNS check, keeping its reservations and Forge ids. */
+    public function retry(string $workspaceUid, string $businessUid, string $domainUid): RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
         $domain = $this->resolveDomain($website, $domainUid);
 
-        $domain = $this->domains->provisionCertificate($domain);
+        $this->domains->retry($domain);
 
-        return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid])->with([
-            'status' => $domain->status->value === 'failed' ? 'error' : 'success',
-            'message' => $domain->status->value === 'failed'
-                ? ($domain->failure_reason ?? 'Certificate request failed.')
-                : 'Certificate requested. This can take a few minutes — check status below.',
-        ]);
-    }
-
-    public function checkCertificate(string $workspaceUid, string $businessUid, string $domainUid): RedirectResponse
-    {
-        $this->authorize('website');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
-        $website = $this->resolveWebsite($business);
-        $domain = $this->resolveDomain($website, $domainUid);
-
-        $domain = $this->domains->checkCertificate($domain);
-
-        return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid])->with([
-            'status' => $domain->status->value === 'failed' ? 'error' : 'success',
-            'message' => match ($domain->status->value) {
-                'active' => "{$domain->domain} is live.",
-                'failed' => $domain->failure_reason ?? 'Certificate provisioning failed.',
-                default => 'Still provisioning — check back shortly.',
-            },
-        ]);
+        return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]);
     }
 
     public function makePrimary(string $workspaceUid, string $businessUid, string $domainUid): RedirectResponse
