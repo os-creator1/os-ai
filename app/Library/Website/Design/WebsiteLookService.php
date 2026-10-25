@@ -27,7 +27,7 @@ use Illuminate\Validation\ValidationException;
 final class WebsiteLookService
 {
     /** Theme keys that belong to the owner, never to the template. */
-    public const OWNER_THEME_KEYS = ['brand_color', 'secondary_brand_color', 'logo_asset_uid', 'hero_asset_uid', 'privacy_notice_url', 'terms_url'];
+    public const OWNER_THEME_KEYS = ['brand_color', 'secondary_brand_color', ...BrandColors::PALETTE_KEYS, 'logo_asset_uid', 'hero_asset_uid', 'privacy_notice_url', 'terms_url'];
 
     public function __construct(private readonly WebsiteAssetUploadService $uploads) {}
 
@@ -87,6 +87,35 @@ final class WebsiteLookService
         }
 
         $this->patchTheme($website, ['secondary_brand_color' => $hex]);
+    }
+
+    /**
+     * One of the palette overrides (BrandColors::PALETTE_KEYS: dark background, footer, surfaces, text...). Only that
+     * key is touched; blank resets it to the template default.
+     *
+     * @throws ValidationException
+     */
+    public function setPaletteColor(Website $website, string $key, ?string $value): void
+    {
+        if (! in_array($key, BrandColors::PALETTE_KEYS, true)) {
+            throw ValidationException::withMessages([$key => ['Unknown colour.']]);
+        }
+
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            $this->patchTheme($website, [$key => null]);
+
+            return;
+        }
+
+        $hex = BrandColors::normalize($value);
+
+        if ($hex === null) {
+            throw ValidationException::withMessages([$key => ['Enter a colour like #1a56db.']]);
+        }
+
+        $this->patchTheme($website, [$key => $hex]);
     }
 
     /**
