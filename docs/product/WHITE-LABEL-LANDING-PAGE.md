@@ -145,3 +145,21 @@ event ledger.
 6. Use a declined/incomplete test card: no plan is assigned.
 7. Add `app.<your-domain>` under Branding, add the TXT record, **Check DNS**: status becomes "Ownership verified —
    not live".
+
+## Applying an industry preset to one Agency (operator procedure)
+
+`php artisan agency-site:apply-preset {agencyWorkspaceUid}` writes the **dog training and boarding** content into that
+Agency's own Landing Page **draft** through the editor's validated save path. It is a dry run unless `--apply` is given,
+refuses the production environment, never publishes, and never touches other Agencies, shared defaults, the brand, plans
+or Stripe.
+
+1. `php artisan agency-site:apply-preset <uid>` — review the table: sellable plans, bookable booking type, chosen
+   conversion goal, and which already-edited values would be replaced.
+2. Optional: `--create-booking-type` adds a 30-minute "MotionGrove Demo — Dog Training & Boarding" type when none is
+   bookable. It is created **without working hours**; add availability in the Calendar before it can be booked.
+3. `php artisan agency-site:apply-preset <uid> --apply` — saves the draft and lists what still blocks publishing.
+4. In the editor: add privacy and terms links (Footer), add availability if needed, check desktop and mobile in the
+   preview, then publish from the Review screen.
+
+Left unwritten on purpose: testimonials and the Customers page, "Support & onboarding", "Setup commitment", legal
+links, brand identity. The How-it-works page holds at most four steps, so the five-stage journey is condensed into four.
