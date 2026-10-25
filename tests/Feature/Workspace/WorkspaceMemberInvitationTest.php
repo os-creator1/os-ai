@@ -146,7 +146,7 @@ class WorkspaceMemberInvitationTest extends TestCase
 
         $this->post(route('workspace-invitations.register', [$uid, $token]), [
             'first_name' => 'Nora', 'last_name' => 'Newhire', 'password' => 'a-strong-pass-1', 'password_confirmation' => 'a-strong-pass-1',
-        ])->assertRedirect(route('customer.workspaces.index'));
+        ])->assertRedirect(route('user.home'));
 
         $user = User::where('email', 'new@example.test')->firstOrFail();
         $this->assertNotNull($user->email_verified_at, 'The emailed single-use link proved they own the address.');
@@ -285,7 +285,7 @@ class WorkspaceMemberInvitationTest extends TestCase
         $invitee = $this->customerAccount('invited@example.test');
         $this->actingAs($invitee);
         $this->get(route('workspace-invitations.claim', [$uid, $token]))->assertOk()->assertSee('Accept invitation');
-        $this->post(route('workspace-invitations.accept', [$uid, $token]))->assertRedirect(route('customer.workspaces.index'));
+        $this->post(route('workspace-invitations.accept', [$uid, $token]))->assertRedirect(route('user.home'));
         $this->assertNotNull(WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $invitee->id)->first());
         $this->assertSame(1, User::where('email', 'invited@example.test')->count(), 'No second account is made for an address that already has one.');
     }
@@ -416,6 +416,135 @@ class WorkspaceMemberInvitationTest extends TestCase
     private function customerRowFor(User $user): Customer
     {
         return Customer::where('user_id', $user->id)->firstOrFail();
+    }
+
+    /** @return array{0: User, 1: Workspace, 2: Business} a selected-scope staff member who just joined through the real claim flow */
+    private function joinedScopedStaff(): array
+    {
+        Notification::fake();
+        [$owner, $workspace] = $this->ownerAndWorkspace();
+        $assigned = $this->activeBusiness($this->customerRowFor($owner)->id, $workspace->id);
+        $email = 'new-staff@example.test';
+
+        $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'member_email' => $email, 'role' => 'staff', 'business_access_scope' => 'selected', 'business_uids' => [$assigned->uid],
+        ]);
+
+        [$uid, $token] = $this->claimParts($this->sentMail());
+        auth()->logout();
+        $this->post(route('workspace-invitations.register', [$uid, $token]), ['first_name' => 'Sam', 'password' => 'a-strong-pass-1', 'password_confirmation' => 'a-strong-pass-1'])
+            ->assertRedirect(route('user.home'));
+
+        return [User::where('email', $email)->firstOrFail(), $workspace, $assigned];
+    }
+
+    public function test_a_new_scoped_staff_member_lands_on_the_assigned_business_home_not_the_account_list(): void
+    {
+        [$user, $workspace, $assigned] = $this->joinedScopedStaff();
+
+        $this->assertSame($assigned->uid, session('customer_context.business'));
+        $this->assertSame($workspace->uid, session('customer_context.workspace'));
+        $this->get(route('user.home'))->assertOk()->assertDontSee("You don't have access to any accounts yet");
+        // The account frame stays closed to them.
+        $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
+    }
+
+    public function test_an_existing_scoped_staff_member_who_accepts_an_invitation_lands_on_the_assigned_business_home(): void
+    {
+        Notification::fake();
+        [$owner, $workspace] = $this->ownerAndWorkspace();
+        $assigned = $this->activeBusiness($this->customerRowFor($owner)->id, $workspace->id);
+        $this->invite($workspace, 'later@example.test', ['business_access_scope' => 'selected', 'business_uids' => [$assigned->uid]]);
+        [$uid, $token] = $this->claimParts($this->sentMail());
+        // The address registers elsewhere before using the link (the "existing user" path).
+        $invitee = $this->customerAccount('later@example.test');
+        auth()->logout();
+        $this->actingAs($invitee);
+
+        $this->post(route('workspace-invitations.accept', [$uid, $token]))->assertRedirect(route('user.home'));
+        $this->assertSame($assigned->uid, session('customer_context.business'));
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('user.home'));
+        $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
+    }
+
+    public function test_workspaces_sends_business_only_staff_to_their_business_home_and_never_to_another_business(): void
+    {
+        [$user, $workspace, $assigned] = $this->joinedScopedStaff();
+        $otherWorkspace = $this->createWorkspace($workspace->owner, ['name' => 'Other Account']);
+        $other = $this->activeBusiness($this->customerRowFor($workspace->owner)->id, $otherWorkspace->id);
+        $this->flushSession();
+        $this->actingAs($user);
+
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('user.home'));
+        $this->assertSame($assigned->uid, session('customer_context.business'));
+        $this->assertNotSame($other->uid, session('customer_context.business'));
+        $this->assertFalse(app(WorkspaceManager::class)->userCanAccessBusiness($user->id, $other->fresh()));
+    }
+
+    public function test_owner_navigation_is_unchanged(): void
+    {
+        [$owner, $workspace] = $this->ownerAndWorkspace();
+        $this->activeBusiness($this->customerRowFor($owner)->id, $workspace->id);
+
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+    }
+
+    public function test_inactive_or_revoked_membership_is_not_sent_to_a_business_home(): void
+    {
+        [$user, $workspace] = $this->joinedScopedStaff();
+        WorkspaceMembership::where('user_id', $user->id)->update(['is_active' => false]);
+        $this->flushSession();
+        $this->actingAs($user);
+
+        $response = $this->get(route('customer.workspaces.index'));
+        $response->assertOk();
+        $this->assertNull(session('customer_context.business'));
+    }
+
+    public function test_several_accessible_businesses_are_never_chosen_arbitrarily(): void
+    {
+        [$user, $workspace, $assigned] = $this->joinedScopedStaff();
+        $secondWorkspace = $this->createWorkspace($workspace->owner, ['name' => 'Second Account']);
+        $second = $this->activeBusiness($this->customerRowFor($workspace->owner)->id, $secondWorkspace->id);
+        $membership = $this->createMembership($secondWorkspace, $user, ['business_access_scope' => WorkspaceBusinessAccessScope::Selected]);
+        DB::table('workspace_membership_businesses')->insert(['workspace_membership_id' => $membership->id, 'business_id' => $second->id, 'created_at' => now(), 'updated_at' => now()]);
+        $this->flushSession();
+        $this->actingAs($user);
+
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('user.home'));
+        $this->assertNull(session('customer_context.business'), 'With two legitimate Businesses nothing is picked for them.');
+    }
+
+    public function test_an_existing_user_with_business_a_who_accepts_an_invitation_to_business_b_lands_on_business_b(): void
+    {
+        Notification::fake();
+        [$ownerB, $workspaceB] = $this->ownerAndWorkspace();
+        $businessB = $this->activeBusiness($this->customerRowFor($ownerB)->id, $workspaceB->id);
+
+        // The address has no account when invited, so a pending invitation is created; it registers elsewhere afterwards.
+        $this->invite($workspaceB, 'multi@example.test', ['business_access_scope' => 'selected', 'business_uids' => [$businessB->uid]]);
+        [$uid, $token] = $this->claimParts($this->sentMail());
+        $user = $this->customerAccount('multi@example.test');
+        $workspaceA = $this->createWorkspace($user, ['name' => 'Account A']);
+        $businessA = $this->activeBusiness($this->customerRowFor($user)->id, $workspaceA->id);
+        auth()->logout();
+        $this->flushSession();
+        $this->actingAs($user);
+        $this->withSession(['customer_context' => ['workspace' => $workspaceA->uid, 'business' => $businessA->uid, 'accountFrame' => false]]);
+
+        $this->post(route('workspace-invitations.accept', [$uid, $token]))->assertRedirect(route('user.home'));
+
+        $this->assertSame($businessB->uid, session('customer_context.business'));
+        $this->assertSame($workspaceB->uid, session('customer_context.workspace'));
+        $this->assertTrue(app(WorkspaceManager::class)->userCanAccessBusiness($user->id, $businessB));
+    }
+
+    private function activeBusiness(int $customerId, int $workspaceId): Business
+    {
+        $business = $this->createBusinessForCustomer($customerId, $workspaceId);
+        DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Active->value]);
+
+        return $business->fresh();
     }
 
     private function sentMail(): \Illuminate\Notifications\Messages\MailMessage
