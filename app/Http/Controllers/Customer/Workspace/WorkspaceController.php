@@ -47,6 +47,7 @@ use App\Library\Navigation\CustomerMenuBuilder;
 use App\Library\PlatformBilling\CustomerSubscriptionPresenter;
 use App\Library\PlatformBilling\PlatformSubscriptionManager;
 use App\Library\Navigation\CustomerShellComposer;
+use App\Library\Navigation\SoleBusinessLanding;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Workspace\AccountFrameAccess;
 use App\Library\Workspace\WorkspaceManager;
@@ -128,6 +129,14 @@ class WorkspaceController extends CustomerBaseController
     {
         $userId = (int) Auth::id();
         $workspaces = $this->accountChoices($userId);
+
+        // Business-only staff (a selected-scope team member) have no account-frame row by design. They are not
+        // "without access": send them to their Business Home rather than claiming they have no accounts.
+        if ($workspaces->isEmpty() && app(SoleBusinessLanding::class)->hasAnyBusiness($userId)) {
+            app(SoleBusinessLanding::class)->rememberSole($userId);
+
+            return redirect()->route('user.home');
+        }
 
         if ($workspaces->count() === 1) {
             return redirect()->route('customer.workspaces.show', $workspaces->first()['uid']);

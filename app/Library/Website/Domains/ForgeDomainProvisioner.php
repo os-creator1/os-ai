@@ -126,10 +126,10 @@ class ForgeDomainProvisioner
      * Requests a Let's Encrypt certificate for exactly this one Forge
      * domain — never a multi-domain SAN list. HTTP-01 verification is
      * used deliberately: it needs nothing beyond the domain already
-     * resolving to this server, which our own traffic CNAME/A-record
-     * instruction (dnsInstructions()) already requires, so the owner is
-     * never asked for a THIRD DNS record on top of our ownership TXT
-     * record and the traffic record.
+     * resolving to this server, which the two website records (A @ and the
+     * unique CNAME on www) already require: no TXT or any third record. One
+     * certificate is requested per hostname (apex and www separately), the
+     * way Forge's per-domain model works.
      *
      * @return string a Forge certificate id to poll via certificateStatus()
      *
@@ -238,6 +238,12 @@ class ForgeDomainProvisioner
                 "Forge domain deletion failed for domain {$forgeDomainId}: HTTP {$response->status()} {$response->body()}"
             );
         }
+    }
+
+    /** Whether every Forge credential this class needs is present. Never reveals which one is missing or any value. */
+    public function isConfigured(): bool
+    {
+        return (bool) (config('services.forge.api_token') && config('services.forge.organization_slug') && config('services.forge.server_id') && config('services.forge.site_id'));
     }
 
     private function client(string $token): PendingRequest

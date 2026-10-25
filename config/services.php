@@ -275,6 +275,9 @@
             'server_id'         => env('FORGE_SERVER_ID'),
             'site_id'           => env('FORGE_SITE_ID'),
             'cname_target'      => env('FORGE_CNAME_TARGET'),
+            // Zone for each website domain's unique CNAME target (<token>.<zone>). It needs ONE wildcard A record
+            // (*.<zone> -> the server IP). Replaces the single shared cname_target for website domains.
+            'cname_zone'        => env('FORGE_CNAME_ZONE'),
             'a_record_ip'       => env('FORGE_A_RECORD_IP'),
         ],
 

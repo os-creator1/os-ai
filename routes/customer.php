@@ -2269,8 +2269,7 @@
             Route::get('/domains', 'Business\WebsiteDomainController@home')->name('domains.index');
             Route::post('/domains', 'Business\WebsiteDomainController@store')->name('domains.store');
             Route::post('/domains/{domainUid}/verify', 'Business\WebsiteDomainController@verify')->name('domains.verify');
-            Route::post('/domains/{domainUid}/provision', 'Business\WebsiteDomainController@provision')->name('domains.provision');
-            Route::post('/domains/{domainUid}/check-certificate', 'Business\WebsiteDomainController@checkCertificate')->name('domains.checkCertificate');
+            Route::post('/domains/{domainUid}/retry', 'Business\WebsiteDomainController@retry')->middleware('throttle:10,1')->name('domains.retry');
             Route::post('/domains/{domainUid}/make-primary', 'Business\WebsiteDomainController@makePrimary')->name('domains.makePrimary');
             Route::delete('/domains/{domainUid}', 'Business\WebsiteDomainController@destroy')->name('domains.destroy');
         });
