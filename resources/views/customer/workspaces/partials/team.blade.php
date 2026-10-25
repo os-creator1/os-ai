@@ -1,13 +1,14 @@
 {{--
-    Settings → Team: add a member, then manage the people who already belong to
+    Settings → Team: invite a member, then manage the people who already belong to
     this account. Presentation only — every form below posts to the same
     WorkspaceController member endpoints as before (the page script in
     show.blade.php rewrites each form's action from data-workspace-action /
     data-member-action), and every control is shown only when the existing rules
     allow it (Owner-only role changes, Admin members only manageable by the
     Owner, access edits only when the manager can see the member's complete
-    Business set). There is no invitation workflow: a person must already have a
-    Business OS account, so there are no pending invitations to list.
+    Business set). A person with no MotionGrove account yet gets a pending
+    invitation, listed under Pending invitations until they accept; they then
+    appear under Members.
 --}}
 @php
     $manageableBusinessUids = collect($manageableBusinesses ?? [])->pluck('uid')->all();
@@ -45,11 +46,11 @@
                     <div class="d-flex align-items-start gap-3 mb-3">
                         <span class="sr-tile"><x-ds-icon name="user-plus" size="18" /></span>
                         <div>
-                            <h2 class="sr-card__title">Add a member</h2>
+                            <h2 class="sr-card__title">Invite a member</h2>
                             @if ($singleManageableBusiness !== null)
-                                <p class="sr-card__sub" data-role="member-single-business">They'll get access to {{ $singleManageableBusiness['name'] }} with the role you choose.</p>
+                                <p class="sr-card__sub" data-role="member-single-business">They'll get access to {{ $singleManageableBusiness['name'] }} with the role you choose. We'll email an invitation if they don't have a MotionGrove account yet.</p>
                             @else
-                                <p class="sr-card__sub">They'll get access with the role you choose.</p>
+                                <p class="sr-card__sub">They'll get access with the role you choose. We'll email an invitation if they don't have a MotionGrove account yet.</p>
                             @endif
                         </div>
                     </div>
@@ -63,7 +64,7 @@
                             @if ($errors->first('member_email'))
                                 <p class="sr-error">{{ $errors->first('member_email') }}</p>
                             @else
-                                <p class="sr-hint">They need an existing MotionGrove account first.</p>
+                                <p class="sr-hint">Anyone can be invited: if they're new to MotionGrove they'll set up their sign-in from the email.</p>
                             @endif
                         </div>
                         <div class="sr-field" style="min-width:160px">
@@ -77,7 +78,7 @@
                         </div>
                         <div class="sr-field" style="padding-top:22px">
                             <button type="submit" class="btn btn-primary d-inline-flex align-items-center gap-1">
-                                <x-ds-icon name="plus" size="16" /> Add member
+                                <x-ds-icon name="plus" size="16" /> Invite member
                             </button>
                         </div>
                     </div>
@@ -100,6 +101,45 @@
                 </form>
             </div>
         </div>
+
+        @if (! empty($invitations))
+            <div class="sr-card" data-section="team-invitations">
+                <div class="sr-card__head">
+                    <h2 class="sr-card__title">Pending invitations</h2>
+                    <span class="sr-card__meta">{{ count($invitations) }}</span>
+                </div>
+                <ul class="sr-list">
+                    @foreach ($invitations as $invitation)
+                        @php
+                            $viewerCanManageInvitation = $viewerIsOwner || $invitation['role'] !== 'Admin';
+                        @endphp
+                        <li class="sr-list__row" style="align-items:flex-start" data-invitation-uid="{{ $invitation['uid'] }}">
+                            <span class="sr-avatar">{{ $initialsOf($invitation['email']) }}</span>
+                            <div class="sr-list__main">
+                                <div class="sr-list__name">
+                                    {{ $invitation['email'] }}
+                                    <span class="sr-chip">{{ $invitation['role'] }}</span>
+                                    <span class="sr-chip {{ $invitation['status'] === 'Pending' ? 'sr-chip--success' : '' }}">{{ $invitation['status'] }}</span>
+                                </div>
+                                <div class="sr-list__sub">{{ $invitation['status'] === 'Expired' ? 'Expired' : 'Expires' }} {{ $invitation['expires'] }}</div>
+                                @if ($viewerCanManageInvitation)
+                                    <div class="d-flex gap-2 mt-2">
+                                        <form method="POST" data-invitation-action="resend" data-invitation-uid="{{ $invitation['uid'] }}">
+                                            @csrf
+                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Resend</button>
+                                        </form>
+                                        <form method="POST" data-invitation-action="revoke" data-invitation-uid="{{ $invitation['uid'] }}">
+                                            @csrf
+                                            <button type="submit" class="btn btn-sm btn-sr-danger-outline">Revoke</button>
+                                        </form>
+                                    </div>
+                                @endif
+                            </div>
+                        </li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
 
         <div class="sr-card" data-section="team-members">
             <div class="sr-card__head">
@@ -203,7 +243,7 @@
                 <div class="sr-empty" data-role="team-empty">
                     <span class="sr-tile"><x-ds-icon name="users" size="18" /></span>
                     <strong>No one else yet</strong>
-                    <p>People you add appear here, with their role and what they can open.</p>
+                    <p>People you invite appear here once they join, with their role and what they can open.</p>
                 </div>
             @endif
         </div>

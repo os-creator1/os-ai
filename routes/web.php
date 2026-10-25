@@ -78,6 +78,16 @@
     Route::post('client-invitations/{uid}/{token}/accept', [\App\Http\Controllers\ClientInvitationClaimController::class, 'accept'])
         ->middleware(['auth', 'twofactor'])->name('client-invitations.accept');
 
+    // Settings → Team invitations. Deliberately NOT inside the `account.can_register` block: accepting a valid,
+    // emailed, single-use invitation is not public signup, so it works while registration is closed. GET is
+    // side-effect-free; the two POSTs are the only writes and are throttled.
+    Route::get('workspace-invitations/{uid}/{token}', [\App\Http\Controllers\WorkspaceMemberInvitationClaimController::class, 'show'])
+        ->middleware('twofactor')->name('workspace-invitations.claim');
+    Route::post('workspace-invitations/{uid}/{token}/register', [\App\Http\Controllers\WorkspaceMemberInvitationClaimController::class, 'register'])
+        ->middleware(['guest', 'throttle:10,1'])->name('workspace-invitations.register');
+    Route::post('workspace-invitations/{uid}/{token}/accept', [\App\Http\Controllers\WorkspaceMemberInvitationClaimController::class, 'accept'])
+        ->middleware(['auth', 'twofactor', 'throttle:10,1'])->name('workspace-invitations.accept');
+
     // Security Remediation Slice 0 §16.A.1 (D-24) — the five unauthenticated
     // GET routes formerly registered here (add-gateways, remove-jobs,
     // remove-contacts, cache-clear, update-campaign-cache/{campaign}/{number})

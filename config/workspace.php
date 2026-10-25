@@ -14,4 +14,10 @@
         */
 
         'client_invitation_ttl_days' => env('CLIENT_INVITATION_TTL_DAYS', 7),
+
+        /*
+        | Settings → Team invitations (a person with no account yet): how long
+        | the emailed acceptance link stays valid. Resending restarts the window.
+        */
+        'member_invitation_ttl_days' => env('MEMBER_INVITATION_TTL_DAYS', 7),
     ];

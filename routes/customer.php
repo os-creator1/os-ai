@@ -1152,6 +1152,10 @@
         Route::post('{workspaceUid}/members/{memberUid}/deactivate', 'Workspace\WorkspaceController@deactivateMember')->name('members.deactivate');
         Route::post('{workspaceUid}/members/{memberUid}/reactivate', 'Workspace\WorkspaceController@reactivateMember')->name('members.reactivate');
 
+        // Settings → Team invitations (people with no account yet): resend / revoke a pending one.
+        Route::post('{workspaceUid}/invitations/{invitationUid}/resend', 'Workspace\WorkspaceController@resendInvitation')->middleware('throttle:6,1')->name('invitations.resend');
+        Route::post('{workspaceUid}/invitations/{invitationUid}/revoke', 'Workspace\WorkspaceController@revokeInvitation')->name('invitations.revoke');
+
         /*
         |----------------------------------------------------------------
         | B4 — Business-scoped Automations
