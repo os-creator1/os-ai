@@ -124,6 +124,32 @@ class ForgeDomainProvisionerTest extends TestCase
             && $request['letsencrypt']['verification_method'] === 'http-01');
     }
 
+    public function test_the_certificate_request_body_is_exactly_http_01_with_the_required_key_type(): void
+    {
+        Http::fake([self::BASE.'/domains/555/certificates' => Http::response(['data' => ['id' => '777']], 202)]);
+
+        app(ForgeDomainProvisioner::class)->requestCertificate('555');
+
+        // Forge API v2 requires letsencrypt.key_type (enum: ecdsa | rsa); 422 "The letsencrypt.key type field is required" without it.
+        Http::assertSent(fn ($request) => $request->data() === [
+            'type' => 'letsencrypt',
+            'letsencrypt' => ['verification_method' => 'http-01', 'key_type' => 'ecdsa'],
+        ]);
+    }
+
+    public function test_a_422_from_forge_is_reported_as_a_provisioning_failure_naming_the_status_and_never_succeeds(): void
+    {
+        Http::fake([self::BASE.'/domains/555/certificates' => Http::response(['message' => 'The letsencrypt.key type field is required.'], 422)]);
+
+        try {
+            app(ForgeDomainProvisioner::class)->requestCertificate('555');
+            $this->fail('A 422 must not look like success.');
+        } catch (DomainProvisioningException $e) {
+            $this->assertStringContainsString('HTTP 422', $e->getMessage());
+            $this->assertStringNotContainsString('test-forge-token', $e->getMessage());
+        }
+    }
+
     public function test_request_certificate_never_touches_any_other_domain(): void
     {
         Http::fake([

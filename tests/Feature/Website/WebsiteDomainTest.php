@@ -637,6 +637,38 @@ class WebsiteDomainTest extends TestCase
         $this->assertStringContainsString('https://example.test', $live);
     }
 
+    public function test_resuming_a_verified_domain_reuses_both_forge_domains_and_only_requests_the_missing_certificates(): void
+    {
+        [$customer, $business, $workspace, $website] = $this->tenant();
+        $this->fakeDnsVerifier();
+        $this->fakeHttpsProbe(true);
+        // The REAL provisioner against a faked Forge API: domain resources already exist, certificates never got created.
+        $this->app->forgetInstance(\App\Library\Website\Domains\ForgeDomainProvisioner::class);
+        $this->app->forgetInstance(WebsiteDomainService::class);
+        config(['services.forge.api_token' => 't', 'services.forge.organization_slug' => 'org', 'services.forge.server_id' => 9, 'services.forge.site_id' => 4]);
+        $base = 'forge.laravel.com/api/orgs/org/servers/9/sites/4';
+        \Illuminate\Support\Facades\Http::fake([
+            $base.'/domains/111/certificates' => \Illuminate\Support\Facades\Http::response(['data' => ['id' => 'cert-apex']], 202),
+            $base.'/domains/222/certificates' => \Illuminate\Support\Facades\Http::response(['data' => ['id' => 'cert-www']], 202),
+        ]);
+        $this->authenticateAsCustomer($customer);
+        $this->add($workspace->uid, $business->uid, 'example.test');
+        $domain = $website->domains()->sole();
+        $domain->forceFill(['status' => WebsiteDomainStatus::Verified, 'forge_domain_id' => '111', 'www_forge_domain_id' => '222', 'attempts' => 3])->save();
+
+        $domain = $this->service()->advance($domain, true);
+
+        $this->assertSame(WebsiteDomainStatus::Provisioning, $domain->status);
+        $this->assertSame(['111', '222', 'cert-apex', 'cert-www'], [$domain->forge_domain_id, $domain->www_forge_domain_id, $domain->certificate_reference, $domain->www_certificate_reference]);
+        \Illuminate\Support\Facades\Http::assertNotSent(fn ($request) => $request->method() === 'POST' && str_ends_with($request->url(), '/sites/4/domains'));
+        \Illuminate\Support\Facades\Http::assertSentCount(2);
+
+        // A later run never re-requests a certificate that already has a reference (only status polls would be made).
+        $domain->forceFill(['status' => WebsiteDomainStatus::Verified])->save();
+        $this->service()->advance($domain->refresh(), true);
+        \Illuminate\Support\Facades\Http::assertSentCount(2);
+    }
+
     public function test_a_failed_add_keeps_the_connect_form_open_with_the_typed_value(): void
     {
         [$customer, $business, $workspace] = $this->tenant();
