@@ -193,6 +193,12 @@ final class WebsiteHealthChecker
             );
         }
 
+        // 16. Search-quality review (owner's judgement, never a block): competing pages, repeated copy, pages with no links on,
+        // repeated photo descriptions, cut-off descriptions, no proof. Reported only when found, naming the page.
+        foreach (app(\App\Library\Website\Seo\WebsiteSeoReview::class)->review($website, $pages, $business, $links) as $review) {
+            $checks[] = $review;
+        }
+
         $counts = array_count_values(array_column($checks, 'status'));
 
         return ['checks' => $checks, 'summary' => ['ok' => $counts[self::OK] ?? 0, 'warn' => $counts[self::WARN] ?? 0, 'fail' => $counts[self::FAIL] ?? 0]];
