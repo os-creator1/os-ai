@@ -84,7 +84,9 @@ class ApplyAgencySitePreset extends Command
             }
 
             // 7 — Pricing: the Agency's real, currently sellable plans (read only).
-            $plans = $site ? $contexts->make($site, AgencySiteManager::values($site))->plans : [];
+            // Needs no site: the same read-only discovery the editor and renderer use, so a first-time dry run reports the
+            // Agency's real plans and chooses the same mode --apply will.
+            $plans = $contexts->plans($agency, $site ? AgencySiteManager::values($site) : [], (string) $agency->name);
             $sellable = array_values(array_filter($plans, fn ($p) => $p['sellable']));
             $canSell = $sellable !== [];
             $canBook = $ready !== null;
