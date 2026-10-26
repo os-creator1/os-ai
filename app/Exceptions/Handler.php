@@ -85,6 +85,14 @@
                 ], $status ?? Response::HTTP_INTERNAL_SERVER_ERROR);
             }
 
+            // A private Agency draft preview (the page and its stylesheet) must not reveal that a draft exists, so a
+            // visitor who is signed out or not on that Agency's team gets the plain branded 404 instead of a login
+            // redirect or a 401/403. Scoped to these two routes only; every other 401/403 keeps its own status.
+            if (($exception instanceof AuthenticationException || $exception instanceof AuthorizationException)
+                && $request->routeIs('customer.workspaces.agency.site.preview', 'customer.workspaces.agency.site.preview-css')) {
+                return response()->view('errors.404', compact('exception'), 404);
+            }
+
             if (config('app.env') != 'local') {
                 // A missing record is a missing page: it was answered as a 500,
                 // which sent crawlers and monitors a server-fault signal for what

@@ -25,6 +25,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
     <title>{{ $page['title'] }} · {{ $errorBrandName }}</title>
+    <x-branding-favicon />
     <style>
         :root{--eb-canvas:var(--color-canvas,#F7F6F2);--eb-surface:var(--color-surface,#FFFFFF);--eb-border:var(--color-border,#E5E1DA);--eb-text:var(--color-text-primary,#262522);--eb-muted:var(--color-text-muted,#6F6D67);--eb-accent:var(--color-primary,#B5524C);--eb-accent-hover:var(--color-primary-hover,#A83D38);--eb-accent-soft:var(--color-primary-soft-bg,#F4E6E4)}
         *{box-sizing:border-box}

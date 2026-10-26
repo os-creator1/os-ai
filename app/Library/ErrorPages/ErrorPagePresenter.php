@@ -30,10 +30,15 @@ class ErrorPagePresenter
     {
         $request ??= request();
         $context = $this->context($request);
-        $key = $code === 429 ? '429' : '404';
+        // 401/403 reuse the platform's existing copy (locale.http.*) inside the same shell; anything else is a 404.
+        [$shown, $titleKey] = match ($code) {
+            401, 403 => [$code, "locale.http.{$code}"],
+            429 => [429, 'locale.error_pages.429'],
+            default => [404, 'locale.error_pages.404'],
+        };
 
         $card = null;
-        if ($code !== 429) {
+        if ($shown === 404) {
             $card = match ($context) {
                 self::CONTEXT_DOCUMENT => [
                     'title' => __('locale.error_pages.document.card_title'),
@@ -48,9 +53,9 @@ class ErrorPagePresenter
         }
 
         return [
-            'code'        => $code === 429 ? 429 : 404,
-            'title'       => __("locale.error_pages.{$key}.title"),
-            'description' => __("locale.error_pages.{$key}.description"),
+            'code'        => $shown,
+            'title'       => __("{$titleKey}.title"),
+            'description' => __("{$titleKey}.description"),
             'card'        => $card,
             'homeUrl'     => $this->homeUrl($context),
             'context'     => $context,
