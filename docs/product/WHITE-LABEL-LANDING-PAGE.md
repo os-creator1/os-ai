@@ -169,7 +169,8 @@ export AGENCY_UID=cc60c018-cb05-43fb-8f4d-27ed4e456a9b
    conversion goal, and the `Replaced:` line (the editor paths whose current draft values would be overwritten).
 3. Optional: add `--create-booking-type` to the dry run to see whether the 30-minute demo type would be created. With
    `--apply` it is created **without working hours**; add availability in the Calendar before it can be booked. Repeat
-   runs reuse it.
+   runs reuse it. If the owner already has weekly hours at the location, the dry run shows the goal as
+   `conditional: ...` (those hours are used unchanged); with none it says the type will not be bookable yet.
 4. **Apply (draft only, never publishes):** `php artisan agency-site:apply-preset "$AGENCY_UID" --apply`. It prints
    anything that still blocks publishing (typically the privacy and terms links).
 5. **Verify in the editor and preview** (desktop and phone width), then publish from the Review screen only when satisfied.

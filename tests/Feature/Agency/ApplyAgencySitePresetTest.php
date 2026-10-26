@@ -297,4 +297,70 @@ class ApplyAgencySitePresetTest extends TestCase
         $this->assertSame('See pricing', $primary['label']);
         $this->assertStringEndsWith('/pricing', $primary['href']);
     }
+
+    // ------------------------------------------------------------ dry run and existing availability
+
+    private function giveOwnerHours(Workspace $agency, Customer $owner): void
+    {
+        $business = \App\Models\Business::query()->where('workspace_id', $agency->id)->firstOrFail();
+        $location = $business->locations()->orderByDesc('is_primary')->orderBy('id')->firstOrFail();
+        $uid = (int) $owner->user_id;
+        app(\App\Library\Calendar\StaffAvailabilityService::class)->createRule($agency, $business, $location, $uid, 2, '08:00:00', '12:00:00', $uid);
+        app(\App\Library\Calendar\StaffAvailabilityService::class)->createRule($agency, $business, $location, $uid, 2, '14:00:00', '18:00:00', $uid);
+    }
+
+    public function test_a_dry_run_with_existing_owner_hours_reports_the_outcome_as_conditional_and_apply_then_confirms_it(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->giveOwnerHours($agency, $owner);
+        $rules = StaffAvailabilityRule::query()->orderBy('id')->get(['day_of_week', 'start_time', 'end_time'])->toArray();
+
+        [$code, $out] = $this->run_($agency, ['--create-booking-type' => true]);
+
+        $this->assertSame(0, $code);
+        $this->assertMatchesRegularExpression('/Conversion goal\s*\|\s*conditional: book_call/', $out, 'not a flat "unchanged": existing hours may make the new type bookable');
+        $this->assertStringContainsString('used unchanged', $out);
+        $this->assertSame(0, BookingType::query()->count(), 'read-only');
+        $this->assertSame(0, AgencySite::query()->count(), 'read-only');
+        $this->assertSame($rules, StaffAvailabilityRule::query()->orderBy('id')->get(['day_of_week', 'start_time', 'end_time'])->toArray());
+
+        // Apply creates the type once, uses the owner's hours as they are, and the prediction holds.
+        $this->run_($agency, ['--apply' => true, '--create-booking-type' => true]);
+        $this->run_($agency, ['--apply' => true, '--create-booking-type' => true]);
+
+        $this->assertSame(1, BookingType::query()->count(), 'repeat runs do not duplicate it');
+        $this->assertSame($rules, StaffAvailabilityRule::query()->orderBy('id')->get(['day_of_week', 'start_time', 'end_time'])->toArray(), 'hours neither invented nor changed');
+        $this->assertSame('book_call', $this->values($agency)['x.goal'] ?? null, 'the demo type is bookable on the existing hours');
+    }
+
+    public function test_a_dry_run_without_owner_hours_says_the_new_type_will_not_be_bookable_and_apply_agrees(): void
+    {
+        [$agency] = $this->agency();
+
+        [, $out] = $this->run_($agency, ['--create-booking-type' => true]);
+
+        $this->assertStringNotContainsString('conditional', $out);
+        $this->assertStringContainsString('not bookable until you add availability', $out);
+        $this->assertSame(0, BookingType::query()->count());
+
+        $this->run_($agency, ['--apply' => true, '--create-booking-type' => true]);
+
+        $this->assertSame(1, BookingType::query()->count());
+        $this->assertSame(0, StaffAvailabilityRule::query()->count(), 'no hours invented');
+        $this->assertNotSame('book_call', $this->values($agency)['x.goal'] ?? null);
+    }
+
+    public function test_with_plans_and_existing_hours_the_conditional_mode_is_both(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        $this->giveOwnerHours($agency, $owner);
+
+        [, $out] = $this->run_($agency, ['--create-booking-type' => true]);
+        $this->assertMatchesRegularExpression('/Conversion goal\s*\|\s*conditional: both/', $out);
+
+        $this->run_($agency, ['--apply' => true, '--create-booking-type' => true]);
+        $this->assertSame('both', $this->values($agency)['x.goal']);
+    }
 }

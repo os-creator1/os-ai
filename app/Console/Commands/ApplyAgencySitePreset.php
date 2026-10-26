@@ -67,6 +67,7 @@ class ApplyAgencySitePreset extends Command
                 ?? $options->first(fn ($o) => $o['ready'] && stripos($o['name'], 'MotionGrove Demo') !== false)
                 ?? $options->first(fn ($o) => $o['ready']);
             $createdType = false;
+            $wouldCreate = false;
 
             if ($ready === null && $this->option('create-booking-type')) {
                 if ($apply) {
@@ -79,7 +80,8 @@ class ApplyAgencySitePreset extends Command
                     $ready = ($ready['ready'] ?? false) ? $ready : null;
                     $this->warn('Created the demo booking type WITHOUT working hours. Add availability in the Calendar before it can be booked.');
                 } else {
-                    $this->line('[dry run] would create the 30-minute demo booking type (no working hours).');
+                    $wouldCreate = true;
+                    $this->line('[dry run] would create the 30-minute demo booking type (no working hours added).');
                 }
             }
 
@@ -105,12 +107,25 @@ class ApplyAgencySitePreset extends Command
             $existing = $site ? AgencySiteManager::values($site) : [];
             $replaced = array_values(array_filter(array_keys($values), fn ($p) => array_key_exists($p, $existing) && $existing[$p] !== $values[$p]));
 
+            // A dry run cannot know whether the demo type it WOULD create is bookable, but it can read the one thing that
+            // decides it here: whether the owner already has weekly hours at the location the type would use. Those hours
+            // are used as they are (never changed); with none, the type stays unbookable until availability is added.
+            $goalLine = $values['x.goal'] ?? 'unchanged (no working conversion route)';
+
+            if ($wouldCreate && ! $canBook) {
+                $hours = $this->ownerHasAvailability($booking, $agency, $actor);
+                $ifBookable = $canSell ? 'both' : 'book_call';
+                $goalLine = $hours
+                    ? "conditional: {$ifBookable} if the new demo type is bookable (the owner already has weekly hours, which are used unchanged)"
+                    : ($values['x.goal'] ?? 'unchanged').' (the new demo type has no working hours, so it is not bookable until you add availability)';
+            }
+
             $this->table(['Check', 'Result'], [
                 ['Agency', $agency->name.' ('.$agency->uid.')'],
                 ['Mode', $apply ? 'APPLY (draft only, never published)' : 'DRY RUN'],
                 ['Sellable plans', $canSell ? implode('; ', array_map(fn ($p) => ($p['name'] ?? '?'), $sellable)) : 'none'],
                 ['Bookable booking type', $canBook ? $ready['name'] : 'none'.($createdType ? ' (just created, needs availability)' : '')],
-                ['Conversion goal', $values['x.goal'] ?? 'unchanged (no working conversion route)'],
+                ['Conversion goal', $goalLine],
                 ['Values to write', count($values)],
                 ['Existing edited values replaced', count($replaced)],
             ]);
@@ -140,5 +155,16 @@ class ApplyAgencySitePreset extends Command
 
             return self::FAILURE;
         }
+    }
+
+    /** Read-only: the owner has recurring hours at the location a new booking type would be created in. */
+    private function ownerHasAvailability(AgencySiteBookingService $booking, Workspace $agency, int $ownerUserId): bool
+    {
+        $business = $booking->business($agency);
+        $location = $business === null ? null : \App\Models\BusinessLocation::query()
+            ->where('business_id', $business->id)->orderByDesc('is_primary')->orderBy('id')->first();
+
+        return $location !== null && \App\Models\StaffAvailabilityRule::query()
+            ->where('business_location_id', $location->id)->where('staff_user_id', $ownerUserId)->exists();
     }
 }
