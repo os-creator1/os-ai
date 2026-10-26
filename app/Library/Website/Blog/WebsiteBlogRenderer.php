@@ -9,6 +9,7 @@ use App\Library\Website\Seo\WebsiteArticleStructuredData;
 use App\Library\Website\Seo\WebsiteAssetUrls;
 use App\Library\Website\Seo\WebsiteBreadcrumbStructuredData;
 use App\Library\Website\Seo\WebsiteHeadMeta;
+use App\Library\Website\Seo\WebsitePageIntent;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Library\Website\WebsiteSearchVisibility;
 use App\Models\Website;
@@ -102,6 +103,7 @@ class WebsiteBlogRenderer
                 'prev_url' => $page > 1 ? $surface->blogUrl($page - 1) : null,
                 'next_url' => $page < $last ? $surface->blogUrl($page + 1) : null,
                 'trail' => $trail,
+                'offerings' => $this->offerings($snapshot, $surface),
             ],
         ], 'blog');
     }
@@ -225,7 +227,7 @@ class WebsiteBlogRenderer
                 'related' => $this->related($website, $article, $surface),
                 'trail' => $trail,
                 'blog_url' => $surface->blogUrl(),
-                'packages_url' => $this->pageUrlBySlug($snapshot, 'packages', $surface),
+                'offerings' => $this->offerings($snapshot, $surface),
                 'is_preview' => $surface->isPreview(),
                 'is_published' => $article->isPublished(),
             ],
@@ -384,6 +386,20 @@ class WebsiteBlogRenderer
         }
 
         return ['title' => (string) $page['title'], 'url' => $surface->pageUrl($page)];
+    }
+
+    /**
+     * Where the blog's call to action sends a reader who wants to see what the business offers: the packages page,
+     * else any page that lists catalog packages, else the services hub — found by what the page IS (its stored role or
+     * its content), never by a fixed address. Null when the site has no such page (the button is then simply absent).
+     *
+     * @return array{url: string, label: string}|null
+     */
+    private function offerings(array $snapshot, WebsiteBlogSurface $surface): ?array
+    {
+        $found = WebsitePageIntent::offeringsPage((array) ($snapshot['pages'] ?? []));
+
+        return $found === null ? null : ['url' => $surface->pageUrl($found['page']), 'label' => $found['label']];
     }
 
     private function pageUrlBySlug(array $snapshot, string $slug, WebsiteBlogSurface $surface): ?string

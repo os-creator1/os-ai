@@ -197,6 +197,12 @@ final class WebsiteDraftPageService
             $validated['noindex_explicit'] = (bool) $attributes['noindex_explicit'] && $validated['noindex'];
         }
 
+        // The generator's page-intent map. Only the generator passes these; an owner's edit leaves them untouched.
+        if (array_key_exists('page_role', $attributes)) {
+            $validated['page_role'] = \App\Library\Website\Seo\WebsitePageIntent::validRole($attributes['page_role']);
+            $validated['page_intent'] = \App\Library\Website\Seo\WebsitePageIntent::cleanIntent($attributes['page_intent'] ?? null);
+        }
+
         return $validated;
     }
 

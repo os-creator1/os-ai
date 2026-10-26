@@ -52,4 +52,4 @@
     </div>
 </div>
 
-@include('public.website.blog.cta', ['supports' => null, 'packagesUrl' => $pageUrls['packages'] ?? null])
+@include('public.website.blog.cta', ['supports' => null, 'offerings' => $blog['offerings'] ?? null])

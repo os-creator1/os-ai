@@ -107,6 +107,9 @@ final class WebsiteSnapshotBuilder
                 'uid' => $page->uid,
                 'slug' => $page->slug,
                 'is_home' => $page->is_home,
+                // The generator's page-intent map (null for a page written before it existed or by the owner).
+                'role' => $page->page_role,
+                'intent' => $page->page_intent,
                 'title' => $page->title,
                 'seo' => [
                     'seo_title' => $page->seo_title,

@@ -411,10 +411,14 @@ final class GuidedGenerationCommitService
                 foreach ($bound['pages'] as $page) {
                     $hiddenByOwner = in_array($page['is_home'] ? '' : (string) $page['slug'], $ownerHidden, true);
 
+                    $identity = \App\Library\Website\Seo\WebsitePageIntent::forPlanPage($page);
+
                     $this->pages->createPage($locked, [
                         'title' => $page['title'],
                         'slug' => $page['slug'],
                         'is_home' => $page['is_home'],
+                        'page_role' => $identity['role'],
+                        'page_intent' => $identity['intent'],
                         'sections' => $page['sections'],
                         'seo_title' => $page['seo_title'] ?? null,
                         'meta_description' => $page['meta_description'] ?? null,

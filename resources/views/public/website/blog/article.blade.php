@@ -62,4 +62,4 @@
     </div>
 </div>
 
-@include('public.website.blog.cta', ['supports' => $blog['supports'], 'packagesUrl' => $blog['packages_url']])
+@include('public.website.blog.cta', ['supports' => $blog['supports'], 'offerings' => $blog['offerings'] ?? null])

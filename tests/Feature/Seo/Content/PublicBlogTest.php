@@ -360,4 +360,59 @@ class PublicBlogTest extends TestCase
         $this->assertStringNotContainsString('"BlogPosting"', $html);
         $this->assertSame(1, substr_count($html, '<h1'));
     }
+    /** Rewrites the published snapshot's pages (test fixture only) and drops the render cache. */
+    private function republishPages(\App\Models\Website $website, callable $edit): void
+    {
+        $revision = \App\Models\WebsiteRevision::query()->findOrFail($website->published_revision_id);
+        $snapshot = $revision->snapshot;
+        $snapshot['pages'] = array_values($edit($snapshot['pages']));
+        $revision->update(['snapshot' => $snapshot]);
+        app('cache')->flush();
+    }
+
+    public function test_the_blog_call_to_action_never_links_to_a_packages_page_the_site_does_not_have(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $article = $this->publishedArticle($business);
+        $this->republishPages($website, fn (array $pages) => array_filter($pages, fn ($page) => ! in_array($page['slug'], ['packages', 'services'], true)));
+
+        $html = $this->body(self::HOST . '/blog/' . $article->slug);
+
+        $this->assertStringNotContainsString('href="https://' . self::DOMAIN . '/packages"', $html);
+        $this->assertStringNotContainsString('See packages', $html);
+        $this->assertStringContainsString('data-blog-cta', $html, 'the call to action itself is still there');
+    }
+
+    public function test_the_blog_call_to_action_finds_the_page_that_lists_the_packages_whatever_its_address(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $article = $this->publishedArticle($business);
+        $this->republishPages($website, function (array $pages) {
+            return array_map(function ($page) {
+                if ($page['slug'] === 'packages') {
+                    $page['slug'] = 'photo-booth-prices';
+                    $page['sections'] = [['type' => 'services', 'data' => ['heading' => 'Prices', 'items' => [['catalog_item_uid' => 'pkg-1', 'name' => 'Signature']]]]];
+                }
+
+                return $page;
+            }, $pages);
+        });
+
+        $html = $this->body(self::HOST . '/blog/' . $article->slug);
+
+        $this->assertStringContainsString('href="https://' . self::DOMAIN . '/photo-booth-prices">See packages</a>', $html);
+        $this->assertStringNotContainsString('/packages"', $html);
+    }
+
+    public function test_the_blog_index_call_to_action_uses_the_same_page_identity(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $this->publishedArticle($business);
+        $this->republishPages($website, fn (array $pages) => array_filter($pages, fn ($page) => ! in_array($page['slug'], ['packages'], true)));
+
+        $html = $this->body(self::HOST . '/blog');
+
+        $this->assertStringNotContainsString('/packages"', $html);
+        $this->assertStringContainsString('href="https://' . self::DOMAIN . '/services">See our services</a>', $html);
+    }
 }

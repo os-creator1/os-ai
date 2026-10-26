@@ -2,7 +2,7 @@
     SEO Content Engine V1 — the ONE call-to-action at the foot of the blog index and every article. It uses the
     site's own resolved CTA ($siteCta: booking → quote form → contact page → phone/email; the same answer the
     header and hero give, so it is never a dead button) and, on an article, links on to the page the article
-    supports and to Packages. Nothing here is written per article: no invented offer, price or promise.
+    supports and to the page that shows what the business offers (found by its role, never by an address). Nothing here is written per article: no invented offer, price or promise.
 --}}
 @php($ctaTone = ($design ?? null) ? $design->toneFor('cta') : 'accent')
 <div class="wd-band wd-tone-{{ $ctaTone }} blog-cta-band" data-blog-cta>
@@ -16,8 +16,8 @@
             @if (! empty($supports))
                 <a class="wd-btn wd-btn-secondary blog-cta-secondary" href="{{ $supports['url'] }}">{{ $supports['title'] }}</a>
             @endif
-            @if (! empty($packagesUrl))
-                <a class="wd-btn wd-btn-secondary blog-cta-secondary" href="{{ $packagesUrl }}">See packages</a>
+            @if (! empty($offerings))
+                <a class="wd-btn wd-btn-secondary blog-cta-secondary" href="{{ $offerings['url'] }}">{{ $offerings['label'] }}</a>
             @endif
         </div>
     </div>
