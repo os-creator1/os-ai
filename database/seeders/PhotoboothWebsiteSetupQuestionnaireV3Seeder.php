@@ -32,7 +32,8 @@ use Illuminate\Database\Seeder;
  *    screen (`shared_fact`), not only when the website is generated.
  *
  * Idempotent: it ensures v1/v2 exist, then publishes v3 only when the
- * currently published version's step tree differs from this one.
+ * CURRENTLY PUBLISHED version's step tree differs from this one (a matching
+ * but superseded version does not count: it is published again as a new version).
  */
 class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
 {
@@ -44,10 +45,12 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
         // Already part of this definition's history (published now, or since superseded by a later version):
         // never republish it.
         $tree = self::canonical(self::steps());
-        foreach ($definition->versions()->get() as $version) {
-            if (self::canonical($version->storedSteps()) === $tree) {
-                return;
-            }
+        // Only the version that is published NOW counts as already active. A matching tree that was since superseded
+        // (A -> B -> A) is history, not the live version: it is published again as a NEW version, and the old rows are
+        // never edited.
+        $published = $definition->publishedVersion();
+        if ($published !== null && self::canonical($published->storedSteps()) === $tree) {
+            return;
         }
 
         $publisher = app(QuestionnaireVersionPublisher::class);

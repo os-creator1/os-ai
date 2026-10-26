@@ -427,28 +427,27 @@ final class GuidedGenerationCommitService
                     ]);
                 }
 
-                // A place page this rebuild no longer creates (its area has no confirmed local details any more, or no room) may
-                // already be indexed or linked to. Its address answers a permanent redirect to the home page ONLY while the
-                // place is still named in the home page's "Areas we serve" list — that is where the visitor's search is still
-                // answered. A place the owner dropped entirely is not redirected (an honest 404 beats a misleading landing
-                // page). Never overrides an owner redirect, never points anywhere but a live page, so no chain or loop.
+                // A place page this rebuild no longer creates may already be indexed or linked to. Its address answers a permanent
+                // redirect to the home page ONLY when the new home page's "Areas we serve" list names that exact place (a
+                // normalized whole-name match — "Spokane" is not "Spokane Valley"). A place the owner dropped is not redirected
+                // (an honest 404 beats a misleading landing page). Existing redirects — the owner's own, or generated earlier,
+                // which cannot be told apart — are never changed or removed here, and never point anywhere but a live page.
                 $newSlugs = collect($bound['pages'])->pluck('slug')->filter()->all();
-                $homeText = mb_strtolower((string) json_encode(collect($bound['pages'])->firstWhere('is_home', true)['sections'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                $coveredPlaces = $this->homeCoveredPlaces($bound['pages']);
                 $lost = $previous->filter(fn ($old) => ! $old->is_home && $old->slug !== null && ($old->page_role === 'location' || str_starts_with((string) $old->slug, 'serving-')))
                     ->reject(fn ($old) => in_array($old->slug, $newSlugs, true))
-                    ->filter(function ($old) use ($homeText) {
-                        $place = trim((string) (($old->page_intent['place'] ?? null) ?: ''));
-
-                        return $place !== '' && str_contains($homeText, mb_strtolower(trim(\Illuminate\Support\Str::before($place, ','))));
-                    })
+                    ->filter(fn ($old) => in_array(self::placeIdentity((string) ($old->page_intent['place'] ?? '')), $coveredPlaces, true) && self::placeIdentity((string) ($old->page_intent['place'] ?? '')) !== '')
                     ->pluck('slug')->values()->all();
                 $redirects = (array) ($locked->custom_redirects ?? []);
                 foreach ($lost as $slug) {
-                    $redirects[strtolower((string) $slug)] ??= '';
+                    // Added only while there is room: the cap never evicts a redirect somebody else may have set.
+                    if (! array_key_exists(strtolower((string) $slug), $redirects) && count($redirects) < \App\Library\Website\Seo\WebsiteRedirectManager::MAX) {
+                        $redirects[strtolower((string) $slug)] = '';
+                    }
                 }
 
                 $locked->update([
-                    'custom_redirects' => $redirects === [] ? $locked->custom_redirects : array_slice($redirects, 0, \App\Library\Website\Seo\WebsiteRedirectManager::MAX, true),
+                    'custom_redirects' => $redirects === [] ? $locked->custom_redirects : $redirects,
                     // The template's own tokens, plus the owner's brand colour,
                     // logo and hero image (never lost to a rebuild).
                     'theme' => array_merge($template->theme, \App\Library\Website\Design\WebsiteLookService::ownerTokens($locked->theme)),
@@ -527,6 +526,40 @@ final class GuidedGenerationCommitService
         }
 
         return [null, $attempts - 1];
+    }
+
+    /**
+     * The exact place identities the new home page's "Areas we serve" list covers.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, string>
+     */
+    private function homeCoveredPlaces(array $pages): array
+    {
+        $home = collect($pages)->firstWhere('is_home', true);
+        $places = [];
+
+        foreach ((array) ($home['sections'] ?? []) as $section) {
+            if (! str_contains(mb_strtolower((string) ($section['data']['heading'] ?? '')), 'areas we serve')) {
+                continue;
+            }
+
+            foreach ((array) ($section['data']['items'] ?? []) as $item) {
+                $identity = self::placeIdentity((string) (is_array($item) ? ($item['place'] ?? $item['name'] ?? '') : $item));
+
+                if ($identity !== '') {
+                    $places[$identity] = true;
+                }
+            }
+        }
+
+        return array_keys($places);
+    }
+
+    /** A place compared by its whole city name, ignoring case, punctuation and the ", ST" suffix: "Spokane, WA" = "spokane" ≠ "spokane-valley". */
+    private static function placeIdentity(string $place): string
+    {
+        return \Illuminate\Support\Str::slug(\Illuminate\Support\Str::before($place, ','));
     }
 
     /**

@@ -391,6 +391,63 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertEquals(['serving-brooklyn' => ''], $website->fresh()->custom_redirects, 'Only the place the home page still lists is redirected; the dropped one is an honest 404.');
     }
 
+    private function rebuildWith(object $business, array $savedAreas, array $confirmedAreas): void
+    {
+        $this->saveServiceAreas($business, $savedAreas);
+        $website = Website::where('business_id', $business->id)->sole();
+
+        $rebuilt = app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class)->rebuild(
+            $business->fresh(), $website->fresh(), WebsiteTemplate::findActiveOrFail('photo_booth_modern'), (int) $business->customer_id, 'rebuild-' . uniqid(), null, null, null, null, $confirmedAreas, null
+        );
+        $this->assertSame('succeeded', $rebuilt->status);
+    }
+
+    public function test_a_similarly_named_city_does_not_stand_in_for_a_removed_place(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Spokane Valley', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Spokane Valley', 'Brooklyn']));
+        $this->assertSame(2, Website::where('business_id', $business->id)->sole()->pages()->where('slug', 'like', 'serving-%')->count());
+
+        // The home page now lists "Spokane" (not Spokane Valley) and Brooklyn: only Brooklyn's old address may redirect.
+        $this->rebuildWith($business, ['Spokane', 'Brooklyn'], ['Spokane', 'Brooklyn']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
+    public function test_a_retained_area_redirects_and_a_completely_removed_one_does_not(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+
+        $this->rebuildWith($business, ['Brooklyn', 'brooklyn heights'], ['Brooklyn']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Brooklyn is still listed; Queens was removed entirely.');
+    }
+
+    public function test_existing_redirects_are_never_replaced_or_erased_by_a_rebuild(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $website = Website::where('business_id', $business->id)->sole();
+        // An owner-approved redirect for a place the rebuild will still cover, one for a page that will vanish entirely,
+        // and an old entry whose provenance cannot be told (it points at the home page).
+        $website->forceFill(['custom_redirects' => ['serving-brooklyn' => 'services', 'old-wedding-page' => 'services', 'serving-queens' => '']])->save();
+
+        $this->rebuildWith($business, ['Brooklyn', 'Bronx'], ['Bronx']);
+
+        $this->assertEquals(
+            ['serving-brooklyn' => 'services', 'old-wedding-page' => 'services', 'serving-queens' => ''],
+            Website::where('business_id', $business->id)->sole()->custom_redirects,
+            'Nothing existing is overwritten or removed, and Queens (no longer listed) gains no new redirect.'
+        );
+    }
+
     public function test_a_generation_of_near_duplicate_area_pages_fails_and_never_commits_pages(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

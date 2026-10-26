@@ -114,14 +114,19 @@ no saved answer and no published website changes; only setups started afterwards
    `php artisan tinker --execute="App\Models\QuestionnaireDefinition::where('key','photobooth_website_setup')->first()->versions()->orderBy('version_number')->get(['id','version_number','state'])->each(fn(\$v)=>print(\$v->id.' v'.\$v->version_number.' '.(\$v->state->value??\$v->state).' area_details='.json_encode(collect(\$v->storedSteps())->firstWhere('key','service_area_cities')['area_details']??null).PHP_EOL));"`
    Expect exactly one `published` row without `area_details`. A `draft` row is fine: the seeder rewrites a differing draft to the new
    steps before publishing it (it never publishes a stale draft; a draft is pinned by no session).
-3. **Activate:** `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV3Seeder --force`. It is idempotent: if any existing version
-   already has exactly this step tree it does nothing; otherwise it publishes one new version and marks the previous one superseded.
+3. **Activate:** `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV3Seeder --force`. It is idempotent: if the version that is PUBLISHED
+   NOW already has exactly this step tree it does nothing; otherwise it publishes one new version and marks the previous one superseded. A
+   superseded version that happens to match the tree does not count (A → B → A publishes a new version again); no published or
+   superseded row is ever edited.
 4. **Verify:** repeat the step 2 command — expect the new highest version `published` with `area_details=true`, the previous one
    `superseded` and unchanged, and no `draft`. Running step 3 again must change nothing. In the app, start a NEW setup and open
    "Where do you provide your services?": each row has "Add local details (optional)". An in-progress setup keeps its old screen.
 5. **Existing websites:** nothing regenerates. To use the details on an existing site the owner opens setup (a new setup starts on the new
    version), fills the panels, then explicitly rebuilds and publishes. Transparent Photo Booths is not touched by any step above.
-6. **Rollback:** publish no older version back; the new version only adds an optional panel. If it must be withdrawn, ship a code change
-   (the panel and `serviceAreas()` are keyed on the flag, so removing the flag from the seeder and re-seeding publishes a version without it).
+6. **Rollback / reactivation:** versions are never edited or re-published, so there is no "restore". To withdraw the panel, ship a code
+   change that removes `area_details` from the seeder's step and run the seeder: it publishes a new version without the flag
+   (setups started in between stay pinned to the version they began on). To bring the panel back later, restore the flag and run the
+   seeder again: because a matching but superseded version is not the live one, it publishes a fresh version with the flag. Running
+   the seeder when the live version already matches changes nothing.
 
 Browser walkthrough: `tests/e2e/area-details.mjs` (opt-in, see `tests/e2e/README.md`).

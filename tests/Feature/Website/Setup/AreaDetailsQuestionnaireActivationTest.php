@@ -78,6 +78,42 @@ class AreaDetailsQuestionnaireActivationTest extends TestCase
         $this->assertSame($published->id, $definition->fresh()->publishedVersion()->id);
     }
 
+    public function test_reactivating_a_superseded_tree_publishes_a_new_version_and_never_edits_history(): void
+    {
+        $this->seedGuidedWizard();                                       // A: the tree in code is published
+        $definition = QuestionnaireDefinition::where('key', PhotoboothWebsiteSetupQuestionnaireSeeder::KEY)->firstOrFail();
+        $a = $definition->publishedVersion();
+        $aSteps = $a->storedSteps();
+        $this->assertTrue($this->areaStep($a->steps())['area_details']);
+
+        // B: somebody publishes a different tree (here: without the capability), superseding A.
+        $publisher = app(QuestionnaireVersionPublisher::class);
+        $b = $publisher->publish($publisher->createDraft($definition, $this->withoutAreaDetails($aSteps)));
+        $this->assertSame(QuestionnaireVersionState::Superseded, $a->fresh()->state);
+        $this->assertSame($b->id, $definition->fresh()->publishedVersion()->id);
+        $count = $definition->versions()->count();
+
+        // A again: the old A row only matches the tree, it is not the live version, so a NEW version is published.
+        $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
+
+        $live = $definition->fresh()->publishedVersion();
+        $this->assertSame($count + 1, $definition->versions()->count());
+        $this->assertNotSame($a->id, $live->id);
+        $this->assertGreaterThan($b->version_number, $live->version_number);
+        $this->assertTrue($this->areaStep($live->steps())['area_details']);
+        $this->assertSame(QuestionnaireVersionState::Superseded, $a->fresh()->state, 'The old A row stays superseded.');
+        $this->assertSame(QuestionnaireVersionState::Superseded, $b->fresh()->state);
+        $this->assertSame($aSteps, $a->fresh()->storedSteps());
+        $this->assertSame($this->withoutAreaDetails($aSteps), $b->fresh()->storedSteps(), 'No published or superseded version is rewritten.');
+
+        // Repeated seeding is a no-op while the live version already matches.
+        $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
+        $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
+        $this->assertSame($count + 1, $definition->versions()->count());
+        $this->assertSame($live->id, $definition->fresh()->publishedVersion()->id);
+        $this->assertNull($definition->fresh()->draftVersion());
+    }
+
     public function test_a_clean_environment_gets_the_capability_in_its_first_v3(): void
     {
         $this->seedGuidedWizard();
