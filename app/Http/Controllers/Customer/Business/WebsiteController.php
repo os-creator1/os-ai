@@ -573,6 +573,7 @@ class WebsiteController extends CustomerBaseController
                     ?: (str_starts_with((string) $candidate->slug, 'service-')
                         ? collect($candidate->sections ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
                         : null),
+                'role' => $candidate->page_role,
                 'place' => $candidate->page_role === 'location' ? ($candidate->page_intent['place'] ?? null) : null,
                 'url' => route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid, $candidate->uid]),
             ])->all(),

@@ -64,7 +64,7 @@ final class WebsiteSeoReview
             $identity = $row['identity'];
             $subject = match ($identity['role']) {
                 WebsitePageIntent::LOCATION => 'place:' . mb_strtolower((string) $identity['place']),
-                WebsitePageIntent::SERVICE => 'offer:' . mb_strtolower((string) ($identity['offer'] ?? $row['page']->page_intent['service_uid'] ?? '')),
+                WebsitePageIntent::SERVICE, WebsitePageIntent::EVENT => $identity['role'] . ':' . mb_strtolower((string) ($identity['offer'] ?? $row['page']->page_intent['service_uid'] ?? '')),
                 default => null,
             };
 
@@ -89,7 +89,7 @@ final class WebsiteSeoReview
 
         // Place and booth pages that are the same text with a few words changed.
         $sameCopy = [];
-        $rows = $described->filter(fn ($row) => in_array($row['identity']['role'], [WebsitePageIntent::LOCATION, WebsitePageIntent::SERVICE], true))->values();
+        $rows = $described->filter(fn ($row) => in_array($row['identity']['role'], [WebsitePageIntent::LOCATION, WebsitePageIntent::SERVICE, WebsitePageIntent::EVENT], true))->values();
         $mask = array_merge(...array_map(fn ($row) => WebsitePageIntentClassifier::tokens((string) ($row['identity']['place'] ?? ''), false), $rows->all()) ?: [[]]);
         for ($a = 0; $a < $rows->count(); $a++) {
             for ($b = $a + 1; $b < $rows->count(); $b++) {
@@ -108,7 +108,7 @@ final class WebsiteSeoReview
         $islands = [];
         foreach ($described as $row) {
             $role = $row['identity']['role'];
-            if (in_array($role, [WebsitePageIntent::SERVICE, WebsitePageIntent::LOCATION, WebsitePageIntent::AREA_HUB, WebsitePageIntent::SERVICES_HUB], true) && ! $this->linksToAnotherPage($row['page'], $pages)) {
+            if (in_array($role, [WebsitePageIntent::SERVICE, WebsitePageIntent::EVENT, WebsitePageIntent::LOCATION, WebsitePageIntent::AREA_HUB, WebsitePageIntent::SERVICES_HUB], true) && ! $this->linksToAnotherPage($row['page'], $pages)) {
                 $islands[] = $row['page']->title;
             }
         }

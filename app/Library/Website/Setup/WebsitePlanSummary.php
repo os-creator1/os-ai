@@ -42,6 +42,7 @@ final class WebsitePlanSummary
             WizardPresentationAnswers::serviceAreas($response),
             $services,
             WizardPresentationAnswers::hasBackdrops($response),
+            $this->virtualEvents($business, $response),
         );
 
         $decisions = collect($explained['decisions']);
@@ -54,6 +55,27 @@ final class WebsitePlanSummary
             'areas' => $explained['areas'],
             'budget' => $explained['budget'],
         ];
+    }
+
+    /**
+     * The event types as the owner has entered them so far (unsaved), or the saved ones when the questionnaire has none.
+     *
+     * @return Collection<int, BusinessService>
+     */
+    private function virtualEvents(Business $business, QuestionnaireResponse $response): Collection
+    {
+        $rows = WizardPresentationAnswers::eventRows($response);
+
+        if ($rows === []) {
+            return $this->strategy->eligibleEventTypes($business);
+        }
+
+        return collect($rows)->map(function (array $row, int $position) {
+            $event = new BusinessService(['name' => $row['name'], 'slug' => Str::slug($row['name']), 'description' => $row['description'], 'kind' => BusinessService::KIND_EVENT, 'sort_order' => $position]);
+            $event->uid = 'preview-event-' . $position;
+
+            return $event;
+        });
     }
 
     /**

@@ -28,22 +28,27 @@ final class WebsitePageIntentClassifier
     private const PACKAGES = ['packages', 'pricing', 'prices', 'rates'];
     private const HUB_WORDS = ['area', 'areas', 'location', 'locations', 'coverage', 'serve', 'serving'];
 
-    /** @var array<int, array{name: string, distinct: array<int, string>}> */
+    /** @var array<int, array{name: string, event: bool, distinct: array<int, string>}> */
     private array $offers;
 
     /** @var array<int, array{name: string, tokens: array<int, string>}> */
     private array $places;
 
     /**
-     * @param  array<int, string>  $offerNames  the Business's active services and event types
+     * @param  array<int, string>  $offerNames  the Business's active services (booths, equipment)
      * @param  array<int, string>  $placeNames  its base city and every service area, as bare place names
+     * @param  array<int, string>  $eventNames  its active event types ("Weddings", "Corporate Events"): a page about one is an event page
      */
-    public function __construct(array $offerNames = [], array $placeNames = [])
+    public function __construct(array $offerNames = [], array $placeNames = [], array $eventNames = [])
     {
         $offers = [];
 
         foreach (array_values(array_unique(array_filter(array_map('trim', $offerNames)))) as $name) {
-            $offers[] = ['name' => $name, 'tokens' => self::tokens($name, true)];
+            $offers[] = ['name' => $name, 'event' => false, 'tokens' => self::tokens($name, true)];
+        }
+
+        foreach (array_values(array_unique(array_filter(array_map('trim', $eventNames)))) as $name) {
+            $offers[] = ['name' => $name, 'event' => true, 'tokens' => self::tokens($name, true)];
         }
 
         $all = [];
@@ -54,7 +59,7 @@ final class WebsitePageIntentClassifier
         }
 
         // A word only counts as "this offer's" when no other offer shares it ("wedding" yes, "booth" no).
-        $this->offers = array_map(fn (array $offer) => ['name' => $offer['name'], 'distinct' => array_values(array_filter(array_unique($offer['tokens']), fn ($t) => ($all[$t] ?? 0) === 1))], $offers);
+        $this->offers = array_map(fn (array $offer) => ['name' => $offer['name'], 'event' => $offer['event'], 'distinct' => array_values(array_filter(array_unique($offer['tokens']), fn ($t) => ($all[$t] ?? 0) === 1))], $offers);
 
         $this->places = array_map(fn (string $name) => ['name' => $name, 'tokens' => self::tokens($name, false)], array_values(array_unique(array_filter(array_map('trim', $placeNames)))));
     }
@@ -72,9 +77,14 @@ final class WebsitePageIntentClassifier
 
     public static function forBusiness(Business $business): self
     {
-        $offers = BusinessService::query()->where('business_id', $business->id)->where('status', 'active')->pluck('name')->all();
+        $services = BusinessService::query()->where('business_id', $business->id)->where('status', 'active')->get(['name', 'kind']);
+        $isEvent = fn ($service) => $service->kind === BusinessService::KIND_EVENT;
 
-        return new self($offers, self::placeNames($business));
+        return new self(
+            $services->reject($isEvent)->pluck('name')->all(),
+            self::placeNames($business),
+            $services->filter($isEvent)->pluck('name')->all(),
+        );
     }
 
     /**
@@ -141,9 +151,10 @@ final class WebsitePageIntentClassifier
         $place = $this->placeFor($words);
         $offer = $this->offerFor($words);
 
-        // "Wedding photo booth rental Spokane" names both: the offer is what it sells, so it is a service page.
+        // "Wedding photo booth rental Spokane" names both: the offer is what it sells. An event type makes it an event page
+        // (the occasion someone is hiring for); a booth or equipment makes it a service page.
         if ($offer !== null) {
-            return ['role' => WebsitePageIntent::SERVICE, 'place' => $place, 'offer' => $offer, 'source' => 'business'];
+            return ['role' => $offer['event'] ? WebsitePageIntent::EVENT : WebsitePageIntent::SERVICE, 'place' => $place, 'offer' => $offer['name'], 'source' => 'business'];
         }
 
         if ($place !== null) {
@@ -191,11 +202,12 @@ final class WebsitePageIntentClassifier
         return $best;
     }
 
-    private function offerFor(array $words): ?string
+    /** @return array{name: string, event: bool}|null */
+    private function offerFor(array $words): ?array
     {
         foreach ($this->offers as $offer) {
             if (array_intersect($offer['distinct'], $words) !== []) {
-                return $offer['name'];
+                return ['name' => $offer['name'], 'event' => $offer['event']];
             }
         }
 

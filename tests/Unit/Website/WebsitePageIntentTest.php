@@ -14,6 +14,7 @@ class WebsitePageIntentTest extends TestCase
         $this->assertSame(['role' => 'location', 'intent' => ['place' => 'Cheney']], WebsitePageIntent::forPlanPage(['page_type' => 'location', 'entity' => ['area' => 'Cheney']]));
         $this->assertSame(['role' => 'service', 'intent' => ['service_uid' => 'abc']], WebsitePageIntent::forPlanPage(['page_type' => 'service_detail', 'entity' => ['service_uid' => 'abc']]));
         $this->assertSame('services_hub', WebsitePageIntent::forPlanPage(['page_type' => 'services_overview'])['role']);
+        $this->assertSame(['role' => 'event', 'intent' => ['service_uid' => 'ev1']], WebsitePageIntent::forPlanPage(['page_type' => 'event_detail', 'entity' => ['service_uid' => 'ev1']]));
         $this->assertSame('other', WebsitePageIntent::forPlanPage(['page_type' => 'custom_section'])['role']);
         $this->assertNull(WebsitePageIntent::validRole('made-up'));
         $this->assertNull(WebsitePageIntent::cleanIntent(['place' => '  ', 'junk' => 'x']));
@@ -22,8 +23,9 @@ class WebsitePageIntentTest extends TestCase
     private function migratedPhotoBoothSite(): WebsitePageIntentClassifier
     {
         return new WebsitePageIntentClassifier(
-            ['Weddings', 'Corporate events', 'Parties', 'Digital Photo Booth', 'Polaroid Photo Booth'],
+            ['Digital Photo Booth', 'Polaroid Photo Booth'],
             ['Spokane', 'Spokane Valley', 'Liberty Lake', 'Cheney', 'Airway Heights', "Coeur d'Alene", 'Post Falls'],
+            ['Weddings', 'Corporate events', 'Parties'],
         );
     }
 
@@ -32,9 +34,10 @@ class WebsitePageIntentTest extends TestCase
         $classifier = $this->migratedPhotoBoothSite();
         $role = fn (string $slug, string $text = '') => $classifier->classify(['slug' => $slug, 'is_home' => false, 'title' => '', 'text' => $text])['role'];
 
-        $this->assertSame('service', $role('wedding-photo-booth-rental'));
-        $this->assertSame('service', $role('corporate-photo-booth-rental'));
-        $this->assertSame('service', $role('party-photo-booth-rental'));
+        $this->assertSame('event', $role('wedding-photo-booth-rental'), 'An event type is the occasion someone is hiring for, not a booth.');
+        $this->assertSame('event', $role('corporate-photo-booth-rental'));
+        $this->assertSame('event', $role('party-photo-booth-rental'));
+        $this->assertSame('service', $role('digital-photo-booth-rental'), 'A booth or equipment page stays a service page.');
         $this->assertSame('location', $role('cheney'));
         $this->assertSame('location', $role('airway'));
         $this->assertSame('location', $role('spokane-valley'));

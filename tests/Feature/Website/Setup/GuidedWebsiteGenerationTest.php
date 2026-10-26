@@ -375,16 +375,19 @@ class GuidedWebsiteGenerationTest extends TestCase
         $slugs = $website->pages()->where('slug', 'like', 'service-%')->pluck('slug')->all();
         $this->assertGreaterThanOrEqual(2, count($slugs));
 
+        $eventSlugs = $website->pages()->where('page_role', 'event')->pluck('slug')->all();
+        $this->assertCount(2, $eventSlugs, 'The two event types the owner described in their own words each have a page.');
+
         preg_match_all('/<a class="website-service-link" href="([^"]+)">([^<]+)<\/a>/', $html, $m);
-        $this->assertCount(count($slugs), $m[1], 'Exactly the booths that HAVE a detail page are links — events, steps, advantages, packages and booths without a page are not.');
-        foreach ($slugs as $slug) {
+        $this->assertCount(count($slugs) + count($eventSlugs), $m[1], 'Exactly the booths and event types that HAVE a page are links — steps, advantages, packages and anything without a page are not.');
+        foreach (array_merge($slugs, $eventSlugs) as $slug) {
             $this->assertContains(route('public.website.page', [$website->public_id, $slug]), $m[1]);
         }
         // Each link leads to the page of the booth it names.
         foreach ($m[1] as $i => $url) {
             $this->get($url)->assertOk()->assertSee(trim(html_entity_decode($m[2][$i])), false);
         }
-        $this->assertSame(count($slugs), substr_count($html, 'wd-card-linked'));
+        $this->assertSame(count($slugs) + count($eventSlugs), substr_count($html, 'wd-card-linked'));
         $this->assertStringNotContainsString('<a class="website-service-link" href="#"', $html);
     }
 

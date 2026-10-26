@@ -28,6 +28,7 @@ final class ArticleSiteInventory
     public const KIND_HOME = 'home';
     public const KIND_SERVICES_HUB = 'services_hub';
     public const KIND_SERVICE = 'service';
+    public const KIND_EVENT = 'event';
     public const KIND_LOCATION = 'location';
     public const KIND_AREA_HUB = 'area_hub';
     public const KIND_PACKAGES = 'packages';
@@ -35,7 +36,7 @@ final class ArticleSiteInventory
     public const KIND_OTHER = 'other';
 
     /** Kinds that carry a high-intent "hire / book this" search of their own. */
-    public const MONEY_KINDS = [self::KIND_HOME, self::KIND_SERVICES_HUB, self::KIND_SERVICE, self::KIND_LOCATION, self::KIND_PACKAGES];
+    public const MONEY_KINDS = [self::KIND_HOME, self::KIND_SERVICES_HUB, self::KIND_SERVICE, self::KIND_EVENT, self::KIND_LOCATION, self::KIND_PACKAGES];
 
     public function __construct(private readonly SeoPublishedContentReader $content)
     {
@@ -103,6 +104,7 @@ final class ArticleSiteInventory
             WebsitePageIntent::HOME => self::KIND_HOME,
             WebsitePageIntent::SERVICES_HUB => self::KIND_SERVICES_HUB,
             WebsitePageIntent::SERVICE => self::KIND_SERVICE,
+            WebsitePageIntent::EVENT => self::KIND_EVENT,
             WebsitePageIntent::LOCATION => self::KIND_LOCATION,
             WebsitePageIntent::AREA_HUB => self::KIND_AREA_HUB,
             WebsitePageIntent::PACKAGES => self::KIND_PACKAGES,

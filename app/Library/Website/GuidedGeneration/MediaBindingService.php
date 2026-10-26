@@ -159,34 +159,41 @@ final class MediaBindingService
      */
     private function linkServicePages(array $pages): array
     {
-        // Only booths the owner described have something of their own to link on from; a booth page that is just its name
+        // Booths: only ones the owner described have something of their own to link on from; a booth page that is just its name
         // and a generic line is flagged at publish time instead of being padded with more shared blocks.
-        $described = fn ($page) => ($page['page_type'] ?? null) === 'service_detail' && ! empty($page['slug']) && trim((string) ($page['entity']['description'] ?? '')) !== '';
-        $servicePages = array_values(array_filter($pages, $described));
+        // Event pages exist only because the owner described them (EventPageUsefulness), so every one of them links on to two others.
+        $groups = [
+            ['type' => 'service_detail', 'heading' => 'Also available', 'eligible' => fn ($page) => trim((string) ($page['entity']['description'] ?? '')) !== ''],
+            ['type' => 'event_detail', 'heading' => 'Other occasions', 'eligible' => fn ($page) => true],
+        ];
 
-        if (count($servicePages) < 2) {
-            return $pages;
-        }
+        foreach ($groups as $group) {
+            $members = array_values(array_filter($pages, fn ($page) => ($page['page_type'] ?? null) === $group['type'] && ! empty($page['slug']) && $group['eligible']($page)));
 
-        foreach ($pages as $index => $page) {
-            if (! $described($page)) {
+            if (count($members) < 2) {
                 continue;
             }
 
-            $buttons = [];
-            foreach ($servicePages as $other) {
-                if ($other['slug'] !== $page['slug']) {
-                    $buttons[] = ['label' => \Illuminate\Support\Str::limit((string) $other['title'], 40, ''), 'url' => '/' . $other['slug']];
+            foreach ($pages as $index => $page) {
+                if (($page['page_type'] ?? null) !== $group['type'] || empty($page['slug']) || ! $group['eligible']($page)) {
+                    continue;
                 }
-                if (count($buttons) === 2) {
-                    break;
-                }
-            }
 
-            $sections = (array) ($page['sections'] ?? []);
-            $at = collect($sections)->search(fn ($section) => in_array($section['type'] ?? null, ['cta', 'contact_details'], true));
-            array_splice($sections, $at === false ? count($sections) : $at, 0, [['type' => 'cta', 'data' => ['heading' => 'Also available', 'body' => null, 'buttons' => $buttons]]]);
-            $pages[$index]['sections'] = $sections;
+                $buttons = [];
+                foreach ($members as $other) {
+                    if ($other['slug'] !== $page['slug']) {
+                        $buttons[] = ['label' => \Illuminate\Support\Str::limit((string) $other['title'], 40, ''), 'url' => '/' . $other['slug']];
+                    }
+                    if (count($buttons) === 2) {
+                        break;
+                    }
+                }
+
+                $sections = (array) ($page['sections'] ?? []);
+                $at = collect($sections)->search(fn ($section) => in_array($section['type'] ?? null, ['cta', 'contact_details'], true));
+                array_splice($sections, $at === false ? count($sections) : $at, 0, [['type' => 'cta', 'data' => ['heading' => $group['heading'], 'body' => null, 'buttons' => $buttons]]]);
+                $pages[$index]['sections'] = $sections;
+            }
         }
 
         return $pages;

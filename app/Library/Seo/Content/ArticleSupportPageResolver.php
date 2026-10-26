@@ -185,7 +185,7 @@ final class ArticleSupportPageResolver
         $word = ' ' . trim(preg_replace('/[^\p{L}\p{N}]+/u', ' ', $hint) ?? $hint) . ' ';
 
         foreach ($pages as $page) {
-            if ($page['kind'] !== ArticleSiteInventory::KIND_SERVICE) {
+            if (! in_array($page['kind'], [ArticleSiteInventory::KIND_SERVICE, ArticleSiteInventory::KIND_EVENT], true)) {
                 continue;
             }
 
@@ -228,7 +228,8 @@ final class ArticleSupportPageResolver
      */
     private function distinguishingServicePage(array $pages, string $loweredText): ?array
     {
-        $services = array_values(array_filter($pages, fn (array $p) => $p['kind'] === ArticleSiteInventory::KIND_SERVICE));
+        // Booth/equipment pages and event pages (wedding, corporate, party) are both named by a word only they carry.
+        $services = array_values(array_filter($pages, fn (array $p) => in_array($p['kind'], [ArticleSiteInventory::KIND_SERVICE, ArticleSiteInventory::KIND_EVENT], true)));
         $wordsByPage = [];
         $count = [];
 

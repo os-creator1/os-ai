@@ -335,6 +335,7 @@ class WebsiteBlogRenderer
                 ?: (str_starts_with((string) ($candidate['slug'] ?? ''), 'service-')
                     ? collect($candidate['sections'] ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
                     : null),
+            'role' => $candidate['role'] ?? null,
             // The place a location page is about (stored page intent): a hub entry links to it by this, not by an address.
             'place' => ($candidate['role'] ?? null) === 'location' ? ($candidate['intent']['place'] ?? null) : null,
             'url' => $surface->pageUrl($candidate),

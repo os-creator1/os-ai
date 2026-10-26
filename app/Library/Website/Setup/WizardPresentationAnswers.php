@@ -152,6 +152,39 @@ final class WizardPresentationAnswers
         return $rows;
     }
 
+    /**
+     * The event types the owner entered (item_kind "event"), shown ones only, with their own descriptions — what the Review
+     * screen previews event pages from before the answers are saved as services.
+     *
+     * @return array<int, array{name: string, description: ?string}>
+     */
+    public static function eventRows(?QuestionnaireResponse $response): array
+    {
+        if ($response === null) {
+            return [];
+        }
+
+        $rows = [];
+
+        foreach ($response->version->steps() as $step) {
+            if (($step['target_module'] ?? null) !== 'business_service' || ($step['item_kind'] ?? null) !== 'event') {
+                continue;
+            }
+
+            $answer = $response->answer($step['key']);
+
+            foreach (is_array($answer) ? $answer : [] as $item) {
+                $name = trim((string) (is_array($item) ? ($item['name'] ?? '') : ''));
+
+                if ($name !== '' && (! is_array($item) || ($item['visible'] ?? true))) {
+                    $rows[] = ['name' => $name, 'description' => isset($item['description']) ? trim((string) $item['description']) : null];
+                }
+            }
+        }
+
+        return $rows;
+    }
+
     /** Whether the owner entered at least one backdrop (so a Backdrops page will be planned). */
     public static function hasBackdrops(?QuestionnaireResponse $response): bool
     {

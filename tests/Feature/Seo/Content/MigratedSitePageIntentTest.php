@@ -64,7 +64,7 @@ class MigratedSitePageIntentTest extends TestCase
         $pages = $this->pagesBySlug();
 
         $this->assertSame('home', $pages['']['kind']);
-        $this->assertSame('service', $pages['wedding-photo-booth-rental']['kind']);
+        $this->assertSame('event', $pages['wedding-photo-booth-rental']['kind'], 'Weddings is a saved event type, so the wedding page is an event page, not a booth page.');
         $this->assertSame('location', $pages['cheney']['kind']);
         $this->assertSame('Airway Heights', $pages['airway']['place']);
         $this->assertSame('area_hub', $pages['service-areas']['kind']);

@@ -5,6 +5,7 @@ namespace App\Library\Website\GuidedGeneration;
 use App\Enums\Business\BusinessKnowledgeProfileFieldKey;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Catalog\CatalogMoney;
+use App\Library\Website\EventPageUsefulness;
 use App\Library\Website\Seo\WebsiteHeadMeta;
 use App\Library\Website\Seo\WebsiteSeoText;
 use App\Library\Website\Setup\WizardContentDefaults;
@@ -65,6 +66,10 @@ final class PhotoBoothBlueprint
     public function pages(Business $business, Website $website, array $plan, array $context): array
     {
         $facts = $this->facts($business, $website, $context);
+        // What the plan decided about neighbouring pages: the events that have a page (their home cards link to it) and the
+        // packages page (an event page points on to it).
+        $facts['event_page_uids'] = collect($plan)->where('page_type', 'event_detail')->map(fn ($page) => (string) ($page['entity']['service_uid'] ?? ''))->filter()->values()->all();
+        $facts['packages_slug'] = collect($plan)->firstWhere('page_type', 'packages')['slug'] ?? null;
         $pages = [];
 
         foreach ($plan as $page) {
@@ -74,6 +79,7 @@ final class PhotoBoothBlueprint
                 'home' => $this->home($facts),
                 'services_overview' => $this->servicesOverview($facts),
                 'service_detail' => $this->serviceDetail($facts, $page),
+                'event_detail' => $this->eventDetail($facts, $page),
                 'packages' => $this->packagesPage($facts),
                 'about' => $this->about($facts),
                 'faq' => $this->faqPage($facts),
@@ -125,7 +131,8 @@ final class PhotoBoothBlueprint
 
         if ($f['events'] !== []) {
             $sections[] = ['type' => 'services', 'data' => ['heading' => 'Events we cover', 'items' => array_map(
-                fn (BusinessService $e) => array_filter(['name' => Str::limit($e->name, 120, ''), 'description' => $this->prose($e->description)]),
+                // An event type that has its own page links to it by its stable id (the renderer finds the page by identity).
+                fn (BusinessService $e) => array_filter(['name' => Str::limit($e->name, 120, ''), 'description' => $this->prose($e->description), 'service_uid' => in_array($e->uid, $f['event_page_uids'] ?? [], true) ? $e->uid : null]),
                 array_slice($f['events'], 0, 12)
             )]];
         }
@@ -198,6 +205,61 @@ final class PhotoBoothBlueprint
         $sections[] = $this->contactDetails($f['business']);
 
         return $sections;
+    }
+
+    /**
+     * An event-type page ("Wedding photo booth rental in Spokane"): the owner's own description of that event type, the booths
+     * they offer (linked to their pages), any of their own FAQ answers and customer quotes that actually mention the event, and
+     * the way on to packages and the quote. Nothing about the event is written for them: no venues, past events, reviews, prices
+     * or guarantees. The page exists only because EventPageUsefulness found the owner's own words to put on it.
+     *
+     * @param  array<string, mixed>  $f
+     * @param  array<string, mixed>  $page
+     */
+    private function eventDetail(array $f, array $page): array
+    {
+        $uid = (string) ($page['entity']['service_uid'] ?? '');
+        $event = collect($f['events'])->first(fn (BusinessService $e) => $e->uid === $uid);
+        $name = (string) ($page['title'] ?? $event?->name ?? 'Events');
+        $label = EventPageUsefulness::label($name) ?? $name;
+        $in = $f['city'] !== null ? ' in ' . $f['city'] : '';
+        $words = EventPageUsefulness::words($name);
+        $mentions = fn (string $text) => array_intersect($words, \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($text, false)) !== [];
+
+        [$prose, $features] = $event !== null ? \App\Library\Catalog\CatalogFeatureList::split($event->description) : [null, []];
+        $body = trim((string) $prose);
+        if ($features !== []) {
+            $body .= "\n\n" . 'Included: ' . implode(', ', $features) . '.';
+        }
+        $heading = 'Photo booths for ' . mb_strtolower($name);
+
+        // The owner's own photo of this event type, when they gave one, sits beside the copy; otherwise the copy stands alone
+        // (an empty photo slot would be removed along with its text).
+        $copy = $event !== null && $event->coverImage() !== null
+            ? ['type' => 'image_text', 'data' => ['heading' => Str::limit($heading, 120, ''), 'body' => Str::limit($body, 3000, ''), 'image' => null, 'image_position' => 'right', 'service_uid' => $uid]]
+            : ['type' => 'text', 'data' => ['heading' => Str::limit($heading, 120, ''), 'body' => Str::limit($body, 3000, '')]];
+
+        $booths = array_map(fn (BusinessService $s) => ['name' => Str::limit($s->name, 120, ''), 'service_uid' => $s->uid], array_slice($f['services'], 0, 4));
+
+        // Only the owner's own answers and quotes that talk about this event; a generic default is not shown as if it were about it.
+        $faq = array_values(array_filter((array) $f['customer_faq'], fn ($item) => $mentions((string) ($item['question'] ?? '') . ' ' . (string) ($item['answer'] ?? ''))));
+        $quotes = array_values(array_filter((array) $f['testimonials'], fn ($item) => $mentions((string) ($item['quote'] ?? ''))));
+
+        $cta = ['type' => 'cta', 'data' => [
+            'heading' => Str::limit('Planning ' . (preg_match('/^[aeiou]/i', $label) ? 'an ' : 'a ') . mb_strtolower($label) . ' event? Check your date', 120, ''),
+            'body' => 'Tell us about your event and we\'ll help you choose the right booth.',
+            'buttons' => array_values(array_filter([$this->primaryCta($f), $f['packages_slug'] !== null ? ['label' => 'See packages', 'url' => '/' . $f['packages_slug']] : null])),
+        ]];
+
+        return array_filter([
+            $this->hero($label . ' photo booth rental' . $in, $f['name'] . ($f['city'] !== null ? ' · ' . $f['city'] : ''), $this->primaryCta($f)),
+            $copy,
+            $booths === [] ? null : ['type' => 'services', 'data' => ['heading' => Str::limit('Booths for ' . mb_strtolower($name), 120, ''), 'items' => $booths]],
+            $quotes === [] ? null : ['type' => 'testimonials', 'data' => ['heading' => 'What customers say', 'items' => array_slice($quotes, 0, 3)]],
+            $faq === [] ? null : ['type' => 'faq', 'data' => ['heading' => Str::limit('Questions about ' . mb_strtolower($name), 120, ''), 'items' => array_slice($faq, 0, 6)]],
+            $cta,
+            $this->contactDetails($f['business']),
+        ]);
     }
 
     /** @param array<string, mixed> $f */
@@ -626,6 +688,7 @@ final class PhotoBoothBlueprint
         $subject = match ($type) {
             'home' => 'Photo Booth Rentals' . $in,
             'service_detail' => $title === '' ? 'Photo Booth Rental' . $in : (stripos($title, 'rental') !== false ? $title : $title . ' Rental') . $in,
+            'event_detail' => (EventPageUsefulness::label($title) ?? 'Event') . ' Photo Booth Rental' . $in,
             'location' => 'Photo Booth Rental in ' . ($place ?? $city ?? 'Your Area'),
             'packages' => 'Photo Booth Packages' . $in,
             'faq' => 'Photo Booth Rental FAQs',
@@ -669,6 +732,7 @@ final class PhotoBoothBlueprint
         $text = match ($type) {
             'home' => "{$f['name']} offers photo booth rentals{$in}." . ($f['services'] !== [] ? ' Choose from ' . $names($f['services'], 3) . '.' : '') . $ask,
             'service_detail' => $this->serviceSentence($f, $page) ?? "Rent the {$title} from {$f['name']}{$in}.{$ask}",
+            'event_detail' => $this->serviceSentence($f, $page, $f['events']) ?? ((EventPageUsefulness::label($title) ?? $title) . " photo booth rental from {$f['name']}{$in}.{$ask}"),
             'location' => "Photo booth rental for events in {$place} from {$f['name']}." . ($f['services'] !== [] ? ' Choose from ' . $names($f['services'], 3) . '.' : '') . $ask,
             'packages' => "Photo booth packages from {$f['name']}{$in}: compare what each includes and how pricing works.",
             'faq' => "Answers to common questions about booking {$f['name']}{$in}: timing, setup, space and what is included.",
@@ -684,10 +748,10 @@ final class PhotoBoothBlueprint
     }
 
     /** The first full sentence of the owner's own description of this booth, plus the next step; null when they wrote none. */
-    private function serviceSentence(array $f, array $page): ?string
+    private function serviceSentence(array $f, array $page, ?array $pool = null): ?string
     {
         $uid = (string) ($page['entity']['service_uid'] ?? '');
-        $service = collect($f['services'])->first(fn (BusinessService $s) => $s->uid === $uid);
+        $service = collect($pool ?? $f['services'])->first(fn (BusinessService $s) => $s->uid === $uid);
         $prose = $service !== null ? $this->prose($service->description) : null;
 
         if ($prose === null) {

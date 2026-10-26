@@ -18,6 +18,7 @@ final class WebsitePageIntent
     public const HOME = 'home';
     public const SERVICES_HUB = 'services_hub';
     public const SERVICE = 'service';
+    public const EVENT = 'event';
     public const LOCATION = 'location';
     public const AREA_HUB = 'area_hub';
     public const PACKAGES = 'packages';
@@ -30,12 +31,12 @@ final class WebsitePageIntent
     public const OTHER = 'other';
 
     public const ROLES = [
-        self::HOME, self::SERVICES_HUB, self::SERVICE, self::LOCATION, self::AREA_HUB, self::PACKAGES, self::CONTACT,
+        self::HOME, self::SERVICES_HUB, self::SERVICE, self::EVENT, self::LOCATION, self::AREA_HUB, self::PACKAGES, self::CONTACT,
         self::ABOUT, self::FAQ, self::GALLERY, self::BACKDROPS, self::LEGAL, self::OTHER,
     ];
 
     /** Roles that answer a "hire / book this" search of their own, and so must not be competed with by an article. */
-    public const COMMERCIAL = [self::HOME, self::SERVICES_HUB, self::SERVICE, self::LOCATION, self::AREA_HUB, self::PACKAGES];
+    public const COMMERCIAL = [self::HOME, self::SERVICES_HUB, self::SERVICE, self::EVENT, self::LOCATION, self::AREA_HUB, self::PACKAGES];
 
     /** The generator's plan page type -> role. */
     public static function roleForPlanType(string $pageType, bool $isHome = false): string
@@ -48,6 +49,7 @@ final class WebsitePageIntent
             'home' => self::HOME,
             'services_overview' => self::SERVICES_HUB,
             'service_detail' => self::SERVICE,
+            'event_detail' => self::EVENT,
             'location' => self::LOCATION,
             'packages' => self::PACKAGES,
             'contact' => self::CONTACT,
