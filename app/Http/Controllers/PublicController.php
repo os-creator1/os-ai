@@ -11,7 +11,7 @@
         {
             // On the MotionGrove marketing host the legacy Terms URL points to the canonical Terms & Conditions.
             if (app(\App\Library\Marketing\MarketingSite::class)->servesRequest(request())) {
-                return redirect()->to(url('terms-of-service'), 301);
+                return redirect()->to(app(\App\Library\Legal\LegalDocuments::class)->url('terms-of-service'), 301);
             }
 
             $termsOfUse     = AppConfig::where('setting', 'terms_of_use')->first();

@@ -22,7 +22,11 @@ class LegalAcceptanceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Finalised (non-draft) versions, so the fail-closed draft guard does not mask what these tests exercise.
         config(['marketing.enabled' => true, 'marketing.hosts' => [], 'legal.acceptance_enabled' => true]);
+        foreach (['terms-of-service', 'acceptable-use'] as $slug) {
+            config(['legal.documents.'.$slug.'.version' => '1.0']);
+        }
     }
 
     private function user(bool $admin = false): User
@@ -36,6 +40,12 @@ class LegalAcceptanceTest extends TestCase
     private function service(): LegalAcceptanceService
     {
         return app(LegalAcceptanceService::class);
+    }
+
+    /** Row id of a company revision (ids are not revisions: auto-increment survives rolled-back tests). */
+    private function profileId(int $revision): int
+    {
+        return (int) \App\Models\LegalCompanyProfile::query()->where('revision', $revision)->value('id');
     }
 
     private function version(): string
@@ -88,7 +98,7 @@ class LegalAcceptanceTest extends TestCase
         $this->assertStringNotContainsString('Virtual Office 5', $fresh->snapshot->rendered_html);
         $this->assertSame($originalHash, $fresh->snapshot->content_hash);
         $this->assertSame($this->version(), $fresh->document_version);
-        $this->assertSame(1, (int) $fresh->snapshot->company_profile_id);
+        $this->assertSame($this->profileId(1), (int) $fresh->snapshot->company_profile_id);
 
         // A routine address update does not demand re-acceptance...
         $this->assertTrue($this->service()->hasAccepted($user->id, 'terms-of-service'));
@@ -112,7 +122,7 @@ class LegalAcceptanceTest extends TestCase
 
         $this->assertNotSame($v1->document_version, $v2->document_version);
         $this->assertNotSame($v1->snapshot_id, $v2->snapshot_id);
-        $this->assertSame('1.0-draft', $v1->fresh()->snapshot->version);
+        $this->assertSame('1.0', $v1->fresh()->snapshot->version);
     }
 
     public function test_forged_or_stale_client_values_are_rejected_and_nothing_is_stored(): void
@@ -133,6 +143,42 @@ class LegalAcceptanceTest extends TestCase
             }
         }
         $this->assertSame(0, LegalAcceptance::query()->count());
+    }
+
+    public function test_draft_versions_are_never_offered_even_when_acceptance_is_switched_on(): void
+    {
+        $this->assertTrue($this->service()->isOffered('terms-of-service'));
+
+        config(['legal.documents.terms-of-service.version' => '1.0-draft']);
+
+        $this->assertFalse($this->service()->isOffered('terms-of-service'));
+        $this->expectsValidation(fn () => $this->service()->record($this->user(), 'terms-of-service', '1.0-draft', 'registration'));
+        $this->assertSame(0, LegalAcceptance::query()->count());
+    }
+
+    public function test_identical_body_hash_across_an_address_change_still_references_each_company_revision(): void
+    {
+        $owner = $this->user(true);
+        $slug = 'acceptable-use'; // its text does not contain the registered office, so the body hash cannot change
+
+        $first = $this->service()->record($this->user(), $slug, '1.0', 'registration');
+
+        app(LegalCompany::class)->update($owner->id, [
+            'brand_name' => 'MotionGrove', 'legal_entity' => 'Jazmin medija, MB', 'company_number' => '306304073',
+            'registered_address' => 'Virtual Office 5, Vilnius', 'country' => 'Lithuania', 'legal_email' => 'legal@getmotiongrove.com',
+        ], 1);
+
+        $second = $this->service()->record($this->user(), $slug, '1.0', 'registration');
+
+        $this->assertSame($first->snapshot->content_hash, $second->snapshot->content_hash);
+        $this->assertNotSame($first->snapshot_id, $second->snapshot_id);
+        $this->assertSame($this->profileId(1), (int) $first->fresh()->snapshot->company_profile_id);
+        $this->assertSame($this->profileId(2), (int) $second->fresh()->snapshot->company_profile_id);
+        $this->assertSame(2, LegalDocumentSnapshot::query()->where('slug', $slug)->count());
+
+        // A further acceptance under the same revision reuses that revision's snapshot.
+        $third = $this->service()->record($this->user(), $slug, '1.0', 'registration');
+        $this->assertSame($second->snapshot_id, $third->snapshot_id);
     }
 
     public function test_documents_with_unverified_facts_and_a_disabled_switch_cannot_be_accepted(): void

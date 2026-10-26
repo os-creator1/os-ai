@@ -36,7 +36,11 @@ class LegalAcceptanceService
     {
         $meta = $this->documents->meta($slug);
 
-        return $meta !== null && (bool) config('legal.acceptance_enabled') && ! empty($meta['acceptance_eligible']);
+        // Fail closed: a draft version is never offered for acceptance, whatever the switches say.
+        return $meta !== null
+            && (bool) config('legal.acceptance_enabled')
+            && ! empty($meta['acceptance_eligible'])
+            && ! preg_match('/draft/i', (string) $meta['version']);
     }
 
     /** Whether the user has accepted the version currently offered. */
@@ -77,11 +81,13 @@ class LegalAcceptanceService
 
         return DB::transaction(function () use ($user, $slug, $rendered, $context, $workspaceId, $offerRef) {
             $snapshot = LegalDocumentSnapshot::query()->firstOrCreate(
-                ['slug' => $slug, 'version' => $rendered['meta']['version'], 'content_hash' => $rendered['hash']],
                 [
+                    'slug' => $slug,
+                    'version' => $rendered['meta']['version'],
+                    'content_hash' => $rendered['hash'],
                     'company_profile_id' => (int) $rendered['company']['id'],
-                    'rendered_html' => $rendered['html'],
                 ],
+                ['rendered_html' => $rendered['html']],
             );
 
             return LegalAcceptance::query()->create([

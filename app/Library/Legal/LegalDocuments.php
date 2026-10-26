@@ -23,10 +23,32 @@ class LegalDocuments
     {
         $out = [];
         foreach ((array) config('legal.documents') as $slug => $meta) {
-            $out[$slug] = $meta + ['slug' => $slug, 'url' => url($slug)];
+            $out[$slug] = $meta + ['slug' => $slug, 'url' => $this->url($slug)];
         }
 
         return $out;
+    }
+
+    /**
+     * The canonical marketing origin: the first configured marketing host, else the platform (APP_URL) origin.
+     * Legal documents are served only there, so a link built while the request is on an application subdomain,
+     * a customer domain or an Agency domain must still point at it, never at the request host.
+     */
+    public function origin(): string
+    {
+        $app = (string) config('app.url');
+        $host = trim((string) (((array) config('marketing.hosts', []))[0] ?? ''));
+
+        if ($host === '') {
+            return rtrim($app, '/');
+        }
+
+        return (parse_url($app, PHP_URL_SCHEME) ?: 'https').'://'.$host;
+    }
+
+    public function url(string $path): string
+    {
+        return $this->origin().'/'.ltrim($path, '/');
     }
 
     public function tier(string $tier): array

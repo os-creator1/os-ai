@@ -139,6 +139,40 @@ class LegalCenterTest extends TestCase
         $this->get('http://www.motiongrove.test/terms-of-service')->assertOk();
     }
 
+    public function test_legal_urls_use_the_canonical_marketing_origin_from_any_host(): void
+    {
+        config(['marketing.hosts' => ['www.motiongrove.test']]);
+        $docs = app(LegalDocuments::class);
+        $origin = 'http://www.motiongrove.test';
+
+        // From the marketing host and from an application subdomain, the generated links are identical...
+        foreach (['http://www.motiongrove.test/register', 'http://app.motiongrove.test/register'] as $from) {
+            $this->get($from)->assertOk();
+
+            $this->assertSame($origin, $docs->origin());
+            foreach ($docs->all() as $slug => $d) {
+                $this->assertSame($origin.'/'.$slug, $d['url'], $slug.' from '.$from);
+            }
+            $partial = view('legal._links', ['docs' => array_keys($docs->all())])->render();
+            $this->assertStringContainsString('href="'.$origin.'/terms-of-service"', $partial);
+            $this->assertStringNotContainsString('app.motiongrove.test', $partial);
+        }
+
+        // ...and every one of them is a reachable legal document on that origin.
+        foreach (array_keys($docs->all()) as $slug) {
+            $this->get($origin.'/'.$slug)->assertOk()->assertSee('About this document');
+        }
+        $this->get($origin.'/legal')->assertOk();
+        $this->assertSame($origin.'/legal', $docs->url('legal'));
+    }
+
+    public function test_without_configured_marketing_hosts_links_use_the_platform_origin(): void
+    {
+        config(['marketing.hosts' => [], 'app.url' => 'https://staging.example.test']);
+
+        $this->assertSame('https://staging.example.test/security', app(LegalDocuments::class)->url('security'));
+    }
+
     public function test_hub_and_footer_expose_all_legal_documents(): void
     {
         $hub = $this->get('/legal')->assertOk()->getContent();

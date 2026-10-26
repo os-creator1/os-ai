@@ -14,7 +14,7 @@
 <article class="lg-page">
 <div class="lg-hero">
 <div class="wrap">
-<nav class="lg-crumbs" aria-label="Breadcrumb"><a href="{{ $mg->url('home') }}">Home</a><span aria-hidden="true">/</span><a href="{{ url('legal') }}">Legal</a><span aria-hidden="true">/</span><span aria-current="page">{{ $d['nav'] }}</span></nav>
+<nav class="lg-crumbs" aria-label="Breadcrumb"><a href="{{ $mg->url('home') }}">Home</a><span aria-hidden="true">/</span><a href="{{ app(\App\Library\Legal\LegalDocuments::class)->url('legal') }}">Legal</a><span aria-hidden="true">/</span><span aria-current="page">{{ $d['nav'] }}</span></nav>
 <p class="lg-cat">{{ $d['category'] }}</p>
 <h1 class="lg-title">{{ $d['title'] }}</h1>
 <p class="lg-intro">{{ $d['intro'] }}</p>

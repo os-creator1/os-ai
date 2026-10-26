@@ -1,7 +1,7 @@
 @php
     $center = $mg->legalLinks();
     $legal = $center['primary']
-        ? ['Legal' => url('legal')] + $center['primary']
+        ? ['Legal' => app(\App\Library\Legal\LegalDocuments::class)->url('legal')] + $center['primary']
         : array_filter([
             'Privacy' => $mg->link('privacy'),
             'Terms' => $mg->link('terms'),

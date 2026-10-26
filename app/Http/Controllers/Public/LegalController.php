@@ -27,7 +27,7 @@ class LegalController extends Controller
             'meta' => [
                 'title' => 'Legal Center | MotionGrove',
                 'description' => 'The terms, policies and addenda that govern the use of MotionGrove.',
-                'canonical' => url('legal'),
+                'canonical' => $this->documents->url('legal'),
                 'image' => $this->site->asset((string) $this->site->get('site.og_image')),
             ],
             'primary' => $this->documents->tier('primary'),
@@ -49,7 +49,7 @@ class LegalController extends Controller
             'meta' => [
                 'title' => $doc['meta']['seo_title'],
                 'description' => $doc['meta']['description'],
-                'canonical' => url($slug),
+                'canonical' => $this->documents->url($slug),
                 'image' => $this->site->asset((string) $this->site->get('site.og_image')),
             ],
             'doc' => $doc,
