@@ -135,7 +135,7 @@ class AgencySiteTest extends TestCase
         $this->postJson($this->url('publish', $agency))->assertNotFound();
 
         auth()->logout();
-        $this->assertContains($this->get($this->url('preview', $agency, ['page' => 'home']))->getStatusCode(), [302, 401]);
+        $this->get($this->url('preview', $agency, ['page' => 'home']))->assertNotFound();
     }
 
     // -------------------------------------------------------------- editing
@@ -884,7 +884,7 @@ class AgencySiteTest extends TestCase
 
         // Outsiders get nothing: not logged in, or a different agency's owner.
         auth()->logout();
-        $this->get($href)->assertUnauthorized();
+        $this->get($href)->assertNotFound();
         [$other, $otherOwner] = $this->agency('Other Agency');
         $this->authenticateAs($otherOwner);
         $this->get($href)->assertStatus(404);
