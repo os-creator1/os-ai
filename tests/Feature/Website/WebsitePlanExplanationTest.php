@@ -39,10 +39,10 @@ class WebsitePlanExplanationTest extends TestCase
         $this->seedSmartWizard();
     }
 
-    private function services(object $business, array $names): void
+    private function services(object $business, array $names, bool $described = true): void
     {
         foreach ($names as $i => $name) {
-            BusinessService::create(['business_id' => $business->id, 'name' => $name, 'slug' => \Illuminate\Support\Str::slug($name), 'status' => BusinessServiceStatus::Active->value, 'sort_order' => $i]);
+            BusinessService::create(['business_id' => $business->id, 'name' => $name, 'slug' => \Illuminate\Support\Str::slug($name), 'description' => $described ? "What the {$name} is and what it includes." : null, 'status' => BusinessServiceStatus::Active->value, 'sort_order' => $i]);
         }
     }
 
@@ -73,6 +73,22 @@ class WebsitePlanExplanationTest extends TestCase
         $this->assertContains('service-open-air-photo-booth', $slugs);
         $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($result['plan']));
         $this->assertSame(count($result['plan']), $result['budget']['planned']);
+    }
+
+    public function test_a_booth_beyond_the_first_five_without_a_description_stays_on_the_services_page_and_says_how_to_get_a_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business, ['Open-Air Photo Booth', 'Mirror Photo Booth', '360 Photo Booth', 'Enclosed Photo Booth', 'Selfie Pod', 'Backdrop Wall Rental', 'Roaming Booth'], false);
+
+        $decisions = collect($this->explain($business)['decisions'])->where('type', 'service_detail')->keyBy('title');
+
+        foreach (['Open-Air Photo Booth', 'Mirror Photo Booth', '360 Photo Booth', 'Enclosed Photo Booth', 'Selfie Pod'] as $core) {
+            $this->assertTrue($decisions[$core]['included'], "{$core}: the first five always get a page.");
+        }
+        foreach (['Backdrop Wall Rental', 'Roaming Booth'] as $extra) {
+            $this->assertFalse($decisions[$extra]['included']);
+            $this->assertStringContainsString('needs a description of this booth', $decisions[$extra]['reason']);
+        }
     }
 
     public function test_every_service_has_a_decision_and_every_exclusion_says_why(): void
