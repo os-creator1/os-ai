@@ -415,4 +415,20 @@ class PublicBlogTest extends TestCase
         $this->assertStringNotContainsString('/packages"', $html);
         $this->assertStringContainsString('href="https://' . self::DOMAIN . '/services">See our services</a>', $html);
     }
+
+    public function test_a_commercial_page_lists_the_published_articles_that_support_it_and_no_other_page_does(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+        $supporting = $this->publishedArticle($business, ['title' => 'How to plan wedding photo booth timing', 'primary_topic' => 'wedding photo booth timeline planning']);
+        $this->draftArticle($business, ['title' => 'A draft about wedding booths', 'slug' => 'a-draft-about-wedding-booths', 'primary_topic' => 'draft wedding booth ideas']);
+        $noindexed = $this->publishedArticle($business, ['title' => 'Hidden wedding notes', 'slug' => 'hidden-wedding-notes', 'noindex' => true, 'primary_topic' => 'hidden wedding vendor notes']);
+
+        $wedding = $this->body(self::HOST . '/service-wedding-photo-booth-rental');
+
+        $this->assertStringContainsString('data-testid="related-articles"', $wedding);
+        $this->assertStringContainsString('<a href="https://' . self::DOMAIN . '/blog/' . $supporting->slug . '">How to plan wedding photo booth timing</a>', $wedding);
+        $this->assertStringNotContainsString('a-draft-about-wedding-booths', $wedding, 'A draft is never linked.');
+        $this->assertStringNotContainsString($noindexed->slug, $wedding, 'An article the owner excluded from search is not promoted from a page.');
+        $this->assertStringNotContainsString('data-testid="related-articles"', $this->body(self::HOST . '/photo-booth-about'), 'A page no article supports shows nothing.');
+    }
 }

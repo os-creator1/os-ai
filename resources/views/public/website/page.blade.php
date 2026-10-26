@@ -189,6 +189,21 @@
                     </div>
                 @endif
             @endforeach
+            @if (! empty($relatedArticles ?? []))
+                {{-- A page the owner's published articles support lists them: descriptive links from the commercial page into the blog. --}}
+                <div class="wd-band wd-tone-{{ $design->toneFor('text') }} wd-band-related-articles" data-section="related_articles">
+                    <div class="website-container wd-container">
+                        <section class="website-section website-related-articles" aria-labelledby="related-articles-title" data-testid="related-articles">
+                            <h2 id="related-articles-title" class="wd-section-title">Helpful guides</h2>
+                            <ul>
+                                @foreach ($relatedArticles as $related)
+                                    <li><a href="{{ $related['url'] }}">{{ $related['title'] }}</a></li>
+                                @endforeach
+                            </ul>
+                        </section>
+                    </div>
+                </div>
+            @endif
         </main>
 
         @include('public.website.design.footer')

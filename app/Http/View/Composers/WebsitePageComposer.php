@@ -69,6 +69,7 @@ final class WebsitePageComposer
             'paletteClasses' => BrandColors::paletteClasses($theme),
             'hasSecondaryBrand' => BrandColors::normalize($theme['secondary_brand_color'] ?? null) !== null,
             'logo' => $logo,
+            'relatedArticles' => $isPreview ? [] : $this->relatedArticles($website, $page, $pages),
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
             // A blog article's trail (Home > Blog > article) comes from the blog renderer; every other page derives its own.
@@ -83,6 +84,30 @@ final class WebsitePageComposer
                 $isPreview,
             ), $data['headExtra'] ?? null, $isPreview),
         ]);
+    }
+
+    /**
+     * The owner's published, indexable articles that SUPPORT this page (supports_page_uid), newest first, as links the page can
+     * show ("Helpful guides"). Empty unless the site has published articles at all (the blog navigation entry is the proof),
+     * on the blog's own pages, and for any page no article supports.
+     *
+     * @param  array<int, array<string, mixed>>  $pages  the navigation pages (carry the blog entry once an article is live)
+     * @return array<int, array{title: string, url: string}>
+     */
+    private function relatedArticles(mixed $website, mixed $page, array $pages): array
+    {
+        $uid = is_object($page) ? ($page->uid ?? null) : null;
+        $blog = collect($pages)->firstWhere('slug', 'blog');
+
+        if ($website === null || ! is_string($uid) || $uid === '' || $blog === null || empty($blog['url'])) {
+            return [];
+        }
+
+        return \App\Models\WebsiteArticle::query()->published()
+            ->where('website_id', $website->id)->where('noindex', false)->where('supports_page_uid', $uid)
+            ->orderByDesc('published_at')->limit(3)->get(['title', 'slug'])
+            ->map(fn ($article) => ['title' => (string) $article->title, 'url' => rtrim((string) $blog['url'], '/') . '/' . $article->slug])
+            ->all();
     }
 
     /**
