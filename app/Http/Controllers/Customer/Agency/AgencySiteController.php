@@ -56,6 +56,20 @@ class AgencySiteController extends Controller
             ->header('X-Frame-Options', 'SAMEORIGIN');
     }
 
+    /** The draft's stylesheet in the Agency's colours: private, so a draft site is never reachable by its public id. */
+    public function previewCss(string $workspaceUid): Response
+    {
+        $agency = $this->authorizedAgency($workspaceUid);
+        $site = $this->sites->find($agency);
+        abort_if($site === null, 404);
+
+        $css = $this->renderer->css($this->renderer->site($site, AgencySiteManager::values($site), $agency->uid)->context());
+
+        return response($css)->header('Content-Type', 'text/css; charset=UTF-8')
+            ->header('X-Robots-Tag', 'noindex, nofollow')
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     /** Save answers (JSON). Returns the refreshed checklist so the editor can show status without a reload. */
     public function save(Request $request, string $workspaceUid): JsonResponse
     {

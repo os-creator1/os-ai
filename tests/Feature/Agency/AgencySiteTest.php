@@ -135,7 +135,7 @@ class AgencySiteTest extends TestCase
         $this->postJson($this->url('publish', $agency))->assertNotFound();
 
         auth()->logout();
-        $this->assertContains($this->get($this->url('preview', $agency, ['page' => 'home']))->getStatusCode(), [302, 401]);
+        $this->get($this->url('preview', $agency, ['page' => 'home']))->assertNotFound();
     }
 
     // -------------------------------------------------------------- editing

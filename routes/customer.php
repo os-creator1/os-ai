@@ -1049,6 +1049,7 @@
         // `agency.white-label.` in ViewAsProhibitedActions.
         Route::prefix('{workspaceUid}/agency/site')->name('agency.site.')->group(function () {
             Route::get('preview/{page?}', 'Agency\AgencySiteController@preview')->name('preview');
+            Route::get('preview-css/marketing.css', 'Agency\AgencySiteController@previewCss')->name('preview-css');
             Route::post('save', 'Agency\AgencySiteController@save')->middleware('throttle:120,1')->name('save');
             Route::post('step', 'Agency\AgencySiteController@step')->middleware('throttle:120,1')->name('step');
             Route::post('reset-group', 'Agency\AgencySiteController@resetGroup')->middleware('throttle:60,1')->name('reset-group');
