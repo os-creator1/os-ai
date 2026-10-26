@@ -55,14 +55,28 @@ class AreaDetailsQuestionnaireActivationTest extends TestCase
         $this->assertArrayNotHasKey('area_details', $this->areaStep($session->version->steps()), 'The pinned version has no panel.');
         $stale = app(QuestionnaireVersionPublisher::class)->createDraft($definition, $olderSteps);
 
+        // A pre-existing draft that is not the seeder's tree is never overwritten or published: activation refuses, loudly,
+        // and everything stays exactly as it was.
+        try {
+            $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
+            $this->fail('Seeding must refuse a conflicting draft.');
+        } catch (\DomainException $e) {
+            $this->assertStringContainsString('version id ' . $stale->id, $e->getMessage());
+            $this->assertStringContainsString('Refusing', $e->getMessage());
+        }
+        $this->assertSame($current->id, $definition->fresh()->publishedVersion()->id, 'Nothing was published.');
+        $this->assertSame($stale->id, $definition->fresh()->draftVersion()->id);
+        $this->assertSame($olderSteps, $definition->fresh()->draftVersion()->storedSteps());
+
+        // The operator deliberately discards the draft, then activation proceeds.
+        $stale->delete();
         $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
 
         $definition = $definition->fresh();
         $published = $definition->publishedVersion();
         $this->assertTrue($published->steps()[array_search('service_area_cities', array_column($published->steps(), 'key'), true)]['area_details'], 'The new version carries area_details.');
         $this->assertGreaterThan($current->version_number, $published->version_number);
-        $this->assertNull($definition->draftVersion(), 'The leftover draft was consumed, not left behind.');
-        $this->assertSame($stale->id, $published->id, 'The draft itself was brought up to date and published (never published stale).');
+        $this->assertNull($definition->draftVersion());
         $this->assertSame(QuestionnaireVersionState::Superseded, $current->fresh()->state);
         $this->assertSame($olderSteps, $current->fresh()->storedSteps(), 'The old version is immutable.');
 
@@ -138,30 +152,47 @@ class AreaDetailsQuestionnaireActivationTest extends TestCase
         $this->assertTrue($this->areaStep($this->wizardSession()->version->steps())['area_details']);
     }
 
-    public function test_the_v2_step_never_publishes_an_unrelated_draft_or_leaves_an_intermediate_version_live(): void
+    public function test_an_unrelated_draft_makes_the_whole_activation_refuse_and_roll_back(): void
     {
-        // A database that has only v1, with a draft nobody recognises.
+        // A database that has only v1, with a draft nobody can vouch for.
         $this->seed(PhotoboothWebsiteSetupQuestionnaireSeeder::class);
         $definition = QuestionnaireDefinition::where('key', PhotoboothWebsiteSetupQuestionnaireSeeder::KEY)->firstOrFail();
         $v1 = $definition->publishedVersion();
         $unrelated = array_slice($v1->storedSteps(), 0, 3);
-        app(QuestionnaireVersionPublisher::class)->createDraft($definition, $unrelated);
+        $draft = app(QuestionnaireVersionPublisher::class)->createDraft($definition, $unrelated);
+        $snapshot = fn () => $definition->versions()->orderBy('id')->get(['id', 'version_number', 'state', 'definition', 'published_at'])->toArray();
+        $before = $snapshot();
+
+        foreach ([PhotoboothWebsiteSetupQuestionnaireV3Seeder::class, \Database\Seeders\PhotoboothWebsiteSetupQuestionnaireV2Seeder::class] as $seeder) {
+            try {
+                $this->seed($seeder);
+                $this->fail("{$seeder} must refuse a conflicting draft.");
+            } catch (\DomainException $e) {
+                $this->assertStringContainsString('version id ' . $draft->id, $e->getMessage());
+            }
+
+            $this->assertEquals($before, $snapshot(), 'No version was created, published, superseded or edited — including the intermediate v2.');
+            $this->assertSame($draft->id, $definition->fresh()->draftVersion()->id);
+            $this->assertSame($unrelated, $definition->fresh()->draftVersion()->storedSteps());
+            $this->assertSame($v1->id, $definition->fresh()->publishedVersion()->id);
+        }
+    }
+
+    public function test_a_draft_that_is_exactly_the_seeders_tree_is_simply_published_and_the_run_is_idempotent(): void
+    {
+        $this->seedGuidedWizard();
+        $definition = QuestionnaireDefinition::where('key', PhotoboothWebsiteSetupQuestionnaireSeeder::KEY)->firstOrFail();
+        $current = $definition->publishedVersion();
+        $full = $current->storedSteps();
+        $current->forceFill(['definition' => ['steps' => $this->withoutAreaDetails($full)]])->save();
+        $draft = app(QuestionnaireVersionPublisher::class)->createDraft($definition, $full);
 
         $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
 
-        $definition = $definition->fresh();
-        $versions = $definition->versions()->orderBy('version_number')->get();
-        $published = $definition->publishedVersion();
-        $this->assertTrue($this->areaStep($published->steps())['area_details'], 'The live version is v3.');
-        $this->assertNull($definition->draftVersion());
-        $this->assertSame(QuestionnaireVersionState::Superseded, $v1->fresh()->state);
-        $this->assertSame($v1->storedSteps(), $v1->fresh()->storedSteps(), 'v1 is untouched.');
-        $this->assertCount(3, $versions, 'v1, v2 and v3 — and nothing else.');
-        $this->assertNotContains(json_encode($unrelated), $versions->map(fn ($v) => json_encode($v->storedSteps()))->all(), 'The unrelated draft was never published.');
-        $this->assertSame(1, $versions->where('state', QuestionnaireVersionState::Published)->count());
-
+        $this->assertSame($draft->id, $definition->fresh()->publishedVersion()->id, 'An identical draft is safe to publish.');
+        $count = $definition->versions()->count();
         $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
-        $this->assertSame(3, $definition->versions()->count(), 'Idempotent.');
+        $this->assertSame($count, $definition->versions()->count());
     }
 
     public function test_a_clean_environment_gets_the_capability_in_its_first_v3(): void

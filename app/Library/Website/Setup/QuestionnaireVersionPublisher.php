@@ -66,27 +66,6 @@ final class QuestionnaireVersionPublisher
     }
 
     /**
-     * Replaces the step tree of an existing, UNPUBLISHED draft (validated like createDraft). A draft is not pinned by any
-     * setup session, so rewriting it affects nobody; a published or superseded version is immutable and refused.
-     */
-    public function replaceDraftSteps(QuestionnaireVersion $draft, array $steps): QuestionnaireVersion
-    {
-        $this->definitionValidator->validate($steps);
-
-        return DB::transaction(function () use ($draft, $steps) {
-            $locked = QuestionnaireVersion::whereKey($draft->id)->lockForUpdate()->firstOrFail();
-
-            if (! $locked->isDraft()) {
-                throw new \DomainException('Only a draft version can be rewritten.');
-            }
-
-            $locked->forceFill(['definition' => ['steps' => $steps]])->save();
-
-            return $locked->refresh();
-        });
-    }
-
-    /**
      * Publishes a draft version: supersedes the definition's current
      * published version (if any) and promotes this draft, atomically.
      * Refuses a version that is not currently a draft — a published or

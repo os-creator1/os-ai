@@ -112,9 +112,8 @@ no saved answer and no published website changes; only setups started afterwards
    adds two nullable columns to `website_pages` and sorts after the newest migration already on `main` (`2026_12_05_100001…`).
 2. **Look before seeding (read-only):**
    `php artisan tinker --execute="App\Models\QuestionnaireDefinition::where('key','photobooth_website_setup')->first()->versions()->orderBy('version_number')->get(['id','version_number','state'])->each(fn(\$v)=>print(\$v->id.' v'.\$v->version_number.' '.(\$v->state->value??\$v->state).' area_details='.json_encode(collect(\$v->storedSteps())->firstWhere('key','service_area_cities')['area_details']??null).PHP_EOL));"`
-   Expect exactly one `published` row without `area_details`. A `draft` row is fine: the seeder rewrites a differing draft to the new
-   steps before publishing it (it never publishes a stale draft; a draft is pinned by no session).
-3. **Activate** (one database transaction, so no setup can start on an intermediate v2 on a database that still needs it; a leftover draft whose steps differ is rewritten to the seeder's tree, never published as-is): `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV3Seeder --force`. It is idempotent: if the version that is PUBLISHED
+   Expect exactly one `published` row without `area_details`. A `draft` row will make step 3 refuse (see below) unless it is exactly the new tree — decide about it first.
+3. **Activate** (one database transaction, so no setup can start on an intermediate v2 on a database that still needs it; a draft that already exists is used only if its steps are exactly the seeder's tree; any other draft makes the seeder REFUSE with a diagnostic naming its version id, rolls everything back and leaves the draft untouched — nothing proves who wrote it, so publish or discard it deliberately and run the seeder again): `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV3Seeder --force`. It is idempotent: if the version that is PUBLISHED
    NOW already has exactly this step tree it does nothing; otherwise it publishes one new version and marks the previous one superseded. A
    superseded version that happens to match the tree does not count (A → B → A publishes a new version again); no published or
    superseded row is ever edited.

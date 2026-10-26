@@ -64,13 +64,17 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
         $publisher = app(QuestionnaireVersionPublisher::class);
         $draft = $definition->draftVersion();
 
-        // A leftover draft (an earlier seed that was interrupted, or one from before a step was added) must not be
-        // published as-is: it would activate the OLD steps and the seeder would believe it had shipped the new ones.
-        // A draft is pinned by no setup session, so it is brought to this tree first.
+        // There is no marker that proves a draft was written by a seeder, so ownership is never guessed. A draft is used
+        // only when its steps are EXACTLY this tree (publishing it changes nothing); any other draft is somebody's work:
+        // refuse, change nothing (inside the V3 transaction everything rolls back) and say how to resolve it.
         if ($draft === null) {
             $draft = $publisher->createDraft($definition, self::steps());
         } elseif (self::canonical($draft->storedSteps()) !== $tree) {
-            $draft = $publisher->replaceDraftSteps($draft, self::steps());
+            throw new \DomainException(
+                'Refusing to seed the v3 questionnaire: the definition "' . $definition->key . '" already has a draft (version id ' . $draft->id
+                . ', version number ' . $draft->version_number . ') whose steps differ from the seeder\'s, and nothing proves the seeder wrote it. '
+                . 'It was left exactly as it is and nothing was published. Publish or discard that draft deliberately, then run the seeder again.'
+            );
         }
 
         $publisher->publish($draft);
