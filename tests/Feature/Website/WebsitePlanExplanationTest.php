@@ -53,6 +53,10 @@ class WebsitePlanExplanationTest extends TestCase
             WebsiteAsset::forceCreate(['website_id' => $website->id, 'disk' => 'public', 'path' => "images/x{$i}.png", 'mime_type' => 'image/png', 'size' => 1, 'width' => 1, 'height' => 1, 'content_hash' => str_repeat((string) $i, 64), 'purpose' => 'gallery']);
         }
 
+        // These tests are about the page BUDGET, so the areas carry the confirmed local details that earn a page
+        // (LocalAreaUsefulness); a bare list of city names is covered in WebsiteServiceAreaPagesTest.
+        $areas = $areas === null ? null : array_map(fn ($area) => is_array($area) ? $area : ['name' => $area, 'details' => ['logistics' => "We confirmed how serving {$area} works."]], $areas);
+
         return app(WebsitePageStrategy::class)->planWithExplanation($business, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website, null, null, $areas);
     }
 

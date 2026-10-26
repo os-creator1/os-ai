@@ -89,7 +89,11 @@ class GuidedWebsiteGenerationTest extends TestCase
         $this->assertSame('Request a quote', $home['hero'][0]['primary_cta']['label']);
 
         $headings = array_map(fn ($d) => $d['heading'] ?? '', $home['services']);
-        $this->assertSame(['Our photo booths', 'Packages', 'Events we cover', 'How booking works', 'Why choose Glow Booths'], $headings, 'Booths, packages, events, how booking works and the confirmed advantages — in that order, each from real facts.');
+        $this->assertSame(['Our photo booths', 'Packages', 'Events we cover', 'How booking works', 'Why choose Glow Booths', 'Areas we serve'], $headings, 'Booths, packages, events, how booking works, the confirmed advantages and the confirmed service areas — in that order, each from real facts.');
+
+        $hub = collect($home['services'])->firstWhere('heading', 'Areas we serve');
+        $this->assertContains('Irvine', array_column($hub['items'], 'name'), 'The areas list is the saved service areas, base city first — a visible, crawlable list, never city pages.');
+        $this->assertSame(array_column($hub['items'], 'name'), array_column($hub['items'], 'place'), 'Each entry carries its place so it links to a page about it when the site has one.');
 
         // Nothing is an empty shell: every list has items, every text has a body.
         foreach ($home['services'] as $section) {
@@ -111,6 +115,30 @@ class GuidedWebsiteGenerationTest extends TestCase
         $this->assertGreaterThanOrEqual(3, count($home['gallery'][0]['items']));
         $this->assertSame('Floral wall', $home['backdrops'][0]['items'][0]['name']);
         $this->assertNotEmpty($home['backdrops'][0]['items'][0]['images'][0]['url']);
+    }
+
+    public function test_generated_titles_and_descriptions_are_intent_led_finished_and_unique_and_every_page_records_what_it_is(): void
+    {
+        $this->fullSetup();
+        $website = $this->generate();
+        $pages = $website->pages()->get();
+        $home = $pages->firstWhere('is_home', true);
+
+        $this->assertSame('Photo Booth Rentals in Irvine | Glow Booths', $home->seo_title, 'What the page is for first, the brand after it.');
+        $this->assertSame('home', $home->page_role);
+
+        foreach ($pages as $page) {
+            $this->assertSame(1, substr_count(mb_strtolower((string) $page->seo_title), 'glow booths'), "{$page->slug}: the brand appears once in the title.");
+            $this->assertLessThanOrEqual(70, mb_strlen((string) $page->seo_title));
+            $this->assertLessThanOrEqual(160, mb_strlen((string) $page->meta_description));
+            $this->assertDoesNotMatchRegularExpression('/(\.\.\.|…)$/u', (string) $page->meta_description, "{$page->slug}: no meaningless ellipsis.");
+            $this->assertMatchesRegularExpression('/[.!?]$/', (string) $page->meta_description, "{$page->slug}: the description ends on a finished sentence.");
+            $this->assertNotNull($page->page_role, "{$page->slug}: the page-intent map is stored.");
+        }
+
+        $this->assertSame($pages->count(), $pages->pluck('seo_title')->unique()->count(), 'Every title is unique.');
+        $this->assertSame($pages->count(), $pages->pluck('meta_description')->unique()->count(), 'Every description is unique.');
+        $this->assertSame(['service'], $pages->filter(fn ($p) => str_starts_with((string) $p->slug, 'service-'))->pluck('page_role')->unique()->values()->all());
     }
 
     public function test_the_other_pages_are_complete_too(): void

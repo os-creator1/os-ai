@@ -115,6 +115,8 @@
     @endif
     @php($theme = $websiteMeta['theme'] ?? [])
     @php($servicePageUrls = collect($navigationPages ?? [])->filter(fn ($navPage) => ! empty($navPage['service_uid']) && ! empty($navPage['url']))->mapWithKeys(fn ($navPage) => [$navPage['service_uid'] => $navPage['url']])->all())
+    {{-- place (slug) => the location page about it, so an "Areas we serve" entry links to its page by identity, not by address --}}
+    @php($placePageUrls = collect($navigationPages ?? [])->filter(fn ($navPage) => ! empty($navPage['place']) && ! empty($navPage['url']))->mapWithKeys(fn ($navPage) => [\Illuminate\Support\Str::slug((string) $navPage['place']) => $navPage['url']])->all())
     @if (! empty($theme))
         <style>
             :root {
@@ -178,10 +180,10 @@
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
                     <div class="wd-band wd-tone-{{ $design->toneFor($toneKey) }} wd-band-{{ $toneKey }}" data-section="{{ $toneKey }}">
                         @if ($type === 'hero')
-                            @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'heroImageFallback' => $heroImageFallback])
+                            @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls, 'heroImageFallback' => $heroImageFallback])
                         @else
                             <div class="website-container wd-container">
-                                @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls])
+                                @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls])
                             </div>
                         @endif
                     </div>
@@ -272,7 +274,7 @@
                 @foreach ($sections as $section)
                     @php($componentView = 'public.website.components.' . ($section['type'] ?? ''))
                     @if (\Illuminate\Support\Facades\View::exists($componentView))
-                        @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls])
+                        @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls])
                     @endif
                 @endforeach
             </div>

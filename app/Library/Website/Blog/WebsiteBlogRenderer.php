@@ -331,9 +331,12 @@ class WebsiteBlogRenderer
             'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
             // A service-detail page names the catalog service it presents, so a booth card can link to it by id —
             // never by a guessed address.
-            'service_uid' => str_starts_with((string) ($candidate['slug'] ?? ''), 'service-')
-                ? collect($candidate['sections'] ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
-                : null,
+            'service_uid' => ($candidate['intent']['service_uid'] ?? null)
+                ?: (str_starts_with((string) ($candidate['slug'] ?? ''), 'service-')
+                    ? collect($candidate['sections'] ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
+                    : null),
+            // The place a location page is about (stored page intent): a hub entry links to it by this, not by an address.
+            'place' => ($candidate['role'] ?? null) === 'location' ? ($candidate['intent']['place'] ?? null) : null,
             'url' => $surface->pageUrl($candidate),
         ])->all();
 

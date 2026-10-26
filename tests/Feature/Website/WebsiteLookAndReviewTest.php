@@ -76,7 +76,8 @@ class WebsiteLookAndReviewTest extends TestCase
         $response->assertSee('data-testid="website-plan"', false);
         $response->assertSee('Your website plan');
         $response->assertSee('pages will be built');
-        $response->assertSee('Service areas saved 3 / local pages planned 3');
+        $response->assertSee('Service areas saved 3 / local pages planned 0');
+        $response->assertSee('would be a doorway page', false);
         $response->assertSee('Open Air Booth');
         $response->assertSee('Weddings');
         $response->assertSee('Gallery');

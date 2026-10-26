@@ -402,7 +402,7 @@ final class GuidedGenerationCommitService
                 // let search engines find their pages, the rebuilt pages stay open, and a
                 // page the owner hid on purpose stays hidden (matched by its address). A
                 // first generation, or a site never released, stays hidden until reviewed.
-                $previous = $locked->pages()->get(['slug', 'is_home', 'noindex', 'noindex_explicit']);
+                $previous = $locked->pages()->get(['slug', 'is_home', 'page_role', 'noindex', 'noindex_explicit']);
                 $ownerOpened = $locked->indexing_released_at !== null;
                 $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_explicit)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
 
@@ -427,7 +427,19 @@ final class GuidedGenerationCommitService
                     ]);
                 }
 
+                // A place page this rebuild no longer creates (its area has no confirmed local details any more) may already be
+                // indexed or linked to: its address answers a permanent redirect to the home page, which lists the area,
+                // instead of a 404. Frozen into the next published revision like any owner redirect.
+                $newSlugs = collect($bound['pages'])->pluck('slug')->filter()->all();
+                $lost = $previous->filter(fn ($old) => ! $old->is_home && $old->slug !== null && ($old->page_role === 'location' || str_starts_with((string) $old->slug, 'serving-')))
+                    ->pluck('slug')->reject(fn ($slug) => in_array($slug, $newSlugs, true))->values()->all();
+                $redirects = (array) ($locked->custom_redirects ?? []);
+                foreach ($lost as $slug) {
+                    $redirects[strtolower((string) $slug)] ??= '';
+                }
+
                 $locked->update([
+                    'custom_redirects' => $redirects === [] ? $locked->custom_redirects : array_slice($redirects, 0, \App\Library\Website\Seo\WebsiteRedirectManager::MAX, true),
                     // The template's own tokens, plus the owner's brand colour,
                     // logo and hero image (never lost to a rebuild).
                     'theme' => array_merge($template->theme, \App\Library\Website\Design\WebsiteLookService::ownerTokens($locked->theme)),

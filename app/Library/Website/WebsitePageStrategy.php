@@ -307,7 +307,7 @@ final class WebsitePageStrategy
      *     (up to MAX_AREA_PAGES), until the budget is full.
      * Nothing is ever dropped silently: every candidate has a decision.
      *
-     * @return array{plan: array<int, array>, decisions: array<int, array{key: string, title: string, type: string, included: bool, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>}, budget: array{max: int, planned: int}}
+     * @return array{plan: array<int, array>, decisions: array<int, array{key: string, title: string, type: string, included: bool, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>, hub: array<int, string>}, budget: array{max: int, planned: int}}
      */
     public function planWithExplanation(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?Collection $servicesOverride = null, ?bool $backdropsOverride = null): array
     {
@@ -340,8 +340,30 @@ final class WebsitePageStrategy
         $slots = max(0, self::MAX_TOTAL_PAGES - $mandatory);
 
         $serviceCandidates = $hasType('service_detail') ? $services->take(self::MAX_SERVICE_DETAIL_PAGES)->values() : collect();
+
+        // A booth beyond the first CORE_SERVICE_PAGES earns a page of its own only when the owner described it: a page that is
+        // just a name and a generic line differs from its siblings by one word (a doorway page). It stays on the services page.
+        $undescribed = $serviceCandidates->filter(fn ($service, $index) => $index >= self::CORE_SERVICE_PAGES && trim((string) $service->description) === '');
+        $serviceCandidates = $serviceCandidates->reject(fn ($service, $index) => $undescribed->has($index))->values();
         $locationCandidates = $hasType('location') ? $this->eligibleLocations($business)->take(self::MAX_LOCATION_PAGES)->values() : collect();
-        $areaCandidates = $hasType('location') ? $this->plannedAreas($serviceAreas, $services, $catalogItems) : [];
+        $areaEntries = $hasType('location') ? $this->plannedAreas($serviceAreas, $services, $catalogItems) : [];
+        $areaCandidates = array_column($areaEntries, 'name');
+
+        // The local-usefulness bar (LocalAreaUsefulness): an area earns its own page only with a local fact the owner
+        // confirmed. The rest stay in the visible "Areas we serve" list — never a page that differs by the city name alone.
+        $baseCity = $business->primaryLocation()->first()?->city;
+        $areaDetails = [];
+        $hubOnly = [];
+        $usefulAreas = [];
+        foreach ($areaEntries as $entry) {
+            $assessment = LocalAreaUsefulness::assess($entry, $baseCity);
+            $areaDetails[$entry['name']] = $entry['details'];
+            if ($assessment['qualifies']) {
+                $usefulAreas[] = $entry['name'];
+            } else {
+                $hubOnly[$entry['name']] = $assessment['reason'];
+            }
+        }
 
         // Slugs already spoken for by the fixed and saved-location pages: an
         // area that would land on one is skipped, never two pages at one URL.
@@ -363,7 +385,7 @@ final class WebsitePageStrategy
         }
         $areaExcluded = [];
         $areaQueue = [];
-        foreach ($areaCandidates as $area) {
+        foreach ($usefulAreas as $area) {
             $slug = WebsiteSlugRules::bounded('serving-', (string) $area, 'area');
             if (in_array($slug, $usedSlugs, true)) {
                 $areaExcluded[] = ['area' => $area, 'reason' => 'Already covered by another page at the same address.'];
@@ -450,6 +472,9 @@ final class WebsitePageStrategy
                 $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Move it higher in your services list to include it.');
             }
         }
+        foreach ($undescribed as $service) {
+            $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Listed on your services page without a page of its own: a page needs a description of this booth (what it is and what is included) so it is not a copy of your other pages. Add one and it is planned.');
+        }
         foreach ($hasType('service_detail') ? $services->slice(self::MAX_SERVICE_DETAIL_PAGES) : [] as $service) {
             $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: a website builds at most ' . self::MAX_SERVICE_DETAIL_PAGES . ' service pages.');
         }
@@ -520,8 +545,13 @@ final class WebsitePageStrategy
             }
         }
 
-        $primaryCity = $business->primaryLocation()->first()?->city;
+        $primaryCity = $baseCity;
         $plannedAreas = [];
+
+        foreach ($hubOnly as $area => $reason) {
+            $areaExcluded[] = ['area' => (string) $area, 'reason' => $reason];
+            $decide('area:' . Str::slug((string) $area), 'Serving ' . $area, 'location', false, $reason);
+        }
 
         foreach ($areaQueue as $index => $area) {
             if ($index < $areasPlanned) {
@@ -532,7 +562,7 @@ final class WebsitePageStrategy
                     'slug' => WebsiteSlugRules::bounded('serving-', (string) $area, 'area'),
                     'title' => 'Serving ' . $area,
                     'allowed_section_types' => $allowed('location'),
-                    'entity' => $this->areaEntity($area, $areaCandidates, $services, $primaryCity),
+                    'entity' => $this->areaEntity($area, $areaCandidates, $services, $primaryCity, $areaDetails[$area] ?? []),
                 ];
                 $plannedAreas[] = $area;
                 $decide('area:' . Str::slug($area), 'Serving ' . $area, 'location', true, 'One of your top service areas (your order).');
@@ -553,6 +583,8 @@ final class WebsitePageStrategy
                 'planned' => count($plannedAreas),
                 'planned_list' => $plannedAreas,
                 'excluded' => $areaExcluded,
+                // Every area without a page of its own: still named in the "Areas we serve" section of the home page.
+                'hub' => array_values(array_diff($areaCandidates, $plannedAreas)),
             ],
             'budget' => ['max' => self::MAX_TOTAL_PAGES, 'planned' => count($plan)],
         ];
@@ -576,12 +608,12 @@ final class WebsitePageStrategy
     }
 
     /**
-     * The owner's chosen service areas that earn a page: distinct URLs,
-     * priority order preserved, capped, and only when the Business has real
-     * service content to write about for them.
+     * The owner's chosen service areas, normalized (a bare name, or a name with confirmed local details): distinct URLs,
+     * priority order preserved, and only when the Business has real service content to write about for them. Which of
+     * them earn a page is decided by LocalAreaUsefulness; the rest are listed on the home page.
      *
-     * @param  ?array<int, string>  $serviceAreas
-     * @return array<int, string>
+     * @param  ?array<int, string|array{name: string, details?: array<string, mixed>}>  $serviceAreas
+     * @return array<int, array{name: string, details: array<string, mixed>}>
      */
     private function plannedAreas(?array $serviceAreas, Collection $services, Collection $catalogItems): array
     {
@@ -592,11 +624,11 @@ final class WebsitePageStrategy
         $seen = [];
         $areas = [];
 
-        foreach ($serviceAreas as $area) {
-            $area = trim((string) $area);
-            $slug = Str::slug($area);
+        foreach ($serviceAreas as $entry) {
+            $area = LocalAreaUsefulness::normalize($entry);
+            $slug = $area === null ? '' : Str::slug($area['name']);
 
-            if ($area === '' || $slug === '' || isset($seen[$slug])) {
+            if ($area === null || $slug === '' || isset($seen[$slug])) {
                 continue;
             }
 
@@ -613,11 +645,13 @@ final class WebsitePageStrategy
      * about the area is invented — no landmarks, distances or statistics.
      *
      * @param  array<int, string>  $areas
+     * @param  array<string, mixed>  $localFacts  the local details the owner confirmed for this area (LocalAreaUsefulness)
      */
-    private function areaEntity(string $area, array $areas, Collection $services, ?string $primaryCity): array
+    private function areaEntity(string $area, array $areas, Collection $services, ?string $primaryCity, array $localFacts = []): array
     {
         return array_filter([
             'area' => $area,
+            'local_facts' => $localFacts,
             'business_home_city' => $primaryCity ?: null,
             'nearby_areas' => array_slice(array_values(array_filter($areas, fn ($other) => $other !== $area)), 0, self::MAX_AREA_NEIGHBORS),
             'services' => $services->take(8)->pluck('name')->values()->all(),

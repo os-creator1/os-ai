@@ -33,7 +33,7 @@
             @if ($plan['areas']['saved'] > 0)
                 <div class="border-top pt-3" data-testid="area-plan">
                     <div class="fw-bold" data-testid="area-summary">Service areas saved {{ $plan['areas']['saved'] }} / local pages planned {{ $plan['areas']['planned'] }}</div>
-                    <div class="text-caption mb-2">Every area you entered stays listed as a service area. Your first areas get their own page, in the order you entered them — put your most important area first.</div>
+                    <div class="text-caption mb-2">Every area you entered stays listed as a service area on your home page. An area gets its own page only when you have told us something specific to it (a venue you have worked at, how serving it works, or an event photo from there); otherwise a page would only swap the city name.</div>
                     @if (count($plan['areas']['planned_list']) > 0)
                         <div class="small text-label">Areas that get their own page</div>
                         <ul class="ps-3 small mb-1" data-testid="area-planned-list">

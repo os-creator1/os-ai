@@ -5,6 +5,8 @@ namespace App\Library\Website\GuidedGeneration;
 use App\Enums\Business\BusinessKnowledgeProfileFieldKey;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Catalog\CatalogMoney;
+use App\Library\Website\Seo\WebsiteHeadMeta;
+use App\Library\Website\Seo\WebsiteSeoText;
 use App\Library\Website\Setup\WizardContentDefaults;
 use App\Library\Website\WebsitePageStrategy;
 use App\Enums\Website\WebsiteAssetPurpose;
@@ -86,8 +88,8 @@ final class PhotoBoothBlueprint
             $pages[] = [
                 'page_key' => (string) $page['page_key'],
                 'title' => (string) ($page['title'] ?? $facts['name']),
-                'seo_title' => $this->seoTitle((string) ($page['title'] ?? ''), $facts, $type === 'home'),
-                'meta_description' => $this->metaDescription($facts, $type, (string) ($page['title'] ?? '')),
+                'seo_title' => $this->seoTitle($facts, $type, $page),
+                'meta_description' => $this->metaDescription($facts, $type, $page),
                 'sections' => array_values(array_filter($sections)),
             ];
         }
@@ -185,7 +187,9 @@ final class PhotoBoothBlueprint
             $body .= "\n\nIncluded: " . implode(', ', $features) . '.';
         }
 
-        $sections = [$this->hero($name, $f['name'] . ($f['city'] !== null ? ' · ' . $f['city'] : ''), $this->primaryCta($f))];
+        // The page's main heading names the booth and, once, where it is offered; the brand sits in the subheading.
+        $heading = $f['city'] !== null && stripos($name, (string) $f['city']) === false ? $name . ' in ' . $f['city'] : $name;
+        $sections = [$this->hero($heading, $f['name'] . ($f['city'] !== null ? ' · ' . $f['city'] : ''), $this->primaryCta($f))];
 
         // The picture beside the copy is this service's OWN photo (bound by id after the pages are written);
         // a service with no photo simply has no picture here — never another booth's.
@@ -242,18 +246,58 @@ final class PhotoBoothBlueprint
     }
 
     /**
+     * A place page says only what the owner confirmed about THAT place: the saved location's own service cities and radius, or
+     * the local details they gave (venues they have worked at, how serving it really works, event photos from there). Nothing
+     * is added to make it longer, and the booths are listed by name (linking to their own pages) so the page repeats no
+     * paragraph that appears on another page.
+     *
      * @param  array<string, mixed>  $f
      * @param  array<string, mixed>  $page
      */
     private function location(array $f, array $page): array
     {
-        $place = (string) ($page['entity']['city'] ?? $page['entity']['area'] ?? $page['title'] ?? $f['city'] ?? '');
+        $entity = is_array($page['entity'] ?? null) ? $page['entity'] : [];
+        $place = $this->placeOf($f, $page) ?? (string) ($page['title'] ?? $f['city'] ?? '');
+        $region = trim((string) ($entity['region'] ?? ''));
+        $local = (array) ($entity['local_facts'] ?? []);
+        $paragraphs = [$f['name'] . ' brings its photo booths to events in ' . $place . ($region !== '' ? ', ' . $region : '') . '.'];
+
+        $covered = array_values(array_filter(array_map(fn ($city) => trim((string) Str::before((string) $city, ',')), (array) ($entity['service_area_cities'] ?? []))));
+        if ($covered !== []) {
+            $paragraphs[] = 'From ' . $place . ' we also serve ' . $this->joinList(array_slice($covered, 0, 8)) . '.';
+        }
+
+        if (! empty($entity['service_radius_km'])) {
+            $paragraphs[] = 'We serve events within about ' . (int) $entity['service_radius_km'] . ' km of ' . $place . '.';
+        }
+
+        if (! empty($local['venues'])) {
+            $paragraphs[] = 'Venues in or near ' . $place . ' we have worked at: ' . implode('; ', (array) $local['venues']) . '.';
+        }
+
+        if (! empty($local['logistics'])) {
+            $paragraphs[] = (string) $local['logistics'];
+        }
+
+        $photos = array_values(array_intersect((array) ($local['photos'] ?? []), $f['gallery']));
+        $booths = array_map(fn (BusinessService $s) => ['name' => Str::limit($s->name, 120, ''), 'service_uid' => $s->uid], array_slice($f['services'], 0, 4));
 
         return array_filter([
-            $this->hero((string) ($page['title'] ?? 'Serving ' . $place), null, $this->primaryCta($f)),
-            ['type' => 'text', 'data' => ['heading' => 'Photo booths for ' . ($place !== '' ? $place : 'your event'), 'body' => $f['name'] . ' brings photo booth experiences to events' . ($place !== '' ? ' in ' . $place : '') . '. Tell us about your event and we\'ll confirm we can be there.']],
+            $this->hero('Photo booth rental in ' . $place, $f['name'] . ($f['city'] !== null && $f['city'] !== $place ? ' · based in ' . $f['city'] : ''), $this->primaryCta($f)),
+            ['type' => 'text', 'data' => ['heading' => 'Photo booths for events in ' . $place, 'body' => implode("\n\n", $paragraphs)]],
+            $booths === [] ? null : ['type' => 'services', 'data' => ['heading' => 'Booths available in ' . $place, 'items' => $booths]],
+            $photos === [] ? null : ['type' => 'gallery', 'data' => ['heading' => 'Events in ' . $place, 'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($photos, 0, 6))]],
             $this->contactDetails($f['business']),
         ]);
+    }
+
+    /** "A", "A and B", "A, B and C". */
+    private function joinList(array $items): string
+    {
+        $items = array_values($items);
+        $last = array_pop($items);
+
+        return $items === [] ? (string) $last : implode(', ', $items) . ' and ' . $last;
     }
 
     // --------------------------------------------------------------- sections
@@ -565,30 +609,104 @@ final class PhotoBoothBlueprint
         };
     }
 
-    /** @param array<string, mixed> $f */
-    private function seoTitle(string $pageTitle, array $f, bool $home): string
+    /**
+     * The page's title tag: what the page is about first, the brand after it, never the brand twice, and never cut in the
+     * middle of a word. The wording follows the page's own search intent (its type and, for a booth or place, its subject).
+     *
+     * @param  array<string, mixed>  $f
+     * @param  array<string, mixed>  $page  the plan entry
+     */
+    private function seoTitle(array $f, string $type, array $page): string
     {
-        $in = $f['city'] !== null ? ' in ' . $f['city'] : '';
+        $city = $f['city'];
+        $in = $city !== null ? ' in ' . $city : '';
+        $title = trim((string) ($page['title'] ?? ''));
+        $place = $this->placeOf($f, $page);
 
-        return Str::limit($home ? $f['name'] . ' | Photo Booth Rentals' . $in : trim($pageTitle . ' | ' . $f['name'], ' |'), 70, '');
+        $subject = match ($type) {
+            'home' => 'Photo Booth Rentals' . $in,
+            'service_detail' => $title === '' ? 'Photo Booth Rental' . $in : (stripos($title, 'rental') !== false ? $title : $title . ' Rental') . $in,
+            'location' => 'Photo Booth Rental in ' . ($place ?? $city ?? 'Your Area'),
+            'packages' => 'Photo Booth Packages' . $in,
+            'faq' => 'Photo Booth Rental FAQs',
+            'gallery' => 'Photo Booth Gallery' . $in,
+            'backdrops' => 'Photo Booth Backdrops' . $in,
+            'about' => 'About ' . $f['name'],
+            'contact' => 'Contact ' . $f['name'] . ' | Request a Quote',
+            'services_overview' => 'Photo Booths' . $in,
+            default => $title !== '' ? $title : $f['name'],
+        };
+
+        // The brand follows unless the subject already carries it ("About Acme Booths") or it would not fit.
+        if (WebsiteHeadMeta::mentionsBrand($subject, $f['name'])) {
+            return WebsiteSeoText::fit($subject, 70);
+        }
+
+        $withBrand = $subject . ' | ' . $f['name'];
+
+        return mb_strlen($withBrand) <= 70 ? $withBrand : WebsiteSeoText::fit($subject, 70);
     }
 
-    /** @param array<string, mixed> $f */
-    private function metaDescription(array $f, string $type, string $title): string
+    /**
+     * A useful one- or two-sentence summary of THIS page, written only from facts the owner confirmed. It ends on a full
+     * sentence (WebsiteSeoText::fit), and never repeats another page's description because each names its own subject.
+     *
+     * @param  array<string, mixed>  $f
+     * @param  array<string, mixed>  $page
+     */
+    private function metaDescription(array $f, string $type, array $page): string
     {
         $in = $f['city'] !== null ? ' in ' . $f['city'] : '';
-        $booths = $f['services'] !== [] ? ' ' . Str::limit(implode(', ', array_map(fn (BusinessService $s) => $s->name, array_slice($f['services'], 0, 3))), 60, '') . '.' : '';
+        $names = fn (array $services, int $n) => implode(', ', array_map(fn (BusinessService $s) => $s->name, array_slice($services, 0, $n)));
+        $ask = match ($f['cta']) {
+            'call' => ' Call to talk through your event.',
+            'book_now' => ' Book your date online.',
+            default => ' Request a quote for your date.',
+        };
+        $title = trim((string) ($page['title'] ?? ''));
+        $place = $this->placeOf($f, $page);
 
         $text = match ($type) {
-            'home' => "{$f['name']} offers photo booth rentals{$in}." . $booths . ' Request a quote for your event.',
-            'faq' => "Answers to common questions about booking {$f['name']}{$in}.",
-            'about' => "Learn about {$f['name']}{$in}.",
-            'contact' => "Contact {$f['name']}{$in} to ask about your event.",
-            'packages' => "Photo booth packages from {$f['name']}{$in}.",
+            'home' => "{$f['name']} offers photo booth rentals{$in}." . ($f['services'] !== [] ? ' Choose from ' . $names($f['services'], 3) . '.' : '') . $ask,
+            'service_detail' => $this->serviceSentence($f, $page) ?? "Rent the {$title} from {$f['name']}{$in}.{$ask}",
+            'location' => "Photo booth rental for events in {$place} from {$f['name']}." . ($f['services'] !== [] ? ' Choose from ' . $names($f['services'], 3) . '.' : '') . $ask,
+            'packages' => "Photo booth packages from {$f['name']}{$in}: compare what each includes and how pricing works.",
+            'faq' => "Answers to common questions about booking {$f['name']}{$in}: timing, setup, space and what is included.",
+            'about' => "Meet {$f['name']}, the team behind the photo booths{$in}.",
+            'contact' => "Contact {$f['name']}{$in} to ask about your event or check a date.",
+            'gallery' => "Photos of the photo booths and events from {$f['name']}{$in}.",
+            'backdrops' => "The backdrops available with {$f['name']}'s photo booths{$in}.",
+            'services_overview' => "Every photo booth {$f['name']} offers{$in}, and what makes each one different.",
             default => ($title !== '' ? $title . ' — ' : '') . "{$f['name']}{$in}.",
         };
 
-        return Str::limit($text, 160, '');
+        return WebsiteSeoText::fit($text, 160);
+    }
+
+    /** The first full sentence of the owner's own description of this booth, plus the next step; null when they wrote none. */
+    private function serviceSentence(array $f, array $page): ?string
+    {
+        $uid = (string) ($page['entity']['service_uid'] ?? '');
+        $service = collect($f['services'])->first(fn (BusinessService $s) => $s->uid === $uid);
+        $prose = $service !== null ? $this->prose($service->description) : null;
+
+        if ($prose === null) {
+            return null;
+        }
+
+        $first = preg_match('/^.+?[.!?](?=\s|$)/us', $prose, $m) === 1 ? $m[0] : $prose;
+        $in = $f['city'] !== null ? ' in ' . $f['city'] : '';
+
+        return rtrim($first, '.!? ') . ". Rent it from {$f['name']}{$in}.";
+    }
+
+    /** The place a location page is about, from the plan's entity (its area, else its saved location's city). */
+    private function placeOf(array $f, array $page): ?string
+    {
+        $entity = is_array($page['entity'] ?? null) ? $page['entity'] : [];
+        $place = trim((string) ($entity['area'] ?? $entity['city'] ?? ''));
+
+        return $place !== '' ? $place : null;
     }
 
     /** The prose part of a description (bullet features are shown as their own list by the services component). */
