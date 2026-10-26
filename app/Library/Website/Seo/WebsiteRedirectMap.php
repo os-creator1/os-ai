@@ -120,7 +120,54 @@ final class WebsiteRedirectMap
             }
         }
 
-        return null;
+        return self::legacySpellingTarget($snapshot, $path);
+    }
+
+    /**
+     * The comparison key two spellings of the same address share: case, hyphens/punctuation and the joining word "and"
+     * are ignored. Sites moved from builders that wrote slugs as one run of words ("weddingphotoboothrental",
+     * "Terms-Conditions") are found at their hyphenated equivalents ("wedding-photo-booth-rental",
+     * "terms-and-conditions") without anyone having to key in a redirect.
+     */
+    public static function slugKey(string $slug): string
+    {
+        $slug = mb_strtolower(trim($slug, '/'));
+        $slug = preg_replace('/(?<![a-z0-9])and(?![a-z0-9])/', '', $slug) ?? $slug;
+
+        return preg_replace('/[^a-z0-9]+/', '', $slug) ?? '';
+    }
+
+    /**
+     * A previously published address that only differs by spelling from EXACTLY ONE live page. Never a guess: an
+     * ambiguous key (two pages share it), an empty key, a live page's own address or the homepage never redirect.
+     *
+     * @param  array<string, mixed>  $snapshot
+     */
+    private static function legacySpellingTarget(array $snapshot, string $path): ?string
+    {
+        $key = self::slugKey($path);
+
+        if ($key === '') {
+            return null;
+        }
+
+        $matches = [];
+
+        foreach ((array) ($snapshot['pages'] ?? []) as $page) {
+            $slug = (string) ($page['slug'] ?? '');
+
+            if (empty($page['is_home']) && $slug !== '') {
+                if (strtolower($slug) === strtolower(trim($path, '/'))) {
+                    return null;
+                }
+
+                if (self::slugKey($slug) === $key) {
+                    $matches[$slug] = true;
+                }
+            }
+        }
+
+        return count($matches) === 1 ? (string) array_key_first($matches) : null;
     }
 
     /**

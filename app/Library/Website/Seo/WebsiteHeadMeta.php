@@ -108,7 +108,7 @@ final class WebsiteHeadMeta
             return $siteName;
         }
 
-        if (mb_stripos($base, $siteName) !== false) {
+        if (self::mentionsBrand($base, $siteName)) {
             return $base;
         }
 
@@ -117,6 +117,25 @@ final class WebsiteHeadMeta
         $withName = $base.' | '.$siteName;
 
         return mb_strlen($withName) <= self::TITLE_SOFT_LIMIT ? $withName : $base;
+    }
+
+    /**
+     * Whether a title already carries the brand, tolerant of the usual variants an imported or hand-written title has
+     * ("Privacy Policy | Transparent Photo Booth" for the brand "Transparent Photo Booths"): case, punctuation,
+     * spacing and a plural/singular "s" on the brand's last word never make the brand appear twice.
+     */
+    public static function mentionsBrand(string $title, string $siteName): bool
+    {
+        $flat = fn (string $text) => preg_replace('/[^\p{L}\p{N}]+/u', '', mb_strtolower($text)) ?? '';
+        $brand = $flat($siteName);
+
+        if ($brand === '') {
+            return false;
+        }
+
+        $haystack = $flat($title);
+
+        return str_contains($haystack, $brand) || (mb_strlen($brand) > 3 && str_ends_with($brand, 's') && str_contains($haystack, mb_substr($brand, 0, -1)));
     }
 
     public static function description(mixed $value): ?string

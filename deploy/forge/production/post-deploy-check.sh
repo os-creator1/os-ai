@@ -50,10 +50,13 @@ fi
 
 # robots.txt must come from Laravel (allow-all), never a static file or a server rule.
 robots="$(curl -sS --max-time 20 "$BASE/robots.txt" || true)"
-if printf '%s' "$robots" | grep -q '^User-agent: \*' && printf '%s' "$robots" | grep -q '^Disallow:[[:space:]]*$'; then
-    echo "ok    /robots.txt is the allow-all body"
+# ...and it must answer 200: a 404 that still carries the body (Nginx `location = /robots.txt` falling through to
+# the app via error_page 404) is read by crawlers as "no robots.txt".
+robots_code="$(code "$BASE/robots.txt")"
+if [ "$robots_code" = "200" ] && printf '%s' "$robots" | grep -q '^User-agent: \*' && printf '%s' "$robots" | grep -q '^Disallow:[[:space:]]*$'; then
+    echo "ok    /robots.txt is the allow-all body (200)"
 else
-    echo "FAIL  /robots.txt is not the app's allow-all body (check the Nginx robots.txt block)"; fail=$((fail + 1))
+    echo "FAIL  /robots.txt answered $robots_code or is not the app's allow-all body (check the Nginx robots.txt block)"; fail=$((fail + 1))
 fi
 
 # Webhook endpoints exist and refuse an unsigned payload (400), never 404/500.
