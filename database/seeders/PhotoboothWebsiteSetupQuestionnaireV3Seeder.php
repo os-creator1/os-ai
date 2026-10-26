@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Library\Website\Setup\QuestionnaireVersionPublisher;
 use App\Models\QuestionnaireDefinition;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The guided, one-question-per-page Photo Booth website setup — published as
@@ -38,6 +39,13 @@ use Illuminate\Database\Seeder;
 class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
 {
     public function run(): void
+    {
+        // One transaction: on a database that still needs v2 first, nobody can start a setup on the intermediate v2 — the
+        // definition goes from its current state straight to v3 for every other connection.
+        DB::transaction(fn () => $this->activate());
+    }
+
+    private function activate(): void
     {
         (new PhotoboothWebsiteSetupQuestionnaireV2Seeder())->run();
 

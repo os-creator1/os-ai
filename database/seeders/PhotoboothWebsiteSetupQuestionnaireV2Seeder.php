@@ -55,7 +55,16 @@ class PhotoboothWebsiteSetupQuestionnaireV2Seeder extends Seeder
         }
 
         $publisher = app(QuestionnaireVersionPublisher::class);
-        $draft = $definition->draftVersion() ?? $publisher->createDraft($definition, self::steps());
+        $draft = $definition->draftVersion();
+
+        // A leftover draft is published only if it IS this tree; one with different steps is brought to this tree first
+        // (it is pinned by no session) — never published as if it were v2.
+        if ($draft === null) {
+            $draft = $publisher->createDraft($definition, self::steps());
+        } elseif (self::canonical($draft->storedSteps()) !== $tree) {
+            $draft = $publisher->replaceDraftSteps($draft, self::steps());
+        }
+
         $publisher->publish($draft);
     }
 

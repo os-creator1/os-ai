@@ -114,7 +114,7 @@ no saved answer and no published website changes; only setups started afterwards
    `php artisan tinker --execute="App\Models\QuestionnaireDefinition::where('key','photobooth_website_setup')->first()->versions()->orderBy('version_number')->get(['id','version_number','state'])->each(fn(\$v)=>print(\$v->id.' v'.\$v->version_number.' '.(\$v->state->value??\$v->state).' area_details='.json_encode(collect(\$v->storedSteps())->firstWhere('key','service_area_cities')['area_details']??null).PHP_EOL));"`
    Expect exactly one `published` row without `area_details`. A `draft` row is fine: the seeder rewrites a differing draft to the new
    steps before publishing it (it never publishes a stale draft; a draft is pinned by no session).
-3. **Activate:** `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV3Seeder --force`. It is idempotent: if the version that is PUBLISHED
+3. **Activate** (one database transaction, so no setup can start on an intermediate v2 on a database that still needs it; a leftover draft whose steps differ is rewritten to the seeder's tree, never published as-is): `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV3Seeder --force`. It is idempotent: if the version that is PUBLISHED
    NOW already has exactly this step tree it does nothing; otherwise it publishes one new version and marks the previous one superseded. A
    superseded version that happens to match the tree does not count (A → B → A publishes a new version again); no published or
    superseded row is ever edited.

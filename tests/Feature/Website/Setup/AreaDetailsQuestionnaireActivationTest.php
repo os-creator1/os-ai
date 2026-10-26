@@ -114,6 +114,56 @@ class AreaDetailsQuestionnaireActivationTest extends TestCase
         $this->assertNull($definition->fresh()->draftVersion());
     }
 
+    public function test_activation_touches_no_website_and_new_customers_get_the_latest_version(): void
+    {
+        $this->seedGuidedWizard();
+        $definition = QuestionnaireDefinition::where('key', PhotoboothWebsiteSetupQuestionnaireSeeder::KEY)->firstOrFail();
+        $current = $definition->publishedVersion();
+        $current->forceFill(['definition' => ['steps' => $this->withoutAreaDetails($current->storedSteps())]])->save();
+
+        $this->tenant(['name' => 'Glow Booths'], ['city' => 'Spokane', 'region' => 'WA']);
+        $website = \App\Models\Website::where("business_id", $this->business->id)->firstOrFail();
+        $before = [\App\Models\Website::query()->orderBy('id')->get()->toArray(), \App\Models\WebsitePage::query()->count(), \App\Models\WebsiteRevision::query()->count()];
+
+        $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
+
+        $this->assertSame($before, [\App\Models\Website::query()->orderBy('id')->get()->toArray(), \App\Models\WebsitePage::query()->count(), \App\Models\WebsiteRevision::query()->count()], 'Seeding writes no website, page or revision.');
+        $this->assertSame($website->template_key, $website->fresh()->template_key);
+
+        // A customer who starts setup now is pinned to the version just published.
+        $this->tenant(['name' => 'Fresh Booths'], ['city' => 'Boise', 'region' => 'ID']);
+        $live = $definition->fresh()->publishedVersion();
+        $this->assertNotSame($current->id, $live->id);
+        $this->assertSame($live->id, $this->wizardSession()->questionnaire_version_id);
+        $this->assertTrue($this->areaStep($this->wizardSession()->version->steps())['area_details']);
+    }
+
+    public function test_the_v2_step_never_publishes_an_unrelated_draft_or_leaves_an_intermediate_version_live(): void
+    {
+        // A database that has only v1, with a draft nobody recognises.
+        $this->seed(PhotoboothWebsiteSetupQuestionnaireSeeder::class);
+        $definition = QuestionnaireDefinition::where('key', PhotoboothWebsiteSetupQuestionnaireSeeder::KEY)->firstOrFail();
+        $v1 = $definition->publishedVersion();
+        $unrelated = array_slice($v1->storedSteps(), 0, 3);
+        app(QuestionnaireVersionPublisher::class)->createDraft($definition, $unrelated);
+
+        $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
+
+        $definition = $definition->fresh();
+        $versions = $definition->versions()->orderBy('version_number')->get();
+        $published = $definition->publishedVersion();
+        $this->assertTrue($this->areaStep($published->steps())['area_details'], 'The live version is v3.');
+        $this->assertNull($definition->draftVersion());
+        $this->assertSame(QuestionnaireVersionState::Superseded, $v1->fresh()->state);
+        $this->assertSame($v1->storedSteps(), $v1->fresh()->storedSteps(), 'v1 is untouched.');
+        $this->assertCount(3, $versions, 'v1, v2 and v3 — and nothing else.');
+        $this->assertNotContains(json_encode($unrelated), $versions->map(fn ($v) => json_encode($v->storedSteps()))->all(), 'The unrelated draft was never published.');
+        $this->assertSame(1, $versions->where('state', QuestionnaireVersionState::Published)->count());
+
+        $this->seed(PhotoboothWebsiteSetupQuestionnaireV3Seeder::class);
+        $this->assertSame(3, $definition->versions()->count(), 'Idempotent.');
+    }
+
     public function test_a_clean_environment_gets_the_capability_in_its_first_v3(): void
     {
         $this->seedGuidedWizard();
