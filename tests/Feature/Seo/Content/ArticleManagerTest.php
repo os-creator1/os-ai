@@ -343,4 +343,23 @@ class ArticleManagerTest extends TestCase
         $this->assertSame(4, ArticleMarkdown::wordCount("## Head\n\nthree little words"));
         $this->assertSame(5, ArticleMarkdown::wordCount("1. first step\n2. second step here"));
     }
+
+    public function test_an_article_about_a_place_the_site_has_no_page_for_is_flagged_as_thin_but_never_blocked(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+        $this->locationFor($business)->update(['service_area_cities' => ['Evanston, IL']]);
+        $analyzer = app(ArticleAnalyzer::class);
+
+        $thin = $this->draftArticle($business, ['title' => 'Photo Booth Timeline for Evanston Weddings', 'primary_topic' => 'photo booth timeline evanston weddings']);
+        $check = collect($analyzer->analyze($business, $thin)['checks'])->firstWhere('key', 'local');
+        $this->assertSame('attention', $check['status']);
+        $this->assertStringContainsString('no page about Evanston', $check['detail']);
+        $this->assertNotContains($check['detail'], $analyzer->blockers($business, $thin), 'Advice for the owner\'s approval, not a publishing block.');
+
+        $backed = $this->draftArticle($business, ['title' => 'Photo Booth Timeline for Chicago Weddings', 'slug' => 'photo-booth-timeline-chicago', 'primary_topic' => 'photo booth timeline chicago weddings']);
+        $this->assertSame('good', collect($analyzer->analyze($business, $backed)['checks'])->firstWhere('key', 'local')['status'], 'The site has a Chicago page.');
+
+        $none = $this->draftArticle($business, ['title' => 'Photo Booth Power Needs', 'slug' => 'photo-booth-power-needs', 'primary_topic' => 'photo booth power needs']);
+        $this->assertNull(collect($analyzer->analyze($business, $none)['checks'])->firstWhere('key', 'local'), 'An article not tied to a place is not judged on local substance.');
+    }
 }

@@ -59,22 +59,45 @@ final class WebsitePageIntentClassifier
         $this->places = array_map(fn (string $name) => ['name' => $name, 'tokens' => self::tokens($name, false)], array_values(array_unique(array_filter(array_map('trim', $placeNames)))));
     }
 
+    /**
+     * Every word of every place the Business serves, as the same normalised tokens the classifier uses — what an article
+     * topic is masked with to tell "the same article for another city" from a genuinely different one.
+     *
+     * @return array<int, string>
+     */
+    public function placeWords(): array
+    {
+        return array_values(array_unique(array_merge(...array_map(fn (array $place) => $place['tokens'], $this->places) ?: [[]])));
+    }
+
     public static function forBusiness(Business $business): self
     {
         $offers = BusinessService::query()->where('business_id', $business->id)->where('status', 'active')->pluck('name')->all();
+
+        return new self($offers, self::placeNames($business));
+    }
+
+    /**
+     * Every place the Business confirmed serving — each saved location's city and service areas — as bare names
+     * ("Spokane Valley, WA" -> "Spokane Valley"), base cities first, without duplicates.
+     *
+     * @return array<int, string>
+     */
+    public static function placeNames(Business $business): array
+    {
         $places = [];
 
-        foreach ($business->locations()->get() as $location) {
+        foreach ($business->locations()->orderByDesc('is_primary')->orderBy('id')->get() as $location) {
             foreach (array_merge([(string) $location->city], (array) ($location->service_area_cities ?? [])) as $entry) {
                 $place = trim((string) Str::before((string) $entry, ','));
 
                 if ($place !== '') {
-                    $places[] = $place;
+                    $places[mb_strtolower($place)] ??= $place;
                 }
             }
         }
 
-        return new self($offers, $places);
+        return array_values($places);
     }
 
     /**

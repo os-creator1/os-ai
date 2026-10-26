@@ -119,4 +119,21 @@ class ArticleCannibalizationGuardTest extends TestCase
         $this->assertSame('attention', $row['status']);
         $this->assertSame('attention', $analysis['overall']);
     }
+
+    public function test_the_same_article_for_another_city_is_a_strong_duplicate_but_a_different_question_is_not(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+        $this->publishedArticle($business, ['title' => 'How Much Space Does a Photo Booth Need in Chicago?', 'primary_topic' => 'how much space does a photo booth need in chicago']);
+        $guard = app(ArticleCannibalizationGuard::class);
+
+        $swapped = $guard->check($business, ['How Much Space Does a Photo Booth Need in Naperville?']);
+        $this->assertTrue($swapped->strong(), 'Only the city name changed: a name-swapped copy of the article.');
+        $this->assertStringContainsString('same article for a different place', $swapped->strongFindings()[0]['reason']);
+
+        $different = $guard->check($business, ['What Does a Photo Booth Cost in Naperville?']);
+        $this->assertFalse($different->strong(), 'A different question about that city is a different article.');
+
+        $nonPlace = $guard->check($business, ['How Much Space Does a Photo Booth Need for a Wedding?']);
+        $this->assertFalse($nonPlace->strong(), 'Swapping a non-place word is judged by the existing topic rules, not as a city swap.');
+    }
 }
