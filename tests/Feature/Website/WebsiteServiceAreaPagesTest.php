@@ -416,6 +416,53 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
     }
 
+    public function test_same_named_cities_in_different_states_are_different_places(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Brooklyn']));
+        $this->assertContains('serving-portland-or', Website::where('business_id', $business->id)->sole()->pages()->pluck('slug')->all());
+
+        // The home page now lists Portland, ME — not the Oregon city the old page was about.
+        $this->rebuildWith($business, ['Portland, ME', 'Brooklyn'], ['Brooklyn']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
+    public function test_equivalent_spellings_of_the_same_location_are_the_same_place(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Brooklyn']));
+
+        $this->rebuildWith($business, ['portland,  Oregon', 'Brooklyn'], ['Brooklyn']);
+
+        $this->assertEquals(['serving-portland-or' => '', 'serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
+    public function test_legacy_names_without_a_state_match_only_when_unambiguous(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        // Older value: no state on the old page's place, one covered Portland afterwards -> the only interpretation.
+        $this->saveServiceAreas($business, ['Portland', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland', 'Brooklyn']));
+        $this->rebuildWith($business, ['Portland, OR', 'Brooklyn'], ['Brooklyn']);
+        $this->assertEquals(['serving-portland' => '', 'serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+
+        // Two Portlands saved at once: a stateless old page could be either, so it is not redirected.
+        $website = Website::where('business_id', $business->id)->sole();
+        $website->forceFill(['custom_redirects' => null])->save();
+        $this->saveServiceAreas($business, ['Portland', 'Brooklyn']);
+        $this->rebuildWith($business, ['Portland', 'Brooklyn'], $this->confirmed(['Portland', 'Brooklyn']));
+        $website->pages()->where('slug', 'serving-portland')->exists() || $this->fail('fixture: the legacy page exists again');
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME', 'Brooklyn']);
+        $this->rebuildWith($business, ['Portland, OR', 'Portland, ME', 'Brooklyn'], ['Brooklyn']);
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Ambiguous: no redirect for the stateless Portland page.');
+    }
+
     public function test_a_retained_area_redirects_and_a_completely_removed_one_does_not(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
