@@ -443,7 +443,6 @@
 
 
                             </form>
-                            @include('legal._links', ['docs' => ['terms-of-service', 'privacy-policy', 'acceptable-use']])
                         </div>
                     </div>
                 </div>

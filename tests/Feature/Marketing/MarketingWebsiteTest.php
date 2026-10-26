@@ -437,7 +437,8 @@ class MarketingWebsiteTest extends TestCase
     public function test_social_help_and_legal_links_render_only_when_configured_and_valid(): void
     {
         $html = $this->html('/');
-        foreach (['Privacy Policy', 'Terms of Service', 'Acceptable Use Policy', 'YouTube', 'Instagram', 'Help centre'] as $label) {
+        // The Legal Center's own documents always link (they are real pages); only configured external links are conditional.
+        foreach (['Terms of Service', 'Acceptable Use Policy', 'YouTube', 'Instagram', 'Help centre'] as $label) {
             $this->assertStringNotContainsString('>'.$label.'<', $html, $label.' must not render without a real URL');
         }
 

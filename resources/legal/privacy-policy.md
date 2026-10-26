@@ -41,7 +41,7 @@ Where Company processes Customer-controlled data as processor, the purposes foll
 
 Our legal basis depends on the specific operation:
 
-| Activity | Typical possible legal basis; verify case-by-case |
+| Activity | Possible legal basis (case by case) |
 | --- | --- |
 | Account setup, subscription and core support | Necessary to perform a contract with an individual, or legitimate interests for organizational accounts |
 | Subscription administration and payment reconciliation | Contract, legitimate interests and/or legal obligation |
@@ -64,7 +64,7 @@ Company generally does not decide the legal basis for Customer's promotional out
 
 Payment processing is provided through third-party payment processors. Relevant subscription or transaction information and billing events may be processed to administer subscription payments, refunds, merchant connections and usage billing.
 
-We may receive payment method metadata rather than complete card numbers. **Do not publish a categorical statement that we never receive card data or are PCI compliant until the actual embedded payment fields, collection flow and scope have been verified.**
+We may receive payment method metadata rather than complete card numbers.
 
 ## 8. Communication processing
 
@@ -109,7 +109,7 @@ Restricted transfers shall use an applicable lawful mechanism, such as an adequa
 
 Personal information is retained only as necessary for the disclosed purpose, applicable contractual instructions, security investigation, legal claims and mandatory accounting/retention requirements. Different categories can have distinct periods.
 
-| Data category | Period or criteria before publication |
+| Data category | Period or criteria |
 | --- | --- |
 | Active account and user profiles | To be confirmed |
 | Customer CRM/content and documents | To be confirmed |
@@ -124,7 +124,7 @@ Customer-controlled data deletion or return is handled under the DPA and applica
 
 ## 14. Security
 
-We use technical and organizational safeguards appropriate to the nature and risks of processing as required by law. These measures must reflect the **verified** production environment and security annex. No online service can promise perfect security; this does not reduce statutory security duties or breach-response obligations.
+We use technical and organizational safeguards appropriate to the nature and risks of processing as required by law. No online service can promise perfect security; this does not reduce statutory security duties or breach-response obligations.
 
 Individuals and customers should use strong unique credentials, protect login details, manage account access and report suspicious activity.
 
@@ -160,7 +160,7 @@ AI recommendations and workflow automations may assist business decisions. Custo
 
 ## 21. US privacy notices
 
-Where applicable California or other US state laws grant consumers additional rights relating to sale, sharing, targeted advertising, sensitive information, appeals and authorized agents, Company shall provide the required information and controls. Do not publish blanket “we never sell or share data” claims without auditing actual website trackers and integration disclosures.
+Where applicable California or other US state laws grant consumers additional rights relating to sale, sharing, targeted advertising, sensitive information, appeals and authorized agents, Company shall provide the required information and controls.
 
 ## 22. Corporate changes, lawful requests and updates
 

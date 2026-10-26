@@ -1,7 +1,7 @@
 @php
     $center = $mg->legalLinks();
     $legal = $center['primary']
-        ? ['Legal' => url('legal'), 'Terms' => $center['primary']['Terms & Conditions'] ?? url('terms-of-service'), 'Privacy' => $center['primary']['Privacy Policy'] ?? url('privacy-policy')]
+        ? ['Legal' => url('legal')] + $center['primary']
         : array_filter([
             'Privacy' => $mg->link('privacy'),
             'Terms' => $mg->link('terms'),

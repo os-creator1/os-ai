@@ -30,7 +30,7 @@ This does not excuse statutory or expressly contracted service obligations.
 
 Customers should maintain independent copies of vital business and legal records when feasible. Backup, restoration, export and deletion capabilities are described by the applicable documented product and DPA schedule.
 
- Do not assume backups guarantee zero data loss or immediate recovery.
+Backups do not guarantee zero data loss or immediate recovery.
 
 ## 7. Integration and provider boundaries
 

@@ -45,7 +45,7 @@ Taking account of the nature of processing, Company shall assist Customer, using
 
 ## 7. Personal data breaches
 
-7.1. Company shall notify Customer **without undue delay after becoming aware** of a personal data breach affecting Customer Personal Data, as required by applicable law, through {{legal_email}} (email address supplied; incident-response workflow and escalation still to verify). Customer shall maintain a current security contact.
+7.1. Company shall notify Customer **without undue delay after becoming aware** of a personal data breach affecting Customer Personal Data, as required by applicable law, through {{legal_email}}. Customer shall maintain a current security contact.
 
 7.2. The initial notice shall include available information reasonably useful to assess categories and scale of affected data, likely effects, measures taken and points of contact. Additional findings may follow as investigation progresses. Company shall reasonably assist with lawful containment, investigation, evidence and notification duties.
 

@@ -50,6 +50,14 @@ purely a template were replaced by "This section is not yet published…"; table
 | Stripe Connect loss-liability configuration | Payments | Text only describes the contractual allocation; confirm against the Stripe dashboard before release |
 | Terms acceptance evidence for existing accounts | — | None fabricated; existing accounts have no acceptance record |
 
+Also removed or neutralised because they were internal drafting directives rather than terms (no new legal
+obligations were added): "Do not publish a categorical statement … PCI compliant" (Privacy §7), "Do not publish blanket
+‘we never sell or share data’ claims" (Privacy §21), "These measures must reflect the verified production environment"
+(Privacy §14), "incident-response workflow … still to verify" (DPA §7.1), the table headings "verify case-by-case" /
+"before publication" (Privacy), and "Do not assume backups guarantee…" became "Backups do not guarantee…" (Security §6).
+The rest of each document is word-for-word the supplied text apart from the identity placeholders and the dropped
+status/effective-date header lines.
+
 PCI DSS, SOC 2, ISO, encryption-at-rest, pen-test, uptime and retention claims: none are made.
 
 ## Product/UI discrepancies observed (not changed)

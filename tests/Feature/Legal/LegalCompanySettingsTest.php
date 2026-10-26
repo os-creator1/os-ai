@@ -71,7 +71,7 @@ class LegalCompanySettingsTest extends TestCase
 
     public function test_platform_owner_edits_the_registered_address_and_it_persists_and_goes_public(): void
     {
-        $this->actingAsAdmin(['access backend']);
+        $this->actingAsAdmin(['access backend', 'general settings']);
 
         $this->get('/admin/settings?tab=legal')->assertOk()
             ->assertSee('Legal Company Information')->assertSee('Bičių g. 23, LT-11111 Vilnius, Lithuania');
@@ -128,7 +128,7 @@ class LegalCompanySettingsTest extends TestCase
 
     public function test_invalid_submissions_persist_nothing(): void
     {
-        $this->actingAsAdmin(['access backend']);
+        $this->actingAsAdmin(['access backend', 'general settings']);
 
         foreach ([
             ['registered_address' => ''],
@@ -146,7 +146,7 @@ class LegalCompanySettingsTest extends TestCase
 
     public function test_international_addresses_are_not_rejected_for_format(): void
     {
-        $this->actingAsAdmin(['access backend']);
+        $this->actingAsAdmin(['access backend', 'general settings']);
 
         $this->post(route('admin.platform-owner.legal-company.save'), $this->payload([
             'registered_address' => "PO Box 12, 1 Rue de l'Église\nGenève 1204, Suisse",
@@ -157,7 +157,7 @@ class LegalCompanySettingsTest extends TestCase
 
     public function test_a_stale_form_cannot_overwrite_a_newer_save(): void
     {
-        $this->actingAsAdmin(['access backend']);
+        $this->actingAsAdmin(['access backend', 'general settings']);
         $stale = $this->payload();
 
         $this->post(route('admin.platform-owner.legal-company.save'), $this->payload(['registered_address' => 'Newer Address 1, Vilnius']))
@@ -171,7 +171,7 @@ class LegalCompanySettingsTest extends TestCase
 
     public function test_an_unchanged_save_creates_no_revision(): void
     {
-        $this->actingAsAdmin(['access backend']);
+        $this->actingAsAdmin(['access backend', 'general settings']);
 
         $this->post(route('admin.platform-owner.legal-company.save'), $this->payload([
             'registered_address' => 'Bičių g. 23, LT-11111 Vilnius, Lithuania',
@@ -182,7 +182,7 @@ class LegalCompanySettingsTest extends TestCase
 
     public function test_saving_touches_only_the_legal_company_tables_and_no_tenant_data(): void
     {
-        $admin = $this->actingAsAdmin(['access backend']);
+        $admin = $this->actingAsAdmin(['access backend', 'general settings']);
         $before = AppConfig::query()->where('setting', 'company_address')->value('value');
         $tables = [];
         DB::listen(function ($q) use (&$tables) {

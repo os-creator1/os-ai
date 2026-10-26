@@ -161,10 +161,19 @@ class LegalAcceptanceTest extends TestCase
         }
     }
 
-    public function test_registration_page_still_renders_with_legal_links(): void
+    public function test_registration_still_renders_and_signup_steps_carry_legal_links_without_acceptance(): void
     {
-        $this->get('/register')->assertOk()
-            ->assertSee(url('terms-of-service'), false)
-            ->assertSee(url('privacy-policy'), false);
+        // The signup steps need a sellable plan to render, which the signup acceptance suites cover; here the
+        // entry point must still answer, the shared links partial must resolve, and each step must include it.
+        $this->get('/register')->assertOk();
+
+        $html = view('legal._links', ['docs' => ['terms-of-service', 'refund-policy', 'privacy-policy']])->render();
+        foreach (['terms-of-service', 'refund-policy', 'privacy-policy'] as $slug) {
+            $this->assertStringContainsString('href="'.url($slug).'"', $html);
+        }
+        foreach (['plan', 'account', 'payment'] as $step) {
+            $this->assertStringContainsString("@include('legal._links'", (string) file_get_contents(resource_path('views/auth/signup/'.$step.'.blade.php')), $step);
+        }
+        $this->assertSame(0, LegalAcceptance::query()->count());
     }
 }

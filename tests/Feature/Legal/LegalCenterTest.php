@@ -66,8 +66,12 @@ class LegalCenterTest extends TestCase
     public function test_specialised_protections_are_present_in_full(): void
     {
         $terms = $this->get('/terms-of-service')->assertOk()->getContent();
-        foreach (['Stripe', 'negative balance', 'chargeback', 'refund', 'SMS', 'electronic signature', 'Agency'] as $needle) {
+        foreach (['Stripe', 'chargeback', 'refund', 'SMS', 'electronic signature', 'Agency', 'AI'] as $needle) {
             $this->assertStringContainsStringIgnoringCase($needle, $terms, $needle);
+        }
+        $payments = $this->get('/payments-and-esignatures')->assertOk()->getContent();
+        foreach (['Negative balances', 'chargeback', 'connected account', 'Stripe'] as $needle) {
+            $this->assertStringContainsStringIgnoringCase($needle, $payments, $needle);
         }
         $refund = $this->get('/refund-policy')->assertOk()->getContent();
         $this->assertStringContainsString('Core $97, Growth $297 and Agency $497 per 28-day', $refund);
@@ -138,11 +142,16 @@ class LegalCenterTest extends TestCase
     public function test_hub_and_footer_expose_all_legal_documents(): void
     {
         $hub = $this->get('/legal')->assertOk()->getContent();
-        $footer = $this->get('/product')->assertOk()->getContent();
+        $fullFooter = $this->get('/')->assertOk()->getContent();
+        $compactFooter = $this->get('/product')->assertOk()->getContent();
 
         foreach (self::SLUGS as $slug) {
             $this->assertStringContainsString('href="'.url($slug).'"', $hub, $slug);
-            $this->assertStringContainsString('href="'.url($slug).'"', $footer, $slug);
+            $this->assertStringContainsString('href="'.url($slug).'"', $fullFooter, $slug);
+        }
+        $this->assertStringContainsString('href="'.url('legal').'"', $compactFooter);
+        foreach (array_keys(app(LegalDocuments::class)->tier('primary')) as $slug) {
+            $this->assertStringContainsString('href="'.url($slug).'"', $compactFooter, $slug);
         }
     }
 
