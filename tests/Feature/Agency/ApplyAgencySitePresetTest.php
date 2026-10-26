@@ -189,4 +189,112 @@ class ApplyAgencySitePresetTest extends TestCase
         $this->assertStringContainsString('production', $out);
         $this->assertSame(0, AgencySite::query()->count());
     }
+
+    // ------------------------------------------------------------ first-time dry run
+
+    public function test_a_first_time_dry_run_reports_real_plans_and_chooses_the_mode_apply_will_choose_without_writing(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        app(AgencySiteBookingService::class)->create((int) $owner->user_id, $agency, ['name' => 'Intro call', 'duration_minutes' => 30, 'default_hours' => true]);
+        $types = BookingType::query()->count();
+        $this->assertSame(0, AgencySite::query()->count(), 'no website exists yet');
+
+        [$code, $out] = $this->run_($agency, ['--create-booking-type' => true]);
+
+        $this->assertSame(0, $code);
+        $this->assertStringContainsString('DRY RUN', $out);
+        $this->assertStringContainsString('Studio', $out, 'his existing sellable plan is found without a site');
+        $this->assertMatchesRegularExpression('/Conversion goal\s*\|\s*both/', $out);
+        $this->assertSame(0, AgencySite::query()->count(), 'a dry run creates no site');
+        $this->assertSame($types, BookingType::query()->count(), 'a dry run creates no booking type');
+
+        [, $applied] = $this->run_($agency, ['--apply' => true]);
+        $this->assertStringContainsString('Studio', $applied);
+        $this->assertSame('both', $this->values($agency)['x.goal'], 'apply chose what the dry run reported');
+    }
+
+    public function test_a_disconnected_stripe_or_no_plans_is_reported_as_nothing_sellable(): void
+    {
+        [$agency, $owner] = $this->agency();
+
+        [, $none] = $this->run_($agency);
+        $this->assertMatchesRegularExpression('/Sellable plans\s*\|\s*none/', $none);
+
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        \App\Models\AgencyStripeConnection::query()->where('agency_workspace_id', $agency->id)->update(['charges_enabled' => false]);
+
+        [$code, $out] = $this->run_($agency);
+
+        $this->assertSame(0, $code);
+        $this->assertMatchesRegularExpression('/Sellable plans\s*\|\s*none/', $out, 'a plan Stripe cannot charge for is not offered');
+        $this->assertMatchesRegularExpression('/Conversion goal\s*\|\s*unchanged/', $out);
+        $this->assertSame(0, AgencySite::query()->count());
+    }
+
+    // ------------------------------------------------------------ CTA labels match their destinations
+
+    /** @return array{label: string, href: string}|null the anchor of a hero button, by its class */
+    private function heroButton(string $html, string $class): ?array
+    {
+        return preg_match('#<a href="([^"]*)" class="btn '.$class.' hero-btn">([^<]*)#', $html, $m) ? ['label' => trim($m[2]), 'href' => html_entity_decode($m[1])] : null;
+    }
+
+    private function preview(Workspace $agency, string $page = 'home'): string
+    {
+        return $this->get(route('customer.workspaces.agency.site.preview', [$agency->uid, $page]))->assertOk()->getContent();
+    }
+
+    public function test_the_heros_second_button_says_what_it_does_and_every_button_label_matches_its_destination(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+        $type = app(AgencySiteBookingService::class)->create((int) $owner->user_id, $agency, ['name' => 'Intro call', 'duration_minutes' => 30, 'default_hours' => true]);
+
+        $this->run_($agency, ['--apply' => true]);
+        $this->authenticateAs($owner);
+        $home = $this->preview($agency);
+
+        // The shared hero always links its second button to How it works, so that is what the label says.
+        $secondary = $this->heroButton($home, 'btn-s');
+        $this->assertSame('See how it works', $secondary['label']);
+        $this->assertStringEndsWith('/how-it-works', $secondary['href']);
+
+        // The primary button: "Get started" goes to signup (one plan on sale), never to a booking page.
+        $primary = $this->heroButton($home, 'btn-p');
+        $this->assertSame('Get started', $primary['label']);
+        $this->assertStringContainsString('/signup/', $primary['href']);
+
+        // "Book a demo" appears only where the booking page is real.
+        $this->assertStringContainsString('href="'.route('public.booking.show', $type->public_booking_uuid).'"', $home);
+        preg_match_all('#href="([^"]*)"[^>]*>\s*Book a demo#', $home, $demo);
+        foreach ($demo[1] as $href) {
+            $this->assertSame(route('public.booking.show', $type->public_booking_uuid), html_entity_decode($href));
+        }
+    }
+
+    public function test_without_booking_there_is_no_book_a_demo_button_and_the_primary_goes_where_it_says(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->connectAgencyStripe($agency, (int) $owner->user_id);
+        $this->publishedPlan($agency, (int) $owner->user_id, WorkspacePlanTier::Growth, '49.00', null, 'Studio');
+
+        $this->run_($agency, ['--apply' => true]);
+        $this->authenticateAs($owner);
+
+        foreach (['home', 'product', 'solutions'] as $page) {
+            $this->assertStringNotContainsString('Book a demo', $this->preview($agency, $page), "{$page}: no booking route, so no booking button");
+        }
+
+        // Nothing at all to sell or book: the primary button is an honest "See pricing".
+        [$bare, $bareOwner] = $this->agency('Bare Agency');
+        $this->run_($bare, ['--apply' => true]);
+        $this->authenticateAs($bareOwner);
+        $primary = $this->heroButton($this->preview($bare), 'btn-p');
+        $this->assertSame('See pricing', $primary['label']);
+        $this->assertStringEndsWith('/pricing', $primary['href']);
+    }
 }

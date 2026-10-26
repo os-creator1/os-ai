@@ -43,7 +43,9 @@ final class DogTrainingBoardingPreset
             'copy.home.hero.lead_mobile' => 'Turn inquiries into customers with websites, CRM, automated follow-ups, booking tools and marketing in one place.',
             'copy.home.hero.primary' => $primary === 'signup' ? 'Get started' : ($primary === 'booking' ? 'Book a demo' : 'See pricing'),
             'x.cta.hero' => $primary,
-            'copy.home.hero.secondary' => $secondary === 'booking' ? 'Book a demo' : ($secondary === 'signup' ? 'Get started' : 'See pricing'),
+            // The hero's second button always opens the How it works page (the shared view has no destination setting),
+            // so its label must say exactly that.
+            'copy.home.hero.secondary' => 'See how it works',
             'copy.home.hero.ticks' => ['Website, CRM and calendar together', 'Automated follow-ups for new inquiries', 'Set up for dog training and boarding'],
 
             'copy.home.trust.title' => 'Built for professional dog-care businesses',

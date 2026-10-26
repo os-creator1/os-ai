@@ -151,15 +151,34 @@ event ledger.
 `php artisan agency-site:apply-preset {agencyWorkspaceUid}` writes the **dog training and boarding** content into that
 Agency's own Landing Page **draft** through the editor's validated save path. It is a dry run unless `--apply` is given,
 refuses the production environment, never publishes, and never touches other Agencies, shared defaults, the brand, plans
-or Stripe.
+or Stripe. The dry run reads the Agency's real plans and booking types even when it has no website yet, and reports the
+same conversion mode `--apply` would choose.
 
-1. `php artisan agency-site:apply-preset <uid>` — review the table: sellable plans, bookable booking type, chosen
-   conversion goal, and which already-edited values would be replaced.
-2. Optional: `--create-booking-type` adds a 30-minute "MotionGrove Demo — Dog Training & Boarding" type when none is
-   bookable. It is created **without working hours**; add availability in the Calendar before it can be booked.
-3. `php artisan agency-site:apply-preset <uid> --apply` — saves the draft and lists what still blocks publishing.
-4. In the editor: add privacy and terms links (Footer), add availability if needed, check desktop and mobile in the
-   preview, then publish from the Review screen.
+Run it on **staging only**.
+
+```
+export AGENCY_UID=cc60c018-cb05-43fb-8f4d-27ed4e456a9b
+```
+
+1. **Back up first.** Take a full staging database backup or snapshot (for example a hosting-provider snapshot, or
+   `mysqldump --single-transaction --routines --triggers <staging_db> > staging-before-preset.sql`) and confirm the file
+   or snapshot exists. Also save a readable copy of the draft for reference:
+   `php artisan tinker --execute='echo json_encode(optional(App\Models\AgencySite::query()->whereIn("agency_workspace_id", App\Models\Workspace::where("uid", getenv("AGENCY_UID"))->pluck("id"))->first())->config, JSON_PRETTY_PRINT);' > draft-before.json`
+   (prints `null` when no site exists yet).
+2. **Dry run:** `php artisan agency-site:apply-preset "$AGENCY_UID"`. Review the sellable plans, bookable booking type,
+   conversion goal, and the `Replaced:` line (the editor paths whose current draft values would be overwritten).
+3. Optional: add `--create-booking-type` to the dry run to see whether the 30-minute demo type would be created. With
+   `--apply` it is created **without working hours**; add availability in the Calendar before it can be booked. Repeat
+   runs reuse it.
+4. **Apply (draft only, never publishes):** `php artisan agency-site:apply-preset "$AGENCY_UID" --apply`. It prints
+   anything that still blocks publishing (typically the privacy and terms links).
+5. **Verify in the editor and preview** (desktop and phone width), then publish from the Review screen only when satisfied.
+
+**Recovery.** The command changes only this Agency's draft (and, with `--create-booking-type`, one booking type). To undo a
+single section use **Reset this section** in the editor. To return the whole environment to its earlier state, restore the
+full backup from step 1, ideally into a scratch database first to confirm it is complete. Do not delete site rows or
+restore partial SQL dumps by hand: the site, its revisions, signups and booking selection reference one another.
 
 Left unwritten on purpose: testimonials and the Customers page, "Support & onboarding", "Setup commitment", legal
 links, brand identity. The How-it-works page holds at most four steps, so the five-stage journey is condensed into four.
+The hero's second button always opens How it works, so the preset labels it "See how it works".
