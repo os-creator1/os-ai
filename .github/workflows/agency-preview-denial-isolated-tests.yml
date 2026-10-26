@@ -43,9 +43,12 @@ jobs:
     steps:
       - name: Checkout exact application code and isolated CI workflow
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Verify app commit is unchanged
         run: |
-          test "$(git rev-parse HEAD^)" = "ca0b472a509f4300f5de90a1f8118f351e5dd52a"
+          git merge-base --is-ancestor ca0b472a509f4300f5de90a1f8118f351e5dd52a HEAD
+          git diff --quiet ca0b472a509f4300f5de90a1f8118f351e5dd52a HEAD -- . ':(exclude).github/workflows/agency-preview-denial-isolated-tests.yml'
       - name: Configure PHP and Composer
         uses: shivammathur/setup-php@v2
         with:
