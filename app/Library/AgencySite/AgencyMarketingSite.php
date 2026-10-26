@@ -103,6 +103,11 @@ final class AgencyMarketingSite extends MarketingSite
         };
     }
 
+    public function legalLinks(): array
+    {
+        return ['primary' => [], 'supporting' => []];
+    }
+
     public function loginUrl(): string
     {
         return $this->context->loginUrl;

@@ -76,6 +76,7 @@
 
         <button type="submit" class="btn btn-primary w-100">{{ __('Continue') }}</button>
     </form>
+    @include('legal._links', ['docs' => ['terms-of-service', 'privacy-policy', 'acceptable-use']])
 
     <p class="text-center mt-2">
         <span>{{ __('Already have an account?') }}</span>

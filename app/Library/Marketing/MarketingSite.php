@@ -414,6 +414,21 @@ class MarketingSite
         return $this->cleanUrl($this->cfg('links.'.$key));
     }
 
+    /**
+     * MotionGrove's own legal documents for the footer, label => URL: the six primary documents first, then
+     * the supporting addenda. An Agency site overrides this to none: it must not present the platform's
+     * legal documents as the Agency's own.
+     *
+     * @return array{primary: array<string, string>, supporting: array<string, string>}
+     */
+    public function legalLinks(): array
+    {
+        $docs = app(\App\Library\Legal\LegalDocuments::class);
+        $labels = fn (array $set) => array_column(array_map(fn ($d) => [$d['nav'], $d['url']], $set), 1, 0);
+
+        return ['primary' => $labels($docs->tier('primary')), 'supporting' => $labels($docs->tier('supporting'))];
+    }
+
     /** Help destination for the footer: help centre, else support email, else nothing. */
     public function helpUrl(): ?string
     {

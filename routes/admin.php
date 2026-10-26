@@ -722,6 +722,9 @@
         Route::post('platform-owner/marketing/demo-form/publish', 'DemoFormController@publish')->name('platform-owner.demo-form.publish');
         Route::post('platform-owner/marketing/demo-form/discard', 'DemoFormController@discard')->name('platform-owner.demo-form.discard');
 
+        // Settings → Legal Company Information: the operator's registered identity shown on the public legal pages.
+        Route::post('platform-owner/legal-company', 'LegalCompanyController@save')->name('platform-owner.legal-company.save');
+
         // The one lifecycle control on the support page
         // (EntitlementManager::recoverAccess(), through PlatformOwnerAccountActions).
         // Named outside the `admin.workspaces.` family on purpose: that family

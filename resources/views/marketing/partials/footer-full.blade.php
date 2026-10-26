@@ -1,11 +1,14 @@
 @php
     $social = $mg->social();
     $help = $mg->helpUrl();
-    $legal = array_filter([
-        'Privacy Policy' => $mg->link('privacy'),
-        'Terms of Service' => $mg->link('terms'),
-        'Acceptable Use Policy' => $mg->link('acceptable_use'),
-    ]);
+    $center = $mg->legalLinks();
+    $legal = $center['primary']
+        ? array_intersect_key($center['primary'], array_flip(['Terms & Conditions', 'Privacy Policy', 'Acceptable Use']))
+        : array_filter([
+            'Privacy Policy' => $mg->link('privacy'),
+            'Terms of Service' => $mg->link('terms'),
+            'Acceptable Use Policy' => $mg->link('acceptable_use'),
+        ]);
 @endphp
 <footer style="background: #181413; color: #C9C0BA; padding: 72px 0 40px">
 <div class="wrap" style="display: flex; flex-direction: column; gap: 56px">
@@ -15,6 +18,9 @@
 <div style="display: flex; flex-direction: column; gap: 12px"><b style="color: #FFFFFF; font-size: 13px">Product</b>@if ($mg->pageVisible('product'))<a href="{{ $mg->url('product') }}">Features</a>@endif @if ($mg->pageVisible('how-it-works'))<a href="{{ $mg->url('how-it-works') }}">How it works</a>@endif @if ($mg->pageVisible('pricing'))<a href="{{ $mg->url('pricing') }}">Pricing</a>@endif<a href="{{ $mg->loginUrl() }}">Log in</a></div>
 <div style="display: flex; flex-direction: column; gap: 12px"><b style="color: #FFFFFF; font-size: 13px">Company</b>@if ($mg->pageVisible('solutions'))<a href="{{ $mg->url('solutions') }}">Solutions</a>@endif @if ($mg->pageVisible('customers'))<a href="{{ $mg->url('customers') }}">Customers</a>@endif @if ($mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}">Contact</a><a href="{{ $mg->bookDemoUrl() }}">Book a demo</a>@endif</div>
 <div style="display: flex; flex-direction: column; gap: 12px"><b style="color: #FFFFFF; font-size: 13px">Support</b><a href="{{ $mg->url('home') }}#faq">Help &amp; FAQ</a>@if ($help)<a href="{{ $help }}">{{ $mg->link('help_centre') ? 'Help centre' : 'Email support' }}</a>@endif</div>
+@if ($center['primary'])
+<div style="display: flex; flex-direction: column; gap: 12px"><b style="color: #FFFFFF; font-size: 13px">Legal</b>@foreach ($center['primary'] + $center['supporting'] as $label => $url)<a href="{{ $url }}">{{ $label }}</a>@endforeach</div>
+@endif
 @if ($social)
 <div style="display: flex; flex-direction: column; gap: 12px"><b style="color: #FFFFFF; font-size: 13px">Follow</b>@foreach ($social as $label => $url)<a href="{{ $url }}" rel="noopener" target="_blank">{{ $label }}</a>@endforeach</div>
 @endif
