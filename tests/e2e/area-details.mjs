@@ -21,6 +21,20 @@ const openPanel = async (name) => {
   if (!(await panel.evaluate((el) => el.open))) { await panel.locator('summary').click(); }
   return panel;
 };
+// The hidden JSON the form submits must say exactly what the panel shows (venues, logistics, ticked photos).
+const jsonMatchesDisplay = async (name) => {
+  const r = await row(name);
+  const raw = await r.locator('[data-area-details-json]').inputValue();
+  const shown = await r.locator('[data-area-detail-panel]').evaluate((p) => ({
+    venues: (p.querySelector('[data-area-field="venues"]') || {}).value || '',
+    logistics: (p.querySelector('[data-area-field="logistics"]') || {}).value || '',
+    photos: Array.from(p.querySelectorAll('[data-area-photo]:checked')).map((b) => b.value),
+  }));
+  const empty = shown.venues.trim() === '' && shown.logistics.trim() === '' && shown.photos.length === 0;
+  if (empty) { return raw === ''; }
+  const json = JSON.parse(raw || '{}');
+  return json.venues === shown.venues && json.logistics === shown.logistics && JSON.stringify(json.photos) === JSON.stringify(shown.photos);
+};
 const savedJson = async (name) => (await row(name)).locator('[data-area-details-json]').inputValue();
 
 // -- reach the service-area screen -----------------------------------------------------------------
@@ -82,6 +96,15 @@ await page.reload({ waitUntil: 'load' });
 tustin = await openPanel('Tustin, CA');
 check('a hard reload restores the same details and photo', /Old Town Courtyard/.test(await tustin.locator('[data-area-field="venues"]').inputValue()) && (await tustin.locator('[data-area-photo]').nth(1).isChecked()));
 check('an area with no details stayed empty', (await savedJson('Orange, CA')) === '');
+check('hidden JSON matches the displayed selections after reload', await jsonMatchesDisplay('Tustin, CA') && await jsonMatchesDisplay('Orange, CA'));
+
+// -- editing: change the logistics, autosave, reload ---------------------------------------------------
+await tustin.locator('[data-area-field="logistics"]').fill('Twelve minutes from Irvine; parking behind the venue.');
+await waitSaved();
+check('editing is reflected in the JSON immediately', await jsonMatchesDisplay('Tustin, CA'));
+await page.reload({ waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+check('the edited logistics survive a reload and the photo stays ticked', /parking behind the venue/.test(await tustin.locator('[data-area-field="logistics"]').inputValue()) && (await tustin.locator('[data-area-photo]').nth(1).isChecked()) && await jsonMatchesDisplay('Tustin, CA'));
 
 // -- reorder: details travel with the row ------------------------------------------------------------
 await (await row('Tustin, CA')).locator('[data-move-row="up"]').click();
@@ -100,6 +123,39 @@ await page.reload({ waitUntil: 'load' });
 check('Orange is gone after reload', !(await rowValues()).includes('Orange, CA'));
 tustin = await openPanel('Tustin, CA');
 check('Tustin still has its details', /Tustin Hangar/.test(await tustin.locator('[data-area-field="venues"]').inputValue()));
+
+// -- a full gallery (24 photos is the wizard's limit): the LAST photo can be picked, kept and unticked --------------
+// (The picker's own 40-photo window cannot be exceeded through the UI; that path is covered by AreaDetailsAcceptanceTest.)
+await page.goto(wizardUrl('/gallery'), { waitUntil: 'load' });
+const bulk = Array.from({ length: 21 }, (_, i) => `${IMG}/bulk-${String(i + 1).padStart(2, '0')}.jpg`);
+for (let i = 0; i < bulk.length; i += 11) {
+  const target = 3 + Math.min(i + 11, bulk.length);
+  await page.locator('[data-gallery-input]').setInputFiles(bulk.slice(i, i + 11));
+  await page.waitForFunction((n) => document.querySelectorAll('[data-gallery-card]').length >= n, target, { timeout: 120000 });
+}
+const galleryUids = await page.locator('[data-gallery-card]').evaluateAll((els) => els.map((e) => e.getAttribute('data-uid')));
+const deepUid = galleryUids[galleryUids.length - 1];
+check('the gallery is full at 24 photos', galleryUids.length === 24, String(galleryUids.length));
+await waitSaved().catch(() => {});
+await page.waitForLoadState('networkidle');
+await page.goto(wizardUrl('/service_area_cities'), { waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+check('every one of the 24 photos is offered, with no partial-list note', (await tustin.locator('[data-area-photo]').count()) === 24 && (await tustin.locator('[data-area-photo-note]').count()) === 0);
+const deepBox = tustin.locator(`[data-area-photo][value="${deepUid}"]`);
+await deepBox.check();
+await waitSaved();
+check('the last photo is in the JSON and the JSON matches the display', JSON.parse(await savedJson('Tustin, CA')).photos.includes(deepUid) && await jsonMatchesDisplay('Tustin, CA'));
+await page.reload({ waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+check('after reload it is still ticked and the earlier photo too', (await tustin.locator(`[data-area-photo][value="${deepUid}"]`).isChecked()) && (await tustin.locator('[data-area-photo]').nth(1).isChecked()) && await jsonMatchesDisplay('Tustin, CA'));
+await tustin.locator('[data-area-field="logistics"]').fill('Twelve minutes from Irvine; parking behind the venue. Gate code on request.');
+await waitSaved();
+await page.reload({ waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+check('saving other edits keeps both photos', (await tustin.locator(`[data-area-photo][value="${deepUid}"]`).isChecked()) && JSON.parse(await savedJson('Tustin, CA')).photos.length === 2);
+await tustin.locator(`[data-area-photo][value="${deepUid}"]`).uncheck();
+await waitSaved();
+check('unticking is a real removal', !JSON.parse(await savedJson('Tustin, CA')).photos.includes(deepUid) && await jsonMatchesDisplay('Tustin, CA'));
 await tustin.locator('[data-area-photo]').nth(1).uncheck();
 await tustin.locator('[data-area-field="venues"]').fill('');
 await tustin.locator('[data-area-field="logistics"]').fill('');

@@ -28,4 +28,4 @@ Each script prints PASS/FAIL per check and exits non-zero on any failure.
   screenshots go to `E2E_SHOTS` (default `/tmp`).
 - `area-details.mjs` — the optional per-area local details in the service-area step: add venues/logistics, upload photos later in
   the Gallery step, return and pick a photo, Next/Back, reload, reorder and remove (details travel with their row). Re-seed the
-  fixture before each run (the wizard resumes where the previous run stopped). Needs `IMG_DIR` with `event-1.jpg … event-3.jpg`.
+  fixture before each run (the wizard resumes where the previous run stopped). Needs `IMG_DIR` with `event-1.jpg … event-3.jpg` and `bulk-01.jpg … bulk-21.jpg` (any small distinct JPEGs; the wizard caps a gallery at 24 photos).
