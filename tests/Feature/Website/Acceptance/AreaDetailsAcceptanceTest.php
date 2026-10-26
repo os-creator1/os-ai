@@ -253,6 +253,42 @@ class AreaDetailsAcceptanceTest extends TestCase
         $this->assertSame([$deep], $this->wizardSession()->answers[ServiceAreaDetails::ANSWER_KEY]['coeur-dalene-id']['photos']);
     }
 
+    public function test_more_than_six_photos_for_an_area_is_refused_and_the_earlier_selection_is_kept(): void
+    {
+        $this->startSpokane();
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+        for ($i = 0; $i < 4; $i++) {
+            \App\Models\WebsiteAsset::forceCreate(['website_id' => $website->id, 'disk' => 'public', 'path' => "images/six{$i}.png", 'mime_type' => 'image/png', 'size' => 1, 'width' => 1, 'height' => 1, 'content_hash' => hash('sha256', "six{$i}"), 'purpose' => 'gallery', 'sort_order' => 500 + $i]);
+        }
+        $uids = $website->assets()->where('purpose', 'gallery')->orderBy('id')->pluck('uid')->all();
+        $this->assertGreaterThanOrEqual(8, count($uids));
+        $this->continueStep('base_location', ['value' => ['city' => 'Spokane', 'region' => 'WA', 'country_code' => 'US']])->assertOk();
+
+        $this->saveAreas([["Coeur d'Alene, ID", ['venues' => self::VENUE, 'photos' => array_slice($uids, 0, 6)]]])->assertOk();
+        $this->assertSame(array_slice($uids, 0, 6), $this->wizardSession()->answers[ServiceAreaDetails::ANSWER_KEY]['coeur-dalene-id']['photos']);
+        $revision = $this->wizardSession()->answers_revision;
+
+        // A seventh distinct valid photo (and a duplicate, which is not a seventh) over autosave and the debounced draft.
+        $tooMany = $this->areaPayload([["Coeur d'Alene, ID", ['venues' => 'Changed venue', 'photos' => array_slice($uids, 0, 7)]]]);
+        $draft = $this->jpost($this->url('draft', 'service_area_cities'), $tooMany + ['answers_revision' => $revision, '__present' => ['service_area_cities']]);
+        $draft->assertStatus(422);
+        $this->assertStringContainsString('at most 6 photos', $draft->json('message'));
+        $this->jpost($this->url('autosave', 'service_area_cities'), $tooMany + ['answers_revision' => $revision, '__present' => ['service_area_cities']])->assertStatus(422);
+
+        $kept = $this->wizardSession();
+        $this->assertSame($revision, $kept->answers_revision, 'Nothing was written.');
+        $this->assertSame(array_slice($uids, 0, 6), $kept->answers[ServiceAreaDetails::ANSWER_KEY]['coeur-dalene-id']['photos']);
+        $this->assertSame([self::VENUE], $kept->answers[ServiceAreaDetails::ANSWER_KEY]['coeur-dalene-id']['venues']);
+
+        // Six distinct photos with a repeated uid is still six: accepted.
+        $this->saveAreas([["Coeur d'Alene, ID", ['venues' => self::VENUE, 'photos' => array_merge(array_slice($uids, 0, 6), [$uids[0]])]]])->assertOk();
+
+        // The panel shows the count and disables the rest at the limit.
+        $page = $this->get($this->url('step', 'service_area_cities'))->assertOk()->getContent();
+        $this->assertStringContainsString('6 of 6 photos selected', $page);
+        $this->assertMatchesRegularExpression('/value="' . preg_quote($uids[6], '/') . '" data-area-photo\s+disabled/', $page);
+    }
+
     public function test_publishing_is_untouched_until_the_owner_rebuilds(): void
     {
         $photos = $this->startSpokane();

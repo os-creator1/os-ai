@@ -1144,13 +1144,21 @@
 
         // ---- service-area local details: serialise a row's optional panel into its hidden JSON input ----
         // Capture phase, so the hidden value is current before the autosave listeners below read the form.
-        function syncAreaDetails(panel) {
+        function syncAreaDetails(panel, event) {
             var row = panel.closest('[data-row]');
             var hidden = row && row.querySelector('[data-area-details-json]');
             if (!hidden) { return; }
             var venues = (panel.querySelector('[data-area-field="venues"]') || {}).value || '';
             var logistics = (panel.querySelector('[data-area-field="logistics"]') || {}).value || '';
+            var counter = panel.querySelector('[data-area-photo-count]');
+            var max = counter ? parseInt(counter.getAttribute('data-max') || '6', 10) : 6;
+            var boxes = panel.querySelectorAll('[data-area-photo]');
+            // At most `max` photos per area: a further tick is undone, and once the limit is reached the rest are disabled.
+            var ticked = Array.prototype.filter.call(boxes, function (box) { return box.checked; });
+            if (ticked.length > max && event && event.target && event.target.matches && event.target.matches('[data-area-photo]')) { event.target.checked = false; }
             var photos = Array.prototype.map.call(panel.querySelectorAll('[data-area-photo]:checked'), function (box) { return box.value; });
+            Array.prototype.forEach.call(boxes, function (box) { box.disabled = !box.checked && photos.length >= max; });
+            if (counter) { counter.textContent = photos.length + ' of ' + max + ' photos selected'; }
             var has = venues.trim() !== '' || logistics.trim() !== '' || photos.length > 0;
             hidden.value = has ? JSON.stringify({ venues: venues, logistics: logistics, photos: photos }) : '';
             var badge = panel.querySelector('[data-area-detail-badge]');
@@ -1159,7 +1167,7 @@
         ['input', 'change'].forEach(function (type) {
             root.addEventListener(type, function (event) {
                 var panel = event.target.closest && event.target.closest('[data-area-detail-panel]');
-                if (panel) { syncAreaDetails(panel); }
+                if (panel) { syncAreaDetails(panel, event); }
             }, true);
         });
 

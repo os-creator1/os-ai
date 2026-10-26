@@ -29,7 +29,7 @@ final class LocalAreaUsefulness
     public const PHOTOS = 'photos';
 
     private const MAX_VENUES = 8;
-    private const MAX_PHOTOS = 6;
+    public const MAX_PHOTOS = 6;
 
     /**
      * An area entry as the owner's list carries it: a bare name, or a name with the local facts they confirmed.

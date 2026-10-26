@@ -30,11 +30,13 @@
             <label class="form-label small mb-1">Travel, setup or service details for this area</label>
             <textarea class="form-control form-control-sm mb-2" rows="2" maxlength="600" data-area-field="logistics" placeholder="{{ \App\Library\Website\Setup\ServiceAreaDetails::EXAMPLES['logistics'] }}">{{ $logisticsText }}</textarea>
             @if (! empty($galleryPhotos))
-                <div class="small mb-1">Event photos taken here <span class="text-caption fw-normal">(from your uploaded gallery)</span></div>
+                @php($photoMax = \App\Library\Website\LocalAreaUsefulness::MAX_PHOTOS)
+                <div class="small mb-1">Event photos taken here <span class="text-caption fw-normal">(from your uploaded gallery)</span>
+                    <span class="ms-2 fw-bold" data-area-photo-count role="status" data-max="{{ $photoMax }}">{{ count($chosenPhotos) }} of {{ $photoMax }} photos selected</span></div>
                 <div class="d-flex flex-wrap gap-2">
                     @foreach ($galleryPhotos as $photo)
                         <label class="d-block" style="cursor:pointer;">
-                            <input type="checkbox" class="form-check-input me-1" value="{{ $photo['uid'] }}" data-area-photo @checked(in_array($photo['uid'], $chosenPhotos, true))>
+                            <input type="checkbox" class="form-check-input me-1" value="{{ $photo['uid'] }}" data-area-photo @checked(in_array($photo['uid'], $chosenPhotos, true)) @disabled(! in_array($photo['uid'], $chosenPhotos, true) && count($chosenPhotos) >= $photoMax)>
                             <img src="{{ $photo['url'] }}" alt="{{ $photo['alt'] }}" style="width:64px;height:64px;object-fit:cover;" class="rounded align-middle">
                         </label>
                     @endforeach

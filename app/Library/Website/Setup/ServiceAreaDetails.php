@@ -3,6 +3,7 @@
 namespace App\Library\Website\Setup;
 
 use App\Library\Website\LocalAreaUsefulness;
+use App\Library\Website\Setup\Exceptions\InvalidAnswerException;
 use Illuminate\Support\Str;
 
 /**
@@ -55,12 +56,19 @@ final class ServiceAreaDetails
             $venues = $payload['venues'] ?? [];
             $venues = is_string($venues) ? preg_split('/\R/u', $venues) : (is_array($venues) ? $venues : []);
 
+            $photos = array_values(array_unique(array_filter((array) ($payload['photos'] ?? []), fn ($uid) => is_string($uid) && isset($owned[$uid]))));
+
+            // Never silently truncated: more than the limit is refused, and nothing is saved (the earlier selection stays).
+            if (count($photos) > LocalAreaUsefulness::MAX_PHOTOS) {
+                throw new InvalidAnswerException('Choose at most ' . LocalAreaUsefulness::MAX_PHOTOS . ' photos for ' . $name . ' (you selected ' . count($photos) . '). Untick one and try again; your earlier selection was kept.');
+            }
+
             $entry = LocalAreaUsefulness::normalize([
                 'name' => $name,
                 'details' => [
                     'venues' => $venues,
                     'logistics' => $payload['logistics'] ?? null,
-                    'photos' => array_values(array_filter((array) ($payload['photos'] ?? []), fn ($uid) => is_string($uid) && isset($owned[$uid]))),
+                    'photos' => $photos,
                 ],
             ]);
 

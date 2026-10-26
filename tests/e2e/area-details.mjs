@@ -156,7 +156,59 @@ check('saving other edits keeps both photos', (await tustin.locator(`[data-area-
 await tustin.locator(`[data-area-photo][value="${deepUid}"]`).uncheck();
 await waitSaved();
 check('unticking is a real removal', !JSON.parse(await savedJson('Tustin, CA')).photos.includes(deepUid) && await jsonMatchesDisplay('Tustin, CA'));
-await tustin.locator('[data-area-photo]').nth(1).uncheck();
+
+// -- the six-photo limit: counter, a disabled seventh, JSON, reload, reorder and a server-side refusal -----------------
+const boxes = () => tustin.locator('[data-area-photo]');
+const counter = async () => (await tustin.locator('[data-area-photo-count]').innerText()).trim();
+const tickedCount = () => boxes().evaluateAll((els) => els.filter((e) => e.checked).length);
+check('the counter starts at one photo', (await counter()) === '1 of 6 photos selected', await counter());
+for (const i of [0, 2, 3, 4]) { await boxes().nth(i).check(); }
+check('five photos selected shows 5 of 6', (await counter()) === '5 of 6 photos selected', await counter());
+await boxes().nth(5).check();
+await waitSaved();
+check('six photos selected shows 6 of 6', (await counter()) === '6 of 6 photos selected' && (await tickedCount()) === 6);
+check('a seventh cannot be selected: the other photos are disabled', (await boxes().nth(6).isDisabled()) && (await boxes().nth(7).isDisabled()));
+await boxes().nth(6).click({ force: true }).catch(() => {});
+check('forcing a click on a disabled photo changes nothing', (await tickedCount()) === 6 && JSON.parse(await savedJson('Tustin, CA')).photos.length === 6 && await jsonMatchesDisplay('Tustin, CA'));
+await boxes().nth(0).uncheck();
+check('unticking one re-enables the others (5 of 6)', (await counter()) === '5 of 6 photos selected' && !(await boxes().nth(6).isDisabled()));
+await boxes().nth(6).check();
+await waitSaved();
+await page.reload({ waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+check('after reload 6 of 6 is still shown, six ticked, JSON matches', (await counter()) === '6 of 6 photos selected' && (await tickedCount()) === 6 && await jsonMatchesDisplay('Tustin, CA'));
+const sixBefore = JSON.parse(await savedJson('Tustin, CA')).photos;
+
+// A seventh photo forced past the browser is refused by the server and nothing is lost.
+const refused = await page.evaluate(async (extra) => {
+  const form = document.querySelector('form[id^="answer-form-"]');
+  const data = new FormData(form);
+  const names = data.getAll('value[]');
+  const at = names.indexOf('Tustin, CA');
+  const rows = data.getAll('area_details[]');
+  const json = JSON.parse(rows[at]);
+  json.photos = json.photos.concat([extra]);
+  data.delete('area_details[]');
+  rows.forEach((r, i) => data.append('area_details[]', i === at ? JSON.stringify(json) : r));
+  const res = await fetch(form.action.replace(/\/answers$/, '/draft'), { method: 'POST', body: data, headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' });
+  return { status: res.status, body: await res.json() };
+}, await boxes().evaluateAll((els) => els.find((e) => !e.checked).value));
+check('the server refuses a seventh photo with a clear message', refused.status === 422 && /at most 6 photos/i.test(refused.body.message || ''), JSON.stringify(refused));
+await page.reload({ waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+check('the earlier six are still saved after the refusal', JSON.stringify(JSON.parse(await savedJson('Tustin, CA')).photos) === JSON.stringify(sixBefore) && (await tickedCount()) === 6);
+
+// Reordering keeps the six on Tustin.
+await (await row('Tustin, CA')).locator('[data-move-row="down"]').click();
+await waitSaved();
+await page.reload({ waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+check('after a reorder and reload Tustin still has its six', (await tickedCount()) === 6 && (await counter()) === '6 of 6 photos selected' && await jsonMatchesDisplay('Tustin, CA'));
+await (await row('Tustin, CA')).locator('[data-move-row="up"]').click();
+await waitSaved();
+await page.reload({ waitUntil: 'load' });
+tustin = await openPanel('Tustin, CA');
+while ((await tustin.locator('[data-area-photo]:checked').count()) > 0) { await tustin.locator('[data-area-photo]:checked').first().uncheck(); }
 await tustin.locator('[data-area-field="venues"]').fill('');
 await tustin.locator('[data-area-field="logistics"]').fill('');
 await waitSaved();
