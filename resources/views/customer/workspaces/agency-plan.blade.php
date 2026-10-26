@@ -105,6 +105,7 @@
                         <button type="submit">{{ __('Continue to payment') }}</button>
                         <span class="text-caption">{{ __('You pay on Stripe. We never see or store your card.') }}</span>
                     </form>
+                    @include('legal._links', ['docs' => ['agency-terms', 'terms-of-service', 'refund-policy']])
                 @endif
 
                 {{-- §C7 — the billing problem, its deadline, and the REAL recovery action. --}}
