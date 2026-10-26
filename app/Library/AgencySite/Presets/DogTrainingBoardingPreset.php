@@ -34,6 +34,8 @@ final class DogTrainingBoardingPreset
             'x.audience' => 'Dog trainers, obedience schools, puppy programs, board-and-train businesses, boarding facilities and kennels',
             'x.industries' => ['Dog training businesses', 'Dog obedience schools', 'Puppy training programs', 'Board-and-train businesses', 'Dog boarding facilities', 'Kennels', 'Independent dog-care operators'],
             'x.language' => 'English',
+            // Selects the dog-industry sample data drawn inside the illustrations (MarketingDemo); the platform's own examples are untouched.
+            'x.demo' => 'dog-training',
 
             // 2 — Home
             'copy.home.hero.chip' => 'Software for dog training and boarding businesses',

@@ -2,6 +2,7 @@
 
 namespace App\Library\AgencySite;
 
+use App\Library\Marketing\MarketingDemo;
 use App\Library\Marketing\MarketingSite;
 use Illuminate\Support\Arr;
 
@@ -56,6 +57,12 @@ final class AgencyMarketingSite extends MarketingSite
     public function legalName(): string
     {
         return $this->context->legalName ?: $this->context->brandName;
+    }
+
+    /** A site that sells MotionGrove to an industry names the product, not the Agency's brand, in sentences about the software. */
+    public function productName(): string
+    {
+        return MarketingDemo::known($this->cfg('x.demo')) ? 'MotionGrove' : parent::productName();
     }
 
     public function wordmark(bool $onDark = false): string
