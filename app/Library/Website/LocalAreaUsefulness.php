@@ -2,6 +2,7 @@
 
 namespace App\Library\Website;
 
+use App\Library\Website\Setup\ServiceAreaDetails;
 use Illuminate\Support\Str;
 
 /**
@@ -47,11 +48,15 @@ final class LocalAreaUsefulness
         $clean = [];
 
         $venues = array_values(array_unique(array_filter(array_map(fn ($venue) => self::text($venue, 120), (array) ($details[self::VENUES] ?? [])))));
+        $venues = array_values(array_filter($venues, fn (string $venue) => ! self::isExample($venue)));
         if ($venues !== []) {
             $clean[self::VENUES] = array_slice($venues, 0, self::MAX_VENUES);
         }
 
         $logistics = self::text($details[self::LOGISTICS] ?? null, 600);
+        if ($logistics !== null && self::isExample($logistics)) {
+            $logistics = null;
+        }
         if ($logistics !== null) {
             $clean[self::LOGISTICS] = $logistics;
         }
@@ -70,7 +75,9 @@ final class LocalAreaUsefulness
      */
     public static function assess(array $area, ?string $baseCity): array
     {
-        if ($baseCity !== null && Str::slug($baseCity) !== '' && Str::slug($baseCity) === Str::slug($area['name'])) {
+        // An owner's area is usually written "City, ST": it is the base city whatever follows the comma.
+        $areaCity = trim(Str::before($area['name'], ','));
+        if ($baseCity !== null && Str::slug($baseCity) !== '' && in_array(Str::slug($baseCity), [Str::slug($area['name']), Str::slug($areaCity)], true)) {
             return [
                 'qualifies' => false,
                 'signals' => [],
@@ -89,6 +96,23 @@ final class LocalAreaUsefulness
         }
 
         return ['qualifies' => true, 'signals' => $signals, 'reason' => 'You confirmed local details for this area (' . implode(', ', $signals) . ').'];
+    }
+
+    /** A suggestion the form shows as a placeholder is never a confirmed fact, even if it is submitted back verbatim. */
+    private static function isExample(string $text): bool
+    {
+        $norm = fn (string $value) => Str::lower(trim(preg_replace('/\s+/u', ' ', preg_replace('/^e\.g\.\s*/i', '', $value)) ?? ''));
+        $text = $norm($text);
+
+        foreach (ServiceAreaDetails::EXAMPLES as $example) {
+            foreach (preg_split('/\R/u', $example) as $line) {
+                if ($text === $norm($line)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static function text(mixed $value, int $max): ?string

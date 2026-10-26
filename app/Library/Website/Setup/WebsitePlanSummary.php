@@ -27,7 +27,7 @@ final class WebsitePlanSummary
     public function __construct(private readonly WebsitePageStrategy $strategy) {}
 
     /**
-     * @return array{pages: array<int, array{title: string, type: string, included: bool, reason: string}>, included: array<int, array{title: string, reason: string}>, excluded: array<int, array{title: string, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>}, budget: array{max: int, planned: int}}
+     * @return array{pages: array<int, array{title: string, type: string, included: bool, reason: string}>, included: array<int, array{title: string, reason: string}>, excluded: array<int, array{title: string, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>, over_budget?: array<int, array{area: string, reason: string}>}, budget: array{max: int, planned: int}}
      */
     public function forResponse(Business $business, Website $website, WebsiteTemplate $template, QuestionnaireResponse $response): array
     {

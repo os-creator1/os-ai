@@ -165,7 +165,7 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
             self::step('logo', 'Logo', 'image', false, 'website_look', 'logo', screen: 'basics'),
 
             self::step('base_location', 'Where are you based?', 'location', true, 'business_location', null, sharedFact: true, helpText: 'Your main city. We use it to suggest the areas you serve next.'),
-            self::step('service_area_cities', 'Where do you provide your services?', 'string_list', true, 'business_location', null, sharedFact: true, suggest: true, areaPages: false, helpText: 'One place per row — a city or area customers hire you in. Put your most important areas first.'),
+            self::step('service_area_cities', 'Where do you provide your services?', 'string_list', true, 'business_location', null, sharedFact: true, suggest: true, areaPages: false, areaDetails: true, helpText: 'One place per row — a city or area customers hire you in. Put your most important areas first. Optional: open "Add local details" on a place to add venues you have worked at, how serving it works, or event photos from there — that is what lets it earn its own page.'),
 
             self::step('booth_services', 'What photo booth experiences do you offer?', 'repeatable_group', true, 'business_service', null,
                 helpText: 'Choose each experience you offer. Every one needs a real photo of that booth before your website can be published — you can add it now or later.',
@@ -240,6 +240,7 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
         ?string $itemKind = null,
         ?string $itemType = null,
         ?bool $areaPages = null,
+        ?bool $areaDetails = null,
         bool $completeList = false,
         ?string $defaults = null,
         ?array $templateHint = null,
@@ -274,6 +275,10 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
 
         if ($areaPages !== null) {
             $step['area_pages'] = $areaPages;
+        }
+
+        if ($areaDetails !== null) {
+            $step['area_details'] = $areaDetails;
         }
 
         if ($completeList) {

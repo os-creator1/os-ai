@@ -152,7 +152,21 @@
             @break
 
         @case('string_list')
-            @include('customer.business.website.wizard.steps._string-list', ['entries' => is_array($answer) ? $answer : [], 'fieldName' => $n('value'), 'areaState' => $areaState[$stepKey] ?? null])
+            @php
+                $wantsAreaDetails = (bool) ($step['area_details'] ?? false);
+                $areaPhotos = $wantsAreaDetails
+                    ? $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->limit(40)->get()
+                        ->map(fn ($asset) => ['uid' => $asset->uid, 'url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($asset), 'alt' => (string) ($asset->alt_text ?? '')])->all()
+                    : [];
+            @endphp
+            @include('customer.business.website.wizard.steps._string-list', [
+                'entries' => is_array($answer) ? $answer : [],
+                'fieldName' => $n('value'),
+                'areaState' => $areaState[$stepKey] ?? null,
+                'areaDetailsName' => $wantsAreaDetails ? $n('area_details') : null,
+                'areaDetailsSaved' => $wantsAreaDetails ? ($answers[\App\Library\Website\Setup\ServiceAreaDetails::ANSWER_KEY] ?? []) : [],
+                'areaPhotos' => $areaPhotos,
+            ])
             @break
 
         @case('repeatable_group')

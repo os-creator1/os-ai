@@ -35,6 +35,16 @@ nothing stays `other` — never a guess.
 * A service area earns a page only with an owner-confirmed local fact (venues worked, how serving it works, event photos). Everything
   else — and the base city, which the home page owns — stays in the visible "Areas we serve" list. The Review screen says exactly what
   would earn a page.
+* **Local area details (setup).** In the existing "Where do you provide your services?" step each area row has an optional, collapsed
+  "Add local details" panel: venues the owner really worked at (one per line), travel/setup/service details, and event photos picked
+  from the website's own uploaded gallery. Grey text is an example placeholder only — never saved; an example submitted back verbatim
+  is rejected (`LocalAreaUsefulness`), markup is stripped, and a photo uid that is not one of this website's gallery assets is dropped
+  (no cross-customer images). Details are stored as the companion answer `_service_area_details` (keyed by area slug, submitted
+  index-aligned with the names), so `service_area_cities` stays a plain list; reordering, renaming, removing or re-adding an area
+  cannot move details to another area, and a removed area's details are deleted with it. Only questionnaire versions whose step carries
+  `area_details: true` show the panel; older versions behave as before. An area with a confirmed fact becomes a page (the base city,
+  written "City, ST" or not, never does); one that qualifies but does not fit the page budget is listed on the Review screen with the
+  reason. Saving details never touches a published revision: pages change only when the owner generates/rebuilds and publishes.
 * A booth beyond the first five has its own page only when the owner described it.
 * **Event-type pages.** Each saved event type (`BusinessService` kind `event`: weddings, corporate events, parties…) gets its own
   page (`event_detail`, role `event`) at a clean address (`/wedding-photo-booth-rental`) only when the owner described it in their
@@ -84,8 +94,9 @@ area). Old addresses from another builder are covered by the legacy-spelling red
    requirements (space, power, lead time) and event photos are used only if the owner entered them; there is no event-specific
    field for them yet. Template manifests gained an `event_detail` entry; a template not re-seeded plans event pages with the
    booth-page section list, so no re-seed is required.
-2. **Per-area local details have no owner UI yet.** `LocalAreaUsefulness` accepts them (`details.venues|logistics|photos`) through the
-   plan; the wizard/Studio field is the follow-up that lets an area be upgraded to a page.
+2. **Area details are collected in the setup wizard only.** Studio has no editor for them yet; an existing site gains them by re-opening
+   setup on a questionnaire version that carries `area_details`, then rebuilding. Venue/photo claims are the owner's own and are not
+   verified by MotionGrove.
 3. Sitemap `<lastmod>` is not emitted: pages carry no accurate last-significant-edit timestamp, and a publish time would be misleading.
 4. Core Web Vitals are targets (LCP ≤ 2.5 s, INP ≤ 200 ms, CLS ≤ 0.1), not measurements; none was measured here.
 5. The questionnaire does not yet ask SEO-specific questions beyond what onboarding already collects.

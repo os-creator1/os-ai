@@ -22,6 +22,7 @@ use App\Library\Website\Setup\WebsiteCreationStage;
 use App\Library\Website\Setup\WebsiteCreationStateResolver;
 use App\Library\Business\BusinessImageStore;
 use App\Library\Website\Gallery\ImageAltText;
+use App\Library\Website\Setup\ServiceAreaDetails;
 use App\Library\Website\Setup\ServiceAreaList;
 use App\Library\Website\Setup\WebsiteReviewSourceStatus;
 use App\Library\Website\Setup\WebsiteSetupAnswerApplier;
@@ -758,6 +759,21 @@ class WebsiteWizardController extends CustomerBaseController
             $value = $this->stepValue($stepRequest, $screenStep, $response->website, $business);
             $this->answerValidator->validate($screenStep, $value, $draft);
             $values[$screenStep['key']] = $value;
+
+            // The optional local facts for each area travel with their row (index-aligned with the names), so a reorder,
+            // removal or rename can never attach one area's details to another. A submission that carries no detail
+            // payload at all (an older form) leaves the saved details untouched.
+            if (($screenStep['area_details'] ?? false) && ($stepRequest->has('area_details') || $value === [])) {
+                $galleryUids = $response->website->assets()
+                    ->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::Gallery->value)
+                    ->pluck('uid')->all();
+
+                $values[ServiceAreaDetails::ANSWER_KEY] = ServiceAreaDetails::fromSubmission(
+                    (array) $stepRequest->input('value', []),
+                    (array) $stepRequest->input('area_details', []),
+                    $galleryUids,
+                );
+            }
         }
 
         return $values;

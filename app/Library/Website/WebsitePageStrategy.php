@@ -608,6 +608,7 @@ final class WebsitePageStrategy
 
         $primaryCity = $baseCity;
         $plannedAreas = [];
+        $overBudget = [];
 
         foreach ($hubOnly as $area => $reason) {
             $areaExcluded[] = ['area' => (string) $area, 'reason' => $reason];
@@ -632,6 +633,7 @@ final class WebsitePageStrategy
                     ? 'Not planned: a website builds at most ' . self::MAX_AREA_PAGES . ' local pages. It is still listed as a service area.'
                     : 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. It is still listed as a service area.';
                 $areaExcluded[] = ['area' => $area, 'reason' => $reason];
+                $overBudget[] = ['area' => $area, 'reason' => $reason];
                 $decide('area:' . Str::slug($area), 'Serving ' . $area, 'location', false, $reason);
             }
         }
@@ -644,6 +646,8 @@ final class WebsitePageStrategy
                 'planned' => count($plannedAreas),
                 'planned_list' => $plannedAreas,
                 'excluded' => $areaExcluded,
+                // Areas with confirmed local details that DID qualify but could not be given a page (page limit): shown to the owner.
+                'over_budget' => $overBudget,
                 // Every area without a page of its own: still named in the "Areas we serve" section of the home page.
                 'hub' => array_values(array_diff($areaCandidates, $plannedAreas)),
             ],

@@ -1142,6 +1142,27 @@
             leaveAfterSave(function () { window.location.assign(screen.getAttribute('data-exit-url')); });
         }
 
+        // ---- service-area local details: serialise a row's optional panel into its hidden JSON input ----
+        // Capture phase, so the hidden value is current before the autosave listeners below read the form.
+        function syncAreaDetails(panel) {
+            var row = panel.closest('[data-row]');
+            var hidden = row && row.querySelector('[data-area-details-json]');
+            if (!hidden) { return; }
+            var venues = (panel.querySelector('[data-area-field="venues"]') || {}).value || '';
+            var logistics = (panel.querySelector('[data-area-field="logistics"]') || {}).value || '';
+            var photos = Array.prototype.map.call(panel.querySelectorAll('[data-area-photo]:checked'), function (box) { return box.value; });
+            var has = venues.trim() !== '' || logistics.trim() !== '' || photos.length > 0;
+            hidden.value = has ? JSON.stringify({ venues: venues, logistics: logistics, photos: photos }) : '';
+            var badge = panel.querySelector('[data-area-detail-badge]');
+            if (badge) { badge.classList.toggle('d-none', !has); }
+        }
+        ['input', 'change'].forEach(function (type) {
+            root.addEventListener(type, function (event) {
+                var panel = event.target.closest && event.target.closest('[data-area-detail-panel]');
+                if (panel) { syncAreaDetails(panel); }
+            }, true);
+        });
+
         // ---- wiring (delegated on the persistent root; survives swaps) ----
         root.addEventListener('input', function (event) {
             if (event.target.closest && event.target.closest('form[id^="answer-form-"]') && !event.target.matches('[data-gallery-field]')) { markDirty(); }
