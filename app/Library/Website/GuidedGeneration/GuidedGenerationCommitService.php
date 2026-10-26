@@ -402,7 +402,7 @@ final class GuidedGenerationCommitService
                 // let search engines find their pages, the rebuilt pages stay open, and a
                 // page the owner hid on purpose stays hidden (matched by its address). A
                 // first generation, or a site never released, stays hidden until reviewed.
-                $previous = $locked->pages()->get(['slug', 'is_home', 'page_role', 'noindex', 'noindex_explicit']);
+                $previous = $locked->pages()->get(['slug', 'is_home', 'page_role', 'page_intent', 'noindex', 'noindex_explicit']);
                 $ownerOpened = $locked->indexing_released_at !== null;
                 $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_explicit)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
 
@@ -427,12 +427,21 @@ final class GuidedGenerationCommitService
                     ]);
                 }
 
-                // A place page this rebuild no longer creates (its area has no confirmed local details any more) may already be
-                // indexed or linked to: its address answers a permanent redirect to the home page, which lists the area,
-                // instead of a 404. Frozen into the next published revision like any owner redirect.
+                // A place page this rebuild no longer creates (its area has no confirmed local details any more, or no room) may
+                // already be indexed or linked to. Its address answers a permanent redirect to the home page ONLY while the
+                // place is still named in the home page's "Areas we serve" list — that is where the visitor's search is still
+                // answered. A place the owner dropped entirely is not redirected (an honest 404 beats a misleading landing
+                // page). Never overrides an owner redirect, never points anywhere but a live page, so no chain or loop.
                 $newSlugs = collect($bound['pages'])->pluck('slug')->filter()->all();
+                $homeText = mb_strtolower((string) json_encode(collect($bound['pages'])->firstWhere('is_home', true)['sections'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                 $lost = $previous->filter(fn ($old) => ! $old->is_home && $old->slug !== null && ($old->page_role === 'location' || str_starts_with((string) $old->slug, 'serving-')))
-                    ->pluck('slug')->reject(fn ($slug) => in_array($slug, $newSlugs, true))->values()->all();
+                    ->reject(fn ($old) => in_array($old->slug, $newSlugs, true))
+                    ->filter(function ($old) use ($homeText) {
+                        $place = trim((string) (($old->page_intent['place'] ?? null) ?: ''));
+
+                        return $place !== '' && str_contains($homeText, mb_strtolower(trim(\Illuminate\Support\Str::before($place, ','))));
+                    })
+                    ->pluck('slug')->values()->all();
                 $redirects = (array) ($locked->custom_redirects ?? []);
                 foreach ($lost as $slug) {
                     $redirects[strtolower((string) $slug)] ??= '';

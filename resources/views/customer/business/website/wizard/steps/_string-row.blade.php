@@ -39,6 +39,11 @@
                         </label>
                     @endforeach
                 </div>
+                @if (($galleryTotal ?? 0) > count($galleryPhotos))
+                    <p class="text-caption mt-1 mb-0" data-area-photo-note>Showing {{ count($galleryPhotos) }} of your {{ $galleryTotal }} gallery photos (the first ones, plus any you already picked).</p>
+                @endif
+            @else
+                <p class="text-caption mb-0" data-area-photo-hint>No photos yet? You&rsquo;ll upload your event photos in the Gallery step later. Afterwards, choose <strong>Edit</strong> next to Service areas on the final Review screen to come back here and pick the ones taken in this place.</p>
             @endif
         </details>
     @endif

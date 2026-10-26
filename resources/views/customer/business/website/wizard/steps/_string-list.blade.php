@@ -23,6 +23,7 @@
         'detailsName' => $detailsName,
         'detail' => $detailsBySlug[\Illuminate\Support\Str::slug($entry)] ?? [],
         'galleryPhotos' => $galleryPhotos,
+        'galleryTotal' => $areaPhotoTotal ?? count($galleryPhotos),
     ];
 @endphp
 @if ($area)

@@ -211,6 +211,48 @@ class AreaDetailsAcceptanceTest extends TestCase
         $this->assertSame([], array_values(array_filter($mine['nampa-id'], fn ($v) => $v === [$photos[0]])));
     }
 
+    public function test_a_stale_revision_cannot_overwrite_area_details(): void
+    {
+        $photos = $this->startSpokane();
+        $this->continueStep('base_location', ['value' => ['city' => 'Spokane', 'region' => 'WA', 'country_code' => 'US']])->assertOk();
+        $this->saveAreas([['Liberty Lake, WA', ['logistics' => self::LOGISTICS]]])->assertOk();
+        $stale = $this->wizardSession()->answers_revision;
+
+        // Another tab saves first.
+        $this->saveAreas([['Liberty Lake, WA', ['logistics' => self::LOGISTICS . ' Edited elsewhere.']]])->assertOk();
+
+        $response = $this->jpost($this->url('draft', 'service_area_cities'), $this->areaPayload([['Liberty Lake, WA', ['logistics' => 'Overwrite attempt.']]]) + ['answers_revision' => $stale, '__present' => ['service_area_cities']]);
+        $response->assertStatus(409);
+        $this->assertStringContainsString('Edited elsewhere', $this->wizardSession()->answers[ServiceAreaDetails::ANSWER_KEY]['liberty-lake-wa']['logistics']);
+
+        $response = $this->jpost($this->url('autosave', 'service_area_cities'), $this->areaPayload([['Liberty Lake, WA', ['logistics' => 'Overwrite attempt.']]]) + ['answers_revision' => $stale, '__present' => ['service_area_cities']]);
+        $response->assertStatus(409);
+        $this->assertStringNotContainsString('Overwrite attempt', json_encode($this->wizardSession()->answers));
+    }
+
+    public function test_a_saved_photo_selection_beyond_the_first_forty_gallery_photos_is_still_shown_and_kept(): void
+    {
+        $this->startSpokane();
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+        for ($i = 0; $i < 45; $i++) {
+            \App\Models\WebsiteAsset::forceCreate(['website_id' => $website->id, 'disk' => 'public', 'path' => "images/bulk{$i}.png", 'mime_type' => 'image/png', 'size' => 1, 'width' => 1, 'height' => 1, 'content_hash' => hash('sha256', "bulk{$i}"), 'purpose' => 'gallery', 'sort_order' => 1000 + $i]);
+        }
+        $this->continueStep('base_location', ['value' => ['city' => 'Spokane', 'region' => 'WA', 'country_code' => 'US']])->assertOk();
+        $deep = $website->assets()->where('path', 'images/bulk44.png')->firstOrFail()->uid;
+        $shallow = $website->assets()->where('path', 'images/bulk43.png')->firstOrFail()->uid;
+        $this->saveAreas([["Coeur d'Alene, ID", ['venues' => self::VENUE, 'photos' => [$deep]]]])->assertOk();
+        $this->assertSame([$deep], $this->wizardSession()->answers[ServiceAreaDetails::ANSWER_KEY]['coeur-dalene-id']['photos']);
+
+        $page = $this->get($this->url('step', 'service_area_cities'))->assertOk()->getContent();
+        $this->assertStringContainsString('value="' . $deep . '" data-area-photo checked', preg_replace('/\s+/', ' ', $page), 'The saved photo is offered and ticked, however deep in the gallery.');
+        $this->assertStringNotContainsString($shallow, $page, 'Unselected photos beyond the first 40 are not rendered.');
+        $this->assertStringContainsString('of your 49 gallery photos', $page, 'The owner is told the list is partial.');
+
+        // Saving what the form posts back keeps it.
+        $this->saveAreas([["Coeur d'Alene, ID", ['venues' => self::VENUE, 'photos' => [$deep]]]])->assertOk();
+        $this->assertSame([$deep], $this->wizardSession()->answers[ServiceAreaDetails::ANSWER_KEY]['coeur-dalene-id']['photos']);
+    }
+
     public function test_publishing_is_untouched_until_the_owner_rebuilds(): void
     {
         $photos = $this->startSpokane();

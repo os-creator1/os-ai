@@ -100,3 +100,28 @@ area). Old addresses from another builder are covered by the legacy-spelling red
 3. Sitemap `<lastmod>` is not emitted: pages carry no accurate last-significant-edit timestamp, and a publish time would be misleading.
 4. Core Web Vitals are targets (LCP ≤ 2.5 s, INP ≤ 200 ms, CLS ≤ 0.1), not measurements; none was measured here.
 5. The questionnaire does not yet ask SEO-specific questions beyond what onboarding already collects.
+
+## 7. Operator runbook — activating local-area details (`area_details`)
+
+The service-area panel exists only on questionnaire versions whose `service_area_cities` step carries `area_details: true`. Versions are
+immutable and every setup session is pinned to the version it started on, so activation = publishing ONE new version. Nobody mid-setup,
+no saved answer and no published website changes; only setups started afterwards use the new version. Run in this order, per environment
+(never against a database you have not looked at first):
+
+1. **Deploy the code, then migrate:** `php artisan migrate --force`. The only migration (`2026_12_06_100001_add_page_intent_to_website_pages`)
+   adds two nullable columns to `website_pages` and sorts after the newest migration already on `main` (`2026_12_05_100001…`).
+2. **Look before seeding (read-only):**
+   `php artisan tinker --execute="App\Models\QuestionnaireDefinition::where('key','photobooth_website_setup')->first()->versions()->orderBy('version_number')->get(['id','version_number','state'])->each(fn(\$v)=>print(\$v->id.' v'.\$v->version_number.' '.(\$v->state->value??\$v->state).' area_details='.json_encode(collect(\$v->storedSteps())->firstWhere('key','service_area_cities')['area_details']??null).PHP_EOL));"`
+   Expect exactly one `published` row without `area_details`. A `draft` row is fine: the seeder rewrites a differing draft to the new
+   steps before publishing it (it never publishes a stale draft; a draft is pinned by no session).
+3. **Activate:** `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV3Seeder --force`. It is idempotent: if any existing version
+   already has exactly this step tree it does nothing; otherwise it publishes one new version and marks the previous one superseded.
+4. **Verify:** repeat the step 2 command — expect the new highest version `published` with `area_details=true`, the previous one
+   `superseded` and unchanged, and no `draft`. Running step 3 again must change nothing. In the app, start a NEW setup and open
+   "Where do you provide your services?": each row has "Add local details (optional)". An in-progress setup keeps its old screen.
+5. **Existing websites:** nothing regenerates. To use the details on an existing site the owner opens setup (a new setup starts on the new
+   version), fills the panels, then explicitly rebuilds and publishes. Transparent Photo Booths is not touched by any step above.
+6. **Rollback:** publish no older version back; the new version only adds an optional panel. If it must be withdrawn, ship a code change
+   (the panel and `serviceAreas()` are keyed on the flag, so removing the flag from the seeder and re-seeding publishes a version without it).
+
+Browser walkthrough: `tests/e2e/area-details.mjs` (opt-in, see `tests/e2e/README.md`).

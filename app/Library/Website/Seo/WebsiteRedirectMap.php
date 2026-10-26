@@ -145,6 +145,11 @@ final class WebsiteRedirectMap
      */
     private static function legacySpellingTarget(array $snapshot, string $path): ?string
     {
+        // Single-segment addresses only: a nested path ("blog/x") is never folded into a flat page's spelling.
+        if (str_contains(trim($path, '/'), '/')) {
+            return null;
+        }
+
         $key = self::slugKey($path);
 
         if ($key === '') {

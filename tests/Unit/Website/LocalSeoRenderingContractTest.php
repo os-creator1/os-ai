@@ -49,6 +49,28 @@ class LocalSeoRenderingContractTest extends TestCase
         $this->assertNull(WebsiteRedirectMap::target($live, 'photobooths'), 'a live address is served, never redirected');
     }
 
+    public function test_transparent_style_old_service_urls_reach_their_one_real_page_and_nothing_else_is_guessed(): void
+    {
+        $snapshot = $this->snapshot(['digital-polaroid-photo-booth', '360-photo-booth', 'wedding-photo-booth-rental', 'photo-booth-gallery', 'photo-booth-contact', 'serving-liberty-lake-wa']);
+
+        // Specific, relevant legacy spellings keep their redirect.
+        $this->assertSame('digital-polaroid-photo-booth', WebsiteRedirectMap::target($snapshot, 'digitalpolaroidphotobooth'));
+        $this->assertSame('360-photo-booth', WebsiteRedirectMap::target($snapshot, '360photobooth'));
+        $this->assertSame('photo-booth-contact', WebsiteRedirectMap::target($snapshot, 'PhotoBoothContact'));
+
+        // A different page, a partial name, a nested path or a removed page is a 404 — never the home page, never a guess.
+        foreach (['digital-polaroid', 'photobooth', 'old-pricing', 'photo-booth-packages', 'serving-cheney-wa', 'blog/wedding-photo-booth-rental', 'wedding/photo/booth/rental'] as $unrelated) {
+            $this->assertNull(WebsiteRedirectMap::target($snapshot, $unrelated), "{$unrelated} must not be redirected");
+        }
+
+        // Targets are always live pages, never the old address itself, so no loop or chain can form.
+        foreach (['digitalpolaroidphotobooth', '360photobooth', 'PhotoBoothContact'] as $old) {
+            $target = WebsiteRedirectMap::target($snapshot, $old);
+            $this->assertContains($target, array_column($snapshot['pages'], 'slug'));
+            $this->assertNull(WebsiteRedirectMap::target($snapshot, $target), 'the destination is served, not redirected again');
+        }
+    }
+
     public function test_an_explicit_redirect_still_wins_over_a_spelling_match(): void
     {
         $snapshot = $this->snapshot(['wedding-photo-booth-rental', 'weddings']) + ['redirects' => ['weddingphotoboothrental' => 'weddings']];

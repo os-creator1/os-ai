@@ -58,6 +58,17 @@ class WebsiteServiceAreaPagesTest extends TestCase
         return array_map(fn (string $name) => ['name' => $name, 'details' => ['logistics' => "Serving {$name} takes under an hour from our base; we arrive two hours before the event."]], $names);
     }
 
+    /** The service areas saved on the business's own location: what the home page's "Areas we serve" list is built from. */
+    private function saveServiceAreas(object $business, array $areas): void
+    {
+        $location = $business->primaryLocation()->first();
+        if ($location === null) {
+            $location = $business->locations()->create(['name' => 'Primary Location', 'service_mode' => 'service_area', 'country_code' => 'US', 'city' => 'Manhattan', 'region' => 'NY']);
+            $location->forceFill(['is_primary' => true])->save();
+        }
+        $location->forceFill(['service_area_cities' => $areas])->save();
+    }
+
     private function areaPages(array $plan): array
     {
         return array_values(array_filter($plan, fn ($page) => str_starts_with($page['page_key'], 'area:')));
@@ -346,6 +357,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
         $first = $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
         $this->assertSame('succeeded', $first->status);
         $website = Website::where('business_id', $business->id)->sole();
@@ -359,6 +371,24 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $website = $website->fresh();
         $this->assertSame(0, $website->pages()->where('slug', 'like', 'serving-%')->count());
         $this->assertEquals(['serving-brooklyn' => '', 'serving-queens' => ''], $website->custom_redirects, 'Old place addresses 301 to the home page, which lists the areas.');
+    }
+
+    public function test_a_place_the_owner_dropped_entirely_is_not_redirected_to_a_home_page_that_no_longer_mentions_it(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Bronx']);
+
+        // Brooklyn stays a listed area (no details now); Queens is removed from the list altogether.
+        $rebuilt = app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class)->rebuild(
+            $business->fresh(), $website->fresh(), WebsiteTemplate::findActiveOrFail('photo_booth_modern'), (int) $business->customer_id, 'rebuild-' . uniqid(), null, null, null, null, ['Brooklyn', 'Bronx'], null
+        );
+
+        $this->assertSame('succeeded', $rebuilt->status);
+        $this->assertEquals(['serving-brooklyn' => ''], $website->fresh()->custom_redirects, 'Only the place the home page still lists is redirected; the dropped one is an honest 404.');
     }
 
     public function test_a_generation_of_near_duplicate_area_pages_fails_and_never_commits_pages(): void
