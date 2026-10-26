@@ -2,6 +2,7 @@
 
 namespace App\Library\AgencySite;
 
+use App\Library\Marketing\MarketingDemo;
 use App\Models\WorkspacePlanCatalog;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -54,13 +55,26 @@ final class SiteContentBuilder
         $tree['sections'] = ['home' => ['trust_logos' => false, 'testimonials' => true, 'setup_specialist_card' => false]];
         $tree['show_unverified_features'] = false;
 
-        $tree = $this->rebrand($tree, $brand);
+        $answers = $this->validAnswers($values);
 
-        foreach (SiteDefaults::values($brand) as $path => $value) {
+        // A site that sells MotionGrove to one industry says "MotionGrove" in sentences about the software; the Agency's
+        // own brand stays in the header, footer, titles and legal identity (all read from the context, not the tree).
+        $demo = $answers['x.demo'] ?? null;
+        $product = MarketingDemo::known($demo) ? 'MotionGrove' : $brand;
+
+        $tree = $this->rebrand($tree, $product, $brand);
+
+        foreach (SiteDefaults::values($product) as $path => $value) {
             Arr::set($tree, $path, $value);
         }
 
-        $tree['faqs'] = ['home' => SiteDefaults::homeFaqs($brand), 'pricing' => SiteDefaults::pricingFaqs()];
+        $tree['faqs'] = ['home' => SiteDefaults::homeFaqs($product), 'pricing' => SiteDefaults::pricingFaqs()];
+
+        // The industry's sample-data blocks that live in config, before the Agency's own copy (which still wins).
+        foreach (MarketingDemo::tree($demo) as $path => $value) {
+            Arr::set($tree, $path, $value);
+        }
+
         Arr::set($tree, 'pages.pricing.description', "Plans and pricing for {$brand}.");
         Arr::set($tree, 'pages.home.title', $brand);
         $tree['site'] = ['name' => $brand, 'legal_name' => $context->legalName, 'og_image' => 'img/mg-mark.png'];
@@ -74,8 +88,6 @@ final class SiteContentBuilder
                 Arr::set($tree, "pages.$page.title", $title);
             }
         }
-
-        $answers = $this->validAnswers($values);
 
         // Setup answers feed starter wording; the Agency's own answers below still win.
         if (! empty($answers['x.industries']) && ! array_key_exists('copy.home.trust.industries', $answers)) {
@@ -100,7 +112,7 @@ final class SiteContentBuilder
         $tree['industries'] = $this->industriesWithJobs($tree['industries'] ?? []);
 
         // x.* — settings of the Agency site itself, kept apart from the copy.
-        $tree['x'] = ['cta' => [], 'testimonials' => (array) ($answers['x.testimonials'] ?? [])];
+        $tree['x'] = ['cta' => [], 'testimonials' => (array) ($answers['x.testimonials'] ?? []), 'demo' => MarketingDemo::known($demo) ? $demo : null];
         foreach (['hero', 'final', 'product', 'solutions', 'how'] as $slot) {
             if (! empty($answers["x.cta.$slot"])) {
                 $tree['x']['cta'][$slot] = $answers["x.cta.$slot"];
@@ -140,11 +152,11 @@ final class SiteContentBuilder
     }
 
     /** Replace the product name in every string value (never in keys), and drop the original owner's story copy. */
-    private function rebrand(array $tree, string $brand): array
+    private function rebrand(array $tree, string $product, string $brand): array
     {
-        array_walk_recursive($tree, function (&$value) use ($brand): void {
+        array_walk_recursive($tree, function (&$value) use ($product, $brand): void {
             if (is_string($value)) {
-                $value = str_replace(['MotionGrove', 'getmotiongrove.com'], [$brand, strtolower(str_replace(' ', '', $brand)).'.com'], $value);
+                $value = str_replace(['MotionGrove', 'getmotiongrove.com'], [$product, strtolower(str_replace(' ', '', $brand)).'.com'], $value);
             }
         });
 

@@ -183,3 +183,20 @@ restore partial SQL dumps by hand: the site, its revisions, signups and booking 
 Left unwritten on purpose: testimonials and the Customers page, "Support & onboarding", "Setup commitment", legal
 links, brand identity. The How-it-works page holds at most four steps, so the five-stage journey is condensed into four.
 The hero's second button always opens How it works, so the preset labels it "See how it works".
+
+## Industry sample data in the illustrations
+
+The marketing illustrations (hero dashboards, mock website, CRM cards, conversations, SEO keywords, the "one connected
+workflow" steps) draw **fictional sample data**. The strings live in `App\Library\Marketing\MarketingDemo`; the views read
+them through `$mg->demo('key')`, and sentences about the software use `$mg->productName()`.
+
+- The default set is the platform's original events example, so the platform site and every Agency that has not chosen a
+  set render exactly as before (verified byte-identical).
+- An Agency selects a set with the validated `x.demo` setting. `dog-training` is the only one today and is written by the
+  dog training and boarding preset (`agency-site:apply-preset`). A site with a set also says "MotionGrove" (not the Agency's
+  brand) in sentences about the software; the header, footer, titles and legal identity keep the Agency brand.
+- To add an industry: add a set with every key of the default set to `MarketingDemo::SETS`, register it in `SELECTABLE`,
+  and keep it to claims MotionGrove supports (no occupancy, overnight reservations, vaccination or medical records).
+- **Existing saved drafts:** a draft saved before this change has no `x.demo`. Re-run
+  `php artisan agency-site:apply-preset <workspaceUid> --apply` (dry run first, without `--apply`), or set
+  "Sample data in illustrations" via the editor save path. Nothing is published by either.

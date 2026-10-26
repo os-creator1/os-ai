@@ -2,6 +2,7 @@
 
 namespace App\Library\AgencySite;
 
+use App\Library\Marketing\MarketingDemo;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -305,6 +306,7 @@ final class SiteSchema
         $index['x.cta.product'] = ['path' => 'x.cta.product', 'label' => 'Product CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
         $index['x.cta.solutions'] = ['path' => 'x.cta.solutions', 'label' => 'Solutions CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
         $index['x.cta.how'] = ['path' => 'x.cta.how', 'label' => 'How it works CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
+        $index['x.demo'] = ['path' => 'x.demo', 'label' => 'Sample data in illustrations', 'type' => 'choice', 'options' => MarketingDemo::SELECTABLE];
         $index['x.seo_image'] = ['path' => 'x.seo_image', 'label' => 'Social image', 'type' => 'asset'];
 
         return $index;

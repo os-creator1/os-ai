@@ -73,6 +73,18 @@ class MarketingSite
         'final_cta' => 'marketing.partials.final-cta',
     ];
 
+    /** The name of the software when a sentence is about the product itself (the brand, unless a site sells another product). */
+    public function productName(): string
+    {
+        return $this->brandName();
+    }
+
+    /** One fictional sample-data string drawn inside an illustration (App\Library\Marketing\MarketingDemo). */
+    public function demo(string $key): string
+    {
+        return MarketingDemo::get($this->cfg('x.demo'), $key);
+    }
+
     public function brandName(): string
     {
         return (string) $this->cfg('site.name', 'MotionGrove');
