@@ -36,6 +36,17 @@ nothing stays `other` — never a guess.
   else — and the base city, which the home page owns — stays in the visible "Areas we serve" list. The Review screen says exactly what
   would earn a page.
 * A booth beyond the first five has its own page only when the owner described it.
+* **Event-type pages.** Each saved event type (`BusinessService` kind `event`: weddings, corporate events, parties…) gets its own
+  page (`event_detail`, role `event`) at a clean address (`/wedding-photo-booth-rental`) only when the owner described it in their
+  own words — an empty description, or the setup's unchanged example sentence, does not count (`EventPageUsefulness`) — and no booth
+  page already targets the same search. The page states that description, lists the booths (linked), shows only the owner's FAQ
+  answers and customer quotes that mention the event, and points on to packages and the quote; it never adds venues, past events,
+  reviews, prices or guarantees. Home "Events we cover" cards link to them by event identity; they sit under Services in the
+  navigation and the breadcrumb, and link to each other ("Other occasions").
+* **Page budget (14), in the order it is given out:** Home/Services/Packages/About/Contact/extra section → first five booths (with a
+  small reserve for areas that have local details) → event pages (up to 4, in the owner's order) → Gallery, Backdrops, FAQ → more
+  described booths → place pages. The Review screen lists every page left out with its reason and the order; a booth page is never
+  displaced by an event page.
 * Place pages state saved cities, the travel radius and confirmed local details only, and list booths by name with links.
 * Titles lead with the page's purpose and carry the brand once; descriptions are written per page from confirmed facts and end on a
   full sentence (no ellipsis, no mid-word cut).
@@ -49,7 +60,7 @@ nothing stays `other` — never a guess.
 | Class | What | Effect on existing sites |
 |---|---|---|
 | **A. Shared renderer code** | brand-variant title dedupe; legacy one-word/punctuation slug 301s; footer legal link resolved to the real page; footer column titles no longer `<h2>`; page-intent classification for blog/article logic; blog call to action found by role/content, not by a `/packages` address; `areaServed`; "Helpful guides" on supported pages | applies on deploy, nothing republished, no content changed |
-| **B. Generator** | usefulness gate, areas list, per-page metadata, booth/place linking, role storage | new generations and explicit rebuilds only |
+| **B. Generator** | usefulness gate, areas list, per-page metadata, booth/place/event linking, role storage, event pages | new generations and explicit rebuilds only; a published site never gains event pages until the owner rebuilds and publishes |
 | **C. Published content** | truncated descriptions, missing legal descriptions, repeated alt text, name-swapped city pages, unlinked cards, "booking out for 2026" claims | owner reviews and republishes; the publish-time review names each page |
 | **D. Operator configuration** | `/robots.txt` must answer 200 (nginx); `X-Frame-Options` for form frames (§6.6) | operator action; `deploy/forge/production/post-deploy-check.sh` now fails a 404 robots.txt |
 
@@ -69,8 +80,10 @@ area). Old addresses from another builder are covered by the legacy-spelling red
 
 ## 6. Limitations and follow-ups (priority order)
 
-1. **Event-type pages** (wedding / corporate / party) are not a generated page type: they need a new plan page type and template
-   manifest entries (seeded data). Until then they are cards on the home page, or pages the owner builds.
+1. **Event pages need the owner's words.** An event type described only by the setup's example sentence stays a card. Event-specific
+   requirements (space, power, lead time) and event photos are used only if the owner entered them; there is no event-specific
+   field for them yet. Template manifests gained an `event_detail` entry; a template not re-seeded plans event pages with the
+   booth-page section list, so no re-seed is required.
 2. **Per-area local details have no owner UI yet.** `LocalAreaUsefulness` accepts them (`details.venues|logistics|photos`) through the
    plan; the wizard/Studio field is the follow-up that lets an area be upgraded to a page.
 3. Sitemap `<lastmod>` is not emitted: pages carry no accurate last-significant-edit timestamp, and a publish time would be misleading.
