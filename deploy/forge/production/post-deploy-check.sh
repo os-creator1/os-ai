@@ -4,6 +4,11 @@
 #
 #   bash deploy/forge/production/post-deploy-check.sh https://getmotiongrove.com closed   # registration closed (default)
 #   bash deploy/forge/production/post-deploy-check.sh https://getmotiongrove.com open     # after launch approval
+#   bash deploy/forge/production/post-deploy-check.sh https://getmotiongrove.com closed disabled   # MARKETING_SITE_ENABLED=false
+#
+# The optional third argument states whether the public marketing site is meant to be on (default: enabled, the
+# production setting). Enabled: GET / must be the marketing homepage (200 with an <h1> and a link to /pricing).
+# Disabled: GET / keeps its original behaviour, a 302 to /login.
 #
 # The second argument states what the environment is SUPPOSED to be (ACCOUNT_CAN_REGISTER=false -> closed),
 # and the check fails if reality differs in either direction: closed must really show the closed screen,
@@ -12,8 +17,10 @@
 
 BASE="${1:-}"
 EXPECT="${2:-closed}"
+MARKETING="${3:-enabled}"
 if [ -z "$BASE" ]; then echo "usage: $0 https://host [closed|open]" >&2; exit 2; fi
 case "$EXPECT" in closed|open) : ;; *) echo "second argument must be 'closed' or 'open'" >&2; exit 2 ;; esac
+case "$MARKETING" in enabled|disabled) : ;; *) echo "third argument must be 'enabled' or 'disabled'" >&2; exit 2 ;; esac
 BASE="${BASE%/}"
 fail=0
 
@@ -28,7 +35,16 @@ case "$BASE" in
 esac
 
 check "GET /login (readiness probe)"           200 "$(code "$BASE/login")"
-check "GET / redirects to /login"               302 "$(code "$BASE/")"
+if [ "$MARKETING" = "enabled" ]; then
+    # The public marketing homepage (MarketingSite::servesRequest): 200 AND recognisably the homepage, so a blank page,
+    # an error page or a parked-domain 200 does not pass.
+    check "GET / is the marketing homepage"      200 "$(code "$BASE/")"
+    home_body="$(curl -sS --max-time 20 "$BASE/" || true)"
+    if printf '%s' "$home_body" | grep -qi '<h1[ >]'; then echo "ok    homepage has an <h1>"; else echo "FAIL  homepage has no <h1>"; fail=$((fail + 1)); fi
+    if printf '%s' "$home_body" | grep -Eq "href=[\"']((https?:)?//getmotiongrove\.com)?/pricing[\"'#?]"; then echo "ok    homepage links to /pricing"; else echo "FAIL  homepage has no link to /pricing"; fail=$((fail + 1)); fi
+else
+    check "GET / redirects to /login (marketing disabled)" 302 "$(code "$BASE/")"
+fi
 check "http:// redirects to https://"           301 "$(code "http://${BASE#https://}/login")"
 check "unknown site uuid is a 404, not a 500"   404 "$(code "$BASE/sites/00000000-0000-4000-8000-000000000000")"
 
