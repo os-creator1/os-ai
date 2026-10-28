@@ -12,7 +12,7 @@
         @else
             <p class="mb-1"><strong>One-time:</strong> {{ $oneTimeLabel }} — {{ $preview['one_time']['text'] }}@if(isset($preview['one_time']['detail'])) <span class="text-caption text-muted">({{ $preview['one_time']['detail'] }})</span>@endif</p>
             @if(isset($preview['possible_review_fee']) && $preview['possible_review_fee']['micro'] > 0)
-                <p class="mb-1" data-role="possible-review-fee"><strong>Possible carrier review fee:</strong> up to {{ $preview['possible_review_fee']['text'] }}, only if the carrier bills a one-time campaign review. It is not part of the amount charged when you submit; if it applies we charge it separately, at the carrier's cost, and never without telling you.</p>
+                <p class="mb-1" data-role="possible-review-fee"><strong>Carrier review fee:</strong> {{ $preview['possible_review_fee']['text'] }} per carrier review, if sent for downstream review; additional review fees may apply on resubmission. It is not part of the amount charged when you submit; any review fee is billed separately, at the carrier's cost, and never without telling you.</p>
             @endif
             <p class="mb-1"><strong>Then monthly:</strong> {{ $recurringLabel }} — {{ $preview['recurring']['text'] ?? 'not priced yet; we will tell you before anything recurring is charged' }}</p>
             <p class="mb-1">Text messages you send are billed separately, per message. Your balance: {{ $preview['balance_text'] }}.</p>

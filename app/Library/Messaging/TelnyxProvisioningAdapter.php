@@ -1118,11 +1118,11 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 try {
                     $qualification = $this->client()->get(self::API_BASE . '/10dlc/campaignBuilder/brand/' . $brandId . '/usecase/' . $useCase['usecase']);
                 } catch (ConnectionException) {
-                    throw new \RuntimeException('Could not check the brand\'s eligibility for Low Volume Mixed.');
+                    throw new MessagingRegistrationNotEligibleException('We couldn\'t reach the carrier to check your eligibility for Low Volume Mixed. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
                 }
 
                 if (! $qualification->successful()) {
-                    throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. Nothing was charged. Choose a standard service or promotional campaign instead.');
+                    throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. ' . $this->qualificationFeeNote($needsBrand) . ' Choose a standard service or promotional campaign instead.');
                 }
 
                 // UsecaseMetadata is a root-level object. Unknown or malformed
@@ -1133,15 +1133,15 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
                 if (! is_int($minSub) || ! is_int($maxSub) || $minSub < 0 || $maxSub < 0
                     || $this->providerValue($qualification, ['usecase']) !== $useCase['usecase']) {
-                    throw new MessagingRegistrationNotEligibleException('We couldn\'t confirm the carrier\'s rules for Low Volume Mixed right now. Nothing was charged. Please try again later.');
+                    throw new MessagingRegistrationNotEligibleException('We couldn\'t confirm the carrier\'s rules for Low Volume Mixed right now. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
                 }
 
                 if (count($subUsecases) < $minSub) {
-                    throw new MessagingRegistrationNotEligibleException('The carrier needs at least ' . $minSub . ' distinct message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. Nothing was charged. Choose the standard campaign type that matches what you send.');
+                    throw new MessagingRegistrationNotEligibleException('The carrier needs at least ' . $minSub . ' distinct message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. ' . $this->qualificationFeeNote($needsBrand) . ' Choose the standard campaign type that matches what you send.');
                 }
 
                 if (count($subUsecases) > $maxSub) {
-                    throw new MessagingRegistrationNotEligibleException('The carrier allows at most ' . $maxSub . ' message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. Nothing was charged and none of your purposes was dropped. Choose a campaign type that fits what you send.');
+                    throw new MessagingRegistrationNotEligibleException('The carrier allows at most ' . $maxSub . ' message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. ' . $this->qualificationFeeNote($needsBrand) . ' None of your purposes was dropped. Choose a campaign type that fits what you send.');
                 }
             }
 
@@ -1297,6 +1297,20 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      *
      * @param  list<string>  $paths  tried in order
      */
+    /**
+     * Customer wording for a Low Volume Mixed refusal that happens AFTER the
+     * brand step: a brand the carrier created in this attempt has already
+     * cost its fee (committed, never refunded), while the campaign fee was
+     * never charged (its hold is released). A brand saved by an earlier
+     * attempt was paid then, so nothing new is charged now.
+     */
+    private function qualificationFeeNote(bool $brandCreatedNow): string
+    {
+        return $brandCreatedNow
+            ? 'The carrier brand fee was already charged because the carrier created your brand, and it is not refunded; your brand is saved so a retry will not pay it again. The campaign fee was not charged.'
+            : 'Your brand was registered earlier, so no new brand fee was charged, and the campaign fee was not charged.';
+    }
+
     private function providerValue(\Illuminate\Http\Client\Response $response, array $paths): string
     {
         foreach ($paths as $path) {

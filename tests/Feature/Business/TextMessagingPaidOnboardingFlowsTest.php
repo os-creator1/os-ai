@@ -598,7 +598,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertStringContainsString('value="low_volume_mixed"', $html);
         $this->assertStringNotContainsString('value="mixed"', $html);
         $this->assertStringContainsString('data-role="possible-review-fee"', $html);
-        $this->assertStringContainsString('up to USD 15.00', $html);
+        $this->assertStringContainsString('USD 15.00 per carrier review, if sent for downstream review; additional review fees may apply on resubmission', $html);
         $this->assertStringContainsString('USD 9.00', $html);
         $this->assertStringContainsString('carrier brand fee USD 4.50 per brand', $html);
         $this->assertStringContainsString('not part of the amount charged when you submit', $html);
@@ -712,6 +712,40 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->post($this->url('registration.update'), $this->lowVolumePayload());
     }
 
+    public function test_low_volume_qualification_failures_after_brand_creation_distinguish_the_committed_brand_fee_from_the_released_campaign_fee(): void
+    {
+        $this->startLowVolume();
+
+        // First refusal: this attempt created the brand, so its fee was earned.
+        $this->lvmEligible = false;
+        $refused = $this->submitLowVolume();
+        $this->assertStringContainsString('brand fee was already charged', $refused);
+        $this->assertStringContainsString('not refunded', $refused);
+        $this->assertStringContainsString('campaign fee was not charged', $refused);
+        $this->assertStringNotContainsString('Nothing was charged', $refused);
+
+        // Malformed limits on the retry reuse the saved brand: no new brand fee is claimed.
+        $this->lvmEligible = true;
+        $this->qualification['minSubUsecases'] = 'unknown';
+        $malformed = $this->submitLowVolume();
+        $this->assertStringContainsString('no new brand fee was charged', $malformed);
+        $this->assertStringContainsString('campaign fee was not charged', $malformed);
+        $this->assertStringNotContainsString('Nothing was charged', $malformed);
+
+        // The brand fee is the only money taken; the campaign hold was released; no second brand.
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(0, (int) DB::table('business_usage_reservations')->where('business_id', $this->business->id)->where('status', 'held')->count());
+
+        // Retry on the SAVED brand: a refusal now must not claim a new brand fee.
+        $this->lvmEligible = false;
+        $retry = $this->submitLowVolume();
+        $this->assertStringContainsString('no new brand fee was charged', $retry);
+        $this->assertStringContainsString('campaign fee was not charged', $retry);
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+    }
+
     public function test_declared_purposes_outside_the_carrier_limits_are_rejected_never_truncated(): void
     {
         $this->startLowVolume();
@@ -720,7 +754,10 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->qualification['maxSubUsecases'] = 1;
         $message = $this->submitLowVolume();
         $this->assertStringContainsString('at most 1', $message);
-        $this->assertStringContainsString('none of your purposes was dropped', $message);
+        $this->assertStringContainsString('None of your purposes was dropped', $message);
+        $this->assertStringContainsString('brand fee was already charged', $message);
+        $this->assertStringContainsString('campaign fee was not charged', $message);
+        $this->assertStringNotContainsString('Nothing was charged', $message);
 
         // The carrier needs more than were declared: reject, never invent one.
         $this->qualification['maxSubUsecases'] = 5;
