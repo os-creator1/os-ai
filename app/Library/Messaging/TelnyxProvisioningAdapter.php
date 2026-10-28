@@ -994,6 +994,11 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('A 10DLC campaign description is required before submission.');
         }
 
+        // Telnyx requires the three confirmation messages (20-320 characters
+        // each). Built from this Business's own registration and validated
+        // before any wallet reservation or provider call.
+        $confirmationMessages = $this->campaignConfirmationMessages($submission);
+
         $business = Business::query()->findOrFail($submission->businessId);
 
         // An earlier attempt whose provider outcome was never confirmed
@@ -1165,6 +1170,9 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     'optinKeywords' => 'START,SUBSCRIBE',
                     'optoutKeywords' => 'STOP,UNSUBSCRIBE',
                     'helpKeywords' => 'HELP,INFO',
+                    'optinMessage' => $confirmationMessages['optin'],
+                    'optoutMessage' => $confirmationMessages['optout'],
+                    'helpMessage' => $confirmationMessages['help'],
                     // The registration's consent checklist is validated
                     // (and customer-attested) before this point.
                     'subscriberOptin' => true,
@@ -1313,6 +1321,51 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $brandCreatedNow
             ? 'The carrier brand fee was already charged because the carrier created your brand, and it is not refunded; your brand is saved so a retry will not pay it again. The campaign fee was not charged.'
             : 'Your brand was registered earlier, so no new brand fee was charged, and the campaign fee was not charged.';
+    }
+
+    /**
+     * The campaign's opt-in, opt-out and help confirmation messages, built
+     * only from this registration's own brand name, declared purposes and
+     * support contact. Nothing about consent is invented: the opt-in text
+     * only names the programs the customer registered. Refuses (before any
+     * funding) when a message would fall outside Telnyx's 20-320 characters
+     * or the support contact is missing.
+     *
+     * @return array{optin: string, optout: string, help: string}
+     */
+    private function campaignConfirmationMessages(MessagingRegistrationSubmission $submission): array
+    {
+        $brand = trim((string) preg_replace('/\s+/u', ' ', $submission->legalBusinessName));
+        $contact = array_values(array_filter([trim($submission->contactPhone), trim($submission->contactEmail)], fn ($v) => $v !== ''));
+
+        if ($brand === '' || $contact === []) {
+            throw new \RuntimeException('A 10DLC campaign needs the business name and a support contact for its confirmation messages.');
+        }
+
+        $purposes = $submission->useCase === 'low_volume_mixed' ? $submission->messagePurposes : [];
+        $service = in_array('care', $purposes, true) || (! str_contains($submission->useCase, 'marketing') && $submission->useCase !== 'mixed' && $submission->useCase !== 'low_volume_mixed');
+        $promo = in_array('marketing', $purposes, true) || in_array($submission->useCase, ['marketing', 'mixed'], true);
+        $programs = match (true) {
+            $service && $promo => 'service messages (inquiries, quotes, bookings, reminders) and promotional offers',
+            $promo => 'promotional offers',
+            default => 'service messages about your inquiries, bookings and reminders',
+        };
+
+        $messages = [
+            'optin' => "{$brand}: You are subscribed to receive {$programs}. Message frequency varies. Msg & data rates may apply. Reply HELP for help or STOP to opt out.",
+            'optout' => "{$brand}: You have been unsubscribed and will receive no more text messages. Reply START to subscribe again.",
+            'help' => "{$brand}: For help, contact us at " . implode(' or ', $contact) . '. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out.',
+        ];
+
+        foreach ($messages as $message) {
+            $length = mb_strlen($message);
+
+            if ($length < 20 || $length > 320) {
+                throw new \RuntimeException('A 10DLC campaign confirmation message is outside the carrier\'s 20-320 character limit.');
+            }
+        }
+
+        return $messages;
     }
 
     /**

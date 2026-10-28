@@ -129,6 +129,10 @@ class TelnyxProvisioningAdapterTest extends TestCase
                 \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL => '500000',
                 TelnyxProvisioningAdapter::FEATURE_TEN_DLC_BRAND_REGISTRATION => '1000000',
             ],
+            TelnyxProvisioningAdapter::FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION => [
+                \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_LOW_VOLUME_CAMPAIGN_RENEWAL => '500000',
+                TelnyxProvisioningAdapter::FEATURE_TEN_DLC_BRAND_REGISTRATION => '1000000',
+            ],
             default => [],
         };
 
@@ -146,38 +150,38 @@ class TelnyxProvisioningAdapterTest extends TestCase
         }
     }
 
-    private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null, ?string $existingBrandId = null): MessagingRegistrationSubmission
+    private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null, ?string $existingBrandId = null, array $overrides = []): MessagingRegistrationSubmission
     {
-        return new MessagingRegistrationSubmission(
-            businessId: $business->id,
-            numberType: $numberType,
-            legalBusinessName: 'Harbor Lane Studios LLC',
-            entityType: MessagingEntityType::Ein,
-            ein: '12-3456789',
-            addressLine1: '1 Harbor Lane',
-            addressLine2: null,
-            city: 'Portland',
-            region: 'OR',
-            postalCode: '97201',
-            countryCode: 'US',
-            websiteUrl: 'https://harborlane.example',
-            contactEmail: 'owner@harborlane.example',
-            contactPhone: '+15035550100',
-            useCase: 'appointment_reminders',
-            optInMethod: 'Customers check a box on our booking form.',
-            sampleMessage1: 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.',
-            sampleMessage2: 'Harbor Lane: reminder, your appointment is tomorrow.',
-            privacyPolicyUrl: 'https://harborlane.example/privacy',
-            termsUrl: 'https://harborlane.example/terms',
-            contactFirstName: 'Pat',
-            contactLastName: 'Owner',
-            messageVolume: '1,000',
-            optInImageUrl: 'https://example.com/opt-in.png',
-            brandVertical: 'ENTERTAINMENT',
-            phoneNumber: $phoneNumber,
-            existingBrandId: $existingBrandId,
-            campaignDescription: 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
-        );
+        return new MessagingRegistrationSubmission(...array_merge([
+            'businessId' => $business->id,
+            'numberType' => $numberType,
+            'legalBusinessName' => 'Harbor Lane Studios LLC',
+            'entityType' => MessagingEntityType::Ein,
+            'ein' => '12-3456789',
+            'addressLine1' => '1 Harbor Lane',
+            'addressLine2' => null,
+            'city' => 'Portland',
+            'region' => 'OR',
+            'postalCode' => '97201',
+            'countryCode' => 'US',
+            'websiteUrl' => 'https://harborlane.example',
+            'contactEmail' => 'owner@harborlane.example',
+            'contactPhone' => '+15035550100',
+            'useCase' => 'appointment_reminders',
+            'optInMethod' => 'Customers check a box on our booking form.',
+            'sampleMessage1' => 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.',
+            'sampleMessage2' => 'Harbor Lane: reminder, your appointment is tomorrow.',
+            'privacyPolicyUrl' => 'https://harborlane.example/privacy',
+            'termsUrl' => 'https://harborlane.example/terms',
+            'contactFirstName' => 'Pat',
+            'contactLastName' => 'Owner',
+            'messageVolume' => '1,000',
+            'optInImageUrl' => 'https://example.com/opt-in.png',
+            'brandVertical' => 'ENTERTAINMENT',
+            'phoneNumber' => $phoneNumber,
+            'existingBrandId' => $existingBrandId,
+            'campaignDescription' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
+        ], $overrides)        );
     }
 
     // -----------------------------------------------------------------
@@ -1027,6 +1031,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'use_case' => 'customer_care', 'region' => 'OR',
             'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000',
             'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
+            'legal_business_name' => 'Harbor Lane Studios LLC', 'contact_email' => 'owner@harborlane.example', 'contact_phone' => '+15035550100',
             'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
             'status' => 'not_started',
         ]);
@@ -1260,6 +1265,86 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame('10005', $logged[0][1]['provider_error_code']);
         $this->assertStringNotContainsString('12-3456789', json_encode($logged));
         $this->assertSame('brand_diag_1', \App\Models\BusinessMessagingRegistration::query()->value('provider_brand_id'));
+    }
+
+    private function lowVolumeCampaignPost(array $overrides = []): array
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::registrationFeatureFor($overrides['useCase'] ?? 'low_volume_mixed'));
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => 'brand_msg_1']),
+            'api.telnyx.com/v2/10dlc/campaignBuilder/brand/*' => Http::response(['usecase' => 'LOW_VOLUME', 'minSubUsecases' => 2, 'maxSubUsecases' => 5]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['campaignId' => 'camp_msg_1']),
+        ]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local, null, null, array_merge([
+            'useCase' => 'low_volume_mixed', 'messagePurposes' => ['care', 'marketing'], 'brandVertical' => 'ENTERTAINMENT',
+        ], $overrides)));
+
+        return Http::recorded(fn ($r) => $r->method() === 'POST' && $r->url() === 'https://api.telnyx.com/v2/10dlc/campaignBuilder')->first()[0]->data();
+    }
+
+    public function test_campaign_submission_carries_valid_business_specific_confirmation_messages_and_keeps_low_volume_sub_usecases(): void
+    {
+        $body = $this->lowVolumeCampaignPost();
+
+        $this->assertSame('LOW_VOLUME', $body['usecase']);
+        $this->assertSame(['CUSTOMER_CARE', 'MARKETING'], $body['subUsecases']);
+
+        foreach (['optinMessage', 'optoutMessage', 'helpMessage'] as $field) {
+            $this->assertGreaterThanOrEqual(20, mb_strlen($body[$field]), $field);
+            $this->assertLessThanOrEqual(320, mb_strlen($body[$field]), $field);
+            $this->assertStringContainsString('Harbor Lane Studios LLC', $body[$field], $field);
+            $this->assertStringNotContainsString('Lumina', $body[$field]);
+            $this->assertStringNotContainsString('MotionGrove', $body[$field]);
+        }
+
+        $this->assertStringContainsString('promotional offers', $body['optinMessage']);
+        $this->assertStringContainsString('STOP', $body['optinMessage']);
+        $this->assertStringContainsString('HELP', $body['optinMessage']);
+        $this->assertStringContainsString('Msg & data rates may apply', $body['optinMessage']);
+        $this->assertStringContainsString('unsubscribed', $body['optoutMessage']);
+        $this->assertStringContainsString('+15035550100', $body['helpMessage']);
+        $this->assertStringContainsString('owner@harborlane.example', $body['helpMessage']);
+        $this->assertSame('HELP,INFO', $body['helpKeywords']);
+    }
+
+    public function test_confirmation_messages_only_describe_the_programs_the_business_declared(): void
+    {
+        $service = $this->lowVolumeCampaignPost(['useCase' => 'customer_care', 'messagePurposes' => []]);
+        $this->assertStringContainsString('service messages', $service['optinMessage']);
+        $this->assertStringNotContainsString('promotional', $service['optinMessage']);
+    }
+
+    private function assertRefusedBeforeFundingOrProvider(array $overrides): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local, null, null, $overrides));
+            $this->fail('Expected refusal.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('confirmation message', $e->getMessage());
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    public function test_a_missing_support_contact_is_refused_before_any_funding_or_provider_call(): void
+    {
+        $this->assertRefusedBeforeFundingOrProvider(['contactEmail' => '', 'contactPhone' => '']);
+    }
+
+    public function test_an_overlong_confirmation_message_is_refused_never_truncated_before_funding_or_provider_call(): void
+    {
+        $this->assertRefusedBeforeFundingOrProvider(['legalBusinessName' => str_repeat('Long Name ', 40)]);
     }
 
     // -----------------------------------------------------------------
