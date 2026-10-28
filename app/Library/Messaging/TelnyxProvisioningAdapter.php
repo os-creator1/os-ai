@@ -1092,7 +1092,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                         throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand status=' . $brandResponse->status());
                     }
 
-                    throw new \RuntimeException('Telnyx rejected the 10DLC brand submission.');
+                    throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the 10DLC brand submission.', 'brand');
                 }
 
                 $brandId = $this->providerValue($brandResponse, ['brandId', 'data.brandId', 'data.id']);
@@ -1211,7 +1211,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     errorMessage: 'brand_id=' . $brandId . ' status=' . $campaignResponse->status(),
                 );
 
-                throw new \RuntimeException('Telnyx rejected the 10DLC campaign submission.');
+                throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the 10DLC campaign submission.', 'campaign', true, $needsBrand);
             }
 
             if ($campaignResponse !== null) {
@@ -1335,33 +1335,46 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      */
     private function campaignConfirmationMessages(MessagingRegistrationSubmission $submission): array
     {
+        $refuse = fn (string $why) => new MessagingRegistrationNotEligibleException($why . ' Nothing was charged.');
         $brand = trim((string) preg_replace('/\s+/u', ' ', $submission->legalBusinessName));
-        $contact = array_values(array_filter([trim($submission->contactPhone), trim($submission->contactEmail)], fn ($v) => $v !== ''));
+        $contact = trim((string) $submission->supportContact);
 
-        if ($brand === '' || $contact === []) {
-            throw new \RuntimeException('A 10DLC campaign needs the business name and a support contact for its confirmation messages.');
+        if ($brand === '') {
+            throw $refuse('Add your business name to build the text-message confirmation messages.');
         }
 
-        $purposes = $submission->useCase === 'low_volume_mixed' ? $submission->messagePurposes : [];
-        $service = in_array('care', $purposes, true) || (! str_contains($submission->useCase, 'marketing') && $submission->useCase !== 'mixed' && $submission->useCase !== 'low_volume_mixed');
-        $promo = in_array('marketing', $purposes, true) || in_array($submission->useCase, ['marketing', 'mixed'], true);
-        $programs = match (true) {
-            $service && $promo => 'service messages (inquiries, quotes, bookings, reminders) and promotional offers',
-            $promo => 'promotional offers',
-            default => 'service messages about your inquiries, bookings and reminders',
+        if (! \App\Library\Messaging\Registration\RegistrationSubmissionValidator::isUsableSupportContact($contact)) {
+            throw $refuse('Add and confirm your Business\'s own customer-facing support email or phone; it is used in the HELP confirmation message.');
+        }
+
+        // What a recipient is told they joined. The text only names the
+        // campaign type the Business registered; for the mixed types it never
+        // claims a recipient joined both programs, because each recipient may
+        // have agreed to service texts, promotions, or both, separately.
+        $program = match ($submission->useCase) {
+            'customer_care', 'appointment_reminders' => 'customer care and appointment texts',
+            'marketing' => 'promotional texts',
+            'account_notifications' => 'account notification texts',
+            'two_factor' => 'one-time passcode and verification texts',
+            'mixed', 'low_volume_mixed' => 'the texts you agreed to (customer care and/or promotions, as you chose when you signed up)',
+            default => null,
         };
 
+        if ($program === null) {
+            throw $refuse('This messaging type has no confirmation message wording.');
+        }
+
         $messages = [
-            'optin' => "{$brand}: You are subscribed to receive {$programs}. Message frequency varies. Msg & data rates may apply. Reply HELP for help or STOP to opt out.",
-            'optout' => "{$brand}: You have been unsubscribed and will receive no more text messages. Reply START to subscribe again.",
-            'help' => "{$brand}: For help, contact us at " . implode(' or ', $contact) . '. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out.',
+            'optin' => "{$brand}: You are now subscribed to {$program}. Message frequency varies. Msg & data rates may apply. Reply HELP for help or STOP to opt out.",
+            'optout' => "{$brand}: You have been unsubscribed and will receive no more text messages from us. Reply START to subscribe again.",
+            'help' => "{$brand}: For help, contact {$contact}. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out.",
         ];
 
         foreach ($messages as $message) {
             $length = mb_strlen($message);
 
             if ($length < 20 || $length > 320) {
-                throw new \RuntimeException('A 10DLC campaign confirmation message is outside the carrier\'s 20-320 character limit.');
+                throw $refuse('A text-message confirmation message would fall outside the carrier\'s 20-320 character limit; shorten your business name.');
             }
         }
 

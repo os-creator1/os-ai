@@ -237,6 +237,21 @@
                     </div>
                 </div>
 
+                @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
+                    <div class="mb-1" data-role="support-contact">
+                        <label class="form-label required" for="support_contact">Text-message support contact</label>
+                        <input type="text" class="form-control @error('support_contact') is-invalid @enderror" id="support_contact" name="support_contact"
+                               value="{{ old('support_contact', $registration->support_contact) }}" maxlength="191" placeholder="support@yourbusiness.com or (555) 555-0100">
+                        <div class="text-caption text-muted">Your Business's own customer-facing email or phone. It appears in the HELP reply your customers get, so it must be one you publish and answer. We never fill this in for you.</div>
+                        <div class="form-check mt-1">
+                            <input type="checkbox" class="form-check-input" id="support_contact_confirmed" name="support_contact_confirmed" value="1"
+                                   {{ old('support_contact_confirmed', $registration->support_contact_confirmed_at !== null) ? 'checked' : '' }}>
+                            <label class="form-check-label" for="support_contact_confirmed">This contact belongs to my Business, is public to my customers, and is monitored.</label>
+                        </div>
+                        @error('support_contact')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+                    </div>
+                @endif
+
                 <div class="row" data-role="carrier-contact-fields">
                     <div class="col-md-6 mb-1">
                         <label class="form-label required" for="contact_first_name">Contact first name</label>

@@ -81,6 +81,8 @@ final readonly class MessagingRegistrationSubmission
         public array $messagePurposes = [],
         /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
         public ?string $campaignDescription = null,
+        /** The Business's own customer-facing SMS help contact, only when it explicitly confirmed it; null otherwise. */
+        public ?string $supportContact = null,
     ) {
     }
 
@@ -107,6 +109,7 @@ final readonly class MessagingRegistrationSubmission
             sampleMessage2: (string) $registration->sample_message_2,
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
+            supportContact: $registration->support_contact_confirmed_at !== null && trim((string) $registration->support_contact) !== '' ? trim((string) $registration->support_contact) : null,
             phoneNumber: $phoneNumber,
             existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
                 ? (string) $registration->provider_brand_id

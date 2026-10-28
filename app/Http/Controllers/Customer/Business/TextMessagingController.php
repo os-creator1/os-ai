@@ -382,6 +382,8 @@ class TextMessagingController extends CustomerBaseController
             'website_url' => ['required', 'url', 'max:255'],
             'contact_email' => ['required', 'email', 'max:191'],
             'contact_phone' => ['required', 'string', 'max:32'],
+            'support_contact' => ['nullable', 'string', 'max:191'],
+            'support_contact_confirmed' => ['nullable', 'boolean'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
             'opt_in_method' => ['required', 'string', 'max:2000'],
             'campaign_description' => ['required', 'string', 'max:2000'],
@@ -399,6 +401,17 @@ class TextMessagingController extends CustomerBaseController
             'opt_in_image_url' => ['nullable', 'url', 'max:2083'],
             'brand_vertical' => ['nullable', 'string', 'in:' . implode(',', array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::BRAND_VERTICALS))],
         ]);
+
+        // The SMS help contact counts only when the Business typed it AND
+        // ticked the confirmation on this save; changing it un-confirms it.
+        $supportContact = trim((string) ($validated['support_contact'] ?? ''));
+        $previous = $this->registrationFor($business);
+        $stillConfirmed = $previous?->support_contact_confirmed_at !== null && trim((string) $previous->support_contact) === $supportContact;
+        $validated['support_contact'] = $supportContact === '' ? null : $supportContact;
+        $validated['support_contact_confirmed_at'] = $supportContact !== '' && ! empty($validated['support_contact_confirmed'])
+            ? ($stillConfirmed ? $previous->support_contact_confirmed_at : now())
+            : null;
+        unset($validated['support_contact_confirmed']);
 
         // An unchecked box is simply absent from the POST, so the stored
         // list is always exactly what the customer ticked on this save.
@@ -515,16 +528,33 @@ class TextMessagingController extends CustomerBaseController
                 : 'Registration pricing hasn\'t been set up on our side yet, so this can\'t be submitted right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
         } catch (MessagingInsufficientFundsException $e) {
             return $this->textMessagingError($workspaceUid, $businessUid, $this->fundingRefusalMessage($e, 'to submit this registration'));
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationProviderException $e) {
+            // The carrier partner refused a step. Operator-only detail (HTTP
+            // status, code, rejected field) is already in the sanitized
+            // provider log; the customer learns the step, what is saved and
+            // what was charged, and is not told to fix their details.
+            \Illuminate\Support\Facades\Log::warning('Messaging registration submission failed.', [
+                'business_id' => (int) $business->id,
+                'exception' => $e::class,
+                'step' => $e->step,
+            ]);
+
+            return $this->textMessagingError($workspaceUid, $businessUid, $e->step === \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_BRAND
+                ? 'Step 1 of 2 (carrier brand registration) was not accepted by our carrier partner. This is not something you need to correct: your details are saved, nothing was charged, and our team has the technical details. Please try again later or contact support.'
+                : 'Step 2 of 2 (campaign registration) was not accepted by our carrier partner. Your carrier brand is registered and saved'
+                    . ($e->brandFeeChargedNow ? '; its fee was charged when it was created and is not refunded, but it will not be charged again when you retry' : ' and its fee will not be charged again')
+                    . '. The campaign fee was not charged. This is not something you need to correct: our team has the technical details. Please try again later or contact support.');
         } catch (\RuntimeException $e) {
-            // A provider rejection or an internal refusal (e.g. a messaging
-            // type with no carrier mapping): never a raw server error.
+            // An internal refusal on our side (e.g. a messaging type with no
+            // carrier mapping): never a raw server error, and never blamed on
+            // the customer's details, which the form already validated.
             // Operator-only: class and Business id, never the message text.
             \Illuminate\Support\Facades\Log::warning('Messaging registration submission failed.', [
                 'business_id' => (int) $business->id,
                 'exception' => $e::class,
             ]);
 
-            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t complete this submission right now. Please review your details and try again, or contact support if it keeps happening.');
+            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t complete this submission because of a problem on our side, not with your details. Your details are saved. Please check Usage & Billing for any charge before retrying, and contact support if it keeps happening.');
         }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([

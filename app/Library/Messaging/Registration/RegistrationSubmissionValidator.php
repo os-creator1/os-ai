@@ -122,6 +122,24 @@ final class RegistrationSubmissionValidator
         return $issues;
     }
 
+    /** A valid email address, or a phone number with 10-15 digits. */
+    public static function isUsableSupportContact(string $value): bool
+    {
+        $value = trim($value);
+
+        if ($value === '' || strlen($value) > 191) {
+            return false;
+        }
+
+        if (filter_var($value, FILTER_VALIDATE_EMAIL) !== false) {
+            return true;
+        }
+
+        $digits = preg_replace('/\D/', '', $value);
+
+        return preg_match('/^[+()\-.\s0-9]+$/', $value) === 1 && strlen($digits) >= 10 && strlen($digits) <= 15;
+    }
+
     /** @return list<string> */
     private function carrierFieldIssues(BusinessMessagingRegistration $registration): array
     {
@@ -149,8 +167,16 @@ final class RegistrationSubmissionValidator
             if (! isset(CarrierRegistrationOptions::TOLL_FREE_USE_CASES[(string) $registration->use_case])) {
                 $issues[] = 'This messaging type can\'t be submitted for toll-free verification. Choose another.';
             }
-        } elseif (! isset(CarrierRegistrationOptions::BRAND_VERTICALS[(string) $registration->brand_vertical])) {
-            $issues[] = 'Choose your industry category.';
+        } else {
+            if (! isset(CarrierRegistrationOptions::BRAND_VERTICALS[(string) $registration->brand_vertical])) {
+                $issues[] = 'Choose your industry category.';
+            }
+
+            if (! self::isUsableSupportContact((string) $registration->support_contact)) {
+                $issues[] = 'Add the customer-facing support email or phone your Business publishes for text-message help (not the brand contact above).';
+            } elseif ($registration->support_contact_confirmed_at === null) {
+                $issues[] = 'Confirm that your text-message support contact is published by your Business and answered.';
+            }
         }
 
         return $issues;

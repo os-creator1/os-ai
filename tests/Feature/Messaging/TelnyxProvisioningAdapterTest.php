@@ -181,6 +181,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'phoneNumber' => $phoneNumber,
             'existingBrandId' => $existingBrandId,
             'campaignDescription' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
+            'supportContact' => 'help@harborlane.example',
         ], $overrides)        );
     }
 
@@ -1031,7 +1032,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'use_case' => 'customer_care', 'region' => 'OR',
             'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000',
             'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
-            'legal_business_name' => 'Harbor Lane Studios LLC', 'contact_email' => 'owner@harborlane.example', 'contact_phone' => '+15035550100',
+            'legal_business_name' => 'Harbor Lane Studios LLC', 'contact_email' => 'owner@harborlane.example', 'contact_phone' => '+15035550100', 'support_contact' => 'help@harborlane.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
             'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
             'status' => 'not_started',
         ]);
@@ -1301,21 +1302,46 @@ class TelnyxProvisioningAdapterTest extends TestCase
             $this->assertStringNotContainsString('MotionGrove', $body[$field]);
         }
 
-        $this->assertStringContainsString('promotional offers', $body['optinMessage']);
+        // Separate consent: never claims the recipient joined both programs.
+        $this->assertStringContainsString('texts you agreed to', $body['optinMessage']);
+        $this->assertStringContainsString('and/or promotions', $body['optinMessage']);
         $this->assertStringContainsString('STOP', $body['optinMessage']);
         $this->assertStringContainsString('HELP', $body['optinMessage']);
         $this->assertStringContainsString('Msg & data rates may apply', $body['optinMessage']);
         $this->assertStringContainsString('unsubscribed', $body['optoutMessage']);
-        $this->assertStringContainsString('+15035550100', $body['helpMessage']);
-        $this->assertStringContainsString('owner@harborlane.example', $body['helpMessage']);
+        // The HELP contact is the Business's confirmed support contact, never the brand representative's.
+        $this->assertStringContainsString('help@harborlane.example', $body['helpMessage']);
+        $this->assertStringNotContainsString('owner@harborlane.example', $body['helpMessage']);
+        $this->assertStringNotContainsString('+15035550100', $body['helpMessage']);
         $this->assertSame('HELP,INFO', $body['helpKeywords']);
     }
 
-    public function test_confirmation_messages_only_describe_the_programs_the_business_declared(): void
+    public function test_every_supported_campaign_type_gets_accurate_confirmation_wording(): void
     {
-        $service = $this->lowVolumeCampaignPost(['useCase' => 'customer_care', 'messagePurposes' => []]);
-        $this->assertStringContainsString('service messages', $service['optinMessage']);
-        $this->assertStringNotContainsString('promotional', $service['optinMessage']);
+        $expect = [
+            'customer_care' => 'customer care and appointment texts',
+            'appointment_reminders' => 'customer care and appointment texts',
+            'marketing' => 'promotional texts',
+            'account_notifications' => 'account notification texts',
+            'two_factor' => 'one-time passcode and verification texts',
+            'mixed' => 'the texts you agreed to',
+            'low_volume_mixed' => 'the texts you agreed to',
+        ];
+        $this->enableProvisioning();
+        $method = new \ReflectionMethod(TelnyxProvisioningAdapter::class, 'campaignConfirmationMessages');
+        $business = $this->business();
+
+        foreach ($expect as $useCase => $phrase) {
+            $messages = $method->invoke(app(TelnyxProvisioningAdapter::class), $this->submission($business, PhoneNumberType::Local, null, null, ['useCase' => $useCase]));
+            $this->assertStringContainsString($phrase, $messages['optin'], $useCase);
+            $this->assertGreaterThanOrEqual(20, mb_strlen($messages['help']));
+        }
+
+        // Single-purpose types never claim promotions or service they were not registered for.
+        $care = $method->invoke(app(TelnyxProvisioningAdapter::class), $this->submission($business, PhoneNumberType::Local, null, null, ['useCase' => 'customer_care']));
+        $this->assertStringNotContainsString('promotion', $care['optin']);
+        $promo = $method->invoke(app(TelnyxProvisioningAdapter::class), $this->submission($business, PhoneNumberType::Local, null, null, ['useCase' => 'marketing']));
+        $this->assertStringNotContainsString('customer care', $promo['optin']);
     }
 
     private function assertRefusedBeforeFundingOrProvider(array $overrides): void
@@ -1337,9 +1363,14 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
     }
 
-    public function test_a_missing_support_contact_is_refused_before_any_funding_or_provider_call(): void
+    public function test_an_unconfirmed_support_contact_is_refused_even_when_a_brand_contact_exists(): void
     {
-        $this->assertRefusedBeforeFundingOrProvider(['contactEmail' => '', 'contactPhone' => '']);
+        $this->assertRefusedBeforeFundingOrProvider(['supportContact' => null]);
+    }
+
+    public function test_an_invalid_support_contact_is_refused_before_any_funding_or_provider_call(): void
+    {
+        $this->assertRefusedBeforeFundingOrProvider(['supportContact' => 'call us sometime']);
     }
 
     public function test_an_overlong_confirmation_message_is_refused_never_truncated_before_funding_or_provider_call(): void
