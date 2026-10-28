@@ -515,9 +515,15 @@ class TextMessagingController extends CustomerBaseController
                 : 'Registration pricing hasn\'t been set up on our side yet, so this can\'t be submitted right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
         } catch (MessagingInsufficientFundsException $e) {
             return $this->textMessagingError($workspaceUid, $businessUid, $this->fundingRefusalMessage($e, 'to submit this registration'));
-        } catch (\RuntimeException) {
+        } catch (\RuntimeException $e) {
             // A provider rejection or an internal refusal (e.g. a messaging
             // type with no carrier mapping): never a raw server error.
+            // Operator-only: class and Business id, never the message text.
+            \Illuminate\Support\Facades\Log::warning('Messaging registration submission failed.', [
+                'business_id' => (int) $business->id,
+                'exception' => $e::class,
+            ]);
+
             return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t complete this submission right now. Please review your details and try again, or contact support if it keeps happening.');
         }
 

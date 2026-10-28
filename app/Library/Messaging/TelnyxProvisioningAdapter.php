@@ -1081,6 +1081,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 }
 
                 if (! $brandResponse->successful()) {
+                    $this->logProviderFailure($business, 'brand', $brandResponse);
+
                     if ($brandResponse->serverError() || $brandResponse->status() === 408) {
                         throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand status=' . $brandResponse->status());
                     }
@@ -1183,6 +1185,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             }
 
             if ($campaignResponse !== null && ! $campaignResponse->successful()) {
+                $this->logProviderFailure($business, 'campaign', $campaignResponse);
+
                 if ($campaignResponse->serverError() || $campaignResponse->status() === 408) {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign status=' . $campaignResponse->status());
                 }
@@ -1309,6 +1313,31 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $brandCreatedNow
             ? 'The carrier brand fee was already charged because the carrier created your brand, and it is not refunded; your brand is saved so a retry will not pay it again. The campaign fee was not charged.'
             : 'Your brand was registered earlier, so no new brand fee was charged, and the campaign fee was not charged.';
+    }
+
+    /**
+     * Operator diagnostics for a failed brand/campaign call. Deliberately
+     * allow-listed: only the stage, HTTP status, the provider's short error
+     * code, the name of the rejected field (JSON pointer, never its value)
+     * and the request id, each checked against a strict pattern. Never the
+     * request payload, response body, title/detail text or any credential.
+     */
+    private function logProviderFailure(Business $business, string $stage, \Illuminate\Http\Client\Response $response): void
+    {
+        $safe = static function (mixed $value, int $max = 64): ?string {
+            $value = is_scalar($value) ? (string) $value : '';
+
+            return $value !== '' && strlen($value) <= $max && preg_match('/^[A-Za-z0-9_.\/\-]+$/', $value) === 1 ? $value : null;
+        };
+
+        \Illuminate\Support\Facades\Log::warning('Telnyx 10DLC provider call failed.', [
+            'stage' => $stage,
+            'business_id' => (int) $business->id,
+            'http_status' => $response->status(),
+            'provider_error_code' => $safe($response->json('errors.0.code')),
+            'rejected_field' => $safe($response->json('errors.0.source.pointer')),
+            'request_id' => $safe($response->header('x-request-id')) ?? $safe($response->header('x-telnyx-request-id')),
+        ]);
     }
 
     private function providerValue(\Illuminate\Http\Client\Response $response, array $paths): string
