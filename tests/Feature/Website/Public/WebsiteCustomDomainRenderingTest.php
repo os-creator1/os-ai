@@ -58,10 +58,11 @@ class WebsiteCustomDomainRenderingTest extends TestCase
     {
         $service = app(WebsiteDomainService::class);
         $domain = $service->attach($website, $hostname);
-        $domain = $service->checkVerification($domain);
-        $domain = $service->provisionCertificate($domain);
 
-        return $service->checkCertificate($domain);
+        // One advance verifies DNS and requests both certificates; the next sees them active and the site answering.
+        $service->advance($domain, true);
+
+        return $service->advance($domain->refresh(), true);
     }
 
     public function test_an_active_primary_domain_serves_the_published_website(): void

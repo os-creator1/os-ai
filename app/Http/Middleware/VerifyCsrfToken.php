@@ -55,4 +55,22 @@
             'webhooks/telnyx-porting',
         ];
 
+        /**
+         * A public form is framed by the customer's own website, a different site from this app: the browser sends the
+         * iframe no session cookie, so a session CSRF token can never match and every real quote request would be refused
+         * with a 419. Exactly ONE request shape is exempt: POST forms/{deploymentUid} (a UUID, nothing after it). It is
+         * anonymous and creates no authenticated state; it is protected by the HMAC-signed, deployment- and version-pinned
+         * operation token the form carries (FormOperationToken, verified before anything is read), the honeypot and the
+         * 10/minute throttle. Any nested or future path under forms/ stays CSRF-protected.
+         */
+        private const PUBLIC_FORM_SUBMIT = '#^forms/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$#i';
+
+        protected function inExceptArray($request)
+        {
+            if ($request->isMethod('POST') && preg_match(self::PUBLIC_FORM_SUBMIT, $request->path()) === 1) {
+                return true;
+            }
+
+            return parent::inExceptArray($request);
+        }
     }

@@ -304,11 +304,11 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
         $this->fakeDns(true);
         $svc = app(AgencyAppDomainService::class);
 
-        $svc->attach((int) $owner->user_id, $agency, 'app.one.example');
+        $svc->attach((int) $owner->user_id, $agency, 'one.example');
         $svc->check((int) $owner->user_id, $agency);
         $this->assertSame('verified', AgencyWhiteLabelSetting::query()->sole()->app_domain_status);
 
-        $svc->attach((int) $owner->user_id, $agency, 'app.two.example');
+        $svc->attach((int) $owner->user_id, $agency, 'two.example');
         $s = AgencyWhiteLabelSetting::query()->sole();
         $this->assertSame('pending_verification', $s->app_domain_status);
         $this->assertNull($s->app_domain_verified_at);
@@ -366,6 +366,8 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
 
     private function attachWebsiteDomain(\App\Models\Website $website, string $domain): ?string
     {
+        config(['services.forge.a_record_ip' => '203.0.113.10', 'services.forge.cname_zone' => 'domains.example-platform.test']);
+
         try {
             app(\App\Library\Website\Domains\WebsiteDomainService::class)->attach($website, $domain);
 
@@ -396,19 +398,19 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
         $siteB = $this->publishedWebsiteOf($b);
 
         // Agency app domain first → a website cannot take it (any workspace).
-        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.first.example'));
-        $this->assertNotNull($this->attachWebsiteDomain($siteA, 'app.first.example'));
-        $this->assertNotNull($this->attachWebsiteDomain($siteB, 'app.first.example'));
-        $this->assertSame('domain_taken', $this->attachAppDomain($b, $ownerB, 'app.first.example'));
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'first.example'));
+        $this->assertNotNull($this->attachWebsiteDomain($siteA, 'first.example'));
+        $this->assertNotNull($this->attachWebsiteDomain($siteB, 'first.example'));
+        $this->assertSame('domain_taken', $this->attachAppDomain($b, $ownerB, 'first.example'));
 
         // Website domain first → no Agency may take it as an app domain, including the owner's own website's workspace.
-        $this->assertNull($this->attachWebsiteDomain($siteA, 'www.second.example'));
-        $this->assertSame('domain_taken', $this->attachAppDomain($b, $ownerB, 'www.second.example'));
-        $this->assertSame('domain_taken', $this->attachAppDomain($a, $ownerA, 'www.second.example'));
-        $this->assertNotNull($this->attachWebsiteDomain($siteB, 'www.second.example'));
+        $this->assertNull($this->attachWebsiteDomain($siteA, 'second.example'));
+        $this->assertSame('domain_taken', $this->attachAppDomain($b, $ownerB, 'second.example'));
+        $this->assertSame('domain_taken', $this->attachAppDomain($a, $ownerA, 'second.example'));
+        $this->assertNotNull($this->attachWebsiteDomain($siteB, 'second.example'));
 
         // Each hostname has exactly one reservation and one owner row.
-        $this->assertSame(2, \Illuminate\Support\Facades\DB::table('domain_reservations')->count());
+        $this->assertSame(3, \Illuminate\Support\Facades\DB::table('domain_reservations')->count(), 'the app domain, plus a website domain and its www');
         $this->assertSame(1, \App\Models\WebsiteDomain::query()->count());
         $this->assertSame(1, AgencyWhiteLabelSetting::query()->whereNotNull('app_domain')->count());
     }
@@ -445,19 +447,19 @@ class AgencyWhiteLabelBrandingTabTest extends TestCase
         $siteB = $this->publishedWebsiteOf($b);
 
         // Removing an app domain frees it; re-pointing frees the OLD name.
-        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.one.example'));
-        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.two.example'));
-        $this->assertNull($this->attachWebsiteDomain($siteB, 'app.one.example'));
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'one.example'));
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'two.example'));
+        $this->assertNull($this->attachWebsiteDomain($siteB, 'one.example'));
         app(AgencyAppDomainService::class)->remove((int) $ownerA->user_id, $a);
-        $this->assertNull($this->attachWebsiteDomain($siteB, 'app.two.example'));
+        $this->assertNull($this->attachWebsiteDomain($siteB, 'two.example'));
 
         // Deleting a website domain frees it for an Agency.
-        \App\Models\WebsiteDomain::query()->where('domain', 'app.one.example')->firstOrFail()->delete();
-        $this->assertNull($this->attachAppDomain($a, $ownerA, 'app.one.example'));
+        \App\Models\WebsiteDomain::query()->where('domain', 'one.example')->firstOrFail()->delete();
+        $this->assertNull($this->attachAppDomain($a, $ownerA, 'one.example'));
 
         // A reservation orphaned by a database cascade (no model event) never blocks the name for ever.
-        \Illuminate\Support\Facades\DB::table('website_domains')->where('domain', 'app.two.example')->delete();
-        $this->assertNull($this->attachAppDomain($b, $ownerB, 'app.two.example'));
+        \Illuminate\Support\Facades\DB::table('website_domains')->where('domain', 'two.example')->delete();
+        $this->assertNull($this->attachAppDomain($b, $ownerB, 'two.example'));
     }
 
     public function test_platform_hostnames_cannot_be_claimed_as_website_domains_either(): void

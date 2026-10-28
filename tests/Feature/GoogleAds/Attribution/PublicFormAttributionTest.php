@@ -258,7 +258,7 @@ class PublicFormAttributionTest extends TestCase
 
     public function test_a_rejected_submission_records_nothing(): void
     {
-        $this->submit($this->touchCookies(['gclid' => self::CLICK]), [], ['phone' => ''])->assertSessionHasErrors();
+        $this->submit($this->touchCookies(['gclid' => self::CLICK]), [], ['phone' => ''])->assertStatus(422);
 
         $this->assertCount(0, $this->touchRows());
     }

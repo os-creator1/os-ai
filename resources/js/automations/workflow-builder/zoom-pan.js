@@ -5,7 +5,7 @@
 // zooming or panning can never modify the workflow document (task
 // requirement, test #21).
 
-const MIN_SCALE = 0.4
+const MIN_SCALE = 0.5
 const MAX_SCALE = 2
 const STEP = 1.2
 

@@ -20,7 +20,11 @@ class WebsiteDomain extends Model
 {
     protected static function booted(): void
     {
-        static::deleted(fn (self $domain) => app(\App\Library\Domains\DomainReservations::class)->release(\App\Library\Domains\DomainReservations::WEBSITE, (int) $domain->id));
+        static::deleted(function (self $domain) {
+            $reservations = app(\App\Library\Domains\DomainReservations::class);
+            $reservations->release(\App\Library\Domains\DomainReservations::WEBSITE, (int) $domain->id);
+            $reservations->release(\App\Library\Domains\DomainReservations::WEBSITE_WWW, (int) $domain->id);
+        });
     }
 
     use HasUid;
@@ -38,6 +42,14 @@ class WebsiteDomain extends Model
         'verified_at',
         'activated_at',
         'last_checked_at',
+        'www_forge_domain_id',
+        'www_certificate_reference',
+        'dns_a_ok',
+        'dns_cname_ok',
+        'attempts',
+        'certificate_attempts',
+        'next_attempt_at',
+        'processing_until',
     ];
 
     protected $casts = [
@@ -46,6 +58,10 @@ class WebsiteDomain extends Model
         'verified_at' => 'datetime',
         'activated_at' => 'datetime',
         'last_checked_at' => 'datetime',
+        'next_attempt_at' => 'datetime',
+        'processing_until' => 'datetime',
+        'dns_a_ok' => 'boolean',
+        'dns_cname_ok' => 'boolean',
     ];
 
     public function generateUid(): void
@@ -63,13 +79,35 @@ class WebsiteDomain extends Model
         return $this->status === WebsiteDomainStatus::Active;
     }
 
-    /**
-     * The exact hostname the owner must create a TXT record on to prove
-     * they control DNS for this domain, before any traffic-serving or
-     * certificate work ever happens.
-     */
-    public function verificationTxtHost(): string
+    public function wwwHost(): string
     {
-        return '_platform-verify.'.$this->domain;
+        return 'www.'.$this->domain;
+    }
+
+    /**
+     * This domain's own CNAME target: unique and unpredictable (the token is random), under MotionGrove's CNAME zone.
+     * Pointing `www` here is both the routing and the proof of DNS control. Null when the zone is not configured.
+     */
+    public function cnameTarget(): ?string
+    {
+        $zone = trim((string) config('services.forge.cname_zone'), '. ');
+
+        return $zone === '' || $this->verification_token === '' ? null : strtolower($this->verification_token).'.'.strtolower($zone);
+    }
+
+    /**
+     * How many trailing labels make up the registrable "root" domain: two, or three under common second-level
+     * suffixes (example.co.uk). A guess without the public-suffix list, used only to refuse subdomains.
+     */
+    public static function rootLabelCount(string $domain): int
+    {
+        $labels = explode('.', strtolower($domain));
+
+        return count($labels) >= 3 && strlen(end($labels)) === 2 && in_array($labels[count($labels) - 2], ['co', 'com', 'org', 'net', 'gov', 'ac', 'edu'], true) ? 3 : 2;
+    }
+
+    public static function isRootDomain(string $domain): bool
+    {
+        return count(explode('.', $domain)) === self::rootLabelCount($domain);
     }
 }

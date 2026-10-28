@@ -48,9 +48,21 @@ final class MailBrand
         $this->accentTint = self::tint($tokens['accent']);
     }
 
+    /**
+     * The platform's own display name for mail. A name the owner set in Platform Settings is used as is; when it is
+     * unset, or still the retired install defaults ("AI Business OS", "Laravel"), the product name is MotionGrove.
+     * Agency white-label names are unaffected: they never come through here.
+     */
+    public static function platformName(): string
+    {
+        $name = trim((string) config('app.name'));
+
+        return in_array(strtolower($name), ['', 'ai business os', 'laravel'], true) ? 'MotionGrove' : $name;
+    }
+
     public static function platform(): self
     {
-        $name = trim((string) config('app.name')) ?: 'MotionGrove';
+        $name = self::platformName();
 
         return new self(
             name: $name,
@@ -64,7 +76,7 @@ final class MailBrand
 
     public static function business(string $businessName, ?string $accent, ?string $logoUrl): self
     {
-        $platform = trim((string) config('app.name')) ?: 'MotionGrove';
+        $platform = self::platformName();
         $name = self::clean($businessName) ?? $platform;
 
         return new self(
@@ -82,7 +94,7 @@ final class MailBrand
     /** Agency white-label identity: the Agency's own name, colour and logo. */
     public static function agency(string $displayName, ?string $accent, ?string $logoUrl, ?string $supportEmail = null, ?string $supportUrl = null): self
     {
-        $platform = trim((string) config('app.name')) ?: 'MotionGrove';
+        $platform = self::platformName();
         $name = self::clean($displayName) ?? $platform;
         $email = filter_var(trim((string) $supportEmail), FILTER_VALIDATE_EMAIL) ?: null;
         $url = is_string($supportUrl) && str_starts_with($supportUrl, 'https://') && filter_var($supportUrl, FILTER_VALIDATE_URL) ? $supportUrl : null;

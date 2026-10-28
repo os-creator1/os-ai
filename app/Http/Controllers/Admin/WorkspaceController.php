@@ -97,6 +97,7 @@ class WorkspaceController extends AdminBaseController
         if (Gate::allows('view workspace plans') || Gate::allows('manage workspace plans')) {
             $summary = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
             $viewData['entitlementSummary'] = $summary;
+            $viewData['businessDisabledKeys'] = $this->entitlementManager->businessDisabledFeatureKeysForWorkspace($workspace);
 
             // Customer Experience Slice 1A, correction round 2 (RFC-004
             // §33.2): the additional-Business-slot chooser offers only what

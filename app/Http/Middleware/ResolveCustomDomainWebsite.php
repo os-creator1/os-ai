@@ -88,6 +88,17 @@ class ResolveCustomDomainWebsite
             ->where('status', WebsiteDomainStatus::Active->value)
             ->first();
 
+        if ($domain === null && str_starts_with($host, 'www.')) {
+            // www is always set up beside the apex and always redirects to it (the canonical hostname).
+            $apex = WebsiteDomain::where('domain', substr($host, 4))
+                ->where('status', WebsiteDomainStatus::Active->value)
+                ->first();
+
+            if ($apex !== null && ($request->isMethod('GET') || $request->isMethod('HEAD'))) {
+                return redirect()->away('https://'.$apex->domain.$request->getRequestUri(), 301);
+            }
+        }
+
         if ($domain === null) {
             return $next($request);
         }

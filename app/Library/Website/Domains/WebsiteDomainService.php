@@ -13,33 +13,44 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Website Generation + Hosting Slice B (custom domains, contract §40).
- * The sole writer of `website_domains`, mirroring
- * WebsiteDraftPageService's own "one authorized seam" pattern.
+ * Custom website domains: TWO DNS records, no TXT, no manual SSL.
  *
- * Lifecycle: pending_verification -> verified -> provisioning -> active,
- * or -> failed at either of the last two steps (WebsiteDomainStatus).
- * Removing is a separate exit state any of those can enter (remove())
- * and can re-enter itself (a retry), never returning to any state
- * above — see remove()'s own docblock. Only an Active domain is ever
- * used for public Host-based routing or search indexing — see
- * App\Http\Middleware\ResolveCustomDomainWebsite and
- * resources/views/public/website/page.blade.php.
+ *   A      @    the production server IP
+ *   CNAME  www  <unique-token>.<FORGE_CNAME_ZONE>   (this domain's own, unguessable target)
+ *
+ * The unique CNAME is both the routing destination and the ownership proof: only whoever controls the domain's DNS can
+ * create it, and nobody else can know the token. A shared server IP (or a shared CNAME target) proves nothing, so a
+ * domain that merely already points at our IP can never be claimed this way. Ownership is checked against the EXACT
+ * expected target, again before every provisioning step. If it cannot be proven (zone/IP not configured, a subdomain
+ * that cannot use the two records) the domain stays unverified; there is no weaker fallback.
+ *
+ * advance() is the one idempotent step function, driven by the `website-domains:process` scheduler command (and by the
+ * owner's "Check again"): Pending (waiting for DNS) -> Verified (DNS proven, preparing) -> Provisioning (certificates
+ * requested for BOTH apex and www, one Forge domain + one certificate each) -> Active only when both certificates are
+ * active AND both hostnames really answer over HTTPS. Transient failures back off and retry a bounded number of times,
+ * then land on Failed with one concise reason; retry() starts again from the DNS proof, keeping every Forge id.
  */
 final class WebsiteDomainService
 {
-    /**
-     * A generous, arbitrary ceiling — this is a safety bound against
-     * runaway automation, not a real product limit.
-     */
     private const MAX_DOMAINS_PER_WEBSITE = 5;
+
+    /** Statuses the background processor owns. */
+    private const IN_FLIGHT = [WebsiteDomainStatus::PendingVerification, WebsiteDomainStatus::Verified, WebsiteDomainStatus::Provisioning];
+
+    private const MAX_PREPARE_ATTEMPTS = 6;
+
+    private const MAX_CERTIFICATE_ATTEMPTS = 3;
+
+    private const MAX_POLL_ATTEMPTS = 120;
 
     public function __construct(
         private readonly DnsVerifier $dns,
         private readonly ForgeDomainProvisioner $provisioner,
+        private readonly HttpsProbe $https,
     ) {}
 
     /**
@@ -56,11 +67,20 @@ final class WebsiteDomainService
         $domain = self::normalize($rawDomain);
         self::validateFormat($domain);
 
+        if (! WebsiteDomain::isRootDomain($domain)) {
+            throw ValidationException::withMessages([
+                'domain' => ['Connect your main domain (like example.com). Addresses such as shop.example.com are not supported yet.'],
+            ]);
+        }
+
+        if (! $this->dnsConfigured()) {
+            throw ValidationException::withMessages([
+                'domain' => ["Custom domains aren't available yet. We'll let you know when you can connect one."],
+            ]);
+        }
+
         return DB::transaction(function () use ($website, $domain) {
-            // Locks any row for this EXACT domain string first — the
-            // last line of defense against two simultaneous claims both
-            // reading "not taken" before either commits. The column's
-            // own DB-level unique constraint backs this up regardless.
+            // Locks any row for this EXACT domain string first; the unique column and the reservations back it up.
             $existing = WebsiteDomain::where('domain', $domain)->lockForUpdate()->first();
 
             if ($existing !== null) {
@@ -79,168 +99,339 @@ final class WebsiteDomainService
 
             $created = $website->domains()->create([
                 'domain' => $domain,
-                // The first domain a website ever connects becomes its
-                // canonical address automatically; every domain added
-                // after that starts as an alias until the owner
-                // explicitly promotes it (makePrimary()).
+                // The first domain a website ever connects becomes its canonical address automatically.
                 'is_primary' => ! $website->domains()->exists(),
                 'status' => WebsiteDomainStatus::PendingVerification,
-                'verification_token' => Str::random(40),
+                'verification_token' => $this->newToken(),
             ]);
 
-            // One hostname, one owner — across website domains AND Agency app domains. The unique reservation decides
-            // a simultaneous claim; the transaction rolls the row back if it loses.
-            try {
-                app(DomainReservations::class)->claim($domain, DomainReservations::WEBSITE, (int) $created->id);
-            } catch (DomainUnavailableException $e) {
-                throw ValidationException::withMessages(['domain' => [$e->getMessage()]]);
-            }
+            // Apex AND www are reserved together, for this one row, in this one transaction: a different customer can
+            // claim neither, and a lost race rolls both back.
+            $this->reserveBoth($created);
 
             return $created;
         });
     }
 
     /**
-     * @return array{ownership: array{type: string, host: string, value: string}, traffic: array{type: string, host: string, cname_target: ?string, a_record_ip: ?string}}
+     * The two records, and nothing else. Null target/IP means the records cannot be shown (not configured).
+     *
+     * @return array{records: list<array{type: string, host: string, value: ?string, ttl: string}>, ready: bool}
      */
     public function dnsInstructions(WebsiteDomain $domain): array
     {
+        $ip = trim((string) config('services.forge.a_record_ip')) ?: null;
+        $target = $domain->cnameTarget();
+
         return [
-            'ownership' => [
-                'type' => 'TXT',
-                'host' => $domain->verificationTxtHost(),
-                'value' => $domain->verification_token,
-            ],
-            'traffic' => [
-                'type' => 'CNAME or A',
-                'host' => $domain->domain,
-                'cname_target' => config('services.forge.cname_target'),
-                'a_record_ip' => config('services.forge.a_record_ip'),
+            'ready' => $ip !== null && $target !== null,
+            'records' => [
+                ['type' => 'A', 'host' => '@', 'value' => $ip, 'ttl' => 'Automatic'],
+                ['type' => 'CNAME', 'host' => 'www', 'value' => $target, 'ttl' => 'Automatic'],
             ],
         ];
     }
 
-    /**
-     * Idempotent: calling this again once already verified (or beyond)
-     * simply returns the domain unchanged rather than erroring on a
-     * stray double-click.
-     */
-    public function checkVerification(WebsiteDomain $domain): WebsiteDomain
+    /** Whether the platform side of custom domains is ready to be shown to a customer (DNS values AND Forge). */
+    public function ready(): bool
     {
-        if ($domain->status !== WebsiteDomainStatus::PendingVerification) {
+        return $this->dnsConfigured() && $this->provisioner->isConfigured();
+    }
+
+    private function dnsConfigured(): bool
+    {
+        return trim((string) config('services.forge.a_record_ip')) !== '' && trim((string) config('services.forge.cname_zone')) !== '';
+    }
+
+    /**
+     * Runs the next step for one domain, at most once at a time across workers. Safe to call repeatedly.
+     */
+    public function advance(WebsiteDomain $domain, bool $ignoreSchedule = false): WebsiteDomain
+    {
+        if (! in_array($domain->status, self::IN_FLIGHT, true) || ! $this->claim($domain, $ignoreSchedule)) {
+            return $domain->refresh();
+        }
+
+        try {
+            $domain->refresh();
+
+            if ($domain->status === WebsiteDomainStatus::PendingVerification) {
+                $this->checkDns($domain);
+            }
+
+            if ($domain->status === WebsiteDomainStatus::Verified) {
+                $this->prepare($domain);
+            } elseif ($domain->status === WebsiteDomainStatus::Provisioning) {
+                $this->pollCertificates($domain);
+            }
+        } catch (Throwable $exception) {
+            Log::warning('Custom domain step failed', ['domain_uid' => $domain->uid, 'exception' => $exception::class]);
+        } finally {
+            $domain->processing_until = null;
+            $domain->save();
+        }
+
+        return $domain;
+    }
+
+    /**
+     * After the platform side is fixed (or any time the owner asks): start a Failed domain again FROM THE DNS PROOF.
+     * Forge ids, certificate references and the hostname reservations are kept; nothing is created twice, and ownership
+     * and routing are re-verified before anything else happens.
+     */
+    public function retry(WebsiteDomain $domain): WebsiteDomain
+    {
+        if ($domain->status !== WebsiteDomainStatus::Failed) {
             return $domain;
         }
 
+        try {
+            DB::transaction(fn () => $this->reserveWwwIfMissing($domain));
+        } catch (ValidationException) {
+            $domain->failure_reason = "The www version of this domain is already connected to another website.";
+            $domain->save();
+
+            return $domain;
+        }
+
+        $domain->forceFill([
+            'status' => WebsiteDomainStatus::PendingVerification,
+            'failure_reason' => null,
+            'verified_at' => null,
+            'attempts' => 0,
+            'certificate_attempts' => 0,
+            'next_attempt_at' => null,
+            'processing_until' => null,
+        ])->save();
+
+        return $this->advance($domain, true);
+    }
+
+    private function claim(WebsiteDomain $domain, bool $ignoreSchedule): bool
+    {
+        return WebsiteDomain::whereKey($domain->id)
+            ->whereIn('status', array_map(fn ($status) => $status->value, self::IN_FLIGHT))
+            ->where(fn ($q) => $q->whereNull('processing_until')->orWhere('processing_until', '<=', now()))
+            ->when(! $ignoreSchedule, fn ($q) => $q->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now())))
+            ->update(['processing_until' => now()->addMinutes(5)]) === 1;
+    }
+
+    /** Step 1: both records present. The CNAME is the ownership proof; the A record is routing readiness. */
+    private function checkDns(WebsiteDomain $domain): void
+    {
         $domain->last_checked_at = now();
 
-        if ($this->dns->hasTxtRecord($domain->verificationTxtHost(), $domain->verification_token)) {
+        if (! $this->dnsConfigured() || $domain->cnameTarget() === null) {
+            $domain->failure_reason = null;
+            $domain->next_attempt_at = now()->addMinutes(15);
+
+            return;
+        }
+
+        $this->readDns($domain);
+
+        if ($domain->dns_cname_ok && $domain->dns_a_ok) {
             $domain->status = WebsiteDomainStatus::Verified;
             $domain->verified_at = now();
             $domain->failure_reason = null;
-        } else {
-            $domain->failure_reason = "We couldn't find that TXT record yet. DNS changes can take a few minutes to take effect — add the record shown below, then check again.";
+            $domain->attempts = 0;
+            $domain->next_attempt_at = null;
+
+            return;
         }
 
-        $domain->save();
-
-        return $domain;
+        // Not there yet (or not propagated): keep waiting, checking more slowly as time goes on. Never an error.
+        $domain->attempts = min(65535, $domain->attempts + 1);
+        $domain->next_attempt_at = now()->addMinutes(min(1 + intdiv($domain->attempts, 5), 30));
     }
 
-    /**
-     * @throws ValidationException when DNS ownership has not been verified yet
-     */
-    public function provisionCertificate(WebsiteDomain $domain): WebsiteDomain
+    private function readDns(WebsiteDomain $domain): void
     {
-        if ($domain->status === WebsiteDomainStatus::Provisioning || $domain->status === WebsiteDomainStatus::Active) {
-            return $domain;
-        }
+        $domain->dns_cname_ok = $this->dns->hasCnameTo($domain->wwwHost(), (string) $domain->cnameTarget());
+        $domain->dns_a_ok = $this->dns->hasARecord($domain->domain, (string) config('services.forge.a_record_ip'));
+    }
 
-        if ($domain->status !== WebsiteDomainStatus::Verified) {
-            throw ValidationException::withMessages([
-                'domain' => ['Verify DNS ownership for this domain before requesting a certificate.'],
-            ]);
-        }
-
+    /** Step 2: re-prove ownership, then create both Forge domains and request both certificates. */
+    private function prepare(WebsiteDomain $domain): void
+    {
         $domain->last_checked_at = now();
+        $this->readDns($domain);
+
+        if (! $domain->dns_cname_ok || ! $domain->dns_a_ok) {
+            // DNS changed under us: ownership is no longer proven, so nothing is provisioned.
+            $domain->status = WebsiteDomainStatus::PendingVerification;
+            $domain->verified_at = null;
+            $domain->next_attempt_at = now()->addMinutes(1);
+
+            return;
+        }
+
+        if (! $this->provisioner->isConfigured()) {
+            // Our side is not ready. Not the customer's fault and not a failure: wait and try again later.
+            Log::warning('Custom-domain provisioning is not configured; domain is waiting', ['domain_uid' => $domain->uid]);
+            $domain->failure_reason = "We're finishing setting up secure connections. This will continue automatically.";
+            $domain->next_attempt_at = now()->addMinutes(15);
+
+            return;
+        }
 
         try {
-            // Attaching and certifying are two separate Forge operations
-            // (see ForgeDomainProvisioner's docblock). If forge_domain_id
-            // is already set, a PRIOR attempt already created the Forge
-            // domain but failed before (or during) the certificate step
-            // — reuse it rather than creating a second, orphaned Forge
-            // domain for the same hostname on every retry.
+            // Each id is persisted the instant Forge returns it, so a retry reuses it and removal can always clean up.
             if ($domain->forge_domain_id === null) {
                 $domain->forge_domain_id = $this->provisioner->attachDomain($domain->domain);
-                // Persisted immediately, before the certificate request
-                // even runs: if THAT call throws, this id must already
-                // be durable so remove() can still clean up the Forge
-                // side — see the migration's own note on this column.
                 $domain->save();
             }
 
-            $domain->certificate_reference = $this->provisioner->requestCertificate($domain->forge_domain_id);
+            if ($domain->www_forge_domain_id === null) {
+                $domain->www_forge_domain_id = $this->provisioner->attachDomain($domain->wwwHost());
+                $domain->save();
+            }
+
+            if ($domain->certificate_reference === null) {
+                $domain->certificate_reference = $this->provisioner->requestCertificate($domain->forge_domain_id);
+                $domain->save();
+            }
+
+            if ($domain->www_certificate_reference === null) {
+                $domain->www_certificate_reference = $this->provisioner->requestCertificate($domain->www_forge_domain_id);
+            }
+
             $domain->status = WebsiteDomainStatus::Provisioning;
             $domain->failure_reason = null;
+            $domain->attempts = 0;
+            $domain->next_attempt_at = now()->addMinute();
         } catch (Throwable $exception) {
-            $domain->status = WebsiteDomainStatus::Failed;
-            $domain->failure_reason = 'Certificate request failed: '.$exception->getMessage();
+            Log::warning('Custom-domain preparation failed', ['domain_uid' => $domain->uid, 'error' => mb_substr($exception->getMessage(), 0, 200)]);
+            $domain->attempts++;
+
+            if ($domain->attempts >= self::MAX_PREPARE_ATTEMPTS) {
+                $this->fail($domain, "We couldn't finish setting up this domain. Please try again.");
+            } else {
+                $domain->failure_reason = null;
+                $domain->next_attempt_at = now()->addMinutes(2 ** $domain->attempts);
+            }
         }
-
-        $domain->save();
-
-        return $domain;
     }
 
-    /**
-     * Idempotent: a no-op once already Active or Failed.
-     */
-    public function checkCertificate(WebsiteDomain $domain): WebsiteDomain
+    /** Step 3: wait for both certificates, retry a failed one a bounded number of times, go live only when both work. */
+    private function pollCertificates(WebsiteDomain $domain): void
     {
-        if ($domain->status !== WebsiteDomainStatus::Provisioning) {
-            return $domain;
-        }
-
         $domain->last_checked_at = now();
-        $status = $this->provisioner->certificateStatus((string) $domain->forge_domain_id, (string) $domain->certificate_reference);
 
-        if ($status === WebsiteDomainCertificateStatus::Active) {
-            $domain->status = WebsiteDomainStatus::Active;
-            $domain->activated_at = now();
-            $domain->failure_reason = null;
+        $apex = $this->provisioner->certificateStatus((string) $domain->forge_domain_id, (string) $domain->certificate_reference);
+        $www = $this->provisioner->certificateStatus((string) $domain->www_forge_domain_id, (string) $domain->www_certificate_reference);
 
-            // The first domain a website attaches is flagged primary at once, even if it never gets
-            // to Active. If a LATER domain becomes Active while no Active domain is primary, the
-            // whole site would be unreachable (an alias with no primary to redirect to answers 404).
-            // So the first domain to go live while there is no live primary takes the primary role.
-            $hasLivePrimary = $domain->website->domains()
-                ->where('id', '!=', $domain->id)
-                ->where('is_primary', true)
-                ->where('status', WebsiteDomainStatus::Active->value)
-                ->exists();
+        if ($apex === WebsiteDomainCertificateStatus::Failed || $www === WebsiteDomainCertificateStatus::Failed) {
+            $domain->certificate_attempts++;
 
-            if (! $hasLivePrimary) {
-                $domain->website->domains()->where('id', '!=', $domain->id)->update(['is_primary' => false]);
-                $domain->is_primary = true;
+            if ($domain->certificate_attempts > self::MAX_CERTIFICATE_ATTEMPTS) {
+                $this->fail($domain, "We couldn't secure this domain. Check that both records are correct, then try again.");
+
+                return;
             }
-        } elseif ($status === WebsiteDomainCertificateStatus::Failed) {
-            $domain->status = WebsiteDomainStatus::Failed;
-            $domain->failure_reason = 'Certificate provisioning failed. Remove this domain and try adding it again.';
+
+            try {
+                if ($apex === WebsiteDomainCertificateStatus::Failed) {
+                    $domain->certificate_reference = $this->provisioner->requestCertificate((string) $domain->forge_domain_id);
+                }
+
+                if ($www === WebsiteDomainCertificateStatus::Failed) {
+                    $domain->www_certificate_reference = $this->provisioner->requestCertificate((string) $domain->www_forge_domain_id);
+                }
+            } catch (Throwable) {
+                // Next poll retries within the same bound.
+            }
+
+            $domain->next_attempt_at = now()->addMinutes(5 * $domain->certificate_attempts);
+
+            return;
         }
-        // Pending: stays Provisioning, nothing else to persist beyond
-        // last_checked_at above.
 
-        $domain->save();
+        $domain->attempts++;
 
-        // The trusted-host allowlist (App\Http\Middleware\TrustHosts) has
-        // to know about a newly Active domain on the VERY NEXT request,
-        // not after its own cache TTL lapses — see that class's own
-        // ACTIVE_DOMAINS_CACHE_KEY docblock for why this coupling exists.
-        if ($domain->status === WebsiteDomainStatus::Active) {
-            Cache::forget(TrustHosts::ACTIVE_DOMAINS_CACHE_KEY);
+        if ($apex === WebsiteDomainCertificateStatus::Active
+            && $www === WebsiteDomainCertificateStatus::Active
+            && $this->https->isServing($domain->domain)
+            && $this->https->isServing($domain->wwwHost())) {
+            $this->activate($domain);
+
+            return;
         }
 
-        return $domain;
+        if ($domain->attempts >= self::MAX_POLL_ATTEMPTS) {
+            $this->fail($domain, "Securing this domain is taking longer than expected. Please try again.");
+
+            return;
+        }
+
+        $domain->next_attempt_at = now()->addMinutes(min(1 + intdiv($domain->attempts, 3), 10));
+    }
+
+    private function activate(WebsiteDomain $domain): void
+    {
+        $domain->status = WebsiteDomainStatus::Active;
+        $domain->activated_at = now();
+        $domain->failure_reason = null;
+        $domain->next_attempt_at = null;
+
+        // If a LATER domain becomes Active while no Active domain is primary, the site would be unreachable.
+        $hasLivePrimary = $domain->website->domains()
+            ->where('id', '!=', $domain->id)
+            ->where('is_primary', true)
+            ->where('status', WebsiteDomainStatus::Active->value)
+            ->exists();
+
+        if (! $hasLivePrimary) {
+            $domain->website->domains()->where('id', '!=', $domain->id)->update(['is_primary' => false]);
+            $domain->is_primary = true;
+        }
+
+        // The trusted-host allowlist must know a newly Active domain on the very next request.
+        Cache::forget(TrustHosts::ACTIVE_DOMAINS_CACHE_KEY);
+    }
+
+    private function fail(WebsiteDomain $domain, string $reason): void
+    {
+        $domain->status = WebsiteDomainStatus::Failed;
+        $domain->failure_reason = $reason;
+        $domain->next_attempt_at = null;
+    }
+
+    private function newToken(): string
+    {
+        do {
+            $token = strtolower(Str::random(32));
+        } while (WebsiteDomain::where('verification_token', $token)->exists());
+
+        return $token;
+    }
+
+    /** Apex + www, same owner row, same transaction. Either both are reserved or the caller's transaction rolls back. */
+    private function reserveBoth(WebsiteDomain $domain): void
+    {
+        $reservations = app(DomainReservations::class);
+
+        try {
+            $reservations->claim($domain->domain, DomainReservations::WEBSITE, (int) $domain->id);
+            $reservations->claim($domain->wwwHost(), DomainReservations::WEBSITE_WWW, (int) $domain->id);
+        } catch (DomainUnavailableException $e) {
+            throw ValidationException::withMessages(['domain' => [$e->getMessage()]]);
+        }
+    }
+
+    /** Domains created before www was reserved gain the reservation on retry; refused if someone else holds it. */
+    private function reserveWwwIfMissing(WebsiteDomain $domain): void
+    {
+        $held = DB::table('domain_reservations')
+            ->where('owner_type', DomainReservations::WEBSITE_WWW)->where('owner_id', $domain->id)->exists();
+
+        if (! $held) {
+            try {
+                app(DomainReservations::class)->claim($domain->wwwHost(), DomainReservations::WEBSITE_WWW, (int) $domain->id);
+            } catch (DomainUnavailableException $e) {
+                throw ValidationException::withMessages(['domain' => [$e->getMessage()]]);
+            }
+        }
     }
 
     /**
@@ -295,20 +486,24 @@ final class WebsiteDomainService
      * confirms the resource is gone (detachDomain() throws otherwise,
      * including on a transport failure, and never on a 404, which
      * means the resource is already gone). A domain that never reached
-     * provisionCertificate() (still pending_verification when removed)
+     * a domain that is still waiting for DNS when removed
      * has no forge_domain_id and nothing to confirm, so it deletes
      * immediately.
      */
     private function attemptDeletion(WebsiteDomain $domain): void
     {
-        if ($domain->forge_domain_id === null) {
+        $forgeIds = array_values(array_filter([$domain->forge_domain_id, $domain->www_forge_domain_id]));
+
+        if ($forgeIds === []) {
             $domain->delete();
 
             return;
         }
 
         try {
-            $this->provisioner->detachDomain($domain->forge_domain_id);
+            foreach ($forgeIds as $forgeId) {
+                $this->provisioner->detachDomain($forgeId);
+            }
         } catch (Throwable $exception) {
             $domain->failure_reason = 'Removal could not be confirmed and will need to be retried: '.$exception->getMessage();
             $domain->save();
@@ -350,7 +545,8 @@ final class WebsiteDomainService
         $domain = strtok($domain, '?');
         $domain = strtok($domain, ':');
 
-        return strtolower(trim((string) $domain, '.'));
+        // A leading www. is the same site: the apex is what gets connected (www is always set up beside it).
+        return preg_replace('/^www\\./', '', strtolower(trim((string) $domain, '.')));
     }
 
     /**

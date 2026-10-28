@@ -85,6 +85,8 @@
 
             $schedule->command('queue:work --queue=automation,default,batch --timeout=120 --tries=1 --max-time=180 --stop-when-empty')->everyMinute();
 
+            // Custom domains: DNS proof -> Forge domains + certificates -> live, with per-domain backoff.
+            $schedule->command('website-domains:process')->everyMinute()->withoutOverlapping();
             $schedule->command('business-email:sync-inbound')->everyFiveMinutes()->withoutOverlapping();
             $schedule->command('campaign:recurring')->everyMinute();
             $schedule->command('campaign:scheduled')->everyMinute();

@@ -18,6 +18,7 @@ use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\CrossWorkspaceAssignmentException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
+use App\Exceptions\Workspace\CannotRemoveSelfException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
 use App\Exceptions\Workspace\InvalidBusinessAccessScopeAssignmentException;
 use App\Exceptions\Workspace\OwnerCannotBeMemberException;
@@ -46,9 +47,14 @@ use App\Library\Navigation\CustomerMenuBuilder;
 use App\Library\PlatformBilling\CustomerSubscriptionPresenter;
 use App\Library\PlatformBilling\PlatformSubscriptionManager;
 use App\Library\Navigation\CustomerShellComposer;
+use App\Library\Navigation\SoleBusinessLanding;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Workspace\AccountFrameAccess;
 use App\Library\Workspace\WorkspaceManager;
+use App\Library\Workspace\WorkspaceMemberInvitationManager;
+use App\Exceptions\Workspace\InvalidMemberInvitationException;
+use App\Exceptions\Workspace\PendingMemberInvitationExistsException;
+use App\Models\WorkspaceMemberInvitation;
 use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
@@ -78,7 +84,9 @@ class WorkspaceController extends CustomerBaseController
      * account's owner, or someone already on it — so the answer never tells an
      * account manager which of those it was.
      */
-    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they need an existing Business OS account, and can\'t already be on this account or be its owner.';
+    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they can\'t already be on this account or be its owner, and their MotionGrove account must be active.';
+
+    private const INVITATION_ALREADY_PENDING = 'An invitation to that email address is already pending. You can resend or revoke it under Pending invitations.';
 
     private const FEATURE_SWITCH_NOT_ALLOWED = 'You don\'t have permission to change this Business\'s features.';
 
@@ -101,6 +109,7 @@ class WorkspaceController extends CustomerBaseController
         private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
         private readonly BusinessManager $businessManager,
         private readonly PlatformSubscriptionManager $platformSubscriptionManager,
+        private readonly WorkspaceMemberInvitationManager $invitationManager,
     ) {
     }
 
@@ -120,6 +129,14 @@ class WorkspaceController extends CustomerBaseController
     {
         $userId = (int) Auth::id();
         $workspaces = $this->accountChoices($userId);
+
+        // Business-only staff (a selected-scope team member) have no account-frame row by design. They are not
+        // "without access": send them to their Business Home rather than claiming they have no accounts.
+        if ($workspaces->isEmpty() && app(SoleBusinessLanding::class)->hasAnyBusiness($userId)) {
+            app(SoleBusinessLanding::class)->rememberSole($userId);
+
+            return redirect()->route('user.home');
+        }
 
         if ($workspaces->count() === 1) {
             return redirect()->route('customer.workspaces.show', $workspaces->first()['uid']);
@@ -457,6 +474,7 @@ class WorkspaceController extends CustomerBaseController
             $viewData['directory'] = $this->membershipDirectory($workspace);
             $viewData['teamOwner'] = $this->teamOwnerRow($workspace, $userId);
             $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
+            $viewData['invitations'] = $this->pendingInvitations($workspace);
 
             return $viewData;
         }
@@ -913,10 +931,17 @@ class WorkspaceController extends CustomerBaseController
             abort(404);
         }
 
-        $targetUser = $this->findAddableUserByEmail((string) $request->validated('member_email'));
+        $email = (string) $request->validated('member_email');
+        $targetUser = $this->findAddableUserByEmail($email);
 
         if ($targetUser === null) {
-            return $this->memberCannotBeAdded($workspaceUid);
+            // An address that belongs to an account we cannot add (disabled, platform-only) is refused as before.
+            // An address with NO account at all is invited: a pending invitation and one email, nothing else.
+            if (User::query()->where('email', trim($email))->exists()) {
+                return $this->memberCannotBeAdded($workspaceUid);
+            }
+
+            return $this->inviteMember($workspace, $actorUserId, $workspaceUid, $email, $role, $scope, $businessIds);
         }
 
         try {
@@ -941,6 +966,62 @@ class WorkspaceController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.team.show', $workspaceUid)
             ->with('flash_success', 'Member added.');
+    }
+
+    private function inviteMember(Workspace $workspace, int $actorUserId, string $workspaceUid, string $email, WorkspaceMembershipRole $role, WorkspaceBusinessAccessScope $scope, array $businessIds): RedirectResponse
+    {
+        try {
+            $this->invitationManager->invite($actorUserId, $workspace, $email, $role, $scope, $businessIds);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            abort(404);
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive new members.');
+        } catch (PendingMemberInvitationExistsException) {
+            return redirect()
+                ->route('customer.workspaces.team.show', $workspaceUid)
+                ->withErrors(['member_email' => self::INVITATION_ALREADY_PENDING])
+                ->withInput(['member_email' => $email]);
+        } catch (OwnerCannotBeMemberException|WorkspaceMembershipAlreadyExistsException) {
+            return $this->memberCannotBeAdded($workspaceUid);
+        }
+
+        return redirect()
+            ->route('customer.workspaces.team.show', $workspaceUid)
+            ->with('flash_success', 'Invitation sent.');
+    }
+
+    /**
+     * Resend a pending Team invitation: a fresh link (the old one stops working) and a new 7-day window. Owner for any
+     * invitation; an active Admin for Staff invitations only. Anyone else, or an unknown uid, gets the usual 404.
+     */
+    public function resendInvitation(string $workspaceUid, string $invitationUid): RedirectResponse
+    {
+        return $this->manageInvitation($workspaceUid, $invitationUid, 'Invitation resent.', fn (WorkspaceMemberInvitation $invitation) => $this->invitationManager->resend((int) Auth::id(), $invitation));
+    }
+
+    public function revokeInvitation(string $workspaceUid, string $invitationUid): RedirectResponse
+    {
+        return $this->manageInvitation($workspaceUid, $invitationUid, 'Invitation revoked.', fn (WorkspaceMemberInvitation $invitation) => $this->invitationManager->revoke((int) Auth::id(), $invitation));
+    }
+
+    private function manageInvitation(string $workspaceUid, string $invitationUid, string $success, \Closure $action): RedirectResponse
+    {
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, (int) Auth::id());
+        $invitation = WorkspaceMemberInvitation::query()->where('workspace_id', $workspace->id)->where('uid', $invitationUid)->first();
+
+        if ($invitation === null) {
+            abort(404);
+        }
+
+        try {
+            $action($invitation);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            abort(404);
+        } catch (InvalidMemberInvitationException) {
+            return redirect()->route('customer.workspaces.team.show', $workspaceUid)->with('flash_error', 'That invitation is no longer pending.');
+        }
+
+        return redirect()->route('customer.workspaces.team.show', $workspaceUid)->with('flash_success', $success);
     }
 
     /**
@@ -1106,6 +1187,31 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
+     * "Delete member": logically removes one membership (access ends at once,
+     * the person leaves the Members list, audit snapshot kept). The User
+     * account and their other Workspaces are untouched. Authority failures
+     * (Staff, Admin removing an Admin) and self-removal resolve to the same 404.
+     */
+    public function removeMember(string $workspaceUid, string $memberUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $membership = $this->resolveAccessibleMembership($workspace, $memberUid);
+
+        try {
+            $this->workspaceManager->removeMember($actorUserId, $membership);
+        } catch (UnauthorizedWorkspaceManagementException|CannotRemoveSelfException) {
+            abort(404);
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.team.show', $workspaceUid)
+            ->with('flash_success', 'Member deleted.');
+    }
+
+    /**
      * Reactivates one membership -- same target-role authority rule as
      * deactivateMember(). WorkspaceManager::reactivateMember() restores
      * effective access purely by flipping is_active back to true; no
@@ -1176,7 +1282,8 @@ class WorkspaceController extends CustomerBaseController
 
         $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, (int) $targetUser->id);
 
-        if ($membership === null) {
+        // A removed member is gone from this Workspace's management surface: same 404 as an unknown uid.
+        if ($membership === null || $membership->removed_at !== null) {
             abort(404);
         }
 
@@ -1526,6 +1633,29 @@ class WorkspaceController extends CustomerBaseController
      *
      * @return array{name: string, email: string, is_you: bool}|null
      */
+    /**
+     * Pending Team invitations, read-only (viewing the page never sends or changes anything). A lapsed one reads
+     * "Expired" until it is resent or revoked. No token or token hash is ever part of this data.
+     *
+     * @return array<int, array{uid: string, email: string, role: string, status: string, expires: string}>
+     */
+    private function pendingInvitations(Workspace $workspace): array
+    {
+        return WorkspaceMemberInvitation::query()
+            ->where('workspace_id', $workspace->id)
+            ->where('status', \App\Enums\Workspace\WorkspaceMemberInvitationStatus::Pending->value)
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (WorkspaceMemberInvitation $invitation) => [
+                'uid' => $invitation->uid,
+                'email' => $invitation->email,
+                'role' => ucfirst($invitation->role->value),
+                'status' => ucfirst($invitation->displayStatus()->value),
+                'expires' => $invitation->expires_at->format('M j, Y'),
+            ])
+            ->all();
+    }
+
     private function teamOwnerRow(Workspace $workspace, int $viewerId): ?array
     {
         $owner = $workspace->owner;
@@ -1573,7 +1703,7 @@ class WorkspaceController extends CustomerBaseController
         $ownerUserId = (int) $workspace->owner_user_id;
 
         return $this->membershipRepository->allForWorkspace($workspace)
-            ->reject(fn (WorkspaceMembership $membership) => (int) $membership->user_id === $ownerUserId)
+            ->reject(fn (WorkspaceMembership $membership) => (int) $membership->user_id === $ownerUserId || $membership->removed_at !== null)
             ->sortBy('id')
             ->values()
             ->map(function (WorkspaceMembership $membership) use ($businessUidsById) {

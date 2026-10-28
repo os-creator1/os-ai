@@ -218,6 +218,49 @@ class WebsiteTemplateRenderingTest extends TestCase
         $this->assertSame($hero->uid, $theme['hero_asset_uid']);
     }
 
+    public function test_palette_overrides_reach_the_published_site_survive_template_switches_and_leave_other_sites_untouched(): void
+    {
+        [, , $website] = $this->lumaWebsite();
+        $this->richHome($website);
+
+        $this->publish($website);
+        $before = $this->get(route('public.website.home', $website->public_id))->assertOk()->getContent();
+        $this->assertStringNotContainsString('--wd-footer-bg', $before);
+        $this->assertStringNotContainsString('wd-pal-', $before, 'No override, no palette classes: the design renders as before.');
+
+        $look = app(WebsiteLookService::class);
+        $look->setBrandColor($website->fresh(), '#ff5500');
+        $look->setSecondaryColor($website->fresh(), '#0a7d5a');
+        $look->setPaletteColor($website->fresh(), 'dark_bg_color', '#3b0a45');
+        $look->setPaletteColor($website->fresh(), 'tint_color', '#fff4e5');
+
+        $theme = $website->fresh()->theme;
+        $this->assertSame('#ff5500', $theme['brand_color']);
+        $this->assertSame('#0a7d5a', $theme['secondary_brand_color']);
+
+        $this->publish($website);
+        $html = $this->get(route('public.website.home', $website->public_id))->assertOk()->getContent();
+        $this->assertStringContainsString(BrandColors::themeStyle($website->fresh()->theme), $html);
+        $this->assertStringContainsString('--wd-dark:#3b0a45', $html);
+        $this->assertStringContainsString('wd-pal-dark', $html);
+        $this->assertStringContainsString('wd-pal-tint', $html);
+
+        foreach (['photo_booth_luxury', 'photo_booth_conversion', 'photo_booth_modern'] as $key) {
+            app(WebsiteStarterDraftService::class)->changeTemplateKeepingPages($website, WebsiteTemplate::findActiveOrFail($key));
+            $kept = $website->fresh()->theme;
+            $this->assertSame('#3b0a45', $kept['dark_bg_color'], $key);
+            $this->assertSame('#fff4e5', $kept['tint_color'], $key);
+            $this->assertSame('#ff5500', $kept['brand_color'], $key);
+        }
+
+        // Resetting one colour leaves the others alone.
+        $look->setPaletteColor($website->fresh(), 'dark_bg_color', '');
+        $reset = $website->fresh()->theme;
+        $this->assertArrayNotHasKey('dark_bg_color', $reset);
+        $this->assertSame('#fff4e5', $reset['tint_color']);
+        $this->assertSame('#0a7d5a', $reset['secondary_brand_color']);
+    }
+
     public function test_a_site_without_a_hero_image_shows_the_templates_designed_hero_never_an_empty_frame(): void
     {
         [, , $website] = $this->lumaWebsite();

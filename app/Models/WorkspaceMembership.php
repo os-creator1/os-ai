@@ -22,6 +22,7 @@ class WorkspaceMembership extends Model
         // business_access_scope, not a new membership-like entity.
         'location_access_scope',
         'is_active',
+        'removed_at',
     ];
 
     protected $casts = [
@@ -29,6 +30,7 @@ class WorkspaceMembership extends Model
         'business_access_scope' => WorkspaceBusinessAccessScope::class,
         'location_access_scope' => LocationAccessScope::class,
         'is_active' => 'boolean',
+        'removed_at' => 'datetime',
     ];
 
     public function workspace(): BelongsTo
