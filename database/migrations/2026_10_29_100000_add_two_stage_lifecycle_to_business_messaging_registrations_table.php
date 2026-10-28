@@ -2,7 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -26,14 +25,11 @@ return new class extends Migration
             $table->boolean('campaign_issue_permanent')->default(false);
         });
 
-        // Existing records keep their real state: a registration that already
-        // created a campaign necessarily had a usable brand, so its brand
-        // stage is Verified. Brand-only rows stay unknown and are confirmed by
-        // the next provider status check. Nothing is resubmitted or reset.
-        DB::table('business_messaging_registrations')
-            ->whereNotNull('provider_campaign_id')
-            ->where('provider_campaign_id', '!=', '')
-            ->update(['brand_status' => 'verified']);
+        // Existing records keep every ID and status exactly as they are. A
+        // campaign (or a pending/approved registration) is NOT proof that its
+        // brand was identity-verified, so brand_status is left NULL = unknown
+        // and is reconciled against the carrier's identityStatus by the status
+        // sweep and the Refresh button. Nothing is resubmitted or charged.
     }
 
     public function down(): void

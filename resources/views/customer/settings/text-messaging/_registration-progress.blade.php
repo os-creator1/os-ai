@@ -3,7 +3,7 @@
     state (RegistrationProgress). Inputs: $progress, $workspaceUid, $businessUid.
 --}}
 @php
-    $variants = ['verified' => 'success', 'approved' => 'success', 'processing' => 'info', 'overdue' => 'warning', 'under_review' => 'info', 'ready' => 'info', 'needs_attention' => 'danger', 'issue' => 'warning', 'not_started' => 'neutral'];
+    $variants = ['verified' => 'success', 'approved' => 'success', 'processing' => 'info', 'unconfirmed' => 'info', 'overdue' => 'warning', 'under_review' => 'info', 'ready' => 'info', 'needs_attention' => 'danger', 'issue' => 'warning', 'not_started' => 'neutral'];
     $stages = [['title' => 'Business verification', 'role' => 'brand', 'stage' => $progress['brand']], ['title' => 'Messaging campaign', 'role' => 'campaign', 'stage' => $progress['campaign']]];
 @endphp
 <x-card :padded="true" class="mb-2" data-role="registration-progress">
@@ -28,7 +28,7 @@
             @if($progress['last_checked_at'])
                 Last carrier status check: {{ $progress['last_checked_at']->diffForHumans() }}
             @else
-                Not checked with the carrier yet. We check automatically every few minutes.
+                Not checked with the carrier yet. We check periodically, and you can refresh at any time.
             @endif
         </span>
     </div>

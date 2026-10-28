@@ -202,7 +202,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         }
     }
 
-    public function test_editing_brand_details_after_a_rejection_clears_the_stale_provider_brand(): void
+    public function test_editing_after_a_rejection_clears_the_stale_campaign_but_never_the_saved_brand(): void
     {
         $business = $this->makeBusiness();
         $registration = $this->service()->captureDetails($business, $this->payload());
@@ -210,7 +210,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
 
         $edited = $this->service()->captureDetails($business, $this->payload());
 
-        $this->assertNull($edited->provider_brand_id);
+        $this->assertSame('brand_old', $edited->provider_brand_id);
         $this->assertNull($edited->provider_campaign_id);
     }
 
@@ -220,12 +220,14 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
         $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_old', 'provider_campaign_id' => 'camp_old']);
 
-        $submitted = $this->submitFully($registration);
+        // The saved brand is reconciled with the carrier (verified) and reused; only the campaign is redone.
+        $submitted = $this->service()->submit($registration, true);
 
-        $this->assertCount(2, $fake->submittedRegistrations);
-        $this->assertNull($fake->submittedRegistrations[0]->existingBrandId);
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertSame('campaign', $fake->submittedRegistrations[0]->phase);
+        $this->assertSame('brand_old', $fake->submittedRegistrations[0]->existingBrandId);
         $this->assertNull($fake->submittedRegistrations[0]->existingCampaignId);
-        $this->assertNotSame('brand_old', $submitted->provider_brand_id);
+        $this->assertSame('brand_old', $submitted->provider_brand_id);
         $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->status);
     }
 

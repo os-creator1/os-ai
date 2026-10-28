@@ -32,9 +32,10 @@ final class RegistrationProgress
 
         // A campaign can only exist for a brand the carrier accepted.
         $brandKey = match (true) {
-            $hasCampaign || $submitted || $brandStatus === 'verified' => 'verified',
+            $brandStatus === 'verified' => 'verified',
             $brandStatus === 'needs_attention' => 'needs_attention',
             $brandStatus === 'overdue' && $hasBrand => 'overdue',
+            $hasBrand && ($hasCampaign || $submitted) && $brandStatus === null => 'unconfirmed',
             $hasBrand => 'processing',
             default => 'not_started',
         };
@@ -42,6 +43,7 @@ final class RegistrationProgress
         $brand = match ($brandKey) {
             'verified' => ['key' => 'verified', 'label' => 'Business verified', 'detail' => 'The carrier has verified your business.'],
             'needs_attention' => ['key' => 'needs_attention', 'label' => 'Needs attention', 'detail' => $registration->brand_status_detail ?: 'The carrier could not finish verifying this business. Your details are saved; contact support to get this resolved.'],
+            'unconfirmed' => ['key' => 'unconfirmed', 'label' => 'Verification being confirmed', 'detail' => 'Your campaign was submitted earlier. We are confirming your business\'s verification with the carrier; your campaign, brand and fees are unchanged.'],
             'overdue' => ['key' => 'overdue', 'label' => 'Verification taking longer than expected', 'detail' => $registration->brand_status_detail ?: 'The carrier has not rejected your business, but verification is taking longer than expected. Your brand is saved and nothing needs to be resubmitted.'],
             'processing' => ['key' => 'processing', 'label' => 'Business verification in progress', 'detail' => 'Your business was sent to the carrier. Verification usually takes a short while and sometimes longer. We check automatically; nothing is wrong and you do not need to resubmit.'],
             default => ['key' => 'not_started', 'label' => 'Not started', 'detail' => 'Submit your business details to start carrier verification.'],
@@ -49,7 +51,7 @@ final class RegistrationProgress
 
         // A sole-proprietor brand needs a carrier PIN text this platform cannot
         // complete: say so instead of implying more waiting will finish it.
-        if (in_array($brandKey, ['processing', 'overdue'], true) && $registration->entity_type?->value === 'sole_proprietor') {
+        if (in_array($brandKey, ['processing', 'overdue', 'unconfirmed'], true) && $registration->entity_type?->value === 'sole_proprietor') {
             $brand['detail'] = 'Sole-proprietor brands need a one-time PIN text from the carrier to the contact phone, which can\'t be completed in MotionGrove yet, so this verification may not finish on its own. Contact support to resolve it.';
         }
 

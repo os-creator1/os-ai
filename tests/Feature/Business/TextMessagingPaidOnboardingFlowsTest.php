@@ -1217,8 +1217,9 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
             'provider_campaign_id' => 'camp_flow_1', 'brand_status' => null, 'submitted_at' => now()->subDay(),
         ]);
 
+        // A campaign is not proof of identity verification: the brand is shown as unconfirmed.
         $html = $this->showHtml();
-        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="verified"#', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="unconfirmed"#', $html);
         $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="under_review"#', $html);
         $this->assertStringContainsString('BB84JS8', $html);
         $this->assertStringContainsString('Refresh status', $html);
@@ -1240,6 +1241,118 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertSame('camp_flow_1', $row->provider_campaign_id);
         $this->assertNotNull($row->campaign_status_checked_at);
         $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $this->business->id)->count());
+
+        // The carrier's real identityStatus decides: UNVERIFIED stays in progress, VERIFIED confirms it.
+        $this->assertSame('verified', $row->brand_status); // the default mock answers VERIFIED
+    }
+
+    public function test_a_legacy_campaign_with_an_unverified_brand_is_reconciled_without_any_post_or_wallet_event(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(35_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update([
+            'status' => 'pending', 'provider_brand_id' => 'brand_flow_1', 'provider_campaign_id' => 'camp_flow_1',
+            'provider_brand_tcr_id' => 'BB84JS8', 'brand_status' => null, 'submitted_at' => now()->subDay(),
+        ]);
+
+        // The carrier says the brand is still UNVERIFIED: not confirmed, not rejected, campaign untouched.
+        $this->brandIdentity = 'UNVERIFIED';
+        $this->refreshNow();
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+        $row = $this->row();
+        $this->assertSame('processing', $row->brand_status);
+        $this->assertSame(MessagingRegistrationStatus::Pending, $row->status);
+        $html = $this->showHtml();
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="processing"#', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="under_review"#', $html);
+        $this->assertStringNotContainsString('Needs correction', $html);
+
+        // Later the carrier verifies it.
+        $this->brandIdentity = 'VERIFIED';
+        $this->refreshNow();
+        $this->assertSame('verified', $this->row()->brand_status);
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="verified"#', $this->showHtml());
+
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(35_000_000, $this->balance());
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $this->business->id)->count());
+        $this->assertSame('camp_flow_1', $this->row()->provider_campaign_id);
+        $this->assertSame('BB84JS8', $this->row()->provider_brand_tcr_id);
+    }
+
+    private function legacyRejectedWithPaidBrand(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(35_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update([
+            'status' => 'rejected', 'provider_brand_id' => 'brand_flow_1', 'provider_campaign_id' => 'camp_flow_1',
+            'brand_status' => null, 'rejected_at' => now()->subDay(), 'rejection_reason' => 'campaign sample too vague',
+        ]);
+    }
+
+    public function test_editing_a_legacy_rejected_registration_never_discards_the_paid_brand_without_authorization(): void
+    {
+        $this->legacyRejectedWithPaidBrand();
+
+        $this->assertStringContainsString('a new carrier brand fee applies', str_replace('&#039;', "'", $this->showHtml()));
+
+        // Brand-defining edit without the explicit replacement authorization: refused, brand kept.
+        $this->post($this->url('registration.update'), $this->payload(['legal_business_name' => 'Other Booths LLC']))->assertSessionHas('status', 'error')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'new carrier brand fee'));
+        $row = $this->row();
+        $this->assertSame('brand_flow_1', $row->provider_brand_id);
+        $this->assertSame('Sunset Photo Booths LLC', $row->legal_business_name);
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $row->status);
+
+        // An edit that does not touch brand identity (e.g. the campaign wording) keeps the brand too.
+        $this->post($this->url('registration.update'), $this->payload(['campaign_description' => 'Sunset Photo Booths sends booking confirmations and reminders to customers who opted in.']))->assertSessionHas('status', 'success');
+        $this->assertSame('brand_flow_1', $this->row()->provider_brand_id);
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(35_000_000, $this->balance());
+
+        // Only with the explicit, fee-disclosed authorization is it replaced locally, still with no charge until submit.
+        $this->post($this->url('registration.update'), $this->payload(['legal_business_name' => 'Other Booths LLC', 'authorize_brand_replacement' => '1']))->assertSessionHas('status', 'success');
+        $this->assertNull($this->row()->provider_brand_id);
+        $this->assertSame(35_000_000, $this->balance());
+    }
+
+    public function test_retrying_a_legacy_rejected_registration_reconciles_and_reuses_its_paid_brand(): void
+    {
+        $this->legacyRejectedWithPaidBrand();
+
+        // Resubmitting without edits: the brand is reconciled with the carrier and reused, never re-bought.
+        $this->brandIdentity = 'UNVERIFIED';
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1']);
+        $row = $this->row();
+        $this->assertSame('brand_flow_1', $row->provider_brand_id);
+        $this->assertSame('processing', $row->brand_status);
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(35_000_000, $this->balance());
+
+        $this->brandIdentity = 'VERIFIED';
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error'); // still needs authorization
+        $this->assertNull($this->row()->provider_campaign_id);
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('status', 'success');
+
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame('brand_flow_1', $this->row()->provider_brand_id);
+        $this->assertSame(35_000_000 - self::REGISTRATION, $this->balance()); // campaign prepayment only, no brand fee
+    }
+
+    public function test_the_progress_copy_does_not_promise_a_check_cadence(): void
+    {
+        $this->legacyRejectedWithPaidBrand();
+        $html = $this->showHtml();
+        $this->assertStringNotContainsString('every few minutes', $html);
     }
 
     public function test_a_brand_only_record_is_tracked_as_a_brand_and_never_as_a_pending_campaign(): void

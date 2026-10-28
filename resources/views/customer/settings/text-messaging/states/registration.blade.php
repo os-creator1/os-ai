@@ -253,11 +253,11 @@
                     </div>
                 </div>
 
-                @if($registration->brand_status === 'needs_attention' && trim((string) $registration->provider_brand_id) !== '')
+                @if(in_array($registration->brand_status, ['needs_attention', null], true) && trim((string) $registration->provider_brand_id) !== '')
                     <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="brand-replacement">
                         <div class="form-check">
                             <input type="checkbox" class="form-check-input" id="authorize_brand_replacement" name="authorize_brand_replacement" value="1">
-                            <label class="form-check-label" for="authorize_brand_replacement">The carrier rejected this business. If I change the business details above, I understand this replaces the rejected carrier brand and a new carrier brand fee applies.</label>
+                            <label class="form-check-label" for="authorize_brand_replacement">{{ $registration->brand_status === 'needs_attention' ? 'The carrier rejected this business.' : 'The outcome of the earlier carrier brand was never recorded, so it is kept unless you choose otherwise.' }} If I change the business details above, I understand this replaces the earlier carrier brand and a new carrier brand fee applies.</label>
                         </div>
                     </x-alert>
                 @endif
@@ -471,7 +471,7 @@
                         </div>
                         <x-button type="submit" variant="primary" data-role="submit-campaign" :disabled="! $available || ! $registrationPreview['configured'] || ! $registrationPreview['sufficient']">Submit campaign for carrier review</x-button>
                     @elseif($isLocalRegistration)
-                        <x-button type="submit" variant="primary" data-role="submit-business" :disabled="! $available || ! $registrationPreview['configured'] || ! $registrationPreview['sufficient']">Submit business for verification</x-button>
+                        <x-button type="submit" variant="primary" data-role="submit-business" :disabled="! $available || ! $registrationPreview['configured'] || ! $registrationPreview['sufficient']">{{ trim((string) $registration->provider_brand_id) !== '' ? 'Check verification and continue' : 'Submit business for verification' }}</x-button>
                     @else
                         <x-button type="submit" variant="primary" :disabled="! $available">Submit for review</x-button>
                     @endif
