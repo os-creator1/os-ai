@@ -47,7 +47,15 @@ class MessagingReadinessReader
             // business verification BEFORE any local number is purchased;
             // toll-free can never reach this branch un-Approved, since its own
             // carrier verification needs an already-owned number.
-            if ($registration !== null && $registration->number_type === PhoneNumberType::Local) {
+            // A local registration only holds the customer on the registration
+            // screen while they are actually in local setup (or it already has
+            // a carrier commitment: Pending/Approved). A not-yet-submitted one
+            // they stepped away from is kept, with every saved detail, but no
+            // longer traps them: they see the Local / Toll-free choice again.
+            if ($registration !== null && $registration->number_type === PhoneNumberType::Local
+                && ($registration->isApproved()
+                    || $registration->status === \App\Enums\Messaging\MessagingRegistrationStatus::Pending
+                    || $registration->local_setup_started_at !== null)) {
                 $state = $registration->isApproved() ? 'number_required' : 'registration_required';
 
                 return ['state' => $state, 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, ...$portOutContext];

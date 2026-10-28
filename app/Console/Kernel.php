@@ -112,6 +112,12 @@
             // recordReleaseDecision()'s own explicit, audited, admin-only
             // action, which itself never confirms a real carrier release.
             $schedule->command('messaging:sweep-number-renewals')->daily()->withoutOverlapping();
+            // Zero-markup message billing: compare billed message charges with
+            // Telnyx's final per-message record and settle each to retail base x
+            // billable parts + the actual carrier surcharge. Idempotent, bounded
+            // retries; oversized or unreadable cases become visible incidents
+            // (the command exits non-zero) rather than being guessed.
+            $schedule->command('messaging:reconcile-costs --days=7 --apply --recheck-days=3')->hourlyAt(17)->withoutOverlapping();
             // Implementation Contract 15 §12.F — an implementation-time
             // cadence decision (not pinned by any authoritative document):
             // frequent enough that a webhook-missed change still converges

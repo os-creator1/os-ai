@@ -21,6 +21,24 @@
         'description' => 'One more step before this number is ready to send and receive texts.',
     ])
 
+    @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
+        {{-- The way out is at the TOP, not buried under a long form. Stepping back only
+             pauses local setup: every saved detail stays, and nothing is deleted. A
+             submitted/approved registration is refused with an explanation instead. --}}
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2" data-role="local-setup-exit">
+            <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.leave-local-setup', [$workspaceUid, $businessUid]) }}" class="m-0">
+                @csrf
+                <x-button type="submit" variant="secondary" data-role="back-to-number-choices">← Back to number choices</x-button>
+            </form>
+            <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.leave-local-setup', [$workspaceUid, $businessUid]) }}" class="m-0">
+                @csrf
+                <input type="hidden" name="then" value="toll_free">
+                <x-button type="submit" variant="primary" data-role="choose-toll-free-instead">Choose toll-free instead (recommended)</x-button>
+            </form>
+            <span class="text-caption text-muted">Your business details stay saved. Nothing has been charged or sent to the carrier yet.</span>
+        </div>
+    @endif
+
     <x-card :padded="true" class="mb-2">
         <dl class="row mb-0">
             <dt class="col-sm-4">Phone number</dt>
@@ -104,6 +122,9 @@
                 --}}
                 <p class="text-caption text-muted mt-2 mb-0">
                     Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step. {{ $verificationChargeDisclosure }}
+                    @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
+                        {{ \App\Library\Messaging\BusinessMessagingRegistrationService::LOCAL_COST_NOTICE }}
+                    @endif
                     @if($phoneNumber === null)
                         A charge for your number begins once you choose it, after your verification is approved.
                     @else
@@ -216,10 +237,59 @@
                     </div>
                 </div>
 
+                <div class="row" data-role="carrier-contact-fields">
+                    <div class="col-md-6 mb-1">
+                        <label class="form-label required" for="contact_first_name">Contact first name</label>
+                        <input type="text" class="form-control @error('contact_first_name') is-invalid @enderror" id="contact_first_name" name="contact_first_name"
+                               value="{{ old('contact_first_name', $registration->contact_first_name) }}" maxlength="100" required>
+                        @error('contact_first_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="col-md-6 mb-1">
+                        <label class="form-label required" for="contact_last_name">Contact last name</label>
+                        <input type="text" class="form-control @error('contact_last_name') is-invalid @enderror" id="contact_last_name" name="contact_last_name"
+                               value="{{ old('contact_last_name', $registration->contact_last_name) }}" maxlength="100" required>
+                        @error('contact_last_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                </div>
+
+                @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree)
+                    <div class="row" data-role="toll-free-carrier-fields">
+                        <div class="col-md-5 mb-1">
+                            <label class="form-label required" for="message_volume">Expected messages per month</label>
+                            <select class="form-select @error('message_volume') is-invalid @enderror" id="message_volume" name="message_volume" required>
+                                <option value="">Choose…</option>
+                                @foreach($messageVolumes as $value => $label)
+                                    <option value="{{ $value }}" @selected(old('message_volume', $registration->message_volume) === (string) $value)>{{ $label }}</option>
+                                @endforeach
+                            </select>
+                            @error('message_volume')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-md-7 mb-1">
+                            <label class="form-label required" for="opt_in_image_url">Link to a screenshot of your opt-in form</label>
+                            <input type="url" class="form-control @error('opt_in_image_url') is-invalid @enderror" id="opt_in_image_url" name="opt_in_image_url"
+                                   value="{{ old('opt_in_image_url', $registration->opt_in_image_url) }}" maxlength="2083" placeholder="https://… (an image of where customers agree to texts)" required>
+                            <p class="text-caption text-muted mb-0">The carrier requires an image showing how customers opt in.</p>
+                            @error('opt_in_image_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
+                @else
+                    <div class="mb-1" data-role="local-carrier-fields">
+                        <label class="form-label required" for="brand_vertical">Industry category</label>
+                        <select class="form-select @error('brand_vertical') is-invalid @enderror" id="brand_vertical" name="brand_vertical" required>
+                            <option value="">Choose…</option>
+                            @foreach($brandVerticals as $value => $label)
+                                <option value="{{ $value }}" @selected(old('brand_vertical', $prefill['values']['brand_vertical'] ?? '') === $value)>{{ $label }}</option>
+                            @endforeach
+                        </select>
+                        @error('brand_vertical')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                @endif
+
                 <div class="mb-1" data-role="use-case-choices">
                     <label class="form-label required">What will you use texting for?</label>
                     @foreach($useCaseChoices as $choice => $definition)
                         @continue($definition['use_case'] === 'mixed' && ! config('messaging.ten_dlc_mixed_enabled') && $useCase !== 'mixed')
+                        @continue($definition['use_case'] === 'low_volume_mixed' && $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree)
                         <div class="form-check">
                             <input type="radio" class="form-check-input" id="use_case_{{ $choice }}" name="use_case" value="{{ $definition['use_case'] }}" data-choice="{{ $choice }}"
                                    {{ $useCase === $definition['use_case'] ? 'checked' : '' }} required>
@@ -234,6 +304,22 @@
                     @endif
                     @error('use_case')<div class="text-danger text-caption">{{ $message }}</div>@enderror
                     <p class="text-caption text-muted mt-1 mb-0">Pick what you will actually send. Promotional messages are only registered if you choose them — we never add them for you. The carrier decides whether the campaign is approved.</p>
+                    <div class="sr-callout sr-callout--warn mt-1" data-low-volume data-role="low-volume-explainer" @if($useCase !== 'low_volume_mixed') hidden @endif>
+                        <x-ds-icon name="info" size="16" />
+                        <div>
+                            <strong class="d-block">Low Volume Mixed — for small businesses</strong>
+                            <p class="mb-1">A separate, lower-cost carrier campaign type for a business that sends only a small number of texts. Carriers limit how fast and how much it can send, and it is not for growing or high-volume senders. Fees are shown below before you submit; number rental and text usage are separate.</p>
+                            <p class="mb-1"><strong>Low Volume Mixed is only for a business that really sends BOTH kinds of text.</strong> Tick both and give a sample message and your opt-in details for each. If you only send one kind, choose that message type above instead — we never relabel single-purpose traffic to lower the fee.</p>
+                            @foreach($lowVolumePurposes as $key => $purpose)
+                                <div class="form-check">
+                                    <input type="checkbox" class="form-check-input" id="purpose_{{ $key }}" name="message_purposes[]" value="{{ $key }}"
+                                           {{ in_array($key, (array) old('message_purposes', $registration->message_purposes ?? []), true) ? 'checked' : '' }}>
+                                    <label class="form-check-label" for="purpose_{{ $key }}">{{ $purpose['label'] }}</label>
+                                </div>
+                            @endforeach
+                            @error('message_purposes')<div class="text-danger text-caption">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
                     <div class="text-caption mt-1" data-role="suggested-topics" @if(empty($prefill['topics'])) hidden @endif>
                         Suggested message types: <span data-role="topics">{{ implode(', ', $prefill['topics']) }}</span>
                     </div>
@@ -293,6 +379,16 @@
                                 @unless(in_array($key, $confirmedConsent, true))<span class="text-warning">— needs your confirmation</span>@endunless</label>
                         </div>
                     @endforeach
+                    <div data-low-volume data-role="low-volume-consent" @if($useCase !== 'low_volume_mixed') hidden @endif>
+                        @foreach($lowVolumeConsentItems as $key => $label)
+                            <div class="form-check" @if(str_starts_with($key, 'purpose_')) data-purpose="{{ str_replace(['purpose_', '_consent'], '', $key) }}" @endif>
+                                <input type="checkbox" class="form-check-input" id="consent_{{ $key }}" name="consent_confirmations[]" value="{{ $key }}"
+                                       {{ in_array($key, $confirmedConsent, true) ? 'checked' : '' }}>
+                                <label class="form-check-label" for="consent_{{ $key }}">{{ $label }}
+                                    @unless(in_array($key, $confirmedConsent, true))<span class="text-warning">— needs your confirmation</span>@endunless</label>
+                            </div>
+                        @endforeach
+                    </div>
                 </div>
 
                 @if($prefill['prefilled'] !== [])
@@ -313,11 +409,21 @@
                         </ul>
                     </x-alert>
                 @else
-                    <p class="text-caption text-muted mb-2">Everything required is filled in. Submitting is a paid step; nothing is sent until you press the button.</p>
+                    <p class="text-caption text-muted mb-2">Everything required is filled in. Nothing is sent until you press the button.</p>
+                @endif
+                @php($isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
+                @if($isLocalRegistration)
+                    @foreach(['standard' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'low_volume_mixed' => 'Low Volume Mixed registration: the carrier brand fee plus the first three months of its campaign fees, charged when you submit'] as $pricingKey => $oneTimeLabel)
+                        <div data-pricing-for="{{ $pricingKey }}" @if(($useCase === 'low_volume_mixed' ? 'low_volume_mixed' : 'standard') !== $pricingKey) hidden @endif>
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $registrationPreviews[$pricingKey], 'oneTimeLabel' => $oneTimeLabel, 'recurringLabel' => $pricingKey === 'low_volume_mixed' ? 'Low Volume Mixed campaign, billed monthly after those first three months' : '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Registration pricing for this campaign type isn\'t set up on our side yet, so it can\'t be submitted right now. Nothing will be charged.'])
+                        </div>
+                    @endforeach
+                @else
+                    <p class="text-caption text-muted mb-2" data-role="toll-free-verification-cost">{{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }}</p>
                 @endif
                 <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspaceUid, $businessUid]) }}">
                     @csrf
-                    <x-button type="submit" variant="primary" :disabled="! $available">Submit for review</x-button>
+                    <x-button type="submit" variant="primary" :disabled="! $available || ($isLocalRegistration && (! $registrationPreview['configured'] || ! $registrationPreview['sufficient']))">Submit for review</x-button>
                 </form>
                 @unless($available)
                     <p class="text-caption text-muted mt-1 mb-0">Preview — submission isn't available in this environment yet.</p>
@@ -334,6 +440,18 @@
 @section('page-script')
     <script>
         $(document).ready(function () {
+            function syncLowVolume() {
+                var on = $('input[name="use_case"]:checked').val() === 'low_volume_mixed';
+                $('[data-low-volume]').prop('hidden', !on);
+                $('[data-pricing-for]').each(function () {
+                    $(this).prop('hidden', $(this).data('pricing-for') !== (on ? 'low_volume_mixed' : 'standard'));
+                });
+                $('[data-low-volume] [data-purpose]').each(function () {
+                    $(this).prop('hidden', !$('#purpose_' + $(this).data('purpose')).is(':checked'));
+                });
+            }
+            $('input[name="use_case"], input[name="message_purposes[]"]').on('change', syncLowVolume);
+            syncLowVolume();
             function syncEinField() {
                 $('#ein-field').prop('hidden', !$('#entity_ein').is(':checked'));
             }

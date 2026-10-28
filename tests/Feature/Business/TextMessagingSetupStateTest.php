@@ -46,9 +46,31 @@ class TextMessagingSetupStateTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Get a phone number');
-        $response->assertDontSee('Telnyx', false);
         $response->assertDontSee('Twilio', false);
-        $response->assertDontSee('10DLC', false);
+    }
+
+    public function test_toll_free_is_the_recommended_first_choice_and_costs_are_disclosed_honestly(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))
+            ->assertOk()->getContent();
+
+        // Toll-free leads and is marked recommended; local stays available.
+        $this->assertLessThan(strpos($html, 'data-role="local-number-card"'), strpos($html, 'data-role="toll-free-number-card"'));
+        $this->assertStringContainsString('data-role="recommended-badge"', $html);
+        $this->assertStringContainsString('Continue with a local number', $html);
+
+        // The $0 verification claim never implies texting is free.
+        $this->assertStringContainsString('Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.', $html);
+
+        // Local discloses 10DLC registration, prepaid campaign fees and ongoing costs up front.
+        $this->assertStringContainsString('10DLC', $html);
+        $this->assertStringContainsString('first three months of campaign fees', $html);
+        $this->assertStringContainsString('monthly campaign fee after those three months', $html);
+        $this->assertStringNotContainsStringIgnoringCase('texting is free', $html);
+        $this->assertStringNotContainsStringIgnoringCase('free texting', $html);
     }
 
     public function test_without_configured_credentials_state_one_renders_a_truthful_inert_preview(): void
@@ -244,6 +266,7 @@ class TextMessagingSetupStateTest extends TestCase
             'sample_message_2' => 'Harbor Lane: reminder, your appointment is tomorrow.',
             'privacy_policy_url' => 'https://harborlane.example/privacy',
             'terms_url' => 'https://harborlane.example/terms',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ], $overrides);
     }
 
@@ -259,7 +282,6 @@ class TextMessagingSetupStateTest extends TestCase
         $response->assertSee('+14155550300');
         $response->assertSee('Not started');
         $response->assertSee('Business details');
-        $response->assertDontSee('10DLC', false);
         $response->assertSee('Messaging registration');
     }
 

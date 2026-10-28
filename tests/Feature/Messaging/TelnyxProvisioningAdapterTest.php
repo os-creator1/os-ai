@@ -119,6 +119,31 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $wallet->activateMetering($featureKey, $actorId, 'Test metering activation.');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => $availableMicro]);
+
+        // The paid actions also require their companion prices to be configured:
+        // the rental multiplier for a number; the brand fee and the monthly
+        // campaign cost for a registration. [meter key => retail micro].
+        $companions = match ($featureKey) {
+            TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE => [\App\Library\Messaging\NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL => '1000000'],
+            TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION => [
+                \App\Library\Messaging\NumberLifecycleManager::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL => '500000',
+                TelnyxProvisioningAdapter::FEATURE_TEN_DLC_BRAND_REGISTRATION => '1000000',
+            ],
+            default => [],
+        };
+
+        foreach ($companions as $recurringKey => $retailMicro) {
+            if (DB::table('usage_meters')->where('meter_key', $recurringKey)->exists()) {
+                continue;
+            }
+
+            app(UsageMeterRepository::class)->create([
+                'meter_key' => $recurringKey, 'feature_key' => PlatformFeature::MessagingTransport->value, 'business_id' => null,
+                'currency_id' => $currencyId, 'description' => 'Companion fixture meter (test-only).', 'updated_by_user_id' => $actorId,
+            ]);
+            $wallet->setActiveRate($recurringKey, $retailMicro, '0', 'per unit', $currencyId, $actorId, 'Test rate activation.');
+            $wallet->activateMetering($recurringKey, $actorId, 'Test metering activation.');
+        }
     }
 
     private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null, ?string $existingBrandId = null): MessagingRegistrationSubmission
@@ -144,6 +169,11 @@ class TelnyxProvisioningAdapterTest extends TestCase
             sampleMessage2: 'Harbor Lane: reminder, your appointment is tomorrow.',
             privacyPolicyUrl: 'https://harborlane.example/privacy',
             termsUrl: 'https://harborlane.example/terms',
+            contactFirstName: 'Pat',
+            contactLastName: 'Owner',
+            messageVolume: '1,000',
+            optInImageUrl: 'https://example.com/opt-in.png',
+            brandVertical: 'ENTERTAINMENT',
             phoneNumber: $phoneNumber,
             existingBrandId: $existingBrandId,
             campaignDescription: 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
@@ -178,7 +208,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $business = $this->business();
 
         try {
-            app(TelnyxProvisioningAdapter::class)->provisionNumber($business, new AvailableNumberCandidate('+14155550500', PhoneNumberType::Local, 'candidate-ref-real-1'));
+            app(TelnyxProvisioningAdapter::class)->provisionNumber($business, new AvailableNumberCandidate('+14155550500', PhoneNumberType::Local, 'candidate-ref-real-1', 0, 1_000_000, 'USD'));
             $this->fail('Expected MessagingFundingUnavailableException.');
         } catch (MessagingFundingUnavailableException) {
             // expected
@@ -215,15 +245,19 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE);
 
         Http::fake([
+            'api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [['phone_number' => 'candidate-ref-real-2', 'cost_information' => ['upfront_cost' => '0.00', 'monthly_cost' => '1.00', 'currency' => 'USD']]]]),
             'api.telnyx.com/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_fixture_1']]),
             'api.telnyx.com/v2/number_orders' => Http::response(['data' => ['phone_numbers' => [['id' => 'pn_fixture_1']]]]),
         ]);
 
-        $result = app(TelnyxProvisioningAdapter::class)->provisionNumber($business, new AvailableNumberCandidate('+14155550501', PhoneNumberType::Local, 'candidate-ref-real-2'));
+        $result = app(TelnyxProvisioningAdapter::class)->provisionNumber($business, new AvailableNumberCandidate('+14155550501', PhoneNumberType::Local, 'candidate-ref-real-2', 0, 1_000_000, 'USD'));
 
         $this->assertSame('mp_fixture_1', $result->messagingProfileId);
         $this->assertSame('pn_fixture_1', $result->providerPhoneNumberId);
-        Http::assertSentCount(2);
+        // The quote re-check (a read), the Messaging Profile and the order.
+        Http::assertSentCount(3);
+        Http::assertSent(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), 'filter%5Bphone_number%5D%5Bstarts_with%5D=candidate-ref-real-2'));
+        $this->assertSame(1_000_000, $result->monthlyCostMicro);
     }
 
     public function test_10dlc_submission_hits_the_10dlc_prefixed_endpoints_once_funded(): void
@@ -336,7 +370,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/campaign/campaign_fixture_2' => Http::response(['data' => ['campaignStatus' => 'ACTIVE']]),
+            'api.telnyx.com/v2/10dlc/campaign/campaign_fixture_2' => Http::response(['campaignId' => 'campaign_fixture_2', 'campaignStatus' => 'MNO_PROVISIONED', 'status' => 'ACTIVE']),
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
@@ -977,7 +1011,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local));
 
         Http::assertSentCount(2);
-        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+        $this->assertSame(['committed', 'committed'], DB::table('business_usage_reservations')->where('business_id', $business->id)->orderBy('id')->pluck('status')->all());
     }
 
     // -----------------------------------------------------------------
@@ -990,7 +1024,9 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'business_id' => $business->id,
             'number_type' => 'local',
             'entity_type' => 'ein',
-            'use_case' => 'customer_care',
+            'use_case' => 'customer_care', 'region' => 'OR',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000',
+            'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
             'status' => 'not_started',
         ]);
@@ -1161,7 +1197,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
 
         $this->assertSame('brand_new_1', $result->providerBrandId);
         $this->assertSame(1, $this->brandRequestCount());
-        $this->assertSame(['committed'], DB::table('business_usage_reservations')->where('business_id', $business->id)->pluck('status')->all());
+        $this->assertSame(['committed', 'committed'], DB::table('business_usage_reservations')->where('business_id', $business->id)->pluck('status')->all());
     }
 
     // -----------------------------------------------------------------
@@ -1250,5 +1286,312 @@ class TelnyxProvisioningAdapterTest extends TestCase
 
         Http::assertNothingSent();
         $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Provider response shapes: the Telnyx 10DLC and toll-free verification
+    // endpoints return ROOT-level objects (no `data` envelope).
+    // -----------------------------------------------------------------
+
+    public function test_root_level_telnyx_responses_are_read_for_brand_campaign_and_verification_ids(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => '4b20017f-8da9-a992-a6c0-683072fb7729', 'tcrBrandId' => 'BXYZ123', 'identityStatus' => 'UNVERIFIED', 'status' => 'REGISTRATION_PENDING', 'mock' => false]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['campaignId' => 'c8d1a4f0-fixture', 'brandId' => '4b20017f-8da9-a992-a6c0-683072fb7729', 'usecase' => 'CUSTOMER_CARE', 'subUsecases' => [], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => 'TCR_PENDING', 'submissionStatus' => 'CREATED']),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+
+        $this->assertSame('4b20017f-8da9-a992-a6c0-683072fb7729', $result->providerBrandId);
+        $this->assertSame('c8d1a4f0-fixture', $result->providerCampaignId);
+        $this->assertSame('4b20017f-8da9-a992-a6c0-683072fb7729', DB::table('business_messaging_registrations')->where('business_id', $business->id)->value('provider_brand_id'));
+    }
+
+    public function test_a_root_level_toll_free_verification_response_is_read(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['id' => '8b2f3a52-2a62-4f4e-a3f1-5d3c7a9c1e10', 'verificationRequestId' => 'vr-fixture', 'verificationStatus' => 'In Progress', 'businessName' => 'Harbor Lane Studios LLC'])]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18885550142'));
+
+        $this->assertSame('8b2f3a52-2a62-4f4e-a3f1-5d3c7a9c1e10', $result->providerRegistrationId);
+    }
+
+    public function test_campaign_status_follows_the_documented_root_level_fields_conservatively(): void
+    {
+        $this->enableProvisioning();
+        $query = new RegistrationStatusQuery(numberType: PhoneNumberType::Local, providerBrandId: 'b', providerCampaignId: 'camp_status', providerRegistrationId: null);
+
+        $expect = [
+            'pending while the registry reviews' => [['campaignStatus' => 'TCR_PENDING', 'status' => 'ACTIVE'], MessagingRegistrationStatus::Pending, null],
+            'pending when accepted but not yet provisioned' => [['campaignStatus' => 'MNO_ACCEPTED', 'status' => 'ACTIVE'], MessagingRegistrationStatus::Pending, null],
+            'approved only when carriers provisioned it' => [['campaignStatus' => 'MNO_PROVISIONED', 'status' => 'ACTIVE'], MessagingRegistrationStatus::Approved, null],
+            'rejected by a carrier, with the reason' => [['campaignStatus' => 'MNO_REJECTED', 'failureReasons' => 'Sample message mismatch'], MessagingRegistrationStatus::Rejected, 'Sample message mismatch'],
+            'rejected by the registry' => [['campaignStatus' => 'TCR_FAILED', 'submissionStatus' => 'FAILED', 'failureReasons' => 'Brand not vetted'], MessagingRegistrationStatus::Rejected, 'Brand not vetted'],
+            'expired is not approved' => [['campaignStatus' => 'TCR_EXPIRED', 'status' => 'EXPIRED'], MessagingRegistrationStatus::Rejected, 'The carrier campaign expired or was suspended.'],
+            'ACTIVE alone is never trusted as approval' => [['status' => 'ACTIVE'], MessagingRegistrationStatus::Pending, null],
+            'an unknown value is pending' => [['campaignStatus' => 'SOMETHING_NEW'], MessagingRegistrationStatus::Pending, null],
+        ];
+
+        $current = [];
+        Http::fake(['api.telnyx.com/v2/10dlc/campaign/camp_status' => function () use (&$current) { return Http::response($current + ['campaignId' => 'camp_status']); }]);
+
+        foreach ($expect as $label => [$body, $status, $reason]) {
+            $current = $body;
+
+            $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus($query);
+
+            $this->assertSame($status, $result->status, $label);
+            $this->assertSame($reason, $result->rejectionReason, $label);
+        }
+    }
+
+    public function test_low_volume_mixed_with_a_single_purpose_is_refused_before_funding_or_any_request(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        $registration->update(['use_case' => 'low_volume_mixed', 'message_purposes' => ['care']]);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+            $this->fail('Expected refusal.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException $e) {
+            $this->assertStringContainsString('at least two different kinds', $e->getMessage());
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Zero-markup pass-through number pricing (Telnyx cost_information).
+    // -----------------------------------------------------------------
+
+    private function quoteRow(string $number, array $cost): array
+    {
+        return ['record_type' => 'available_phone_number', 'phone_number' => $number, 'best_effort' => false, 'cost_information' => $cost, 'features' => [['name' => 'sms']]];
+    }
+
+    public function test_search_reads_the_documented_cost_information_and_never_offers_unknown_pricing(): void
+    {
+        $this->enableProvisioning();
+        config(['messaging.number_sms_addon_monthly_cost_micro' => 0]);
+        Http::fake(['api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [
+            $this->quoteRow('+18885550101', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD']),
+            ['record_type' => 'available_phone_number', 'phone_number' => '+18885550102', 'features' => [['name' => 'sms']]],                                  // no price
+            $this->quoteRow('+18885550103', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'EUR']),                                         // not USD
+            $this->quoteRow('+18885550104', ['upfront_cost' => '0.00', 'monthly_cost' => '0.00', 'currency' => 'USD']),                                         // free is never trusted
+            $this->quoteRow('+18885550105', ['upfront_cost' => '1,00', 'monthly_cost' => '1.00', 'currency' => 'USD']),                                         // malformed
+            $this->quoteRow('+18885550106', ['upfront_cost' => '500.00', 'monthly_cost' => '40.00', 'currency' => 'USD']),                                      // special number above the ceiling
+        ]])]);
+
+        $found = app(TelnyxProvisioningAdapter::class)->searchNumbers(new \App\Library\Messaging\DTO\NumberSearchCriteria('US', PhoneNumberType::TollFree));
+
+        $this->assertCount(1, $found);
+        $this->assertSame('+18885550101', $found[0]->phoneNumber);
+        $this->assertSame([250_000, 1_000_000, 'USD'], [$found[0]->upfrontCostMicro, $found[0]->monthlyCostMicro, $found[0]->currency]);
+        $this->assertSame(1_250_000, $found[0]->initialCostMicro());
+        // The documented filter name (there is no filter[number_type]).
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'filter%5Bphone_number_type%5D=toll_free') && ! str_contains($request->url(), 'number_type%5D=toll_free&'));
+
+        config(['messaging.number_sms_addon_monthly_cost_micro' => 100_000]);
+        $withAddon = app(TelnyxProvisioningAdapter::class)->searchNumbers(new \App\Library\Messaging\DTO\NumberSearchCriteria('US', PhoneNumberType::TollFree));
+        $this->assertSame(1_100_000, $withAddon[0]->monthlyCostMicro);
+    }
+
+    private function purchaseFixture(string $reference, string $upfront, string $monthly, string $multiplierMicro = '1000000'): array
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+
+        if (DB::table('usage_meters')->where('meter_key', TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE)->exists()) {
+            app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+            DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 20_000_000]);
+        } else {
+            $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE, 20_000_000);
+        }
+
+        // Zero markup is a 1.00 multiplier; a different owner multiplier is honoured exactly.
+        if ($multiplierMicro !== '1000000') {
+            $actor = $this->createActorUserId();
+            app(UsageWalletManager::class)->setActiveRate(TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE, $multiplierMicro, '0', 'per 1.00 of carrier cost', Currency::query()->first()->id, $actor, 'Test multiplier.');
+        }
+
+        return [$business, new AvailableNumberCandidate($reference, PhoneNumberType::TollFree, $reference, (int) bcmul($upfront, '1000000', 0), (int) bcmul($monthly, '1000000', 0), 'USD')];
+    }
+
+    public function test_the_first_charge_is_exactly_the_quoted_upfront_plus_first_month_at_the_owner_multiplier(): void
+    {
+        [$business, $candidate] = $this->purchaseFixture('+18885550101', '0.25', '1.00');
+        Http::fake([
+            'api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [$this->quoteRow('+18885550101', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD'])]]),
+            'api.telnyx.com/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_q1']]),
+            'api.telnyx.com/v2/number_orders' => Http::response(['data' => ['status' => 'success', 'phone_numbers' => [['id' => 'pn_q1', 'status' => 'success']]]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+
+        $this->assertSame(1_000_000, $result->monthlyCostMicro);
+        $this->assertSame(250_000, $result->upfrontCostMicro);
+        $this->assertSame(20_000_000 - 1_250_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+    }
+
+    public function test_a_markup_multiplier_is_applied_exactly_and_zero_markup_is_the_default_semantics(): void
+    {
+        [$business, $candidate] = $this->purchaseFixture('+18885550111', '0.25', '1.00', '1100000');
+        Http::fake([
+            'api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [$this->quoteRow('+18885550111', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD'])]]),
+            'api.telnyx.com/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_q2']]),
+            'api.telnyx.com/v2/number_orders' => Http::response(['data' => ['phone_numbers' => [['id' => 'pn_q2']]]]),
+        ]);
+
+        app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+
+        $this->assertSame(20_000_000 - 1_375_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+    }
+
+    public function test_a_changed_carrier_price_stops_the_purchase_before_anything_is_ordered_or_held(): void
+    {
+        [$business, $candidate] = $this->purchaseFixture('+18885550121', '0.25', '1.00');
+        Http::fake(['api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [$this->quoteRow('+18885550121', ['upfront_cost' => '0.25', 'monthly_cost' => '1.50', 'currency' => 'USD'])]])]);
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+            $this->fail('Expected a price-changed refusal.');
+        } catch (\App\Library\Messaging\Exceptions\NumberPriceChangedException $e) {
+            $this->assertStringContainsString('changed', $e->getMessage());
+        }
+
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+        $this->assertSame(20_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+        $this->assertSame(['released'], DB::table('business_usage_reservations')->where('business_id', $business->id)->pluck('status')->all());
+    }
+
+    public function test_a_candidate_with_no_quote_or_that_is_gone_is_never_bought(): void
+    {
+        [$business] = $this->purchaseFixture('+18885550131', '0.25', '1.00');
+        Http::fake(['api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => []])]);
+
+        foreach ([
+            new AvailableNumberCandidate('+18885550131', PhoneNumberType::TollFree, '+18885550131'),                              // no quote
+            new AvailableNumberCandidate('+18885550131', PhoneNumberType::TollFree, '+18885550131', 250_000, 1_000_000, 'USD'),  // gone from the search
+        ] as $candidate) {
+            try {
+                app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+                $this->fail('Expected a refusal.');
+            } catch (\App\Library\Messaging\Exceptions\NumberPriceChangedException) {
+                // expected
+            }
+        }
+
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+        $this->assertSame(20_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+    }
+
+    public function test_a_failed_or_pending_order_is_not_a_purchase(): void
+    {
+        $status = 'failure';
+        Http::fake([
+            'api.telnyx.com/v2/available_phone_numbers*' => fn () => Http::response(['data' => [$this->quoteRow('+18885550141', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD'])]]),
+            'api.telnyx.com/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_s']]),
+            'api.telnyx.com/v2/number_orders' => function () use (&$status) {
+                return Http::response(['data' => ['status' => $status, 'phone_numbers' => [['id' => 'pn_s', 'status' => $status]]]]);
+            },
+        ]);
+
+        foreach (['failure' => 0, 'pending' => 1] as $status => $incidents) {
+            [$business, $candidate] = $this->purchaseFixture('+18885550141', '0.25', '1.00');
+
+            try {
+                app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+                $this->fail('Expected a refusal for status ' . $status);
+            } catch (\RuntimeException) {
+                // expected
+            }
+
+            // A definite failure hands the hold back; an unconfirmed order may be billing, so its charge is kept.
+            $this->assertSame(20_000_000 - ($status === 'pending' ? 1_250_000 : 0), (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'), $status);
+            $this->assertSame($incidents, DB::table('business_messaging_provisioning_incidents')->where('business_id', $business->id)->where('stage', TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN)->count(), $status);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 10DLC: the brand fee is earned when the carrier creates the brand.
+    // -----------------------------------------------------------------
+
+    public function test_the_brand_fee_stays_charged_when_the_campaign_then_fails_and_a_retry_never_charges_it_twice(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, 20_000_000);
+        $campaignStatus = 422;
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => 'brand_keep_1', 'status' => 'REGISTRATION_PENDING']),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => function () use (&$campaignStatus) {
+                return $campaignStatus === 200 ? Http::response(['campaignId' => 'camp_keep_1']) : Http::response(['errors' => []], $campaignStatus);
+            },
+        ]);
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+            $this->fail('Expected the campaign rejection.');
+        } catch (\RuntimeException) {
+            // expected
+        }
+
+        // Fixture rates: brand 1.00, prepaid months 1.00. The carrier holds the brand, so only its fee is kept.
+        $this->assertSame(20_000_000 - 1_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+        $this->assertSame(['committed', 'released'], DB::table('business_usage_reservations')->where('business_id', $business->id)->orderBy('id')->pluck('status')->sort()->values()->all());
+
+        $campaignStatus = 200;
+        app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+
+        $this->assertSame(1, Http::recorded(fn ($request) => str_contains($request->url(), '/10dlc/brand'))->count());
+        $this->assertSame(20_000_000 - 1_000_000 - 1_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+    }
+
+    public function test_a_customer_who_cannot_cover_both_the_brand_and_the_campaign_months_never_has_a_brand_created(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, 1_500_000); // enough for one 1.00 fee, not two
+        Http::fake();
+
+        $this->expectException(\App\Library\Messaging\Exceptions\MessagingInsufficientFundsException::class);
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+        } finally {
+            Http::assertNothingSent();
+            $this->assertSame(1_500_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+        }
+    }
+
+    public function test_a_crash_after_the_brand_was_created_commits_its_held_fee_on_retry_instead_of_letting_it_expire(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, 20_000_000);
+        $registration->update(['provider_brand_id' => 'brand_crash_2']);
+        $held = app(UsageWalletManager::class)->reserve($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_BRAND_REGISTRATION, 'messaging-brand:' . $business->id . ':0:1')->reservationId;
+        Http::fake(['api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['campaignId' => 'camp_crash_2'])]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+
+        $this->assertSame('committed', DB::table('business_usage_reservations')->where('id', $held)->value('status'));
+        $this->assertSame(0, Http::recorded(fn ($request) => str_contains($request->url(), '/10dlc/brand'))->count());
+        $this->assertSame(20_000_000 - 1_000_000 - 1_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
     }
 }

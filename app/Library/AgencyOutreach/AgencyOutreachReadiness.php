@@ -179,12 +179,16 @@ class AgencyOutreachReadiness
 
         // Cost is shown only when the platform has activated a real rate.
         $metered = $this->transport->isMetered();
+
+        if (! $metered && \App\Library\Messaging\ManagedTransportBilling::requiresBilling()) {
+            return $this->item('wallet', $label, false, 'Texting is not enabled for billing on this platform yet.', $url);
+        }
         $info['metered'] = $metered;
         $estimate = null;
 
         if ($metered) {
             try {
-                $estimate = $this->costs->estimate($business, 'messaging_transport', '1');
+                $estimate = $this->costs->estimate($business, \App\Library\Messaging\MessageMeters::SMS_OUTBOUND, '1');
             } catch (Throwable) {
                 $estimate = null;
             }

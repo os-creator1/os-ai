@@ -64,6 +64,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'sample_message_2' => 'Sunset Photo Booths: reminder that your event is this weekend. Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/privacy',
             'terms_url' => 'https://sunsetbooths.example/sms-terms',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
         ], $overrides);
     }
@@ -119,7 +120,9 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertSame('customer_care', RegistrationTemplateCatalog::useCaseForChoice('care'));
         $this->assertSame('marketing', RegistrationTemplateCatalog::useCaseForChoice('marketing'));
         $this->assertSame('mixed', RegistrationTemplateCatalog::useCaseForChoice('both'));
-        $this->assertCount(3, RegistrationTemplateCatalog::CHOICES);
+        // Low Volume Mixed is its own choice, never an alias of ordinary Mixed.
+        $this->assertSame('low_volume_mixed', RegistrationTemplateCatalog::useCaseForChoice('low_volume'));
+        $this->assertCount(4, RegistrationTemplateCatalog::CHOICES);
 
         $marketing = RegistrationTemplateCatalog::forUseCase('photo_booth_service', 'marketing', 'Sunset Photo Booths', null);
         $care = RegistrationTemplateCatalog::forUseCase('photo_booth_service', 'customer_care', 'Sunset Photo Booths', null);
@@ -168,6 +171,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'sample_message_1' => 'Sunset Photo Booths: 20% off all packages this month! Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/terms',
             'terms_url' => 'https://sunsetbooths.example/terms',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'campaign_description' => 'Sunset Photo Booths sends [describe your messages] to customers.',
         ]));
 
@@ -209,12 +213,14 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
     {
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
         \Illuminate\Support\Facades\Http::fake();
+        \App\Models\Currency::query()->firstOrCreate(['code' => 'USD'], ['name' => 'US Dollar', 'format' => '$', 'status' => true]);
         [$business, $workspace] = $this->registrationState();
         \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->delete();
         $submit = route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]);
 
         $this->post($this->updateUrl($workspace, $business), $this->payload());
-        $this->post($submit)->assertSessionHas('status', 'error')->assertSessionMissing('errors');
+        $this->post($submit)->assertSessionHas('status', 'error')->assertSessionMissing('errors')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing') && ! str_contains($m, 'enough funds'));
 
         \Illuminate\Support\Facades\Http::assertNothingSent();
         $this->assertSame(MessagingRegistrationStatus::NotStarted, BusinessMessagingRegistration::where('business_id', $business->id)->first()->status);

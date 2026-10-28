@@ -3,6 +3,7 @@
 namespace App\Library\Messaging\Registration;
 
 use App\Enums\Messaging\MessagingRegistrationStatus;
+use App\Enums\Messaging\PhoneNumberType;
 use App\Models\BusinessMessagingRegistration;
 
 /**
@@ -76,9 +77,83 @@ final class RegistrationSubmissionValidator
             $issues[] = 'The Privacy Policy and SMS Terms need separate pages.';
         }
 
-        $issues = array_merge($issues, $this->messageIssues($registration), $this->consentIssues($registration));
+        $issues = array_merge($issues, $this->carrierFieldIssues($registration), $this->messageIssues($registration), $this->consentIssues($registration));
 
         return array_values(array_unique($issues));
+    }
+
+    /**
+     * Low Volume Mixed is only for a business that genuinely sends the
+     * purposes it registers: at least one real purpose, a sample for each,
+     * and never a purpose the customer did not choose.
+     *
+     * @param  array<int, string>  $promotional
+     * @param  array{0: string, 1: string}  $samples
+     * @return list<string>
+     */
+    private function lowVolumeIssues(BusinessMessagingRegistration $registration, array $promotional, array $samples): array
+    {
+        $issues = [];
+        $purposes = array_values(array_intersect(array_keys(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES), (array) $registration->message_purposes));
+
+        // Low Volume Mixed is defined for several genuine, distinct purposes.
+        // A single purpose is never "mixed": that traffic belongs in its own
+        // (standard) campaign type, and is never relabelled to get a lower fee.
+        if (count($purposes) < count(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES)) {
+            return ['Low Volume Mixed is only for a business that really sends both service texts and promotional texts. Tick both, or choose the single message type you send instead.'];
+        }
+
+        $promoCount = count($promotional);
+
+        if ($promoCount === 2) {
+            $issues[] = 'Both samples are promotions. One sample must be a service or customer-care example.';
+        }
+
+        if ($promoCount === 0) {
+            $issues[] = 'Neither sample is a promotion. One sample must be a promotional example.';
+        }
+
+        foreach ($promotional as $message) {
+            if (stripos($message, 'stop') === false) {
+                $issues[] = 'Every promotional sample message needs opt-out wording such as "Reply STOP to opt out".';
+            }
+        }
+
+        return $issues;
+    }
+
+    /** @return list<string> */
+    private function carrierFieldIssues(BusinessMessagingRegistration $registration): array
+    {
+        $issues = [];
+
+        foreach (['contact_first_name' => 'contact first name', 'contact_last_name' => 'contact last name'] as $field => $label) {
+            if (trim((string) $registration->{$field}) === '') {
+                $issues[] = 'Add your ' . $label . '.';
+            }
+        }
+
+        if (trim((string) $registration->region) !== '' && CarrierRegistrationOptions::stateCode($registration->region) === null) {
+            $issues[] = 'Your state must be a US state (for example TX or Texas).';
+        }
+
+        if ($registration->number_type === PhoneNumberType::TollFree) {
+            if (! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $registration->message_volume])) {
+                $issues[] = 'Choose your expected messages per month.';
+            }
+
+            if (! filter_var((string) $registration->opt_in_image_url, FILTER_VALIDATE_URL)) {
+                $issues[] = 'Add a link to a screenshot of your opt-in form (the carrier requires an image).';
+            }
+
+            if (! isset(CarrierRegistrationOptions::TOLL_FREE_USE_CASES[(string) $registration->use_case])) {
+                $issues[] = 'This messaging type can\'t be submitted for toll-free verification. Choose another.';
+            }
+        } elseif (! isset(CarrierRegistrationOptions::BRAND_VERTICALS[(string) $registration->brand_vertical])) {
+            $issues[] = 'Choose your industry category.';
+        }
+
+        return $issues;
     }
 
     /** @return list<string> */
@@ -109,6 +184,10 @@ final class RegistrationSubmissionValidator
 
         if ($useCase === 'marketing' && count($promotional) < 2) {
             $issues[] = 'Promotional and marketing campaigns need both sample messages to be promotions. Reword the sample that is not.';
+        }
+
+        if ($useCase === 'low_volume_mixed') {
+            $issues = array_merge($issues, $this->lowVolumeIssues($registration, $promotional, [$one, $two]));
         }
 
         if ($useCase === 'mixed' && count($promotional) === 2) {
@@ -186,7 +265,7 @@ final class RegistrationSubmissionValidator
 
         $confirmed = is_array($registration->consent_confirmations) ? $registration->consent_confirmations : [];
 
-        foreach (RegistrationTemplateCatalog::CONSENT_ITEMS as $key => $label) {
+        foreach (RegistrationTemplateCatalog::consentItemsFor($registration->use_case, $registration->message_purposes) as $key => $label) {
             if (! in_array($key, $confirmed, true)) {
                 $issues[] = 'Confirm on your website, then check: ' . $label . '.';
             }

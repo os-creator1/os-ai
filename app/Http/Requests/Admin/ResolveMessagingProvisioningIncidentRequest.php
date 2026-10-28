@@ -34,6 +34,7 @@ class ResolveMessagingProvisioningIncidentRequest extends FormRequest
             'provider_resolution' => ['nullable', 'string', 'in:verified_provider_id,confirmed_not_created'],
             'provider_brand_id' => ['nullable', 'string', 'max:191'],
             'provider_campaign_id' => ['nullable', 'string', 'max:191'],
+            'provider_registration_id' => ['nullable', 'string', 'max:191'],
         ];
     }
 }

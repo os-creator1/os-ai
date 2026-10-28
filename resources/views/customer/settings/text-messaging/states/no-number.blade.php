@@ -15,6 +15,13 @@
         'description' => 'Get a phone number so this Business can send and receive text messages. Pick the kind of number that suits you.',
     ])
 
+    @if(request('focus') === 'toll_free')
+        <x-alert variant="success" icon="check-circle" class="mb-2" data-role="toll-free-focus-banner">
+            <strong class="d-block">Let's get your toll-free number</strong>
+            Pick an area code if you like (optional), then find a number. You'll see the prices before you buy anything.
+        </x-alert>
+    @endif
+
     @unless($available)
         <div class="sr-callout sr-callout--warn" data-role="preview-notice" role="status">
             <x-ds-icon name="clock" size="16" />
@@ -74,7 +81,8 @@
                         <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.order', [$workspaceUid, $businessUid]) }}">
                             @csrf
                             <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            <x-button type="submit" variant="primary" :disabled="! $available">Get this number</x-button>
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'this number, charged when you buy it: the carrier\'s upfront cost plus the first month\'s rental at the price quoted today', 'recurringLabel' => 'rental of this number, billed each month starting next month at that same quoted price', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
+                            <x-button type="submit" variant="primary" :disabled="! $available || ! $numberPreview['configured'] || ! $numberPreview['sufficient']">Get this number</x-button>
                         </form>
                     </div>
                 @else
@@ -101,40 +109,13 @@
                 not a product choice.
         --}}
         <div class="sr-grid-2" style="margin-bottom:var(--space-5)">
-            <div class="sr-card" style="margin-bottom:0;height:100%" data-role="local-number-card">
-                <div class="sr-card__body d-flex flex-column" style="height:100%;min-height:360px">
-                    <div class="d-flex align-items-center gap-3 mb-3">
-                        <span class="sr-tile sr-tile--lg"><x-ds-icon name="map-pin" size="20" /></span>
-                        <div>
-                            <h2 class="sr-card__title" style="font-size:1.0625rem">Local number</h2>
-                            <p class="sr-card__sub">A specific area code, like a local business.</p>
-                        </div>
-                    </div>
-
-                    <ol class="sr-steps">
-                        <li><span class="sr-num">1</span><div><strong>Verify your business</strong><span class="sr-step-desc">{{ $verificationChargeDisclosure }}</span></div></li>
-                        <li><span class="sr-num">2</span><div><strong>Choose your number</strong><span class="sr-step-desc">Once verification is approved.</span></div></li>
-                    </ol>
-
-                    <div class="sr-callout">
-                        <x-ds-icon name="credit-card" size="16" />
-                        <p>The number is charged only when you complete that order, after you're verified.</p>
-                    </div>
-
-                    <form method="post" class="mt-auto pt-3" action="{{ route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspaceUid, $businessUid]) }}">
-                        @csrf
-                        <x-button type="submit" variant="primary" :disabled="! $available">Verify your business</x-button>
-                    </form>
-                </div>
-            </div>
-
-            <div class="sr-card" style="margin-bottom:0;height:100%" data-role="toll-free-number-card">
+            <div class="sr-card" style="margin-bottom:0;height:100%;border:2px solid var(--primary, #2c5282)" data-role="toll-free-number-card">
                 <div class="sr-card__body d-flex flex-column" style="height:100%;min-height:360px">
                     <div class="d-flex align-items-center gap-3 mb-3">
                         <span class="sr-tile sr-tile--lg" style="background:#e6eef7;color:#2c5282"><x-ds-icon name="globe" size="20" /></span>
                         <div>
-                            <h2 class="sr-card__title" style="font-size:1.0625rem">Toll-free number</h2>
-                            <p class="sr-card__sub">Nationwide, and free for customers to text.</p>
+                            <h2 class="sr-card__title" style="font-size:1.0625rem">Toll-free number <span class="badge bg-primary ms-1" data-role="recommended-badge">Recommended</span></h2>
+                            <p class="sr-card__sub">Nationwide, and free for your customers to text. The simplest way to start texting a US audience.</p>
                         </div>
                     </div>
 
@@ -143,9 +124,9 @@
                         <li><span class="sr-num">2</span><div><strong>Verify your business</strong><span class="sr-step-desc">For that number.</span></div></li>
                     </ol>
 
-                    <div class="sr-callout sr-callout--warn">
+                    <div class="sr-callout" data-role="toll-free-cost-notice">
                         <x-ds-icon name="credit-card" size="16" />
-                        <p>The charge starts as soon as you complete the order, <strong>before</strong> verification.</p>
+                        <p>{{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }} Number rental starts as soon as you complete the order, <strong>before</strong> verification.</p>
                     </div>
 
                     <form method="post" class="mt-auto pt-3" action="{{ route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceUid, $businessUid]) }}" data-role="toll-free-search-form">
@@ -161,7 +142,39 @@
                             @enderror
                         </div>
 
-                        <x-button type="submit" variant="primary" :disabled="! $available">Find a toll-free number</x-button>
+                        <x-button type="submit" variant="primary" :disabled="! $available" data-role="find-toll-free">Find a toll-free number</x-button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="sr-card" style="margin-bottom:0;height:100%" data-role="local-number-card">
+                <div class="sr-card__body d-flex flex-column" style="height:100%;min-height:360px">
+                    <div class="d-flex align-items-center gap-3 mb-3">
+                        <span class="sr-tile sr-tile--lg"><x-ds-icon name="map-pin" size="20" /></span>
+                        <div>
+                            <h2 class="sr-card__title" style="font-size:1.0625rem">Local number</h2>
+                            <p class="sr-card__sub">A specific area code, like a local business. Needs carrier 10DLC registration, which has its own costs.</p>
+                        </div>
+                    </div>
+
+                    <ol class="sr-steps">
+                        <li><span class="sr-num">1</span><div><strong>Verify your business</strong><span class="sr-step-desc">{{ $verificationChargeDisclosure }}</span></div></li>
+                        <li><span class="sr-num">2</span><div><strong>Choose your number</strong><span class="sr-step-desc">Once verification is approved.</span></div></li>
+                    </ol>
+
+                    <div class="sr-callout sr-callout--warn" data-role="local-cost-notice">
+                        <x-ds-icon name="credit-card" size="16" />
+                        <p>{{ \App\Library\Messaging\BusinessMessagingRegistrationService::LOCAL_COST_NOTICE }} The number itself is charged only when you complete that order, after you're verified.</p>
+                    </div>
+
+                    @include('customer.settings.text-messaging._charge-summary', ['preview' => $localRegistrationPreview, 'oneTimeLabel' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'recurringLabel' => '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Local registration pricing isn\'t set up on our side yet, so a local number can\'t be registered right now. Toll-free is available.'])
+                    @if($lowVolumeRegistrationPreview['configured'])
+                        <p class="text-caption text-muted mb-2" data-role="low-volume-note">Small business sending few texts? A lower-cost <strong>Low Volume Mixed</strong> option is available when you register: {{ $lowVolumeRegistrationPreview['one_time']['text'] }} to register, then {{ $lowVolumeRegistrationPreview['recurring']['text'] }} after the first three months. It has lower sending limits.</p>
+                    @endif
+
+                    <form method="post" class="mt-auto pt-3" action="{{ route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspaceUid, $businessUid]) }}">
+                        @csrf
+                        <x-button type="submit" variant="secondary" :disabled="! $available">Continue with a local number</x-button>
                     </form>
                 </div>
             </div>
@@ -184,7 +197,14 @@
                                  can never be bound to a provider resource this
                                  platform did not itself just verify. --}}
                             <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            <x-button type="submit" variant="primary" :disabled="! $available">Get this number</x-button>
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'this number, charged when you buy it: the carrier\'s upfront cost plus the first month\'s rental at the price quoted today', 'recurringLabel' => 'rental of this number, billed each month starting next month at that same quoted price', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
+                            <p class="text-caption text-muted mb-2" data-role="number-cost-notice">
+                                Number rental and SMS usage are charged.
+                                @if(($criteria['number_type'] ?? null) === 'toll_free')
+                                    {{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }}
+                                @endif
+                            </p>
+                            <x-button type="submit" variant="primary" :disabled="! $available || ! $numberPreview['configured'] || ! $numberPreview['sufficient']">Get this number</x-button>
                         </form>
                     </div>
                 @else

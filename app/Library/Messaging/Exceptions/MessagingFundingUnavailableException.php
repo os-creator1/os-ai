@@ -17,4 +17,18 @@ use RuntimeException;
  */
 class MessagingFundingUnavailableException extends RuntimeException
 {
+    /** No meter, no active rate, or metering not enabled: a platform-owner action is missing. */
+    public const REASON_PRICING_NOT_CONFIGURED = 'pricing_not_configured';
+
+    /** The Business's own wallet/currency cannot be matched to the meter. */
+    public const REASON_WALLET_CONFIGURATION = 'wallet_configuration';
+
+    public function __construct(
+        string $message = '',
+        int $code = 0,
+        ?\Throwable $previous = null,
+        public readonly string $reason = self::REASON_PRICING_NOT_CONFIGURED,
+    ) {
+        parent::__construct($message, $code, $previous);
+    }
 }

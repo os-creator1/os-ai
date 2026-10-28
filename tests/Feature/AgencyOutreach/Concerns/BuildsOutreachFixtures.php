@@ -239,13 +239,13 @@ trait BuildsOutreachFixtures
     /** What the platform owner does with the existing rate tooling: a meter, a rate, then metering on. */
     protected function priceTransport(int $ratePerSegmentMicro = 10_000): void
     {
-        $key = PlatformFeature::MessagingTransport->value;
+        $key = \App\Library\Messaging\MessageMeters::SMS_OUTBOUND;
         $currencyId = (Currency::query()->first() ?? Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]))->id;
         $actorId = $this->platformAdminId();
 
         $manager = app(UsageWalletManager::class);
         app(UsageMeterRepository::class)->create([
-            'meter_key' => $key, 'feature_key' => $key, 'business_id' => null,
+            'meter_key' => $key, 'feature_key' => PlatformFeature::MessagingTransport->value, 'business_id' => null,
             'currency_id' => $currencyId, 'description' => 'Managed messaging transport (per segment).', 'updated_by_user_id' => $actorId,
         ]);
         $manager->setActiveRate($key, (string) $ratePerSegmentMicro, '5000', 'per segment', $currencyId, $actorId, 'Fixture.');

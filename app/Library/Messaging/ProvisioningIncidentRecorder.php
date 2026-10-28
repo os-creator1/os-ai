@@ -81,9 +81,9 @@ final class ProvisioningIncidentRecorder
      * @param  'verified_provider_id'|'confirmed_not_created'  $type
      * @return int rows resolved (0 when already resolved, missing, or invalid for this stage)
      */
-    public function resolveUnknownOutcome(int $incidentId, int $resolvedByUserId, string $type, ?string $brandId, ?string $campaignId, string $note): int
+    public function resolveUnknownOutcome(int $incidentId, int $resolvedByUserId, string $type, ?string $brandId, ?string $campaignId, string $note, ?string $verificationId = null): int
     {
-        return DB::transaction(function () use ($incidentId, $resolvedByUserId, $type, $brandId, $campaignId, $note): int {
+        return DB::transaction(function () use ($incidentId, $resolvedByUserId, $type, $brandId, $campaignId, $note, $verificationId): int {
             $incident = DB::table('business_messaging_provisioning_incidents')
                 ->where('id', $incidentId)->whereNull('resolved_at')->lockForUpdate()->first();
 
@@ -97,7 +97,17 @@ final class ProvisioningIncidentRecorder
             $stage = $incident->stage;
             $audit = '[' . $type;
 
-            if ($type === 'verified_provider_id') {
+            if ($type === 'verified_provider_id' && $stage === TelnyxProvisioningAdapter::INCIDENT_TOLLFREE_UNKNOWN) {
+                $verificationId = trim((string) $verificationId);
+
+                if ($registration === null || $verificationId === '') {
+                    return 0;
+                }
+
+                DB::table('business_messaging_registrations')->where('id', $registration->id)
+                    ->update(['provider_registration_id' => $verificationId, 'updated_at' => now()]);
+                $audit .= ' verification=' . $verificationId;
+            } elseif ($type === 'verified_provider_id') {
                 $brandId = trim((string) $brandId);
                 $campaignId = trim((string) $campaignId);
                 $needsBrand = $stage !== TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN

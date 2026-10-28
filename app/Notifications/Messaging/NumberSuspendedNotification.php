@@ -34,6 +34,7 @@ class NumberSuspendedNotification extends Notification
             ->subject('New outbound texting paused for your number')
             ->line("Sending new texts from {$this->phoneNumber} has been paused because the renewal charge could not be completed.")
             ->line('This number still receives incoming texts, and you can still request to port it out to another carrier at any time.')
+            ->line('While a number is paused we keep holding it for you, and the carrier keeps billing us for it (the number\'s rental and, for a local number, its registered campaign). That is why it can only be held for the grace period, and why releasing it does not happen automatically on the last day: you get a written notice first and a chance to port it out or add funds.')
             ->line("Add funds by {$this->graceExpiresAt?->format('Y-m-d')} to resume sending. After that date this number becomes eligible for release.");
     }
 }

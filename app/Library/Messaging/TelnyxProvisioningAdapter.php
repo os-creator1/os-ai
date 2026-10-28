@@ -26,8 +26,11 @@ use App\Library\Messaging\DTO\RegistrationStatusQuery;
 use App\Library\Messaging\DTO\RegistrationStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
+use App\Library\Messaging\Registration\CarrierRegistrationOptions;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
+use App\Library\Messaging\Exceptions\NumberPriceChangedException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException;
 use App\Library\Usage\UsageWalletManager;
 use App\Enums\Usage\UsageReservationStatus;
@@ -326,6 +329,16 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     public const FEATURE_TEN_DLC_REGISTRATION = 'messaging_10dlc_registration';
 
+    /** One-time carrier brand registration fee — charged when the brand is actually created, never refunded after. */
+    public const FEATURE_TEN_DLC_BRAND_REGISTRATION = 'messaging_10dlc_brand_registration';
+
+    public const FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION = 'messaging_10dlc_low_volume_registration';
+
+    public static function registrationFeatureFor(?string $useCase): string
+    {
+        return $useCase === 'low_volume_mixed' ? self::FEATURE_TEN_DLC_LOW_VOLUME_REGISTRATION : self::FEATURE_TEN_DLC_REGISTRATION;
+    }
+
     public const FEATURE_TOLL_FREE_VERIFICATION = 'messaging_tollfree_verification';
 
     /**
@@ -372,12 +385,14 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $filter = [
             'filter[country_code]' => $criteria->countryCode,
             'filter[features][]' => 'sms',
-            'filter[limit]' => 1,
+            'filter[limit]' => 5,
         ];
 
-        if ($criteria->numberType === PhoneNumberType::TollFree) {
-            $filter['filter[number_type]'] = 'toll_free';
-        } elseif ($criteria->areaCode !== null && $criteria->areaCode !== '') {
+        // Telnyx documents `filter[phone_number_type]` (local | toll_free ...);
+        // there is no `filter[number_type]`.
+        $filter['filter[phone_number_type]'] = $criteria->numberType === PhoneNumberType::TollFree ? 'toll_free' : 'local';
+
+        if ($criteria->numberType !== PhoneNumberType::TollFree && $criteria->areaCode !== null && $criteria->areaCode !== '') {
             $filter['filter[national_destination_code]'] = $criteria->areaCode;
         }
 
@@ -394,14 +409,118 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 continue;
             }
 
+            // Unknown or unusable pricing is never offered for purchase.
+            $quote = $this->quoteFrom($row);
+
+            if ($quote === null) {
+                continue;
+            }
+
             $candidates[] = new AvailableNumberCandidate(
                 phoneNumber: (string) $row['phone_number'],
                 numberType: $criteria->numberType,
                 providerCandidateReference: (string) $row['phone_number'],
+                upfrontCostMicro: $quote['upfront'],
+                monthlyCostMicro: $quote['monthly'],
+                currency: $quote['currency'],
             );
         }
 
         return $candidates;
+    }
+
+    /**
+     * Telnyx's `cost_information` (strings: upfront_cost, monthly_cost,
+     * currency) as exact micro-units, plus the owner-configured at-cost SMS
+     * capability add-on when set. Null for anything incomplete, non-USD,
+     * non-positive, malformed or above the safety ceiling — which also
+     * keeps unusually priced special numbers from being sold at a wrong
+     * price.
+     *
+     * @param  array<string, mixed>  $row
+     * @return array{upfront: int, monthly: int, currency: string}|null
+     */
+    private function quoteFrom(array $row): ?array
+    {
+        $cost = $row['cost_information'] ?? null;
+
+        if (! is_array($cost) || ($cost['currency'] ?? null) !== 'USD') {
+            return null;
+        }
+
+        $upfront = self::decimalToMicro($cost['upfront_cost'] ?? null);
+        $monthly = self::decimalToMicro($cost['monthly_cost'] ?? null);
+
+        if ($upfront === null || $monthly === null || $monthly < 1) {
+            return null;
+        }
+
+        $monthly += max(0, (int) config('messaging.number_sms_addon_monthly_cost_micro', 0));
+        $ceiling = (int) config('messaging.number_price_ceiling_micro', 25_000_000);
+
+        if ($upfront > $ceiling || $monthly > $ceiling) {
+            return null;
+        }
+
+        return ['upfront' => $upfront, 'monthly' => $monthly, 'currency' => 'USD'];
+    }
+
+    private static function decimalToMicro(mixed $value): ?int
+    {
+        if (! is_string($value) || preg_match('/^\d{1,9}(\.\d{1,6})?$/', trim($value)) !== 1) {
+            return null;
+        }
+
+        return (int) bcmul(trim($value), '1000000', 0);
+    }
+
+    /**
+     * Re-asks Telnyx for exactly this number immediately before it is paid
+     * for. The order response carries no price, so the only way to know the
+     * customer is charged what they confirmed is to confirm the carrier's
+     * current quote still equals it (filter[phone_number][starts_with] is
+     * a documented search filter). Any mismatch, absence or failure to ask
+     * stops the purchase before funds are reserved.
+     */
+    private function assertNumberQuoteStillCurrent(AvailableNumberCandidate $candidate): void
+    {
+        if (! $candidate->hasQuote()) {
+            throw new NumberPriceChangedException('We couldn\'t confirm the price of this number. Nothing was charged. Please search again.');
+        }
+
+        try {
+            $response = $this->client()->get(self::API_BASE . '/available_phone_numbers', [
+                'filter[phone_number][starts_with]' => $candidate->providerCandidateReference,
+                'filter[phone_number_type]' => $candidate->numberType === PhoneNumberType::TollFree ? 'toll_free' : 'local',
+                'filter[features][]' => 'sms',
+                'filter[limit]' => 5,
+            ]);
+        } catch (ConnectionException) {
+            throw new NumberPriceChangedException('We couldn\'t reach the carrier to confirm this number\'s price. Nothing was charged. Please try again.');
+        }
+
+        $current = null;
+
+        if ($response->successful()) {
+            foreach ((array) $response->json('data', []) as $row) {
+                if (is_array($row) && ($row['phone_number'] ?? null) === $candidate->providerCandidateReference) {
+                    $current = $this->quoteFrom($row);
+                    break;
+                }
+            }
+        }
+
+        if ($current === null) {
+            throw new NumberPriceChangedException('This number is no longer available at a confirmed price. Nothing was charged. Please search again.');
+        }
+
+        if ($current['upfront'] !== $candidate->upfrontCostMicro || $current['monthly'] !== $candidate->monthlyCostMicro) {
+            throw new NumberPriceChangedException(sprintf(
+                'The price of this number changed to %s today and %s per month. Nothing was charged — please search again and confirm the new price.',
+                \App\Library\Dashboard\DashboardMoney::format((string) ($current['upfront'] + $current['monthly']), 'USD'),
+                \App\Library\Dashboard\DashboardMoney::format((string) $current['monthly'], 'USD'),
+            ));
+        }
     }
 
     /**
@@ -414,9 +533,40 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      */
     public function provisionNumber(Business $business, AvailableNumberCandidate $candidate): ProvisionedNumberResult
     {
-        $reservationId = $this->reserveFunding($business, self::FEATURE_NUMBER_PURCHASE);
+        ProvisioningPilot::assertOpen($business);
+
+        // A number order whose outcome was never confirmed may have bought
+        // (and be billing) a number at the carrier: no second purchase
+        // until an operator reconciles it.
+        if (BusinessMessagingProvisioningIncident::query()
+            ->where('business_id', $business->id)
+            ->where('stage', self::INCIDENT_NUMBER_ORDER_UNKNOWN)
+            ->whereNull('resolved_at')
+            ->exists()) {
+            throw new MessagingRegistrationRecoveryRequiredException('An earlier number order has an unconfirmed carrier outcome.');
+        }
+
+        $this->assertRecurringPriceConfigured(NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL);
+
+        // Zero-markup pass-through: the meter's rate is the owner's multiplier
+        // (1.00 = no markup) per 1.00 of carrier cost, and the quantity is the
+        // exact carrier cost charged at order — the upfront cost plus the
+        // first month's rental. Rental renewals start next month, so the
+        // first month is never charged twice.
+        $reservationId = $this->reserveFunding(
+            $business,
+            self::FEATURE_NUMBER_PURCHASE,
+            null,
+            bcdiv((string) $candidate->initialCostMicro(), '1000000', 6),
+        );
 
         try {
+            // The price the customer confirmed must still be the carrier's
+            // price. Checked after funds are held (an unfunded Business never
+            // reaches Telnyx at all) and before anything is ordered; a mismatch
+            // releases the hold and asks the customer to confirm again.
+            $this->assertNumberQuoteStillCurrent($candidate);
+
             $profileResponse = $this->client()->post(self::API_BASE . '/messaging_profiles', [
                 'name' => sprintf('Business #%d', $business->id),
             ]);
@@ -427,10 +577,18 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $messagingProfileId = (string) $profileResponse->json('data.id');
 
-            $orderResponse = $this->client()->post(self::API_BASE . '/number_orders', [
-                'phone_numbers' => [['phone_number' => $candidate->providerCandidateReference]],
-                'messaging_profile_id' => $messagingProfileId,
-            ]);
+            try {
+                $orderResponse = $this->client()->post(self::API_BASE . '/number_orders', [
+                    'phone_numbers' => [['phone_number' => $candidate->providerCandidateReference]],
+                    'messaging_profile_id' => $messagingProfileId,
+                ]);
+            } catch (ConnectionException) {
+                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order request did not complete');
+            }
+
+            if ($orderResponse->serverError() || $orderResponse->status() === 408) {
+                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order status=' . $orderResponse->status());
+            }
 
             if (! $orderResponse->successful()) {
                 // The Messaging Profile above WAS genuinely created on
@@ -450,9 +608,33 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 throw new \RuntimeException('Telnyx rejected the number order request.');
             }
 
+            // HTTP 200 is not a completed order: each number carries its own
+            // status (pending | success | failure). A failure is definitive;
+            // a still-pending order may yet complete, so it is an unconfirmed
+            // outcome (incident + block), not a quiet success or a refund.
+            $orderedStatus = strtolower((string) ($orderResponse->json('data.phone_numbers.0.status') ?? $orderResponse->json('data.status') ?? 'success'));
+
+            if ($orderedStatus === 'failure') {
+                app(ProvisioningIncidentRecorder::class)->record(
+                    business: $business,
+                    stage: 'messaging_profile_created_but_number_order_failed',
+                    messagingProfileId: $messagingProfileId,
+                    providerPhoneNumberId: null,
+                    phoneNumber: $candidate->phoneNumber,
+                    numberType: $candidate->numberType->value,
+                    errorMessage: 'order status=failure',
+                );
+
+                throw new \RuntimeException('Telnyx could not complete the number order.');
+            }
+
+            if ($orderedStatus === 'pending') {
+                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order accepted but still pending');
+            }
+
             $providerPhoneNumberId = (string) ($orderResponse->json('data.phone_numbers.0.id') ?? $orderResponse->json('data.id'));
         } catch (\Throwable $e) {
-            $this->wallet->release($reservationId);
+            $this->settleAfterFailure($reservationId, $e);
 
             throw $e;
         }
@@ -463,11 +645,16 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             messagingProfileId: $messagingProfileId,
             providerPhoneNumberId: $providerPhoneNumberId,
             phoneNumber: $candidate->phoneNumber,
+            upfrontCostMicro: $candidate->upfrontCostMicro,
+            monthlyCostMicro: $candidate->monthlyCostMicro,
+            costCurrency: $candidate->currency,
         );
     }
 
     public function submitRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
+        ProvisioningPilot::assertOpen($submission->businessId);
+
         if ($submission->numberType === PhoneNumberType::TollFree) {
             return $this->submitTollFreeVerification($submission);
         }
@@ -731,6 +918,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     public const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
     public const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';
     public const INCIDENT_FUNDING_AMBIGUOUS = '10dlc_funding_state_ambiguous';
+    public const INCIDENT_NUMBER_ORDER_UNKNOWN = 'number_order_outcome_unknown';
+    public const INCIDENT_TOLLFREE_UNKNOWN = 'tollfree_verification_outcome_unknown';
 
     /**
      * Internal use-case key => Telnyx/TCR campaign `usecase` enum value.
@@ -748,6 +937,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         'customer_care' => ['usecase' => 'CUSTOMER_CARE'],
         'marketing' => ['usecase' => 'MARKETING'],
         'mixed' => ['usecase' => 'MIXED', 'sub' => ['CUSTOMER_CARE', 'MARKETING']],
+        // Telnyx/TCR "Low Volume Mixed" is its own use case (LOW_VOLUME), NOT
+        // MIXED. Its sub-use-cases are the customer's real purposes, and the
+        // brand's eligibility is checked against Telnyx before it is created.
+        'low_volume_mixed' => ['usecase' => 'LOW_VOLUME', 'purposes' => true],
         'account_notifications' => ['usecase' => 'ACCOUNT_NOTIFICATION'],
         'appointment_reminders' => ['usecase' => 'CUSTOMER_CARE'],
         'two_factor' => ['usecase' => '2FA'],
@@ -763,10 +956,36 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('This messaging type cannot be submitted as a 10DLC campaign.');
         }
 
+        // Low Volume Mixed needs at least one real, valid purpose. Nothing is
+        // added on the customer's behalf to reach a cheaper campaign type.
+        $subUsecases = [];
+
+        if (($useCase['purposes'] ?? false) === true) {
+            foreach ($submission->messagePurposes as $purpose) {
+                if (isset(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES[$purpose])) {
+                    $subUsecases[] = CarrierRegistrationOptions::LOW_VOLUME_PURPOSES[$purpose]['sub_usecase'];
+                }
+            }
+
+            $subUsecases = array_values(array_unique($subUsecases));
+
+            if (count($subUsecases) < 2) {
+                throw new MessagingRegistrationNotEligibleException('Low Volume Mixed is for a business that genuinely sends at least two different kinds of text (service and promotional). Choose the standard campaign type that matches what you send.');
+            }
+        }
+
         // Also before any wallet reservation: Mixed stays off until carrier
         // acceptance has been verified.
         if ($useCase['usecase'] === 'MIXED' && ! config('messaging.ten_dlc_mixed_enabled')) {
             throw new \RuntimeException('Mixed 10DLC campaigns are not enabled yet.');
+        }
+
+        // Checked before any wallet reservation: values Telnyx requires and
+        // validates must be present and provider-valid.
+        if ($submission->existingBrandId === null
+            && (! isset(CarrierRegistrationOptions::BRAND_VERTICALS[(string) $submission->brandVertical])
+                || CarrierRegistrationOptions::stateCode($submission->region) === null)) {
+            throw new \RuntimeException('A 10DLC brand needs an industry category and a valid US state.');
         }
 
         // Checked before any wallet reservation: a campaign description is
@@ -782,13 +1001,24 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // incident — a brand/campaign may already exist at Telnyx.
         if (BusinessMessagingProvisioningIncident::query()
             ->where('business_id', $business->id)
-            ->whereIn('stage', [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN, self::INCIDENT_FUNDING_AMBIGUOUS])
+            ->whereIn('stage', [self::INCIDENT_BRAND_UNKNOWN, self::INCIDENT_CAMPAIGN_UNKNOWN, self::INCIDENT_FUNDING_AMBIGUOUS, self::INCIDENT_TOLLFREE_UNKNOWN])
             ->whereNull('resolved_at')
             ->exists()) {
             throw new MessagingRegistrationRecoveryRequiredException('An earlier 10DLC submission has an unconfirmed provider outcome.');
         }
 
-        $operationKey = $this->registrationOperationKey($business, self::FEATURE_TEN_DLC_REGISTRATION, $submission);
+        $registrationFeature = self::registrationFeatureFor($submission->useCase);
+        $this->assertRecurringPriceConfigured(NumberLifecycleManager::campaignRenewalFeatureFor($submission->useCase));
+
+        // The carrier brand fee is its own priced charge (when a brand is
+        // created), so it must be configured before anything is reserved.
+        $needsBrand = $submission->existingBrandId === null;
+
+        if ($needsBrand) {
+            $this->assertRecurringPriceConfigured(self::FEATURE_TEN_DLC_BRAND_REGISTRATION);
+        }
+
+        $operationKey = $this->registrationOperationKey($business, $registrationFeature, $submission);
 
         if ($operationKey === null) {
             // This cycle's fee is already committed and the saved brand and
@@ -797,27 +1027,55 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationSubmissionResult($submission->existingBrandId, $submission->existingCampaignId, null, MessagingRegistrationStatus::Pending);
         }
 
-        $reservationId = $this->reserveFunding($business, self::FEATURE_TEN_DLC_REGISTRATION, $operationKey);
+        // 1) The prepaid campaign months (the carrier bills three upfront) —
+        //    held first, so a customer who cannot cover BOTH never has a
+        //    brand created for them.
+        $reservationId = $this->reserveFunding($business, $registrationFeature, $operationKey);
+
+        // 2) The brand fee, held now and committed the moment the carrier
+        //    actually creates the brand: a real carrier commitment is never
+        //    refunded because a later step failed.
+        $brandReservationId = null;
+
+        if ($needsBrand) {
+            try {
+                $brandReservationId = $this->reserveFunding($business, self::FEATURE_TEN_DLC_BRAND_REGISTRATION, $this->brandOperationKey($business, $submission));
+            } catch (\Throwable $e) {
+                $this->wallet->release($reservationId);
+
+                throw $e;
+            }
+        } else {
+            // A brand saved by an earlier attempt whose fee was held but
+            // not yet committed (a crash right after the carrier created it):
+            // commit it now rather than letting the hold expire unbilled.
+            $this->commitPendingBrandFee($business, $submission);
+        }
 
         $brandId = $submission->existingBrandId;
 
         try {
             if ($brandId === null) {
                 try {
-                    $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', [
+                    $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', array_filter([
                         'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
                         'displayName' => $submission->legalBusinessName,
                         'companyName' => $submission->legalBusinessName,
+                        'firstName' => $submission->contactFirstName,
+                        'lastName' => $submission->contactLastName,
                         'ein' => $submission->ein,
                         'email' => $submission->contactEmail,
                         'phone' => $submission->contactPhone,
                         'street' => $submission->addressLine1,
                         'city' => $submission->city,
-                        'state' => $submission->region,
+                        // Telnyx: "Must be 2 letters code for United States."
+                        'state' => CarrierRegistrationOptions::stateCode($submission->region),
                         'postalCode' => $submission->postalCode,
                         'country' => $submission->countryCode,
                         'website' => $submission->websiteUrl,
-                    ]);
+                        // Required by Telnyx; the customer's own choice, never inferred here.
+                        'vertical' => $submission->brandVertical,
+                    ], fn ($value) => $value !== null && $value !== ''));
                 } catch (ConnectionException $e) {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand request did not complete');
                 }
@@ -830,7 +1088,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     throw new \RuntimeException('Telnyx rejected the 10DLC brand submission.');
                 }
 
-                $brandId = (string) $brandResponse->json('data.brandId', $brandResponse->json('data.id'));
+                $brandId = $this->providerValue($brandResponse, ['brandId', 'data.brandId', 'data.id']);
 
                 if ($brandId === '') {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand accepted without an id');
@@ -841,9 +1099,51 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 BusinessMessagingRegistration::query()
                     ->where('business_id', $business->id)
                     ->update(['provider_brand_id' => $brandId]);
+
+                // The carrier now holds this brand: its fee is earned and is
+                // committed here, so no later failure can hand it back.
+                if ($brandReservationId !== null) {
+                    $this->wallet->commit($brandReservationId);
+                    $brandReservationId = null;
+                }
             }
 
             $campaignId = $submission->existingCampaignId;
+
+            // Low Volume Mixed: ask Telnyx whether THIS brand qualifies for
+            // the use case before creating (and paying for) a campaign. A
+            // read-only call: any failure is a definitive refusal, never an
+            // unknown create outcome. The brand stays saved for a retry.
+            if ($campaignId === null && ($useCase['purposes'] ?? false) === true) {
+                try {
+                    $qualification = $this->client()->get(self::API_BASE . '/10dlc/campaignBuilder/brand/' . $brandId . '/usecase/' . $useCase['usecase']);
+                } catch (ConnectionException) {
+                    throw new MessagingRegistrationNotEligibleException('We couldn\'t reach the carrier to check your eligibility for Low Volume Mixed. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
+                }
+
+                if (! $qualification->successful()) {
+                    throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. ' . $this->qualificationFeeNote($needsBrand) . ' Choose a standard service or promotional campaign instead.');
+                }
+
+                // UsecaseMetadata is a root-level object. Unknown or malformed
+                // limits are never guessed at: refuse rather than send a
+                // campaign the registry may reject (or that drops a purpose).
+                $minSub = $qualification->json('minSubUsecases');
+                $maxSub = $qualification->json('maxSubUsecases');
+
+                if (! is_int($minSub) || ! is_int($maxSub) || $minSub < 0 || $maxSub < 0
+                    || $this->providerValue($qualification, ['usecase']) !== $useCase['usecase']) {
+                    throw new MessagingRegistrationNotEligibleException('We couldn\'t confirm the carrier\'s rules for Low Volume Mixed right now. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
+                }
+
+                if (count($subUsecases) < $minSub) {
+                    throw new MessagingRegistrationNotEligibleException('The carrier needs at least ' . $minSub . ' distinct message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. ' . $this->qualificationFeeNote($needsBrand) . ' Choose the standard campaign type that matches what you send.');
+                }
+
+                if (count($subUsecases) > $maxSub) {
+                    throw new MessagingRegistrationNotEligibleException('The carrier allows at most ' . $maxSub . ' message purposes for Low Volume Mixed, and you declared ' . count($subUsecases) . '. ' . $this->qualificationFeeNote($needsBrand) . ' None of your purposes was dropped. Choose a campaign type that fits what you send.');
+                }
+            }
 
             // A previous attempt that already created and persisted the
             // campaign but never reached the fee commit only finishes the
@@ -853,6 +1153,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     'brandId' => $brandId,
                     'usecase' => $useCase['usecase'],
                     ...(isset($useCase['sub']) ? ['subUsecases' => $useCase['sub']] : []),
+                    ...(($useCase['purposes'] ?? false) === true && $subUsecases !== [] ? ['subUsecases' => $subUsecases] : []),
                     'description' => $submission->campaignDescription,
                     'sample1' => $submission->sampleMessage1,
                     'sample2' => $submission->sampleMessage2,
@@ -862,6 +1163,20 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     'optinKeywords' => 'START,SUBSCRIBE',
                     'optoutKeywords' => 'STOP,UNSUBSCRIBE',
                     'helpKeywords' => 'HELP,INFO',
+                    // The registration's consent checklist is validated
+                    // (and customer-attested) before this point.
+                    'subscriberOptin' => true,
+                    'subscriberOptout' => true,
+                    'subscriberHelp' => true,
+                    'termsAndConditions' => true,
+                    'embeddedLink' => false,
+                    'embeddedPhone' => false,
+                    'numberPool' => false,
+                    'ageGated' => false,
+                    'directLending' => false,
+                    // Keeps the campaign alive across billing cycles while
+                    // the customer is billed its monthly campaign cost.
+                    'autoRenewal' => true,
                 ]);
             } catch (ConnectionException $e) {
                 throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign request did not complete');
@@ -888,7 +1203,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             }
 
             if ($campaignResponse !== null) {
-                $campaignId = (string) $campaignResponse->json('data.campaignId', $campaignResponse->json('data.id'));
+                $campaignId = $this->providerValue($campaignResponse, ['campaignId', 'data.campaignId', 'data.id']);
 
                 if ($campaignId === '') {
                     throw $this->unconfirmedOutcome($business, self::INCIDENT_CAMPAIGN_UNKNOWN, $brandId, 'campaign accepted without an id');
@@ -901,7 +1216,11 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     ->update(['provider_campaign_id' => $campaignId]);
             }
         } catch (\Throwable $e) {
-            $this->wallet->release($reservationId);
+            $this->settleAfterFailure($reservationId, $e);
+
+            if ($brandReservationId !== null) {
+                $this->settleAfterFailure($brandReservationId, $e);
+            }
 
             throw $e;
         }
@@ -909,6 +1228,133 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $this->wallet->commit($reservationId);
 
         return new RegistrationSubmissionResult($brandId, $campaignId, null, MessagingRegistrationStatus::Pending);
+    }
+
+    /**
+     * Stable per-cycle identity for a brand fee. Each brand the carrier
+     * actually creates is a new fee (including a replacement brand after the
+     * customer changes brand-defining details), so a committed, released or
+     * expired attempt moves on to the next suffix; a still-pending one is
+     * reused rather than duplicated.
+     */
+    private function brandOperationKey(Business $business, MessagingRegistrationSubmission $submission): string
+    {
+        $repository = app(BusinessUsageReservationRepository::class);
+
+        for ($attempt = 1; $attempt <= 50; $attempt++) {
+            $key = sprintf('messaging-brand:%d:%s:%d', $business->id, $submission->fundingCycle, $attempt);
+            $existing = $repository->findByIdempotencyKey($key);
+
+            if ($existing === null || $existing->status === UsageReservationStatus::Pending) {
+                return $key;
+            }
+        }
+
+        throw new MessagingRegistrationRecoveryRequiredException('Too many brand attempts in one funding cycle.');
+    }
+
+    private function commitPendingBrandFee(Business $business, MessagingRegistrationSubmission $submission): void
+    {
+        $repository = app(BusinessUsageReservationRepository::class);
+
+        for ($attempt = 1; $attempt <= 50; $attempt++) {
+            $existing = $repository->findByIdempotencyKey(sprintf('messaging-brand:%d:%s:%d', $business->id, $submission->fundingCycle, $attempt));
+
+            if ($existing === null) {
+                return;
+            }
+
+            if ($existing->status === UsageReservationStatus::Pending) {
+                $this->wallet->commit((int) $existing->id);
+
+                return;
+            }
+        }
+    }
+
+    /**
+     * A paid action with an ongoing carrier cost is never started unless
+     * that ongoing cost is priced too — otherwise the platform would absorb
+     * it. Refused before any funds are reserved or provider call is made.
+     */
+    private function assertRecurringPriceConfigured(string $recurringFeature): void
+    {
+        if (app(MessagingChargePreview::class)->fee($recurringFeature) === null) {
+            throw new MessagingFundingUnavailableException(
+                sprintf('The recurring price [%s] is not configured.', $recurringFeature),
+                0,
+                null,
+                MessagingFundingUnavailableException::REASON_PRICING_NOT_CONFIGURED,
+            );
+        }
+    }
+
+    /**
+     * Telnyx's 10DLC and toll-free verification endpoints return a ROOT-level
+     * object (no `data` envelope — confirmed in the API reference: brandId,
+     * campaignId, id, campaignStatus, verificationStatus). A legacy `data.`
+     * wrapper is still read as a fallback; a blank value is treated as absent.
+     *
+     * @param  list<string>  $paths  tried in order
+     */
+    /**
+     * Customer wording for a Low Volume Mixed refusal that happens AFTER the
+     * brand step: a brand the carrier created in this attempt has already
+     * cost its fee (committed, never refunded), while the campaign fee was
+     * never charged (its hold is released). A brand saved by an earlier
+     * attempt was paid then, so nothing new is charged now.
+     */
+    private function qualificationFeeNote(bool $brandCreatedNow): string
+    {
+        return $brandCreatedNow
+            ? 'The carrier brand fee was already charged because the carrier created your brand, and it is not refunded; your brand is saved so a retry will not pay it again. The campaign fee was not charged.'
+            : 'Your brand was registered earlier, so no new brand fee was charged, and the campaign fee was not charged.';
+    }
+
+    private function providerValue(\Illuminate\Http\Client\Response $response, array $paths): string
+    {
+        foreach ($paths as $path) {
+            $value = $response->json($path);
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return trim((string) $value);
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * A definite failure hands the held funds back. An UNCONFIRMED provider
+     * outcome (the order or campaign may exist and be billing at the
+     * carrier) keeps the charge: a real carrier cost is never absorbed by
+     * releasing the hold, and the operator who resolves the incident
+     * credits it back only if the carrier confirms nothing was created.
+     */
+    private function settleAfterFailure(int $reservationId, \Throwable $e): void
+    {
+        if ($e instanceof MessagingRegistrationRecoveryRequiredException) {
+            $this->wallet->commit($reservationId);
+
+            return;
+        }
+
+        $this->wallet->release($reservationId);
+    }
+
+    private function unconfirmedNumberOrder(Business $business, AvailableNumberCandidate $candidate, string $messagingProfileId, string $detail): MessagingRegistrationRecoveryRequiredException
+    {
+        app(ProvisioningIncidentRecorder::class)->record(
+            business: $business,
+            stage: self::INCIDENT_NUMBER_ORDER_UNKNOWN,
+            messagingProfileId: $messagingProfileId,
+            providerPhoneNumberId: null,
+            phoneNumber: $candidate->phoneNumber,
+            numberType: $candidate->numberType->value,
+            errorMessage: $detail,
+        );
+
+        return new MessagingRegistrationRecoveryRequiredException('The number order outcome could not be confirmed.');
     }
 
     private function unconfirmedOutcome(Business $business, string $stage, ?string $brandId, string $detail): MessagingRegistrationRecoveryRequiredException
@@ -979,40 +1425,97 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('Toll-free verification cannot be submitted without an already-owned number.');
         }
 
-        $business = Business::query()->findOrFail($submission->businessId);
-        $reservationId = $this->reserveFunding($business, self::FEATURE_TOLL_FREE_VERIFICATION);
+        // Provider-required values, checked before any request: Telnyx
+        // validates these and a guessed value would only be rejected.
+        $tollFreeUseCase = CarrierRegistrationOptions::TOLL_FREE_USE_CASES[$submission->useCase] ?? null;
 
-        try {
-            $response = $this->client()->post(self::API_BASE . '/messaging_tollfree/verification/requests', [
-                'businessName' => $submission->legalBusinessName,
-                'businessAddr1' => $submission->addressLine1,
-                'businessCity' => $submission->city,
-                'businessState' => $submission->region,
-                'businessZip' => $submission->postalCode,
-                'businessContactEmail' => $submission->contactEmail,
-                'businessContactPhone' => $submission->contactPhone,
-                'websiteUrl' => $submission->websiteUrl,
-                'useCaseCategories' => [$submission->useCase],
-                'useCaseSummary' => $submission->useCase,
-                'productionMessageContent' => $submission->sampleMessage1,
-                'optInWorkflow' => $submission->optInMethod,
-                'privacyPolicyUrl' => $submission->privacyPolicyUrl,
-                'termsAndConditionsUrl' => $submission->termsUrl,
-                'phoneNumbers' => [['phoneNumber' => $submission->phoneNumber]],
-            ]);
-
-            if (! $response->successful()) {
-                throw new \RuntimeException('Telnyx rejected the toll-free verification submission.');
-            }
-
-            $requestId = (string) $response->json('data.id', $response->json('data.verificationId'));
-        } catch (\Throwable $e) {
-            $this->wallet->release($reservationId);
-
-            throw $e;
+        if ($submission->existingVerificationId === null
+            && ($tollFreeUseCase === null
+                || ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume])
+                || CarrierRegistrationOptions::stateName($submission->region) === null
+                || trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === ''
+                || ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL))) {
+            throw new \RuntimeException('Toll-free verification needs a mapped use case, a message volume, a US state, a contact name and an opt-in image URL.');
         }
 
-        $this->wallet->commit($reservationId);
+        $business = Business::query()->findOrFail($submission->businessId);
+
+        // Toll-free verification is $0 through Telnyx: there is genuinely
+        // no fee to reserve, so this path never touches the usage wallet
+        // (and so needs no billing meter, and can never charge). The
+        // carrier verification itself is still submitted — Pending until
+        // Telnyx approves it. Number rental and SMS usage are billed
+        // through their own paths, unchanged.
+
+        // A request the provider already accepted on an earlier attempt
+        // (saved before the status write) is never submitted twice.
+        if ($submission->existingVerificationId !== null) {
+            return new RegistrationSubmissionResult(null, null, $submission->existingVerificationId, MessagingRegistrationStatus::Pending);
+        }
+
+        // An earlier attempt whose provider outcome was never confirmed
+        // blocks automatic retry until an operator resolves the incident.
+        if (BusinessMessagingProvisioningIncident::query()
+            ->where('business_id', $business->id)
+            ->where('stage', self::INCIDENT_TOLLFREE_UNKNOWN)
+            ->whereNull('resolved_at')
+            ->exists()) {
+            throw new MessagingRegistrationRecoveryRequiredException('An earlier toll-free verification submission has an unconfirmed provider outcome.');
+        }
+
+        try {
+            $response = $this->client()->post(self::API_BASE . '/messaging_tollfree/verification/requests', array_filter([
+                'businessName' => $submission->legalBusinessName,
+                'corporateWebsite' => $submission->websiteUrl,
+                'businessAddr1' => $submission->addressLine1,
+                'businessAddr2' => $submission->addressLine2,
+                'businessCity' => $submission->city,
+                // Telnyx: "The full name of the state (not the 2 letter code)".
+                'businessState' => CarrierRegistrationOptions::stateName($submission->region),
+                'businessZip' => $submission->postalCode,
+                'businessContactFirstName' => $submission->contactFirstName,
+                'businessContactLastName' => $submission->contactLastName,
+                'businessContactEmail' => $submission->contactEmail,
+                'businessContactPhone' => $submission->contactPhone,
+                'messageVolume' => $submission->messageVolume,
+                'useCase' => $tollFreeUseCase,
+                'useCaseSummary' => $submission->campaignDescription,
+                'productionMessageContent' => $submission->sampleMessage1,
+                'optInWorkflow' => $submission->optInMethod,
+                'optInWorkflowImageURLs' => [['url' => $submission->optInImageUrl]],
+                'additionalInformation' => mb_substr((string) $submission->campaignDescription, 0, 500),
+                'businessRegistrationNumber' => $submission->entityType === MessagingEntityType::Ein ? $submission->ein : null,
+                'businessRegistrationType' => $submission->entityType === MessagingEntityType::Ein ? 'EIN' : null,
+                'businessRegistrationCountry' => $submission->entityType === MessagingEntityType::Ein ? 'US' : null,
+                'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
+                'privacyPolicyURL' => $submission->privacyPolicyUrl,
+                'termsAndConditionURL' => $submission->termsUrl,
+                'optInKeywords' => 'START,SUBSCRIBE',
+                'phoneNumbers' => [['phoneNumber' => $submission->phoneNumber]],
+            ], fn ($value) => $value !== null && $value !== ''));
+        } catch (ConnectionException) {
+            throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free request did not complete');
+        }
+
+        if (! $response->successful()) {
+            if ($response->serverError() || $response->status() === 408) {
+                throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free status=' . $response->status());
+            }
+
+            throw new \RuntimeException('Telnyx rejected the toll-free verification submission.');
+        }
+
+        $requestId = $this->providerValue($response, ['id', 'data.id', 'data.verificationId']);
+
+        if ($requestId === '') {
+            throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free accepted without an id');
+        }
+
+        // Durable before the local status write: a crash after this point
+        // must never lead to a second verification request.
+        BusinessMessagingRegistration::query()
+            ->where('business_id', $business->id)
+            ->update(['provider_registration_id' => $requestId]);
 
         // PR #295 Correction Round 1, item 7 — toll-free has no
         // brand/campaign concept; the single opaque id goes into its own
@@ -1057,17 +1560,31 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
-        $status = strtoupper((string) $response->json('data.campaignStatus', $response->json('data.status', '')));
+        // GET /10dlc/campaign/{id} returns a root-level campaign object:
+        // `campaignStatus` (TCR_/TELNYX_/MNO_ stages), `status` (ACTIVE or
+        // EXPIRED) and `submissionStatus`. Only a campaign the carriers have
+        // actually provisioned (MNO_PROVISIONED) is Approved; an absent or
+        // unknown value is Pending, never guessed Approved.
+        $campaignStatus = strtoupper($this->providerValue($response, ['campaignStatus', 'data.campaignStatus']));
+        $status = strtoupper($this->providerValue($response, ['status', 'data.status']));
+        $submission = strtoupper($this->providerValue($response, ['submissionStatus', 'data.submissionStatus']));
 
-        $isApproved = $status === 'ACTIVE' || $status === 'APPROVED' || $status === 'VERIFIED';
-        $isRejected = str_contains($status, 'REJECTED') || str_contains($status, 'FAILED') || str_contains($status, 'DECLINED');
-
-        if ($isApproved) {
+        if ($campaignStatus === 'MNO_PROVISIONED') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
         }
 
-        if ($isRejected) {
-            return new RegistrationStatusResult(MessagingRegistrationStatus::Rejected, $this->extractReason($response, ['data.failureReasons', 'data.reasons']));
+        $failed = in_array($campaignStatus, ['TCR_FAILED', 'TELNYX_FAILED', 'MNO_REJECTED', 'MNO_PROVISIONING_FAILED'], true)
+            || $submission === 'FAILED';
+
+        if ($failed) {
+            return new RegistrationStatusResult(
+                MessagingRegistrationStatus::Rejected,
+                $this->extractReason($response, ['failureReasons', 'data.failureReasons', 'data.reasons']),
+            );
+        }
+
+        if (in_array($campaignStatus, ['TCR_EXPIRED', 'TCR_SUSPENDED'], true) || $status === 'EXPIRED') {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Rejected, 'The carrier campaign expired or was suspended.');
         }
 
         return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
@@ -1085,7 +1602,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
-        $status = strtolower((string) $response->json('data.verificationStatus', $response->json('data.status', '')));
+        $status = strtolower($this->providerValue($response, ['verificationStatus', 'data.verificationStatus', 'data.status']));
 
         if ($status === 'verified') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
@@ -1100,7 +1617,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             // already tries.
             return new RegistrationStatusResult(
                 MessagingRegistrationStatus::Rejected,
-                $this->extractReason($response, ['data.declineReason', 'data.rejectionReason', 'data.reason']),
+                $this->extractReason($response, ['reason', 'declineReason', 'data.declineReason', 'data.rejectionReason', 'data.reason']),
             );
         }
 
@@ -1149,7 +1666,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      * path stays impossible until an owner-approved rate activates it. A
      * later slice that adds the rate needs no code change here.
      */
-    private function reserveFunding(Business $business, string $featureKey, ?string $idempotencyKey = null): int
+    private function reserveFunding(Business $business, string $featureKey, ?string $idempotencyKey = null, ?string $quantity = null): int
     {
         try {
             // A Business whose creation-time listener failed (or that
@@ -1159,13 +1676,17 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             // still refuses an unfunded Business exactly as before.
             $this->wallet->initializeWalletForNewBusiness($business->id);
 
-            $result = $this->wallet->reserve($business, $featureKey, $idempotencyKey ?? (string) Str::uuid());
+            $result = $this->wallet->reserve($business, $featureKey, $idempotencyKey ?? (string) Str::uuid(), $quantity);
         } catch (BusinessCurrencyUnresolvableException|UsageWalletNotFoundException|NoActiveRateForFeatureException|UsageMeterNotMeteredException|UsageMeterBusinessScopeMismatchException|UsageMeterCurrencyMismatchException|UsageMeterRateIntegrityException $e) {
+            $pricingMissing = $e instanceof NoActiveRateForFeatureException || $e instanceof UsageMeterNotMeteredException;
+
             throw new MessagingFundingUnavailableException(sprintf(
                 'Funding is not yet configured for [%s]: %s',
                 $featureKey,
                 $e->getMessage(),
-            ), 0, $e);
+            ), 0, $e, $pricingMissing
+                ? MessagingFundingUnavailableException::REASON_PRICING_NOT_CONFIGURED
+                : MessagingFundingUnavailableException::REASON_WALLET_CONFIGURATION);
         }
 
         if (! $result->granted || $result->reservationId === null) {

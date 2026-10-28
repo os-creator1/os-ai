@@ -18,13 +18,39 @@ final class RegistrationTemplateCatalog
     public const CHOICE_CARE = 'care';
     public const CHOICE_MARKETING = 'marketing';
     public const CHOICE_BOTH = 'both';
+    public const CHOICE_LOW_VOLUME = 'low_volume';
 
     /** @var array<string, array{label: string, use_case: string}> */
     public const CHOICES = [
         self::CHOICE_CARE => ['label' => 'Service and customer-care messages', 'use_case' => 'customer_care'],
         self::CHOICE_MARKETING => ['label' => 'Promotional and marketing messages', 'use_case' => 'marketing'],
+        self::CHOICE_LOW_VOLUME => ['label' => 'Both service and promotional — Low Volume Mixed (small businesses: lower cost, lower sending speed)', 'use_case' => 'low_volume_mixed'],
         self::CHOICE_BOTH => ['label' => 'Both', 'use_case' => 'mixed'],
     ];
+
+    /**
+     * Extra confirmations only for Low Volume Mixed, in the customer's own
+     * words: an eligibility attestation plus consent evidence for each
+     * purpose they register. The customer attests; we verify nothing.
+     */
+    public const LOW_VOLUME_CONSENT_ITEMS = [
+        'low_volume_attestation' => 'This Business is a small sender: it sends a low volume of texts, understands carriers limit how fast this campaign type can send, and will register a different campaign type if it outgrows that',
+        'purpose_care_consent' => 'Customers opt in specifically to service and customer-care texts (where they agree is described in the message-flow description)',
+        'purpose_marketing_consent' => 'Customers opt in specifically to promotional texts, separately from service texts (where they agree is described in the message-flow description)',
+    ];
+
+    /** @return array<string, string> the checklist this registration needs */
+    public static function consentItemsFor(?string $useCase, ?array $purposes): array
+    {
+        if ($useCase !== 'low_volume_mixed') {
+            return self::CONSENT_ITEMS;
+        }
+
+        // Both purposes are always required, so both consent confirmations are.
+        $extra = self::LOW_VOLUME_CONSENT_ITEMS;
+
+        return self::CONSENT_ITEMS + $extra;
+    }
 
     /** Checklist key => label. The customer confirms each against their own website. */
     public const CONSENT_ITEMS = [
