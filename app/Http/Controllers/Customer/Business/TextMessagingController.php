@@ -384,6 +384,7 @@ class TextMessagingController extends CustomerBaseController
             'contact_phone' => ['required', 'string', 'max:32'],
             'support_contact' => ['nullable', 'string', 'max:191'],
             'support_contact_confirmed' => ['nullable', 'boolean'],
+            'support_contact_confirmed_for' => ['nullable', 'string', 'max:191'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
             'opt_in_method' => ['required', 'string', 'max:2000'],
             'campaign_description' => ['required', 'string', 'max:2000'],
@@ -408,10 +409,14 @@ class TextMessagingController extends CustomerBaseController
         $previous = $this->registrationFor($business);
         $stillConfirmed = $previous?->support_contact_confirmed_at !== null && trim((string) $previous->support_contact) === $supportContact;
         $validated['support_contact'] = $supportContact === '' ? null : $supportContact;
-        $validated['support_contact_confirmed_at'] = $supportContact !== '' && ! empty($validated['support_contact_confirmed'])
+        // A tick only counts for the exact contact it was given against
+        // (the page records that value when the box is ticked). A changed
+        // contact submitted with a stale tick is saved but left unconfirmed.
+        $tickedFor = trim((string) ($validated['support_contact_confirmed_for'] ?? ''));
+        $validated['support_contact_confirmed_at'] = $supportContact !== '' && ! empty($validated['support_contact_confirmed']) && $tickedFor === $supportContact
             ? ($stillConfirmed ? $previous->support_contact_confirmed_at : now())
             : null;
-        unset($validated['support_contact_confirmed']);
+        unset($validated['support_contact_confirmed'], $validated['support_contact_confirmed_for']);
 
         // An unchecked box is simply absent from the POST, so the stored
         // list is always exactly what the customer ticked on this save.
@@ -540,10 +545,10 @@ class TextMessagingController extends CustomerBaseController
             ]);
 
             return $this->textMessagingError($workspaceUid, $businessUid, $e->step === \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_BRAND
-                ? 'Step 1 of 2 (carrier brand registration) was not accepted by our carrier partner. This is not something you need to correct: your details are saved, nothing was charged, and our team has the technical details. Please try again later or contact support.'
-                : 'Step 2 of 2 (campaign registration) was not accepted by our carrier partner. Your carrier brand is registered and saved'
+                ? 'Step 1 of 2 (carrier brand registration): the carrier could not accept this step. Your saved details remain, nothing was charged, and support is reviewing the technical reason. You can try again later or contact support.'
+                : 'Step 2 of 2 (campaign registration): the carrier could not accept this step. Your carrier brand is registered and saved'
                     . ($e->brandFeeChargedNow ? '; its fee was charged when it was created and is not refunded, but it will not be charged again when you retry' : ' and its fee will not be charged again')
-                    . '. The campaign fee was not charged. This is not something you need to correct: our team has the technical details. Please try again later or contact support.');
+                    . '. The campaign fee was not charged. Your saved details remain and support is reviewing the technical reason. You can try again later or contact support.');
         } catch (\RuntimeException $e) {
             // An internal refusal on our side (e.g. a messaging type with no
             // carrier mapping): never a raw server error, and never blamed on

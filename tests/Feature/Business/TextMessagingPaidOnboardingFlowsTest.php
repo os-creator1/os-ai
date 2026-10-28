@@ -115,7 +115,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
             'opt_in_method' => 'Customers tick an optional SMS box on https://sunsetbooths.example/contact before sending an inquiry.',
             'sample_message_1' => 'Sunset Photo Booths: thanks for your inquiry, your quote is on its way. Reply STOP to opt out.',
             'sample_message_2' => 'Sunset Photo Booths: reminder that your event is this weekend. Reply STOP to opt out.',
-            'privacy_policy_url' => 'https://sunsetbooths.example/privacy', 'terms_url' => 'https://sunsetbooths.example/sms-terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'privacy_policy_url' => 'https://sunsetbooths.example/privacy', 'terms_url' => 'https://sunsetbooths.example/sms-terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
             'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
         ], $overrides);
@@ -834,7 +834,10 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $message = $this->submitLowVolume();
 
         $this->assertStringContainsString('Step 1 of 2', $message);
-        $this->assertStringContainsString('not something you need to correct', $message);
+        $this->assertStringContainsString('carrier could not accept this step', $message);
+        $this->assertStringContainsString('Your saved details remain', $message);
+        $this->assertStringNotContainsString('not something you need to correct', $message);
+        $this->assertStringNotContainsString('need to correct', $message);
         $this->assertStringContainsString('nothing was charged', $message);
         $this->assertStringNotContainsString('review your details', $message);
         $this->assertStringNotContainsString('10015', $message);
@@ -884,7 +887,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->fund(40_000_000);
         $this->post($this->url('registration.start-local-verification'));
 
-        foreach ([['support_contact' => '', 'support_contact_confirmed' => '1'], ['support_contact' => 'help@fixture.example', 'support_contact_confirmed' => null], ['support_contact' => 'not a contact', 'support_contact_confirmed' => '1']] as $overrides) {
+        foreach ([['support_contact' => '', 'support_contact_confirmed' => '1'], ['support_contact' => 'help@fixture.example', 'support_contact_confirmed' => null, 'support_contact_confirmed_for' => ''], ['support_contact' => 'not a contact', 'support_contact_confirmed' => '1']] as $overrides) {
             $this->post($this->url('registration.update'), $this->payload($overrides));
             $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
         }
@@ -893,6 +896,64 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertSame(40_000_000, $this->balance());
         $row = BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
         $this->assertNotSame('hi@sunsetbooths.example', $row->support_contact); // never silently the brand contact
+    }
+
+    public function test_a_saved_brand_with_a_failed_campaign_is_shown_as_brand_registered_and_priced_without_the_paid_brand_fee(): void
+    {
+        $this->startLowVolume();
+        $this->campaignCreateStatus = 422;
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+
+        $html = str_replace('&#039;', "'", $this->get($this->url('show'))->assertOk()->getContent());
+
+        $this->assertStringContainsString('data-role="brand-saved-badge"', $html);
+        $this->assertStringContainsString('Brand registered', $html);
+        $this->assertStringNotContainsString('>Not started<', $html);
+        $this->assertStringContainsString('data-role="brand-saved-note"', $html);
+        $this->assertStringContainsString("isn't due again", $html);
+        $this->assertStringNotContainsString('Nothing has been charged or sent to the carrier yet', $html);
+        preg_match('#data-role="brand-saved-note">(.*?)</span>#s', $html, $note);
+        $this->assertStringNotContainsString('refund', strtolower($note[1] ?? 'x'));
+
+        // The upfront preview is only the campaign prepayment.
+        $preview = app(\App\Library\Messaging\MessagingChargePreview::class)->forLocalRegistration($this->business, 'low_volume_mixed');
+        $this->assertTrue($preview['one_time']['brand_already_paid']);
+        $this->assertSame(self::LVM_REGISTRATION, $preview['one_time']['micro']);
+        $this->assertStringContainsString('no new brand fee', $preview['one_time']['detail']);
+
+    }
+
+    public function test_changing_a_confirmed_support_contact_without_reaffirming_it_leaves_the_new_one_unconfirmed(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->post($this->url('registration.start-local-verification'));
+
+        $row = fn () => BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
+        $confirmed = ['support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example'];
+
+        $this->post($this->url('registration.update'), $this->payload($confirmed));
+        $this->assertNotNull($row()->support_contact_confirmed_at);
+        $firstConfirmedAt = $row()->support_contact_confirmed_at;
+
+        // Unchanged and still ticked: stays confirmed (same confirmation).
+        $this->post($this->url('registration.update'), $this->payload($confirmed));
+        $this->assertEquals($firstConfirmedAt, $row()->support_contact_confirmed_at);
+
+        // Edited while the stale tick is still posted (no deliberate re-confirmation).
+        $this->post($this->url('registration.update'), $this->payload(['support_contact' => 'new@fixture.example'] + $confirmed));
+        $this->assertSame('new@fixture.example', $row()->support_contact);
+        $this->assertNull($row()->support_contact_confirmed_at);
+
+        // Deliberately reaffirmed for the new value.
+        $this->post($this->url('registration.update'), $this->payload(['support_contact' => 'new@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'new@fixture.example']));
+        $this->assertNotNull($row()->support_contact_confirmed_at);
+
+        // The page carries the handshake and clears the tick when the contact is edited.
+        $html = $this->get($this->url('show'))->getContent();
+        $this->assertStringContainsString('name="support_contact_confirmed_for"', $html);
+        $this->assertStringContainsString("$('#support_contact').on('input'", $html);
     }
 
     public function test_a_price_change_between_search_and_order_requires_the_customer_to_confirm_again(): void

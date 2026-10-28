@@ -63,7 +63,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'sample_message_1' => 'Sunset Photo Booths: thanks for your inquiry, your quote is on its way. Reply STOP to opt out.',
             'sample_message_2' => 'Sunset Photo Booths: reminder that your event is this weekend. Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/privacy',
-            'terms_url' => 'https://sunsetbooths.example/sms-terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'terms_url' => 'https://sunsetbooths.example/sms-terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
             'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
         ], $overrides);
@@ -170,7 +170,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'consent_confirmations' => ['stop_help'],
             'sample_message_1' => 'Sunset Photo Booths: 20% off all packages this month! Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/terms',
-            'terms_url' => 'https://sunsetbooths.example/terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'terms_url' => 'https://sunsetbooths.example/terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
             'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'campaign_description' => 'Sunset Photo Booths sends [describe your messages] to customers.',
         ]));

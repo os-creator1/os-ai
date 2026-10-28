@@ -69,7 +69,7 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
     {
         $registration = BusinessMessagingRegistration::create([
             'business_id' => $business->id, 'number_type' => 'local', 'entity_type' => 'ein', 'use_case' => 'customer_care', 'region' => 'OR', 'brand_vertical' => 'ENTERTAINMENT', 'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner',
-            'campaign_description' => 'Harbor Lane sends appointment reminders.', 'legal_business_name' => 'Harbor Lane Studios LLC', 'contact_email' => 'owner@harborlane.example', 'contact_phone' => '+15035550100', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_at' => '2026-01-01 00:00:00', 'status' => 'not_started',
+            'campaign_description' => 'Harbor Lane sends appointment reminders.', 'legal_business_name' => 'Harbor Lane Studios LLC', 'contact_email' => 'owner@harborlane.example', 'contact_phone' => '+15035550100', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00', 'status' => 'not_started',
         ]);
 
         return MessagingRegistrationSubmission::fromModel($registration->fresh());

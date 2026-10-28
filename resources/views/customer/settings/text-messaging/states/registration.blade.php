@@ -21,6 +21,9 @@
         'description' => 'One more step before this number is ready to send and receive texts.',
     ])
 
+    @php($brandSaved = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local
+        && ($status ?? 'not_started') === 'not_started'
+        && trim((string) ($registration->provider_brand_id ?? '')) !== '')
     @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
         {{-- The way out is at the TOP, not buried under a long form. Stepping back only
              pauses local setup: every saved detail stays, and nothing is deleted. A
@@ -35,7 +38,11 @@
                 <input type="hidden" name="then" value="toll_free">
                 <x-button type="submit" variant="primary" data-role="choose-toll-free-instead">Choose toll-free instead (recommended)</x-button>
             </form>
-            <span class="text-caption text-muted">Your business details stay saved. Nothing has been charged or sent to the carrier yet.</span>
+            @if($brandSaved)
+                <span class="text-caption text-muted" data-role="brand-saved-note">Your business details stay saved. Your carrier brand is already registered and its fee was paid to the carrier; it isn't due again. Your campaign hasn't been submitted or charged yet.</span>
+            @else
+                <span class="text-caption text-muted">Your business details stay saved. Nothing has been charged or sent to the carrier yet.</span>
+            @endif
         </div>
     @endif
 
@@ -63,7 +70,11 @@
                         <x-badge variant="success">Approved</x-badge>
                         @break
                     @default
-                        <x-badge variant="neutral">Not started</x-badge>
+                        @if($brandSaved)
+                            <x-badge variant="info" data-role="brand-saved-badge">Brand registered — campaign not yet submitted</x-badge>
+                        @else
+                            <x-badge variant="neutral">Not started</x-badge>
+                        @endif
                 @endswitch
             </dd>
         </dl>
@@ -243,6 +254,7 @@
                         <input type="text" class="form-control @error('support_contact') is-invalid @enderror" id="support_contact" name="support_contact"
                                value="{{ old('support_contact', $registration->support_contact) }}" maxlength="191" placeholder="support@yourbusiness.com or (555) 555-0100">
                         <div class="text-caption text-muted">Your Business's own customer-facing email or phone. It appears in the HELP reply your customers get, so it must be one you publish and answer. We never fill this in for you.</div>
+                        <input type="hidden" id="support_contact_confirmed_for" name="support_contact_confirmed_for" value="{{ $registration->support_contact_confirmed_at !== null ? $registration->support_contact : '' }}">
                         <div class="form-check mt-1">
                             <input type="checkbox" class="form-check-input" id="support_contact_confirmed" name="support_contact_confirmed" value="1"
                                    {{ old('support_contact_confirmed', $registration->support_contact_confirmed_at !== null) ? 'checked' : '' }}>
@@ -455,6 +467,15 @@
 @section('page-script')
     <script>
         $(document).ready(function () {
+            // The confirmation belongs to the exact contact it was given for:
+            // editing the contact clears it, and ticking records the value.
+            $('#support_contact').on('input', function () {
+                $('#support_contact_confirmed').prop('checked', false);
+                $('#support_contact_confirmed_for').val('');
+            });
+            $('#support_contact_confirmed').on('change', function () {
+                $('#support_contact_confirmed_for').val(this.checked ? $.trim($('#support_contact').val()) : '');
+            });
             function syncLowVolume() {
                 var on = $('input[name="use_case"]:checked').val() === 'low_volume_mixed';
                 $('[data-low-volume]').prop('hidden', !on);
