@@ -139,6 +139,11 @@ return [
      */
     'number_sms_addon_monthly_cost_micro' => (int) env('MESSAGING_NUMBER_SMS_ADDON_MONTHLY_COST_MICRO', 100000),
 
+    // Disclosure-only: the possible one-time carrier campaign review fee shown
+    // before a customer submits. It is never charged at submit time; if the
+    // carrier bills it, it is charged explicitly via messaging:charge-carrier-fee.
+    'ten_dlc_review_fee_micro' => (int) env('MESSAGING_10DLC_REVIEW_FEE_DISCLOSURE_MICRO', 15000000),
+
     /** Months of campaign fees Telnyx bills upfront at registration (covered by the registration price). */
     'ten_dlc_prepaid_months' => (int) env('MESSAGING_10DLC_PREPAID_MONTHS', 3),
 

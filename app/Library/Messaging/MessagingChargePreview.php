@@ -123,6 +123,11 @@ final class MessagingChargePreview
                 'detail' => 'carrier brand fee ' . $brand['text'] . ' + first three campaign months ' . $prepaid['text'],
             ] : null,
             'recurring' => $recurring,
+            // Disclosure only, never part of the submit-time total or the
+            // sufficiency check: the carrier may bill a one-time campaign
+            // review, which is charged separately, explicitly and at cost
+            // (messaging:charge-carrier-fee) and never silently.
+            'possible_review_fee' => ['micro' => ($reviewMicro = max(0, (int) config('messaging.ten_dlc_review_fee_micro', 15000000))), 'text' => DashboardMoney::format((string) $reviewMicro, 'USD')],
             'configured' => $configured,
             'balance_text' => DashboardMoney::format((string) $balanceMicro, $wallet?->currency?->code),
             'sufficient' => $configured && $balanceMicro >= $totalMicro,

@@ -585,6 +585,30 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertStringContainsString('value="low_volume_mixed"', $this->get($this->url('show'))->getContent());
     }
 
+    public function test_low_volume_form_discloses_brand_prepayment_and_possible_review_fee_without_charging_or_enabling_standard_mixed(): void
+    {
+        $this->configureRates();
+        config(['messaging.ten_dlc_mixed_enabled' => false]);
+        $before = $this->balance();
+        $this->telnyx();
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+
+        $html = str_replace('&#039;', "'", $this->get($this->url('show'))->getContent());
+        $this->assertStringContainsString('value="low_volume_mixed"', $html);
+        $this->assertStringNotContainsString('value="mixed"', $html);
+        $this->assertStringContainsString('data-role="possible-review-fee"', $html);
+        $this->assertStringContainsString('up to USD 15.00', $html);
+        $this->assertStringContainsString('USD 9.00', $html);
+        $this->assertStringContainsString('carrier brand fee USD 4.50 per brand', $html);
+        $this->assertStringContainsString('not part of the amount charged when you submit', $html);
+
+        $preview = app(\App\Library\Messaging\MessagingChargePreview::class)->forLocalRegistration($this->business, 'low_volume_mixed');
+        $this->assertSame(15_000_000, $preview['possible_review_fee']['micro']);
+        $this->assertSame(self::BRAND + self::LVM_REGISTRATION, $preview['one_time']['micro']);
+        $this->assertSame($before, $this->balance());
+    }
+
     // -----------------------------------------------------------------
     // Navigation: the customer is never trapped in local registration.
     // -----------------------------------------------------------------
