@@ -27,6 +27,8 @@ use Tests\TestCase;
  */
 class TextMessagingPaidOnboardingFlowsTest extends TestCase
 {
+    use \Tests\Support\CompletesTenDlcStages;
+
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
@@ -49,6 +51,10 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     private string $tfStatus = 'In Progress';
     private string $campaignStatus = 'TCR_PENDING';
     private bool $lvmEligible = true;
+    private int $brandGetHttp = 200;
+    private string $brandIdentity = 'VERIFIED';
+    private string $brandRegistrationStatus = 'OK';
+    private ?int $qualificationHttp = null;
     private int $brandCreateStatus = 200;
     /** The mocked carrier quote for the number (cost_information strings). */
     private array $numberCost = ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD'];
@@ -131,6 +137,9 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
                 : Http::response(['errors' => []], $this->orderStatus),
             'api.telnyx.com/v2/messaging_tollfree/verification/requests/*' => fn () => Http::response(['id' => '8b2f3a52-2a62-4f4e-a3f1-5d3c7a9c1e10', 'verificationRequestId' => 'a6e0-fixture', 'verificationStatus' => $this->tfStatus, 'businessName' => 'Sunset Photo Booths LLC']),
             'api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['id' => 'tfv_flow_1', 'verificationRequestId' => 'vr_flow_1', 'verificationStatus' => 'In Progress', 'businessName' => 'Sunset Photo Booths LLC']),
+            'api.telnyx.com/v2/10dlc/brand/*' => fn () => $this->brandGetHttp === 200
+                ? Http::response(['brandId' => 'brand_flow_1', 'tcrBrandId' => 'BB84JS8', 'identityStatus' => $this->brandIdentity, 'status' => $this->brandRegistrationStatus])
+                : Http::response(['errors' => [['code' => '20001', 'title' => 'busy']]], $this->brandGetHttp),
             'api.telnyx.com/v2/10dlc/brand' => fn () => $this->brandCreateStatus === 200
                 ? Http::response(['brandId' => 'brand_flow_1', 'tcrBrandId' => 'BXYZ', 'displayName' => 'Sunset Photo Booths LLC', 'identityStatus' => 'UNVERIFIED', 'status' => 'REGISTRATION_PENDING', 'mock' => false])
                 : Http::response(['errors' => [['code' => '10015', 'title' => 'Invalid ein 12-3456789', 'source' => ['pointer' => '/body/ein']]]], $this->brandCreateStatus, ['x-request-id' => 'req-brand-1']),
@@ -138,9 +147,11 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
                 ? Http::response(['campaignId' => 'camp_flow_1', 'brandId' => 'brand_flow_1', 'usecase' => 'LOW_VOLUME', 'subUsecases' => ['CUSTOMER_CARE', 'MARKETING'], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => 'TCR_PENDING', 'submissionStatus' => 'CREATED'])
                 : Http::response(['errors' => [['code' => '10002', 'title' => 'Invalid sample']]], $this->campaignCreateStatus),
             'api.telnyx.com/v2/10dlc/campaign/*' => fn () => Http::response(['campaignId' => 'camp_flow_1', 'brandId' => 'brand_flow_1', 'usecase' => 'CUSTOMER_CARE', 'subUsecases' => [], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => $this->campaignStatus, 'status' => 'ACTIVE', 'submissionStatus' => 'CREATED']),
-            'api.telnyx.com/v2/10dlc/campaignBuilder/brand/*' => fn () => $this->lvmEligible
+            'api.telnyx.com/v2/10dlc/campaignBuilder/brand/*' => fn () => $this->qualificationHttp !== null
+                ? Http::response(['errors' => [['code' => '10001', 'title' => 'x']]], $this->qualificationHttp)
+                : ($this->lvmEligible
                 ? Http::response($this->qualification)
-                : Http::response(['errors' => [['code' => '10016', 'title' => 'Brand not eligible']]], 422),
+                : Http::response(['errors' => [['code' => '10016', 'title' => 'Brand not eligible']]], 422)),
             '*' => Http::response(['data' => []]),
         ]);
     }
@@ -196,7 +207,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $balanceAfterPurchase = $this->balance();
         $reservationsAfterPurchase = DB::table('business_usage_reservations')->count();
         $this->post($this->url('registration.update'), $this->payload());
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $registration = BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->status);
         $this->assertSame('tfv_flow_1', $registration->provider_registration_id);
@@ -205,7 +216,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertSame(1, $this->posted('/messaging_tollfree/verification/requests'));
 
         // Duplicate verification click: refused, no second request.
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(1, $this->posted('/messaging_tollfree/verification/requests'));
 
         // Rejected by the carrier, then corrected and resubmitted: a fresh
@@ -214,7 +225,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         app(BusinessMessagingRegistrationService::class)->refreshAllPending();
         $this->assertSame(MessagingRegistrationStatus::Rejected, $registration->fresh()->status);
 
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->fresh()->status);
         $this->assertSame($balanceAfterPurchase, $this->balance());
 
@@ -233,23 +244,28 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->post($this->url('registration.update'), $this->payload());
 
         $page = $this->get($this->url('show'))->getContent();
-        $this->assertStringContainsString('USD 34.50', $page);
+        // Two charges at two times, never one combined "34.50".
+        $this->assertStringContainsString('data-role="fee-due-now"', $page);
+        $this->assertStringContainsString('USD 4.50', $page);
+        $this->assertStringContainsString('data-role="fee-due-at-campaign"', $page);
+        $this->assertStringContainsString('USD 30.00', $page);
+        $this->assertStringNotContainsString('USD 34.50', $page);
         $this->assertStringContainsString('USD 10.00', $page);
 
         // Missing funds: refused before any carrier request.
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error')
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error')
             ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'enough funds'));
         $this->assertSame(0, $this->posted('/10dlc/brand'));
 
         // Funded: charged exactly once; brand and campaign each created once.
         $this->fund(60_000_000);
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame(60_000_000 - self::BRAND - self::REGISTRATION, $this->balance());
         $this->assertSame(1, $this->posted('/10dlc/brand'));
         $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
 
         // Duplicate click: refused, no second fee or request.
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(60_000_000 - self::BRAND - self::REGISTRATION, $this->balance());
         $this->assertSame(1, $this->posted('/10dlc/brand'));
 
@@ -337,7 +353,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         // Switch: buy a toll-free number instead; nothing is retyped or deleted.
         $this->order($this->search('toll_free'))->assertSessionHas('status', 'success');
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
 
         $registration = BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
         $this->assertSame('toll_free', $registration->number_type->value);
@@ -370,7 +386,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->fund(60_000_000);
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
-        $this->post($this->url('registration.submit'));
+        $this->twoStageSubmit($this->url('registration.submit'));
         $this->campaignStatus = 'MNO_PROVISIONED';
         app(BusinessMessagingRegistrationService::class)->refreshAllPending();
         $this->order($this->search('local', '512'));
@@ -394,7 +410,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->fund(60_000_000);
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
-        $this->post($this->url('registration.submit'));
+        $this->twoStageSubmit($this->url('registration.submit'));
         $this->campaignStatus = 'MNO_PROVISIONED';
         app(BusinessMessagingRegistrationService::class)->refreshAllPending();
         $this->order($this->search('local', '512'));
@@ -476,10 +492,11 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         // The page shows the Low Volume Mixed prices, not the standard ones.
         $page = $this->get($this->url('show'))->getContent();
         $this->assertStringContainsString('Low Volume Mixed', $page);
-        $this->assertStringContainsString('USD 9.00', $page);
+        $this->assertStringContainsString('USD 4.50', $page);
+        $this->assertStringContainsString('data-role="fee-due-at-campaign"', $page);
         $this->assertStringContainsString('USD 1.50', $page);
 
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
 
         // Charged the Low Volume Mixed registration price exactly once — not the standard one.
         $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
@@ -490,7 +507,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         Http::assertSent(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), '/10dlc/campaignBuilder/brand/brand_flow_1/usecase/LOW_VOLUME'));
 
         // Duplicate click: refused, nothing more charged or sent.
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
         $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
 
@@ -523,7 +540,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->lowVolumePayload());
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
 
         $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // the carrier brand exists, so its fee stays earned
         $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
@@ -531,7 +548,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         // Eligibility later granted: retry reuses the brand (no second brand) and charges once.
         $this->lvmEligible = true;
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame(1, $this->posted('/10dlc/brand'));
         $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
     }
@@ -548,7 +565,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $page = $this->get($this->url('show'))->getContent();
         $this->assertStringContainsString("this campaign type isn't set up", str_replace('&#039;', "'", $page));
 
-        $this->post($this->url('registration.submit'))->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing'));
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing'));
         $this->assertSame(40_000_000, $this->balance());
         $this->assertSame(0, $this->posted('/10dlc/brand'));
     }
@@ -562,20 +579,20 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         // No purposes chosen, missing attestation.
         $this->post($this->url('registration.update'), $this->lowVolumePayload(['message_purposes' => [], 'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS)]));
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $page = str_replace('&#039;', "'", $this->get($this->url('show'))->getContent());
         $this->assertStringContainsString('only for a business that really sends both', $page);
         $this->assertStringContainsString('small sender', $page);
 
         // Both purposes chosen but only promotional samples: the care sample is missing.
         $this->post($this->url('registration.update'), $this->lowVolumePayload(['sample_message_1' => 'Sunset Photo Booths: 20% off specials today. Reply STOP to opt out.']));
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(0, $this->posted('/10dlc/brand'));
         $this->assertSame(40_000_000, $this->balance());
 
         // A single purpose is never "mixed": refused, not relabelled to get a cheaper fee.
         $this->post($this->url('registration.update'), $this->lowVolumePayload(['message_purposes' => ['care']]));
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertStringContainsString('only for a business that really sends both', str_replace('&#039;', "'", $this->get($this->url('show'))->getContent()));
         $this->assertSame(0, $this->posted('/10dlc/brand'));
         $this->assertSame(40_000_000, $this->balance());
@@ -602,8 +619,9 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertStringNotContainsString('value="mixed"', $html);
         $this->assertStringContainsString('data-role="possible-review-fee"', $html);
         $this->assertStringContainsString('USD 15.00 per carrier review, if sent for downstream review; additional review fees may apply on resubmission', $html);
-        $this->assertStringContainsString('USD 9.00', $html);
-        $this->assertStringContainsString('carrier brand fee USD 4.50 per brand', $html);
+        $this->assertStringContainsString('data-role="fee-due-now"', $html);
+        $this->assertStringContainsString('carrier brand fee — USD 4.50', $html);
+        $this->assertStringContainsString('data-role="fee-due-at-campaign"', $html);
         $this->assertStringContainsString('not part of the amount charged when you submit', $html);
 
         $preview = app(\App\Library\Messaging\MessagingChargePreview::class)->forLocalRegistration($this->business, 'low_volume_mixed');
@@ -673,7 +691,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         $registration = BusinessMessagingRegistration::where('business_id', $this->business->id)->first();
         $this->assertSame('Sunset Photo Booths LLC', $registration->legal_business_name);
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame('toll_free', $registration->fresh()->number_type->value);
         $this->assertSame(0, $this->posted('/10dlc/brand'));
         $this->assertSame(20_000_000 - self::PURCHASE, $this->balance());
@@ -686,7 +704,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->fund(60_000_000);
         $this->post($this->url('registration.start-local-verification'));
         $this->post($this->url('registration.update'), $this->payload());
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $balance = $this->balance();
 
         $this->post($this->url('registration.leave-local-setup'))->assertSessionHas('status', 'error')
@@ -701,7 +719,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     /** @return array{0: string} submits a fully valid Low Volume Mixed registration and returns the flash message */
     private function submitLowVolume(): string
     {
-        $this->post($this->url('registration.submit'));
+        $this->twoStageSubmit($this->url('registration.submit'));
 
         return (string) session('message');
     }
@@ -719,11 +737,10 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     {
         $this->startLowVolume();
 
-        // First refusal: this attempt created the brand, so its fee was earned.
+        // Stage 1 already created and charged the brand, so a refusal at stage 2 never claims a new brand fee.
         $this->lvmEligible = false;
         $refused = $this->submitLowVolume();
-        $this->assertStringContainsString('brand fee was already charged', $refused);
-        $this->assertStringContainsString('not refunded', $refused);
+        $this->assertStringContainsString('no new brand fee was charged', $refused);
         $this->assertStringContainsString('campaign fee was not charged', $refused);
         $this->assertStringNotContainsString('Nothing was charged', $refused);
 
@@ -758,7 +775,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $message = $this->submitLowVolume();
         $this->assertStringContainsString('at most 1', $message);
         $this->assertStringContainsString('None of your purposes was dropped', $message);
-        $this->assertStringContainsString('brand fee was already charged', $message);
+        $this->assertStringContainsString('no new brand fee was charged', $message);
         $this->assertStringContainsString('campaign fee was not charged', $message);
         $this->assertStringNotContainsString('Nothing was charged', $message);
 
@@ -772,7 +789,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         // Within limits: both purposes are sent exactly as declared.
         $this->qualification['minSubUsecases'] = 2;
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         Http::assertSent(fn ($request) => $request->method() === 'POST' && str_ends_with($request->url(), '/10dlc/campaignBuilder')
             && $request['subUsecases'] === ['CUSTOMER_CARE', 'MARKETING']);
         $this->assertSame(1, $this->posted('/10dlc/brand'));
@@ -803,14 +820,14 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->startLowVolume();
         $this->campaignCreateStatus = 422;
 
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // the carrier brand exists, so its fee stays earned
 
         $this->campaignCreateStatus = 200;
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame(1, $this->posted('/10dlc/brand'));
         $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
     }
 
@@ -855,7 +872,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         // Provider recovers: the same submission goes through and is charged once.
         $this->brandCreateStatus = 200;
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'success');
         $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
     }
 
@@ -867,7 +884,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $first = $this->submitLowVolume();
         $this->assertStringContainsString('Step 2 of 2', $first);
         $this->assertStringContainsString('brand is registered and saved', $first);
-        $this->assertStringContainsString('its fee was charged when it was created', $first);
+        $this->assertStringContainsString('its fee will not be charged again', $first);
         $this->assertStringContainsString('campaign fee was not charged', $first);
         $this->assertStringNotContainsString('review your details', $first);
         $this->assertSame(40_000_000 - self::BRAND, $this->balance());
@@ -875,7 +892,6 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         // Retry on the saved brand: no new brand fee is claimed or taken.
         $retry = $this->submitLowVolume();
         $this->assertStringContainsString('its fee will not be charged again', $retry);
-        $this->assertStringNotContainsString('was charged when it was created', $retry);
         $this->assertSame(40_000_000 - self::BRAND, $this->balance());
         $this->assertSame(1, $this->posted('/10dlc/brand'));
     }
@@ -889,7 +905,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         foreach ([['support_contact' => '', 'support_contact_confirmed' => '1'], ['support_contact' => 'help@fixture.example', 'support_contact_confirmed' => null, 'support_contact_confirmed_for' => ''], ['support_contact' => 'not a contact', 'support_contact_confirmed' => '1']] as $overrides) {
             $this->post($this->url('registration.update'), $this->payload($overrides));
-            $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+            $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         }
 
         $this->assertSame(0, $this->posted('/10dlc/brand'));
@@ -902,19 +918,27 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     {
         $this->startLowVolume();
         $this->campaignCreateStatus = 422;
-        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->twoStageSubmit($this->url('registration.submit'))->assertSessionHas('status', 'error');
         $this->assertSame(40_000_000 - self::BRAND, $this->balance());
 
         $html = str_replace('&#039;', "'", $this->get($this->url('show'))->assertOk()->getContent());
 
-        $this->assertStringContainsString('data-role="brand-saved-badge"', $html);
-        $this->assertStringContainsString('Brand registered', $html);
-        $this->assertStringNotContainsString('>Not started<', $html);
-        $this->assertStringContainsString('data-role="brand-saved-note"', $html);
-        $this->assertStringContainsString("isn't due again", $html);
+        // The unified progress screen shows the real saved state of both stages.
+        $this->assertStringContainsString('data-role="registration-progress"', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="verified"#', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="issue"#', $html);
+        $this->assertStringContainsString('Business verified', $html);
+        $this->assertStringContainsString('Submission issue', $html);
+        $this->assertStringContainsString('data-role="refresh-status"', $html);
+        $this->assertStringContainsString('Last carrier status check', $html);
+
+        // No contradictory wording or actions once the carrier holds a brand.
         $this->assertStringNotContainsString('Nothing has been charged or sent to the carrier yet', $html);
-        preg_match('#data-role="brand-saved-note">(.*?)</span>#s', $html, $note);
-        $this->assertStringNotContainsString('refund', strtolower($note[1] ?? 'x'));
+        $this->assertStringNotContainsString('data-role="back-to-number-choices"', $html);
+        $this->assertStringNotContainsString('data-role="choose-toll-free-instead"', $html);
+        $this->assertStringNotContainsString('One more step', $html);
+        $this->assertStringContainsString('data-role="fee-already-paid"', $html);
+        $this->assertStringContainsString('is not due again', $html);
 
         // The upfront preview is only the campaign prepayment.
         $preview = app(\App\Library\Messaging\MessagingChargePreview::class)->forLocalRegistration($this->business, 'low_volume_mixed');
@@ -954,6 +978,301 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $html = $this->get($this->url('show'))->getContent();
         $this->assertStringContainsString('name="support_contact_confirmed_for"', $html);
         $this->assertStringContainsString("$('#support_contact').on('input'", $html);
+    }
+
+    // -----------------------------------------------------------------
+    // Two-stage 10DLC lifecycle: business verification, then campaign.
+    // -----------------------------------------------------------------
+
+    private function refreshUrl(): string
+    {
+        return $this->url('registration.refresh');
+    }
+
+    private function row(): BusinessMessagingRegistration
+    {
+        return BusinessMessagingRegistration::where('business_id', $this->business->id)->firstOrFail();
+    }
+
+    /** The 60-second refresh floor is about customers hammering the button, not about the tests. */
+    private function refreshNow(): void
+    {
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_status_checked_at' => null, 'campaign_status_checked_at' => null]);
+        $this->post($this->refreshUrl());
+    }
+
+    private function showHtml(): string
+    {
+        return str_replace('&#039;', "'", $this->get($this->url('show'))->assertOk()->getContent());
+    }
+
+    public function test_a_new_brand_moves_from_processing_to_verified_and_only_then_unlocks_an_authorized_campaign(): void
+    {
+        $this->startLowVolume();
+        $this->brandIdentity = 'UNVERIFIED';
+
+        // Stage 1: one brand, one fee, then the progress screen (never an editable form).
+        $this->post($this->url('registration.submit'))->assertRedirect($this->url('show'))->assertSessionHas('status', 'success');
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $this->row()->status);
+        $this->assertSame('processing', $this->row()->brand_status);
+        $this->assertNull($this->row()->provider_campaign_id);
+        $this->assertSame('BXYZ', $this->row()->provider_brand_tcr_id); // saved from the brand response
+
+        $html = $this->showHtml();
+        $this->assertStringContainsString('Business verification in progress', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="not_started"#', $html);
+        $this->assertStringNotContainsString('Failed', $html);
+        $this->assertStringNotContainsString('data-role="back-to-number-choices"', $html);
+        $this->assertStringNotContainsString('data-role="submit-campaign"', $html);
+
+        // HTTP 200 / "OK" with an UNVERIFIED identity is NOT verification.
+        $this->refreshNow();
+        $this->assertSame('processing', $this->row()->brand_status);
+        $this->assertNotNull($this->row()->provider_brand_tcr_id);
+
+        // The campaign stage refuses to start, without any carrier call or charge.
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('status', 'info');
+        $this->assertSame(0, $this->posted('/campaignBuilder'));
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+
+        // The carrier verifies the business.
+        $this->brandIdentity = 'VERIFIED';
+        $this->refreshNow();
+        $this->assertSame('verified', $this->row()->brand_status);
+        $html = $this->showHtml();
+        $this->assertStringContainsString('Business verified', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="ready"#', $html);
+        $this->assertStringContainsString('data-role="campaign-authorization"', $html);
+
+        // Never submitted automatically: the customer must authorize the fees.
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(0, $this->posted('/campaignBuilder'));
+
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertRedirect($this->url('show'))
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'Campaign submitted — awaiting carrier review'));
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
+        $this->assertSame('camp_flow_1', $this->row()->provider_campaign_id); // saved before the UI says submitted
+        $this->assertSame(MessagingRegistrationStatus::Pending, $this->row()->status);
+
+        $html = $this->showHtml();
+        $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="under_review"#', $html);
+        $this->assertStringContainsString('Campaign submitted — awaiting carrier review', $html);
+        $this->assertStringNotContainsString('One more step', $html);
+        $this->assertStringNotContainsString('data-role="choose-toll-free-instead"', $html);
+        $this->assertStringNotContainsString('Nothing has been charged or sent to the carrier yet', $html);
+
+        // Replays never create a second brand or campaign, nor charge again.
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('status', 'error');
+        $this->refreshNow();
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
+    }
+
+    public function test_an_eligibility_400_before_verification_is_a_temporary_issue_never_permanent_ineligibility(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        // The page believed the brand verified, but the carrier still says it is not.
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_status' => 'verified']);
+        $this->brandIdentity = 'UNVERIFIED';
+        $this->qualificationHttp = 400;
+
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'yet') && ! str_contains($m, 'not eligible'));
+        $row = $this->row();
+        $this->assertFalse($row->campaign_issue_permanent);
+        $this->assertSame('processing', $row->brand_status);        // sent back to verification, not failed
+        $this->assertNull($row->provider_campaign_id);
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // the campaign hold was released
+
+        // Once the carrier verifies the brand and answers normally, the same campaign goes through, charged once.
+        $this->qualificationHttp = null;
+        $this->brandIdentity = 'VERIFIED';
+        $this->refreshNow();
+        $this->assertNull($this->row()->campaign_issue);
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('status', 'success');
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
+    }
+
+    public function test_temporary_carrier_failures_recover_without_duplicate_brands_or_charges(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+
+        // A rate limit / server error while checking the brand is not a verdict.
+        foreach ([429, 500, 503] as $http) {
+            $this->brandGetHttp = $http;
+            $this->refreshNow();
+            $this->assertSame('processing', $this->row()->brand_status, "HTTP {$http}");
+        }
+
+        $this->brandGetHttp = 200;
+        $this->refreshNow();
+        $this->assertSame('verified', $this->row()->brand_status);
+
+        // A carrier outage while qualifying: temporary, the hold is released, a retry succeeds.
+        foreach ([429, 503] as $http) {
+            $this->qualificationHttp = $http;
+            $this->post($this->url('registration.submit'), ['authorize_campaign' => '1']);
+            $this->assertFalse($this->row()->campaign_issue_permanent, "HTTP {$http}");
+            $this->assertNotNull($this->row()->campaign_issue);
+            $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+        }
+
+        $this->qualificationHttp = null;
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('status', 'success');
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(1, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
+        $this->assertNull($this->row()->campaign_issue);
+    }
+
+    public function test_an_unverified_or_failed_brand_surfaces_needs_attention_truthfully_and_can_recover(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+
+        // Carrier says registration failed: Needs attention, no raw payload shown.
+        $this->brandRegistrationStatus = 'REGISTRATION_FAILED';
+        $this->refreshNow();
+        $this->assertSame('needs_attention', $this->row()->brand_status);
+        $html = $this->showHtml();
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="needs_attention"#', $html);
+        $this->assertStringContainsString('Needs attention', $html);
+        $this->assertStringNotContainsString('REGISTRATION_FAILED', $html);
+
+        // Still merely unverified long after creation: Needs attention, with polling still able to recover.
+        $this->brandRegistrationStatus = 'OK';
+        $this->brandIdentity = 'UNVERIFIED';
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_created_at' => now()->subDays(4), 'brand_status' => 'processing']);
+        $this->refreshNow();
+        $this->assertSame('needs_attention', $this->row()->brand_status);
+
+        $this->brandIdentity = 'VERIFIED';
+        $this->refreshNow();
+        $this->assertSame('verified', $this->row()->brand_status);
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+    }
+
+    public function test_the_scheduled_sweep_verifies_brands_and_tracks_campaigns_through_approval_or_rejection(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_status_checked_at' => null]);
+
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+        $this->assertSame('verified', $this->row()->brand_status);
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $this->row()->status); // a brand is never polled as a campaign
+
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1']);
+        $this->assertSame(MessagingRegistrationStatus::Pending, $this->row()->status);
+
+        // Rejected: specific "Needs correction", not a generic failure.
+        $this->campaignStatus = 'TCR_FAILED';
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $this->row()->status);
+        $html = $this->showHtml();
+        $this->assertStringContainsString('Needs correction', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="verified"#', $html);
+
+        // Approved only on the carrier-provisioned status.
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['status' => 'pending']);
+        $this->campaignStatus = 'TCR_ACCEPTED';
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+        $this->assertSame(MessagingRegistrationStatus::Pending, $this->row()->status);
+        $this->campaignStatus = 'MNO_PROVISIONED';
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+        $this->assertSame(MessagingRegistrationStatus::Approved, $this->row()->status);
+        $this->assertNotNull($this->row()->campaign_status_checked_at);
+    }
+
+    public function test_an_existing_pending_campaign_like_lumina_aura_is_represented_and_never_resubmitted_or_recharged(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(35_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+
+        // Production-shaped record created before this lifecycle existed: no brand_status at all.
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update([
+            'status' => 'pending', 'provider_brand_id' => 'brand_flow_1', 'provider_brand_tcr_id' => 'BB84JS8',
+            'provider_campaign_id' => 'camp_flow_1', 'brand_status' => null, 'submitted_at' => now()->subDay(),
+        ]);
+
+        $html = $this->showHtml();
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="verified"#', $html);
+        $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="under_review"#', $html);
+        $this->assertStringContainsString('BB84JS8', $html);
+        $this->assertStringContainsString('Refresh status', $html);
+        foreach (['data-role="back-to-number-choices"', 'data-role="choose-toll-free-instead"', 'Nothing has been charged or sent to the carrier yet', 'One more step', 'data-role="submit-campaign"', 'data-role="submit-business"'] as $absent) {
+            $this->assertStringNotContainsString($absent, $html);
+        }
+
+        // Neither submit nor refresh nor the sweep creates or charges anything, or resets the status.
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('status', 'error');
+        $this->refreshNow();
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(35_000_000, $this->balance());
+        $row = $this->row();
+        $this->assertSame(MessagingRegistrationStatus::Pending, $row->status);
+        $this->assertSame('brand_flow_1', $row->provider_brand_id);
+        $this->assertSame('camp_flow_1', $row->provider_campaign_id);
+        $this->assertNotNull($row->campaign_status_checked_at);
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $this->business->id)->count());
+    }
+
+    public function test_a_brand_only_record_is_tracked_as_a_brand_and_never_as_a_pending_campaign(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(35_500_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->payload());
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['provider_brand_id' => 'brand_flow_1', 'brand_status' => null]);
+
+        $this->assertMatchesRegularExpression('#data-role="stage-brand"\s+data-state="processing"#', $this->showHtml());
+        $this->refreshNow();
+
+        $row = $this->row();
+        $this->assertSame('verified', $row->brand_status);
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $row->status);
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(35_500_000, $this->balance());
+    }
+
+    public function test_the_progress_screen_only_acts_on_the_signed_in_businesses_registration(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        $before = $this->row()->brand_status_checked_at;
+
+        // Another Business's workspace/business uid in the URL is refused; nothing is refreshed.
+        $other = route('customer.workspaces.businesses.text-messaging.registration.refresh', [$this->workspace->uid, 'not-this-business']);
+        $this->assertContains($this->post($other)->getStatusCode(), [302, 403, 404]);
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertEquals($before, $this->row()->fresh()->brand_status_checked_at);
+    }
+
+    public function test_numbers_stay_blocked_until_the_campaign_is_approved(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        $this->refreshNow();
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1']);
+
+        // Brand verified and campaign merely under review: still the registration screen, no ready/number state.
+        $this->get($this->url('show'))->assertOk()->assertViewIs('customer.settings.text-messaging.states.registration');
+        $this->assertSame(0, BusinessMessagingNumber::query()->count());
     }
 
     public function test_a_price_change_between_search_and_order_requires_the_customer_to_confirm_again(): void

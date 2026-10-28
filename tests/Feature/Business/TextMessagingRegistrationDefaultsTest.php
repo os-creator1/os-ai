@@ -21,6 +21,8 @@ use Tests\TestCase;
  */
 class TextMessagingRegistrationDefaultsTest extends TestCase
 {
+    use \Tests\Support\CompletesTenDlcStages;
+
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
@@ -200,7 +202,18 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->post($this->updateUrl($workspace, $business), $this->payload());
         $this->post($submit)->assertSessionHas('status', 'success');
 
+        // Stage 1 only creates the brand; the campaign waits for verification and authorization.
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $registration->status);
+        $this->assertNotNull($registration->provider_brand_id);
+        $this->assertNull($registration->provider_campaign_id);
+        $this->post(str_replace('/registration/submit', '/registration/refresh', $submit));
+        $this->assertSame('verified', $registration->fresh()->brand_status);
+        $this->post($submit)->assertSessionHas('status', 'error'); // not authorized
+        $this->assertNull($registration->fresh()->provider_campaign_id);
+        $this->post($submit, ['authorize_campaign' => '1'])->assertSessionHas('status', 'success');
+
+        $registration = $registration->fresh();
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->status);
         $brandId = $registration->provider_brand_id;
 

@@ -1,0 +1,45 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        if (Schema::hasColumn('business_messaging_registrations', 'brand_status')) {
+            return;
+        }
+
+        Schema::table('business_messaging_registrations', function (Blueprint $table) {
+            // processing | verified | needs_attention. Null = not yet known (polled, shown as in progress).
+            $table->string('brand_status', 24)->nullable();
+            $table->string('provider_brand_tcr_id', 64)->nullable();
+            $table->string('brand_status_detail', 191)->nullable();
+            $table->timestamp('brand_created_at')->nullable();
+            $table->timestamp('brand_status_checked_at')->nullable();
+            $table->timestamp('campaign_status_checked_at')->nullable();
+            // A campaign eligibility/submission issue that did NOT create a campaign.
+            $table->string('campaign_issue', 255)->nullable();
+            $table->boolean('campaign_issue_permanent')->default(false);
+        });
+
+        // Existing records keep their real state: a registration that already
+        // created a campaign necessarily had a usable brand, so its brand
+        // stage is Verified. Brand-only rows stay unknown and are confirmed by
+        // the next provider status check. Nothing is resubmitted or reset.
+        DB::table('business_messaging_registrations')
+            ->whereNotNull('provider_campaign_id')
+            ->where('provider_campaign_id', '!=', '')
+            ->update(['brand_status' => 'verified']);
+    }
+
+    public function down(): void
+    {
+        Schema::table('business_messaging_registrations', function (Blueprint $table) {
+            $table->dropColumn(['brand_status', 'provider_brand_tcr_id', 'brand_status_detail', 'brand_created_at', 'brand_status_checked_at', 'campaign_status_checked_at', 'campaign_issue', 'campaign_issue_permanent']);
+        });
+    }
+};

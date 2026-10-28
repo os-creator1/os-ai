@@ -272,6 +272,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
 
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_1']]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_fixture_1']]),
         ]);
@@ -361,6 +362,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
 
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_no_number']]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_fixture_no_number']]),
         ]);
@@ -1009,6 +1011,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
 
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_2']]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_fixture_2']]),
         ]);
@@ -1058,6 +1061,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
 
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_9']]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::sequence()
                 ->push(['errors' => []], 422)
@@ -1195,6 +1199,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertNull($submission->existingCampaignId);
 
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_new_1']]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_new_1']]),
         ]);
@@ -1216,8 +1221,10 @@ class TelnyxProvisioningAdapterTest extends TestCase
 
         $body = ['errors' => [['code' => '10005', 'title' => 'Invalid ein 12-3456789', 'detail' => 'EIN 12-3456789 at 1 Main St, jane@example.test, +15555550100', 'source' => ['pointer' => '/ein']]]];
         Http::fake($stage === 'brand' ? [
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response($body, $status, ['x-request-id' => 'req-abc-123']),
         ] : [
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => 'brand_diag_1']),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response($body, $status, ['x-request-id' => 'req-abc-123']),
         ]);
@@ -1275,6 +1282,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->localRegistration($business);
         $this->fundWallet($business, TelnyxProvisioningAdapter::registrationFeatureFor($overrides['useCase'] ?? 'low_volume_mixed'));
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => 'brand_msg_1']),
             'api.telnyx.com/v2/10dlc/campaignBuilder/brand/*' => Http::response(['usecase' => 'LOW_VOLUME', 'minSubUsecases' => 2, 'maxSubUsecases' => 5]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['campaignId' => 'camp_msg_1']),
@@ -1423,6 +1431,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             $registration->update(['use_case' => $internal]);
 
             Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
                 'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_map_' . $internal]]),
                 'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'camp_map_' . $internal]]),
             ]);
@@ -1479,6 +1488,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
 
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => '4b20017f-8da9-a992-a6c0-683072fb7729', 'tcrBrandId' => 'BXYZ123', 'identityStatus' => 'UNVERIFIED', 'status' => 'REGISTRATION_PENDING', 'mock' => false]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['campaignId' => 'c8d1a4f0-fixture', 'brandId' => '4b20017f-8da9-a992-a6c0-683072fb7729', 'usecase' => 'CUSTOMER_CARE', 'subUsecases' => [], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => 'TCR_PENDING', 'submissionStatus' => 'CREATED']),
         ]);
@@ -1714,6 +1724,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, 20_000_000);
         $campaignStatus = 422;
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => 'brand_keep_1', 'status' => 'REGISTRATION_PENDING']),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => function () use (&$campaignStatus) {
                 return $campaignStatus === 200 ? Http::response(['campaignId' => 'camp_keep_1']) : Http::response(['errors' => []], $campaignStatus);

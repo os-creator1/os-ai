@@ -145,6 +145,9 @@ return [
     'ten_dlc_review_fee_micro' => (int) env('MESSAGING_10DLC_REVIEW_FEE_DISCLOSURE_MICRO', 15000000),
 
     /** Months of campaign fees Telnyx bills upfront at registration (covered by the registration price). */
+    // Hours a brand may stay unverified before the customer is shown "Needs attention" (polling continues).
+    'brand_verification_attention_hours' => (int) env('MESSAGING_BRAND_VERIFICATION_ATTENTION_HOURS', 72),
+
     'ten_dlc_prepaid_months' => (int) env('MESSAGING_10DLC_PREPAID_MONTHS', 3),
 
     /*

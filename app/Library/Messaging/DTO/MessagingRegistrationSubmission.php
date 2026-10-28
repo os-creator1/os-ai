@@ -83,10 +83,12 @@ final readonly class MessagingRegistrationSubmission
         public ?string $campaignDescription = null,
         /** The Business's own customer-facing SMS help contact, only when it explicitly confirmed it; null otherwise. */
         public ?string $supportContact = null,
+        /** 10DLC lifecycle stage to perform: 'full' (legacy one-shot), 'brand' (stage 1) or 'campaign' (stage 2). */
+        public string $phase = 'full',
     ) {
     }
 
-    public static function fromModel(BusinessMessagingRegistration $registration, ?string $phoneNumber = null): self
+    public static function fromModel(BusinessMessagingRegistration $registration, ?string $phoneNumber = null, string $phase = 'full'): self
     {
         return new self(
             businessId: (int) $registration->business_id,
@@ -110,6 +112,7 @@ final readonly class MessagingRegistrationSubmission
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
             supportContact: $registration->support_contact_confirmed_at !== null && trim((string) $registration->support_contact) !== '' ? trim((string) $registration->support_contact) : null,
+            phase: $phase,
             phoneNumber: $phoneNumber,
             existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
                 ? (string) $registration->provider_brand_id

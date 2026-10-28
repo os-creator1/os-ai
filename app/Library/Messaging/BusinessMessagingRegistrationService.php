@@ -6,11 +6,15 @@ use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Dashboard\DashboardMoney;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
+use App\Library\Messaging\DTO\BrandStatusResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationNotReadyException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationProviderException;
 use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
 use App\Repositories\Contracts\UsageMeterRepository;
@@ -142,8 +146,31 @@ class BusinessMessagingRegistrationService
             }
         }
 
+        // A brand the carrier is verifying (or has verified) was created and
+        // paid for with these exact details. Editing them would orphan it and
+        // buy a second brand, so it is refused; only a brand the carrier
+        // flagged as needing attention may be replaced by corrected details.
+        $hasBrand = trim((string) $registration->provider_brand_id) !== '';
+
+        if ($brandIdentityChanged && $hasBrand && $registration->status !== MessagingRegistrationStatus::Rejected
+            && $registration->brand_status !== 'needs_attention') {
+            throw new MessagingRegistrationImmutableException(
+                'Your business details were already sent to the carrier for verification, so they can\'t be changed here. Contact support if something needs correcting.',
+            );
+        }
+
+        $keepVerifiedBrand = $registration->status === MessagingRegistrationStatus::Rejected
+            && ! $brandIdentityChanged
+            && $registration->brand_status === 'verified';
+
         if ($registration->status === MessagingRegistrationStatus::Rejected || $brandIdentityChanged) {
-            $attributes['provider_brand_id'] = null;
+            if (! $keepVerifiedBrand) {
+                $attributes['provider_brand_id'] = null;
+                $attributes['provider_brand_tcr_id'] = null;
+                $attributes['brand_status'] = null;
+                $attributes['brand_status_detail'] = null;
+            }
+
             $attributes['provider_campaign_id'] = null;
             $attributes['provider_registration_id'] = null;
         }
@@ -159,7 +186,7 @@ class BusinessMessagingRegistrationService
      *                                                  checked
      *                                                  ProvisioningAvailability::isConfigured()
      */
-    public function submit(BusinessMessagingRegistration $registration): BusinessMessagingRegistration
+    public function submit(BusinessMessagingRegistration $registration, bool $campaignAuthorized = false): BusinessMessagingRegistration
     {
         $adapter = app(MessagingProvisioningAdapter::class);
 
@@ -187,12 +214,21 @@ class BusinessMessagingRegistrationService
             // submission: the rejected provider brand/campaign are never
             // reused. rejected_at is kept — it identifies the funding cycle.
             if ($registration->status === MessagingRegistrationStatus::Rejected) {
+                // A carrier-VERIFIED brand survives a rejected campaign: it is
+                // still valid and was already paid for, so correcting the
+                // campaign never buys a second brand. A rejected brand is
+                // never reused.
+                $keepBrand = $registration->brand_status === 'verified' && trim((string) $registration->provider_campaign_id) !== '';
                 $registration->update([
                     'status' => MessagingRegistrationStatus::NotStarted->value,
-                    'provider_brand_id' => null,
+                    'provider_brand_id' => $keepBrand ? $registration->provider_brand_id : null,
+                    'provider_brand_tcr_id' => $keepBrand ? $registration->provider_brand_tcr_id : null,
+                    'brand_status' => $keepBrand ? 'verified' : null,
                     'provider_campaign_id' => null,
                     'provider_registration_id' => null,
                     'rejection_reason' => null,
+                    'campaign_issue' => null,
+                    'campaign_issue_permanent' => false,
                 ]);
                 $registration = $registration->fresh();
             }
@@ -221,7 +257,59 @@ class BusinessMessagingRegistrationService
             // there — never resolved, never required.
             $phoneNumber = $this->primaryPhoneNumberFor($registration->business);
 
-            $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
+            // 10DLC is two stages. Stage 1 creates the brand once (and charges
+            // its fee once); stage 2, the campaign, starts only after the
+            // carrier has verified the brand AND the customer authorized the
+            // campaign fees. A campaign that already exists is only ever
+            // finished, never created again.
+            $phase = 'full';
+
+            if ($registration->number_type === PhoneNumberType::Local) {
+                $hasCampaign = trim((string) $registration->provider_campaign_id) !== '';
+                $hasBrand = trim((string) $registration->provider_brand_id) !== '';
+
+                if ($hasCampaign) {
+                    $phase = 'campaign';
+                } elseif (! $hasBrand) {
+                    $phase = 'brand';
+                } elseif ($registration->brand_status === 'verified') {
+                    if (! $campaignAuthorized) {
+                        throw new MessagingRegistrationNotReadyException('Confirm that you authorize the campaign charge shown below to submit your campaign.', MessagingRegistrationNotReadyException::REASON_NEEDS_AUTHORIZATION);
+                    }
+
+                    $phase = 'campaign';
+                } else {
+                    throw new MessagingRegistrationNotReadyException('Your business is still being verified by the carrier. You can submit your campaign as soon as verification completes.');
+                }
+            }
+
+            try {
+                $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber, $phase));
+            } catch (MessagingRegistrationNotEligibleException $e) {
+                // Remember why the campaign was not created. Nothing here is a
+                // charge or a provider id; a temporary issue is never final.
+                $registration->update(['campaign_issue' => mb_substr($e->getMessage(), 0, 255), 'campaign_issue_permanent' => ! $e->temporary]);
+
+                throw $e;
+            } catch (MessagingRegistrationProviderException $e) {
+                if ($e->step === MessagingRegistrationProviderException::STEP_CAMPAIGN) {
+                    $registration->update(['campaign_issue' => 'The carrier could not accept the campaign submission yet.', 'campaign_issue_permanent' => false]);
+                }
+
+                throw $e;
+            }
+
+            if ($phase === 'brand') {
+                // A brand the carrier just created is never trusted as verified.
+                $registration->update(array_filter([
+                    'provider_brand_id' => $result->providerBrandId,
+                    'provider_brand_tcr_id' => $result->providerBrandTcrId,
+                    'brand_status' => 'processing',
+                    'brand_created_at' => $registration->brand_created_at ?? now(),
+                ], fn ($v) => $v !== null));
+
+                return $registration->fresh();
+            }
 
             // A provider id the result does not carry (a toll-free result has
             // no brand/campaign, a 10DLC result no verification id) is left
@@ -235,7 +323,9 @@ class BusinessMessagingRegistrationService
                 'status' => $result->status->value,
                 'submitted_at' => CarbonImmutable::now(),
                 'rejection_reason' => null,
-            ]));
+                'campaign_issue' => null,
+                'campaign_issue_permanent' => false,
+            ], $phase === 'campaign' ? ['brand_status' => 'verified'] : []));
 
             return $registration->fresh();
         } finally {
@@ -304,6 +394,13 @@ class BusinessMessagingRegistrationService
      */
     public function refreshStatus(BusinessMessagingRegistration $registration): BusinessMessagingRegistration
     {
+        // A local registration with a brand but no campaign is in stage 1:
+        // only the brand's verification is tracked. It must never be polled as
+        // a campaign (which would wrongly read as Pending review).
+        if ($registration->number_type === PhoneNumberType::Local && trim((string) $registration->provider_campaign_id) === '') {
+            return $this->refreshBrand($registration);
+        }
+
         $query = RegistrationStatusQuery::fromModel($registration);
 
         if ($query->providerBrandId === null && $query->providerCampaignId === null && $query->providerRegistrationId === null) {
@@ -317,6 +414,10 @@ class BusinessMessagingRegistrationService
         }
 
         $result = $adapter->refreshRegistrationStatus($query);
+
+        if ($result->conclusive && $query->providerCampaignId !== null) {
+            $registration->forceFill(['campaign_status_checked_at' => CarbonImmutable::now()])->save();
+        }
 
         if ($result->status === $registration->status) {
             return $registration;
@@ -341,6 +442,83 @@ class BusinessMessagingRegistrationService
     }
 
     /**
+     * Stage 1 tracking: asks the carrier whether the saved brand has been
+     * identity-verified. Only a conclusive answer changes anything; an
+     * inconclusive lookup (rate limit, timeout, server error) leaves the saved
+     * state exactly as it was. Never creates a brand and never charges.
+     */
+    public function refreshBrand(BusinessMessagingRegistration $registration): BusinessMessagingRegistration
+    {
+        $brandId = trim((string) $registration->provider_brand_id);
+
+        if ($brandId === '' || $registration->number_type !== PhoneNumberType::Local) {
+            return $registration;
+        }
+
+        try {
+            $result = app(MessagingProvisioningAdapter::class)->refreshBrandStatus($brandId);
+        } catch (MessagingProviderNotConfiguredException) {
+            return $registration;
+        }
+
+        if ($result->state === BrandStatusResult::UNCHANGED) {
+            return $registration;
+        }
+
+        $state = $result->state;
+        $detail = $result->detail;
+        $hours = (int) config('messaging.brand_verification_attention_hours', 72);
+
+        // A brand still unverified long after creation is surfaced truthfully
+        // as needing attention. Polling continues, so it recovers on its own
+        // if the carrier verifies it later.
+        if ($state === BrandStatusResult::PROCESSING && $registration->brand_created_at !== null
+            && $registration->brand_created_at->lt(now()->subHours($hours))) {
+            $state = BrandStatusResult::NEEDS_ATTENTION;
+            $detail = 'The carrier has not finished verifying this business yet. Support has been asked to look into it; your details and brand are saved.';
+        }
+
+        $attributes = [
+            'brand_status' => $state,
+            'brand_status_detail' => $state === BrandStatusResult::VERIFIED ? null : ($detail !== null ? mb_substr($detail, 0, 191) : null),
+            'brand_status_checked_at' => CarbonImmutable::now(),
+        ];
+
+        if ($result->tcrBrandId !== null) {
+            $attributes['provider_brand_tcr_id'] = $result->tcrBrandId;
+        }
+
+        // A brand that was refused as unverified at qualification time and is
+        // now verified clears the temporary eligibility issue.
+        if ($state === BrandStatusResult::VERIFIED && ! $registration->campaign_issue_permanent) {
+            $attributes['campaign_issue'] = null;
+        }
+
+        $registration->forceFill($attributes)->save();
+
+        return $registration->fresh();
+    }
+
+    /** Whether a brand's next status check is due; backs off as the brand ages. */
+    private function brandCheckDue(BusinessMessagingRegistration $registration): bool
+    {
+        $checked = $registration->brand_status_checked_at;
+
+        if ($checked === null) {
+            return true;
+        }
+
+        $age = $registration->brand_created_at;
+        $interval = match (true) {
+            $registration->brand_status === 'needs_attention' => 360,
+            $age === null || $age->gt(now()->subHours(2)) => 10,
+            default => 45,
+        };
+
+        return $checked->lte(now()->subMinutes($interval));
+    }
+
+    /**
      * PR #295 Correction Round 1, item 6 — the one canonical mechanism
      * that actually advances a submitted registration: a scheduled job
      * (RefreshPendingMessagingRegistrations) calls this, never a page
@@ -360,6 +538,27 @@ class BusinessMessagingRegistrationService
                         // One Business's provider failure must never stop
                         // the sweep from reaching every other pending
                         // registration in this batch.
+                        continue;
+                    }
+                }
+            });
+
+        // Stage 1: brands created but not yet verified. Idempotent and
+        // read-only at the provider; one failure never stops the sweep.
+        BusinessMessagingRegistration::query()
+            ->where('status', MessagingRegistrationStatus::NotStarted->value)
+            ->where('number_type', PhoneNumberType::Local->value)
+            ->whereNotNull('provider_brand_id')->where('provider_brand_id', '!=', '')
+            ->where(fn ($q) => $q->whereNull('provider_campaign_id')->orWhere('provider_campaign_id', ''))
+            ->where(fn ($q) => $q->whereNull('brand_status')->orWhereIn('brand_status', ['processing', 'needs_attention']))
+            ->orderBy('id')
+            ->chunkById(50, function ($registrations): void {
+                foreach ($registrations as $registration) {
+                    try {
+                        if ($this->brandCheckDue($registration)) {
+                            $this->refreshBrand($registration);
+                        }
+                    } catch (\Throwable) {
                         continue;
                     }
                 }

@@ -29,6 +29,8 @@ use Tests\TestCase;
  */
 class TextMessagingSetupStateTest extends TestCase
 {
+    use \Tests\Support\CompletesTenDlcStages;
+
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
@@ -305,7 +307,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->attachNumber($this->attachIdentity($business), '+14155550302');
         $this->authenticateAs($customer);
 
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'error');
 
         $this->assertDatabaseMissing('business_messaging_registrations', ['business_id' => $business->id]);
@@ -322,7 +324,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->authenticateAs($customer);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
@@ -340,7 +342,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->authenticateAs($customer);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'error');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
@@ -488,7 +490,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))->assertOk();
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload())
             ->assertStatus(401);
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertStatus(401);
 
         $this->assertDatabaseMissing('business_messaging_registrations', ['business_id' => $business->id]);
@@ -506,7 +508,7 @@ class TextMessagingSetupStateTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload())
             ->assertSessionHas('status', 'success');
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();

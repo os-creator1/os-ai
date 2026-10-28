@@ -82,6 +82,13 @@ interface MessagingProvisioningAdapter
     public function refreshRegistrationStatus(RegistrationStatusQuery $query): RegistrationStatusResult;
 
     /**
+     * Looks up a 10DLC brand's carrier identity verification. Never throws
+     * for a provider/transport problem: an inconclusive lookup is reported
+     * as BrandStatusResult::UNCHANGED.
+     */
+    public function refreshBrandStatus(string $providerBrandId): \App\Library\Messaging\DTO\BrandStatusResult;
+
+    /**
      * Phone Numbers + A2P lane — the final step of the 10DLC sequence this
      * platform now supports completing before a number exists: once a
      * Business's brand+campaign is Approved, and a local number has since

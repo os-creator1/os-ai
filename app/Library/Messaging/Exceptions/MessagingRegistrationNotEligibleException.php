@@ -13,4 +13,20 @@ use RuntimeException;
  */
 class MessagingRegistrationNotEligibleException extends RuntimeException
 {
+    /**
+     * True when the carrier could not be asked or did not answer clearly
+     * (transport error, rate limit, server error, unreadable rules, a brand
+     * the carrier has not finished verifying). Nothing was concluded about
+     * the business, so the customer may simply retry; it is never recorded as
+     * definitive ineligibility.
+     */
+    public bool $temporary = false;
+
+    public static function temporary(string $message): self
+    {
+        $e = new self($message);
+        $e->temporary = true;
+
+        return $e;
+    }
 }

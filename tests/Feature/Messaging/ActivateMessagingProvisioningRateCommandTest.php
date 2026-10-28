@@ -161,6 +161,7 @@ class ActivateMessagingProvisioningRateCommandTest extends TestCase
 
         $unfunded = $this->business();
         Http::fake([
+            'api.telnyx.com/v2/10dlc/brand/*' => Http::response(['brandId' => 'brand_x', 'tcrBrandId' => 'BTEST1', 'identityStatus' => 'VERIFIED', 'status' => 'OK']),
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_cfg_1']]),
             'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'camp_cfg_1']]),
         ]);
