@@ -152,12 +152,27 @@ class BusinessMessagingRegistrationService
         // flagged as needing attention may be replaced by corrected details.
         $hasBrand = trim((string) $registration->provider_brand_id) !== '';
 
-        if ($brandIdentityChanged && $hasBrand && $registration->status !== MessagingRegistrationStatus::Rejected
-            && $registration->brand_status !== 'needs_attention') {
-            throw new MessagingRegistrationImmutableException(
-                'Your business details were already sent to the carrier for verification, so they can\'t be changed here. Contact support if something needs correcting.',
-            );
+        if ($brandIdentityChanged && $hasBrand) {
+            $legacyUnverified = $registration->status === MessagingRegistrationStatus::Rejected && $registration->brand_status === null;
+
+            if ($registration->brand_status === 'needs_attention') {
+                // Terminal carrier rejection: replacing the brand is possible, but it
+                // buys a NEW paid carrier brand, so it needs explicit authorization.
+                if (empty($data['authorize_brand_replacement'])) {
+                    throw new MessagingRegistrationImmutableException(
+                        'The carrier rejected this business\'s verification. To correct the details you must confirm that this replaces the rejected brand and that a new carrier brand fee applies.',
+                    );
+                }
+            } elseif (! $legacyUnverified) {
+                throw new MessagingRegistrationImmutableException(
+                    in_array($registration->brand_status, ['processing', 'overdue'], true) || $registration->brand_status === null
+                        ? 'Your business is with the carrier for verification, so its details can\'t be changed while that is pending. If verification is taking too long, contact support.'
+                        : 'Your business was already verified with the carrier, so its details can\'t be changed here. Contact support if something needs correcting.',
+                );
+            }
         }
+
+        unset($attributes['authorize_brand_replacement']);
 
         $keepVerifiedBrand = $registration->status === MessagingRegistrationStatus::Rejected
             && ! $brandIdentityChanged
@@ -415,7 +430,13 @@ class BusinessMessagingRegistrationService
 
         $result = $adapter->refreshRegistrationStatus($query);
 
-        if ($result->conclusive && $query->providerCampaignId !== null) {
+        // An outage, rate limit or malformed answer says nothing: a confirmed
+        // Approved/Rejected (or Pending) status is never changed by one.
+        if (! $result->conclusive) {
+            return $registration;
+        }
+
+        if ($query->providerCampaignId !== null) {
             $registration->forceFill(['campaign_status_checked_at' => CarbonImmutable::now()])->save();
         }
 
@@ -474,8 +495,10 @@ class BusinessMessagingRegistrationService
         // if the carrier verifies it later.
         if ($state === BrandStatusResult::PROCESSING && $registration->brand_created_at !== null
             && $registration->brand_created_at->lt(now()->subHours($hours))) {
-            $state = BrandStatusResult::NEEDS_ATTENTION;
-            $detail = 'The carrier has not finished verifying this business yet. Support has been asked to look into it; your details and brand are saved.';
+            // Overdue is NOT rejection: the carrier has not said no. Nothing
+            // is replaced or re-bought, and polling continues.
+            $state = 'overdue';
+            $detail = 'Verification is taking longer than expected. The carrier has not rejected your business; your brand is saved and nothing needs to be resubmitted.';
         }
 
         $attributes = [
@@ -510,7 +533,7 @@ class BusinessMessagingRegistrationService
 
         $age = $registration->brand_created_at;
         $interval = match (true) {
-            $registration->brand_status === 'needs_attention' => 360,
+            in_array($registration->brand_status, ['needs_attention', 'overdue'], true) => 360,
             $age === null || $age->gt(now()->subHours(2)) => 10,
             default => 45,
         };
@@ -550,7 +573,7 @@ class BusinessMessagingRegistrationService
             ->where('number_type', PhoneNumberType::Local->value)
             ->whereNotNull('provider_brand_id')->where('provider_brand_id', '!=', '')
             ->where(fn ($q) => $q->whereNull('provider_campaign_id')->orWhere('provider_campaign_id', ''))
-            ->where(fn ($q) => $q->whereNull('brand_status')->orWhereIn('brand_status', ['processing', 'needs_attention']))
+            ->where(fn ($q) => $q->whereNull('brand_status')->orWhereIn('brand_status', ['processing', 'overdue', 'needs_attention']))
             ->orderBy('id')
             ->chunkById(50, function ($registrations): void {
                 foreach ($registrations as $registration) {

@@ -145,6 +145,11 @@ return [
     'ten_dlc_review_fee_micro' => (int) env('MESSAGING_10DLC_REVIEW_FEE_DISCLOSURE_MICRO', 15000000),
 
     /** Months of campaign fees Telnyx bills upfront at registration (covered by the registration price). */
+    // Telnyx qualification error codes (errors[0].code) CONFIRMED to mean the brand is
+    // not eligible for the campaign type. Empty until confirmed from provider documentation:
+    // every other refusal is treated as an uncertain, retryable submission issue.
+    'qualification_ineligible_codes' => array_filter(explode(',', (string) env('MESSAGING_QUALIFICATION_INELIGIBLE_CODES', ''))),
+
     // Hours a brand may stay unverified before the customer is shown "Needs attention" (polling continues).
     'brand_verification_attention_hours' => (int) env('MESSAGING_BRAND_VERIFICATION_ATTENTION_HOURS', 72),
 

@@ -59,6 +59,11 @@ final class RegistrationSubmissionValidator
             }
         }
 
+        if ($registration->entity_type?->value === 'sole_proprietor' && $registration->number_type !== PhoneNumberType::TollFree
+            && trim((string) $registration->provider_brand_id) === '') {
+            $issues[] = \App\Library\Messaging\TelnyxProvisioningAdapter::SOLE_PROPRIETOR_GUIDANCE;
+        }
+
         if ($registration->entity_type?->value === 'ein' && trim((string) $registration->ein) === '') {
             $issues[] = 'Add your EIN, or choose "Individual / sole proprietor".';
         }

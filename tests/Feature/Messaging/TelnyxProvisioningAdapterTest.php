@@ -1352,6 +1352,26 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertStringNotContainsString('customer care', $promo['optin']);
     }
 
+    public function test_a_sole_proprietor_brand_is_refused_before_any_reservation_or_provider_call(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+        Http::fake();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local, null, null, ['entityType' => MessagingEntityType::SoleProprietor, 'ein' => null, 'phase' => 'brand']));
+            $this->fail('Expected refusal.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException $e) {
+            $this->assertStringContainsString('one-time PIN text', $e->getMessage());
+            $this->assertStringContainsString('Nothing was charged', $e->getMessage());
+        }
+
+        Http::assertNothingSent();
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
     private function assertRefusedBeforeFundingOrProvider(array $overrides): void
     {
         $this->enableProvisioning();

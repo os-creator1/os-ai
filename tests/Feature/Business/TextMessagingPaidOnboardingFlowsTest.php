@@ -52,6 +52,8 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
     private string $campaignStatus = 'TCR_PENDING';
     private bool $lvmEligible = true;
     private int $brandGetHttp = 200;
+    /** ok | 429 | 500 | timeout | malformed — how the mocked campaign status lookup behaves. */
+    private string $campaignGetMode = 'ok';
     private string $brandIdentity = 'VERIFIED';
     private string $brandRegistrationStatus = 'OK';
     private ?int $qualificationHttp = null;
@@ -146,7 +148,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
             'api.telnyx.com/v2/10dlc/campaignBuilder' => fn () => $this->campaignCreateStatus === 200
                 ? Http::response(['campaignId' => 'camp_flow_1', 'brandId' => 'brand_flow_1', 'usecase' => 'LOW_VOLUME', 'subUsecases' => ['CUSTOMER_CARE', 'MARKETING'], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => 'TCR_PENDING', 'submissionStatus' => 'CREATED'])
                 : Http::response(['errors' => [['code' => '10002', 'title' => 'Invalid sample']]], $this->campaignCreateStatus),
-            'api.telnyx.com/v2/10dlc/campaign/*' => fn () => Http::response(['campaignId' => 'camp_flow_1', 'brandId' => 'brand_flow_1', 'usecase' => 'CUSTOMER_CARE', 'subUsecases' => [], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => $this->campaignStatus, 'status' => 'ACTIVE', 'submissionStatus' => 'CREATED']),
+            'api.telnyx.com/v2/10dlc/campaign/*' => fn () => $this->campaignGetMode !== 'ok' ? $this->campaignGetOutage() : Http::response(['campaignId' => 'camp_flow_1', 'brandId' => 'brand_flow_1', 'usecase' => 'CUSTOMER_CARE', 'subUsecases' => [], 'description' => 'd', 'mock' => false, 'termsAndConditions' => true, 'campaignStatus' => $this->campaignStatus, 'status' => 'ACTIVE', 'submissionStatus' => 'CREATED']),
             'api.telnyx.com/v2/10dlc/campaignBuilder/brand/*' => fn () => $this->qualificationHttp !== null
                 ? Http::response(['errors' => [['code' => '10001', 'title' => 'x']]], $this->qualificationHttp)
                 : ($this->lvmEligible
@@ -154,6 +156,15 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
                 : Http::response(['errors' => [['code' => '10016', 'title' => 'Brand not eligible']]], 422)),
             '*' => Http::response(['data' => []]),
         ]);
+    }
+
+    private function campaignGetOutage()
+    {
+        return match ($this->campaignGetMode) {
+            'timeout' => throw new \Illuminate\Http\Client\ConnectionException('timed out'),
+            'malformed' => Http::response(['unexpected' => 'shape'], 200),
+            default => Http::response(['errors' => [['code' => '20001', 'title' => 'busy']]], (int) $this->campaignGetMode),
+        };
     }
 
     private function posted(string $fragment): int
@@ -1152,7 +1163,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->brandIdentity = 'UNVERIFIED';
         DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_created_at' => now()->subDays(4), 'brand_status' => 'processing']);
         $this->refreshNow();
-        $this->assertSame('needs_attention', $this->row()->brand_status);
+        $this->assertSame('overdue', $this->row()->brand_status); // slow is not rejected
 
         $this->brandIdentity = 'VERIFIED';
         $this->refreshNow();
@@ -1273,6 +1284,214 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         // Brand verified and campaign merely under review: still the registration screen, no ready/number state.
         $this->get($this->url('show'))->assertOk()->assertViewIs('customer.settings.text-messaging.states.registration');
         $this->assertSame(0, BusinessMessagingNumber::query()->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Review corrections for the two-stage lifecycle.
+    // -----------------------------------------------------------------
+
+    private function pendingCampaign(string $status = 'pending'): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        $this->refreshNow();
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1']);
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['status' => $status]);
+    }
+
+    public function test_an_inconclusive_status_lookup_never_regresses_a_confirmed_campaign_status(): void
+    {
+        foreach (['approved' => 'approved', 'rejected' => 'rejected', 'pending' => 'pending'] as $state => $expected) {
+            DB::table('business_messaging_registrations')->delete();
+            $this->pendingCampaign($state);
+
+            foreach (['429', '500', '503', 'timeout', 'malformed'] as $mode) {
+                $this->campaignGetMode = $mode;
+                $this->refreshNow();
+                app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+                $this->assertSame($expected, $this->row()->status->value, "{$state} must survive {$mode}");
+            }
+
+            $this->campaignGetMode = 'ok';
+        }
+    }
+
+    public function test_an_inconclusive_refresh_is_reported_honestly_and_a_conclusive_one_as_checked(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+
+        $this->brandGetHttp = 503;
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_status_checked_at' => null]);
+        $this->post($this->refreshUrl())
+            ->assertSessionHas('status', 'info')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, "didn't give a clear answer") && ! str_contains($m, 'Checked with the carrier') && ! str_contains($m, 'refreshed'));
+        $this->assertNull($this->row()->brand_status_checked_at);
+
+        $this->brandGetHttp = 200;
+        $this->post($this->refreshUrl())->assertSessionHas('status', 'success')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'Checked with the carrier just now'));
+        $this->assertNotNull($this->row()->brand_status_checked_at);
+    }
+
+    public function test_an_uncertain_qualification_refusal_is_a_temporary_issue_that_keeps_the_brand_and_charges_nothing_more(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        $this->refreshNow();
+        $logged = $this->captureWarnings();
+
+        foreach ([400, 403, 422] as $http) {
+            $this->qualificationHttp = $http;
+            $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])
+                ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'did not say why') && ! str_contains($m, 'not eligible') && ! str_contains($m, 'notified'));
+
+            $row = $this->row();
+            $this->assertFalse($row->campaign_issue_permanent, "HTTP {$http}");
+            $this->assertNotNull($row->campaign_issue);
+            $this->assertSame('brand_flow_1', $row->provider_brand_id);
+            $this->assertNull($row->provider_campaign_id);
+            $this->assertSame('low_volume_mixed', $row->use_case); // never silently switched
+            $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+        }
+
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $dump = json_encode($logged->getArrayCopy(), JSON_UNESCAPED_SLASHES);
+        $this->assertStringContainsString('"stage":"qualification"', $dump);
+        $this->assertStringNotContainsString('12-3456789', $dump);
+        $this->assertMatchesRegularExpression('#data-state="issue"#', $this->showHtml());
+
+        // Same campaign type succeeds once the carrier answers normally.
+        $this->qualificationHttp = null;
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])->assertSessionHas('status', 'success');
+        $this->assertSame(40_000_000 - self::BRAND - self::LVM_REGISTRATION, $this->balance());
+    }
+
+    public function test_only_a_configured_structured_error_code_is_confirmed_ineligibility(): void
+    {
+        config(['messaging.qualification_ineligible_codes' => ['10016']]);
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        $this->refreshNow();
+        $this->lvmEligible = false; // 422 with errors[0].code 10016
+
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1'])
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'not eligible for a Low Volume Mixed campaign'));
+        $this->assertTrue($this->row()->campaign_issue_permanent);
+        $this->assertSame(0, $this->posted('/10dlc/campaignBuilder'));
+    }
+
+    public function test_an_overdue_brand_is_not_rejected_cannot_be_edited_away_and_never_buys_a_second_brand(): void
+    {
+        $this->startLowVolume();
+        $this->brandIdentity = 'UNVERIFIED';
+        $this->post($this->url('registration.submit'));
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_created_at' => now()->subDays(4)]);
+        $this->refreshNow();
+
+        $this->assertSame('overdue', $this->row()->brand_status);
+        $html = $this->showHtml();
+        $this->assertStringContainsString('Verification taking longer than expected', $html);
+        $this->assertStringContainsString('has not rejected your business', $html);
+        $this->assertStringNotContainsString('data-role="brand-replacement"', $html);
+
+        // An ordinary edit to brand-defining details is refused and erases nothing.
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['legal_business_name' => 'Renamed LLC', 'ein' => '99-9999999']))
+            ->assertSessionHas('status', 'error');
+        $row = $this->row();
+        $this->assertSame('brand_flow_1', $row->provider_brand_id);
+        $this->assertSame('Sunset Photo Booths LLC', $row->legal_business_name);
+
+        // Even with a replacement tick: overdue is not a terminal rejection.
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['legal_business_name' => 'Renamed LLC', 'authorize_brand_replacement' => '1']))
+            ->assertSessionHas('status', 'error');
+        $this->assertSame('brand_flow_1', $this->row()->provider_brand_id);
+
+        $this->post($this->url('registration.submit'), ['authorize_campaign' => '1']);
+        $this->assertSame(1, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance());
+
+        // The carrier finally verifies it: recovers without anything being re-bought.
+        $this->brandIdentity = 'VERIFIED';
+        $this->refreshNow();
+        $this->assertSame('verified', $this->row()->brand_status);
+    }
+
+    public function test_an_explicitly_rejected_brand_is_replaced_only_after_explicit_authorization_and_a_new_fee(): void
+    {
+        $this->startLowVolume();
+        $this->post($this->url('registration.submit'));
+        $this->brandRegistrationStatus = 'REGISTRATION_FAILED';
+        $this->refreshNow();
+        $this->assertSame('needs_attention', $this->row()->brand_status);
+
+        $changed = ['legal_business_name' => 'Sunset Photo Booths Inc'];
+        $this->assertStringContainsString('data-role="brand-replacement"', $this->showHtml());
+
+        // Without the authorization nothing is replaced.
+        $this->post($this->url('registration.update'), $this->lowVolumePayload($changed))->assertSessionHas('status', 'error');
+        $this->assertSame('brand_flow_1', $this->row()->provider_brand_id);
+
+        // Authorized: the rejected brand is released locally and the corrected one is a NEW paid brand.
+        $this->post($this->url('registration.update'), $this->lowVolumePayload($changed + ['authorize_brand_replacement' => '1']))->assertSessionHas('status', 'success');
+        $this->assertNull($this->row()->provider_brand_id);
+        $this->assertNull($this->row()->brand_status);
+        $this->assertSame(40_000_000 - self::BRAND, $this->balance()); // editing alone charges nothing
+
+        $this->brandRegistrationStatus = 'OK';
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'success');
+        $this->assertSame(2, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000 - 2 * self::BRAND, $this->balance());
+    }
+
+    public function test_a_sole_proprietor_is_blocked_before_any_charge_with_accurate_guidance(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->fund(40_000_000);
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['entity_type' => 'sole_proprietor', 'ein' => '']));
+
+        $html = str_replace('&#039;', "'", $this->get($this->url('show'))->getContent());
+        $this->assertStringContainsString('one-time PIN text from the carrier', $html);
+        $this->assertStringContainsString('Register with your business\'s EIN instead, or use a toll-free number', $html);
+
+        $this->post($this->url('registration.submit'))->assertSessionHas('status', 'error');
+        $this->assertSame(0, $this->posted('/10dlc/brand'));
+        $this->assertSame(40_000_000, $this->balance());
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $this->business->id)->count());
+    }
+
+    public function test_an_existing_sole_proprietor_brand_is_told_the_truth_instead_of_polling_forever(): void
+    {
+        $this->configureRates();
+        $this->telnyx();
+        $this->post($this->url('registration.start-local-verification'));
+        $this->post($this->url('registration.update'), $this->lowVolumePayload(['entity_type' => 'sole_proprietor', 'ein' => '']));
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['provider_brand_id' => 'brand_flow_1', 'brand_status' => 'processing']);
+
+        $html = str_replace('&#039;', "'", $this->showHtml());
+        $this->assertStringContainsString('need a one-time PIN text from the carrier', $html);
+        $this->assertStringContainsString('may not finish on its own', $html);
+    }
+
+    public function test_provider_failure_and_overdue_messages_never_claim_unrecorded_support_action(): void
+    {
+        $this->startLowVolume();
+        $this->brandCreateStatus = 422;
+        $message = $this->submitLowVolume();
+        $this->assertStringNotContainsString('notified', $message);
+        $this->assertStringNotContainsString('reviewing', $message);
+        $this->assertStringContainsString('contact support', $message);
+
+        $this->brandCreateStatus = 200;
+        $this->post($this->url('registration.submit'));
+        $this->brandIdentity = 'UNVERIFIED';
+        DB::table('business_messaging_registrations')->where('business_id', $this->business->id)->update(['brand_created_at' => now()->subDays(4)]);
+        $this->refreshNow();
+        $html = $this->showHtml();
+        $this->assertStringNotContainsString('Support has been asked', $html);
     }
 
     public function test_a_price_change_between_search_and_order_requires_the_customer_to_confirm_again(): void

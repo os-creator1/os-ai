@@ -385,6 +385,7 @@ class TextMessagingController extends CustomerBaseController
             'support_contact' => ['nullable', 'string', 'max:191'],
             'support_contact_confirmed' => ['nullable', 'boolean'],
             'support_contact_confirmed_for' => ['nullable', 'string', 'max:191'],
+            'authorize_brand_replacement' => ['nullable', 'boolean'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
             'opt_in_method' => ['required', 'string', 'max:2000'],
             'campaign_description' => ['required', 'string', 'max:2000'],
@@ -552,10 +553,10 @@ class TextMessagingController extends CustomerBaseController
             ]);
 
             return $this->textMessagingError($workspaceUid, $businessUid, $e->step === \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_BRAND
-                ? 'Step 1 of 2 (carrier brand registration): the carrier could not accept this step. Your saved details remain, nothing was charged, and support is reviewing the technical reason. You can try again later or contact support.'
+                ? 'Step 1 of 2 (carrier brand registration): the carrier could not accept this step. Your saved details remain, nothing was charged. You can try again later; if it keeps happening, contact support.'
                 : 'Step 2 of 2 (campaign registration): the carrier could not accept this step. Your carrier brand is registered and saved'
                     . ($e->brandFeeChargedNow ? '; its fee was charged when it was created and is not refunded, but it will not be charged again when you retry' : ' and its fee will not be charged again')
-                    . '. The campaign fee was not charged. Your saved details remain and support is reviewing the technical reason. You can try again later or contact support.');
+                    . '. The campaign fee was not charged. Your saved details remain. You can try again later; if it keeps happening, contact support.');
         } catch (\RuntimeException $e) {
             // An internal refusal on our side (e.g. a messaging type with no
             // carrier mapping): never a raw server error, and never blamed on
@@ -607,15 +608,24 @@ class TextMessagingController extends CustomerBaseController
             return $back->with(['status' => 'info', 'message' => 'Status was checked moments ago. Please try again in a minute.']);
         }
 
+        $before = [(string) $registration->brand_status_checked_at, (string) $registration->campaign_status_checked_at];
+
         try {
-            $this->registrations->refreshStatus($registration);
+            $registration = $this->registrations->refreshStatus($registration);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('Messaging registration status refresh failed.', ['business_id' => (int) $business->id, 'exception' => $e::class]);
 
             return $back->with(['status' => 'info', 'message' => 'We couldn\'t reach the carrier just now. Your saved progress is unchanged; please try again shortly.']);
         }
 
-        return $back->with(['status' => 'success', 'message' => 'Status refreshed from the carrier.']);
+        // Only a conclusive carrier answer stamps a check time; anything else
+        // (outage, rate limit, unreadable answer) changed nothing.
+        $registration = $registration->fresh();
+        $answered = (string) $registration->brand_status_checked_at !== $before[0] || (string) $registration->campaign_status_checked_at !== $before[1];
+
+        return $answered
+            ? $back->with(['status' => 'success', 'message' => 'Checked with the carrier just now. The status below is current.'])
+            : $back->with(['status' => 'info', 'message' => 'The carrier didn\'t give a clear answer just now, so your saved status is unchanged. Please try again shortly.']);
     }
 
     // -----------------------------------------------------------------

@@ -1109,7 +1109,21 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                         throw MessagingRegistrationNotEligibleException::temporary('We couldn\'t confirm your eligibility for Low Volume Mixed yet; the carrier has not finished verifying your business or did not answer. ' . $this->qualificationFeeNote($needsBrand) . ' We will keep checking; you can try again shortly.');
                     }
 
-                    throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. ' . $this->qualificationFeeNote($needsBrand) . ' Choose a standard service or promotional campaign instead.');
+                    $this->logProviderFailure($business, 'qualification', $qualification);
+
+                    // Only a structured provider error code explicitly configured
+                    // as "not eligible" is a verdict. Any other refusal (400, 403,
+                    // 422...) does not say WHY, so it is an uncertain, temporary
+                    // submission issue: the campaign stays unsubmitted, the brand
+                    // stays saved, nothing is charged, and no other campaign type
+                    // is ever substituted on the customer's behalf.
+                    $code = $this->providerValue($qualification, ['errors.0.code']);
+
+                    if ($code !== '' && in_array($code, array_map('strval', (array) config('messaging.qualification_ineligible_codes', [])), true)) {
+                        throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. ' . $this->qualificationFeeNote($needsBrand) . ' Choose a standard service or promotional campaign instead.');
+                    }
+
+                    throw MessagingRegistrationNotEligibleException::temporary('The carrier did not accept the Low Volume Mixed eligibility check and did not say why, so your campaign has not been submitted. Your verified business is saved, ' . lcfirst($this->qualificationFeeNote($needsBrand)) . ' You can try again shortly; if it keeps happening, contact support with the time of your attempt. Nothing about your campaign type was changed.');
                 }
 
                 // UsecaseMetadata is a root-level object. Unknown or malformed
@@ -1308,6 +1322,21 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      * already saved is reused as-is (no request, no charge). The campaign is
      * never created here, and nothing about the brand is assumed verified.
      */
+    /**
+     * Telnyx verifies a sole-proprietor brand with an SMS one-time PIN sent to
+     * the contact phone, which the carrier expects to be entered back. This
+     * platform has no PIN entry step, so such a brand could be paid for and then
+     * never complete. It is refused before any reservation or provider call.
+     */
+    private function assertSoleProprietorSupported(MessagingRegistrationSubmission $submission): void
+    {
+        if ($submission->entityType === MessagingEntityType::SoleProprietor) {
+            throw new MessagingRegistrationNotEligibleException(self::SOLE_PROPRIETOR_GUIDANCE . ' Nothing was charged.');
+        }
+    }
+
+    public const SOLE_PROPRIETOR_GUIDANCE = 'Registering as an individual / sole proprietor requires a one-time PIN text from the carrier that can\'t be completed in MotionGrove yet. Register with your business\'s EIN instead, or use a toll-free number, which needs no EIN or PIN.';
+
     private function submitBrandStage(Business $business, MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
         if ($submission->existingBrandId !== null) {
@@ -1317,6 +1346,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // The whole lifecycle must be priced before the first charge: a
         // customer is never charged the brand fee for a campaign type whose
         // own prices are not configured (nothing is silently omitted later).
+        $this->assertSoleProprietorSupported($submission);
         $this->assertRecurringPriceConfigured(self::FEATURE_TEN_DLC_BRAND_REGISTRATION);
         $this->assertRecurringPriceConfigured(self::registrationFeatureFor($submission->useCase));
         $this->assertRecurringPriceConfigured(NumberLifecycleManager::campaignRenewalFeatureFor($submission->useCase));
@@ -1363,7 +1393,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         }
 
         if (in_array($status, ['REGISTRATION_FAILED', 'FAILED', 'REJECTED', 'DELETED'], true)) {
-            return new BrandStatusResult(BrandStatusResult::NEEDS_ATTENTION, $tcr, 'The carrier could not register this business. Support is reviewing the reason.');
+            return new BrandStatusResult(BrandStatusResult::NEEDS_ATTENTION, $tcr, 'The carrier rejected this business\'s verification. Contact support to correct and resubmit it.');
         }
 
         if (in_array($identity, ['VERIFIED', 'VETTED_VERIFIED'], true) && ! in_array($status, ['REGISTRATION_PENDING', 'PENDING'], true)) {
@@ -1785,6 +1815,11 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $status = strtoupper($this->providerValue($response, ['status', 'data.status']));
         $submission = strtoupper($this->providerValue($response, ['submissionStatus', 'data.submissionStatus']));
 
+        // A body carrying no status field at all is malformed, not a verdict.
+        if ($campaignStatus === '' && $status === '' && $submission === '') {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
+        }
+
         if ($campaignStatus === 'MNO_PROVISIONED') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
         }
@@ -1812,13 +1847,22 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
-        $response = $this->client()->get(self::API_BASE . '/messaging_tollfree/verification/requests/' . $query->providerRegistrationId);
+        try {
+            $response = $this->client()->get(self::API_BASE . '/messaging_tollfree/verification/requests/' . $query->providerRegistrationId);
+        } catch (ConnectionException) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
+        }
 
         if (! $response->successful()) {
-            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
         }
 
         $status = strtolower($this->providerValue($response, ['verificationStatus', 'data.verificationStatus', 'data.status']));
+
+        // A body with no status at all is a malformed answer, not a verdict.
+        if ($status === '') {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
+        }
 
         if ($status === 'verified') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);

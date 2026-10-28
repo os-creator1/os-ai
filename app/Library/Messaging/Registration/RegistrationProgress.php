@@ -34,6 +34,7 @@ final class RegistrationProgress
         $brandKey = match (true) {
             $hasCampaign || $submitted || $brandStatus === 'verified' => 'verified',
             $brandStatus === 'needs_attention' => 'needs_attention',
+            $brandStatus === 'overdue' && $hasBrand => 'overdue',
             $hasBrand => 'processing',
             default => 'not_started',
         };
@@ -41,9 +42,16 @@ final class RegistrationProgress
         $brand = match ($brandKey) {
             'verified' => ['key' => 'verified', 'label' => 'Business verified', 'detail' => 'The carrier has verified your business.'],
             'needs_attention' => ['key' => 'needs_attention', 'label' => 'Needs attention', 'detail' => $registration->brand_status_detail ?: 'The carrier could not finish verifying this business. Your details are saved; contact support to get this resolved.'],
+            'overdue' => ['key' => 'overdue', 'label' => 'Verification taking longer than expected', 'detail' => $registration->brand_status_detail ?: 'The carrier has not rejected your business, but verification is taking longer than expected. Your brand is saved and nothing needs to be resubmitted.'],
             'processing' => ['key' => 'processing', 'label' => 'Business verification in progress', 'detail' => 'Your business was sent to the carrier. Verification usually takes a short while and sometimes longer. We check automatically; nothing is wrong and you do not need to resubmit.'],
             default => ['key' => 'not_started', 'label' => 'Not started', 'detail' => 'Submit your business details to start carrier verification.'],
         };
+
+        // A sole-proprietor brand needs a carrier PIN text this platform cannot
+        // complete: say so instead of implying more waiting will finish it.
+        if (in_array($brandKey, ['processing', 'overdue'], true) && $registration->entity_type?->value === 'sole_proprietor') {
+            $brand['detail'] = 'Sole-proprietor brands need a one-time PIN text from the carrier to the contact phone, which can\'t be completed in MotionGrove yet, so this verification may not finish on its own. Contact support to resolve it.';
+        }
 
         $issue = $registration->campaign_issue;
 
@@ -69,7 +77,7 @@ final class RegistrationProgress
             $campaignKey === 'approved' => 100,
             $campaignKey === 'under_review' => 75,
             $campaignKey === 'needs_attention' || $campaignKey === 'issue' || $campaignKey === 'ready' => 50,
-            $brandKey === 'processing' || $brandKey === 'needs_attention' => 25,
+            in_array($brandKey, ['processing', 'overdue', 'needs_attention'], true) => 25,
             default => 0,
         };
 

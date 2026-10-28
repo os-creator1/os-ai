@@ -253,6 +253,15 @@
                     </div>
                 </div>
 
+                @if($registration->brand_status === 'needs_attention' && trim((string) $registration->provider_brand_id) !== '')
+                    <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="brand-replacement">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="authorize_brand_replacement" name="authorize_brand_replacement" value="1">
+                            <label class="form-check-label" for="authorize_brand_replacement">The carrier rejected this business. If I change the business details above, I understand this replaces the rejected carrier brand and a new carrier brand fee applies.</label>
+                        </div>
+                    </x-alert>
+                @endif
+
                 @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
                     <div class="mb-1" data-role="support-contact">
                         <label class="form-label required" for="support_contact">Text-message support contact</label>
