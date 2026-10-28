@@ -43,7 +43,7 @@ class ProvisioningPilotTest extends TestCase
             'opt_in_method' => 'Customers tick an optional SMS box on our booking form.',
             'sample_message_1' => 'Harbor Lane: your appointment is confirmed. Reply STOP to opt out.',
             'sample_message_2' => 'Harbor Lane: reminder, your appointment is tomorrow. Reply STOP to opt out.',
-            'privacy_policy_url' => 'https://harborlane.example/privacy', 'terms_url' => 'https://harborlane.example/terms',
+            'privacy_policy_url' => 'https://harborlane.example/privacy', 'terms_url' => 'https://harborlane.example/terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
             'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ]);
 

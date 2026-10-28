@@ -994,6 +994,11 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new \RuntimeException('A 10DLC campaign description is required before submission.');
         }
 
+        // Telnyx requires the three confirmation messages (20-320 characters
+        // each). Built from this Business's own registration and validated
+        // before any wallet reservation or provider call.
+        $confirmationMessages = $this->campaignConfirmationMessages($submission);
+
         $business = Business::query()->findOrFail($submission->businessId);
 
         // An earlier attempt whose provider outcome was never confirmed
@@ -1087,7 +1092,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                         throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand status=' . $brandResponse->status());
                     }
 
-                    throw new \RuntimeException('Telnyx rejected the 10DLC brand submission.');
+                    throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the 10DLC brand submission.', 'brand');
                 }
 
                 $brandId = $this->providerValue($brandResponse, ['brandId', 'data.brandId', 'data.id']);
@@ -1165,6 +1170,9 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     'optinKeywords' => 'START,SUBSCRIBE',
                     'optoutKeywords' => 'STOP,UNSUBSCRIBE',
                     'helpKeywords' => 'HELP,INFO',
+                    'optinMessage' => $confirmationMessages['optin'],
+                    'optoutMessage' => $confirmationMessages['optout'],
+                    'helpMessage' => $confirmationMessages['help'],
                     // The registration's consent checklist is validated
                     // (and customer-attested) before this point.
                     'subscriberOptin' => true,
@@ -1203,7 +1211,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                     errorMessage: 'brand_id=' . $brandId . ' status=' . $campaignResponse->status(),
                 );
 
-                throw new \RuntimeException('Telnyx rejected the 10DLC campaign submission.');
+                throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the 10DLC campaign submission.', 'campaign', true, $needsBrand);
             }
 
             if ($campaignResponse !== null) {
@@ -1313,6 +1321,64 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $brandCreatedNow
             ? 'The carrier brand fee was already charged because the carrier created your brand, and it is not refunded; your brand is saved so a retry will not pay it again. The campaign fee was not charged.'
             : 'Your brand was registered earlier, so no new brand fee was charged, and the campaign fee was not charged.';
+    }
+
+    /**
+     * The campaign's opt-in, opt-out and help confirmation messages, built
+     * only from this registration's own brand name, declared purposes and
+     * support contact. Nothing about consent is invented: the opt-in text
+     * only names the programs the customer registered. Refuses (before any
+     * funding) when a message would fall outside Telnyx's 20-320 characters
+     * or the support contact is missing.
+     *
+     * @return array{optin: string, optout: string, help: string}
+     */
+    private function campaignConfirmationMessages(MessagingRegistrationSubmission $submission): array
+    {
+        $refuse = fn (string $why) => new MessagingRegistrationNotEligibleException($why . ' Nothing was charged.');
+        $brand = trim((string) preg_replace('/\s+/u', ' ', $submission->legalBusinessName));
+        $contact = trim((string) $submission->supportContact);
+
+        if ($brand === '') {
+            throw $refuse('Add your business name to build the text-message confirmation messages.');
+        }
+
+        if (! \App\Library\Messaging\Registration\RegistrationSubmissionValidator::isUsableSupportContact($contact)) {
+            throw $refuse('Add and confirm your Business\'s own customer-facing support email or phone; it is used in the HELP confirmation message.');
+        }
+
+        // What a recipient is told they joined. The text only names the
+        // campaign type the Business registered; for the mixed types it never
+        // claims a recipient joined both programs, because each recipient may
+        // have agreed to service texts, promotions, or both, separately.
+        $program = match ($submission->useCase) {
+            'customer_care', 'appointment_reminders' => 'customer care and appointment texts',
+            'marketing' => 'promotional texts',
+            'account_notifications' => 'account notification texts',
+            'two_factor' => 'one-time passcode and verification texts',
+            'mixed', 'low_volume_mixed' => 'the texts you agreed to (customer care and/or promotions, as you chose when you signed up)',
+            default => null,
+        };
+
+        if ($program === null) {
+            throw $refuse('This messaging type has no confirmation message wording.');
+        }
+
+        $messages = [
+            'optin' => "{$brand}: You are now subscribed to {$program}. Message frequency varies. Msg & data rates may apply. Reply HELP for help or STOP to opt out.",
+            'optout' => "{$brand}: You have been unsubscribed and will receive no more text messages from us. Reply START to subscribe again.",
+            'help' => "{$brand}: For help, contact {$contact}. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out.",
+        ];
+
+        foreach ($messages as $message) {
+            $length = mb_strlen($message);
+
+            if ($length < 20 || $length > 320) {
+                throw $refuse('A text-message confirmation message would fall outside the carrier\'s 20-320 character limit; shorten your business name.');
+            }
+        }
+
+        return $messages;
     }
 
     /**

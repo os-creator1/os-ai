@@ -111,7 +111,16 @@ final class MessagingChargePreview
         $wallet = $this->wallets->findByBusinessId((int) $business->id);
         $balanceMicro = $wallet === null ? 0 : (int) $wallet->available_balance_micro;
         $configured = $brand !== null && $prepaid !== null && $recurring !== null;
-        $totalMicro = $configured ? $brand['micro'] + $prepaid['micro'] : 0;
+
+        // A carrier brand an earlier attempt already created (and was charged
+        // for) is reused on submit: its fee is never due again, so it is not
+        // part of what the customer is about to pay. Same rule the adapter uses.
+        $saved = \App\Models\BusinessMessagingRegistration::query()->where('business_id', $business->id)->first();
+        $brandPaid = $saved !== null
+            && $saved->number_type === \App\Enums\Messaging\PhoneNumberType::Local
+            && $saved->status === \App\Enums\Messaging\MessagingRegistrationStatus::NotStarted
+            && trim((string) $saved->provider_brand_id) !== '';
+        $totalMicro = $configured ? ($brandPaid ? 0 : $brand['micro']) + $prepaid['micro'] : 0;
 
         return [
             // Charged when you submit: the carrier brand fee plus the three
@@ -120,7 +129,10 @@ final class MessagingChargePreview
             'one_time' => $configured ? [
                 'micro' => $totalMicro,
                 'text' => DashboardMoney::format((string) $totalMicro, 'USD'),
-                'detail' => 'carrier brand fee ' . $brand['text'] . ' + first three campaign months ' . $prepaid['text'],
+                'detail' => $brandPaid
+                    ? 'your carrier brand is already registered and paid, so no new brand fee; first three campaign months ' . $prepaid['text']
+                    : 'carrier brand fee ' . $brand['text'] . ' + first three campaign months ' . $prepaid['text'],
+                'brand_already_paid' => $brandPaid,
             ] : null,
             'recurring' => $recurring,
             // Disclosure only, never part of the submit-time total or the
