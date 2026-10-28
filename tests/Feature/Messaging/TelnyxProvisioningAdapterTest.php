@@ -1200,6 +1200,68 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame(['committed', 'committed'], DB::table('business_usage_reservations')->where('business_id', $business->id)->pluck('status')->all());
     }
 
+    /** @return array<int, array{string, array<string, mixed>}> */
+    private function providerFailureLogs(int $status, string $stage): array
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $registration = $this->localRegistration($business);
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        $body = ['errors' => [['code' => '10005', 'title' => 'Invalid ein 12-3456789', 'detail' => 'EIN 12-3456789 at 1 Main St, jane@example.test, +15555550100', 'source' => ['pointer' => '/ein']]]];
+        Http::fake($stage === 'brand' ? [
+            'api.telnyx.com/v2/10dlc/brand' => Http::response($body, $status, ['x-request-id' => 'req-abc-123']),
+        ] : [
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['brandId' => 'brand_diag_1']),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response($body, $status, ['x-request-id' => 'req-abc-123']),
+        ]);
+
+        $logged = [];
+        \Illuminate\Support\Facades\Log::shouldReceive('warning')->andReturnUsing(function ($message, $context = []) use (&$logged) {
+            $logged[] = [(string) $message, (array) $context];
+        });
+        \Illuminate\Support\Facades\Log::shouldReceive('error', 'info', 'notice', 'debug')->andReturnNull();
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->submitRegistration(MessagingRegistrationSubmission::fromModel($registration->fresh()));
+            $this->fail('Expected the provider rejection to surface.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Telnyx rejected', $e->getMessage()); // customer-neutral path unchanged
+        }
+
+        $this->assertSame($business->id, $logged[0][1]['business_id'] ?? null);
+
+        return $logged;
+    }
+
+    public function test_a_brand_api_rejection_is_diagnosable_in_the_logs_without_any_sensitive_data(): void
+    {
+        $logged = $this->providerFailureLogs(422, 'brand');
+
+        $this->assertCount(1, $logged);
+        $this->assertSame('brand', $logged[0][1]['stage']);
+        $this->assertSame(422, $logged[0][1]['http_status']);
+        $this->assertSame('10005', $logged[0][1]['provider_error_code']);
+        $this->assertSame('/ein', $logged[0][1]['rejected_field']);
+        $this->assertSame('req-abc-123', $logged[0][1]['request_id']);
+
+        $dump = json_encode($logged);
+        foreach (['12-3456789', 'Main St', 'jane@example.test', '5555550100', 'Invalid ein', 'Authorization', 'Bearer'] as $secret) {
+            $this->assertStringNotContainsString($secret, $dump);
+        }
+    }
+
+    public function test_a_campaign_api_rejection_is_diagnosable_and_leaves_the_saved_brand_and_accounting_intact(): void
+    {
+        $logged = $this->providerFailureLogs(400, 'campaign');
+
+        $this->assertSame('campaign', $logged[0][1]['stage']);
+        $this->assertSame(400, $logged[0][1]['http_status']);
+        $this->assertSame('10005', $logged[0][1]['provider_error_code']);
+        $this->assertStringNotContainsString('12-3456789', json_encode($logged));
+        $this->assertSame('brand_diag_1', \App\Models\BusinessMessagingRegistration::query()->value('provider_brand_id'));
+    }
+
     // -----------------------------------------------------------------
     // Provider use-case mapping and payload contract.
     // -----------------------------------------------------------------
