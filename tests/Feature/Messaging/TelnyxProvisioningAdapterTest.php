@@ -1610,6 +1610,8 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame(1_250_000, $found[0]->initialCostMicro());
         // The documented filter name (there is no filter[number_type]).
         Http::assertSent(fn ($request) => str_contains($request->url(), 'filter%5Bphone_number_type%5D=toll_free') && ! str_contains($request->url(), 'number_type%5D=toll_free&'));
+        // A larger provider pool is required to rotate away from the first five.
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'filter%5Blimit%5D=50'));
 
         config(['messaging.number_sms_addon_monthly_cost_micro' => 100_000]);
         $withAddon = app(TelnyxProvisioningAdapter::class)->searchNumbers(new \App\Library\Messaging\DTO\NumberSearchCriteria('US', PhoneNumberType::TollFree));

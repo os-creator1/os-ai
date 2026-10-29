@@ -80,7 +80,7 @@
                             <p class="text-caption text-muted mb-0">We'll find the closest match if this exact area code isn't available.</p>
                         </div>
 
-                        <x-button type="submit" variant="primary">Find a number</x-button>
+                        <x-button type="submit" variant="primary">{{ $searched ? 'Show different numbers' : 'Find a number' }}</x-button>
                     </form>
                 </div>
             </div>
@@ -90,9 +90,14 @@
 
                 @if(count($candidateOffers) > 0)
                     @include('customer.settings.text-messaging._number-candidate-offers')
+                    <p class="text-muted small mt-2" data-role="number-rotation-note">Want more choices? Click Show different numbers above to see the next available numbers, without repeating those already shown in this session.</p>
                 @else
-                    <x-empty-state icon="search" title="No number found"
-                                    description="We couldn't find a number matching those preferences right now. Try a different area code." />
+                    @if($numberOptionsExhausted ?? false)
+                        <x-empty-state icon="search" title="No more different numbers" description="The carrier returned no further unseen numbers for this area code. Try another area code to see other choices." />
+                    @else
+                        <x-empty-state icon="search" title="No number found"
+                                        description="We couldn't find a number matching those preferences right now. Try a different area code." />
+                    @endif
                 @endif
             @endif
         </x-card>
@@ -152,7 +157,7 @@
                             <p class="text-caption text-muted mb-0">Toll-free prefixes aren't geographic area codes.</p>
                         </div>
 
-                        <x-button type="submit" variant="primary" :disabled="! $available" data-role="find-toll-free">Find a toll-free number</x-button>
+                        <x-button type="submit" variant="primary" :disabled="! $available" data-role="find-toll-free">{{ $searched ? 'Show different toll-free numbers' : 'Find a toll-free number' }}</x-button>
                     </form>
                 </div>
             </div>
@@ -194,9 +199,14 @@
             <x-card :padded="true">
                 @if(count($candidateOffers) > 0)
                     @include('customer.settings.text-messaging._number-candidate-offers')
+                    <p class="text-muted small mt-2" data-role="number-rotation-note">Want more choices? Click Show different toll-free numbers above to see the next available numbers, without repeating those already shown in this session.</p>
                 @else
-                    <x-empty-state icon="search" title="No number found"
-                                    description="We couldn't find any toll-free numbers with confirmed pricing for that search. Try another prefix or search again later." />
+                    @if($numberOptionsExhausted ?? false)
+                        <x-empty-state icon="search" title="No more different numbers" description="The carrier returned no further unseen numbers for these filters. Choose a different toll-free prefix to see other numbers." />
+                    @else
+                        <x-empty-state icon="search" title="No number found"
+                                        description="We couldn't find any toll-free numbers with confirmed pricing for that search. Try another prefix or search again later." />
+                    @endif
                 @endif
             </x-card>
         @endif

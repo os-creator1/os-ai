@@ -386,7 +386,9 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $filter = [
             'filter[country_code]' => $criteria->countryCode,
             'filter[features][]' => 'sms',
-            'filter[limit]' => 5,
+            // Bring back enough inventory for multiple fresh five-number batches.
+            // Telnyx may otherwise return the same first five on every search.
+            'filter[limit]' => 50,
         ];
 
         // Telnyx documents `filter[phone_number_type]` (local | toll_free ...);
