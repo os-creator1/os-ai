@@ -46,7 +46,8 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Show the tested commit
-        run: git log -1 --format='tested head: %H %s'
+        run: |
+          git log -1 --format='tested head: %H %s'
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
