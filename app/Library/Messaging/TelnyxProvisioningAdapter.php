@@ -397,6 +397,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             $filter['filter[national_destination_code]'] = $criteria->areaCode;
         }
 
+        if ($criteria->numberType === PhoneNumberType::TollFree && $criteria->tollFreePrefix !== null && $criteria->tollFreePrefix !== '') {
+            $filter['filter[phone_number][starts_with]'] = '+1' . $criteria->tollFreePrefix;
+        }
+
         $response = $this->client()->get(self::API_BASE . '/available_phone_numbers', $filter);
 
         if (! $response->successful()) {
