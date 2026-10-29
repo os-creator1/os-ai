@@ -140,6 +140,52 @@ class TextMessagingSetupStateTest extends TestCase
         $this->assertSame('+18445550102', \App\Library\Messaging\CandidateToken::decode($matches[1][1], $business)->phoneNumber);
     }
 
+    public function test_repeated_searches_show_next_unseen_numbers_instead_of_the_same_first_five(): void
+    {
+        $fake = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $fake);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+
+        foreach (range(1, 8) as $suffix) {
+            $number = sprintf('+184455501%02d', $suffix);
+            $fake->nextSearchResults[] = new AvailableNumberCandidate(
+                $number,
+                \App\Enums\Messaging\PhoneNumberType::TollFree,
+                $number,
+                100_000,
+                1_000_000,
+                'USD',
+            );
+        }
+
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+        $route = route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]);
+        $data = ['number_type' => 'toll_free'];
+
+        $first = $this->post($route, $data)->assertOk()->getContent();
+        $this->assertSame(5, substr_count($first, 'data-role="number-candidate"'));
+        $this->assertStringContainsString('+18445550101', $first);
+        $this->assertStringContainsString('+18445550105', $first);
+        $this->assertStringNotContainsString('+18445550106', $first);
+
+        $second = $this->post($route, $data)->assertOk()->getContent();
+        $this->assertSame(3, substr_count($second, 'data-role="number-candidate"'));
+        $this->assertStringContainsString('+18445550106', $second);
+        $this->assertStringContainsString('+18445550108', $second);
+        $this->assertStringNotContainsString('+18445550101', $second);
+
+        $third = $this->post($route, $data)->assertOk()->getContent();
+        $this->assertSame(0, substr_count($third, 'data-role="number-candidate"'));
+        $this->assertStringContainsString('No more different numbers', $third);
+
+        // Changing criteria starts a separate history without weakening tokens.
+        $prefix = $this->post($route, $data + ['toll_free_prefix' => '844'])->assertOk()->getContent();
+        $this->assertSame(5, substr_count($prefix, 'data-role="number-candidate"'));
+        $this->assertCount(4, $fake->searches);
+        $this->assertDatabaseCount('business_messaging_numbers', 0);
+    }
+
     public function test_toll_free_rejects_non_toll_free_prefixes(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
