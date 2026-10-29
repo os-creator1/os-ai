@@ -1701,7 +1701,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         try {
             app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
             $this->fail('Expected refusal when the exact selected number is absent.');
-        } catch (\\App\\Library\\Messaging\\Exceptions\\NumberPriceChangedException) {
+        } catch (\App\Library\Messaging\Exceptions\NumberPriceChangedException) {
             // expected
         }
 
@@ -1718,7 +1718,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         try {
             app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
             $this->fail('Expected refusal when carrier quote lookup fails.');
-        } catch (\\App\\Library\\Messaging\\Exceptions\\NumberPriceChangedException $e) {
+        } catch (\App\Library\Messaging\Exceptions\NumberPriceChangedException $e) {
             $this->assertStringContainsString('could not confirm', $e->getMessage());
             $this->assertStringNotContainsString('no longer available', $e->getMessage());
         }
