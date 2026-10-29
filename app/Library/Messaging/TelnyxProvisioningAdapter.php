@@ -481,10 +481,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     /**
      * Confirm the exact selected number and its price against fresh Telnyx
-     * inventory before placing an order. Telnyx's number-pattern filters
-     * match national-number digits: a full E.164 value in starts_with can
-     * yield no results even when the ordinary inventory search offered the
-     * number. Search for the last seven digits instead, then ONLY accept an
+     * inventory before placing an order. Using the full E.164 value in
+     * a starts_with pattern can yield no results even when the ordinary
+     * inventory search offered the number. Search for the last seven
+     * national digits instead, then ONLY accept an
      * exact E.164 match with the same valid quote. Never trust a near match.
      */
     private function assertNumberQuoteStillCurrent(AvailableNumberCandidate $candidate): void
@@ -504,7 +504,6 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'filter[phone_number_type]' => $candidate->numberType === PhoneNumberType::TollFree ? 'toll_free' : 'local',
                 'filter[features][]' => 'sms',
                 'filter[phone_number][contains]' => substr($digits, -7),
-                'filter[best_effort]' => false,
                 'filter[limit]' => 100,
             ]);
         } catch (ConnectionException) {
@@ -532,6 +531,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         }
 
         if ($current === null) {
+            \Illuminate\Support\Facades\Log::warning('Telnyx quote recheck returned no exact priced number', [
+                'number_type' => $candidate->numberType->value,
+                'returned_count' => count((array) $response->json('data', [])),
+            ]);
             throw new NumberPriceChangedException('This number is no longer available at a confirmed price. Nothing was charged. Please search again.');
         }
 
