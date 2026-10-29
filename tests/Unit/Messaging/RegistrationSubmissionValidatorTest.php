@@ -232,4 +232,29 @@ class RegistrationSubmissionValidatorTest extends TestCase
         $this->assertCount(count(RegistrationTemplateCatalog::CONSENT_ITEMS) - 1, $issues);
         $this->assertContains('Confirm on your website, then check: ' . RegistrationTemplateCatalog::CONSENT_ITEMS['stop_help'] . '.', $issues);
     }
+
+    public function test_toll_free_sample_2_is_optional_but_local_still_requires_it(): void
+    {
+        $this->assertSame([], $this->issues($this->registration(['sample_message_2' => null])));
+        $this->assertSame([], $this->issues($this->registration(['sample_message_2' => ''])));
+        // A provided sample 2 is still checked for placeholders.
+        $this->assertContains('Replace the placeholder text in your sample message 2 with real details.', $this->issues($this->registration(['sample_message_2' => 'Kaleb Hill Photo Booth: [message here] Reply STOP'])));
+
+        $local = $this->issues($this->registration(['number_type' => 'local', 'sample_message_2' => null]));
+        $this->assertContains('Add your sample message 2.', $local);
+    }
+
+    public function test_toll_free_sample_1_allows_1000_characters_and_lengths_count_exact_whitespace(): void
+    {
+        $ok = str_pad('Kaleb Hill Photo Booth: your booking is confirmed. Reply STOP to opt out.', 1000, ' ');
+        // 1000 characters including trailing whitespace: allowed. One more: refused with the exact count.
+        $this->assertSame([], $this->issues($this->registration(['sample_message_1' => $ok])));
+        $issues = $this->issues($this->registration(['sample_message_1' => $ok . ' ']));
+        $this->assertCount(1, $issues);
+        $this->assertStringContainsString('sample message 1 is 1001 characters; toll-free verification accepts at most 1000', $issues[0]);
+
+        // Whitespace in the saved value counts toward the 500-character fields too.
+        $padded = $this->issues($this->registration(['campaign_description' => 'Kaleb Hill Photo Booth sends booking confirmations. ' . str_repeat(' ', 460)]));
+        $this->assertStringContainsString('campaign description is 512 characters', implode(' ', $padded));
+    }
 }

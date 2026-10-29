@@ -442,15 +442,15 @@ $textLimit = $isTollFreeForm ? \App\Library\Messaging\Registration\RegistrationS
                 <div class="pm-section__body">
                     <div class="pm-field">
                         <label class="required" for="sample_message_1">Sample 1</label>
-                        <textarea class="form-control @error('sample_message_1') is-invalid @enderror" id="sample_message_1" name="sample_message_1" data-suggestible rows="2" maxlength="500" required
+                        <textarea class="form-control @error('sample_message_1') is-invalid @enderror" id="sample_message_1" name="sample_message_1" data-suggestible rows="2" maxlength="{{ $isTollFreeForm ? \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_SAMPLE_LIMIT : 500 }}" required
                                   placeholder="Include your business name and how to opt out, e.g. &quot;Reply STOP to unsubscribe.&quot;">{{ old('sample_message_1', $prefill['values']['sample_message_1']) }}</textarea>
                         @error('sample_message_1')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
                     <div class="pm-field">
-                        <label class="required" for="sample_message_2">Sample 2</label>
-                        <textarea class="form-control @error('sample_message_2') is-invalid @enderror" id="sample_message_2" name="sample_message_2" data-suggestible rows="2" maxlength="500" required>{{ old('sample_message_2', $prefill['values']['sample_message_2']) }}</textarea>
+                        <label @unless($isTollFreeForm) class="required" @endunless for="sample_message_2">Sample 2 @if($isTollFreeForm)<span class="fw-normal text-muted">(optional)</span>@endif</label>
+                        <textarea class="form-control @error('sample_message_2') is-invalid @enderror" id="sample_message_2" name="sample_message_2" data-suggestible rows="2" maxlength="500" @unless($isTollFreeForm) required @endunless>{{ old('sample_message_2', $prefill['values']['sample_message_2']) }}</textarea>
                         @error('sample_message_2')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                        @if($isTollFreeForm)<div class="form-text">For toll-free verification the carrier receives Sample 1 only; Sample 2 is kept with your draft. Please still brand it with your business name.</div>@endif
+                        @if($isTollFreeForm)<div class="form-text">For toll-free verification the carrier receives Sample 1 only, so Sample 2 is optional. If you add one, brand it with your business name.</div>@endif
                     </div>
                 </div>
             </fieldset>

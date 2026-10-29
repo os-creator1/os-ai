@@ -78,6 +78,12 @@ final class RegistrationSubmissionValidator
         foreach (self::REQUIRED as $field => $label) {
             $value = $registration->{$field};
 
+            // Toll-free verification transmits only sample 1, so sample 2 is optional there
+            // (still checked for placeholders when given). Local/10DLC keeps requiring both.
+            if ($field === 'sample_message_2' && $registration->number_type === PhoneNumberType::TollFree && (! is_string($value) || trim($value) === '')) {
+                continue;
+            }
+
             if (! is_string($value) || trim($value) === '') {
                 $issues[] = 'Add your ' . $label . '.';
             } elseif (preg_match(self::PLACEHOLDER, $value) === 1) {
@@ -275,7 +281,7 @@ final class RegistrationSubmissionValidator
             $issues[] = 'Registering both message types together is not available yet. Choose service and customer-care, or promotional and marketing.';
         }
 
-        if ($useCase === 'marketing' && count($promotional) < 2) {
+        if ($useCase === 'marketing' && count($promotional) < count(array_filter([$one, $two], fn (string $m): bool => $m !== ''))) {
             $issues[] = 'Promotional and marketing campaigns need both sample messages to be promotions. Reword the sample that is not.';
         }
 

@@ -439,8 +439,9 @@ class TextMessagingController extends CustomerBaseController
             'consent_confirmations.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS + RegistrationTemplateCatalog::LOW_VOLUME_CONSENT_ITEMS))],
             'message_purposes' => ['nullable', 'array'],
             'message_purposes.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::LOW_VOLUME_PURPOSES))],
-            'sample_message_1' => ['required', 'string', 'max:500'],
-            'sample_message_2' => ['required', 'string', 'max:500'],
+            // Toll-free sends only sample 1 (Telnyx allows 1,000 characters) and sample 2 is optional there.
+            'sample_message_1' => ['required', 'string', 'max:' . ($numberType === PhoneNumberType::TollFree ? RegistrationSubmissionValidator::TOLL_FREE_SAMPLE_LIMIT : 500)],
+            'sample_message_2' => [$numberType === PhoneNumberType::TollFree ? 'nullable' : 'required', 'string', 'max:500'],
             'privacy_policy_url' => ['required', 'url', 'max:255'],
             'terms_url' => ['required', 'url', 'max:255'],
             'contact_first_name' => ['nullable', 'string', 'max:100'],
