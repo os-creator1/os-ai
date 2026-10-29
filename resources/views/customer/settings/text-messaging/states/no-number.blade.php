@@ -11,8 +11,11 @@
     @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
-        'chip' => 'No number yet',
-        'description' => 'Get a phone number so this Business can send and receive text messages. Pick the kind of number that suits you.',
+        'chip' => $numberTypeLocked !== null ? 'Approved' : 'No number yet',
+        'chipVariant' => $numberTypeLocked !== null ? 'success' : '',
+        'description' => $numberTypeLocked !== null
+            ? 'The carrier approved your registration. Choose a local number to finish setup.'
+            : 'Get a phone number so this Business can send and receive text messages. Pick the kind of number that suits you.',
     ])
 
     @if(request('focus') === 'toll_free')
@@ -41,12 +44,24 @@
             this is the guided next step, restricted to local only — the
             toll-free/local choice never reappears here.
         --}}
-        <x-alert variant="success" icon="check-circle" class="mb-2" data-role="verified-banner">
-            <strong class="d-block">Business verified</strong>
-            Your business verification is approved. Choose your local number below to finish setup — a charge for the number begins once you complete your order.
-        </x-alert>
+        @if(isset($registration) && $registration !== null)
+            {{-- Step 3 of the registration progress: the picker below is the existing, authorized number search/order. --}}
+            @include('customer.settings.text-messaging._registration-progress', [
+                'progress' => \App\Library\Messaging\Registration\RegistrationProgress::for($registration),
+                'registration' => $registration,
+                'phoneNumber' => null,
+                'campaignAssignmentStatus' => null,
+                'numberPickerAnchor' => '#choose-number',
+            ])
+            <div class="mb-2"></div>
+        @else
+            <x-alert variant="success" icon="check-circle" class="mb-2" data-role="verified-banner">
+                <strong class="d-block">Business verified</strong>
+                Your business verification is approved. Choose your local number below to finish setup — a charge for the number begins once you complete your order.
+            </x-alert>
+        @endif
 
-        <x-card :padded="true">
+        <x-card :padded="true" id="choose-number" data-role="number-picker">
             <x-empty-state icon="phone" title="Choose your local number" description="Choose a preferred area code and we'll find a number for this Business." />
 
             <div class="row">

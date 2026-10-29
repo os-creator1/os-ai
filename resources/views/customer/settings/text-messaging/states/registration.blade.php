@@ -11,6 +11,21 @@
     // Once a brand or campaign exists at the carrier, the customer is tracking
     // real progress: no "back to number choices", no "nothing was charged".
     $progressActive = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && $progress['committed'];
+    $progressChip = match ($progress['campaign']['key']) {
+        'approved' => ['Approved', 'success'],
+        'under_review' => ['Carrier review', 'warn'],
+        'needs_attention' => ['Needs correction', 'danger'],
+        'issue' => ['Submission issue', 'warn'],
+        'ready' => ['Ready to submit', 'accent'],
+        default => $progress['brand']['key'] === 'needs_attention' ? ['Needs attention', 'danger'] : ['Verifying business', 'warn'],
+    };
+    $progressDescription = match ($progress['campaign']['key']) {
+        'under_review' => 'Your texting registration is with the carrier. There\'s nothing you need to do right now.',
+        'approved' => 'The carrier approved your registration. Finish setup by choosing a phone number.',
+        'needs_attention' => 'The carrier needs a correction before this registration can continue.',
+        'issue', 'ready' => 'Your business is verified. Review your campaign details and submit them to the carrier.',
+        default => 'Track your messaging registration with the carrier.',
+    };
 @endphp
 
 @section('page-style')
@@ -22,7 +37,9 @@
     @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
-        'description' => $progressActive ? 'Track your messaging registration with the carrier.' : 'One more step before this number is ready to send and receive texts.',
+        'description' => $progressActive ? $progressDescription : 'One more step before this number is ready to send and receive texts.',
+        'chip' => $progressActive ? $progressChip[0] : null,
+        'chipVariant' => $progressActive ? $progressChip[1] : '',
     ])
 
     @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && ! $progressActive)
@@ -44,9 +61,10 @@
     @endif
 
     @if($progressActive)
-        @include('customer.settings.text-messaging._registration-progress', ['progress' => $progress])
+        @include('customer.settings.text-messaging._registration-progress', ['progress' => $progress, 'registration' => $registration, 'phoneNumber' => $phoneNumber, 'campaignAssignmentStatus' => $campaignAssignmentStatus ?? null])
     @endif
 
+    @unless($progressActive)
     <x-card :padded="true" class="mb-2">
         <dl class="row mb-0">
             <dt class="col-sm-4">Phone number</dt>
@@ -149,6 +167,7 @@
                 @endunless
         @endswitch
     </x-card>
+    @endunless
 
     {{-- PR #295 Correction Round 1, item 8 — once a carrier has approved
          this registration, the normal customer edit form is never shown

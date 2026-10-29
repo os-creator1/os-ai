@@ -156,7 +156,10 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
         $response->assertOk();
         $response->assertSee('Business verified', false);
-        $response->assertSee('data-role="verified-banner"', false);
+        // Step 3 of the progress screen, on top of the existing authorized number picker.
+        $response->assertSee('data-role="registration-progress"', false);
+        $response->assertSee('Step 3 of 3');
+        $response->assertSee('data-role="choose-number" href="#choose-number"', false);
         $response->assertSee('Choose your local number');
     }
 
