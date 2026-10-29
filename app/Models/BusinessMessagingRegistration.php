@@ -28,6 +28,8 @@ class BusinessMessagingRegistration extends Model
         'number_type',
         'status',
         'legal_business_name',
+        'doing_business_as',
+        'additional_information',
         'entity_type',
         'ein',
         'address_line_1',

@@ -242,17 +242,18 @@ final class RegistrationTemplateCatalog
     private static function messageFlow(string $choice, string $brand, ?string $websiteUrl): string
     {
         $where = $websiteUrl !== null && $websiteUrl !== ''
-            ? 'on ' . $websiteUrl . ' (the exact opt-in page URL: ' . rtrim($websiteUrl, '/') . '/...)'
+            ? 'at ' . rtrim($websiteUrl, '/') . '/... (replace "..." with the exact opt-in page)'
             : 'on our website (opt-in page URL: add it here)';
 
         $what = $choice === self::CHOICE_CARE
-            ? 'service and customer-care texts such as replies to inquiries, quotes, booking confirmations and reminders'
+            ? 'service texts such as replies to inquiries, quotes, booking confirmations and reminders'
             : ($choice === self::CHOICE_MARKETING
-                ? 'promotional texts such as package promotions, seasonal specials and discounts'
-                : 'service and customer-care texts and, separately, promotional texts');
+                ? 'promotional texts such as package offers and discounts'
+                : 'service texts and, separately, promotional texts');
 
-        return 'Customers enter their mobile number ' . $where . ' and choose to receive ' . $what . ' from ' . $brand
-            . ' by checking an optional SMS consent box that is separate from any other agreement. The consent wording states message frequency, that message and data rates may apply, that they can reply STOP to opt out and HELP for help, and links our Privacy Policy and SMS Terms. Consent is not a condition of purchase.';
+        // Kept well under Telnyx's 500-character limit for `optInWorkflow`, even with a long brand name and URL.
+        return 'Customers enter their mobile number ' . $where . ' and opt in to ' . $what . ' from ' . $brand
+            . ' with an optional SMS consent box, separate from other agreements. It states message frequency, that message and data rates may apply, STOP to opt out, HELP for help, and links our Privacy Policy and SMS Terms. Consent is not a condition of purchase.';
     }
 
     public static function isCareOnly(?string $useCase): bool

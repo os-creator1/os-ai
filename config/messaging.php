@@ -167,6 +167,13 @@ return [
     'provisioning_open_to_all' => (bool) env('MESSAGING_PROVISIONING_OPEN_TO_ALL', false),
     'provisioning_pilot_business_ids' => env('MESSAGING_PILOT_BUSINESS_IDS', ''),
 
+    /*
+    | Telnyx toll-free `isvReseller`: the name of the ISV/reseller, sent ONLY when the
+    | platform's Telnyx account really is an ISV account submitting for a separate end
+    | business. Null (the default) omits the field; it is never guessed or hardcoded.
+    */
+    'toll_free_isv_reseller' => env('MESSAGING_TOLL_FREE_ISV_RESELLER') ?: null,
+
     'default_provider' => 'telnyx',
 
     'webhook_rejection_retention_days' => env('MESSAGING_WEBHOOK_REJECTION_RETENTION_DAYS', 30),

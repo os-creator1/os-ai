@@ -85,6 +85,10 @@ final readonly class MessagingRegistrationSubmission
         public ?string $supportContact = null,
         /** 10DLC lifecycle stage to perform: 'full' (legacy one-shot), 'brand' (stage 1) or 'campaign' (stage 2). */
         public string $phase = 'full',
+        /** Owner-stated DBA (customer-facing name), when different from the legal name. */
+        public ?string $doingBusinessAs = null,
+        /** Owner-written explanation of legitimate name/domain differences. */
+        public ?string $additionalInformation = null,
     ) {
     }
 
@@ -131,6 +135,8 @@ final readonly class MessagingRegistrationSubmission
             messagePurposes: array_values((array) $registration->message_purposes),
             fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
             campaignDescription: $registration->campaign_description,
+            doingBusinessAs: filled($registration->doing_business_as) ? trim((string) $registration->doing_business_as) : null,
+            additionalInformation: filled($registration->additional_information) ? trim((string) $registration->additional_information) : null,
         );
     }
 }

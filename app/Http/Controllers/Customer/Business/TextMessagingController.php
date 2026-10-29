@@ -414,6 +414,8 @@ class TextMessagingController extends CustomerBaseController
 
         $validated = $request->validate([
             'legal_business_name' => ['required', 'string', 'max:191'],
+            'doing_business_as' => ['nullable', 'string', 'max:191'],
+            'additional_information' => ['nullable', 'string', 'max:300'],
             'entity_type' => ['required', 'in:sole_proprietor,ein'],
             'ein' => ['required_if:entity_type,ein', 'nullable', 'string', 'max:20'],
             'address_line_1' => ['required', 'string', 'max:191'],
@@ -429,14 +431,17 @@ class TextMessagingController extends CustomerBaseController
             'support_contact_confirmed_for' => ['nullable', 'string', 'max:191'],
             'authorize_brand_replacement' => ['nullable', 'boolean'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
-            'opt_in_method' => ['required', 'string', 'max:2000'],
-            'campaign_description' => ['required', 'string', 'max:2000'],
+            // Telnyx limits toll-free `optInWorkflow` and `useCaseSummary` to 500 characters each;
+            // they are refused here rather than ever being cut off on the way to the carrier.
+            'opt_in_method' => ['required', 'string', 'max:' . ($numberType === PhoneNumberType::TollFree ? RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT : 2000)],
+            'campaign_description' => ['required', 'string', 'max:' . ($numberType === PhoneNumberType::TollFree ? RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT : 2000)],
             'consent_confirmations' => ['nullable', 'array'],
             'consent_confirmations.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS + RegistrationTemplateCatalog::LOW_VOLUME_CONSENT_ITEMS))],
             'message_purposes' => ['nullable', 'array'],
             'message_purposes.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::LOW_VOLUME_PURPOSES))],
-            'sample_message_1' => ['required', 'string', 'max:500'],
-            'sample_message_2' => ['required', 'string', 'max:500'],
+            // Toll-free sends only sample 1 (Telnyx allows 1,000 characters) and sample 2 is optional there.
+            'sample_message_1' => ['required', 'string', 'max:' . ($numberType === PhoneNumberType::TollFree ? RegistrationSubmissionValidator::TOLL_FREE_SAMPLE_LIMIT : 500)],
+            'sample_message_2' => [$numberType === PhoneNumberType::TollFree ? 'nullable' : 'required', 'string', 'max:500'],
             'privacy_policy_url' => ['required', 'url', 'max:255'],
             'terms_url' => ['required', 'url', 'max:255'],
             'contact_first_name' => ['nullable', 'string', 'max:100'],
@@ -466,13 +471,25 @@ class TextMessagingController extends CustomerBaseController
         $validated['consent_confirmations'] = array_values(array_unique($validated['consent_confirmations'] ?? []));
         $validated['message_purposes'] = $validated['use_case'] === 'low_volume_mixed' ? array_values(array_unique($validated['message_purposes'] ?? [])) : null;
 
-        // Consent attestations were made for the messaging type the
-        // customer had saved; a different type needs them re-confirmed.
+        // Consent attestations are about the opt-in wording on the customer's own
+        // website. Moving to a type that adds promotional messages needs them
+        // re-confirmed (they were made for service messages); moving to a
+        // service-only type keeps the common ticks and drops only the
+        // Low Volume Mixed extras that no longer apply. Nothing is ever ticked for them.
         $existing = $this->registrationFor($business);
         $useCaseChanged = $existing !== null && $existing->use_case !== null && $existing->use_case !== $validated['use_case'];
+        $consentReset = false;
 
         if ($useCaseChanged) {
-            $validated['consent_confirmations'] = [];
+            if (! RegistrationTemplateCatalog::isCareOnly($validated['use_case'])) {
+                $consentReset = $validated['consent_confirmations'] !== [];
+                $validated['consent_confirmations'] = [];
+            } else {
+                $validated['consent_confirmations'] = array_values(array_intersect(
+                    $validated['consent_confirmations'],
+                    array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
+                ));
+            }
         }
         $validated['number_type'] = $numberType->value;
         $validated['country_code'] = 'US';
@@ -485,9 +502,11 @@ class TextMessagingController extends CustomerBaseController
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => $useCaseChanged
-                ? 'Business details saved. You changed the messaging type, so please re-confirm the consent checklist and review your sample messages.'
-                : 'Business details saved.',
+            'message' => match (true) {
+                $consentReset => 'Draft saved. You changed to a messaging type that includes promotions, so the consent checklist was cleared — please re-confirm each item on your website and review your sample messages.',
+                $useCaseChanged => 'Draft saved. You changed the messaging type, so please review your sample messages and campaign description.',
+                default => 'Business details saved.',
+            },
         ]);
     }
 
@@ -548,11 +567,15 @@ class TextMessagingController extends CustomerBaseController
         $issues = $this->registrationValidator->issues($registration);
 
         if ($issues !== []) {
-            return $this->textMessagingError(
-                $workspaceUid,
-                $businessUid,
-                'Not submitted yet — ' . count($issues) . ' item(s) need your attention under "Before you submit". Nothing was charged.',
-            );
+            // Local validation only: the carrier was never contacted, no fee was
+            // charged and the saved draft and registration status are untouched.
+            // The exact items are re-derived from the saved draft and listed on
+            // the page under "Before you submit".
+            return redirect(route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]) . '#pm-submit')->with([
+                'status' => 'error',
+                'registration_blocked' => true,
+                'message' => 'Not submitted — ' . count($issues) . ' item(s) in your saved draft need attention before this can go to the carrier (listed under "Before you submit"). Nothing was sent to the carrier and nothing was charged. Your saved details are unchanged.',
+            ]);
         }
 
         try {

@@ -410,6 +410,24 @@ class TelnyxProvisioningAdapterTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_over_long_toll_free_text_is_refused_in_preflight_never_truncated(): void
+    {
+        [$e] = $this->tollFreeSubmit(200, ['data' => ['id' => 'x']], ['campaignDescription' => str_repeat('a', 501), 'optInMethod' => str_repeat('b', 501)]);
+
+        $this->assertInstanceOf(\App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException::class, $e);
+        $this->assertSame(['campaign_description', 'opt_in_method'], $e->fields);
+        Http::assertNothingSent();
+    }
+
+    public function test_a_500_character_description_and_opt_in_workflow_are_sent_whole(): void
+    {
+        $text = str_repeat('c', 500);
+        [$e] = $this->tollFreeSubmit(200, ['data' => ['id' => 'tfv_full_1']], ['campaignDescription' => $text, 'optInMethod' => $text]);
+
+        $this->assertNull($e);
+        Http::assertSent(fn ($request) => $request->data()['useCaseSummary'] === $text && $request->data()['optInWorkflow'] === $text);
+    }
+
     public function test_a_successful_toll_free_submission_returns_the_provider_id_without_an_incident(): void
     {
         [$e, , $business, $result] = $this->tollFreeSubmit(200, ['data' => ['id' => 'tfv_ok_1']]);
@@ -417,6 +435,91 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertNull($e);
         $this->assertSame('tfv_ok_1', $result->providerRegistrationId);
         $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->where('business_id', $business->id)->count());
+    }
+
+    public function test_toll_free_payload_carries_the_stated_dba_a_truthful_note_and_no_invented_reseller(): void
+    {
+        $this->enableProvisioning();
+        config(['messaging.toll_free_isv_reseller' => null]);
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_fixture_dba']])]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100', null, [
+            'doingBusinessAs' => 'Harbor Lane Photo Booth',
+            'additionalInformation' => 'Our website uses the Photo Booth brand; email is on the parent domain.',
+            'optInImageUrl' => 'https://harborlane.example/book-now',
+        ]));
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['businessName'] === 'Harbor Lane Studios LLC'
+                && $body['doingBusinessAs'] === 'Harbor Lane Photo Booth'
+                && ! array_key_exists('isvReseller', $body)
+                && $body['productionMessageContent'] === 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.'
+                && $body['additionalInformation'] !== $body['useCaseSummary']
+                && str_contains($body['additionalInformation'], 'Harbor Lane Studios LLC operates the customer-facing brand Harbor Lane Photo Booth.')
+                && str_contains($body['additionalInformation'], 'email is on the parent domain')
+                && $body['optInWorkflowImageURLs'] === [['url' => 'https://harborlane.example/book-now']];
+        });
+    }
+
+    public function test_toll_free_payload_sends_isv_reseller_only_when_configured_and_omits_an_unneeded_dba(): void
+    {
+        $this->enableProvisioning();
+        config(['messaging.toll_free_isv_reseller' => 'Configured Reseller Inc']);
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_fixture_isv']])]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100', null, [
+            'doingBusinessAs' => 'harbor lane studios llc',
+        ]));
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['isvReseller'] === 'Configured Reseller Inc'
+                && ! array_key_exists('doingBusinessAs', $body)
+                && $body['additionalInformation'] === 'No additional information.';
+        });
+    }
+
+    public function test_toll_free_values_over_telnyxs_limits_fail_before_any_request_and_are_never_truncated(): void
+    {
+        foreach ([
+            'campaign_description' => ['campaignDescription' => str_repeat('a', 500) . ' '],
+            'opt_in_method' => ['optInMethod' => str_repeat('b', 501)],
+            'sample_message_1' => ['sampleMessage1' => str_repeat('c', 1001)],
+        ] as $field => $override) {
+            [$caught, , $business] = $this->tollFreeSubmit(200, ['data' => ['id' => 'never']], $override);
+
+            $this->assertInstanceOf(\App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException::class, $caught, $field);
+            $this->assertSame([$field], $caught->fields);
+            Http::assertNothingSent();
+            $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->where('business_id', $business->id)->count());
+        }
+    }
+
+    public function test_toll_free_values_exactly_at_the_limits_are_sent_unmodified(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_limits']])]);
+        $summary = 'Harbor Lane ' . str_repeat('d', 488);
+        $flow = str_repeat('e', 500);
+        $sample = 'Harbor Lane: ' . str_repeat('f', 982) . ' STOP';
+        $this->assertSame([500, 500, 1000], [mb_strlen($summary), mb_strlen($flow), mb_strlen($sample)]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100', null, [
+            'campaignDescription' => $summary, 'optInMethod' => $flow, 'sampleMessage1' => $sample,
+        ]));
+
+        Http::assertSent(fn ($request) => $request->data()['useCaseSummary'] === $summary
+            && $request->data()['optInWorkflow'] === $flow
+            && $request->data()['productionMessageContent'] === $sample);
     }
 
     /**

@@ -32,9 +32,35 @@ final class RegistrationSubmissionValidator
         'terms_url' => 'SMS Terms URL',
     ];
 
+    /** Telnyx documents a 500-character maximum for `useCaseSummary` and `optInWorkflow` (toll-free). */
+    public const TOLL_FREE_TEXT_LIMIT = 500;
+
+    /** Telnyx `productionMessageContent` maximum (the transmitted sample message 1). */
+    public const TOLL_FREE_SAMPLE_LIMIT = 1000;
+
     private const PLACEHOLDER = '/\[[^\]]*\]|\{\{?[^}]*\}?\}|\.\.\.|…|\bTODO\b|\bTBD\b|lorem ipsum|add it here|your (business|company)\b|example\.(com|org|net)\b|\bxxx+\b/i';
 
-    private const PROMOTIONAL = '/\b(promo\w*|special\w*|discount\w*|sale|deal\w*|\d+%|% off|save)\b/i';
+    /**
+     * Genuine marketing behaviour, not isolated words: "special occasions",
+     * "save the date" and "sales team" describe service messages. Offers,
+     * discounts, coupons, percentages and sale pricing do not.
+     */
+    private const PROMOTIONAL = '/(?:\bpromo(?:tion\w*|s|code\w*)?\b|\bpromotional\b|\bdiscount\w*|\bcoupon\w*|\bdeals?\b|\bspecials\b|\blimited[- ]time\b|\bspecial\s+(?:offers?|deals?|prices?|pricing|promotions?|discounts?|rates?)\b|\b(?:on|for)\s+sale\b|\b(?:flash|big|huge|annual|holiday|weekend|clearance|summer)\s+sale\b|\bsave\s+(?:\$?\d|up\s+to|big|money)|\d\s*%|%\s*off\b|\bbogo\b|\bbuy\s+one\b)/i';
+
+    /**
+     * Promotional wording that is *negated* ("we do not send promotional
+     * messages", "no discounts or sales") describes the opposite of a
+     * promotion and must not classify a customer-care campaign as marketing.
+     */
+    private const NEGATED_PROMOTIONAL = '/\b(?:no|not|never|without|don\'t|doesn\'t|won\'t|isn\'t|aren\'t|neither|nor)\b(?:\s+[\w\'-]+){0,5}?\s+(?:promo\w*|specials|special\s+(?:offers?|deals?|prices?|promotions?|discounts?)|discount\w*|coupon\w*|sales?|deals?|marketing)\b(?:\s*(?:,|\bor\b|\band\b|\bnor\b)\s*(?:promo\w*|specials|special\s+(?:offers?|deals?|prices?|promotions?|discounts?)|discount\w*|coupon\w*|sales?|deals?|marketing)\b)*/i';
+
+    private static function isPromotional(string $text): bool
+    {
+        $text = str_replace(["\u{2019}", "\u{2018}"], "'", $text);
+        $text = preg_replace(self::NEGATED_PROMOTIONAL, ' ', $text) ?? $text;
+
+        return preg_match(self::PROMOTIONAL, $text) === 1;
+    }
 
     /** @return list<string> actionable corrections; empty when ready to submit */
     public function issues(BusinessMessagingRegistration $registration): array
@@ -51,6 +77,12 @@ final class RegistrationSubmissionValidator
 
         foreach (self::REQUIRED as $field => $label) {
             $value = $registration->{$field};
+
+            // Toll-free verification transmits only sample 1, so sample 2 is optional there
+            // (still checked for placeholders when given). Local/10DLC keeps requiring both.
+            if ($field === 'sample_message_2' && $registration->number_type === PhoneNumberType::TollFree && (! is_string($value) || trim($value) === '')) {
+                continue;
+            }
 
             if (! is_string($value) || trim($value) === '') {
                 $issues[] = 'Add your ' . $label . '.';
@@ -127,6 +159,23 @@ final class RegistrationSubmissionValidator
         return $issues;
     }
 
+    /**
+     * Opt-in evidence is a public link to the opt-in page or a screenshot of
+     * it; Telnyx accepts either in its `optInWorkflowImageURLs` field. This is
+     * a syntax check only (http/https with a real host): it cannot prove the
+     * link is publicly reachable or shows the form — the carrier reviews that.
+     */
+    public static function optInEvidenceUrlIssue(string $url): ?string
+    {
+        $url = trim($url);
+
+        if ($url === '' || preg_match('#^https?://[^/\s]+\.[^/\s]+#i', $url) !== 1 || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return 'Add a public link to your opt-in page or a screenshot of your opt-in form (the carrier requires opt-in evidence, and it must start with https://).';
+        }
+
+        return null;
+    }
+
     /** A valid email address, or a phone number with 10-15 digits. */
     public static function isUsableSupportContact(string $value): bool
     {
@@ -165,8 +214,27 @@ final class RegistrationSubmissionValidator
                 $issues[] = 'Choose your expected messages per month.';
             }
 
-            if (! filter_var((string) $registration->opt_in_image_url, FILTER_VALIDATE_URL)) {
-                $issues[] = 'Add a link to a screenshot of your opt-in form (the carrier requires an image).';
+            $imageIssue = self::optInEvidenceUrlIssue((string) $registration->opt_in_image_url);
+
+            if ($imageIssue !== null) {
+                $issues[] = $imageIssue;
+            }
+
+            // Telnyx's published toll-free request schema: useCaseSummary and
+            // optInWorkflow max 500 characters, productionMessageContent max
+            // 1000 (no minimums). Sent exactly as written, never trimmed, so a
+            // longer value is refused here, field by field.
+            foreach ([
+                ['campaign_description', 'campaign description', self::TOLL_FREE_TEXT_LIMIT],
+                ['opt_in_method', 'message-flow (how customers opt in) description', self::TOLL_FREE_TEXT_LIMIT],
+                ['sample_message_1', 'sample message 1', self::TOLL_FREE_SAMPLE_LIMIT],
+            ] as [$field, $label, $max]) {
+                // Exact outgoing value: whitespace counts, nothing is trimmed.
+                $length = mb_strlen((string) $registration->{$field});
+
+                if ($length > $max) {
+                    $issues[] = sprintf('Your %s is %d characters; toll-free verification accepts at most %d, and it is sent exactly as written. Shorten it by %d.', $label, $length, $max, $length - $max);
+                }
             }
 
             if (! isset(CarrierRegistrationOptions::TOLL_FREE_USE_CASES[(string) $registration->use_case])) {
@@ -199,9 +267,9 @@ final class RegistrationSubmissionValidator
             $issues[] = 'Sample messages 1 and 2 must be different examples.';
         }
 
-        $promotional = array_filter([$one, $two], fn (string $m): bool => preg_match(self::PROMOTIONAL, $m) === 1);
+        $promotional = array_filter([$one, $two], fn (string $m): bool => self::isPromotional($m));
 
-        if (RegistrationTemplateCatalog::isCareOnly($useCase) && preg_match(self::PROMOTIONAL, (string) $registration->campaign_description) === 1) {
+        if (RegistrationTemplateCatalog::isCareOnly($useCase) && self::isPromotional((string) $registration->campaign_description)) {
             $issues[] = 'Your campaign description mentions promotions, but you chose service and customer-care messages. Reword it, or change your choice to Promotional or Both.';
         }
 
@@ -213,7 +281,7 @@ final class RegistrationSubmissionValidator
             $issues[] = 'Registering both message types together is not available yet. Choose service and customer-care, or promotional and marketing.';
         }
 
-        if ($useCase === 'marketing' && count($promotional) < 2) {
+        if ($useCase === 'marketing' && count($promotional) < count(array_filter([$one, $two], fn (string $m): bool => $m !== ''))) {
             $issues[] = 'Promotional and marketing campaigns need both sample messages to be promotions. Reword the sample that is not.';
         }
 
@@ -239,12 +307,64 @@ final class RegistrationSubmissionValidator
 
         $issues = array_merge($issues, $this->staleSuggestionIssues($registration));
 
-        $brand = trim((string) $registration->legal_business_name);
-        if ($brand !== '' && $one !== '' && $two !== '' && stripos($one . ' ' . $two, $this->firstWords($brand)) === false) {
-            $issues[] = 'Include your business name in at least one sample message.';
+        if ($registration->number_type === PhoneNumberType::TollFree) {
+            return array_merge($issues, $this->tollFreeSampleIssues($registration, $one, $two));
+        }
+
+        // Sample message 1 is what Telnyx receives as the production message, so it must
+        // identify the customer-facing brand: the DBA the owner stated, else the Business name
+        // already on file or the registered legal name. Nothing typed into a sample message is
+        // trusted as a brand by itself, and the legal name is not required when a DBA is used.
+        $brands = self::brandCandidates($registration);
+
+        if ($brands !== [] && $one !== '' && ! self::mentionsAny($one, $brands)) {
+            $issues[] = 'Sample message 1 should name your business the way customers know it. Use your customer-facing name (DBA)'
+                . ($registration->doing_business_as ? '' : ' — enter it under "Customer-facing name (DBA)" if it differs from your legal name —')
+                . ' or your Business name, for example "' . $brands[0] . ': …".';
         }
 
         return $issues;
+    }
+
+    /**
+     * Toll-free verification transmits ONLY sample 1 (productionMessageContent),
+     * so the transmitted sample is judged on its own: it must identify the
+     * customer-facing brand (the stated DBA, else the registered legal name)
+     * and carry opt-out wording. Sample 2 is not sent; if present it must still
+     * be truthfully branded, but it can never satisfy a requirement for sample 1.
+     *
+     * @return list<string>
+     */
+    private function tollFreeSampleIssues(BusinessMessagingRegistration $registration, string $one, string $two): array
+    {
+        $issues = [];
+        $dba = trim((string) $registration->doing_business_as);
+        $brand = $dba !== '' ? $dba : trim((string) $registration->legal_business_name);
+        $source = $dba !== '' ? 'the customer-facing name you entered' : 'your registered business name';
+
+        if ($brand !== '' && $one !== '' && ! self::mentionsBrand($one, $brand)) {
+            $issues[] = 'Sample message 1 must include "' . $brand . '" (' . $source . '), because it is the sample sent to the carrier.';
+        }
+
+        if ($brand !== '' && $two !== '' && ! self::mentionsBrand($two, $brand)) {
+            $issues[] = 'Sample message 2 should also include "' . $brand . '". Only the first sample is sent to the carrier; this one is kept with your draft.';
+        }
+
+        if ($one !== '' && preg_match('/\bstop\b/i', $one) !== 1) {
+            $issues[] = 'Sample message 1 needs opt-out wording such as "Reply STOP to opt out".';
+        }
+
+        return $issues;
+    }
+
+    /** Whole-name match, ignoring case, punctuation and a trailing entity suffix (LLC, Inc, …). */
+    private static function mentionsBrand(string $text, string $brand): bool
+    {
+        $normalize = static fn (string $v): string => trim((string) preg_replace('/[^a-z0-9]+/', ' ', strtolower($v)));
+        $name = $normalize($brand);
+        $name = trim((string) preg_replace('/\s(?:l l c|llc|inc|incorporated|corp|corporation|co|company|ltd|limited|llp|pllc|lp)$/', '', $name));
+
+        return $name !== '' && str_contains(' ' . $normalize($text) . ' ', ' ' . $name . ' ');
     }
 
     /**
@@ -305,8 +425,37 @@ final class RegistrationSubmissionValidator
         return $issues;
     }
 
-    private function firstWords(string $brand): string
+    /** @return list<string> accepted brand names, most specific first, entity suffixes removed */
+    private static function brandCandidates(BusinessMessagingRegistration $registration): array
     {
-        return implode(' ', array_slice(preg_split('/\s+/', $brand) ?: [], 0, 2));
+        $names = [];
+
+        foreach ([$registration->doing_business_as, $registration->business?->name, $registration->legal_business_name] as $name) {
+            $name = trim((string) $name);
+
+            do {
+                $before = $name;
+                $name = trim(preg_replace('/[\s,.]+(?:llc|l\.l\.c|inc|incorporated|corp|corporation|co|company|ltd|llp|lp|pllc)\.?$/i', '', $name) ?? $name, " \t,.");
+            } while ($name !== $before);
+
+            if ($name !== '' && ! in_array(strtolower($name), array_map('strtolower', $names), true)) {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
     }
+
+    /** @param list<string> $names */
+    private static function mentionsAny(string $text, array $names): bool
+    {
+        foreach ($names as $name) {
+            if (stripos($text, $name) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 }

@@ -1738,7 +1738,13 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'message_volume' => ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume]),
                 'state' => CarrierRegistrationOptions::stateName($submission->region) === null,
                 'contact_name' => trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === '',
-                'opt_in_url' => ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL),
+                // Telnyx maximums, measured on the exact values that are sent (whitespace
+                // included); nothing is ever trimmed to fit.
+                'campaign_description' => mb_strlen((string) $submission->campaignDescription) > \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT,
+                'opt_in_method' => mb_strlen((string) $submission->optInMethod) > \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT,
+                'sample_message_1' => mb_strlen((string) $submission->sampleMessage1) > \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_SAMPLE_LIMIT,
+                'additional_information' => mb_strlen($this->tollFreeAdditionalInformation($submission)) > 500,
+                'opt_in_url' => \App\Library\Messaging\Registration\RegistrationSubmissionValidator::optInEvidenceUrlIssue((string) $submission->optInImageUrl) !== null,
             ]));
 
             if ($failed !== []) {
@@ -1792,7 +1798,10 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'productionMessageContent' => $submission->sampleMessage1,
                 'optInWorkflow' => $submission->optInMethod,
                 'optInWorkflowImageURLs' => [['url' => $submission->optInImageUrl]],
-                'additionalInformation' => mb_substr((string) $submission->campaignDescription, 0, 500),
+                'doingBusinessAs' => $this->tollFreeDoingBusinessAs($submission),
+                // Optional ISV name: only when the platform is configured as a reseller account.
+                'isvReseller' => $this->tollFreeIsvReseller(),
+                'additionalInformation' => $this->tollFreeAdditionalInformation($submission),
                 'businessRegistrationNumber' => $submission->entityType === MessagingEntityType::Ein ? $submission->ein : null,
                 'businessRegistrationType' => $submission->entityType === MessagingEntityType::Ein ? 'EIN' : null,
                 'businessRegistrationCountry' => $submission->entityType === MessagingEntityType::Ein ? 'US' : null,
@@ -1842,6 +1851,43 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // honest field, never duplicated into provider_brand_id/
         // provider_campaign_id.
         return new RegistrationSubmissionResult(null, null, $requestId, MessagingRegistrationStatus::Pending);
+    }
+
+    /** Owner-stated DBA only, and only when it really differs from the legal name. */
+    private function tollFreeDoingBusinessAs(MessagingRegistrationSubmission $submission): ?string
+    {
+        $dba = trim((string) $submission->doingBusinessAs);
+
+        return $dba !== '' && strcasecmp($dba, trim((string) $submission->legalBusinessName)) !== 0 ? $dba : null;
+    }
+
+    private function tollFreeIsvReseller(): ?string
+    {
+        $name = config('messaging.toll_free_isv_reseller');
+
+        return is_string($name) && trim($name) !== '' ? mb_substr(trim($name), 0, 500) : null;
+    }
+
+    /**
+     * Telnyx requires this text. It carries only what the owner stated: the DBA relationship
+     * (when one was given) and their own note about legitimate name/domain differences — never
+     * a copy of the campaign description and never an inferred explanation.
+     */
+    private function tollFreeAdditionalInformation(MessagingRegistrationSubmission $submission): string
+    {
+        $parts = [];
+        $dba = $this->tollFreeDoingBusinessAs($submission);
+
+        if ($dba !== null) {
+            $parts[] = 'Legal entity ' . trim((string) $submission->legalBusinessName) . ' operates the customer-facing brand ' . $dba . '.';
+        }
+
+        if (trim((string) $submission->additionalInformation) !== '') {
+            $parts[] = trim((string) $submission->additionalInformation);
+        }
+
+        // Never truncated: an over-long result is refused in preflight instead.
+        return $parts === [] ? 'No additional information.' : implode(' ', $parts);
     }
 
     /**
