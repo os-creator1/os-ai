@@ -365,7 +365,7 @@ class TextMessagingSetupStateTest extends TestCase
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
-        $response->assertSee('Needs attention');
+        $response->assertSee('Needs correction');
         $response->assertSee('The website did not match the business name.');
         $response->assertSee('Business details');
     }

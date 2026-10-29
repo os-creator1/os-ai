@@ -941,7 +941,7 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->assertStringContainsString('Business verified', $html);
         $this->assertStringContainsString('Submission issue', $html);
         $this->assertStringContainsString('data-role="refresh-status"', $html);
-        $this->assertStringContainsString('Last carrier status check', $html);
+        $this->assertStringContainsString('Last checked', $html);
 
         // No contradictory wording or actions once the carrier holds a brand.
         $this->assertStringNotContainsString('Nothing has been charged or sent to the carrier yet', $html);
