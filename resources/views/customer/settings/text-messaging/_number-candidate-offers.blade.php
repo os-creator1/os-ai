@@ -51,7 +51,7 @@
                             <div class="sr-callout sr-callout--warn" role="alert" data-role="add-funds"><x-ds-icon name="alert-circle" size="16" /><p>Your balance doesn't cover today's charge yet. <a href="{{ route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid]) }}">Add funds</a> to continue.</p></div>
                         @endunless
                     @endif
-                    <x-button type="submit" variant="primary" :disabled="! $available || ! $preview['configured'] || ! $preview['sufficient']">Get this number@if($preview['configured']) · {{ $preview['one_time']['text'] }}@endif</x-button>
+                    <x-button type="submit" variant="primary" :disabled="! $available || ! $preview['configured'] || ! $preview['sufficient']">Get this number{{ $preview["configured"] ? " · " . $preview["one_time"]["text"] : "" }}</x-button>
                     @unless($available)
                         <p class="pm-hint mb-0">Preview only — number setup isn't turned on in this environment.</p>
                     @endunless

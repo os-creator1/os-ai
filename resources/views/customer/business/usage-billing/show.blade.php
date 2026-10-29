@@ -209,7 +209,9 @@
                 </div>
             @endif
 
-        @php($hasSide = ($wallet !== null && $managesLimits) || $managesBillingContact)
+        @php
+            $hasSide = ($wallet !== null && $managesLimits) || $managesBillingContact;
+        @endphp
         <div class="pm-split @unless ($hasSide) pm-split--single @endunless" style="@unless ($hasSide) grid-template-columns:minmax(0,1fr) @endunless">
             <div class="pm-stack">
                 {{-- 3. Funding — only the payer ever sees add-funds / automatic top-up (T-PAYER-4) --}}
