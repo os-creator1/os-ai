@@ -7,6 +7,10 @@
     $useCase = old('use_case', $registration->use_case ?? null);
     $confirmedConsent = old('consent_confirmations', $registration->consent_confirmations ?? []);
     $confirmedConsent = is_array($confirmedConsent) ? $confirmedConsent : [];
+    $progress = \App\Library\Messaging\Registration\RegistrationProgress::for($registration);
+    // Once a brand or campaign exists at the carrier, the customer is tracking
+    // real progress: no "back to number choices", no "nothing was charged".
+    $progressActive = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && $progress['committed'];
 @endphp
 
 @section('page-style')
@@ -18,13 +22,10 @@
     @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
-        'description' => 'One more step before this number is ready to send and receive texts.',
+        'description' => $progressActive ? 'Track your messaging registration with the carrier.' : 'One more step before this number is ready to send and receive texts.',
     ])
 
-    @php($brandSaved = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local
-        && ($status ?? 'not_started') === 'not_started'
-        && trim((string) ($registration->provider_brand_id ?? '')) !== '')
-    @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
+    @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && ! $progressActive)
         {{-- The way out is at the TOP, not buried under a long form. Stepping back only
              pauses local setup: every saved detail stays, and nothing is deleted. A
              submitted/approved registration is refused with an explanation instead. --}}
@@ -38,12 +39,12 @@
                 <input type="hidden" name="then" value="toll_free">
                 <x-button type="submit" variant="primary" data-role="choose-toll-free-instead">Choose toll-free instead (recommended)</x-button>
             </form>
-            @if($brandSaved)
-                <span class="text-caption text-muted" data-role="brand-saved-note">Your business details stay saved. Your carrier brand is already registered and its fee was paid to the carrier; it isn't due again. Your campaign hasn't been submitted or charged yet.</span>
-            @else
-                <span class="text-caption text-muted">Your business details stay saved. Nothing has been charged or sent to the carrier yet.</span>
-            @endif
+            <span class="text-caption text-muted">Your business details stay saved. Nothing has been charged or sent to the carrier yet.</span>
         </div>
+    @endif
+
+    @if($progressActive)
+        @include('customer.settings.text-messaging._registration-progress', ['progress' => $progress])
     @endif
 
     <x-card :padded="true" class="mb-2">
@@ -70,8 +71,8 @@
                         <x-badge variant="success">Approved</x-badge>
                         @break
                     @default
-                        @if($brandSaved)
-                            <x-badge variant="info" data-role="brand-saved-badge">Brand registered — campaign not yet submitted</x-badge>
+                        @if($progressActive)
+                            <x-badge variant="info" data-role="registration-in-progress">In progress</x-badge>
                         @else
                             <x-badge variant="neutral">Not started</x-badge>
                         @endif
@@ -81,9 +82,10 @@
 
         @switch($status)
             @case('pending')
-                <p class="text-caption text-muted mt-2 mb-0">We've submitted your business details for messaging registration. This is typically reviewed within a few business days — nothing else to do right now.</p>
+                @unless($progressActive)<p class="text-caption text-muted mt-2 mb-0">We've submitted your business details for messaging registration. This is typically reviewed within a few business days — nothing else to do right now.</p>@endunless
                 @break
             @case('rejected')
+                @unless($progressActive)
                 <x-alert variant="danger" icon="alert-circle" class="mt-2 mb-0" data-role="rejection-reason">
                     <strong class="d-block">This needs a correction</strong>
                     {{-- Review correction — a specific, carrier-supplied
@@ -97,6 +99,7 @@
                         The carrier did not supply a detailed reason for this rejection. Please review the details below and try again.
                     @endif
                 </x-alert>
+                @endunless
                 @break
             @case('approved')
                 {{--
@@ -131,6 +134,7 @@
                     configured, so this currently reads as an honest
                     "no fee is currently configured" statement.
                 --}}
+                @unless($progressActive)
                 <p class="text-caption text-muted mt-2 mb-0">
                     Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step. {{ $verificationChargeDisclosure }}
                     @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
@@ -142,6 +146,7 @@
                         You have already been charged for this number.
                     @endif
                 </p>
+                @endunless
         @endswitch
     </x-card>
 
@@ -160,7 +165,7 @@
                 <dd class="col-sm-8">{{ $registration->contact_email }}</dd>
             </dl>
         </x-card>
-    @elseif($status !== 'pending')
+    @elseif($status !== 'pending' && $progress['show_form'])
         <x-card title="Business details" :padded="true">
             <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.update', [$workspaceUid, $businessUid]) }}">
                 @csrf
@@ -247,6 +252,15 @@
                         @error('contact_phone')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
                 </div>
+
+                @if(in_array($registration->brand_status, ['needs_attention', null], true) && trim((string) $registration->provider_brand_id) !== '')
+                    <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="brand-replacement">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="authorize_brand_replacement" name="authorize_brand_replacement" value="1">
+                            <label class="form-check-label" for="authorize_brand_replacement">{{ $registration->brand_status === 'needs_attention' ? 'The carrier rejected this business.' : 'The outcome of the earlier carrier brand was never recorded, so it is kept unless you choose otherwise.' }} If I change the business details above, I understand this replaces the earlier carrier brand and a new carrier brand fee applies.</label>
+                        </div>
+                    </x-alert>
+                @endif
 
                 @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
                     <div class="mb-1" data-role="support-contact">
@@ -440,7 +454,7 @@
                 @endif
                 @php($isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
                 @if($isLocalRegistration)
-                    @foreach(['standard' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'low_volume_mixed' => 'Low Volume Mixed registration: the carrier brand fee plus the first three months of its campaign fees, charged when you submit'] as $pricingKey => $oneTimeLabel)
+                    @foreach(['standard' => 'First three months of 10DLC campaign fees', 'low_volume_mixed' => 'First three months of Low Volume Mixed campaign fees'] as $pricingKey => $oneTimeLabel)
                         <div data-pricing-for="{{ $pricingKey }}" @if(($useCase === 'low_volume_mixed' ? 'low_volume_mixed' : 'standard') !== $pricingKey) hidden @endif>
                             @include('customer.settings.text-messaging._charge-summary', ['preview' => $registrationPreviews[$pricingKey], 'oneTimeLabel' => $oneTimeLabel, 'recurringLabel' => $pricingKey === 'low_volume_mixed' ? 'Low Volume Mixed campaign, billed monthly after those first three months' : '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Registration pricing for this campaign type isn\'t set up on our side yet, so it can\'t be submitted right now. Nothing will be charged.'])
                         </div>
@@ -450,7 +464,17 @@
                 @endif
                 <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspaceUid, $businessUid]) }}">
                     @csrf
-                    <x-button type="submit" variant="primary" :disabled="! $available || ($isLocalRegistration && (! $registrationPreview['configured'] || ! $registrationPreview['sufficient']))">Submit for review</x-button>
+                    @if($isLocalRegistration && $progress['campaign_ready'])
+                        <div class="form-check mb-1" data-role="campaign-authorization">
+                            <input type="checkbox" class="form-check-input" id="authorize_campaign" name="authorize_campaign" value="1">
+                            <label class="form-check-label" for="authorize_campaign">I authorize charging the first three months of campaign fees ({{ $registrationPreview['campaign_prepay']['text'] ?? '' }}) when this campaign is submitted. Possible carrier review fees are billed separately, as described above.</label>
+                        </div>
+                        <x-button type="submit" variant="primary" data-role="submit-campaign" :disabled="! $available || ! $registrationPreview['configured'] || ! $registrationPreview['sufficient']">Submit campaign for carrier review</x-button>
+                    @elseif($isLocalRegistration)
+                        <x-button type="submit" variant="primary" data-role="submit-business" :disabled="! $available || ! $registrationPreview['configured'] || ! $registrationPreview['sufficient']">{{ trim((string) $registration->provider_brand_id) !== '' ? 'Check verification and continue' : 'Submit business for verification' }}</x-button>
+                    @else
+                        <x-button type="submit" variant="primary" :disabled="! $available">Submit for review</x-button>
+                    @endif
                 </form>
                 @unless($available)
                     <p class="text-caption text-muted mt-1 mb-0">Preview — submission isn't available in this environment yet.</p>

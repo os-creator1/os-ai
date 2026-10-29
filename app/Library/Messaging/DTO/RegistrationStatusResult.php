@@ -23,6 +23,8 @@ final readonly class RegistrationStatusResult
     public function __construct(
         public MessagingRegistrationStatus $status,
         public ?string $rejectionReason = null,
+        /** False when the lookup itself failed (rate limit, timeout, server error): nothing was learned. */
+        public bool $conclusive = true,
     ) {
     }
 }

@@ -2372,6 +2372,7 @@
             // STATE 2 — number acquired, messaging registration required.
             Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');
             Route::post('/registration/submit', 'Business\TextMessagingController@submitRegistration')->name('registration.submit');
+            Route::post('/registration/refresh', 'Business\TextMessagingController@refreshRegistrationProgress')->middleware('throttle:10,1')->name('registration.refresh');
 
             // STATE 3 — Delivery & usage (relocated out of Business Results,
             // see AnalyticsController's own overview: operational messaging

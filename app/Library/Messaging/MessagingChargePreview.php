@@ -140,9 +140,19 @@ final class MessagingChargePreview
             // review, which is charged separately, explicitly and at cost
             // (messaging:charge-carrier-fee) and never silently.
             'possible_review_fee' => ['micro' => ($reviewMicro = max(0, (int) config('messaging.ten_dlc_review_fee_micro', 15000000))), 'text' => DashboardMoney::format((string) $reviewMicro, 'USD')],
+            // The two charges happen at different times: the brand fee when the
+            // business is submitted for verification, the campaign prepayment
+            // only when the customer later authorizes the campaign. A brand
+            // fee already paid is shown as paid and never due again.
+            'brand_already_paid' => $brandPaid,
+            'brand_fee' => $brand,
+            'campaign_prepay' => $prepaid,
             'configured' => $configured,
             'balance_text' => DashboardMoney::format((string) $balanceMicro, $wallet?->currency?->code),
-            'sufficient' => $configured && $balanceMicro >= $totalMicro,
+            'sufficient_for_brand' => $configured && $balanceMicro >= $brand['micro'],
+            'sufficient_for_campaign' => $configured && $balanceMicro >= $prepaid['micro'],
+            // Sufficient for the stage the customer is about to start.
+            'sufficient' => $configured && $balanceMicro >= ($brandPaid ? $prepaid['micro'] : $brand['micro']),
         ];
     }
 

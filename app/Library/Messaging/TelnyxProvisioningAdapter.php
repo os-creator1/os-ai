@@ -24,6 +24,7 @@ use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
 use App\Library\Messaging\DTO\RegistrationStatusResult;
+use App\Library\Messaging\DTO\BrandStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Registration\CarrierRegistrationOptions;
@@ -1012,6 +1013,14 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new MessagingRegistrationRecoveryRequiredException('An earlier 10DLC submission has an unconfirmed provider outcome.');
         }
 
+        if ($submission->phase === 'brand') {
+            return $this->submitBrandStage($business, $submission);
+        }
+
+        if ($submission->phase === 'campaign' && $submission->existingBrandId === null) {
+            throw new \RuntimeException('A campaign can only be submitted after the business brand exists.');
+        }
+
         $registrationFeature = self::registrationFeatureFor($submission->useCase);
         $this->assertRecurringPriceConfigured(NumberLifecycleManager::campaignRenewalFeatureFor($submission->useCase));
 
@@ -1061,51 +1070,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
         try {
             if ($brandId === null) {
-                try {
-                    $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', array_filter([
-                        'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
-                        'displayName' => $submission->legalBusinessName,
-                        'companyName' => $submission->legalBusinessName,
-                        'firstName' => $submission->contactFirstName,
-                        'lastName' => $submission->contactLastName,
-                        'ein' => $submission->ein,
-                        'email' => $submission->contactEmail,
-                        'phone' => $submission->contactPhone,
-                        'street' => $submission->addressLine1,
-                        'city' => $submission->city,
-                        // Telnyx: "Must be 2 letters code for United States."
-                        'state' => CarrierRegistrationOptions::stateCode($submission->region),
-                        'postalCode' => $submission->postalCode,
-                        'country' => $submission->countryCode,
-                        'website' => $submission->websiteUrl,
-                        // Required by Telnyx; the customer's own choice, never inferred here.
-                        'vertical' => $submission->brandVertical,
-                    ], fn ($value) => $value !== null && $value !== ''));
-                } catch (ConnectionException $e) {
-                    throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand request did not complete');
-                }
-
-                if (! $brandResponse->successful()) {
-                    $this->logProviderFailure($business, 'brand', $brandResponse);
-
-                    if ($brandResponse->serverError() || $brandResponse->status() === 408) {
-                        throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand status=' . $brandResponse->status());
-                    }
-
-                    throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the 10DLC brand submission.', 'brand');
-                }
-
-                $brandId = $this->providerValue($brandResponse, ['brandId', 'data.brandId', 'data.id']);
-
-                if ($brandId === '') {
-                    throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand accepted without an id');
-                }
-
-                // Durable before the next external step: a later campaign
-                // failure must never lose the brand this call just created.
-                BusinessMessagingRegistration::query()
-                    ->where('business_id', $business->id)
-                    ->update(['provider_brand_id' => $brandId]);
+                [$brandId, $tcrBrandId] = $this->createBrandAtProvider($business, $submission);
 
                 // The carrier now holds this brand: its fee is earned and is
                 // committed here, so no later failure can hand it back.
@@ -1125,11 +1090,40 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 try {
                     $qualification = $this->client()->get(self::API_BASE . '/10dlc/campaignBuilder/brand/' . $brandId . '/usecase/' . $useCase['usecase']);
                 } catch (ConnectionException) {
-                    throw new MessagingRegistrationNotEligibleException('We couldn\'t reach the carrier to check your eligibility for Low Volume Mixed. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
+                    throw MessagingRegistrationNotEligibleException::temporary('We couldn\'t reach the carrier to check your eligibility for Low Volume Mixed. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
                 }
 
                 if (! $qualification->successful()) {
-                    throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. ' . $this->qualificationFeeNote($needsBrand) . ' Choose a standard service or promotional campaign instead.');
+                    $http = $qualification->status();
+
+                    // Only an explicit refusal is ineligibility. A rate limit, timeout or
+                    // server error says nothing about the business, and a 400 is only
+                    // trusted once the carrier confirms the brand is verified (an
+                    // unverified brand is refused with 400 until verification finishes).
+                    if ($http === 429 || $http === 408 || $http >= 500
+                        || ($http === 400 && $this->refreshBrandStatus($brandId)->state !== BrandStatusResult::VERIFIED)) {
+                        if ($http === 400) {
+                            BusinessMessagingRegistration::query()->where('business_id', $business->id)->update(['brand_status' => 'processing']);
+                        }
+
+                        throw MessagingRegistrationNotEligibleException::temporary('We couldn\'t confirm your eligibility for Low Volume Mixed yet; the carrier has not finished verifying your business or did not answer. ' . $this->qualificationFeeNote($needsBrand) . ' We will keep checking; you can try again shortly.');
+                    }
+
+                    $this->logProviderFailure($business, 'qualification', $qualification);
+
+                    // Only a structured provider error code explicitly configured
+                    // as "not eligible" is a verdict. Any other refusal (400, 403,
+                    // 422...) does not say WHY, so it is an uncertain, temporary
+                    // submission issue: the campaign stays unsubmitted, the brand
+                    // stays saved, nothing is charged, and no other campaign type
+                    // is ever substituted on the customer's behalf.
+                    $code = $this->providerValue($qualification, ['errors.0.code']);
+
+                    if ($code !== '' && in_array($code, array_map('strval', (array) config('messaging.qualification_ineligible_codes', [])), true)) {
+                        throw new MessagingRegistrationNotEligibleException('Telnyx says this business is not eligible for a Low Volume Mixed campaign. ' . $this->qualificationFeeNote($needsBrand) . ' Choose a standard service or promotional campaign instead.');
+                    }
+
+                    throw MessagingRegistrationNotEligibleException::temporary('The carrier did not accept the Low Volume Mixed eligibility check and did not say why, so your campaign has not been submitted. Your verified business is saved, ' . lcfirst($this->qualificationFeeNote($needsBrand)) . ' You can try again shortly; if it keeps happening, contact support with the time of your attempt. Nothing about your campaign type was changed.');
                 }
 
                 // UsecaseMetadata is a root-level object. Unknown or malformed
@@ -1140,7 +1134,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
                 if (! is_int($minSub) || ! is_int($maxSub) || $minSub < 0 || $maxSub < 0
                     || $this->providerValue($qualification, ['usecase']) !== $useCase['usecase']) {
-                    throw new MessagingRegistrationNotEligibleException('We couldn\'t confirm the carrier\'s rules for Low Volume Mixed right now. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
+                    throw MessagingRegistrationNotEligibleException::temporary('We couldn\'t confirm the carrier\'s rules for Low Volume Mixed right now. ' . $this->qualificationFeeNote($needsBrand) . ' Please try again later.');
                 }
 
                 if (count($subUsecases) < $minSub) {
@@ -1321,6 +1315,159 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return $brandCreatedNow
             ? 'The carrier brand fee was already charged because the carrier created your brand, and it is not refunded; your brand is saved so a retry will not pay it again. The campaign fee was not charged.'
             : 'Your brand was registered earlier, so no new brand fee was charged, and the campaign fee was not charged.';
+    }
+
+    /**
+     * Stage 1: create the carrier brand once and charge its fee once. A brand
+     * already saved is reused as-is (no request, no charge). The campaign is
+     * never created here, and nothing about the brand is assumed verified.
+     */
+    /**
+     * Telnyx verifies a sole-proprietor brand with an SMS one-time PIN sent to
+     * the contact phone, which the carrier expects to be entered back. This
+     * platform has no PIN entry step, so such a brand could be paid for and then
+     * never complete. It is refused before any reservation or provider call.
+     */
+    private function assertSoleProprietorSupported(MessagingRegistrationSubmission $submission): void
+    {
+        if ($submission->entityType === MessagingEntityType::SoleProprietor) {
+            throw new MessagingRegistrationNotEligibleException(self::SOLE_PROPRIETOR_GUIDANCE . ' Nothing was charged.');
+        }
+    }
+
+    public const SOLE_PROPRIETOR_GUIDANCE = 'Registering as an individual / sole proprietor requires a one-time PIN text from the carrier that can\'t be completed in MotionGrove yet. Register with your business\'s EIN instead, or use a toll-free number, which needs no EIN or PIN.';
+
+    private function submitBrandStage(Business $business, MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
+    {
+        if ($submission->existingBrandId !== null) {
+            return new RegistrationSubmissionResult($submission->existingBrandId, null, null, MessagingRegistrationStatus::NotStarted);
+        }
+
+        // The whole lifecycle must be priced before the first charge: a
+        // customer is never charged the brand fee for a campaign type whose
+        // own prices are not configured (nothing is silently omitted later).
+        $this->assertSoleProprietorSupported($submission);
+        $this->assertRecurringPriceConfigured(self::FEATURE_TEN_DLC_BRAND_REGISTRATION);
+        $this->assertRecurringPriceConfigured(self::registrationFeatureFor($submission->useCase));
+        $this->assertRecurringPriceConfigured(NumberLifecycleManager::campaignRenewalFeatureFor($submission->useCase));
+        $reservationId = $this->reserveFunding($business, self::FEATURE_TEN_DLC_BRAND_REGISTRATION, $this->brandOperationKey($business, $submission));
+
+        try {
+            [$brandId, $tcrBrandId] = $this->createBrandAtProvider($business, $submission);
+        } catch (\Throwable $e) {
+            $this->settleAfterFailure($reservationId, $e);
+
+            throw $e;
+        }
+
+        // The carrier holds this brand now: its fee is earned and never handed back.
+        $this->wallet->commit($reservationId);
+
+        return new RegistrationSubmissionResult($brandId, null, null, MessagingRegistrationStatus::NotStarted, $tcrBrandId);
+    }
+
+    /**
+     * GET /10dlc/brand/{id}. An HTTP 200 / `status: OK` only proves the lookup
+     * worked; verification is the brand's `identityStatus`. Rate limits,
+     * timeouts, server errors and unreadable bodies are UNCHANGED, never final.
+     */
+    public function refreshBrandStatus(string $providerBrandId): BrandStatusResult
+    {
+        try {
+            $response = $this->client()->get(self::API_BASE . '/10dlc/brand/' . rawurlencode($providerBrandId));
+        } catch (\Throwable) {
+            return new BrandStatusResult(BrandStatusResult::UNCHANGED);
+        }
+
+        if (! $response->successful()) {
+            return new BrandStatusResult(BrandStatusResult::UNCHANGED);
+        }
+
+        $identity = strtoupper($this->providerValue($response, ['identityStatus', 'data.identityStatus']));
+        $status = strtoupper($this->providerValue($response, ['status', 'data.status']));
+        $tcr = $this->providerValue($response, ['tcrBrandId', 'data.tcrBrandId']);
+        $tcr = $tcr !== '' ? $tcr : null;
+
+        if ($identity === '' && $status === '') {
+            return new BrandStatusResult(BrandStatusResult::UNCHANGED);
+        }
+
+        if (in_array($status, ['REGISTRATION_FAILED', 'FAILED', 'REJECTED', 'DELETED'], true)) {
+            return new BrandStatusResult(BrandStatusResult::NEEDS_ATTENTION, $tcr, 'The carrier rejected this business\'s verification. Contact support to correct and resubmit it.');
+        }
+
+        if (in_array($identity, ['VERIFIED', 'VETTED_VERIFIED'], true) && ! in_array($status, ['REGISTRATION_PENDING', 'PENDING'], true)) {
+            return new BrandStatusResult(BrandStatusResult::VERIFIED, $tcr);
+        }
+
+        // UNVERIFIED, SELF_DECLARED, a pending registration or any value not
+        // seen before: the carrier is still working. Never guessed verified.
+        return new BrandStatusResult(BrandStatusResult::PROCESSING, $tcr);
+    }
+
+    /**
+     * Creates the carrier brand and saves its id durably. Throws exactly what
+     * the one-shot path always did (unconfirmed outcome, provider rejection).
+     *
+     * @return array{0: string, 1: ?string} [brand id, TCR brand id when supplied]
+     */
+    private function createBrandAtProvider(Business $business, MessagingRegistrationSubmission $submission): array
+    {
+        try {
+            $brandResponse = $this->client()->post(self::API_BASE . '/10dlc/brand', array_filter([
+                'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
+                'displayName' => $submission->legalBusinessName,
+                'companyName' => $submission->legalBusinessName,
+                'firstName' => $submission->contactFirstName,
+                'lastName' => $submission->contactLastName,
+                'ein' => $submission->ein,
+                'email' => $submission->contactEmail,
+                'phone' => $submission->contactPhone,
+                'street' => $submission->addressLine1,
+                'city' => $submission->city,
+                // Telnyx: "Must be 2 letters code for United States."
+                'state' => CarrierRegistrationOptions::stateCode($submission->region),
+                'postalCode' => $submission->postalCode,
+                'country' => $submission->countryCode,
+                'website' => $submission->websiteUrl,
+                // Required by Telnyx; the customer's own choice, never inferred here.
+                'vertical' => $submission->brandVertical,
+            ], fn ($value) => $value !== null && $value !== ''));
+        } catch (ConnectionException $e) {
+            throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand request did not complete');
+        }
+
+        if (! $brandResponse->successful()) {
+            $this->logProviderFailure($business, 'brand', $brandResponse);
+
+            if ($brandResponse->serverError() || $brandResponse->status() === 408) {
+                throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand status=' . $brandResponse->status());
+            }
+
+            throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the 10DLC brand submission.', 'brand');
+        }
+
+        $brandId = $this->providerValue($brandResponse, ['brandId', 'data.brandId', 'data.id']);
+
+        if ($brandId === '') {
+            throw $this->unconfirmedOutcome($business, self::INCIDENT_BRAND_UNKNOWN, null, 'brand accepted without an id');
+        }
+
+        // Durable before the next external step: a later campaign
+        // failure must never lose the brand this call just created.
+        $tcrBrandId = $this->providerValue($brandResponse, ['tcrBrandId', 'data.tcrBrandId']);
+
+        BusinessMessagingRegistration::query()
+            ->where('business_id', $business->id)
+            ->update(array_filter([
+                'provider_brand_id' => $brandId,
+                'provider_brand_tcr_id' => $tcrBrandId !== '' ? $tcrBrandId : null,
+                // A new brand is never trusted as verified: the carrier checks it.
+                'brand_status' => 'processing',
+                'brand_created_at' => now(),
+            ], fn ($v) => $v !== null));
+
+        return [$brandId, $tcrBrandId !== '' ? $tcrBrandId : null];
     }
 
     /**
@@ -1649,10 +1796,14 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
-        $response = $this->client()->get(self::API_BASE . '/10dlc/campaign/' . $query->providerCampaignId);
+        try {
+            $response = $this->client()->get(self::API_BASE . '/10dlc/campaign/' . $query->providerCampaignId);
+        } catch (ConnectionException) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
+        }
 
         if (! $response->successful()) {
-            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
         }
 
         // GET /10dlc/campaign/{id} returns a root-level campaign object:
@@ -1663,6 +1814,11 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $campaignStatus = strtoupper($this->providerValue($response, ['campaignStatus', 'data.campaignStatus']));
         $status = strtoupper($this->providerValue($response, ['status', 'data.status']));
         $submission = strtoupper($this->providerValue($response, ['submissionStatus', 'data.submissionStatus']));
+
+        // A body carrying no status field at all is malformed, not a verdict.
+        if ($campaignStatus === '' && $status === '' && $submission === '') {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
+        }
 
         if ($campaignStatus === 'MNO_PROVISIONED') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
@@ -1691,13 +1847,22 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
-        $response = $this->client()->get(self::API_BASE . '/messaging_tollfree/verification/requests/' . $query->providerRegistrationId);
+        try {
+            $response = $this->client()->get(self::API_BASE . '/messaging_tollfree/verification/requests/' . $query->providerRegistrationId);
+        } catch (ConnectionException) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
+        }
 
         if (! $response->successful()) {
-            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
         }
 
         $status = strtolower($this->providerValue($response, ['verificationStatus', 'data.verificationStatus', 'data.status']));
+
+        // A body with no status at all is a malformed answer, not a verdict.
+        if ($status === '') {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
+        }
 
         if ($status === 'verified') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);

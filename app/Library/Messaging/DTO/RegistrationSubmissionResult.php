@@ -26,6 +26,7 @@ final readonly class RegistrationSubmissionResult
         public ?string $providerCampaignId,
         public ?string $providerRegistrationId,
         public MessagingRegistrationStatus $status,
+        public ?string $providerBrandTcrId = null,
     ) {
     }
 }

@@ -49,6 +49,8 @@ use Tests\TestCase;
  */
 class TextMessagingCustomerAcceptanceTest extends TestCase
 {
+    use \Tests\Support\CompletesTenDlcStages;
+
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
@@ -144,7 +146,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
         // the already-owned number (review correction), which this
         // Business now has from step 1.
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
@@ -231,7 +233,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
 
         $this->searchAndOrder($business, $workspace);
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
         $fpa->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Rejected);
@@ -258,7 +260,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
 
         // Resubmit and approve — the same registration row, never a
         // duplicate.
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration->refresh();
