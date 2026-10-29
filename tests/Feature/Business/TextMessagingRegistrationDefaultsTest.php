@@ -177,7 +177,12 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'campaign_description' => 'Sunset Photo Booths sends [describe your messages] to customers.',
         ]));
 
-        $this->post($submit)->assertSessionHas('status', 'error');
+        $blocked = $this->post($submit);
+        $blocked->assertSessionHas('status', 'error')->assertSessionHas('registration_blocked', true);
+        $this->assertStringEndsWith('#pm-submit', (string) $blocked->headers->get('Location'));
+        $this->assertStringContainsString('Nothing was sent to the carrier and nothing was charged', (string) session('message'));
+        $this->assertSame([], $fake->submittedRegistrations, 'a failed local validation never reaches the carrier');
+        $this->assertSame([], $fake->provisionedOrders);
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
         $this->assertSame(MessagingRegistrationStatus::NotStarted, $registration->status);
@@ -189,6 +194,10 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertStringContainsString('reads as a promotion', $page);
         $this->assertStringContainsString('separate pages', $page);
         $this->assertStringContainsString('placeholder text', $page);
+        // The exact failures are shown, each with a link to its section, and the draft/submit split is explained.
+        $this->assertStringContainsString('data-role="submission-issues"', $page);
+        $this->assertStringContainsString('href="#pm-sec-consent"', $page);
+        $this->assertStringContainsString('last saved draft', $page);
     }
 
     public function test_a_complete_registration_submits_once_and_a_repeat_submit_is_refused(): void

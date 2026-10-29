@@ -177,7 +177,9 @@
             </dl>
         </x-card>
     @elseif($status !== 'pending' && $progress['show_form'])
-        @php($isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree)
+        @php
+$isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree;
+@endphp
         <div class="pm-layout">
         <form method="post" class="pm-form" id="registration-form" action="{{ route('customer.workspaces.businesses.text-messaging.registration.update', [$workspaceUid, $businessUid]) }}" aria-label="Messaging registration details">
             @csrf
@@ -516,16 +518,43 @@
             <section class="pm-submit mt-3" id="pm-submit" aria-labelledby="pm-submit-title"><div class="pm-submit__body">
                 <h2 class="pm-section__title" id="pm-submit-title">Submit for carrier review</h2>
                 @if($submissionIssues !== [])
-                    <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="submission-issues">
+                    @php
+                        // Presentation only: point each exact validator message at the section holding the field.
+                        $sectionFor = static function (string $issue): array {
+                            return match (true) {
+                                (bool) preg_match('/support/i', $issue) => ['pm-sec-contact', 'Contact person'],
+                                (bool) preg_match('/Privacy Policy|SMS Terms|Confirm on your website|separate pages/i', $issue) => ['pm-sec-consent', 'Policies & consent'],
+                                (bool) preg_match('/sample message|opt-out wording|business name in at least|promotional example|customer-care example|still the suggestion/i', $issue) => ['pm-sec-samples', 'Sample messages'],
+                                (bool) preg_match('/messaging type|campaign description|message-flow|opt in|screenshot|per month|industry|promotion|Low Volume|both message types|toll-free|Registering both/i', $issue) => ['pm-sec-texting', 'How you\'ll text'],
+                                (bool) preg_match('/contact (first|last|email|phone)/i', $issue) => ['pm-sec-contact', 'Contact person'],
+                                default => ['pm-sec-business', 'Your business'],
+                            };
+                        };
+                    @endphp
+                    @if(session('registration_blocked'))
+                        <div class="sr-callout sr-callout--warn mb-2" role="alert" data-role="submission-blocked">
+                            <x-ds-icon name="alert-circle" size="16" />
+                            <p><strong>Not submitted.</strong> This was our own check of your saved draft — the carrier did not review or reject anything. Nothing was sent to the carrier and no registration charge was made. Your saved details are unchanged.</p>
+                        </div>
+                    @endif
+                    <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="submission-issues" tabindex="-1" id="pm-submission-issues">
                         <strong class="d-block">Before you submit</strong>
                         <ul class="mb-0 ps-2">
-                            @foreach($submissionIssues as $issue)<li>{{ $issue }}</li>@endforeach
+                            @foreach($submissionIssues as $issue)
+                                @php
+                                    [$anchor, $sectionName] = $sectionFor($issue);
+                                @endphp
+                                <li>{{ $issue }} <a href="#{{ $anchor }}" class="text-nowrap">Go to {{ $sectionName }}</a></li>
+                            @endforeach
                         </ul>
                     </x-alert>
+                    <p class="pm-hint" data-role="submit-uses-saved-draft">Submitting uses your <strong>last saved draft</strong>. If you just changed something above, press <strong>Save draft</strong> first.</p>
                 @else
-                    <p class="text-caption text-muted mb-2">Everything required is filled in. Nothing is sent until you press the button.</p>
+                    <p class="text-caption text-muted mb-2">Everything required is filled in. Nothing is sent until you press the button. Submitting uses your last saved draft — press Save draft first if you just changed something.</p>
                 @endif
-                @php($isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
+                @php
+$isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local;
+@endphp
                 @if($isLocalRegistration)
                     @foreach(['standard' => 'First three months of 10DLC campaign fees', 'low_volume_mixed' => 'First three months of Low Volume Mixed campaign fees'] as $pricingKey => $oneTimeLabel)
                         <div data-pricing-for="{{ $pricingKey }}" @if(($useCase === 'low_volume_mixed' ? 'low_volume_mixed' : 'standard') !== $pricingKey) hidden @endif>
@@ -590,6 +619,15 @@
             }
             $('input[name="entity_type"]').on('change', syncEinField);
             syncEinField();
+            // Submit sends the last SAVED draft, not unsaved edits: say so when the form has changed.
+            $('#registration-form').one('input change', function () {
+                $('.pm-actions__note').append(' <strong class="text-warning" data-role="unsaved-note">Unsaved changes — Save draft before submitting.</strong>');
+            });
+            // After a blocked submission, bring the exact reasons into view.
+            if ($('[data-role="submission-blocked"]').length) {
+                var el = document.getElementById('pm-submission-issues');
+                if (el) { el.scrollIntoView({block: 'center'}); el.focus(); }
+            }
             // Section progress in the sidebar and the consent counter: display only.
             function syncProgress() {
                 $('[data-pm-section]').each(function () {

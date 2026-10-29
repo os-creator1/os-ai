@@ -548,11 +548,15 @@ class TextMessagingController extends CustomerBaseController
         $issues = $this->registrationValidator->issues($registration);
 
         if ($issues !== []) {
-            return $this->textMessagingError(
-                $workspaceUid,
-                $businessUid,
-                'Not submitted yet — ' . count($issues) . ' item(s) need your attention under "Before you submit". Nothing was charged.',
-            );
+            // Local validation only: the carrier was never contacted, no fee was
+            // charged and the saved draft and registration status are untouched.
+            // The exact items are re-derived from the saved draft and listed on
+            // the page under "Before you submit".
+            return redirect(route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]) . '#pm-submit')->with([
+                'status' => 'error',
+                'registration_blocked' => true,
+                'message' => 'Not submitted — ' . count($issues) . ' item(s) in your saved draft need attention before this can go to the carrier (listed under "Before you submit"). Nothing was sent to the carrier and nothing was charged. Your saved details are unchanged.',
+            ]);
         }
 
         try {

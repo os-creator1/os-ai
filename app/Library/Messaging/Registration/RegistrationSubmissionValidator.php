@@ -36,6 +36,21 @@ final class RegistrationSubmissionValidator
 
     private const PROMOTIONAL = '/\b(promo\w*|special\w*|discount\w*|sale|deal\w*|\d+%|% off|save)\b/i';
 
+    /**
+     * Promotional wording that is *negated* ("we do not send promotional
+     * messages", "no discounts or sales") describes the opposite of a
+     * promotion and must not classify a customer-care campaign as marketing.
+     */
+    private const NEGATED_PROMOTIONAL = '/\b(?:no|not|never|without|don\'t|doesn\'t|won\'t|isn\'t|aren\'t|neither|nor)\b(?:\s+[\w\'-]+){0,5}?\s+(?:promo\w*|special\w*|discount\w*|sales?|deals?|marketing)\b(?:\s*(?:,|\bor\b|\band\b|\bnor\b)\s*(?:promo\w*|special\w*|discount\w*|sales?|deals?|marketing)\b)*/i';
+
+    private static function isPromotional(string $text): bool
+    {
+        $text = str_replace(["\u{2019}", "\u{2018}"], "'", $text);
+        $text = preg_replace(self::NEGATED_PROMOTIONAL, ' ', $text) ?? $text;
+
+        return preg_match(self::PROMOTIONAL, $text) === 1;
+    }
+
     /** @return list<string> actionable corrections; empty when ready to submit */
     public function issues(BusinessMessagingRegistration $registration): array
     {
@@ -199,9 +214,9 @@ final class RegistrationSubmissionValidator
             $issues[] = 'Sample messages 1 and 2 must be different examples.';
         }
 
-        $promotional = array_filter([$one, $two], fn (string $m): bool => preg_match(self::PROMOTIONAL, $m) === 1);
+        $promotional = array_filter([$one, $two], fn (string $m): bool => self::isPromotional($m));
 
-        if (RegistrationTemplateCatalog::isCareOnly($useCase) && preg_match(self::PROMOTIONAL, (string) $registration->campaign_description) === 1) {
+        if (RegistrationTemplateCatalog::isCareOnly($useCase) && self::isPromotional((string) $registration->campaign_description)) {
             $issues[] = 'Your campaign description mentions promotions, but you chose service and customer-care messages. Reword it, or change your choice to Promotional or Both.';
         }
 
@@ -239,9 +254,26 @@ final class RegistrationSubmissionValidator
 
         $issues = array_merge($issues, $this->staleSuggestionIssues($registration));
 
-        $brand = trim((string) $registration->legal_business_name);
-        if ($brand !== '' && $one !== '' && $two !== '' && stripos($one . ' ' . $two, $this->firstWords($brand)) === false) {
-            $issues[] = 'Include your business name in at least one sample message.';
+        // The texts may name the registered legal entity or the Business's own
+        // customer-facing name already on file (a DBA). Nothing the customer
+        // types into a sample message is trusted as a name by itself.
+        $names = array_values(array_filter([
+            $this->firstWords(trim((string) $registration->legal_business_name)),
+            $this->firstWords(trim((string) $registration->business?->name)),
+        ], fn (string $n): bool => $n !== ''));
+        $combined = $one . ' ' . $two;
+        $named = false;
+
+        foreach ($names as $name) {
+            if (stripos($combined, $name) !== false) {
+                $named = true;
+                break;
+            }
+        }
+
+        if ($names !== [] && $one !== '' && $two !== '' && ! $named) {
+            $issues[] = 'Include your business name in at least one sample message — your registered name ("' . $names[0] . '…")'
+                . (count($names) > 1 ? ' or your Business name on file ("' . $names[1] . '…")' : '') . '.';
         }
 
         return $issues;
