@@ -6,6 +6,7 @@ use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Library\Opportunity\OpportunityPlanEligibility;
+use App\Library\Opportunity\OpportunityTypeRegistry;
 use App\Models\Business;
 use App\Models\Opportunity;
 use App\Repositories\Contracts\OpportunityRepository;
@@ -117,6 +118,8 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
 
     public function paginateForCustomer(Business $business, array $filters): LengthAwarePaginator
     {
+        // 'suggestions' is not a column: 'only' = optional profile suggestions, 'exclude' = everything else.
+        $suggestions = $filters['suggestions'] ?? null;
         $filters = Arr::only($filters, ['status', 'freshness', 'worker_key']);
 
         $query = $this->query()->where('business_id', $business->id)
@@ -128,6 +131,12 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             // Plan entitlement: rows for types the plan no longer includes stay in
             // storage but are never listed.
             ->whereNotIn('type', $this->eligibility->ineligibleTypes($business));
+
+        if ($suggestions === 'only') {
+            $query->whereIn('type', OpportunityTypeRegistry::optionalProfileSuggestionTypes());
+        } elseif ($suggestions === 'exclude') {
+            $query->whereNotIn('type', OpportunityTypeRegistry::optionalProfileSuggestionTypes());
+        }
 
         foreach ($filters as $column => $value) {
             if (filled($value)) {
@@ -146,6 +155,18 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             ->paginate(self::MAX_PER_PAGE);
     }
 
+    public function optionalSuggestionCountForCustomer(Business $business): int
+    {
+        return $this->query()
+            ->where('business_id', $business->id)
+            ->where('worker_key', OpportunityWorkerKey::BusinessAdvisor->value)
+            ->where('freshness', OpportunityFreshness::Current->value)
+            ->where('status', OpportunityStatus::Open->value)
+            ->whereIn('type', OpportunityTypeRegistry::optionalProfileSuggestionTypes())
+            ->whereNotIn('type', $this->eligibility->ineligibleTypes($business))
+            ->count();
+    }
+
     public function topForCustomer(Business $business, int $limit): Collection
     {
         $actionableStatuses = [
@@ -160,6 +181,9 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             // Business Advisor queue only — see paginateForCustomer().
             ->where('worker_key', OpportunityWorkerKey::BusinessAdvisor->value)
             ->whereNotIn('type', $this->eligibility->ineligibleTypes($business))
+            // Optional profile suggestions are not "needs you" material: they never
+            // reach Home, the next-best-move, its count or the COO signals.
+            ->whereNotIn('type', OpportunityTypeRegistry::optionalProfileSuggestionTypes())
             ->whereIn('status', $actionableStatuses)
             ->orderByRaw('CASE WHEN status IN (?, ?, ?) THEN 0 ELSE 1 END', $actionableStatuses)
             ->orderByDesc('priority_score')

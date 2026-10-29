@@ -249,7 +249,7 @@ class OpportunityQueueHttpTest extends TestCase
         $response = $this->get(route('customer.opportunities.index'));
 
         $response->assertOk();
-        $response->assertSee('No opportunities are available right now.');
+        $response->assertSee('No recommendations right now.');
     }
 
     public function test_pagination_links_preserve_normalized_status_and_freshness(): void
@@ -447,7 +447,7 @@ class OpportunityQueueHttpTest extends TestCase
         $response->assertDontSee($key);
     }
 
-    public function test_fixed_completion_policy_label_is_rendered(): void
+    public function test_internal_completion_policy_is_not_shown_to_customers(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         $opportunity = $this->createOpportunity($business, $this->addPhoneAttributes());
@@ -455,7 +455,8 @@ class OpportunityQueueHttpTest extends TestCase
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
         $response->assertOk();
-        $response->assertSee('System verified');
+        $response->assertDontSee('System verified');
+        $response->assertDontSee('Completion policy');
         $response->assertDontSee('system_verified');
     }
 
@@ -513,11 +514,11 @@ class OpportunityQueueHttpTest extends TestCase
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
         $response->assertOk();
-        $response->assertSee('Recommended action');
+        $response->assertSee('Recommendation');
         $response->assertDontSee('some_future_action');
     }
 
-    public function test_unknown_completion_policy_uses_neutral_label(): void
+    public function test_unknown_completion_policy_is_never_rendered(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         $opportunity = $this->createOpportunity($business, [
@@ -533,7 +534,7 @@ class OpportunityQueueHttpTest extends TestCase
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
         $response->assertOk();
-        $response->assertSee('Completion status unavailable');
+        $response->assertDontSee('Completion status unavailable');
         $response->assertDontSee('not_a_real_policy');
     }
 

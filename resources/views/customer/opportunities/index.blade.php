@@ -23,15 +23,6 @@
                                 />
                             </div>
 
-                            <div class="col-md-4">
-                                <x-select
-                                    name="freshness"
-                                    label="Freshness"
-                                    :options="['current' => 'Current', 'stale' => 'Stale', 'all' => 'All']"
-                                    :selected="$selectedFreshness"
-                                />
-                            </div>
-
                             <div class="col-md-4 d-flex align-items-end">
                                 <x-button type="submit" class="me-1">Apply Filters</x-button>
                                 <x-button variant="secondary" :href="route('customer.opportunities.index')">Clear Filters</x-button>
@@ -39,20 +30,15 @@
                         </form>
 
                         @if ($opportunities->isEmpty())
-                            <x-empty-state title="No opportunities are available right now." />
+                            <x-empty-state title="No recommendations right now." />
                         @else
-                            <x-table :headers="['Title', 'Status', 'Freshness', 'First detected', '']">
+                            <x-table :headers="['Title', 'Status', 'First detected', '']">
                                     @foreach ($opportunities as $opportunity)
                                         <tr>
                                             <td>{{ $opportunity->title }}</td>
                                             <td>
                                                 <x-badge variant="accent">
                                                     {{ ucwords(str_replace('_', ' ', $opportunity->status->value)) }}
-                                                </x-badge>
-                                            </td>
-                                            <td>
-                                                <x-badge :variant="$opportunity->freshness->value === 'current' ? 'success' : 'warning'">
-                                                    {{ ucfirst($opportunity->freshness->value) }}
                                                 </x-badge>
                                             </td>
                                             <td>{{ optional($opportunity->first_detected_at)->format('M j, Y') }}</td>
@@ -70,6 +56,20 @@
                             </div>
                         @endif
                 </x-card>
+
+                @if (! empty($optionalSuggestions))
+                    <x-card title="Optional improvements" id="optional-improvements">
+                        <p class="text-muted small">Nice-to-have profile details. These don't affect how your business operates.</p>
+                        <ul class="list-unstyled mb-0">
+                            @foreach ($optionalSuggestions as $suggestion)
+                                <li class="d-flex justify-content-between align-items-center py-50 border-top">
+                                    <span>{{ $suggestion->title }}</span>
+                                    <x-button variant="outline" size="sm" :href="route('customer.opportunities.show', $suggestion->id)">View</x-button>
+                                </li>
+                            @endforeach
+                        </ul>
+                    </x-card>
+                @endif
             </div>
         </div>
     </section>
