@@ -250,18 +250,18 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE);
 
         Http::fake([
-            'api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [['phone_number' => 'candidate-ref-real-2', 'cost_information' => ['upfront_cost' => '0.00', 'monthly_cost' => '1.00', 'currency' => 'USD']]]]),
+            'api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [['phone_number' => '+14155550501', 'cost_information' => ['upfront_cost' => '0.00', 'monthly_cost' => '1.00', 'currency' => 'USD']]]]),
             'api.telnyx.com/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_fixture_1']]),
             'api.telnyx.com/v2/number_orders' => Http::response(['data' => ['phone_numbers' => [['id' => 'pn_fixture_1']]]]),
         ]);
 
-        $result = app(TelnyxProvisioningAdapter::class)->provisionNumber($business, new AvailableNumberCandidate('+14155550501', PhoneNumberType::Local, 'candidate-ref-real-2', 0, 1_000_000, 'USD'));
+        $result = app(TelnyxProvisioningAdapter::class)->provisionNumber($business, new AvailableNumberCandidate('+14155550501', PhoneNumberType::Local, '+14155550501', 0, 1_000_000, 'USD'));
 
         $this->assertSame('mp_fixture_1', $result->messagingProfileId);
         $this->assertSame('pn_fixture_1', $result->providerPhoneNumberId);
         // The quote re-check (a read), the Messaging Profile and the order.
         Http::assertSentCount(3);
-        Http::assertSent(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), 'filter%5Bphone_number%5D%5Bstarts_with%5D=candidate-ref-real-2'));
+        Http::assertSent(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), 'filter%5Bphone_number%5D%5Bcontains%5D=5550501'));
         $this->assertSame(1_000_000, $result->monthlyCostMicro);
     }
 
@@ -1657,6 +1657,74 @@ class TelnyxProvisioningAdapterTest extends TestCase
         }
 
         return [$business, new AvailableNumberCandidate($reference, PhoneNumberType::TollFree, $reference, (int) bcmul($upfront, '1000000', 0), (int) bcmul($monthly, '1000000', 0), 'USD')];
+    }
+
+    public function test_checkout_rechecks_a_real_toll_free_number_by_national_digits_not_full_e164_prefix(): void
+    {
+        [$business, $candidate] = $this->purchaseFixture('+18445183944', '0.25', '1.00');
+        $lookupChecked = false;
+
+        Http::fake([
+            'api.telnyx.com/v2/available_phone_numbers*' => function ($request) use (&$lookupChecked) {
+                parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $params);
+                $filter = $params['filter'] ?? [];
+                $this->assertSame('US', $filter['country_code'] ?? null);
+                $this->assertSame('toll_free', $filter['phone_number_type'] ?? null);
+                $this->assertSame('5183944', $filter['phone_number']['contains'] ?? null);
+                $this->assertArrayNotHasKey('starts_with', $filter['phone_number'] ?? []);
+                $lookupChecked = true;
+
+                return Http::response(['data' => [
+                    $this->quoteRow('+18885183944', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD']),
+                    $this->quoteRow('+18445183944', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD']),
+                ]]);
+            },
+            'api.telnyx.com/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_quote_lookup']]),
+            'api.telnyx.com/v2/number_orders' => Http::response(['data' => ['status' => 'success', 'phone_numbers' => [['id' => 'pn_quote_lookup', 'status' => 'success']]]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+
+        $this->assertTrue($lookupChecked);
+        $this->assertSame('pn_quote_lookup', $result->providerPhoneNumberId);
+        Http::assertSentCount(3);
+    }
+
+    public function test_quote_lookup_never_accepts_a_different_number_even_with_identical_last_digits_and_price(): void
+    {
+        [$business, $candidate] = $this->purchaseFixture('+18445183944', '0.25', '1.00');
+
+        Http::fake(['api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [
+            $this->quoteRow('+18885183944', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD']),
+        ]])]);
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+            $this->fail('Expected refusal when the exact selected number is absent.');
+        } catch (\\App\\Library\\Messaging\\Exceptions\\NumberPriceChangedException) {
+            // expected
+        }
+
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+        $this->assertSame(20_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
+    }
+
+    public function test_carrier_quote_lookup_http_error_never_places_an_order_or_claims_number_sold(): void
+    {
+        [$business, $candidate] = $this->purchaseFixture('+18445183944', '0.25', '1.00');
+
+        Http::fake(['api.telnyx.com/v2/available_phone_numbers*' => Http::response(['errors' => [['detail' => 'Invalid search criteria']]], 422)]);
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+            $this->fail('Expected refusal when carrier quote lookup fails.');
+        } catch (\\App\\Library\\Messaging\\Exceptions\\NumberPriceChangedException $e) {
+            $this->assertStringContainsString('could not confirm', $e->getMessage());
+            $this->assertStringNotContainsString('no longer available', $e->getMessage());
+        }
+
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+        $this->assertSame(20_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
     }
 
     public function test_the_first_charge_is_exactly_the_quoted_upfront_plus_first_month_at_the_owner_multiplier(): void
