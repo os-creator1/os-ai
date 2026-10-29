@@ -106,18 +106,41 @@ class RecoverTelnyxOrderCommandTest extends TestCase
         $profile = ['id' => self::PROFILE];
 
         $results = $override['results'] ?? [
-            ['phone_number' => '+15550000000', 'category' => 'otc', 'service' => 'numbers', 'amount' => '-5.00000'],
-            ['phone_number' => self::PHONE, 'category' => 'otc', 'service' => 'numbers', 'amount' => '-1.00000'],
-            ['phone_number' => self::PHONE, 'category' => 'partial-mrc', 'service' => 'numbers', 'amount' => '-0.09677'],
-            ['phone_number' => self::PHONE, 'category' => 'partial-mrc', 'service' => 'SMS', 'amount' => '-0.00968'],
+            $this->billingRow('+15550000001', [['otc', 'numbers', '-5.00000']], 'local-number'),
+            $this->billingRow(self::PHONE),
+            $this->billingRow('+15550000002', [['otc', 'numbers', '-1.00000']]),
         ];
 
         Http::fake([
             'api.telnyx.com/v2/number_orders/*' => Http::response(['data' => array_replace($order, $override['order'] ?? [])]),
             'api.telnyx.com/v2/phone_numbers/*' => Http::response(['data' => array_replace($number, $override['number'] ?? [])]),
             'api.telnyx.com/v2/messaging_profiles/*' => Http::response(['data' => $profile]),
-            'api.telnyx.com/v2/charges_breakdown*' => Http::response(['results' => $results, 'currency' => $override['currency'] ?? 'USD']),
+            'api.telnyx.com/v2/charges_breakdown*' => Http::response(array_replace([
+                'user_id' => 'acct-1',
+                'user_email' => 'owner@example.test',
+                'start_date' => '2026-10-01',
+                'end_date' => '2026-10-31',
+                'results' => $results,
+                'currency' => 'USD',
+            ], $override['report'] ?? [], isset($override['currency']) ? ['currency' => $override['currency']] : [])),
         ]);
+    }
+
+    /**
+     * One grouped billing row, as Telnyx returns it.
+     *
+     * @param list<array{0: string, 1: string, 2: string}>|null $services [cost_type, name, cost]
+     * @return array<string, mixed>
+     */
+    private function billingRow(string $tn, ?array $services = null, string $chargeType = 'toll-free-number'): array
+    {
+        $services ??= [['otc', 'numbers', '-1.00000'], ['partial-mrc', 'numbers', '-0.09677'], ['partial-mrc', 'SMS', '-0.00968']];
+
+        return [
+            'tn' => $tn,
+            'charge_type' => $chargeType,
+            'services' => array_map(fn (array $s): array => ['cost_type' => $s[0], 'name' => $s[1], 'cost' => $s[2]], $services),
+        ];
     }
 
     private function run_(bool $execute = true, ?string $order = null, ?int $incident = null)
@@ -223,26 +246,32 @@ class RecoverTelnyxOrderCommandTest extends TestCase
 
     public function test_missing_ambiguous_or_inconsistent_billing_records_fail_closed(): void
     {
-        $row = fn (string $category, string $service, string $amount, ?string $phone = self::PHONE) => ['phone_number' => $phone, 'category' => $category, 'service' => $service, 'amount' => $amount];
-        $otc = $row('otc', 'numbers', '-1.00000');
-        $mrc = $row('partial-mrc', 'numbers', '-0.09677');
-        $sms = $row('partial-mrc', 'SMS', '-0.00968');
+        $otc = ['otc', 'numbers', '-1.00000'];
+        $mrc = ['partial-mrc', 'numbers', '-0.09677'];
+        $sms = ['partial-mrc', 'SMS', '-0.00968'];
+        $mine = fn (array $services, string $type = 'toll-free-number') => ['results' => [$this->billingRow('+15550000001'), $this->billingRow(self::PHONE, $services, $type)]];
 
         foreach ([
             'no results' => ['results' => []],
-            'missing SMS charge' => ['results' => [$otc, $mrc]],
-            'missing otc' => ['results' => [$mrc, $sms]],
-            'only other numbers' => ['results' => [$row('otc', 'numbers', '-1.00000', '+15550000000')]],
-            'duplicate record' => ['results' => [$otc, $otc, $mrc, $sms]],
-            'extra charge' => ['results' => [$otc, $mrc, $sms, $row('other', 'numbers', '-1.00000')]],
-            'credit instead of debit' => ['results' => [$otc, $mrc, $row('partial-mrc', 'SMS', '0.00968')]],
-            'wrong proration' => ['results' => [$otc, $row('partial-mrc', 'numbers', '-0.50000'), $sms]],
-            'wrong one-time fee' => ['results' => [$row('otc', 'numbers', '-2.00000'), $mrc, $sms]],
+            'no row for the number' => ['results' => [$this->billingRow('+15550000001')]],
+            'duplicate matching rows' => ['results' => [$this->billingRow(self::PHONE), $this->billingRow(self::PHONE)]],
+            'wrong charge type' => $mine([$otc, $mrc, $sms], 'local-number'),
+            'missing SMS service' => $mine([$otc, $mrc]),
+            'missing otc service' => $mine([$mrc, $sms]),
+            'duplicate service' => $mine([$otc, $mrc, $mrc]),
+            'extra service' => $mine([$otc, $mrc, $sms, ['partial-mrc', 'voice', '-0.01000']]),
+            'unexpected service in place of one' => $mine([$otc, $mrc, ['usage', 'SMS', '-0.00968']]),
+            'credit instead of debit' => $mine([$otc, $mrc, ['partial-mrc', 'SMS', '0.00968']]),
+            'malformed cost' => $mine([$otc, $mrc, ['partial-mrc', 'SMS', 'n/a']]),
+            'six-decimal ambiguity' => $mine([$otc, $mrc, ['partial-mrc', 'SMS', '-0.009681']]),
+            'wrong proration' => $mine([$otc, ['partial-mrc', 'numbers', '-0.50000'], $sms]),
+            'wrong one-time fee' => $mine([['otc', 'numbers', '-2.00000'], $mrc, $sms]),
+            'services not an array' => ['results' => [['tn' => self::PHONE, 'charge_type' => 'toll-free-number', 'services' => 'x']]],
             'wrong currency' => ['currency' => 'EUR'],
-            'other account' => ['results' => [$otc + ['user_id' => 'acct-2'], $mrc, $sms]],
-            'outside purchase month' => ['results' => [$otc + ['date' => '2026-09-15'], $mrc, $sms]],
-            'unreadable amount' => ['results' => [$otc, $mrc, $row('partial-mrc', 'SMS', 'n/a')]],
-        ] as $label => $override) {
+            'other account' => ['report' => ['user_id' => 'acct-2']],
+            'report for another month' => ['report' => ['start_date' => '2026-09-01', 'end_date' => '2026-09-30']],
+            'row names another resource' => ['results' => [$this->billingRow(self::PHONE) + ['phone_number_id' => '999']]],
+        ] as $override) {
             $this->fakeTelnyx($override);
             $this->run_()->assertExitCode(1);
             $this->assertNothingWritten();

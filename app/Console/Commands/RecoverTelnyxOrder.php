@@ -362,9 +362,10 @@ class RecoverTelnyxOrder extends Command
      * records (GET /charges_breakdown, top-level `results` + `currency`) AND the
      * committed reservation. Every ambiguity fails closed.
      *
-     * For the number: exactly one otc/numbers, one partial-mrc/numbers and one
-     * partial-mrc/SMS debit, in USD, inside the purchase month, and nothing
-     * else. The full monthly rental is not read from the carrier (it is only
+     * The report is {user_id, start_date, end_date, results, currency}; exactly
+     * one results row must have tn = the number and charge_type =
+     * toll-free-number, with exactly three debit services in USD: otc/numbers,
+     * partial-mrc/numbers and partial-mrc/SMS. The full monthly rental is not read from the carrier (it is only
      * billed prorated so far): it is the reservation's charge less the verified
      * one-time fee less the configured SMS add-on, and it is accepted ONLY if
      * both prorated carrier amounts equal that full rate prorated for the days
@@ -393,65 +394,80 @@ class RecoverTelnyxOrder extends Command
             throw new \DomainException('Pricing cannot be verified: /charges_breakdown returned no usable USD results.');
         }
 
+        // Report-level checks, only on the fields the carrier actually sends.
+        $reportAccount = $response->json('user_id');
+
+        if ($reportAccount !== null && $accountId !== null && (string) $reportAccount !== (string) $accountId) {
+            throw new \DomainException('The billing report belongs to a different Telnyx account than the order and number.');
+        }
+
+        $reportStart = $this->parseTime($response->json('start_date'));
+        $reportEnd = $this->parseTime($response->json('end_date'));
+
+        if (($response->json('start_date') !== null && ($reportStart === null || $reportStart->gt($purchasedAt) || $reportStart->lt($monthStart)))
+            || ($response->json('end_date') !== null && ($reportEnd === null || $reportEnd->lt($purchasedAt->copy()->startOfDay()) || $reportEnd->gt($monthEnd->copy()->addDay())))) {
+            throw new \DomainException('The billing report does not cover the purchase month.');
+        }
+
+        // Real shape: one row per number — {tn, charge_type, services: [{cost_type, name, cost}]}.
         $phone = (string) $this->t('phone_number');
+        $matching = array_values(array_filter($results, fn ($row): bool => is_array($row) && ($row['tn'] ?? null) === $phone));
+
+        if (count($matching) !== 1) {
+            throw new \DomainException(sprintf('Expected exactly one billing row for %s; found %d.', $phone, count($matching)));
+        }
+
+        $row = $matching[0];
+
+        // Any further identifier the row happens to carry must agree.
+        foreach (['phone_number', 'number'] as $key) {
+            if (isset($row[$key]) && $row[$key] !== $phone) {
+                throw new \DomainException('The billing row names inconsistent number identifiers.');
+            }
+        }
+
+        foreach (['phone_number_id', 'resource_id'] as $key) {
+            if (isset($row[$key]) && (string) $row[$key] !== (string) $this->t('phone_resource_id')) {
+                throw new \DomainException('The billing row names inconsistent number identifiers.');
+            }
+        }
+
+        if (($row['charge_type'] ?? null) !== 'toll-free-number') {
+            throw new \DomainException('The billing row is not a toll-free-number charge.');
+        }
+
+        $services = $row['services'] ?? null;
+
+        if (! is_array($services) || count($services) !== 3) {
+            throw new \DomainException('The billing row must carry exactly three service charges.');
+        }
+
         $found = [];
 
-        foreach ($results as $row) {
-            if (! is_array($row)) {
-                continue;
-            }
+        foreach ($services as $service) {
+            $type = is_array($service) && is_string($service['cost_type'] ?? null) ? strtolower($service['cost_type']) : '';
+            $name = is_array($service) && is_string($service['name'] ?? null) ? strtolower($service['name']) : '';
+            $units = is_array($service) ? $this->toUnits($service['cost'] ?? null) : null;
 
-            $rowPhone = $this->field($row, ['phone_number', 'number']);
-            $rowResource = $this->field($row, ['phone_number_id', 'resource_id']);
-
-            $mine = $rowPhone === $phone || ($rowResource !== null && $rowResource === (string) $this->t('phone_resource_id'));
-
-            if (! $mine) {
-                continue;
-            }
-
-            if (($rowPhone !== null && $rowPhone !== $phone) || ($rowResource !== null && $rowResource !== (string) $this->t('phone_resource_id'))) {
-                throw new \DomainException('A billing record names inconsistent number identifiers.');
-            }
-
-            $category = strtolower((string) $this->field($row, ['category', 'charge_category', 'charge_type', 'type']));
-            $service = strtolower((string) $this->field($row, ['service', 'product', 'product_category', 'service_type']));
-            $units = $this->toUnits($row['amount'] ?? $row['cost'] ?? $row['total'] ?? null);
-
-            if ($category === '' || $service === '' || $units === null) {
-                throw new \DomainException('A billing record for the number is missing its category, service or amount.');
+            if ($type === '' || $name === '' || $units === null) {
+                throw new \DomainException('A service charge is missing its cost_type, name or a readable cost.');
             }
 
             if ($units >= 0) {
-                throw new \DomainException("Billing record {$category}/{$service} is not a debit; refusing to interpret it.");
+                throw new \DomainException("Service charge {$type}/{$name} is not a debit; refusing to interpret it.");
             }
 
-            $rowAccount = $this->field($row, ['user_id', 'account_id']);
-
-            if ($rowAccount !== null && ($accountId === null || (string) $accountId !== $rowAccount)) {
-                throw new \DomainException('A billing record belongs to a different (or unverifiable) Telnyx account.');
+            if (isset($found["{$type}/{$name}"])) {
+                throw new \DomainException("More than one {$type}/{$name} service charge; ambiguous.");
             }
 
-            $rowDate = $this->parseTime($this->field($row, ['date', 'start_date', 'period_start', 'billing_period_start']));
-
-            if ($this->field($row, ['date', 'start_date', 'period_start', 'billing_period_start']) !== null
-                && ($rowDate === null || $rowDate->lt($monthStart) || $rowDate->gt($monthEnd))) {
-                throw new \DomainException('A billing record falls outside the purchase month.');
-            }
-
-            $key = $category . '/' . $service;
-
-            if (isset($found[$key])) {
-                throw new \DomainException("More than one {$key} billing record for the number; ambiguous.");
-            }
-
-            $found[$key] = -$units;
+            $found["{$type}/{$name}"] = -$units;
         }
 
         $expectedKeys = ['otc/numbers', 'partial-mrc/numbers', 'partial-mrc/sms'];
 
         if (array_diff_key($found, array_flip($expectedKeys)) !== [] || array_diff($expectedKeys, array_keys($found)) !== []) {
-            throw new \DomainException('Billing records for the number are missing or include unexpected charges: ' . implode(', ', array_keys($found)) . '.');
+            throw new \DomainException('Service charges are missing or unexpected: ' . implode(', ', array_keys($found)) . '.');
         }
 
         $reservation = $this->assertReservation(false);
@@ -481,18 +497,6 @@ class RecoverTelnyxOrder extends Command
             'carrier_charged_micro' => ($found['otc/numbers'] + $found['partial-mrc/numbers'] + $found['partial-mrc/sms']) * 10,
             'wallet_charged_micro' => $reservation['quantity_micro'],
         ];
-    }
-
-    /** @param list<string> $keys */
-    private function field(array $row, array $keys): ?string
-    {
-        foreach ($keys as $key) {
-            if (isset($row[$key]) && is_scalar($row[$key]) && trim((string) $row[$key]) !== '') {
-                return trim((string) $row[$key]);
-            }
-        }
-
-        return null;
     }
 
     /** A carrier amount as signed integer units of 0.00001 (the carrier's 5-decimal precision), or null if ambiguous. */
