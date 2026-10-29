@@ -119,7 +119,7 @@ class RecoverTelnyxOrderCommandTest extends TestCase
                 'user_id' => 'acct-1',
                 'user_email' => 'owner@example.test',
                 'start_date' => '2026-10-01',
-                'end_date' => '2026-10-31',
+                'end_date' => '2026-11-01',
                 'results' => $results,
                 'currency' => 'USD',
             ], $override['report'] ?? [], isset($override['currency']) ? ['currency' => $override['currency']] : [])),
@@ -173,6 +173,9 @@ class RecoverTelnyxOrderCommandTest extends TestCase
 
         $this->assertNothingWritten();
         $this->assertOnlyGetsSent();
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'charges_breakdown')
+            && str_contains($request->url(), 'start_date=2026-10-01')
+            && str_contains($request->url(), 'end_date=2026-11-01'));
     }
 
     public function test_execute_reconciles_identity_number_costs_timing_and_resolves_the_incident(): void
@@ -269,7 +272,8 @@ class RecoverTelnyxOrderCommandTest extends TestCase
             'services not an array' => ['results' => [['tn' => self::PHONE, 'charge_type' => 'toll-free-number', 'services' => 'x']]],
             'wrong currency' => ['currency' => 'EUR'],
             'other account' => ['report' => ['user_id' => 'acct-2']],
-            'report for another month' => ['report' => ['start_date' => '2026-09-01', 'end_date' => '2026-09-30']],
+            'report for another month' => ['report' => ['start_date' => '2026-09-01', 'end_date' => '2026-10-01']],
+            'report extends past the exclusive end' => ['report' => ['end_date' => '2026-11-02']],
             'row names another resource' => ['results' => [$this->billingRow(self::PHONE) + ['phone_number_id' => '999']]],
         ] as $override) {
             $this->fakeTelnyx($override);

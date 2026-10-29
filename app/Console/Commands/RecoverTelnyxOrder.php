@@ -377,12 +377,13 @@ class RecoverTelnyxOrder extends Command
     {
         $apiKey = (string) config('services.telnyx.api_key');
         $monthStart = $purchasedAt->copy()->startOfMonth();
-        $monthEnd = $purchasedAt->copy()->endOfMonth();
+        // Telnyx's report period is [start_date, end_date): the end is the first day of the next month.
+        $periodEnd = $monthStart->copy()->addMonthNoOverflow();
 
         try {
             $response = Http::withToken($apiKey)->timeout(20)->acceptJson()->get(self::API_BASE . '/charges_breakdown', [
                 'start_date' => $monthStart->toDateString(),
-                'end_date' => $monthEnd->toDateString(),
+                'end_date' => $periodEnd->toDateString(),
             ]);
         } catch (\Throwable) {
             throw new \DomainException('Telnyx GET /charges_breakdown did not complete.');
@@ -405,7 +406,7 @@ class RecoverTelnyxOrder extends Command
         $reportEnd = $this->parseTime($response->json('end_date'));
 
         if (($response->json('start_date') !== null && ($reportStart === null || $reportStart->gt($purchasedAt) || $reportStart->lt($monthStart)))
-            || ($response->json('end_date') !== null && ($reportEnd === null || $reportEnd->lt($purchasedAt->copy()->startOfDay()) || $reportEnd->gt($monthEnd->copy()->addDay())))) {
+            || ($response->json('end_date') !== null && ($reportEnd === null || $reportEnd->lte($purchasedAt->copy()->startOfDay()) || $reportEnd->gt($periodEnd)))) {
             throw new \DomainException('The billing report does not cover the purchase month.');
         }
 
