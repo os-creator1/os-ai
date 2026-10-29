@@ -5,6 +5,7 @@ namespace App\Repositories\Eloquent;
 use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityWorkerKey;
+use App\Library\Opportunity\OpportunityPlanEligibility;
 use App\Models\Business;
 use App\Models\Opportunity;
 use App\Repositories\Contracts\OpportunityRepository;
@@ -61,7 +62,7 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
         'stale_at',
     ];
 
-    public function __construct(Opportunity $opportunity)
+    public function __construct(Opportunity $opportunity, private readonly OpportunityPlanEligibility $eligibility)
     {
         parent::__construct($opportunity);
     }
@@ -123,7 +124,10 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             // Opportunities (sales/website/seo/reputation workers) are read, with
             // Location ACL applied, by GrowthOpportunityReader only — never here,
             // where nothing filters by Location.
-            ->where('worker_key', OpportunityWorkerKey::BusinessAdvisor->value);
+            ->where('worker_key', OpportunityWorkerKey::BusinessAdvisor->value)
+            // Plan entitlement: rows for types the plan no longer includes stay in
+            // storage but are never listed.
+            ->whereNotIn('type', $this->eligibility->ineligibleTypes($business));
 
         foreach ($filters as $column => $value) {
             if (filled($value)) {
@@ -155,6 +159,7 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             ->where('freshness', OpportunityFreshness::Current->value)
             // Business Advisor queue only — see paginateForCustomer().
             ->where('worker_key', OpportunityWorkerKey::BusinessAdvisor->value)
+            ->whereNotIn('type', $this->eligibility->ineligibleTypes($business))
             ->whereIn('status', $actionableStatuses)
             ->orderByRaw('CASE WHEN status IN (?, ?, ?) THEN 0 ELSE 1 END', $actionableStatuses)
             ->orderByDesc('priority_score')

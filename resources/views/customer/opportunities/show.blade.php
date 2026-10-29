@@ -99,8 +99,17 @@
 
                         <hr>
 
-                        <h5>Recommended action</h5>
-                        <p class="mb-1">{{ $actionLabel }}</p>
+                        @if ($actionLabel !== null)
+                            <h5>Recommended action</h5>
+                            <p class="mb-1">{{ $actionLabel }}</p>
+                            @if ($actionDestination !== null && ! $canConfigureAction)
+                                <p class="mb-1 text-muted">This is a recommendation only. We won't make this change for you.</p>
+                                <p class="mb-1"><a href="{{ $actionDestination['url'] }}" class="btn btn-sm btn-outline-primary">{{ $actionDestination['label'] }}</a></p>
+                            @endif
+                        @else
+                            <h5>Recommended action</h5>
+                            <p class="mb-1 text-muted">There is no action to take for this recommendation yet.</p>
+                        @endif
                         @if ($configuredValue !== null)
                             <p class="mb-1"><strong>Configured value:</strong> {{ $configuredValue }}</p>
                         @endif

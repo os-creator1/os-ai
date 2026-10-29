@@ -10,6 +10,7 @@ use App\Library\Business\InitialBusinessSnapshotBuilder;
 use App\Library\Opportunity\BusinessAdvisorOpportunityProducer;
 use App\Library\Opportunity\OpportunityCandidateData;
 use App\Library\Opportunity\OpportunityEvidenceFactData;
+use App\Library\Opportunity\OpportunityPlanEligibility;
 use App\Library\Opportunity\OpportunityTypeRegistry;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -282,7 +283,10 @@ class BusinessAdvisorOpportunityProducerTest extends TestCase
 
     private function makeProducer(): BusinessAdvisorOpportunityProducer
     {
-        return new BusinessAdvisorOpportunityProducer(new InitialBusinessSnapshotBuilder());
+        $eligibility = $this->createStub(OpportunityPlanEligibility::class);
+        $eligibility->method('ineligibleTypes')->willReturn([]);
+
+        return new BusinessAdvisorOpportunityProducer(new InitialBusinessSnapshotBuilder(), $eligibility);
     }
 
     /**

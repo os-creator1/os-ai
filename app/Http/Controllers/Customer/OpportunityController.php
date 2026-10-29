@@ -19,6 +19,7 @@ use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableExce
 use App\Library\Opportunity\ActionCostEstimate;
 use App\Library\Opportunity\ActionCostEstimator;
 use App\Library\Opportunity\OpportunityManager;
+use App\Library\Opportunity\OpportunityPlanEligibility;
 use App\Library\Opportunity\OpportunityActionRegistry;
 use App\Library\Navigation\CustomerContext;
 use App\Models\Business;
@@ -32,6 +33,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Route;
 
 /**
  * Customer Opportunity queue, detail, and — as of Slice 2A — the
@@ -50,6 +52,35 @@ class OpportunityController extends Controller
      */
     private const ACTION_LABELS = [
         'add_phone' => 'Add phone number',
+        'add_email' => 'Add your public business email',
+        'add_website' => 'Add your website URL',
+        'add_description' => 'Write a business description of at least 50 characters',
+        'add_location' => 'Add your primary business location',
+        'complete_location' => 'Complete your primary location details',
+        'add_service' => 'Add the services you offer',
+        'confirm_primary_service' => 'Choose a primary service',
+        'add_gbp_url' => 'Add your Google Business Profile URL',
+        'add_facebook_url' => 'Add your Facebook page URL',
+        'add_instagram_url' => 'Add your Instagram profile URL',
+    ];
+
+    /**
+     * Where the customer makes the change themselves, for a recommendation
+     * the platform does not execute. Only a route name is stored here: the
+     * destination enforces its own authorization, so a link can never grant
+     * access, and an unresolvable route yields no link at all.
+     */
+    private const ACTION_DESTINATIONS = [
+        'add_email' => ['route' => 'customer.business.edit', 'label' => 'Open business profile'],
+        'add_website' => ['route' => 'customer.business.edit', 'label' => 'Open business profile'],
+        'add_description' => ['route' => 'customer.business.edit', 'label' => 'Open business profile'],
+        'add_gbp_url' => ['route' => 'customer.business.edit', 'label' => 'Open business profile'],
+        'add_facebook_url' => ['route' => 'customer.business.edit', 'label' => 'Open business profile'],
+        'add_instagram_url' => ['route' => 'customer.business.edit', 'label' => 'Open business profile'],
+        'add_location' => ['route' => 'customer.workspaces.businesses.locations.index', 'label' => 'Open locations'],
+        'complete_location' => ['route' => 'customer.workspaces.businesses.locations.index', 'label' => 'Open locations'],
+        'add_service' => ['route' => 'customer.workspaces.businesses.services.index', 'label' => 'Open services'],
+        'confirm_primary_service' => ['route' => 'customer.workspaces.businesses.services.index', 'label' => 'Open services'],
     ];
 
     /**
@@ -66,6 +97,7 @@ class OpportunityController extends Controller
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
         private readonly OpportunityManager $opportunityManager,
         private readonly ActionCostEstimator $costEstimator,
+        private readonly OpportunityPlanEligibility $planEligibility,
     ) {
     }
 
@@ -111,11 +143,7 @@ class OpportunityController extends Controller
             return redirect()->route('customer.onboarding.show');
         }
 
-        $ownedOpportunity = $this->opportunityRepository->findOwned($opportunity, $business->id);
-
-        if ($ownedOpportunity === null) {
-            abort(404);
-        }
+        $ownedOpportunity = $this->findVisible($opportunity, $business);
 
         $latestExecution = $this->actionExecutionRepository->findLatestForOpportunity($ownedOpportunity->id);
 
@@ -123,6 +151,7 @@ class OpportunityController extends Controller
             'opportunity' => $ownedOpportunity,
             'evidence' => $this->safeEvidence($ownedOpportunity),
             'actionLabel' => $this->actionLabel($ownedOpportunity),
+            'actionDestination' => $this->actionDestination($ownedOpportunity, $business),
             'configuredValue' => $this->configuredValue($ownedOpportunity),
             'completionPolicyLabel' => $this->completionPolicyLabel($ownedOpportunity),
             'execution' => $this->safeExecution($latestExecution),
@@ -149,11 +178,7 @@ class OpportunityController extends Controller
             abort(404);
         }
 
-        $ownedOpportunity = $this->opportunityRepository->findOwned($opportunity, $business->id);
-
-        if ($ownedOpportunity === null) {
-            abort(404);
-        }
+        $ownedOpportunity = $this->findVisible($opportunity, $business);
 
         $latestExecution = $this->actionExecutionRepository->findLatestForOpportunity($ownedOpportunity->id);
         $isTerminal = ! $this->shouldPollExecution($ownedOpportunity, $latestExecution);
@@ -364,11 +389,7 @@ class OpportunityController extends Controller
             return [null, null, redirect()->route('customer.onboarding.show')];
         }
 
-        $ownedOpportunity = $this->opportunityRepository->findOwned($opportunityId, $business->id);
-
-        if ($ownedOpportunity === null) {
-            abort(404);
-        }
+        $ownedOpportunity = $this->findVisible($opportunityId, $business);
 
         return [$customer, $ownedOpportunity, null];
     }
@@ -389,6 +410,22 @@ class OpportunityController extends Controller
     private function ensureOpportunityEngineEnabled(): void
     {
         abort_unless(config('opportunity.enabled', false), 404);
+    }
+
+    /**
+     * Owned by this Business AND still entitled by its plan; anything else is
+     * a 404, so a recommendation hidden by a downgrade is unreachable by id
+     * (detail, status poll and every mutation) without being deleted.
+     */
+    private function findVisible(int $opportunityId, Business $business): Opportunity
+    {
+        $owned = $this->opportunityRepository->findOwned($opportunityId, $business->id);
+
+        if ($owned === null || ! $this->planEligibility->isEligible($business, $owned->type)) {
+            abort(404);
+        }
+
+        return $owned;
     }
 
     private function customer(): Customer
@@ -541,16 +578,43 @@ class OpportunityController extends Controller
      * Never the raw action_key — a fixed mapping for currently reachable
      * actions, or a neutral fallback for anything else.
      */
-    private function actionLabel(Opportunity $opportunity): string
+    private function actionLabel(Opportunity $opportunity): ?string
+    {
+        $actionKey = $this->actionKey($opportunity);
+
+        return $actionKey === null ? null : (self::ACTION_LABELS[$actionKey] ?? null);
+    }
+
+    private function actionKey(Opportunity $opportunity): ?string
     {
         $recommendedAction = $opportunity->recommended_action;
         $actionKey = is_array($recommendedAction) ? ($recommendedAction['action_key'] ?? null) : null;
 
-        if (! is_string($actionKey)) {
-            return 'Recommended action';
+        return is_string($actionKey) && $actionKey !== '' ? $actionKey : null;
+    }
+
+    /**
+     * @return array{label: string, url: string}|null the customer's own place to make the change, for a
+     *                                                recommendation the platform does not execute
+     */
+    private function actionDestination(Opportunity $opportunity, Business $business): ?array
+    {
+        $actionKey = $this->actionKey($opportunity);
+        $destination = $actionKey === null ? null : (self::ACTION_DESTINATIONS[$actionKey] ?? null);
+
+        if ($destination === null || ! Route::has($destination['route'])) {
+            return null;
         }
 
-        return self::ACTION_LABELS[$actionKey] ?? 'Recommended action';
+        $parameters = str_starts_with($destination['route'], 'customer.workspaces.businesses.')
+            ? ['workspaceUid' => (string) $business->workspace?->uid, 'businessUid' => (string) $business->uid]
+            : [];
+
+        if ($parameters !== [] && in_array('', $parameters, true)) {
+            return null;
+        }
+
+        return ['label' => $destination['label'], 'url' => route($destination['route'], $parameters)];
     }
 
     private function configuredValue(Opportunity $opportunity): string|int|float|null
