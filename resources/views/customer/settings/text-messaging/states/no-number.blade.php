@@ -21,7 +21,7 @@
     @if(request('focus') === 'toll_free')
         <x-alert variant="success" icon="check-circle" class="mb-2" data-role="toll-free-focus-banner">
             <strong class="d-block">Let's get your toll-free number</strong>
-            Pick an area code if you like (optional), then find a number. You'll see the prices before you buy anything.
+            Choose a toll-free prefix (optional), then compare available numbers and their prices before buying.
         </x-alert>
     @endif
 
@@ -88,18 +88,8 @@
             @if($searched)
                 <hr class="my-2">
 
-                @if($candidate)
-                    <div data-role="number-candidate">
-                        <p class="text-section-heading mb-1">We found a number for this Business</p>
-                        <p class="h4 mb-2" data-role="candidate-phone-number">{{ $candidate->phoneNumber }}</p>
-
-                        <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.order', [$workspaceUid, $businessUid]) }}">
-                            @csrf
-                            <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'this number, charged when you buy it: the carrier\'s upfront cost plus the first month\'s rental at the price quoted today', 'recurringLabel' => 'rental of this number, billed each month starting next month at that same quoted price', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
-                            <x-button type="submit" variant="primary" :disabled="! $available || ! $numberPreview['configured'] || ! $numberPreview['sufficient']">Get this number</x-button>
-                        </form>
-                    </div>
+                @if(count($candidateOffers) > 0)
+                    @include('customer.settings.text-messaging._number-candidate-offers')
                 @else
                     <x-empty-state icon="search" title="No number found"
                                     description="We couldn't find a number matching those preferences right now. Try a different area code." />
@@ -148,13 +138,18 @@
                         @csrf
                         <input type="hidden" name="number_type" value="toll_free">
 
-                        <div class="sr-field mb-3" id="area-code-field" style="max-width:200px">
-                            <label for="area_code">Preferred area code <span class="fw-normal text-muted">(optional)</span></label>
-                            <input type="text" inputmode="numeric" maxlength="3" class="form-control @error('area_code') is-invalid @enderror"
-                                   id="area_code" name="area_code" value="{{ old('area_code', ($criteria['number_type'] ?? null) === 'toll_free' ? ($criteria['area_code'] ?? '') : '') }}" placeholder="e.g. 415">
-                            @error('area_code')
+                        <div class="sr-field mb-3" style="max-width:220px">
+                            <label for="toll_free_prefix">Toll-free prefix <span class="fw-normal text-muted">(optional)</span></label>
+                            <select id="toll_free_prefix" name="toll_free_prefix" class="form-control @error('toll_free_prefix') is-invalid @enderror">
+                                <option value="">Any toll-free prefix</option>
+                                @foreach(['800', '888', '877', '866', '855', '844', '833'] as $prefix)
+                                    <option value="{{ $prefix }}" @selected(old('toll_free_prefix', $criteria['toll_free_prefix'] ?? '') === $prefix)>{{ $prefix }}</option>
+                                @endforeach
+                            </select>
+                            @error('toll_free_prefix')
                                 <div class="invalid-feedback">{{ $message }}</div>
                             @enderror
+                            <p class="text-caption text-muted mb-0">Toll-free prefixes aren't geographic area codes.</p>
                         </div>
 
                         <x-button type="submit" variant="primary" :disabled="! $available" data-role="find-toll-free">Find a toll-free number</x-button>
@@ -197,34 +192,11 @@
 
         @if($searched)
             <x-card :padded="true">
-                @if($candidate)
-                    <div data-role="number-candidate">
-                        <p class="text-section-heading mb-1">We found a number for this Business</p>
-                        <p class="h4 mb-2" data-role="candidate-phone-number">{{ $candidate->phoneNumber }}</p>
-
-                        <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.order', [$workspaceUid, $businessUid]) }}">
-                            @csrf
-                            {{-- PR #295 Correction Round 1, item 2 — the browser
-                                 never gets the raw phone_number/provider_candidate_reference/
-                                 number_type back as independently-editable
-                                 fields; it only carries this one opaque,
-                                 short-lived, Business-bound token, so an order
-                                 can never be bound to a provider resource this
-                                 platform did not itself just verify. --}}
-                            <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
-                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $numberPreview, 'oneTimeLabel' => 'this number, charged when you buy it: the carrier\'s upfront cost plus the first month\'s rental at the price quoted today', 'recurringLabel' => 'rental of this number, billed each month starting next month at that same quoted price', 'unconfiguredText' => 'Number pricing isn\'t set up on our side yet, so numbers can\'t be purchased right now. Nothing will be charged.'])
-                            <p class="text-caption text-muted mb-2" data-role="number-cost-notice">
-                                Number rental and SMS usage are charged.
-                                @if(($criteria['number_type'] ?? null) === 'toll_free')
-                                    {{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }}
-                                @endif
-                            </p>
-                            <x-button type="submit" variant="primary" :disabled="! $available || ! $numberPreview['configured'] || ! $numberPreview['sufficient']">Get this number</x-button>
-                        </form>
-                    </div>
+                @if(count($candidateOffers) > 0)
+                    @include('customer.settings.text-messaging._number-candidate-offers')
                 @else
                     <x-empty-state icon="search" title="No number found"
-                                    description="We couldn't find a number matching those preferences right now. Try a different area code." />
+                                    description="We couldn't find any toll-free numbers with confirmed pricing for that search. Try another prefix or search again later." />
                 @endif
             </x-card>
         @endif

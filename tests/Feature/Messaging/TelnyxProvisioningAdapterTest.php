@@ -1616,6 +1616,28 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame(1_100_000, $withAddon[0]->monthlyCostMicro);
     }
 
+    public function test_toll_free_prefix_is_sent_as_number_pattern_not_geographic_area_code(): void
+    {
+        $this->enableProvisioning();
+        Http::fake(['api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [
+            $this->quoteRow('+18445550101', ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD']),
+        ]])]);
+
+        $criteria = new \App\Library\Messaging\DTO\NumberSearchCriteria(
+            countryCode: 'US',
+            numberType: PhoneNumberType::TollFree,
+            areaCode: '760',
+            tollFreePrefix: '844',
+        );
+        $found = app(TelnyxProvisioningAdapter::class)->searchNumbers($criteria);
+
+        $this->assertCount(1, $found);
+        Http::assertSent(fn ($request) =>
+            str_contains($request->url(), 'filter%5Bphone_number%5D%5Bstarts_with%5D=%2B1844')
+            && ! str_contains($request->url(), 'national_destination_code')
+        );
+    }
+
     private function purchaseFixture(string $reference, string $upfront, string $monthly, string $multiplierMicro = '1000000'): array
     {
         $this->enableProvisioning();

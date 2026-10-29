@@ -110,6 +110,47 @@ class TextMessagingSetupStateTest extends TestCase
         $this->assertDatabaseCount('business_messaging_numbers', 0);
     }
 
+    public function test_toll_free_prefix_and_multiple_candidates_have_distinct_business_bound_tokens(): void
+    {
+        $fake = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $fake);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+        $fake->nextSearchResults = [
+            new AvailableNumberCandidate('+18445550101', \App\Enums\Messaging\PhoneNumberType::TollFree, '+18445550101', 100_000, 1_000_000, 'USD'),
+            new AvailableNumberCandidate('+18445550102', \App\Enums\Messaging\PhoneNumberType::TollFree, '+18445550102', 200_000, 1_200_000, 'USD'),
+        ];
+
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $response = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
+            'number_type' => 'toll_free',
+            'toll_free_prefix' => '844',
+            'area_code' => '760',
+        ])->assertOk();
+
+        $this->assertSame('844', $fake->searches[0]->tollFreePrefix);
+        $this->assertNull($fake->searches[0]->areaCode);
+        $html = $response->getContent();
+        $this->assertStringContainsString('+18445550101', $html);
+        $this->assertStringContainsString('+18445550102', $html);
+        preg_match_all('/name="candidate_token" value="([^"]+)"/', $html, $matches);
+        $this->assertCount(2, $matches[1]);
+        $this->assertSame('+18445550101', \App\Library\Messaging\CandidateToken::decode($matches[1][0], $business)->phoneNumber);
+        $this->assertSame('+18445550102', \App\Library\Messaging\CandidateToken::decode($matches[1][1], $business)->phoneNumber);
+    }
+
+    public function test_toll_free_rejects_non_toll_free_prefixes(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
+            'number_type' => 'toll_free',
+            'toll_free_prefix' => '760',
+        ])->assertSessionHasErrors('toll_free_prefix');
+    }
+
     public function test_ordering_a_number_without_configured_credentials_never_purchases_anything(): void
     {
         config(['messaging.managed_messaging_enabled' => false]);
