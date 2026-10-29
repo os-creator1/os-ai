@@ -55,11 +55,11 @@ class RegistrationSubmissionValidatorTest extends TestCase
     public function test_missing_or_invalid_opt_in_evidence_is_still_refused(): void
     {
         $this->assertContains(
-            'Add a link to a screenshot of your opt-in form (the carrier requires an image).',
+            'Add a public link to your opt-in page or a screenshot of your opt-in form (the carrier requires opt-in evidence, and it must start with https://).',
             $this->issues($this->registration(['opt_in_image_url' => null])),
         );
         $this->assertContains(
-            'Add a link to a screenshot of your opt-in form (the carrier requires an image).',
+            'Add a public link to your opt-in page or a screenshot of your opt-in form (the carrier requires opt-in evidence, and it must start with https://).',
             $this->issues($this->registration(['opt_in_image_url' => 'not a url'])),
         );
         $this->assertNotEmpty($this->issues($this->registration(['consent_confirmations' => []])));
@@ -110,17 +110,28 @@ class RegistrationSubmissionValidatorTest extends TestCase
         $this->assertStringContainsString('reads as a promotion', implode(' ', $issues));
     }
 
-    public function test_opt_in_screenshot_must_be_a_direct_http_image_link_and_a_web_page_is_refused(): void
+    public function test_opt_in_evidence_accepts_public_pages_and_images_over_http_but_rejects_malformed_links(): void
     {
-        foreach (['https://i.imgur.com/AbC123.png', 'https://cdn.example-photo.test/optin.jpg', 'https://example-photo.test/uploads/optin?id=7'] as $ok) {
+        foreach (['https://i.imgur.com/AbC123.png', 'https://imgur.com/gallery/verify-Pq0u7sX#GDFfzGQ', 'https://kalebhillphotobooth.com/checkavailability', 'http://example-photo.test/optin'] as $ok) {
             $this->assertSame([], $this->issues($this->registration(['opt_in_image_url' => $ok])), $ok);
         }
 
-        foreach (['https://imgur.com/gallery/verify-Pq0u7sX#GDFfzGQ', 'https://example-photo.test/optin.html', 'ftp://example-photo.test/optin.png', 'javascript://example.com/%0Aalert(1)', 'not a url', ''] as $bad) {
+        foreach (['ftp://example-photo.test/optin.png', 'javascript://example.com/%0Aalert(1)', 'not a url', ''] as $bad) {
             $issues = $this->issues($this->registration(['opt_in_image_url' => $bad]));
             $this->assertCount(1, $issues, $bad);
-            $this->assertMatchesRegularExpression('/opt-in (form|screenshot)|opens a web page/', $issues[0], $bad);
+            $this->assertStringContainsString('opt-in', $issues[0], $bad);
         }
+    }
+
+    public function test_a_stated_dba_can_brand_the_samples_but_an_unrelated_name_cannot(): void
+    {
+        $dbaSamples = [
+            'sample_message_1' => 'Moonlight Booths: your booking is confirmed. Reply STOP to opt out.',
+            'sample_message_2' => 'Moonlight Booths: reminder, your event is this weekend. Reply STOP to opt out.',
+        ];
+
+        $this->assertNotEmpty($this->issues($this->registration($dbaSamples)));
+        $this->assertSame([], $this->issues($this->registration($dbaSamples + ['doing_business_as' => 'Moonlight Booths'])));
     }
 
     public function test_toll_free_customer_care_does_not_need_local_10dlc_fields(): void

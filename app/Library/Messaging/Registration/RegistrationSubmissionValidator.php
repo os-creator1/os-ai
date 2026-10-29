@@ -143,30 +143,17 @@ final class RegistrationSubmissionValidator
     }
 
     /**
-     * The opt-in evidence must be a direct http(s) link to an image of the
-     * opt-in form. This is a syntax/shape check only: it cannot prove the
-     * link is publicly reachable or really shows the form — the carrier
-     * reviews that. Web pages (a gallery or viewer page rather than the image
-     * itself) are refused because the carrier fetches the URL as an image.
+     * Opt-in evidence is a public link to the opt-in page or a screenshot of
+     * it; Telnyx accepts either in its `optInWorkflowImageURLs` field. This is
+     * a syntax check only (http/https with a real host): it cannot prove the
+     * link is publicly reachable or shows the form — the carrier reviews that.
      */
-    public static function optInImageUrlIssue(string $url): ?string
+    public static function optInEvidenceUrlIssue(string $url): ?string
     {
         $url = trim($url);
-        $missing = 'Add a link to a screenshot of your opt-in form (the carrier requires an image).';
 
         if ($url === '' || preg_match('#^https?://[^/\s]+\.[^/\s]+#i', $url) !== 1 || filter_var($url, FILTER_VALIDATE_URL) === false) {
-            return $missing;
-        }
-
-        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
-        $path = strtolower((string) parse_url($url, PHP_URL_PATH));
-        $extension = pathinfo($path, PATHINFO_EXTENSION);
-
-        $isPage = in_array($extension, ['htm', 'html', 'php', 'asp', 'aspx', 'jsp'], true)
-            || (in_array($host, ['imgur.com', 'www.imgur.com'], true) && ! in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true));
-
-        if ($isPage) {
-            return 'Your opt-in screenshot link opens a web page, not the image itself. Use the direct image link (for Imgur, the i.imgur.com address ending in .png or .jpg) so the carrier can load the picture.';
+            return 'Add a public link to your opt-in page or a screenshot of your opt-in form (the carrier requires opt-in evidence, and it must start with https://).';
         }
 
         return null;
@@ -210,7 +197,7 @@ final class RegistrationSubmissionValidator
                 $issues[] = 'Choose your expected messages per month.';
             }
 
-            $imageIssue = self::optInImageUrlIssue((string) $registration->opt_in_image_url);
+            $imageIssue = self::optInEvidenceUrlIssue((string) $registration->opt_in_image_url);
 
             if ($imageIssue !== null) {
                 $issues[] = $imageIssue;
@@ -287,10 +274,11 @@ final class RegistrationSubmissionValidator
         $issues = array_merge($issues, $this->staleSuggestionIssues($registration));
 
         // The texts may name the registered legal entity or the Business's own
-        // customer-facing name already on file (a DBA). Nothing the customer
+        // customer-facing name the owner stated (DBA) or the Business name on file. Nothing the customer
         // types into a sample message is trusted as a name by itself.
         $names = array_values(array_filter([
             $this->firstWords(trim((string) $registration->legal_business_name)),
+            $this->firstWords(trim((string) $registration->doing_business_as)),
             $this->firstWords(trim((string) $registration->business?->name)),
         ], fn (string $n): bool => $n !== ''));
         $combined = $one . ' ' . $two;
@@ -305,7 +293,7 @@ final class RegistrationSubmissionValidator
 
         if ($names !== [] && $one !== '' && $two !== '' && ! $named) {
             $issues[] = 'Include your business name in at least one sample message — your registered name ("' . $names[0] . '…")'
-                . (count($names) > 1 ? ' or your Business name on file ("' . $names[1] . '…")' : '') . '.';
+                . (count($names) > 1 ? ' or your customer-facing name ("' . $names[1] . '…")' : '') . '.';
         }
 
         return $issues;

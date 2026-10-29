@@ -414,6 +414,8 @@ class TextMessagingController extends CustomerBaseController
 
         $validated = $request->validate([
             'legal_business_name' => ['required', 'string', 'max:191'],
+            'doing_business_as' => ['nullable', 'string', 'max:191'],
+            'additional_information' => ['nullable', 'string', 'max:300'],
             'entity_type' => ['required', 'in:sole_proprietor,ein'],
             'ein' => ['required_if:entity_type,ein', 'nullable', 'string', 'max:20'],
             'address_line_1' => ['required', 'string', 'max:191'],

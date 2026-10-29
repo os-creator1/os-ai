@@ -202,6 +202,14 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                         @endif
                     </div>
 
+                    <div class="pm-field">
+                        <label for="doing_business_as">Customer-facing name (DBA) <span class="fw-normal text-muted">(optional)</span></label>
+                        <input type="text" class="form-control @error('doing_business_as') is-invalid @enderror" id="doing_business_as" name="doing_business_as"
+                               value="{{ old('doing_business_as', $registration->doing_business_as) }}" maxlength="191" aria-describedby="dba-help">
+                        <p class="pm-hint" id="dba-help">Only if customers know you by a different name than the legal name above. It is sent to the carrier as your "doing business as" name, so enter it exactly as you operate under it.</p>
+                        @error('doing_business_as')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+
                     <div class="pm-field" role="radiogroup" aria-labelledby="entity-type-label">
                         <span class="pm-legend required" id="entity-type-label">Business type</span>
                         <div class="pm-choices">
@@ -253,6 +261,13 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                         <label class="required" for="website_url">Website</label>
                         <input type="url" class="form-control @error('website_url') is-invalid @enderror" id="website_url" name="website_url" value="{{ old('website_url', $prefill['values']['website_url']) }}" maxlength="255" placeholder="https://" required>
                         @error('website_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+
+                    <div class="pm-field">
+                        <label for="additional_information">Name or email differences <span class="fw-normal text-muted">(optional)</span></label>
+                        <textarea class="form-control @error('additional_information') is-invalid @enderror" id="additional_information" name="additional_information" rows="2" maxlength="300" aria-describedby="addl-help">{{ old('additional_information', $registration->additional_information) }}</textarea>
+                        <p class="pm-hint" id="addl-help">If your legal name, website brand or contact-email domain legitimately differ, say why in your own words. We send exactly what you write and never add an explanation for you.</p>
+                        @error('additional_information')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
 
                     @if(in_array($registration->brand_status, ['needs_attention', null], true) && trim((string) $registration->provider_brand_id) !== '')
@@ -378,10 +393,10 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                                 @error('message_volume')<div class="invalid-feedback">{{ $message }}</div>@enderror
                             </div>
                             <div class="pm-field">
-                                <label class="required" for="opt_in_image_url">Link to a screenshot of your opt-in form</label>
+                                <label class="required" for="opt_in_image_url">Link to your opt-in page or a screenshot of it</label>
                                 <input type="url" class="form-control @error('opt_in_image_url') is-invalid @enderror" id="opt_in_image_url" name="opt_in_image_url"
-                                       value="{{ old('opt_in_image_url', $registration->opt_in_image_url) }}" maxlength="2083" placeholder="https://… (an image of where customers agree to texts)" required aria-describedby="opt-in-image-help">
-                                <p class="pm-hint" id="opt-in-image-help">The carrier requires an image showing how customers opt in. Use the direct image link (ending in .png or .jpg), not a gallery or viewer page, and make sure it is publicly viewable — we can't check that for you.</p>
+                                       value="{{ old('opt_in_image_url', $registration->opt_in_image_url) }}" maxlength="2083" placeholder="https://… (public page or image where customers agree to texts)" required aria-describedby="opt-in-image-help">
+                                <p class="pm-hint" id="opt-in-image-help">The carrier requires evidence of how customers opt in: a link to your public opt-in page, or to a screenshot of it. Make sure the link is publicly viewable — we can't check that for you.</p>
                                 @error('opt_in_image_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
                             </div>
                         </div>

@@ -1730,7 +1730,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 || ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume])
                 || CarrierRegistrationOptions::stateName($submission->region) === null
                 || trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === ''
-                || ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL))) {
+                || \App\Library\Messaging\Registration\RegistrationSubmissionValidator::optInEvidenceUrlIssue((string) $submission->optInImageUrl) !== null)) {
             throw new \RuntimeException('Toll-free verification needs a mapped use case, a message volume, a US state, a contact name and an opt-in image URL.');
         }
 
@@ -1775,11 +1775,14 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'businessContactPhone' => $submission->contactPhone,
                 'messageVolume' => $submission->messageVolume,
                 'useCase' => $tollFreeUseCase,
-                'useCaseSummary' => $submission->campaignDescription,
+                'useCaseSummary' => mb_substr((string) $submission->campaignDescription, 0, 500),
                 'productionMessageContent' => $submission->sampleMessage1,
                 'optInWorkflow' => $submission->optInMethod,
                 'optInWorkflowImageURLs' => [['url' => $submission->optInImageUrl]],
-                'additionalInformation' => mb_substr((string) $submission->campaignDescription, 0, 500),
+                'doingBusinessAs' => $this->tollFreeDoingBusinessAs($submission),
+                // Optional ISV name: only when the platform is configured as a reseller account.
+                'isvReseller' => $this->tollFreeIsvReseller(),
+                'additionalInformation' => $this->tollFreeAdditionalInformation($submission),
                 'businessRegistrationNumber' => $submission->entityType === MessagingEntityType::Ein ? $submission->ein : null,
                 'businessRegistrationType' => $submission->entityType === MessagingEntityType::Ein ? 'EIN' : null,
                 'businessRegistrationCountry' => $submission->entityType === MessagingEntityType::Ein ? 'US' : null,
@@ -1818,6 +1821,42 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // honest field, never duplicated into provider_brand_id/
         // provider_campaign_id.
         return new RegistrationSubmissionResult(null, null, $requestId, MessagingRegistrationStatus::Pending);
+    }
+
+    /** Owner-stated DBA only, and only when it really differs from the legal name. */
+    private function tollFreeDoingBusinessAs(MessagingRegistrationSubmission $submission): ?string
+    {
+        $dba = trim((string) $submission->doingBusinessAs);
+
+        return $dba !== '' && strcasecmp($dba, trim((string) $submission->legalBusinessName)) !== 0 ? mb_substr($dba, 0, 500) : null;
+    }
+
+    private function tollFreeIsvReseller(): ?string
+    {
+        $name = config('messaging.toll_free_isv_reseller');
+
+        return is_string($name) && trim($name) !== '' ? mb_substr(trim($name), 0, 500) : null;
+    }
+
+    /**
+     * Telnyx requires this text. It carries only what the owner stated: the DBA relationship
+     * (when one was given) and their own note about legitimate name/domain differences — never
+     * a copy of the campaign description and never an inferred explanation.
+     */
+    private function tollFreeAdditionalInformation(MessagingRegistrationSubmission $submission): string
+    {
+        $parts = [];
+        $dba = $this->tollFreeDoingBusinessAs($submission);
+
+        if ($dba !== null) {
+            $parts[] = 'Legal entity ' . trim((string) $submission->legalBusinessName) . ' operates the customer-facing brand ' . $dba . '.';
+        }
+
+        if (trim((string) $submission->additionalInformation) !== '') {
+            $parts[] = trim((string) $submission->additionalInformation);
+        }
+
+        return mb_substr($parts === [] ? 'No additional information.' : implode(' ', $parts), 0, 500);
     }
 
     /**

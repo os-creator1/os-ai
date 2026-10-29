@@ -351,6 +351,55 @@ class TelnyxProvisioningAdapterTest extends TestCase
             && ! str_contains($request->url(), 'verification_requests'));
     }
 
+    public function test_toll_free_payload_carries_the_stated_dba_a_truthful_note_and_no_invented_reseller(): void
+    {
+        $this->enableProvisioning();
+        config(['messaging.toll_free_isv_reseller' => null]);
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_fixture_dba']])]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100', null, [
+            'doingBusinessAs' => 'Harbor Lane Photo Booth',
+            'additionalInformation' => 'Our website uses the Photo Booth brand; email is on the parent domain.',
+            'optInImageUrl' => 'https://harborlane.example/book-now',
+        ]));
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['businessName'] === 'Harbor Lane Studios LLC'
+                && $body['doingBusinessAs'] === 'Harbor Lane Photo Booth'
+                && ! array_key_exists('isvReseller', $body)
+                && $body['productionMessageContent'] === 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.'
+                && $body['additionalInformation'] !== $body['useCaseSummary']
+                && str_contains($body['additionalInformation'], 'Harbor Lane Studios LLC operates the customer-facing brand Harbor Lane Photo Booth.')
+                && str_contains($body['additionalInformation'], 'email is on the parent domain')
+                && $body['optInWorkflowImageURLs'] === [['url' => 'https://harborlane.example/book-now']];
+        });
+    }
+
+    public function test_toll_free_payload_sends_isv_reseller_only_when_configured_and_omits_an_unneeded_dba(): void
+    {
+        $this->enableProvisioning();
+        config(['messaging.toll_free_isv_reseller' => 'Configured Reseller Inc']);
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_fixture_isv']])]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100', null, [
+            'doingBusinessAs' => 'harbor lane studios llc',
+        ]));
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return $body['isvReseller'] === 'Configured Reseller Inc'
+                && ! array_key_exists('doingBusinessAs', $body)
+                && $body['additionalInformation'] === 'No additional information.';
+        });
+    }
+
     /**
      * Review correction — Telnyx's own toll-free verification submission
      * requires the already-owned number being verified.
