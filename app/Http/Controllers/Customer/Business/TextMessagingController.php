@@ -141,6 +141,7 @@ class TextMessagingController extends CustomerBaseController
         $validated = $request->validate([
             'number_type' => ['required', 'in:local,toll_free'],
             'area_code' => ['nullable', 'digits:3'],
+            'toll_free_prefix' => ['nullable', 'in:800,888,877,866,855,844,833'],
         ]);
 
         if ($validated['number_type'] === 'local' && ! $this->hasApprovedLocalRegistration($business)) {
@@ -155,7 +156,8 @@ class TextMessagingController extends CustomerBaseController
         $criteria = new NumberSearchCriteria(
             countryCode: 'US',
             numberType: PhoneNumberType::from($validated['number_type']),
-            areaCode: $validated['area_code'] ?? null,
+            areaCode: $validated['number_type'] === 'local' ? ($validated['area_code'] ?? null) : null,
+            tollFreePrefix: $validated['number_type'] === 'toll_free' ? ($validated['toll_free_prefix'] ?? null) : null,
         );
 
         if (! ProvisioningPilot::allows($business)) {
@@ -163,6 +165,12 @@ class TextMessagingController extends CustomerBaseController
         }
 
         $candidates = $this->provisioning->searchNumbers($criteria);
+        // Every offered choice retains its own Business-bound token and quoted cost.
+        $candidateOffers = array_map(fn ($candidate) => [
+            'candidate' => $candidate,
+            'token' => CandidateToken::encode($business, $candidate),
+            'preview' => $this->charges->forNumberQuote($business, $candidate),
+        ], $candidates);
         $candidate = $candidates[0] ?? null;
 
         return view('customer.settings.text-messaging.states.no-number', [
@@ -172,6 +180,7 @@ class TextMessagingController extends CustomerBaseController
             'searched' => true,
             'criteria' => $validated,
             'candidate' => $candidate,
+            'candidateOffers' => $candidateOffers,
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             'numberPreview' => $candidate !== null ? $this->charges->forNumberQuote($business, $candidate) : $this->charges->forNumberPurchase($business),
             'localRegistrationPreview' => $this->charges->forLocalRegistration($business),
@@ -879,6 +888,7 @@ class TextMessagingController extends CustomerBaseController
             'searched' => false,
             'criteria' => [],
             'candidate' => null,
+            'candidateOffers' => [],
             'candidateToken' => null,
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             'numberPreview' => $this->charges->forNumberPurchase($business),
