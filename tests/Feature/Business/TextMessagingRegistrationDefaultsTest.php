@@ -269,7 +269,7 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $number = $this->attachNumber($identity, '+18885550142');
         // A genuine toll-free number, owned by this Business through its messaging identity.
         \App\Models\BusinessMessagingNumber::query()->whereKey($number->id)->update(['number_type' => 'toll_free']);
-        $this->assertSame('toll_free', \App\Models\BusinessMessagingNumber::query()
+        $this->assertSame(\App\Enums\Messaging\PhoneNumberType::TollFree, \App\Models\BusinessMessagingNumber::query()
             ->where('business_messaging_identity_id', $identity->id)->value('number_type'));
         $this->authenticateAs($customer);
 
