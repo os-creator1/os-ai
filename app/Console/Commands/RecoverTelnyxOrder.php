@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Messaging\BusinessMessagingIdentityStatus;
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\MessagingProvider;
@@ -116,33 +117,68 @@ class RecoverTelnyxOrder extends Command
     }
 
     /**
-     * True only when the exact end state exists AND the incident is resolved.
-     * A number that exists but differs from the expected state is a collision.
+     * True only when the COMPLETE expected end state exists: the Business's
+     * single active Telnyx identity on the expected profile, its one active
+     * primary toll-free number carrying the resource id and costs, and this
+     * command's own resolution of the exact incident. Anything in between is a
+     * collision, never "already done".
      */
     private function alreadyReconciled(): bool
     {
-        $number = BusinessMessagingNumber::query()->where('phone_number', $this->t('phone_number'))->first();
+        $numbers = BusinessMessagingNumber::query()->where('phone_number', $this->t('phone_number'))->get();
 
-        if ($number === null) {
+        if ($numbers->isEmpty()) {
             return false;
         }
 
-        $identity = BusinessMessagingIdentity::query()->find($number->business_messaging_identity_id);
-        $incident = DB::table('business_messaging_provisioning_incidents')->where('id', $this->t('incident_id'))->first();
+        $fail = fn (string $why) => new \DomainException(sprintf('Number %s already exists locally but is not the complete expected end state (%s); refusing to touch it.', $this->t('phone_number'), $why));
 
-        $matches = $identity !== null
-            && (int) $identity->business_id === $this->t('business_id')
-            && $identity->messaging_profile_id === $this->t('messaging_profile_id')
-            && $number->provider_number_reference === $this->t('phone_resource_id')
-            && $number->status === BusinessMessagingNumberStatus::Active
-            && $number->monthly_cost_micro !== null;
-
-        if (! $matches) {
-            throw new \DomainException(sprintf('Number %s already exists locally in a different state (number #%d); refusing to touch it.', $this->t('phone_number'), $number->id));
+        if ($numbers->count() !== 1) {
+            throw $fail('several rows');
         }
 
-        if ($incident === null || $incident->resolved_at === null) {
-            throw new \DomainException('Identity and number are in place but incident is not resolved; investigate manually.');
+        $number = $numbers->first();
+        $identity = BusinessMessagingIdentity::query()->find($number->business_messaging_identity_id);
+
+        if ($identity === null
+            || (int) $identity->business_id !== $this->t('business_id')
+            || $identity->provider !== MessagingProvider::Telnyx
+            || $identity->status !== BusinessMessagingIdentityStatus::Active
+            || $identity->messaging_profile_id !== $this->t('messaging_profile_id')) {
+            throw $fail('identity');
+        }
+
+        if (BusinessMessagingIdentity::query()->where('business_id', $this->t('business_id'))->count() !== 1
+            || BusinessMessagingNumber::query()->where('business_messaging_identity_id', $identity->id)->count() !== 1) {
+            throw $fail('extra identities or numbers');
+        }
+
+        if ($number->provider_number_reference !== $this->t('phone_resource_id')
+            || $number->status !== BusinessMessagingNumberStatus::Active
+            || $number->number_type !== PhoneNumberType::TollFree
+            || ! $number->is_primary
+            || $number->activated_at === null
+            || $number->next_renewal_at === null
+            || $number->upfront_cost_micro === null
+            || $number->monthly_cost_micro === null
+            || (int) $number->monthly_cost_micro < 1
+            || $number->cost_currency !== 'USD') {
+            throw $fail('number');
+        }
+
+        $incident = DB::table('business_messaging_provisioning_incidents')->where('id', $this->t('incident_id'))->first();
+
+        if ($incident === null
+            || (int) $incident->business_id !== $this->t('business_id')
+            || $incident->stage !== TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN
+            || $incident->phone_number !== $this->t('phone_number')
+            || $incident->messaging_profile_id !== $this->t('messaging_profile_id')
+            || $incident->resolved_at === null
+            || ! is_string($incident->resolution_note)
+            || ! str_contains($incident->resolution_note, '[recovered by messaging:recover-telnyx-order]')
+            || ! str_contains($incident->resolution_note, (string) $this->t('order_id'))
+            || ! str_contains($incident->resolution_note, (string) $this->t('phone_resource_id'))) {
+            throw $fail('incident');
         }
 
         return true;
@@ -172,9 +208,13 @@ class RecoverTelnyxOrder extends Command
             throw new \DomainException('Incident ' . $this->t('incident_id') . ' is already resolved but the local state is incomplete; investigate manually.');
         }
 
-        foreach ([['phone_number', $this->t('phone_number')], ['messaging_profile_id', $this->t('messaging_profile_id')]] as [$column, $expected]) {
-            if ($incident->{$column} !== null && $incident->{$column} !== $expected) {
-                throw new \DomainException("Incident {$column} [{$incident->{$column}}] does not match the expected value.");
+        if ($incident->stage !== TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN) {
+            throw new \DomainException('Incident ' . $this->t('incident_id') . ' is not a ' . TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN . ' incident.');
+        }
+
+        foreach (['phone_number', 'messaging_profile_id'] as $column) {
+            if ($incident->{$column} !== $this->t($column)) {
+                throw new \DomainException("Incident {$column} does not exactly match the expected value.");
             }
         }
 
@@ -212,7 +252,10 @@ class RecoverTelnyxOrder extends Command
 
         if ($reservation === null
             || (int) $reservation->business_id !== $this->t('business_id')
-            || $reservation->feature_key !== TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE
+            // Reservations carry the METER's canonical feature: the number
+            // purchase meter belongs to the messaging_transport feature.
+            || $reservation->meter_key !== TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE
+            || $reservation->feature_key !== PlatformFeature::MessagingTransport->value
             || $reservation->status !== UsageReservationStatus::Committed->value
             || (int) $reservation->final_amount_micro !== $this->t('reservation_amount_micro')) {
             throw new \DomainException('Wallet reservation #' . $this->t('reservation_id') . ' is not the committed $2.10 number purchase of Business ' . $this->t('business_id') . '.');

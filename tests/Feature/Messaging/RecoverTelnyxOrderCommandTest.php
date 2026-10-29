@@ -66,7 +66,8 @@ class RecoverTelnyxOrderCommandTest extends TestCase
             'id' => 21,
             'business_id' => $this->business->id,
             'wallet_id' => 1,
-            'feature_key' => 'messaging_number_purchase',
+            // As in production: the feature is the meter's canonical one.
+            'feature_key' => 'messaging_transport',
             'meter_key' => 'messaging_number_purchase',
             'period_key' => '2026-10',
             'status' => 'committed',
@@ -245,5 +246,55 @@ class RecoverTelnyxOrderCommandTest extends TestCase
 
         Http::assertNothingSent();
         $this->assertNothingWritten();
+    }
+
+    public function test_reservation_with_the_wrong_meter_or_feature_is_refused(): void
+    {
+        $this->fakeTelnyx();
+
+        foreach ([['meter_key' => 'messaging_number_rental_renewal'], ['feature_key' => 'messaging_number_purchase']] as $change) {
+            DB::table('business_usage_reservations')->where('id', 21)->update($change);
+            $this->run_()->assertExitCode(1);
+            $this->assertNothingWritten();
+            DB::table('business_usage_reservations')->where('id', 21)->update(['meter_key' => 'messaging_number_purchase', 'feature_key' => 'messaging_transport']);
+        }
+    }
+
+    public function test_incident_must_be_the_unknown_order_stage_with_exact_phone_and_profile(): void
+    {
+        $this->fakeTelnyx();
+
+        foreach ([
+            ['stage' => 'number_attach_failed_after_provider_success'],
+            ['phone_number' => null],
+            ['phone_number' => '+18446980766'],
+            ['messaging_profile_id' => null],
+            ['messaging_profile_id' => 'another-profile'],
+        ] as $change) {
+            $original = (array) DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->first();
+            DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->update($change);
+            $this->run_()->assertExitCode(1);
+            $this->assertNothingWritten();
+            DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->update(array_intersect_key($original, $change));
+        }
+    }
+
+    public function test_partial_state_with_a_resolved_incident_is_not_treated_as_already_reconciled(): void
+    {
+        $this->fakeTelnyx();
+        $this->run_()->assertExitCode(0);
+        Http::fake();
+
+        // Number, identity and a resolved incident exist — but the number is no longer the active primary.
+        BusinessMessagingNumber::query()->update(['is_primary' => false]);
+        $this->run_()->assertExitCode(1);
+        BusinessMessagingNumber::query()->update(['is_primary' => true]);
+
+        // Resolved by someone else (no recovery audit note): not ours to call done.
+        DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->update(['resolution_note' => 'closed by hand']);
+        $this->run_()->assertExitCode(1);
+
+        Http::assertNothingSent();
+        $this->assertSame(1, BusinessMessagingNumber::query()->count());
     }
 }
