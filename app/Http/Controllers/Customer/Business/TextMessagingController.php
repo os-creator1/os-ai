@@ -561,7 +561,7 @@ class TextMessagingController extends CustomerBaseController
             // Not an error: the next stage is simply not available yet. The
             // customer lands on the progress screen, which says why.
             return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
-                'status' => $e->reason === \App\Library\Messaging\Exceptions\MessagingRegistrationNotReadyException::REASON_NEEDS_AUTHORIZATION ? 'error' : 'info',
+                'status' => $e->reason === \App\Library\Messaging\Exceptions\MessagingRegistrationNotReadyException::REASON_VERIFICATION_PENDING ? 'info' : 'error',
                 'message' => $e->getMessage(),
             ]);
         } catch (MessagingRegistrationAlreadySubmittedException) {
@@ -593,6 +593,10 @@ class TextMessagingController extends CustomerBaseController
                 'exception' => $e::class,
                 'step' => $e->step,
             ]);
+
+            if ($e->step === \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_TOLL_FREE) {
+                return $this->textMessagingError($workspaceUid, $businessUid, 'The carrier reviewed this toll-free verification request and rejected it, so it was not submitted. This is the carrier\'s response, not an internal error on our side. Your saved details remain and nothing was charged. Please contact support so we can review the carrier\'s reason with you before you try again.');
+            }
 
             return $this->textMessagingError($workspaceUid, $businessUid, $e->step === \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_BRAND
                 ? 'Step 1 of 2 (carrier brand registration): the carrier could not accept this step. Your saved details remain, nothing was charged. You can try again later; if it keeps happening, contact support.'

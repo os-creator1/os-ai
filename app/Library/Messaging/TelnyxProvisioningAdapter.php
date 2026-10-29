@@ -32,6 +32,7 @@ use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\NumberPriceChangedException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationNotEligibleException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationNotReadyException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException;
 use App\Library\Usage\UsageWalletManager;
 use App\Enums\Usage\UsageReservationStatus;
@@ -1607,6 +1608,31 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         ]);
     }
 
+    /**
+     * Operator-readable record of a definitive toll-free rejection: status,
+     * the provider's error codes and the NAMES of the rejected fields only.
+     * Never the response body, request payload, EIN, contact details or key.
+     */
+    private function logTollFreeRejection(Business $business, \Illuminate\Http\Client\Response $response): void
+    {
+        $safe = static function (mixed $value, int $max = 64): ?string {
+            $value = is_scalar($value) ? (string) $value : '';
+
+            return $value !== '' && strlen($value) <= $max && preg_match('/^[A-Za-z0-9_.\/\-]+$/', $value) === 1 ? $value : null;
+        };
+
+        $errors = array_slice(is_array($response->json('errors')) ? $response->json('errors') : [], 0, 10);
+
+        \Illuminate\Support\Facades\Log::warning('Telnyx toll-free verification submission rejected.', [
+            'stage' => 'toll_free_verification',
+            'business_id' => (int) $business->id,
+            'http_status' => $response->status(),
+            'provider_error_codes' => array_values(array_filter(array_map(fn ($e) => is_array($e) ? $safe($e['code'] ?? null) : null, $errors))),
+            'rejected_fields' => array_values(array_filter(array_map(fn ($e) => is_array($e) ? $safe($e['source']['pointer'] ?? ($e['source']['parameter'] ?? null)) : null, $errors))),
+            'request_id' => $safe($response->header('x-request-id')) ?? $safe($response->header('x-telnyx-request-id')),
+        ]);
+    }
+
     private function providerValue(\Illuminate\Http\Client\Response $response, array $paths): string
     {
         foreach ($paths as $path) {
@@ -1725,13 +1751,45 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // validates these and a guessed value would only be rejected.
         $tollFreeUseCase = CarrierRegistrationOptions::TOLL_FREE_USE_CASES[$submission->useCase] ?? null;
 
-        if ($submission->existingVerificationId === null
-            && ($tollFreeUseCase === null
-                || ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume])
-                || CarrierRegistrationOptions::stateName($submission->region) === null
-                || trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === ''
-                || ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL))) {
-            throw new \RuntimeException('Toll-free verification needs a mapped use case, a message volume, a US state, a contact name and an opt-in image URL.');
+        if ($submission->existingVerificationId === null) {
+            $missing = array_keys(array_filter([
+                'use_case' => $tollFreeUseCase === null,
+                'message_volume' => ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume]),
+                'region' => CarrierRegistrationOptions::stateName($submission->region) === null,
+                'contact_name' => trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === '',
+                'opt_in_image_url' => ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL),
+            ]));
+
+            if ($missing !== []) {
+                // Local, before any request: field names only, never values.
+                \Illuminate\Support\Facades\Log::warning('Toll-free verification blocked by local preflight.', [
+                    'stage' => 'toll_free_verification',
+                    'business_id' => (int) $submission->businessId,
+                    'missing_or_invalid' => $missing,
+                ]);
+
+                throw new \RuntimeException('Toll-free verification needs a mapped use case, a message volume, a US state, a contact name and an opt-in image URL.');
+            }
+
+            // Telnyx's published request schema caps these free-text fields; a
+            // longer value is refused by the carrier. Never truncated silently
+            // (that could cut compliance wording): the customer is told which
+            // field to shorten, before anything is sent or charged.
+            $limits = [
+                'campaign description' => [$submission->campaignDescription, 500],
+                'opt-in description' => [$submission->optInMethod, 500],
+                'first sample message' => [$submission->sampleMessage1, 1000],
+                'legal business name' => [$submission->legalBusinessName, 500],
+            ];
+
+            foreach ($limits as $label => [$value, $max]) {
+                if (mb_strlen((string) $value) > $max) {
+                    throw new MessagingRegistrationNotReadyException(sprintf(
+                        'Your %s is %d characters; toll-free verification accepts at most %d. Shorten it, save, and submit again. Nothing was sent to the carrier and nothing was charged.',
+                        $label, mb_strlen((string) $value), $max,
+                    ), MessagingRegistrationNotReadyException::REASON_NOT_SENT);
+                }
+            }
         }
 
         $business = Business::query()->findOrFail($submission->businessId);
@@ -1798,7 +1856,20 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free status=' . $response->status());
             }
 
-            throw new \RuntimeException('Telnyx rejected the toll-free verification submission.');
+            $this->logTollFreeRejection($business, $response);
+
+            // 401/403: our credentials or account permission, not the request.
+            if (in_array($response->status(), [401, 403], true)) {
+                throw new \RuntimeException('Telnyx refused our credentials for the toll-free verification submission.');
+            }
+
+            // 429: rejected before processing, so nothing exists at the carrier.
+            if ($response->status() === 429) {
+                throw new MessagingRegistrationNotReadyException('The carrier is rate-limiting requests right now. Nothing was submitted and nothing was charged; please try again in a few minutes.', MessagingRegistrationNotReadyException::REASON_NOT_SENT);
+            }
+
+            // Any other 4xx is the carrier definitively rejecting the request.
+            throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the toll-free verification submission.', \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_TOLL_FREE);
         }
 
         $requestId = $this->providerValue($response, ['id', 'data.id', 'data.verificationId']);

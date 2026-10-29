@@ -17,6 +17,9 @@ class MessagingRegistrationProviderException extends RuntimeException
 
     public const STEP_CAMPAIGN = 'campaign';
 
+    /** Toll-free verification: one request, no brand/campaign split. */
+    public const STEP_TOLL_FREE = 'toll_free';
+
     public function __construct(
         string $message,
         public readonly string $step,

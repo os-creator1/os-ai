@@ -16,6 +16,9 @@ class MessagingRegistrationNotReadyException extends RuntimeException
 
     public const REASON_NEEDS_AUTHORIZATION = 'needs_authorization';
 
+    /** Nothing was sent to the carrier (a local limit or a refused-before-processing call); the message says what to do. */
+    public const REASON_NOT_SENT = 'not_sent';
+
     public function __construct(string $message, public readonly string $reason = self::REASON_VERIFICATION_PENDING)
     {
         parent::__construct($message);

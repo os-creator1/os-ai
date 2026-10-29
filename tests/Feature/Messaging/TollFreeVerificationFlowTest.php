@@ -8,6 +8,8 @@ use App\Library\Messaging\BusinessMessagingRegistrationService;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
 use App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationNotReadyException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationProviderException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException;
 use App\Library\Messaging\FakeProvisioningAdapter;
 use App\Library\Messaging\TelnyxProvisioningAdapter;
@@ -16,6 +18,7 @@ use App\Models\Currency;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\TestCase;
 
@@ -193,5 +196,151 @@ class TollFreeVerificationFlowTest extends TestCase
         } finally {
             Http::assertNothingSent();
         }
+    }
+
+    private function incidents(): int
+    {
+        return DB::table('business_messaging_provisioning_incidents')->count();
+    }
+
+    public function test_a_definitive_4xx_rejection_is_a_provider_rejection_logged_with_codes_and_field_names_only(): void
+    {
+        [$business, $registration] = $this->tollFreeBusiness();
+        $before = $this->tables();
+        Log::spy();
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['errors' => [[
+            'code' => '10015', 'title' => 'Invalid',
+            'detail' => 'businessName owner@harborlane.example 12-3456789 is not acceptable',
+            'source' => ['pointer' => '/businessName'],
+        ]]], 422)]);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected a provider rejection.');
+        } catch (MessagingRegistrationProviderException $e) {
+            $this->assertSame(MessagingRegistrationProviderException::STEP_TOLL_FREE, $e->step);
+        }
+
+        Http::assertSentCount(1);
+        $this->assertSame(0, $this->incidents());
+        $this->assertNull($registration->fresh()->provider_registration_id);
+        $this->assertNotSame(MessagingRegistrationStatus::Pending, $registration->fresh()->status);
+        $this->assertSame($before, $this->tables());
+
+        Log::shouldHaveReceived('warning')->withArgs(function (string $message, array $context = []) use ($business): bool {
+            if ($message !== 'Telnyx toll-free verification submission rejected.') {
+                return false;
+            }
+
+            $encoded = json_encode($context);
+
+            return $context['business_id'] === (int) $business->id
+                && $context['stage'] === 'toll_free_verification'
+                && $context['http_status'] === 422
+                && $context['provider_error_codes'] === ['10015']
+                && $context['rejected_fields'] === ['/businessName']
+                && ! str_contains($encoded, '12-3456789')
+                && ! str_contains($encoded, 'owner@harborlane')
+                && ! str_contains($encoded, 'fixture_api_key');
+        })->once();
+    }
+
+    public function test_a_credentials_refusal_is_an_internal_error_not_a_carrier_rejection(): void
+    {
+        [, $registration] = $this->tollFreeBusiness();
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['errors' => [['code' => '10009']]], 401)]);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected an internal refusal.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame(\RuntimeException::class, $e::class);
+        }
+
+        $this->assertSame(0, $this->incidents());
+    }
+
+    public function test_a_local_preflight_failure_is_internal_sends_nothing_and_logs_field_names_only(): void
+    {
+        [, $registration] = $this->tollFreeBusiness();
+        $registration->update(['opt_in_image_url' => null]);
+        Log::spy();
+        Http::fake();
+
+        try {
+            $this->service()->submit($registration->fresh());
+            $this->fail('Expected a local preflight failure.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame(\RuntimeException::class, $e::class);
+        }
+
+        Http::assertNothingSent();
+        Log::shouldHaveReceived('warning')->withArgs(fn (string $m, array $c = []) => $m === 'Toll-free verification blocked by local preflight.'
+            && $c['missing_or_invalid'] === ['opt_in_image_url'])->once();
+        $this->assertSame(0, $this->incidents());
+    }
+
+    public function test_over_length_free_text_is_refused_locally_before_anything_is_sent(): void
+    {
+        [, $registration] = $this->tollFreeBusiness();
+        $registration->update(['campaign_description' => str_repeat('a', 501)]);
+        Http::fake();
+
+        $this->expectException(MessagingRegistrationNotReadyException::class);
+
+        try {
+            $this->service()->submit($registration->fresh());
+        } finally {
+            Http::assertNothingSent();
+            $this->assertSame(0, $this->incidents());
+        }
+    }
+
+    public function test_the_request_matches_telnyxs_published_toll_free_schema(): void
+    {
+        [, $registration] = $this->tollFreeBusiness();
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_schema']])]);
+
+        $this->service()->submit($registration);
+
+        Http::assertSent(function ($request): bool {
+            $body = $request->data();
+            $known = ['businessName', 'corporateWebsite', 'businessAddr1', 'businessAddr2', 'businessCity', 'businessState', 'businessZip',
+                'businessContactFirstName', 'businessContactLastName', 'businessContactEmail', 'businessContactPhone', 'messageVolume',
+                'phoneNumbers', 'useCase', 'useCaseSummary', 'productionMessageContent', 'optInWorkflow', 'optInWorkflowImageURLs',
+                'additionalInformation', 'businessRegistrationNumber', 'businessRegistrationType', 'businessRegistrationCountry',
+                'entityType', 'privacyPolicyURL', 'termsAndConditionURL', 'optInKeywords'];
+            $required = ['businessName', 'corporateWebsite', 'businessAddr1', 'businessCity', 'businessState', 'businessZip',
+                'businessContactFirstName', 'businessContactLastName', 'businessContactEmail', 'businessContactPhone', 'messageVolume',
+                'phoneNumbers', 'useCase', 'useCaseSummary', 'productionMessageContent', 'optInWorkflow', 'optInWorkflowImageURLs', 'additionalInformation'];
+
+            return array_diff(array_keys($body), $known) === []
+                && array_diff($required, array_keys($body)) === []
+                && $body['useCase'] === 'Conversational / Alerts'
+                && $body['messageVolume'] === '1,000'
+                && $body['businessState'] === 'Oregon'
+                && $body['entityType'] === 'PRIVATE_PROFIT'
+                && mb_strlen($body['useCaseSummary']) <= 500 && mb_strlen($body['optInWorkflow']) <= 500
+                && mb_strlen($body['additionalInformation']) <= 500 && mb_strlen($body['productionMessageContent']) <= 1000
+                && isset($body['phoneNumbers'][0]['phoneNumber']) && isset($body['optInWorkflowImageURLs'][0]['url']);
+        });
+    }
+
+    public function test_a_request_timeout_is_an_uncertain_outcome_that_blocks_resubmission(): void
+    {
+        [, $registration] = $this->tollFreeBusiness();
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response([], 408)]);
+
+        for ($i = 0; $i < 2; $i++) {
+            try {
+                $this->service()->submit($registration);
+                $this->fail('Expected recovery-required.');
+            } catch (MessagingRegistrationRecoveryRequiredException) {
+                // expected
+            }
+        }
+
+        Http::assertSentCount(1);
+        $this->assertSame(1, $this->incidents());
     }
 }
