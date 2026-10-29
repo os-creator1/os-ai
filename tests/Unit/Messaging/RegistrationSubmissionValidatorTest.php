@@ -66,35 +66,28 @@ class RegistrationSubmissionValidatorTest extends TestCase
         $this->assertNotEmpty($this->issues($this->registration(['consent_confirmations' => []])));
     }
 
-    public function test_sample_message_1_must_carry_the_customer_facing_brand_not_the_first_words_of_the_legal_name(): void
+    public function test_toll_free_sample_one_must_carry_the_stated_dba_which_may_differ_from_the_legal_name(): void
     {
-        // The stated DBA brands sample 1 even though it shares nothing with the legal entity.
+        // Legal name and DBA differ; the DBA-branded samples pass (no first-two-words legal-name rule).
         $this->assertSame([], $this->issues($this->registration()));
 
-        // An unrelated sender name matches no DBA, Business name or legal name.
-        $unrelated = $this->issues($this->registration([
+        // An unrelated sender name is refused for sample 1.
+        $issues = $this->issues($this->registration([
             'sample_message_1' => 'Acme Party Rentals: your booking is confirmed. Reply STOP to opt out.',
         ]));
-        $this->assertCount(1, $unrelated);
-        $this->assertStringContainsString('Sample message 1 should name your business', $unrelated[0]);
+        $this->assertStringContainsString('Sample message 1 must include "Kaleb Hill Photo Booth"', implode(' ', $issues));
 
-        // Branding only sample 2 is not enough: sample 1 is what the carrier receives.
-        $this->assertCount(1, $this->issues($this->registration([
-            'sample_message_1' => 'Your booking is confirmed. Reply STOP to opt out.',
+        // With no DBA stated, the registered legal name is the brand (entity suffix and punctuation ignored).
+        $this->assertSame([], $this->issues($this->registration([
+            'doing_business_as' => null,
+            'sample_message_1' => 'Spartan Security Force: your booking is confirmed. Reply STOP to opt out.',
+            'sample_message_2' => 'Spartan Security Force, LLC: reminder, your event is this weekend. Reply STOP to opt out.',
         ])));
 
         // A partial legal-name prefix is no longer accepted by itself ("Spartan Security").
         $this->assertCount(1, $this->issues($this->registration([
             'sample_message_1' => 'Spartan Security: your booking is confirmed. Reply STOP to opt out.',
         ])));
-
-        // The full legal name (entity suffix ignored) and the Business name on file still work.
-        foreach (['Spartan Security Force', 'Kaleb Hill Photography'] as $brand) {
-            $this->assertSame([], $this->issues($this->registration([
-                'doing_business_as' => null,
-                'sample_message_1' => $brand . ': your booking is confirmed. Reply STOP to opt out.',
-            ])), $brand);
-        }
     }
 
     public function test_toll_free_text_fields_are_limited_to_500_characters_with_exact_messages(): void
@@ -105,8 +98,8 @@ class RegistrationSubmissionValidatorTest extends TestCase
             'opt_in_method' => 'Customers tick an optional SMS box on https://example-photo.test/contact. ' . $long,
         ]));
         $this->assertCount(2, $issues);
-        $this->assertStringContainsString('Shorten your campaign description to 500 characters or fewer', $issues[0]);
-        $this->assertStringContainsString('Shorten your message-flow (how customers opt in) description to 500 characters or fewer', $issues[1]);
+        $this->assertStringContainsString('campaign description is 553 characters; toll-free verification accepts at most 500', $issues[0]);
+        $this->assertStringContainsString('message-flow (how customers opt in) description is', $issues[1]);
 
         // Exactly 500 is allowed.
         $this->assertSame([], $this->issues($this->registration([
@@ -126,6 +119,52 @@ class RegistrationSubmissionValidatorTest extends TestCase
                 'campaign_description' => 'Kaleb Hill Photo Booth sends booking confirmations. ' . $promo . '.',
             ])), $promo);
         }
+    }
+
+    public function test_a_branded_sample_two_can_never_satisfy_the_transmitted_sample_one(): void
+    {
+        $issues = $this->issues($this->registration([
+            'sample_message_1' => 'Your booking is confirmed for Saturday. Reply STOP to opt out.',
+            'sample_message_2' => 'Kaleb Hill Photo Booth: reminder, your event is this weekend. Reply STOP to opt out.',
+        ]));
+
+        $this->assertCount(1, $issues);
+        $this->assertStringContainsString('Sample message 1 must include "Kaleb Hill Photo Booth"', $issues[0]);
+    }
+
+    public function test_toll_free_sample_one_needs_opt_out_wording(): void
+    {
+        $issues = $this->issues($this->registration([
+            'sample_message_1' => 'Kaleb Hill Photo Booth: your booking is confirmed for Saturday.',
+        ]));
+
+        $this->assertSame(['Sample message 1 needs opt-out wording such as "Reply STOP to opt out".'], $issues);
+    }
+
+    public function test_customer_care_wording_with_special_occasions_or_save_the_date_is_not_marketing(): void
+    {
+        $this->assertSame([], $this->issues($this->registration([
+            'campaign_description' => 'Kaleb Hill Photo Booth texts booking confirmations and reminders for weddings and other special occasions. Save the date notes are sent to existing clients only.',
+            'sample_message_2' => 'Kaleb Hill Photo Booth: save the date, your special occasion is this weekend. Reply STOP to opt out.',
+        ])));
+    }
+
+    public function test_toll_free_text_fields_are_validated_against_telnyxs_published_maximums_without_trimming(): void
+    {
+        $brand = 'Kaleb Hill Photo Booth sends booking confirmations. ';
+        $atLimit = $brand . str_repeat('a', 500 - mb_strlen($brand));
+        $this->assertSame(500, mb_strlen($atLimit));
+        $this->assertSame([], $this->issues($this->registration(['campaign_description' => $atLimit, 'opt_in_method' => str_repeat('b', 500)])));
+
+        $issues = $this->issues($this->registration(['campaign_description' => $atLimit . 'a', 'opt_in_method' => str_repeat('b', 501)]));
+        $this->assertCount(2, $issues);
+        $this->assertStringContainsString('Your campaign description is 501 characters; toll-free verification accepts at most 500', $issues[0]);
+        $this->assertStringContainsString('message-flow (how customers opt in) description is 501 characters', $issues[1]);
+
+        // The same text is fine for a non-toll-free (10DLC) registration: the limit is Telnyx's toll-free schema's.
+        $this->assertStringNotContainsString('accepts at most 500', implode(' ', $this->issues($this->registration([
+            'number_type' => 'local', 'campaign_description' => $atLimit . 'a',
+        ]))));
     }
 
     public function test_negated_promotional_wording_is_not_classified_as_marketing(): void
