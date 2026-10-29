@@ -326,13 +326,6 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     private const TIMEOUT_SECONDS = 20;
 
-    /** Telnyx toll-free verification request schema maximums (characters). */
-    public const TOLL_FREE_USE_CASE_SUMMARY_MAX = 500;
-
-    public const TOLL_FREE_OPT_IN_WORKFLOW_MAX = 500;
-
-    public const TOLL_FREE_PRODUCTION_MESSAGE_MAX = 1000;
-
     public const FEATURE_NUMBER_PURCHASE = 'messaging_number_purchase';
 
     public const FEATURE_TEN_DLC_REGISTRATION = 'messaging_10dlc_registration';
@@ -1745,12 +1738,13 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'message_volume' => ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume]),
                 'state' => CarrierRegistrationOptions::stateName($submission->region) === null,
                 'contact_name' => trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === '',
+                // Telnyx maximums, measured on the exact values that are sent (whitespace
+                // included); nothing is ever trimmed to fit.
+                'campaign_description' => mb_strlen((string) $submission->campaignDescription) > \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT,
+                'opt_in_method' => mb_strlen((string) $submission->optInMethod) > \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT,
+                'sample_message_1' => mb_strlen((string) $submission->sampleMessage1) > \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_SAMPLE_LIMIT,
+                'additional_information' => mb_strlen($this->tollFreeAdditionalInformation($submission)) > 500,
                 'opt_in_url' => \App\Library\Messaging\Registration\RegistrationSubmissionValidator::optInEvidenceUrlIssue((string) $submission->optInImageUrl) !== null,
-                // Telnyx's published maximums, measured on the exact values that are
-                // sent (whitespace included). Nothing is ever trimmed to fit.
-                'use_case_summary_length' => mb_strlen((string) $submission->campaignDescription) > self::TOLL_FREE_USE_CASE_SUMMARY_MAX,
-                'opt_in_workflow_length' => mb_strlen((string) $submission->optInMethod) > self::TOLL_FREE_OPT_IN_WORKFLOW_MAX,
-                'sample_message_length' => mb_strlen((string) $submission->sampleMessage1) > self::TOLL_FREE_PRODUCTION_MESSAGE_MAX,
             ]));
 
             if ($failed !== []) {
@@ -1864,7 +1858,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     {
         $dba = trim((string) $submission->doingBusinessAs);
 
-        return $dba !== '' && strcasecmp($dba, trim((string) $submission->legalBusinessName)) !== 0 ? mb_substr($dba, 0, 500) : null;
+        return $dba !== '' && strcasecmp($dba, trim((string) $submission->legalBusinessName)) !== 0 ? $dba : null;
     }
 
     private function tollFreeIsvReseller(): ?string
@@ -1892,7 +1886,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             $parts[] = trim((string) $submission->additionalInformation);
         }
 
-        return mb_substr($parts === [] ? 'No additional information.' : implode(' ', $parts), 0, 500);
+        // Never truncated: an over-long result is refused in preflight instead.
+        return $parts === [] ? 'No additional information.' : implode(' ', $parts);
     }
 
     /**

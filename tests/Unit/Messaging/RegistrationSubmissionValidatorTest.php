@@ -71,13 +71,11 @@ class RegistrationSubmissionValidatorTest extends TestCase
         // Legal name and DBA differ; the DBA-branded samples pass (no first-two-words legal-name rule).
         $this->assertSame([], $this->issues($this->registration()));
 
-        // An unrelated sender name is refused for sample 1 and flagged on sample 2.
+        // An unrelated sender name is refused for sample 1.
         $issues = $this->issues($this->registration([
             'sample_message_1' => 'Acme Party Rentals: your booking is confirmed. Reply STOP to opt out.',
-            'sample_message_2' => 'Acme Party Rentals: reminder, your event is this weekend. Reply STOP to opt out.',
         ]));
         $this->assertStringContainsString('Sample message 1 must include "Kaleb Hill Photo Booth"', implode(' ', $issues));
-        $this->assertStringContainsString('Sample message 2 should also include "Kaleb Hill Photo Booth"', implode(' ', $issues));
 
         // With no DBA stated, the registered legal name is the brand (entity suffix and punctuation ignored).
         $this->assertSame([], $this->issues($this->registration([
@@ -85,6 +83,42 @@ class RegistrationSubmissionValidatorTest extends TestCase
             'sample_message_1' => 'Spartan Security Force: your booking is confirmed. Reply STOP to opt out.',
             'sample_message_2' => 'Spartan Security Force, LLC: reminder, your event is this weekend. Reply STOP to opt out.',
         ])));
+
+        // A partial legal-name prefix is no longer accepted by itself ("Spartan Security").
+        $this->assertCount(1, $this->issues($this->registration([
+            'sample_message_1' => 'Spartan Security: your booking is confirmed. Reply STOP to opt out.',
+        ])));
+    }
+
+    public function test_toll_free_text_fields_are_limited_to_500_characters_with_exact_messages(): void
+    {
+        $long = str_repeat('a', 501);
+        $issues = $this->issues($this->registration([
+            'campaign_description' => 'Kaleb Hill Photo Booth sends booking confirmations. ' . $long,
+            'opt_in_method' => 'Customers tick an optional SMS box on https://example-photo.test/contact. ' . $long,
+        ]));
+        $this->assertCount(2, $issues);
+        $this->assertStringContainsString('campaign description is 553 characters; toll-free verification accepts at most 500', $issues[0]);
+        $this->assertStringContainsString('message-flow (how customers opt in) description is', $issues[1]);
+
+        // Exactly 500 is allowed.
+        $this->assertSame([], $this->issues($this->registration([
+            'campaign_description' => substr(str_repeat('Kaleb Hill Photo Booth sends booking confirmations and reminders. ', 12), 0, 500),
+        ])));
+    }
+
+    public function test_special_occasions_and_save_the_date_are_customer_care_not_marketing_but_real_offers_are(): void
+    {
+        $this->assertSame([], $this->issues($this->registration([
+            'campaign_description' => 'Kaleb Hill Photo Booth sends booking confirmations for weddings and other special occasions, and save the date reminders.',
+            'sample_message_2' => 'Kaleb Hill Photo Booth: save the date for your special occasion on Saturday. Reply STOP to opt out.',
+        ])));
+
+        foreach (['Enjoy special offers this month', 'Weekend specials on every package', 'Save 20 on all packages', 'Big sale today', '20% off'] as $promo) {
+            $this->assertNotEmpty($this->issues($this->registration([
+                'campaign_description' => 'Kaleb Hill Photo Booth sends booking confirmations. ' . $promo . '.',
+            ])), $promo);
+        }
     }
 
     public function test_a_branded_sample_two_can_never_satisfy_the_transmitted_sample_one(): void

@@ -179,6 +179,7 @@
     @elseif($status !== 'pending' && $progress['show_form'])
         @php
 $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree;
+$textLimit = $isTollFreeForm ? \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT : 2000;
 @endphp
         <div class="pm-layout">
         <form method="post" class="pm-form" id="registration-form" action="{{ route('customer.workspaces.businesses.text-messaging.registration.update', [$workspaceUid, $businessUid]) }}" aria-label="Messaging registration details">
@@ -415,17 +416,17 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
 
                     <div class="pm-field">
                         <label class="required" for="campaign_description">What will you text about?</label>
-                        <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="{{ $isTollFreeForm ? 500 : 2000 }}" required data-suggestible aria-describedby="campaign_description-count">{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
-                        <p class="pm-hint" id="campaign_description-count" data-role="char-count" data-for="campaign_description" data-max="{{ $isTollFreeForm ? 500 : 2000 }}" aria-live="polite">@if($isTollFreeForm)The carrier accepts at most 500 characters here; it is sent exactly as written.@endif</p>
+                        <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="{{ $textLimit }}" required data-suggestible data-counter="campaign_description_count">{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
+                        <div class="pm-counter" id="campaign_description_count" aria-live="polite" data-limit="{{ $textLimit }}"></div>
                         @error('campaign_description')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
 
                     <div class="pm-field">
                         <label class="required" for="opt_in_method">How do customers agree to get texts? (message flow)</label>
-                        <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="2" maxlength="{{ $isTollFreeForm ? 500 : 2000 }}" required
-                                  placeholder="e.g. Customers check a box on our signup form agreeing to receive text updates." aria-describedby="opt-in-method-help opt_in_method-count">{{ old('opt_in_method', $prefill['values']['opt_in_method']) }}</textarea>
+                        <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="3" maxlength="{{ $textLimit }}" required data-counter="opt_in_method_count"
+                                  placeholder="e.g. Customers check a box on our signup form agreeing to receive text updates." aria-describedby="opt-in-method-help">{{ old('opt_in_method', $prefill['values']['opt_in_method']) }}</textarea>
+                        <div class="pm-counter" id="opt_in_method_count" aria-live="polite" data-limit="{{ $textLimit }}"></div>
                         <p class="pm-hint" id="opt-in-method-help">Suggested wording only — edit it to match what your website really does. It is not confirmed until you check the consent items below.</p>
-                        <p class="pm-hint" id="opt_in_method-count" data-role="char-count" data-for="opt_in_method" data-max="{{ $isTollFreeForm ? 500 : 2000 }}" aria-live="polite">@if($isTollFreeForm)The carrier accepts at most 500 characters here; it is sent exactly as written.@endif</p>
                         @error('opt_in_method')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
                 </div>
@@ -664,6 +665,12 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
                 var el = document.getElementById('pm-submission-issues');
                 if (el) { el.scrollIntoView({block: 'center'}); el.focus(); }
             }
+            // Character counters (carrier limit): shown live; the server also refuses over-long text.
+            $('textarea[data-counter]').each(function () {
+                var $ta = $(this), $out = $('#' + $ta.data('counter')), limit = parseInt($out.data('limit'), 10);
+                function upd() { var n = $ta.val().length; $out.text(n + ' / ' + limit + ' characters').css('color', n > limit ? '#a03626' : ''); }
+                $ta.on('input', upd); upd();
+            });
             // Section progress in the sidebar and the consent counter: display only.
             function syncProgress() {
                 $('[data-pm-section]').each(function () {
@@ -679,17 +686,8 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
                 var $boxes = $('input[name="consent_confirmations[]"]:visible');
                 $('[data-role="consent-counter"]').text($boxes.filter(':checked').length + ' of ' + $boxes.length + ' confirmed');
             }
-            // Live character counters; a newline counts as 2 because the browser submits CRLF.
-            function syncCounters() {
-                $('[data-role="char-count"]').each(function () {
-                    var $c = $(this), max = parseInt($c.data('max'), 10), val = $('#' + $c.data('for')).val() || '';
-                    var len = Array.from(val.replace(/\r?\n/g, '\r\n')).length;
-                    $c.text(len + ' / ' + max + ' characters' + (len > max ? ' — too long, please shorten it' : '')).toggleClass('text-danger', len > max);
-                });
-            }
-            $('#registration-form').on('input change', function () { syncProgress(); syncCounters(); });
+            $('#registration-form').on('input change', syncProgress);
             syncProgress();
-            syncCounters();
             var templates = @json($templatesByChoice);
             // Brand the currently displayed suggestions were generated with.
             var lastBrand = @json($templateBrand);
@@ -737,6 +735,7 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
                     else { $('input[name="consent_confirmations[]"]').prop('checked', false); }
                 }
                 lastChoice = choice || null;
+                $('textarea[data-counter]').trigger('input');
             });
         });
     </script>
