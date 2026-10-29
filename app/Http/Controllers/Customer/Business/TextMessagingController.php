@@ -164,7 +164,38 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available for this Business yet.');
         }
 
-        $candidates = $this->provisioning->searchNumbers($criteria);
+        // Telnyx may return the same leading inventory on every request. Fetch a
+        // larger pool in the adapter, but show only unseen candidates in batches
+        // of five. Keep history in the current session, scoped to this Business
+        // and search criteria; it never authorizes a purchase.
+        $searchScope = implode('|', [
+            (string) $business->id,
+            $criteria->numberType->value,
+            $criteria->areaCode ?? '',
+            $criteria->tollFreePrefix ?? '',
+        ]);
+        $seenKey = 'messaging.number_search.seen.' . sha1($searchScope);
+        $seen = $request->session()->get($seenKey, []);
+        $seen = is_array($seen) ? array_values(array_filter($seen, 'is_string')) : [];
+
+        $inventory = $this->provisioning->searchNumbers($criteria);
+        $unseen = [];
+        $seenLookup = array_fill_keys($seen, true);
+
+        foreach ($inventory as $candidate) {
+            if (isset($seenLookup[$candidate->phoneNumber])) {
+                continue;
+            }
+
+            $unseen[] = $candidate;
+            $seenLookup[$candidate->phoneNumber] = true;
+        }
+
+        $candidates = array_slice($unseen, 0, 5);
+        $newlyShown = array_map(fn ($candidate) => $candidate->phoneNumber, $candidates);
+        $request->session()->put($seenKey, array_slice(array_values(array_unique([...$seen, ...$newlyShown])), -100));
+        $numberOptionsExhausted = count($inventory) > 0 && count($candidates) === 0;
+
         // Every offered choice retains its own Business-bound token and quoted cost.
         $candidateOffers = array_map(fn ($candidate) => [
             'candidate' => $candidate,
@@ -181,6 +212,7 @@ class TextMessagingController extends CustomerBaseController
             'criteria' => $validated,
             'candidate' => $candidate,
             'candidateOffers' => $candidateOffers,
+            'numberOptionsExhausted' => $numberOptionsExhausted,
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             'numberPreview' => $candidate !== null ? $this->charges->forNumberQuote($business, $candidate) : $this->charges->forNumberPurchase($business),
             'localRegistrationPreview' => $this->charges->forLocalRegistration($business),
