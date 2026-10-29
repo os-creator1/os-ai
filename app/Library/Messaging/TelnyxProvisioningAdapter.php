@@ -595,13 +595,33 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $profileResponse = $this->client()->post(self::API_BASE . '/messaging_profiles', [
                 'name' => sprintf('Business #%d', $business->id),
+                // Required by Telnyx on every new Messaging Profile since 2024.
+                // This is a US-number product; do not whitelist every country.
+                'whitelisted_destinations' => ['US'],
             ]);
 
             if (! $profileResponse->successful()) {
+                // Retain only diagnostic codes/status, never secrets or the
+                // provider's raw error body, which might contain PII.
+                \Illuminate\Support\Facades\Log::warning('Telnyx Messaging Profile creation rejected', [
+                    'business_id' => $business->id,
+                    'http_status' => $profileResponse->status(),
+                    'provider_code' => $profileResponse->json('errors.0.code'),
+                    'provider_parameter' => $profileResponse->json('errors.0.source.parameter')
+                        ?? $profileResponse->json('errors.0.source.pointer'),
+                ]);
+
                 throw new \RuntimeException('Telnyx rejected the Messaging Profile request.');
             }
 
             $messagingProfileId = (string) $profileResponse->json('data.id');
+            if ($messagingProfileId === '') {
+                \Illuminate\Support\Facades\Log::warning('Telnyx Messaging Profile response omitted an id', [
+                    'business_id' => $business->id,
+                    'http_status' => $profileResponse->status(),
+                ]);
+                throw new \RuntimeException('Telnyx returned no Messaging Profile identifier.');
+            }
 
             try {
                 $orderResponse = $this->client()->post(self::API_BASE . '/number_orders', [
@@ -617,6 +637,15 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             }
 
             if (! $orderResponse->successful()) {
+                // Expose carrier diagnostics in server logs, not to the
+                // customer, and never include an API key or request body.
+                \Illuminate\Support\Facades\Log::warning('Telnyx number order rejected', [
+                    'business_id' => $business->id,
+                    'http_status' => $orderResponse->status(),
+                    'provider_code' => $orderResponse->json('errors.0.code'),
+                    'provider_parameter' => $orderResponse->json('errors.0.source.parameter')
+                        ?? $orderResponse->json('errors.0.source.pointer'),
+                ]);
                 // The Messaging Profile above WAS genuinely created on
                 // Telnyx before this second call failed — that resource
                 // must not become invisible just because the local flow
