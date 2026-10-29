@@ -29,11 +29,11 @@
 @endphp
 
 @section('page-style')
-    @include('customer.settings._redesign-assets')
+    @include('customer.settings._phone-messaging-assets')
 @endsection
 
 @section('content')
-<div class="sr-page sr-page--wide">
+<div class="sr-page sr-page--wide pm-page">
     @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
@@ -60,44 +60,36 @@
         </div>
     @endif
 
+    @php
+        $statusChip = match (true) {
+            $status === 'approved' => ['Approved', 'success'],
+            $status === 'pending' => ['Pending review', 'warn'],
+            $status === 'rejected' => ['Needs attention', 'danger'],
+            $progressActive => ['In progress', 'accent'],
+            default => ['Not started', ''],
+        };
+    @endphp
+    <div class="pm-numbercard" data-role="registration-status-card">
+        <div class="pm-numbercard__main">
+            <div class="pm-numbercard__label">Your number</div>
+            {{-- A null number is the verify-first local sequence's own "no number yet" state, not an error. --}}
+            <div class="pm-numbercard__number @if($phoneNumber === null) pm-numbercard__number--empty @endif" data-role="phone-number">{{ $phoneNumber ?? 'Not yet chosen — you\'ll pick this once your verification is approved.' }}</div>
+        </div>
+        <span class="sr-chip sr-chip--{{ $statusChip[1] }}" data-role="registration-status-chip">{{ $statusChip[0] }}</span>
+        <p class="pm-numbercard__text">Carriers need a few details about this Business before texts can be delivered reliably. It is a one-time step, and nothing is sent until you submit.</p>
+        <div class="pm-numbercard__links">
+            <a href="{{ route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid]) }}">Usage &amp; billing</a>
+        </div>
+    </div>
+
+    @include('customer.settings.text-messaging._registration-tracker', ['phoneNumber' => $phoneNumber, 'status' => $status, 'campaignAssignmentStatus' => $campaignAssignmentStatus ?? null])
+
     @if($progressActive)
         @include('customer.settings.text-messaging._registration-progress', ['progress' => $progress, 'registration' => $registration, 'phoneNumber' => $phoneNumber, 'campaignAssignmentStatus' => $campaignAssignmentStatus ?? null])
     @endif
 
     @unless($progressActive)
-    <x-card :padded="true" class="mb-2">
-        <dl class="row mb-0">
-            <dt class="col-sm-4">Phone number</dt>
-            <dd class="col-sm-8" data-role="phone-number">
-                {{-- Review correction — null here is the verify-first local
-                     sequence's own "no number yet" state: Telnyx genuinely
-                     supports completing business verification before a
-                     number is purchased, so this is not an error. --}}
-                {{ $phoneNumber ?? 'Not yet chosen — you\'ll pick this once your verification is approved.' }}
-            </dd>
-
-            <dt class="col-sm-4">Messaging registration</dt>
-            <dd class="col-sm-8">
-                @switch($status)
-                    @case('pending')
-                        <x-badge variant="warning">Pending review</x-badge>
-                        @break
-                    @case('rejected')
-                        <x-badge variant="danger">Needs attention</x-badge>
-                        @break
-                    @case('approved')
-                        <x-badge variant="success">Approved</x-badge>
-                        @break
-                    @default
-                        @if($progressActive)
-                            <x-badge variant="info" data-role="registration-in-progress">In progress</x-badge>
-                        @else
-                            <x-badge variant="neutral">Not started</x-badge>
-                        @endif
-                @endswitch
-            </dd>
-        </dl>
-
+    <div class="mb-3">
         @switch($status)
             @case('pending')
                 @unless($progressActive)<p class="text-caption text-muted mt-2 mb-0">We've submitted your business details for messaging registration. This is typically reviewed within a few business days — nothing else to do right now.</p>@endunless
@@ -166,7 +158,7 @@
                 </p>
                 @endunless
         @endswitch
-    </x-card>
+    </div>
     @endunless
 
     {{-- PR #295 Correction Round 1, item 8 — once a carrier has approved
@@ -185,282 +177,344 @@
             </dl>
         </x-card>
     @elseif($status !== 'pending' && $progress['show_form'])
-        <x-card title="Business details" :padded="true">
-            <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.update', [$workspaceUid, $businessUid]) }}">
-                @csrf
+        @php($isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree)
+        <div class="pm-layout">
+        <form method="post" class="pm-form" id="registration-form" action="{{ route('customer.workspaces.businesses.text-messaging.registration.update', [$workspaceUid, $businessUid]) }}" aria-label="Messaging registration details">
+            @csrf
 
-                <div class="mb-1">
-                    <label class="form-label required" for="legal_business_name">Legal business name</label>
-                    <input type="text" class="form-control @error('legal_business_name') is-invalid @enderror" id="legal_business_name" name="legal_business_name"
-                           value="{{ old('legal_business_name', $prefill['values']['legal_business_name']) }}" maxlength="191" required>
-                    @error('legal_business_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    @if(in_array('legal_business_name', $prefill['prefilled'], true))
-                        <div class="text-caption text-warning" data-role="legal-name-note">Prefilled from your public business name — not verified. Replace it with the exact legal name on your registration or tax records.</div>
+            {{-- 1 · Your business --}}
+            <fieldset class="pm-section" id="pm-sec-business" data-pm-section="Your business">
+                <legend class="visually-hidden">Your business</legend>
+                <div class="pm-section__head" aria-hidden="true">
+                    <span class="pm-section__num">1</span>
+                    <div><h2 class="pm-section__title">Your business</h2><p class="pm-section__help">Your business details, exactly as they appear on your registration or tax records.</p></div>
+                </div>
+                <div class="pm-section__body">
+                    <div class="pm-field">
+                        <label class="required" for="legal_business_name">Legal business name</label>
+                        <input type="text" class="form-control @error('legal_business_name') is-invalid @enderror" id="legal_business_name" name="legal_business_name"
+                               value="{{ old('legal_business_name', $prefill['values']['legal_business_name']) }}" maxlength="191" required>
+                        @error('legal_business_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        @if(in_array('legal_business_name', $prefill['prefilled'], true))
+                            <div class="pm-hint pm-hint--warn" data-role="legal-name-note">Prefilled from your public business name — not verified. Replace it with the exact legal name on your registration or tax records.</div>
+                        @endif
+                    </div>
+
+                    <div class="pm-field" role="radiogroup" aria-labelledby="entity-type-label">
+                        <span class="pm-legend required" id="entity-type-label">Business type</span>
+                        <div class="pm-choices">
+                            <label class="pm-choice" for="entity_ein">
+                                <input type="radio" id="entity_ein" name="entity_type" value="ein" {{ old('entity_type', $registration->entity_type?->value ?? 'ein') === 'ein' ? 'checked' : '' }}>
+                                <span><span class="pm-choice__title">Registered business</span><span class="pm-choice__desc">Has an EIN</span></span>
+                            </label>
+                            <label class="pm-choice" for="entity_sole">
+                                <input type="radio" id="entity_sole" name="entity_type" value="sole_proprietor" {{ old('entity_type', $registration->entity_type?->value ?? '') === 'sole_proprietor' ? 'checked' : '' }}>
+                                <span><span class="pm-choice__title">Individual / sole proprietor</span><span class="pm-choice__desc">No EIN</span></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="pm-field" id="ein-field">
+                        <label for="ein">EIN</label>
+                        <input type="text" class="form-control @error('ein') is-invalid @enderror" id="ein" name="ein" value="{{ old('ein', $registration->ein ?? '') }}" maxlength="20">
+                        @error('ein')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+
+                    <div class="pm-field">
+                        <label class="required" for="address_line_1">Business address</label>
+                        <input type="text" class="form-control mb-1 @error('address_line_1') is-invalid @enderror" id="address_line_1" name="address_line_1"
+                               value="{{ old('address_line_1', $prefill['values']['address_line_1']) }}" maxlength="191" placeholder="Street address" required>
+                        @error('address_line_1')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        <input type="text" class="form-control" id="address_line_2" name="address_line_2" aria-label="Apartment, suite, etc. (optional)"
+                               value="{{ old('address_line_2', $prefill['values']['address_line_2']) }}" maxlength="191" placeholder="Apt, suite, etc. (optional)">
+                    </div>
+
+                    <div class="pm-grid pm-grid--3">
+                        <div class="pm-field">
+                            <label class="required" for="city">City</label>
+                            <input type="text" class="form-control @error('city') is-invalid @enderror" id="city" name="city" value="{{ old('city', $prefill['values']['city']) }}" maxlength="120" required>
+                            @error('city')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="pm-field">
+                            <label class="required" for="region">State</label>
+                            <input type="text" class="form-control @error('region') is-invalid @enderror" id="region" name="region" value="{{ old('region', $prefill['values']['region']) }}" maxlength="120" required>
+                            @error('region')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="pm-field">
+                            <label class="required" for="postal_code">ZIP code</label>
+                            <input type="text" class="form-control @error('postal_code') is-invalid @enderror" id="postal_code" name="postal_code" value="{{ old('postal_code', $prefill['values']['postal_code']) }}" maxlength="20" required>
+                            @error('postal_code')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
+
+                    <div class="pm-field">
+                        <label class="required" for="website_url">Website</label>
+                        <input type="url" class="form-control @error('website_url') is-invalid @enderror" id="website_url" name="website_url" value="{{ old('website_url', $prefill['values']['website_url']) }}" maxlength="255" placeholder="https://" required>
+                        @error('website_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+
+                    @if(in_array($registration->brand_status, ['needs_attention', null], true) && trim((string) $registration->provider_brand_id) !== '')
+                        <x-alert variant="warning" icon="alert-circle" class="mb-0" data-role="brand-replacement">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="authorize_brand_replacement" name="authorize_brand_replacement" value="1">
+                                <label class="form-check-label" for="authorize_brand_replacement">{{ $registration->brand_status === 'needs_attention' ? 'The carrier rejected this business.' : 'The outcome of the earlier carrier brand was never recorded, so it is kept unless you choose otherwise.' }} If I change the business details above, I understand this replaces the earlier carrier brand and a new carrier brand fee applies.</label>
+                            </div>
+                        </x-alert>
                     @endif
                 </div>
+            </fieldset>
 
-                <div class="mb-1">
-                    <label class="form-label required">Business type</label>
-                    <div class="form-check">
-                        <input type="radio" class="form-check-input" id="entity_ein" name="entity_type" value="ein"
-                               {{ old('entity_type', $registration->entity_type?->value ?? 'ein') === 'ein' ? 'checked' : '' }}>
-                        <label class="form-check-label" for="entity_ein">Registered business (has an EIN)</label>
-                    </div>
-                    <div class="form-check">
-                        <input type="radio" class="form-check-input" id="entity_sole" name="entity_type" value="sole_proprietor"
-                               {{ old('entity_type', $registration->entity_type?->value ?? '') === 'sole_proprietor' ? 'checked' : '' }}>
-                        <label class="form-check-label" for="entity_sole">Individual / sole proprietor (no EIN)</label>
-                    </div>
+            {{-- 2 · Contact person --}}
+            <fieldset class="pm-section" id="pm-sec-contact" data-pm-section="Contact person">
+                <legend class="visually-hidden">Contact person</legend>
+                <div class="pm-section__head" aria-hidden="true">
+                    <span class="pm-section__num">2</span>
+                    <div><h2 class="pm-section__title">Contact person</h2><p class="pm-section__help">Who the carrier can reach about this registration.</p></div>
                 </div>
-
-                <div class="mb-1" id="ein-field">
-                    <label class="form-label" for="ein">EIN</label>
-                    <input type="text" class="form-control @error('ein') is-invalid @enderror" id="ein" name="ein"
-                           value="{{ old('ein', $registration->ein ?? '') }}" maxlength="20">
-                    @error('ein')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                </div>
-
-                <div class="mb-1">
-                    <label class="form-label required" for="address_line_1">Business address</label>
-                    <input type="text" class="form-control mb-1 @error('address_line_1') is-invalid @enderror" id="address_line_1" name="address_line_1"
-                           value="{{ old('address_line_1', $prefill['values']['address_line_1']) }}" maxlength="191" placeholder="Street address" required>
-                    @error('address_line_1')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    <input type="text" class="form-control" name="address_line_2"
-                           value="{{ old('address_line_2', $prefill['values']['address_line_2']) }}" maxlength="191" placeholder="Apt, suite, etc. (optional)">
-                </div>
-
-                <div class="row">
-                    <div class="col-md-5 mb-1">
-                        <label class="form-label required" for="city">City</label>
-                        <input type="text" class="form-control @error('city') is-invalid @enderror" id="city" name="city"
-                               value="{{ old('city', $prefill['values']['city']) }}" maxlength="120" required>
-                        @error('city')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                    <div class="col-md-4 mb-1">
-                        <label class="form-label required" for="region">State</label>
-                        <input type="text" class="form-control @error('region') is-invalid @enderror" id="region" name="region"
-                               value="{{ old('region', $prefill['values']['region']) }}" maxlength="120" required>
-                        @error('region')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                    <div class="col-md-3 mb-1">
-                        <label class="form-label required" for="postal_code">ZIP code</label>
-                        <input type="text" class="form-control @error('postal_code') is-invalid @enderror" id="postal_code" name="postal_code"
-                               value="{{ old('postal_code', $prefill['values']['postal_code']) }}" maxlength="20" required>
-                        @error('postal_code')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                </div>
-
-                <div class="mb-1">
-                    <label class="form-label required" for="website_url">Website</label>
-                    <input type="url" class="form-control @error('website_url') is-invalid @enderror" id="website_url" name="website_url"
-                           value="{{ old('website_url', $prefill['values']['website_url']) }}" maxlength="255" placeholder="https://" required>
-                    @error('website_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                </div>
-
-                <div class="row">
-                    <div class="col-md-6 mb-1">
-                        <label class="form-label required" for="contact_email">Contact email</label>
-                        <input type="email" class="form-control @error('contact_email') is-invalid @enderror" id="contact_email" name="contact_email"
-                               value="{{ old('contact_email', $prefill['values']['contact_email']) }}" maxlength="191" required>
-                        @error('contact_email')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                    <div class="col-md-6 mb-1">
-                        <label class="form-label required" for="contact_phone">Contact phone</label>
-                        <input type="text" class="form-control @error('contact_phone') is-invalid @enderror" id="contact_phone" name="contact_phone"
-                               value="{{ old('contact_phone', $prefill['values']['contact_phone']) }}" maxlength="32" required>
-                        @error('contact_phone')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                </div>
-
-                @if(in_array($registration->brand_status, ['needs_attention', null], true) && trim((string) $registration->provider_brand_id) !== '')
-                    <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="brand-replacement">
-                        <div class="form-check">
-                            <input type="checkbox" class="form-check-input" id="authorize_brand_replacement" name="authorize_brand_replacement" value="1">
-                            <label class="form-check-label" for="authorize_brand_replacement">{{ $registration->brand_status === 'needs_attention' ? 'The carrier rejected this business.' : 'The outcome of the earlier carrier brand was never recorded, so it is kept unless you choose otherwise.' }} If I change the business details above, I understand this replaces the earlier carrier brand and a new carrier brand fee applies.</label>
+                <div class="pm-section__body">
+                    <div class="pm-grid" data-role="carrier-contact-fields">
+                        <div class="pm-field">
+                            <label class="required" for="contact_first_name">First name</label>
+                            <input type="text" class="form-control @error('contact_first_name') is-invalid @enderror" id="contact_first_name" name="contact_first_name" value="{{ old('contact_first_name', $registration->contact_first_name) }}" maxlength="100" required>
+                            @error('contact_first_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
                         </div>
-                    </x-alert>
-                @endif
-
-                @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
-                    <div class="mb-1" data-role="support-contact">
-                        <label class="form-label required" for="support_contact">Text-message support contact</label>
-                        <input type="text" class="form-control @error('support_contact') is-invalid @enderror" id="support_contact" name="support_contact"
-                               value="{{ old('support_contact', $registration->support_contact) }}" maxlength="191" placeholder="support@yourbusiness.com or (555) 555-0100">
-                        <div class="text-caption text-muted">Your Business's own customer-facing email or phone. It appears in the HELP reply your customers get, so it must be one you publish and answer. We never fill this in for you.</div>
-                        <input type="hidden" id="support_contact_confirmed_for" name="support_contact_confirmed_for" value="{{ $registration->support_contact_confirmed_at !== null ? $registration->support_contact : '' }}">
-                        <div class="form-check mt-1">
-                            <input type="checkbox" class="form-check-input" id="support_contact_confirmed" name="support_contact_confirmed" value="1"
-                                   {{ old('support_contact_confirmed', $registration->support_contact_confirmed_at !== null) ? 'checked' : '' }}>
-                            <label class="form-check-label" for="support_contact_confirmed">This contact belongs to my Business, is public to my customers, and is monitored.</label>
+                        <div class="pm-field">
+                            <label class="required" for="contact_last_name">Last name</label>
+                            <input type="text" class="form-control @error('contact_last_name') is-invalid @enderror" id="contact_last_name" name="contact_last_name" value="{{ old('contact_last_name', $registration->contact_last_name) }}" maxlength="100" required>
+                            @error('contact_last_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
                         </div>
-                        @error('support_contact')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+                        <div class="pm-field">
+                            <label class="required" for="contact_email">Email</label>
+                            <input type="email" class="form-control @error('contact_email') is-invalid @enderror" id="contact_email" name="contact_email" value="{{ old('contact_email', $prefill['values']['contact_email']) }}" maxlength="191" required>
+                            @error('contact_email')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="pm-field">
+                            <label class="required" for="contact_phone">Phone</label>
+                            <input type="text" class="form-control @error('contact_phone') is-invalid @enderror" id="contact_phone" name="contact_phone" value="{{ old('contact_phone', $prefill['values']['contact_phone']) }}" maxlength="32" required>
+                            @error('contact_phone')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
                     </div>
-                @endif
 
-                <div class="row" data-role="carrier-contact-fields">
-                    <div class="col-md-6 mb-1">
-                        <label class="form-label required" for="contact_first_name">Contact first name</label>
-                        <input type="text" class="form-control @error('contact_first_name') is-invalid @enderror" id="contact_first_name" name="contact_first_name"
-                               value="{{ old('contact_first_name', $registration->contact_first_name) }}" maxlength="100" required>
-                        @error('contact_first_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                    <div class="col-md-6 mb-1">
-                        <label class="form-label required" for="contact_last_name">Contact last name</label>
-                        <input type="text" class="form-control @error('contact_last_name') is-invalid @enderror" id="contact_last_name" name="contact_last_name"
-                               value="{{ old('contact_last_name', $registration->contact_last_name) }}" maxlength="100" required>
-                        @error('contact_last_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
+                    @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::Local)
+                        <div class="pm-field" data-role="support-contact">
+                            <label class="required" for="support_contact">Text-message support contact</label>
+                            <input type="text" class="form-control @error('support_contact') is-invalid @enderror" id="support_contact" name="support_contact"
+                                   value="{{ old('support_contact', $registration->support_contact) }}" maxlength="191" placeholder="support@yourbusiness.com or (555) 555-0100" aria-describedby="support-contact-help">
+                            <div class="pm-hint" id="support-contact-help">Your Business's own customer-facing email or phone. It appears in the HELP reply your customers get, so it must be one you publish and answer. We never fill this in for you.</div>
+                            <input type="hidden" id="support_contact_confirmed_for" name="support_contact_confirmed_for" value="{{ $registration->support_contact_confirmed_at !== null ? $registration->support_contact : '' }}">
+                            <label class="pm-check mt-1" for="support_contact_confirmed">
+                                <input type="checkbox" id="support_contact_confirmed" name="support_contact_confirmed" value="1" {{ old('support_contact_confirmed', $registration->support_contact_confirmed_at !== null) ? 'checked' : '' }}>
+                                <span>This contact belongs to my Business, is public to my customers, and is monitored.</span>
+                            </label>
+                            @error('support_contact')<div class="pm-error">{{ $message }}</div>@enderror
+                        </div>
+                    @endif
                 </div>
+            </fieldset>
 
-                @if($formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree)
-                    <div class="row" data-role="toll-free-carrier-fields">
-                        <div class="col-md-5 mb-1">
-                            <label class="form-label required" for="message_volume">Expected messages per month</label>
-                            <select class="form-select @error('message_volume') is-invalid @enderror" id="message_volume" name="message_volume" required>
+            {{-- 3 · How you'll text --}}
+            <fieldset class="pm-section" id="pm-sec-texting" data-pm-section="How you'll text">
+                <legend class="visually-hidden">How you'll text</legend>
+                <div class="pm-section__head" aria-hidden="true">
+                    <span class="pm-section__num">3</span>
+                    <div><h2 class="pm-section__title">How you'll text</h2><p class="pm-section__help">What you will send, how often, and how customers agree to it.</p></div>
+                </div>
+                <div class="pm-section__body">
+                    <div class="pm-field" data-role="use-case-choices" role="radiogroup" aria-labelledby="use-case-label">
+                        <span class="pm-legend required" id="use-case-label">What will you use texting for?</span>
+                        <div class="pm-choices">
+                            @foreach($useCaseChoices as $choice => $definition)
+                                @continue($definition['use_case'] === 'mixed' && ! config('messaging.ten_dlc_mixed_enabled') && $useCase !== 'mixed')
+                                @continue($definition['use_case'] === 'low_volume_mixed' && $isTollFreeForm)
+                                <label class="pm-choice" for="use_case_{{ $choice }}">
+                                    <input type="radio" id="use_case_{{ $choice }}" name="use_case" value="{{ $definition['use_case'] }}" data-choice="{{ $choice }}" {{ $useCase === $definition['use_case'] ? 'checked' : '' }} required>
+                                    <span class="pm-choice__title">{{ $definition['label'] }}</span>
+                                </label>
+                            @endforeach
+                            @if($useCase && $selectedChoice === null && isset($useCases[$useCase]))
+                                <label class="pm-choice" for="use_case_existing">
+                                    <input type="radio" id="use_case_existing" name="use_case" value="{{ $useCase }}" checked>
+                                    <span class="pm-choice__title">{{ $useCases[$useCase] }} <span class="pm-choice__desc">Your saved choice</span></span>
+                                </label>
+                            @endif
+                        </div>
+                        @error('use_case')<div class="pm-error">{{ $message }}</div>@enderror
+                        <p class="pm-hint">Pick what you will actually send. Promotional messages are only registered if you choose them — we never add them for you. The carrier decides whether the campaign is approved.</p>
+
+                        <div class="sr-callout sr-callout--warn mt-1" data-low-volume data-role="low-volume-explainer" @if($useCase !== 'low_volume_mixed') hidden @endif>
+                            <x-ds-icon name="info" size="16" />
+                            <div>
+                                <strong class="d-block">Low Volume Mixed — for small businesses</strong>
+                                <p class="mb-1">A separate, lower-cost carrier campaign type for a business that sends only a small number of texts. Carriers limit how fast and how much it can send, and it is not for growing or high-volume senders. Fees are shown below before you submit; number rental and text usage are separate.</p>
+                                <p class="mb-1"><strong>Low Volume Mixed is only for a business that really sends BOTH kinds of text.</strong> Tick both and give a sample message and your opt-in details for each. If you only send one kind, choose that message type above instead — we never relabel single-purpose traffic to lower the fee.</p>
+                                <div class="pm-checks">
+                                    @foreach($lowVolumePurposes as $key => $purpose)
+                                        <label class="pm-check" for="purpose_{{ $key }}">
+                                            <input type="checkbox" id="purpose_{{ $key }}" name="message_purposes[]" value="{{ $key }}" {{ in_array($key, (array) old('message_purposes', $registration->message_purposes ?? []), true) ? 'checked' : '' }}>
+                                            <span>{{ $purpose['label'] }}</span>
+                                        </label>
+                                    @endforeach
+                                </div>
+                                @error('message_purposes')<div class="pm-error">{{ $message }}</div>@enderror
+                            </div>
+                        </div>
+                        <div class="pm-hint" data-role="suggested-topics" @if(empty($prefill['topics'])) hidden @endif>
+                            Suggested message types: <span data-role="topics">{{ implode(', ', $prefill['topics']) }}</span>
+                        </div>
+                    </div>
+
+                    @if($isTollFreeForm)
+                        <div class="pm-grid" data-role="toll-free-carrier-fields">
+                            <div class="pm-field">
+                                <label class="required" for="message_volume">Messages per month</label>
+                                <select class="form-select @error('message_volume') is-invalid @enderror" id="message_volume" name="message_volume" required>
+                                    <option value="">Choose…</option>
+                                    @foreach($messageVolumes as $value => $label)
+                                        <option value="{{ $value }}" @selected(old('message_volume', $registration->message_volume) === (string) $value)>{{ $label }}</option>
+                                    @endforeach
+                                </select>
+                                @error('message_volume')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                            </div>
+                            <div class="pm-field">
+                                <label class="required" for="opt_in_image_url">Link to a screenshot of your opt-in form</label>
+                                <input type="url" class="form-control @error('opt_in_image_url') is-invalid @enderror" id="opt_in_image_url" name="opt_in_image_url"
+                                       value="{{ old('opt_in_image_url', $registration->opt_in_image_url) }}" maxlength="2083" placeholder="https://… (an image of where customers agree to texts)" required aria-describedby="opt-in-image-help">
+                                <p class="pm-hint" id="opt-in-image-help">The carrier requires an image showing how customers opt in.</p>
+                                @error('opt_in_image_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                            </div>
+                        </div>
+                    @else
+                        <div class="pm-field" data-role="local-carrier-fields">
+                            <label class="required" for="brand_vertical">Industry category</label>
+                            <select class="form-select @error('brand_vertical') is-invalid @enderror" id="brand_vertical" name="brand_vertical" required>
                                 <option value="">Choose…</option>
-                                @foreach($messageVolumes as $value => $label)
-                                    <option value="{{ $value }}" @selected(old('message_volume', $registration->message_volume) === (string) $value)>{{ $label }}</option>
+                                @foreach($brandVerticals as $value => $label)
+                                    <option value="{{ $value }}" @selected(old('brand_vertical', $prefill['values']['brand_vertical'] ?? '') === $value)>{{ $label }}</option>
                                 @endforeach
                             </select>
-                            @error('message_volume')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                        </div>
-                        <div class="col-md-7 mb-1">
-                            <label class="form-label required" for="opt_in_image_url">Link to a screenshot of your opt-in form</label>
-                            <input type="url" class="form-control @error('opt_in_image_url') is-invalid @enderror" id="opt_in_image_url" name="opt_in_image_url"
-                                   value="{{ old('opt_in_image_url', $registration->opt_in_image_url) }}" maxlength="2083" placeholder="https://… (an image of where customers agree to texts)" required>
-                            <p class="text-caption text-muted mb-0">The carrier requires an image showing how customers opt in.</p>
-                            @error('opt_in_image_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                        </div>
-                    </div>
-                @else
-                    <div class="mb-1" data-role="local-carrier-fields">
-                        <label class="form-label required" for="brand_vertical">Industry category</label>
-                        <select class="form-select @error('brand_vertical') is-invalid @enderror" id="brand_vertical" name="brand_vertical" required>
-                            <option value="">Choose…</option>
-                            @foreach($brandVerticals as $value => $label)
-                                <option value="{{ $value }}" @selected(old('brand_vertical', $prefill['values']['brand_vertical'] ?? '') === $value)>{{ $label }}</option>
-                            @endforeach
-                        </select>
-                        @error('brand_vertical')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                @endif
-
-                <div class="mb-1" data-role="use-case-choices">
-                    <label class="form-label required">What will you use texting for?</label>
-                    @foreach($useCaseChoices as $choice => $definition)
-                        @continue($definition['use_case'] === 'mixed' && ! config('messaging.ten_dlc_mixed_enabled') && $useCase !== 'mixed')
-                        @continue($definition['use_case'] === 'low_volume_mixed' && $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree)
-                        <div class="form-check">
-                            <input type="radio" class="form-check-input" id="use_case_{{ $choice }}" name="use_case" value="{{ $definition['use_case'] }}" data-choice="{{ $choice }}"
-                                   {{ $useCase === $definition['use_case'] ? 'checked' : '' }} required>
-                            <label class="form-check-label" for="use_case_{{ $choice }}">{{ $definition['label'] }}</label>
-                        </div>
-                    @endforeach
-                    @if($useCase && $selectedChoice === null && isset($useCases[$useCase]))
-                        <div class="form-check">
-                            <input type="radio" class="form-check-input" id="use_case_existing" name="use_case" value="{{ $useCase }}" checked>
-                            <label class="form-check-label" for="use_case_existing">{{ $useCases[$useCase] }} (your saved choice)</label>
+                            @error('brand_vertical')<div class="invalid-feedback">{{ $message }}</div>@enderror
                         </div>
                     @endif
-                    @error('use_case')<div class="text-danger text-caption">{{ $message }}</div>@enderror
-                    <p class="text-caption text-muted mt-1 mb-0">Pick what you will actually send. Promotional messages are only registered if you choose them — we never add them for you. The carrier decides whether the campaign is approved.</p>
-                    <div class="sr-callout sr-callout--warn mt-1" data-low-volume data-role="low-volume-explainer" @if($useCase !== 'low_volume_mixed') hidden @endif>
-                        <x-ds-icon name="info" size="16" />
-                        <div>
-                            <strong class="d-block">Low Volume Mixed — for small businesses</strong>
-                            <p class="mb-1">A separate, lower-cost carrier campaign type for a business that sends only a small number of texts. Carriers limit how fast and how much it can send, and it is not for growing or high-volume senders. Fees are shown below before you submit; number rental and text usage are separate.</p>
-                            <p class="mb-1"><strong>Low Volume Mixed is only for a business that really sends BOTH kinds of text.</strong> Tick both and give a sample message and your opt-in details for each. If you only send one kind, choose that message type above instead — we never relabel single-purpose traffic to lower the fee.</p>
-                            @foreach($lowVolumePurposes as $key => $purpose)
-                                <div class="form-check">
-                                    <input type="checkbox" class="form-check-input" id="purpose_{{ $key }}" name="message_purposes[]" value="{{ $key }}"
-                                           {{ in_array($key, (array) old('message_purposes', $registration->message_purposes ?? []), true) ? 'checked' : '' }}>
-                                    <label class="form-check-label" for="purpose_{{ $key }}">{{ $purpose['label'] }}</label>
-                                </div>
+
+                    <div class="pm-field">
+                        <label class="required" for="campaign_description">What will you text about?</label>
+                        <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="2000" required data-suggestible>{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
+                        @error('campaign_description')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+
+                    <div class="pm-field">
+                        <label class="required" for="opt_in_method">How do customers agree to get texts? (message flow)</label>
+                        <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="2" maxlength="2000" required
+                                  placeholder="e.g. Customers check a box on our signup form agreeing to receive text updates." aria-describedby="opt-in-method-help">{{ old('opt_in_method', $prefill['values']['opt_in_method']) }}</textarea>
+                        <p class="pm-hint" id="opt-in-method-help">Suggested wording only — edit it to match what your website really does. It is not confirmed until you check the consent items below.</p>
+                        @error('opt_in_method')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                </div>
+            </fieldset>
+
+            {{-- 4 · Sample messages --}}
+            <fieldset class="pm-section" id="pm-sec-samples" data-pm-section="Sample messages">
+                <legend class="visually-hidden">Sample messages</legend>
+                <div class="pm-section__head" aria-hidden="true">
+                    <span class="pm-section__num">4</span>
+                    <div><h2 class="pm-section__title">Sample messages</h2><p class="pm-section__help">Real examples the carrier can review. Include your business name and how to opt out.</p></div>
+                </div>
+                <div class="pm-section__body">
+                    <div class="pm-field">
+                        <label class="required" for="sample_message_1">Sample 1</label>
+                        <textarea class="form-control @error('sample_message_1') is-invalid @enderror" id="sample_message_1" name="sample_message_1" data-suggestible rows="2" maxlength="500" required
+                                  placeholder="Include your business name and how to opt out, e.g. &quot;Reply STOP to unsubscribe.&quot;">{{ old('sample_message_1', $prefill['values']['sample_message_1']) }}</textarea>
+                        @error('sample_message_1')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="pm-field">
+                        <label class="required" for="sample_message_2">Sample 2</label>
+                        <textarea class="form-control @error('sample_message_2') is-invalid @enderror" id="sample_message_2" name="sample_message_2" data-suggestible rows="2" maxlength="500" required>{{ old('sample_message_2', $prefill['values']['sample_message_2']) }}</textarea>
+                        @error('sample_message_2')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                    </div>
+                </div>
+            </fieldset>
+
+            {{-- 5 · Policies & consent --}}
+            <fieldset class="pm-section" id="pm-sec-consent" data-pm-section="Policies & consent">
+                <legend class="visually-hidden">Policies and consent</legend>
+                <div class="pm-section__head" aria-hidden="true">
+                    <span class="pm-section__num">5</span>
+                    <div><h2 class="pm-section__title">Policies &amp; consent</h2><p class="pm-section__help">Carriers check these on your website. Only tick what is already true there.</p></div>
+                </div>
+                <div class="pm-section__body">
+                    <div class="pm-grid">
+                        <div class="pm-field">
+                            <label class="required" for="privacy_policy_url">Privacy policy URL</label>
+                            <input type="url" class="form-control @error('privacy_policy_url') is-invalid @enderror" id="privacy_policy_url" name="privacy_policy_url" value="{{ old('privacy_policy_url', $registration->privacy_policy_url ?? '') }}" maxlength="255" placeholder="https://" required>
+                            @error('privacy_policy_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="pm-field">
+                            <label class="required" for="terms_url">Terms of service URL</label>
+                            <input type="url" class="form-control @error('terms_url') is-invalid @enderror" id="terms_url" name="terms_url" value="{{ old('terms_url', $registration->terms_url ?? '') }}" maxlength="255" placeholder="https://" required>
+                            @error('terms_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
+
+                    <div class="pm-field" data-role="consent-checklist" role="group" aria-labelledby="consent-label">
+                        <div class="d-flex justify-content-between align-items-baseline gap-2">
+                            <span class="pm-legend" id="consent-label">Consent checklist</span>
+                            <span class="pm-counter" data-role="consent-counter" aria-live="polite"></span>
+                        </div>
+                        <p class="pm-hint mb-2">We have not checked your website. Check each item only once you have confirmed it there; unchecked items must be fixed before you can submit. These are your own confirmations — we don't verify them, and checking them doesn't guarantee carrier approval.</p>
+                        <div class="pm-checks">
+                            @foreach($consentItems as $key => $label)
+                                <label class="pm-check" for="consent_{{ $key }}">
+                                    <input type="checkbox" id="consent_{{ $key }}" name="consent_confirmations[]" value="{{ $key }}" {{ in_array($key, $confirmedConsent, true) ? 'checked' : '' }}>
+                                    <span>{{ $label }} <span class="pm-check__flag">— needs your confirmation</span></span>
+                                </label>
                             @endforeach
-                            @error('message_purposes')<div class="text-danger text-caption">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="pm-checks mt-1" data-low-volume data-role="low-volume-consent" @if($useCase !== 'low_volume_mixed') hidden @endif>
+                            @foreach($lowVolumeConsentItems as $key => $label)
+                                <label class="pm-check" for="consent_{{ $key }}" @if(str_starts_with($key, 'purpose_')) data-purpose="{{ str_replace(['purpose_', '_consent'], '', $key) }}" @endif>
+                                    <input type="checkbox" id="consent_{{ $key }}" name="consent_confirmations[]" value="{{ $key }}" {{ in_array($key, $confirmedConsent, true) ? 'checked' : '' }}>
+                                    <span>{{ $label }} <span class="pm-check__flag">— needs your confirmation</span></span>
+                                </label>
+                            @endforeach
                         </div>
                     </div>
-                    <div class="text-caption mt-1" data-role="suggested-topics" @if(empty($prefill['topics'])) hidden @endif>
-                        Suggested message types: <span data-role="topics">{{ implode(', ', $prefill['topics']) }}</span>
-                    </div>
                 </div>
+            </fieldset>
 
-                <div class="mb-1">
-                    <label class="form-label required" for="campaign_description">Campaign description</label>
-                    <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="2000" required
-                              data-suggestible>{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
-                    @error('campaign_description')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                </div>
+            @if($prefill['prefilled'] !== [])
+                <p class="pm-hint" data-role="prefill-note">Some fields were prefilled from your business profile or suggested for your industry. Please review them before saving.</p>
+            @endif
 
-                <div class="mb-1">
-                    <label class="form-label required" for="opt_in_method">How do customers agree to receive texts? (message flow)</label>
-                    <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="2" maxlength="2000" required
-                              placeholder="e.g. Customers check a box on our signup form agreeing to receive text updates.">{{ old('opt_in_method', $prefill['values']['opt_in_method']) }}</textarea>
-                    @error('opt_in_method')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    <div class="text-caption text-muted">Suggested wording only — edit it to match what your website really does. It is not confirmed until you check the consent items below.</div>
-                </div>
+            <div class="pm-actions">
+                <p class="pm-actions__note">Saving keeps your answers as a draft. Nothing is sent to the carrier until you submit below.</p>
+                <x-button type="submit" variant="secondary" data-role="save-draft">Save draft</x-button>
+            </div>
+        </form>
 
-                <div class="mb-1">
-                    <label class="form-label required" for="sample_message_1">Sample text message 1</label>
-                    <textarea class="form-control @error('sample_message_1') is-invalid @enderror" id="sample_message_1" name="sample_message_1" data-suggestible rows="2" maxlength="500" required
-                              placeholder="Include your business name and how to opt out, e.g. &quot;Reply STOP to unsubscribe.&quot;">{{ old('sample_message_1', $prefill['values']['sample_message_1']) }}</textarea>
-                    @error('sample_message_1')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                </div>
-
-                <div class="mb-1">
-                    <label class="form-label required" for="sample_message_2">Sample text message 2</label>
-                    <textarea class="form-control @error('sample_message_2') is-invalid @enderror" id="sample_message_2" name="sample_message_2" data-suggestible rows="2" maxlength="500" required>{{ old('sample_message_2', $prefill['values']['sample_message_2']) }}</textarea>
-                    @error('sample_message_2')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                </div>
-
-                <div class="row">
-                    <div class="col-md-6 mb-1">
-                        <label class="form-label required" for="privacy_policy_url">Privacy policy URL</label>
-                        <input type="url" class="form-control @error('privacy_policy_url') is-invalid @enderror" id="privacy_policy_url" name="privacy_policy_url"
-                               value="{{ old('privacy_policy_url', $registration->privacy_policy_url ?? '') }}" maxlength="255" placeholder="https://" required>
-                        @error('privacy_policy_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                    <div class="col-md-6 mb-1">
-                        <label class="form-label required" for="terms_url">Terms of service URL</label>
-                        <input type="url" class="form-control @error('terms_url') is-invalid @enderror" id="terms_url" name="terms_url"
-                               value="{{ old('terms_url', $registration->terms_url ?? '') }}" maxlength="255" placeholder="https://" required>
-                        @error('terms_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    </div>
-                </div>
-
-                <div class="mb-1" data-role="consent-checklist">
-                    <label class="form-label">Consent checklist</label>
-                    <p class="text-caption text-muted mb-1">We have not checked your website. Check each item only once you have confirmed it there; unchecked items must be fixed before you can submit. These are your own confirmations — we don't verify them, and checking them doesn't guarantee carrier approval.</p>
-                    @foreach($consentItems as $key => $label)
-                        <div class="form-check">
-                            <input type="checkbox" class="form-check-input" id="consent_{{ $key }}" name="consent_confirmations[]" value="{{ $key }}"
-                                   {{ in_array($key, $confirmedConsent, true) ? 'checked' : '' }}>
-                            <label class="form-check-label" for="consent_{{ $key }}">{{ $label }}
-                                @unless(in_array($key, $confirmedConsent, true))<span class="text-warning">— needs your confirmation</span>@endunless</label>
-                        </div>
+        <aside class="pm-side" aria-label="Registration help">
+            <nav class="pm-sidecard pm-sidecard--nav" aria-label="Sections">
+                <h2>Sections</h2>
+                <ul class="pm-nav" data-role="section-nav">
+                    @foreach(['pm-sec-business' => 'Your business', 'pm-sec-contact' => 'Contact person', 'pm-sec-texting' => 'How you\'ll text', 'pm-sec-samples' => 'Sample messages', 'pm-sec-consent' => 'Policies & consent'] as $anchor => $navLabel)
+                        <li><a href="#{{ $anchor }}" data-target="{{ $anchor }}"><span class="pm-nav__mark" aria-hidden="true"></span>{{ $navLabel }}<span class="pm-nav__count" data-count></span></a></li>
                     @endforeach
-                    <div data-low-volume data-role="low-volume-consent" @if($useCase !== 'low_volume_mixed') hidden @endif>
-                        @foreach($lowVolumeConsentItems as $key => $label)
-                            <div class="form-check" @if(str_starts_with($key, 'purpose_')) data-purpose="{{ str_replace(['purpose_', '_consent'], '', $key) }}" @endif>
-                                <input type="checkbox" class="form-check-input" id="consent_{{ $key }}" name="consent_confirmations[]" value="{{ $key }}"
-                                       {{ in_array($key, $confirmedConsent, true) ? 'checked' : '' }}>
-                                <label class="form-check-label" for="consent_{{ $key }}">{{ $label }}
-                                    @unless(in_array($key, $confirmedConsent, true))<span class="text-warning">— needs your confirmation</span>@endunless</label>
-                            </div>
-                        @endforeach
-                    </div>
-                </div>
-
-                @if($prefill['prefilled'] !== [])
-                    <p class="text-caption text-muted" data-role="prefill-note">Some fields were prefilled from your business profile or suggested for your industry. Please review them before saving.</p>
-                @endif
-
-                <x-button type="submit" variant="primary">Save details</x-button>
-            </form>
-        </x-card>
+                </ul>
+            </nav>
+            <div class="pm-sidecard" data-role="registration-costs">
+                <h2>Costs</h2>
+                <p>{{ $verificationChargeDisclosure }}</p>
+                <p><a href="{{ route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid]) }}">Usage &amp; billing</a></p>
+            </div>
+            <div class="pm-sidecard">
+                <h2>Moving carriers?</h2>
+                <p>You can move your number to another provider at any time. See the number options at the bottom of this page.</p>
+            </div>
+        </aside>
+        </div>
 
         @if(($registration->legal_business_name ?? null) !== null)
-            <x-card :padded="true" class="mt-2">
+            <section class="pm-submit mt-3" id="pm-submit" aria-labelledby="pm-submit-title"><div class="pm-submit__body">
+                <h2 class="pm-section__title" id="pm-submit-title">Submit for carrier review</h2>
                 @if($submissionIssues !== [])
                     <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="submission-issues">
                         <strong class="d-block">Before you submit</strong>
@@ -498,7 +552,7 @@
                 @unless($available)
                     <p class="text-caption text-muted mt-1 mb-0">Preview — submission isn't available in this environment yet.</p>
                 @endunless
-            </x-card>
+            </div></section>
         @endif
     @endif
 
@@ -536,6 +590,23 @@
             }
             $('input[name="entity_type"]').on('change', syncEinField);
             syncEinField();
+            // Section progress in the sidebar and the consent counter: display only.
+            function syncProgress() {
+                $('[data-pm-section]').each(function () {
+                    var $sec = $(this), id = $sec.attr('id'), total = 0, done = 0, seen = {};
+                    $sec.find('input,select,textarea').filter('[required]').each(function () {
+                        if (this.type === 'radio') { if (seen[this.name]) { return; } seen[this.name] = true; total++; if ($sec.find('input[name="' + this.name + '"]:checked').length) { done++; } return; }
+                        total++; if ($.trim($(this).val()) !== '') { done++; }
+                    });
+                    var $a = $('.pm-nav a[data-target="' + id + '"]');
+                    $a.find('[data-count]').text(total ? done + '/' + total : '');
+                    $a.toggleClass('is-complete', total > 0 && done === total);
+                });
+                var $boxes = $('input[name="consent_confirmations[]"]:visible');
+                $('[data-role="consent-counter"]').text($boxes.filter(':checked').length + ' of ' + $boxes.length + ' confirmed');
+            }
+            $('#registration-form').on('input change', syncProgress);
+            syncProgress();
             var templates = @json($templatesByChoice);
             // Brand the currently displayed suggestions were generated with.
             var lastBrand = @json($templateBrand);
