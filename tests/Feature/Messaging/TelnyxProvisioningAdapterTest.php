@@ -468,6 +468,42 @@ class TelnyxProvisioningAdapterTest extends TestCase
         });
     }
 
+    public function test_toll_free_values_over_telnyxs_limits_fail_before_any_request_and_are_never_truncated(): void
+    {
+        foreach ([
+            'use_case_summary_length' => ['campaignDescription' => str_repeat('a', 500) . ' '],
+            'opt_in_workflow_length' => ['optInMethod' => str_repeat('b', 501)],
+            'sample_message_length' => ['sampleMessage1' => str_repeat('c', 1001)],
+        ] as $field => $override) {
+            [$caught, , $business] = $this->tollFreeSubmit(200, ['data' => ['id' => 'never']], $override);
+
+            $this->assertInstanceOf(\App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException::class, $caught, $field);
+            $this->assertSame([$field], $caught->fields);
+            Http::assertNothingSent();
+            $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->where('business_id', $business->id)->count());
+        }
+    }
+
+    public function test_toll_free_values_exactly_at_the_limits_are_sent_unmodified(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_limits']])]);
+        $summary = 'Harbor Lane ' . str_repeat('d', 488);
+        $flow = str_repeat('e', 500);
+        $sample = 'Harbor Lane: ' . str_repeat('f', 982) . ' STOP';
+        $this->assertSame([500, 500, 1000], [mb_strlen($summary), mb_strlen($flow), mb_strlen($sample)]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100', null, [
+            'campaignDescription' => $summary, 'optInMethod' => $flow, 'sampleMessage1' => $sample,
+        ]));
+
+        Http::assertSent(fn ($request) => $request->data()['useCaseSummary'] === $summary
+            && $request->data()['optInWorkflow'] === $flow
+            && $request->data()['productionMessageContent'] === $sample);
+    }
+
     /**
      * Review correction — Telnyx's own toll-free verification submission
      * requires the already-owned number being verified.

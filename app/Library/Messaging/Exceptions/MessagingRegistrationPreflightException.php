@@ -24,6 +24,9 @@ class MessagingRegistrationPreflightException extends RuntimeException
         'state' => 'state',
         'contact_name' => 'contact first and last name',
         'opt_in_url' => 'opt-in link',
+        'use_case_summary_length' => 'campaign description (over 500 characters)',
+        'opt_in_workflow_length' => 'message-flow description (over 500 characters)',
+        'sample_message_length' => 'sample message 1 (over 1,000 characters)',
     ];
 
     /** @return list<string> */

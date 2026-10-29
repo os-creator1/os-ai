@@ -326,6 +326,13 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     private const TIMEOUT_SECONDS = 20;
 
+    /** Telnyx toll-free verification request schema maximums (characters). */
+    public const TOLL_FREE_USE_CASE_SUMMARY_MAX = 500;
+
+    public const TOLL_FREE_OPT_IN_WORKFLOW_MAX = 500;
+
+    public const TOLL_FREE_PRODUCTION_MESSAGE_MAX = 1000;
+
     public const FEATURE_NUMBER_PURCHASE = 'messaging_number_purchase';
 
     public const FEATURE_TEN_DLC_REGISTRATION = 'messaging_10dlc_registration';
@@ -1739,6 +1746,11 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'state' => CarrierRegistrationOptions::stateName($submission->region) === null,
                 'contact_name' => trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === '',
                 'opt_in_url' => \App\Library\Messaging\Registration\RegistrationSubmissionValidator::optInEvidenceUrlIssue((string) $submission->optInImageUrl) !== null,
+                // Telnyx's published maximums, measured on the exact values that are
+                // sent (whitespace included). Nothing is ever trimmed to fit.
+                'use_case_summary_length' => mb_strlen((string) $submission->campaignDescription) > self::TOLL_FREE_USE_CASE_SUMMARY_MAX,
+                'opt_in_workflow_length' => mb_strlen((string) $submission->optInMethod) > self::TOLL_FREE_OPT_IN_WORKFLOW_MAX,
+                'sample_message_length' => mb_strlen((string) $submission->sampleMessage1) > self::TOLL_FREE_PRODUCTION_MESSAGE_MAX,
             ]));
 
             if ($failed !== []) {
@@ -1788,7 +1800,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'businessContactPhone' => $submission->contactPhone,
                 'messageVolume' => $submission->messageVolume,
                 'useCase' => $tollFreeUseCase,
-                'useCaseSummary' => mb_substr((string) $submission->campaignDescription, 0, 500),
+                'useCaseSummary' => $submission->campaignDescription,
                 'productionMessageContent' => $submission->sampleMessage1,
                 'optInWorkflow' => $submission->optInMethod,
                 'optInWorkflowImageURLs' => [['url' => $submission->optInImageUrl]],

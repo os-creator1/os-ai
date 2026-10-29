@@ -323,4 +323,38 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
                 return true;
             });
     }
+
+    public function test_toll_free_save_draft_enforces_the_carriers_500_character_limit_on_both_descriptions_but_local_keeps_its_own(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        \App\Models\BusinessMessagingNumber::query()->update(['number_type' => 'toll_free']);
+
+        // Exactly 500 characters is accepted and saved as written.
+        $at500 = str_repeat('a', 500);
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => $at500, 'opt_in_method' => $at500]))
+            ->assertSessionDoesntHaveErrors();
+        $this->assertSame($at500, \App\Models\BusinessMessagingRegistration::query()->where('business_id', $business->id)->value('campaign_description'));
+
+        // 501 is refused with a clear, field-specific error; the saved draft is untouched.
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => $at500 . 'a', 'opt_in_method' => $at500 . 'a']))
+            ->assertSessionHasErrors([
+                'campaign_description' => 'The campaign description can be at most 500 characters for toll-free verification (the carrier\'s limit; it is sent exactly as written). Your draft was not saved — please shorten it.',
+                'opt_in_method' => 'The message-flow description can be at most 500 characters for toll-free verification (the carrier\'s limit; it is sent exactly as written). Your draft was not saved — please shorten it.',
+            ]);
+        $this->assertSame($at500, \App\Models\BusinessMessagingRegistration::query()->where('business_id', $business->id)->value('campaign_description'));
+
+        // The page advertises the same limits.
+        $this->get($this->showUrl($workspace, $business))->assertOk()->assertSee('maxlength="500"', false);
+    }
+
+    public function test_local_campaigns_keep_their_separate_2000_character_limit(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        \App\Models\BusinessMessagingNumber::query()->update(['number_type' => 'local']);
+
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => str_repeat('a', 1500)]))
+            ->assertSessionDoesntHaveErrors('campaign_description');
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => str_repeat('a', 2001)]))
+            ->assertSessionHasErrors('campaign_description');
+    }
 }

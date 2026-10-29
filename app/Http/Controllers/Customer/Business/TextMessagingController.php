@@ -412,6 +412,8 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Get a phone number before completing registration.');
         }
 
+        $descriptionMax = $numberType === PhoneNumberType::TollFree ? 500 : 2000;
+
         $validated = $request->validate([
             'legal_business_name' => ['required', 'string', 'max:191'],
             'doing_business_as' => ['nullable', 'string', 'max:191'],
@@ -431,8 +433,11 @@ class TextMessagingController extends CustomerBaseController
             'support_contact_confirmed_for' => ['nullable', 'string', 'max:191'],
             'authorize_brand_replacement' => ['nullable', 'boolean'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
-            'opt_in_method' => ['required', 'string', 'max:2000'],
-            'campaign_description' => ['required', 'string', 'max:2000'],
+            // Toll-free verification: Telnyx accepts at most 500 characters for each of these
+            // (useCaseSummary / optInWorkflow), sent exactly as saved. Other campaign types
+            // keep their own, separate limit.
+            'opt_in_method' => ['required', 'string', 'max:' . $descriptionMax],
+            'campaign_description' => ['required', 'string', 'max:' . $descriptionMax],
             'consent_confirmations' => ['nullable', 'array'],
             'consent_confirmations.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS + RegistrationTemplateCatalog::LOW_VOLUME_CONSENT_ITEMS))],
             'message_purposes' => ['nullable', 'array'],
@@ -446,6 +451,9 @@ class TextMessagingController extends CustomerBaseController
             'message_volume' => ['nullable', 'string', \Illuminate\Validation\Rule::in(array_map('strval', array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::MESSAGE_VOLUMES)))],
             'opt_in_image_url' => ['nullable', 'url', 'max:2083'],
             'brand_vertical' => ['nullable', 'string', 'in:' . implode(',', array_keys(\App\Library\Messaging\Registration\CarrierRegistrationOptions::BRAND_VERTICALS))],
+        ], [
+            'campaign_description.max' => 'The campaign description can be at most :max characters' . ($numberType === PhoneNumberType::TollFree ? ' for toll-free verification (the carrier\'s limit; it is sent exactly as written)' : '') . '. Your draft was not saved — please shorten it.',
+            'opt_in_method.max' => 'The message-flow description can be at most :max characters' . ($numberType === PhoneNumberType::TollFree ? ' for toll-free verification (the carrier\'s limit; it is sent exactly as written)' : '') . '. Your draft was not saved — please shorten it.',
         ]);
 
         // The SMS help contact counts only when the Business typed it AND

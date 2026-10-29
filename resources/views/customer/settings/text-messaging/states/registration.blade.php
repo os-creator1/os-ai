@@ -415,15 +415,17 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
 
                     <div class="pm-field">
                         <label class="required" for="campaign_description">What will you text about?</label>
-                        <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="2000" required data-suggestible>{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
+                        <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="{{ $isTollFreeForm ? 500 : 2000 }}" required data-suggestible aria-describedby="campaign_description-count">{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
+                        <p class="pm-hint" id="campaign_description-count" data-role="char-count" data-for="campaign_description" data-max="{{ $isTollFreeForm ? 500 : 2000 }}" aria-live="polite">@if($isTollFreeForm)The carrier accepts at most 500 characters here; it is sent exactly as written.@endif</p>
                         @error('campaign_description')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
 
                     <div class="pm-field">
                         <label class="required" for="opt_in_method">How do customers agree to get texts? (message flow)</label>
-                        <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="2" maxlength="2000" required
-                                  placeholder="e.g. Customers check a box on our signup form agreeing to receive text updates." aria-describedby="opt-in-method-help">{{ old('opt_in_method', $prefill['values']['opt_in_method']) }}</textarea>
+                        <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="2" maxlength="{{ $isTollFreeForm ? 500 : 2000 }}" required
+                                  placeholder="e.g. Customers check a box on our signup form agreeing to receive text updates." aria-describedby="opt-in-method-help opt_in_method-count">{{ old('opt_in_method', $prefill['values']['opt_in_method']) }}</textarea>
                         <p class="pm-hint" id="opt-in-method-help">Suggested wording only — edit it to match what your website really does. It is not confirmed until you check the consent items below.</p>
+                        <p class="pm-hint" id="opt_in_method-count" data-role="char-count" data-for="opt_in_method" data-max="{{ $isTollFreeForm ? 500 : 2000 }}" aria-live="polite">@if($isTollFreeForm)The carrier accepts at most 500 characters here; it is sent exactly as written.@endif</p>
                         @error('opt_in_method')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
                 </div>
@@ -677,8 +679,17 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
                 var $boxes = $('input[name="consent_confirmations[]"]:visible');
                 $('[data-role="consent-counter"]').text($boxes.filter(':checked').length + ' of ' + $boxes.length + ' confirmed');
             }
-            $('#registration-form').on('input change', syncProgress);
+            // Live character counters; a newline counts as 2 because the browser submits CRLF.
+            function syncCounters() {
+                $('[data-role="char-count"]').each(function () {
+                    var $c = $(this), max = parseInt($c.data('max'), 10), val = $('#' + $c.data('for')).val() || '';
+                    var len = Array.from(val.replace(/\r?\n/g, '\r\n')).length;
+                    $c.text(len + ' / ' + max + ' characters' + (len > max ? ' — too long, please shorten it' : '')).toggleClass('text-danger', len > max);
+                });
+            }
+            $('#registration-form').on('input change', function () { syncProgress(); syncCounters(); });
             syncProgress();
+            syncCounters();
             var templates = @json($templatesByChoice);
             // Brand the currently displayed suggestions were generated with.
             var lastBrand = @json($templateBrand);

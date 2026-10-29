@@ -127,6 +127,10 @@ class RegistrationSubmissionValidatorTest extends TestCase
         $this->assertStringContainsString('Your campaign description is 501 characters; toll-free verification accepts at most 500', $issues[0]);
         $this->assertStringContainsString('message-flow (how customers opt in) description is 501 characters', $issues[1]);
 
+        // Whitespace is part of the outgoing value: 500 characters plus a trailing space is 501.
+        $padded = $this->issues($this->registration(['campaign_description' => $atLimit . ' ']));
+        $this->assertStringContainsString('Your campaign description is 501 characters', implode(' ', $padded));
+
         // The same text is fine for a non-toll-free (10DLC) registration: the limit is Telnyx's toll-free schema's.
         $this->assertStringNotContainsString('accepts at most 500', implode(' ', $this->issues($this->registration([
             'number_type' => 'local', 'campaign_description' => $atLimit . 'a',

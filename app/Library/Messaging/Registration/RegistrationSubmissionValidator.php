@@ -213,11 +213,12 @@ final class RegistrationSubmissionValidator
             // 1000 (no minimums). Sent exactly as written, never trimmed, so a
             // longer value is refused here, field by field.
             foreach ([
-                ['campaign_description', 'campaign description', 500],
-                ['opt_in_method', 'message-flow (how customers opt in) description', 500],
-                ['sample_message_1', 'sample message 1', 1000],
+                ['campaign_description', 'campaign description', \App\Library\Messaging\TelnyxProvisioningAdapter::TOLL_FREE_USE_CASE_SUMMARY_MAX],
+                ['opt_in_method', 'message-flow (how customers opt in) description', \App\Library\Messaging\TelnyxProvisioningAdapter::TOLL_FREE_OPT_IN_WORKFLOW_MAX],
+                ['sample_message_1', 'sample message 1', \App\Library\Messaging\TelnyxProvisioningAdapter::TOLL_FREE_PRODUCTION_MESSAGE_MAX],
             ] as [$field, $label, $max]) {
-                $length = mb_strlen(trim((string) $registration->{$field}));
+                // Exact outgoing value: whitespace counts, nothing is trimmed.
+                $length = mb_strlen((string) $registration->{$field});
 
                 if ($length > $max) {
                     $issues[] = sprintf('Your %s is %d characters; toll-free verification accepts at most %d, and it is sent exactly as written. Shorten it by %d.', $label, $length, $max, $length - $max);
