@@ -264,21 +264,32 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
 
     public function test_save_draft_refuses_toll_free_text_over_500_characters_with_field_errors_and_keeps_the_saved_draft(): void
     {
-        [$business, $workspace] = $this->registrationState();
-        $this->post($this->updateUrl($workspace, $business), $this->payload());
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Sunset Photo Booths');
+        $identity = $this->attachIdentity($business);
+        $number = $this->attachNumber($identity, '+18885550142');
+        // A genuine toll-free number, owned by this Business through its messaging identity.
+        \App\Models\BusinessMessagingNumber::query()->whereKey($number->id)->update(['number_type' => 'toll_free']);
+        $this->assertSame('toll_free', \App\Models\BusinessMessagingNumber::query()
+            ->where('business_messaging_identity_id', $identity->id)->value('number_type'));
+        $this->authenticateAs($customer);
 
-        $response = $this->post($this->updateUrl($workspace, $business), $this->payload([
-            'campaign_description' => str_repeat('a', 501),
-            'opt_in_method' => str_repeat('b', 501),
-        ]));
+        // Exactly 500 characters is accepted and saved as written.
+        $at500 = str_repeat('a', 500);
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => $at500, 'opt_in_method' => str_repeat('b', 500)]))
+            ->assertSessionDoesntHaveErrors();
+        $saved = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertSame($at500, $saved->campaign_description);
+        $this->assertSame(str_repeat('b', 500), $saved->opt_in_method);
 
-        // The fixture's own number is local (2000-character limit); a toll-free business gets 500.
-        if (\App\Models\BusinessMessagingNumber::query()->where('business_id', $business->id)->value('number_type') === 'toll_free') {
-            $response->assertSessionHasErrors(['campaign_description', 'opt_in_method']);
-            $this->assertStringStartsWith('Sunset Photo Booths sends', BusinessMessagingRegistration::where('business_id', $business->id)->first()->campaign_description);
-        } else {
-            $this->markTestSkipped('Fixture number is local; the 500-character rule is toll-free only and is covered by the validator unit test.');
-        }
+        // 501 characters: field-specific errors, and the saved draft is untouched.
+        $this->post($this->updateUrl($workspace, $business), $this->payload([
+            'campaign_description' => str_repeat('c', 501),
+            'opt_in_method' => str_repeat('d', 501),
+        ]))->assertSessionHasErrors(['campaign_description', 'opt_in_method']);
+
+        $after = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertSame($at500, $after->campaign_description);
+        $this->assertSame(str_repeat('b', 500), $after->opt_in_method);
     }
 
     public function test_a_valid_submission_for_a_business_without_a_wallet_shows_a_page_error_and_sends_nothing(): void
