@@ -262,7 +262,47 @@ class TelnyxProvisioningAdapterTest extends TestCase
         // The quote re-check (a read), the Messaging Profile and the order.
         Http::assertSentCount(3);
         Http::assertSent(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), 'filter%5Bphone_number%5D%5Bcontains%5D=5550501'));
+        Http::assertSent(fn ($request) => $request->method() === 'POST'
+            && str_contains($request->url(), '/messaging_profiles')
+            && $request['whitelisted_destinations'] === ['US']);
         $this->assertSame(1_000_000, $result->monthlyCostMicro);
+    }
+
+    public function test_messaging_profile_rejection_refunds_hold_and_never_orders_number(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE, 20_000_000);
+
+        Http::fake([
+            'api.telnyx.com/v2/available_phone_numbers*' => Http::response(['data' => [[
+                'phone_number' => '+18445183944',
+                'cost_information' => ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD'],
+            ]]]),
+            'api.telnyx.com/v2/messaging_profiles' => Http::response([
+                'errors' => [['code' => '10039', 'detail' => 'Messaging profile limit reached']],
+            ], 403),
+            'api.telnyx.com/v2/number_orders' => Http::response(['data' => []]),
+        ]);
+
+        try {
+            app(TelnyxProvisioningAdapter::class)->provisionNumber(
+                $business,
+                new AvailableNumberCandidate('+18445183944', PhoneNumberType::TollFree, '+18445183944', 250_000, 1_000_000, 'USD')
+            );
+            $this->fail('Expected carrier profile rejection.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Telnyx rejected the Messaging Profile request.', $e->getMessage());
+        }
+
+        Http::assertSent(fn ($request) => $request->method() === 'POST'
+            && str_contains($request->url(), '/messaging_profiles')
+            && $request['whitelisted_destinations'] === ['US']);
+        Http::assertNotSent(fn ($request) => $request->method() === 'POST' && str_contains($request->url(), '/number_orders'));
+        $this->assertSame(20_000_000, (int) DB::table('business_usage_wallets')
+            ->where('business_id', $business->id)->value('available_balance_micro'));
+        $this->assertSame(['released'], DB::table('business_usage_reservations')
+            ->where('business_id', $business->id)->pluck('status')->all());
     }
 
     public function test_10dlc_submission_hits_the_10dlc_prefixed_endpoints_once_funded(): void
