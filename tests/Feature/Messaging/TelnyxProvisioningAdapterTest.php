@@ -410,6 +410,24 @@ class TelnyxProvisioningAdapterTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_over_long_toll_free_text_is_refused_in_preflight_never_truncated(): void
+    {
+        [$e] = $this->tollFreeSubmit(200, ['data' => ['id' => 'x']], ['campaignDescription' => str_repeat('a', 501), 'optInMethod' => str_repeat('b', 501)]);
+
+        $this->assertInstanceOf(\App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException::class, $e);
+        $this->assertSame(['campaign_description', 'opt_in_method'], $e->fields);
+        Http::assertNothingSent();
+    }
+
+    public function test_a_500_character_description_and_opt_in_workflow_are_sent_whole(): void
+    {
+        $text = str_repeat('c', 500);
+        [$e] = $this->tollFreeSubmit(200, ['data' => ['id' => 'tfv_full_1']], ['campaignDescription' => $text, 'optInMethod' => $text]);
+
+        $this->assertNull($e);
+        Http::assertSent(fn ($request) => $request->data()['useCaseSummary'] === $text && $request->data()['optInWorkflow'] === $text);
+    }
+
     public function test_a_successful_toll_free_submission_returns_the_provider_id_without_an_incident(): void
     {
         [$e, , $business, $result] = $this->tollFreeSubmit(200, ['data' => ['id' => 'tfv_ok_1']]);

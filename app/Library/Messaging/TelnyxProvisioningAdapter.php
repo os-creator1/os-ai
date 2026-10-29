@@ -1738,6 +1738,9 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'message_volume' => ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume]),
                 'state' => CarrierRegistrationOptions::stateName($submission->region) === null,
                 'contact_name' => trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === '',
+                'campaign_description' => mb_strlen(trim((string) $submission->campaignDescription)) > 500,
+                'opt_in_method' => mb_strlen(trim((string) $submission->optInMethod)) > 500,
+                'additional_information' => mb_strlen($this->tollFreeAdditionalInformation($submission)) > 500,
                 'opt_in_url' => \App\Library\Messaging\Registration\RegistrationSubmissionValidator::optInEvidenceUrlIssue((string) $submission->optInImageUrl) !== null,
             ]));
 
@@ -1788,7 +1791,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'businessContactPhone' => $submission->contactPhone,
                 'messageVolume' => $submission->messageVolume,
                 'useCase' => $tollFreeUseCase,
-                'useCaseSummary' => mb_substr((string) $submission->campaignDescription, 0, 500),
+                'useCaseSummary' => $submission->campaignDescription,
                 'productionMessageContent' => $submission->sampleMessage1,
                 'optInWorkflow' => $submission->optInMethod,
                 'optInWorkflowImageURLs' => [['url' => $submission->optInImageUrl]],
@@ -1852,7 +1855,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     {
         $dba = trim((string) $submission->doingBusinessAs);
 
-        return $dba !== '' && strcasecmp($dba, trim((string) $submission->legalBusinessName)) !== 0 ? mb_substr($dba, 0, 500) : null;
+        return $dba !== '' && strcasecmp($dba, trim((string) $submission->legalBusinessName)) !== 0 ? $dba : null;
     }
 
     private function tollFreeIsvReseller(): ?string
@@ -1880,7 +1883,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             $parts[] = trim((string) $submission->additionalInformation);
         }
 
-        return mb_substr($parts === [] ? 'No additional information.' : implode(' ', $parts), 0, 500);
+        // Never truncated: an over-long result is refused in preflight instead.
+        return $parts === [] ? 'No additional information.' : implode(' ', $parts);
     }
 
     /**

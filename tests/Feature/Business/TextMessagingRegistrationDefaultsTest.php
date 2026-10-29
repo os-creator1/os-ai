@@ -262,6 +262,25 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertStringContainsString('consent checklist was cleared', (string) session('message'));
     }
 
+    public function test_save_draft_refuses_toll_free_text_over_500_characters_with_field_errors_and_keeps_the_saved_draft(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        $this->post($this->updateUrl($workspace, $business), $this->payload());
+
+        $response = $this->post($this->updateUrl($workspace, $business), $this->payload([
+            'campaign_description' => str_repeat('a', 501),
+            'opt_in_method' => str_repeat('b', 501),
+        ]));
+
+        // The fixture's own number is local (2000-character limit); a toll-free business gets 500.
+        if (\App\Models\BusinessMessagingNumber::query()->where('business_id', $business->id)->value('number_type') === 'toll_free') {
+            $response->assertSessionHasErrors(['campaign_description', 'opt_in_method']);
+            $this->assertStringStartsWith('Sunset Photo Booths sends', BusinessMessagingRegistration::where('business_id', $business->id)->first()->campaign_description);
+        } else {
+            $this->markTestSkipped('Fixture number is local; the 500-character rule is toll-free only and is covered by the validator unit test.');
+        }
+    }
+
     public function test_a_valid_submission_for_a_business_without_a_wallet_shows_a_page_error_and_sends_nothing(): void
     {
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);

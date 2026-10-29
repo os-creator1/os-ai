@@ -431,8 +431,10 @@ class TextMessagingController extends CustomerBaseController
             'support_contact_confirmed_for' => ['nullable', 'string', 'max:191'],
             'authorize_brand_replacement' => ['nullable', 'boolean'],
             'use_case' => ['required', 'string', 'in:' . implode(',', array_keys(self::US_USE_CASES))],
-            'opt_in_method' => ['required', 'string', 'max:2000'],
-            'campaign_description' => ['required', 'string', 'max:2000'],
+            // Telnyx limits toll-free `optInWorkflow` and `useCaseSummary` to 500 characters each;
+            // they are refused here rather than ever being cut off on the way to the carrier.
+            'opt_in_method' => ['required', 'string', 'max:' . ($numberType === PhoneNumberType::TollFree ? RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT : 2000)],
+            'campaign_description' => ['required', 'string', 'max:' . ($numberType === PhoneNumberType::TollFree ? RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT : 2000)],
             'consent_confirmations' => ['nullable', 'array'],
             'consent_confirmations.*' => ['string', \Illuminate\Validation\Rule::in(array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS + RegistrationTemplateCatalog::LOW_VOLUME_CONSENT_ITEMS))],
             'message_purposes' => ['nullable', 'array'],

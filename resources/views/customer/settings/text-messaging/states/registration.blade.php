@@ -179,6 +179,7 @@
     @elseif($status !== 'pending' && $progress['show_form'])
         @php
 $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree;
+$textLimit = $isTollFreeForm ? \App\Library\Messaging\Registration\RegistrationSubmissionValidator::TOLL_FREE_TEXT_LIMIT : 2000;
 @endphp
         <div class="pm-layout">
         <form method="post" class="pm-form" id="registration-form" action="{{ route('customer.workspaces.businesses.text-messaging.registration.update', [$workspaceUid, $businessUid]) }}" aria-label="Messaging registration details">
@@ -415,14 +416,16 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
 
                     <div class="pm-field">
                         <label class="required" for="campaign_description">What will you text about?</label>
-                        <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="2000" required data-suggestible>{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
+                        <textarea class="form-control @error('campaign_description') is-invalid @enderror" id="campaign_description" name="campaign_description" rows="3" maxlength="{{ $textLimit }}" required data-suggestible data-counter="campaign_description_count">{{ old('campaign_description', $prefill['values']['campaign_description']) }}</textarea>
+                        <div class="pm-counter" id="campaign_description_count" aria-live="polite" data-limit="{{ $textLimit }}"></div>
                         @error('campaign_description')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
 
                     <div class="pm-field">
                         <label class="required" for="opt_in_method">How do customers agree to get texts? (message flow)</label>
-                        <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="2" maxlength="2000" required
+                        <textarea class="form-control @error('opt_in_method') is-invalid @enderror" id="opt_in_method" name="opt_in_method" data-suggestible rows="3" maxlength="{{ $textLimit }}" required data-counter="opt_in_method_count"
                                   placeholder="e.g. Customers check a box on our signup form agreeing to receive text updates." aria-describedby="opt-in-method-help">{{ old('opt_in_method', $prefill['values']['opt_in_method']) }}</textarea>
+                        <div class="pm-counter" id="opt_in_method_count" aria-live="polite" data-limit="{{ $textLimit }}"></div>
                         <p class="pm-hint" id="opt-in-method-help">Suggested wording only — edit it to match what your website really does. It is not confirmed until you check the consent items below.</p>
                         @error('opt_in_method')<div class="invalid-feedback">{{ $message }}</div>@enderror
                     </div>
@@ -661,6 +664,12 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
                 var el = document.getElementById('pm-submission-issues');
                 if (el) { el.scrollIntoView({block: 'center'}); el.focus(); }
             }
+            // Character counters (carrier limit): shown live; the server also refuses over-long text.
+            $('textarea[data-counter]').each(function () {
+                var $ta = $(this), $out = $('#' + $ta.data('counter')), limit = parseInt($out.data('limit'), 10);
+                function upd() { var n = $ta.val().length; $out.text(n + ' / ' + limit + ' characters').css('color', n > limit ? '#a03626' : ''); }
+                $ta.on('input', upd); upd();
+            });
             // Section progress in the sidebar and the consent counter: display only.
             function syncProgress() {
                 $('[data-pm-section]').each(function () {
@@ -725,6 +734,7 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
                     else { $('input[name="consent_confirmations[]"]').prop('checked', false); }
                 }
                 lastChoice = choice || null;
+                $('textarea[data-counter]').trigger('input');
             });
         });
     </script>

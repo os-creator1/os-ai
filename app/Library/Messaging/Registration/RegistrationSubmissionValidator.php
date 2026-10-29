@@ -32,16 +32,25 @@ final class RegistrationSubmissionValidator
         'terms_url' => 'SMS Terms URL',
     ];
 
+    /** Telnyx documents a 500-character maximum for `useCaseSummary` and `optInWorkflow` (toll-free). */
+    public const TOLL_FREE_TEXT_LIMIT = 500;
+
     private const PLACEHOLDER = '/\[[^\]]*\]|\{\{?[^}]*\}?\}|\.\.\.|…|\bTODO\b|\bTBD\b|lorem ipsum|add it here|your (business|company)\b|example\.(com|org|net)\b|\bxxx+\b/i';
 
-    private const PROMOTIONAL = '/\b(promo\w*|special\w*|discount\w*|sale|deal\w*|\d+%|% off|save)\b/i';
+    /**
+     * Advertising language. Deliberately specific so ordinary care wording ("special occasions",
+     * "save the date", "dealing with") is not mistaken for marketing.
+     */
+    private const PROMO_TERMS = 'promo\w*|specials|special\s+(?:offers?|pricing|prices?|deals?|discounts?|promotions?)|discount\w*|sales?|deals?|offers?\s+(?:expires?|ends?)|save\s+(?:up\s+to\s+)?(?:\$?\d+|big|now|more)';
+
+    private const PROMOTIONAL = '/\b(?:' . self::PROMO_TERMS . '|\d+%|% off)(?!\w)/i';
 
     /**
      * Promotional wording that is *negated* ("we do not send promotional
      * messages", "no discounts or sales") describes the opposite of a
      * promotion and must not classify a customer-care campaign as marketing.
      */
-    private const NEGATED_PROMOTIONAL = '/\b(?:no|not|never|without|don\'t|doesn\'t|won\'t|isn\'t|aren\'t|neither|nor)\b(?:\s+[\w\'-]+){0,5}?\s+(?:promo\w*|special\w*|discount\w*|sales?|deals?|marketing)\b(?:\s*(?:,|\bor\b|\band\b|\bnor\b)\s*(?:promo\w*|special\w*|discount\w*|sales?|deals?|marketing)\b)*/i';
+    private const NEGATED_PROMOTIONAL = '/\b(?:no|not|never|without|don\'t|doesn\'t|won\'t|isn\'t|aren\'t|neither|nor)\b(?:\s+[\w\'-]+){0,5}?\s+(?:' . self::PROMO_TERMS . ')\b(?:\s*(?:,|\bor\b|\band\b|\bnor\b)\s*(?:' . self::PROMO_TERMS . ')\b)*/i';
 
     private static function isPromotional(string $text): bool
     {
@@ -273,27 +282,16 @@ final class RegistrationSubmissionValidator
 
         $issues = array_merge($issues, $this->staleSuggestionIssues($registration));
 
-        // The texts may name the registered legal entity or the Business's own
-        // customer-facing name the owner stated (DBA) or the Business name on file. Nothing the customer
-        // types into a sample message is trusted as a name by itself.
-        $names = array_values(array_filter([
-            $this->firstWords(trim((string) $registration->legal_business_name)),
-            $this->firstWords(trim((string) $registration->doing_business_as)),
-            $this->firstWords(trim((string) $registration->business?->name)),
-        ], fn (string $n): bool => $n !== ''));
-        $combined = $one . ' ' . $two;
-        $named = false;
+        // Sample message 1 is what Telnyx receives as the production message, so it must
+        // identify the customer-facing brand: the DBA the owner stated, else the Business name
+        // already on file or the registered legal name. Nothing typed into a sample message is
+        // trusted as a brand by itself, and the legal name is not required when a DBA is used.
+        $brands = self::brandCandidates($registration);
 
-        foreach ($names as $name) {
-            if (stripos($combined, $name) !== false) {
-                $named = true;
-                break;
-            }
-        }
-
-        if ($names !== [] && $one !== '' && $two !== '' && ! $named) {
-            $issues[] = 'Include your business name in at least one sample message — your registered name ("' . $names[0] . '…")'
-                . (count($names) > 1 ? ' or your customer-facing name ("' . $names[1] . '…")' : '') . '.';
+        if ($brands !== [] && $one !== '' && ! self::mentionsAny($one, $brands)) {
+            $issues[] = 'Sample message 1 should name your business the way customers know it. Use your customer-facing name (DBA)'
+                . ($registration->doing_business_as ? '' : ' — enter it under "Customer-facing name (DBA)" if it differs from your legal name —')
+                . ' or your Business name, for example "' . $brands[0] . ': …".';
         }
 
         return $issues;
@@ -342,6 +340,17 @@ final class RegistrationSubmissionValidator
     {
         $issues = [];
 
+        foreach ([
+            'campaign_description' => ['campaign description', self::TOLL_FREE_TEXT_LIMIT],
+            'opt_in_method' => ['message-flow (how customers opt in) description', self::TOLL_FREE_TEXT_LIMIT],
+        ] as $field => [$label, $limit]) {
+            $length = mb_strlen(trim((string) $registration->{$field}));
+
+            if ($registration->number_type === PhoneNumberType::TollFree && $length > $limit) {
+                $issues[] = 'Shorten your ' . $label . ' to ' . $limit . ' characters or fewer for the carrier (it is ' . $length . ' now).';
+            }
+        }
+
         if (strlen(trim((string) $registration->opt_in_method)) < 40) {
             $issues[] = 'Describe in more detail how customers opt in (where they enter their number and what they agree to).';
         }
@@ -357,8 +366,37 @@ final class RegistrationSubmissionValidator
         return $issues;
     }
 
-    private function firstWords(string $brand): string
+    /** @return list<string> accepted brand names, most specific first, entity suffixes removed */
+    private static function brandCandidates(BusinessMessagingRegistration $registration): array
     {
-        return implode(' ', array_slice(preg_split('/\s+/', $brand) ?: [], 0, 2));
+        $names = [];
+
+        foreach ([$registration->doing_business_as, $registration->business?->name, $registration->legal_business_name] as $name) {
+            $name = trim((string) $name);
+
+            do {
+                $before = $name;
+                $name = trim(preg_replace('/[\s,.]+(?:llc|l\.l\.c|inc|incorporated|corp|corporation|co|company|ltd|llp|lp|pllc)\.?$/i', '', $name) ?? $name, " \t,.");
+            } while ($name !== $before);
+
+            if ($name !== '' && ! in_array(strtolower($name), array_map('strtolower', $names), true)) {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
     }
+
+    /** @param list<string> $names */
+    private static function mentionsAny(string $text, array $names): bool
+    {
+        foreach ($names as $name) {
+            if (stripos($text, $name) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 }
