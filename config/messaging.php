@@ -195,4 +195,24 @@ return [
     'number_renewal_advance_warning_days' => env('MESSAGING_NUMBER_RENEWAL_ADVANCE_WARNING_DAYS', 7),
 
     'number_release_minimum_notice_days' => env('MESSAGING_NUMBER_RELEASE_MINIMUM_NOTICE_DAYS', 7),
+
+    /*
+    |--------------------------------------------------------------------------
+    | One-time Telnyx order recovery target
+    |--------------------------------------------------------------------------
+    |
+    | Read ONLY by `messaging:recover-telnyx-order`. Deliberately a fixed,
+    | source-controlled record (no env()): the command reconciles exactly this
+    | already-purchased number and refuses anything else.
+    */
+    'telnyx_order_recovery' => [
+        'business_id' => 3,
+        'incident_id' => 3,
+        'order_id' => '022c5e59-2fcf-46ce-a4cc-53ad70739348',
+        'phone_number' => '+18446980765',
+        'phone_resource_id' => '3081436796672803842',
+        'messaging_profile_id' => '4001a187-e7fc-4c18-a518-7d1897b41d7e',
+        'reservation_id' => 21,
+        'reservation_amount_micro' => 2_100_000,
+    ],
 ];

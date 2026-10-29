@@ -52,10 +52,13 @@ final class ProvisioningIncidentRecorder
      * — the caller (the controller) turns "0 rows" into a clear "already
      * resolved" response instead of silently succeeding twice.
      *
+     * A null $resolvedByUserId records a system/command resolution (the note
+     * carries who ran it and what was verified); the column is nullable.
+     *
      * @return int the number of rows updated — 1 on a genuine resolution, 0
      *             when the incident was already resolved (or does not exist)
      */
-    public function resolve(int $incidentId, int $resolvedByUserId, string $note): int
+    public function resolve(int $incidentId, ?int $resolvedByUserId, string $note): int
     {
         return DB::table('business_messaging_provisioning_incidents')
             ->where('id', $incidentId)
