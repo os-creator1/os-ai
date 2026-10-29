@@ -17,6 +17,8 @@ class MessagingRegistrationProviderException extends RuntimeException
 
     public const STEP_CAMPAIGN = 'campaign';
 
+    public const STEP_TOLL_FREE = 'toll_free';
+
     public function __construct(
         string $message,
         public readonly string $step,
@@ -24,6 +26,10 @@ class MessagingRegistrationProviderException extends RuntimeException
         public readonly bool $brandSaved = false,
         /** The brand fee was charged by THIS attempt (false: paid earlier, or no brand). */
         public readonly bool $brandFeeChargedNow = false,
+        /** HTTP status of a definitive provider refusal (operator/diagnostic use). */
+        public readonly ?int $httpStatus = null,
+        /** Allow-listed JSON pointers of the rejected request fields (names only, never values). @var list<string> */
+        public readonly array $rejectedFields = [],
     ) {
         parent::__construct($message);
     }

@@ -1597,12 +1597,19 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return $value !== '' && strlen($value) <= $max && preg_match('/^[A-Za-z0-9_.\/\-]+$/', $value) === 1 ? $value : null;
         };
 
-        \Illuminate\Support\Facades\Log::warning('Telnyx 10DLC provider call failed.', [
+        $errors = $response->json('errors');
+        $errors = is_array($errors) ? array_slice($errors, 0, 10) : [];
+        $codes = array_values(array_unique(array_filter(array_map(fn ($e) => is_array($e) ? $safe($e['code'] ?? null) : null, $errors))));
+        $fields = array_values(array_unique(array_filter(array_map(fn ($e) => is_array($e) ? $safe($e['source']['pointer'] ?? null) : null, $errors))));
+
+        \Illuminate\Support\Facades\Log::warning($stage === 'toll_free' ? 'Telnyx toll-free verification provider call failed.' : 'Telnyx 10DLC provider call failed.', [
             'stage' => $stage,
             'business_id' => (int) $business->id,
             'http_status' => $response->status(),
             'provider_error_code' => $safe($response->json('errors.0.code')),
             'rejected_field' => $safe($response->json('errors.0.source.pointer')),
+            'provider_error_codes' => $codes,
+            'rejected_fields' => $fields,
             'request_id' => $safe($response->header('x-request-id')) ?? $safe($response->header('x-telnyx-request-id')),
         ]);
     }
@@ -1725,13 +1732,19 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         // validates these and a guessed value would only be rejected.
         $tollFreeUseCase = CarrierRegistrationOptions::TOLL_FREE_USE_CASES[$submission->useCase] ?? null;
 
-        if ($submission->existingVerificationId === null
-            && ($tollFreeUseCase === null
-                || ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume])
-                || CarrierRegistrationOptions::stateName($submission->region) === null
-                || trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === ''
-                || ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL))) {
-            throw new \RuntimeException('Toll-free verification needs a mapped use case, a message volume, a US state, a contact name and an opt-in image URL.');
+        if ($submission->existingVerificationId === null) {
+            $failed = array_keys(array_filter([
+                'use_case' => $tollFreeUseCase === null,
+                'message_volume' => ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume]),
+                'state' => CarrierRegistrationOptions::stateName($submission->region) === null,
+                'contact_name' => trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === '',
+                'opt_in_url' => ! filter_var((string) $submission->optInImageUrl, FILTER_VALIDATE_URL),
+            ]));
+
+            if ($failed !== []) {
+                // Our own check, before any provider request: names only, never values.
+                throw new \App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException($failed);
+            }
         }
 
         $business = Business::query()->findOrFail($submission->businessId);
@@ -1794,11 +1807,22 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         }
 
         if (! $response->successful()) {
-            if ($response->serverError() || $response->status() === 408) {
-                throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free status=' . $response->status());
+            $status = $response->status();
+            $this->logProviderFailure($business, 'toll_free', $response);
+
+            // Only a definitive client-error refusal means no request was created. A 409
+            // (a request may already exist), a timeout, a server error and any other
+            // non-2xx (redirect, odd code) are uncertain, so they go to the incident path.
+            $definitive = $status >= 400 && $status < 500 && ! in_array($status, [408, 409], true);
+
+            if (! $definitive) {
+                throw $this->unconfirmedOutcome($business, self::INCIDENT_TOLLFREE_UNKNOWN, null, 'toll-free status=' . $status);
             }
 
-            throw new \RuntimeException('Telnyx rejected the toll-free verification submission.');
+            $pointers = $response->json('errors.*.source.pointer');
+            $pointers = is_array($pointers) ? array_slice(array_values(array_filter($pointers, fn ($p) => is_string($p) && strlen($p) <= 64 && preg_match('/^[A-Za-z0-9_.\/\-]+$/', $p) === 1)), 0, 10) : [];
+
+            throw new \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException('Telnyx rejected the toll-free verification submission.', \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_TOLL_FREE, false, false, $status, $pointers);
         }
 
         $requestId = $this->providerValue($response, ['id', 'data.id', 'data.verificationId']);
