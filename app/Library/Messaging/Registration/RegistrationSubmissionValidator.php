@@ -34,14 +34,19 @@ final class RegistrationSubmissionValidator
 
     private const PLACEHOLDER = '/\[[^\]]*\]|\{\{?[^}]*\}?\}|\.\.\.|…|\bTODO\b|\bTBD\b|lorem ipsum|add it here|your (business|company)\b|example\.(com|org|net)\b|\bxxx+\b/i';
 
-    private const PROMOTIONAL = '/\b(promo\w*|special\w*|discount\w*|sale|deal\w*|\d+%|% off|save)\b/i';
+    /**
+     * Genuine marketing behaviour, not isolated words: "special occasions",
+     * "save the date" and "sales team" describe service messages. Offers,
+     * discounts, coupons, percentages and sale pricing do not.
+     */
+    private const PROMOTIONAL = '/(?:\bpromo(?:tion\w*|s|code\w*)?\b|\bpromotional\b|\bdiscount\w*|\bcoupon\w*|\bdeals?\b|\blimited[- ]time\b|\bspecial\s+(?:offers?|deals?|prices?|pricing|promotions?|discounts?|rates?)\b|\b(?:on|for)\s+sale\b|\bflash\s+sale\b|\bsave\s+(?:\$?\d|up\s+to|big|money)|\d\s*%|%\s*off\b|\bbogo\b|\bbuy\s+one\b)/i';
 
     /**
      * Promotional wording that is *negated* ("we do not send promotional
      * messages", "no discounts or sales") describes the opposite of a
      * promotion and must not classify a customer-care campaign as marketing.
      */
-    private const NEGATED_PROMOTIONAL = '/\b(?:no|not|never|without|don\'t|doesn\'t|won\'t|isn\'t|aren\'t|neither|nor)\b(?:\s+[\w\'-]+){0,5}?\s+(?:promo\w*|special\w*|discount\w*|sales?|deals?|marketing)\b(?:\s*(?:,|\bor\b|\band\b|\bnor\b)\s*(?:promo\w*|special\w*|discount\w*|sales?|deals?|marketing)\b)*/i';
+    private const NEGATED_PROMOTIONAL = '/\b(?:no|not|never|without|don\'t|doesn\'t|won\'t|isn\'t|aren\'t|neither|nor)\b(?:\s+[\w\'-]+){0,5}?\s+(?:promo\w*|special\s+(?:offers?|deals?|prices?|promotions?|discounts?)|discount\w*|coupon\w*|sales?|deals?|marketing)\b(?:\s*(?:,|\bor\b|\band\b|\bnor\b)\s*(?:promo\w*|special\s+(?:offers?|deals?|prices?|promotions?|discounts?)|discount\w*|coupon\w*|sales?|deals?|marketing)\b)*/i';
 
     private static function isPromotional(string $text): bool
     {
@@ -203,6 +208,22 @@ final class RegistrationSubmissionValidator
                 $issues[] = $imageIssue;
             }
 
+            // Telnyx's published toll-free request schema: useCaseSummary and
+            // optInWorkflow max 500 characters, productionMessageContent max
+            // 1000 (no minimums). Sent exactly as written, never trimmed, so a
+            // longer value is refused here, field by field.
+            foreach ([
+                ['campaign_description', 'campaign description', 500],
+                ['opt_in_method', 'message-flow (how customers opt in) description', 500],
+                ['sample_message_1', 'sample message 1', 1000],
+            ] as [$field, $label, $max]) {
+                $length = mb_strlen(trim((string) $registration->{$field}));
+
+                if ($length > $max) {
+                    $issues[] = sprintf('Your %s is %d characters; toll-free verification accepts at most %d, and it is sent exactly as written. Shorten it by %d.', $label, $length, $max, $length - $max);
+                }
+            }
+
             if (! isset(CarrierRegistrationOptions::TOLL_FREE_USE_CASES[(string) $registration->use_case])) {
                 $issues[] = 'This messaging type can\'t be submitted for toll-free verification. Choose another.';
             }
@@ -273,6 +294,10 @@ final class RegistrationSubmissionValidator
 
         $issues = array_merge($issues, $this->staleSuggestionIssues($registration));
 
+        if ($registration->number_type === PhoneNumberType::TollFree) {
+            return array_merge($issues, $this->tollFreeSampleIssues($registration, $one, $two));
+        }
+
         // The texts may name the registered legal entity or the Business's own
         // customer-facing name the owner stated (DBA) or the Business name on file. Nothing the customer
         // types into a sample message is trusted as a name by itself.
@@ -297,6 +322,47 @@ final class RegistrationSubmissionValidator
         }
 
         return $issues;
+    }
+
+    /**
+     * Toll-free verification transmits ONLY sample 1 (productionMessageContent),
+     * so the transmitted sample is judged on its own: it must identify the
+     * customer-facing brand (the stated DBA, else the registered legal name)
+     * and carry opt-out wording. Sample 2 is not sent; if present it must still
+     * be truthfully branded, but it can never satisfy a requirement for sample 1.
+     *
+     * @return list<string>
+     */
+    private function tollFreeSampleIssues(BusinessMessagingRegistration $registration, string $one, string $two): array
+    {
+        $issues = [];
+        $dba = trim((string) $registration->doing_business_as);
+        $brand = $dba !== '' ? $dba : trim((string) $registration->legal_business_name);
+        $source = $dba !== '' ? 'the customer-facing name you entered' : 'your registered business name';
+
+        if ($brand !== '' && $one !== '' && ! self::mentionsBrand($one, $brand)) {
+            $issues[] = 'Sample message 1 must include "' . $brand . '" (' . $source . '), because it is the sample sent to the carrier.';
+        }
+
+        if ($brand !== '' && $two !== '' && ! self::mentionsBrand($two, $brand)) {
+            $issues[] = 'Sample message 2 should also include "' . $brand . '". Only the first sample is sent to the carrier; this one is kept with your draft.';
+        }
+
+        if ($one !== '' && preg_match('/\bstop\b/i', $one) !== 1) {
+            $issues[] = 'Sample message 1 needs opt-out wording such as "Reply STOP to opt out".';
+        }
+
+        return $issues;
+    }
+
+    /** Whole-name match, ignoring case, punctuation and a trailing entity suffix (LLC, Inc, …). */
+    private static function mentionsBrand(string $text, string $brand): bool
+    {
+        $normalize = static fn (string $v): string => trim((string) preg_replace('/[^a-z0-9]+/', ' ', strtolower($v)));
+        $name = $normalize($brand);
+        $name = trim((string) preg_replace('/\s(?:l l c|llc|inc|incorporated|corp|corporation|co|company|ltd|limited|llp|pllc|lp)$/', '', $name));
+
+        return $name !== '' && str_contains(' ' . $normalize($text) . ' ', ' ' . $name . ' ');
     }
 
     /**

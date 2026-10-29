@@ -447,6 +447,7 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                         <label class="required" for="sample_message_2">Sample 2</label>
                         <textarea class="form-control @error('sample_message_2') is-invalid @enderror" id="sample_message_2" name="sample_message_2" data-suggestible rows="2" maxlength="500" required>{{ old('sample_message_2', $prefill['values']['sample_message_2']) }}</textarea>
                         @error('sample_message_2')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        @if($isTollFreeForm)<div class="form-text">For toll-free verification the carrier receives Sample 1 only; Sample 2 is kept with your draft. Please still brand it with your business name.</div>@endif
                     </div>
                 </div>
             </fieldset>
