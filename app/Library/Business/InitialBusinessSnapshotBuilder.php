@@ -42,7 +42,7 @@ class InitialBusinessSnapshotBuilder
 
     private const EFFORT_ORDER = ['low' => 0, 'medium' => 1, 'high' => 2];
 
-    public function __construct(private readonly ?OpportunityPlanEligibility $eligibility = null)
+    public function __construct(private readonly OpportunityPlanEligibility $eligibility)
     {
     }
 
@@ -280,7 +280,7 @@ class InitialBusinessSnapshotBuilder
         // Plan entitlement: Google Business Profile management is not part of every
         // plan, so the missing URL is only a recommendation where it is included.
         // (The URL itself stays an optional business-profile field everywhere.)
-        if ($facts['gbp_url_blank'] && ($this->eligibility?->isEligible($business, 'missing_gbp_url') ?? true)) {
+        if ($facts['gbp_url_blank'] && ($this->eligibility->isEligible($business, 'missing_gbp_url'))) {
             // The missing field alone is what proves this finding — goal selection
             // may only raise its impact/relevance, never suppress it (AD-006).
             $gbpGoalRelevant = $this->goalsInclude($primaryGoals, [BusinessGoal::LocalSeo, BusinessGoal::Reputation]);

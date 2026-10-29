@@ -285,8 +285,9 @@ class BusinessAdvisorOpportunityProducerTest extends TestCase
     {
         $eligibility = $this->createStub(OpportunityPlanEligibility::class);
         $eligibility->method('ineligibleTypes')->willReturn([]);
+        $eligibility->method('isEligible')->willReturn(true);
 
-        return new BusinessAdvisorOpportunityProducer(new InitialBusinessSnapshotBuilder(), $eligibility);
+        return new BusinessAdvisorOpportunityProducer(new InitialBusinessSnapshotBuilder($eligibility), $eligibility);
     }
 
     /**

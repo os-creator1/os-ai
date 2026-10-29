@@ -18,6 +18,8 @@ use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableException;
 use App\Library\Opportunity\ActionCostEstimate;
 use App\Library\Opportunity\ActionCostEstimator;
+use App\Library\Dashboard\DashboardLinkGate;
+use App\Library\Navigation\MenuEntitlements;
 use App\Library\Opportunity\OpportunityManager;
 use App\Library\Opportunity\OpportunityPlanEligibility;
 use App\Library\Opportunity\OpportunityActionRegistry;
@@ -26,6 +28,7 @@ use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
+use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\OpportunityActionExecutionRepository;
 use App\Repositories\Contracts\OpportunityRepository;
 use Illuminate\Contracts\View\View;
@@ -98,6 +101,8 @@ class OpportunityController extends Controller
         private readonly OpportunityManager $opportunityManager,
         private readonly ActionCostEstimator $costEstimator,
         private readonly OpportunityPlanEligibility $planEligibility,
+        private readonly DashboardLinkGate $links,
+        private readonly BusinessRepository $businessRepository,
     ) {
     }
 
@@ -596,25 +601,46 @@ class OpportunityController extends Controller
     /**
      * @return array{label: string, url: string}|null the customer's own place to make the change, for a
      *                                                recommendation the platform does not execute
+     *
+     * Always for the EXACT Business being viewed, or no link at all. The
+     * profile edit route resolves the signed-in customer's own primary
+     * Business rather than the viewed one, so it is offered only when those
+     * are the same Business and the actor is not viewing as a client. The
+     * locations/services routes carry the viewed Business's own UIDs and go
+     * through DashboardLinkGate (route exists, permission, View As allowlist).
      */
     private function actionDestination(Opportunity $opportunity, Business $business): ?array
     {
         $actionKey = $this->actionKey($opportunity);
         $destination = $actionKey === null ? null : (self::ACTION_DESTINATIONS[$actionKey] ?? null);
+        $context = request()->attributes->get('customerContext');
 
-        if ($destination === null || ! Route::has($destination['route'])) {
+        if ($destination === null || ! $context instanceof CustomerContext || ! $context->isBusinessFrame()) {
             return null;
         }
 
-        $parameters = str_starts_with($destination['route'], 'customer.workspaces.businesses.')
-            ? ['workspaceUid' => (string) $business->workspace?->uid, 'businessUid' => (string) $business->uid]
-            : [];
+        $user = Auth::user();
 
-        if ($parameters !== [] && in_array('', $parameters, true)) {
-            return null;
+        if ($destination['route'] === 'customer.business.edit') {
+            $primary = $this->businessRepository->findPrimaryByCustomer($this->customer()->user_id);
+
+            if ($context->isViewingAsClient() || $primary === null || (int) $primary->id !== (int) $business->id || ! Route::has($destination['route'])) {
+                return null;
+            }
+
+            return ['label' => $destination['label'], 'url' => route($destination['route'])];
         }
 
-        return ['label' => $destination['label'], 'url' => route($destination['route'], $parameters)];
+        $url = $this->links->url(
+            $context,
+            $user,
+            MenuEntitlements::none(),
+            $destination['route'],
+            ['workspaceUid' => (string) $context->selectedBusiness->workspaceUid, 'businessUid' => (string) $context->selectedBusiness->uid],
+            ['access_backend'],
+        );
+
+        return $url === null ? null : ['label' => $destination['label'], 'url' => $url];
     }
 
     private function configuredValue(Opportunity $opportunity): string|int|float|null
