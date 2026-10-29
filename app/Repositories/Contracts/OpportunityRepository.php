@@ -49,6 +49,12 @@ interface OpportunityRepository extends BaseRepository
      */
     public function topForCustomer(Business $business, int $limit): Collection;
 
+    /**
+     * Open optional profile suggestions (OpportunityTypeRegistry), entitled and
+     * current — for a quiet pointer from the Business Profile, never a Home count.
+     */
+    public function optionalSuggestionCountForCustomer(Business $business): int;
+
     public function paginateForAdmin(array $filters): LengthAwarePaginator;
 
     /**

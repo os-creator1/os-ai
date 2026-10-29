@@ -567,9 +567,9 @@ class OpportunityManualStateHttpTest extends TestCase
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertSee('Snooze opportunity');
-        $response->assertSee('Dismiss opportunity');
-        $response->assertDontSee('Reopen opportunity');
+        $response->assertSee('Snooze recommendation');
+        $response->assertSee('Dismiss recommendation');
+        $response->assertDontSee('Reopen recommendation');
     }
 
     public function test_awaiting_approval_shows_snooze_and_dismiss_but_not_reopen(): void
@@ -579,9 +579,9 @@ class OpportunityManualStateHttpTest extends TestCase
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertSee('Snooze opportunity');
-        $response->assertSee('Dismiss opportunity');
-        $response->assertDontSee('Reopen opportunity');
+        $response->assertSee('Snooze recommendation');
+        $response->assertSee('Dismiss recommendation');
+        $response->assertDontSee('Reopen recommendation');
     }
 
     public function test_snoozed_shows_only_reopen(): void
@@ -591,9 +591,9 @@ class OpportunityManualStateHttpTest extends TestCase
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertSee('Reopen opportunity');
-        $response->assertDontSee('Snooze opportunity');
-        $response->assertDontSee('Dismiss opportunity');
+        $response->assertSee('Reopen recommendation');
+        $response->assertDontSee('Snooze recommendation');
+        $response->assertDontSee('Dismiss recommendation');
     }
 
     public function test_dismissed_shows_only_reopen(): void
@@ -603,9 +603,9 @@ class OpportunityManualStateHttpTest extends TestCase
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertSee('Reopen opportunity');
-        $response->assertDontSee('Snooze opportunity');
-        $response->assertDontSee('Dismiss opportunity');
+        $response->assertSee('Reopen recommendation');
+        $response->assertDontSee('Snooze recommendation');
+        $response->assertDontSee('Dismiss recommendation');
     }
 
     public function test_completed_shows_only_reopen(): void
@@ -615,9 +615,9 @@ class OpportunityManualStateHttpTest extends TestCase
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertSee('Reopen opportunity');
-        $response->assertDontSee('Snooze opportunity');
-        $response->assertDontSee('Dismiss opportunity');
+        $response->assertSee('Reopen recommendation');
+        $response->assertDontSee('Snooze recommendation');
+        $response->assertDontSee('Dismiss recommendation');
     }
 
     public function test_in_progress_shows_no_manual_state_forms(): void
@@ -627,9 +627,9 @@ class OpportunityManualStateHttpTest extends TestCase
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertDontSee('Snooze opportunity');
-        $response->assertDontSee('Dismiss opportunity');
-        $response->assertDontSee('Reopen opportunity');
+        $response->assertDontSee('Snooze recommendation');
+        $response->assertDontSee('Dismiss recommendation');
+        $response->assertDontSee('Reopen recommendation');
     }
 
     // -----------------------------------------------------------------

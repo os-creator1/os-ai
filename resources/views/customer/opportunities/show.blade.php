@@ -1,17 +1,17 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', 'Opportunity details')
+@section('title', 'Recommendation')
 
 @section('content')
     <section id="opportunities-show">
         <div class="row">
             <div class="col-12 mb-1">
                 <x-button variant="secondary" size="sm" :href="route('customer.opportunities.index')">
-                    &larr; Back to opportunities
+                    &larr; Back to recommendations
                 </x-button>
             </div>
 
-            <div class="col-12">
+            <div class="col-12 col-lg-8">
                 @if (session('status') === 'success')
                     <x-alert :dismissible="true" variant="success" role="status" data-role="flash-message">{{ session('message') }}</x-alert>
                 @endif
@@ -26,98 +26,45 @@
                     </x-alert>
                 @endif
 
-                <x-card :title="$opportunity->title">
-                        <p>{{ $opportunity->summary }}</p>
-
-                        <div class="row mb-2">
-                            <div class="col-md-3">
-                                <strong>Status</strong>
-                                <div>
-                                    <x-badge variant="accent">
-                                        {{ ucwords(str_replace('_', ' ', $opportunity->status->value)) }}
-                                    </x-badge>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <strong>Freshness</strong>
-                                <div>
-                                    <x-badge :variant="$opportunity->freshness->value === 'current' ? 'success' : 'warning'">
-                                        {{ ucfirst($opportunity->freshness->value) }}
-                                    </x-badge>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <strong>First detected</strong>
-                                <div>{{ optional($opportunity->first_detected_at)->format('M j, Y g:ia') ?? '—' }}</div>
-                            </div>
-                            <div class="col-md-3">
-                                <strong>Last scored</strong>
-                                <div>{{ optional($opportunity->scored_at)->format('M j, Y g:ia') ?? '—' }}</div>
-                            </div>
+                <x-card>
+                        <div class="d-flex flex-wrap align-items-center gap-1 mb-1" data-role="recommendation-labels">
+                            @if ($isOptional)
+                                <x-badge variant="secondary">Optional improvement</x-badge>
+                            @endif
+                            @if ($opportunity->status->value !== 'open')
+                                <x-badge variant="accent">{{ ['open' => 'Open', 'awaiting_approval' => 'Waiting for your approval', 'in_progress' => 'In progress', 'snoozed' => 'Snoozed', 'dismissed' => 'Dismissed', 'completed' => 'Done'][$opportunity->status->value] ?? ucwords(str_replace('_', ' ', $opportunity->status->value)) }}</x-badge>
+                            @endif
                         </div>
 
-                        @if ($opportunity->snoozed_until || $opportunity->dismissed_at || $opportunity->completed_at)
-                            <div class="row mb-2">
-                                @if ($opportunity->snoozed_until)
-                                    <div class="col-md-4">
-                                        <strong>Snoozed until</strong>
-                                        <div>{{ $opportunity->snoozed_until->format('M j, Y g:ia') }}</div>
-                                    </div>
-                                @endif
-                                @if ($opportunity->dismissed_at)
-                                    <div class="col-md-4">
-                                        <strong>Dismissed</strong>
-                                        <div>{{ $opportunity->dismissed_at->format('M j, Y g:ia') }}</div>
-                                    </div>
-                                @endif
-                                @if ($opportunity->completed_at)
-                                    <div class="col-md-4">
-                                        <strong>Completed</strong>
-                                        <div>{{ $opportunity->completed_at->format('M j, Y g:ia') }}</div>
-                                    </div>
+                        <h2 class="h3 mb-1" data-role="recommendation-title">{{ $customerTitle }}</h2>
+                        <p class="mb-2">{{ $customerSummary }}</p>
+
+                        @if ($opportunity->snoozed_until)
+                            <p class="text-muted small">Snoozed until {{ $opportunity->snoozed_until->format('M j, Y') }}.</p>
+                        @endif
+                        @if ($opportunity->completed_at)
+                            <p class="text-muted small">Done {{ $opportunity->completed_at->format('M j, Y') }}.</p>
+                        @endif
+
+                        @if ($actionLabel !== null)
+                            <div class="mb-2" data-role="next-step">
+                                <h3 class="h6 text-muted mb-25">Next step</h3>
+                                <p class="mb-1">{{ $actionLabel }}</p>
+                                @if ($actionDestination !== null && ! $canConfigureAction)
+                                    <a href="{{ $actionDestination['url'] }}" class="btn btn-primary" data-role="primary-cta">{{ $actionDestination['label'] }}</a>
                                 @endif
                             </div>
                         @endif
 
-                        <hr>
-
-                        <h5>Supporting evidence</h5>
-                        @if (empty($evidence))
-                            <p class="text-muted">No supporting evidence is available.</p>
-                        @else
-                            <ul>
-                                @foreach ($evidence as $item)
-                                    <li>
-                                        {{ $item['summary'] }}
-                                        @if ($item['retrieved_at'])
-                                            <span class="text-muted">({{ $item['retrieved_at'] }})</span>
-                                        @endif
-                                    </li>
-                                @endforeach
-                            </ul>
+                        @if ($isOptional)
+                            <p class="text-muted small mb-2" data-role="optional-note">Optional improvement &mdash; this does not affect your CRM setup.</p>
                         @endif
 
-                        <hr>
-
-                        @if ($actionLabel !== null)
-                            <h5>Recommended action</h5>
-                            <p class="mb-1">{{ $actionLabel }}</p>
-                            @if ($actionDestination !== null && ! $canConfigureAction)
-                                <p class="mb-1 text-muted">This is a recommendation only. We won't make this change for you.</p>
-                                <p class="mb-1"><a href="{{ $actionDestination['url'] }}" class="btn btn-sm btn-outline-primary">{{ $actionDestination['label'] }}</a></p>
-                            @endif
-                        @else
-                            <h5>Recommended action</h5>
-                            <p class="mb-1 text-muted">There is no action to take for this recommendation yet.</p>
-                        @endif
                         @if ($configuredValue !== null)
-                            <p class="mb-1"><strong>Configured value:</strong> {{ $configuredValue }}</p>
+                            <p class="mb-1"><strong>Saved value:</strong> {{ $configuredValue }}</p>
                         @endif
-                        <p class="mb-0"><strong>Completion policy:</strong> {{ $completionPolicyLabel }}</p>
 
                         @if ($opportunity->status->value === 'open' && $canConfigureAction)
-                            <hr>
-
                             <form method="POST" action="{{ route('customer.opportunities.configure-action', $opportunity->id) }}" class="mb-2">
                                 @csrf
                                 <div class="d-flex flex-wrap gap-1 align-items-end">
@@ -142,28 +89,28 @@
                              (add_phone included) and for every action with no configured
                              price, never a fabricated free estimate. --}}
                         @if ($costEstimate !== null)
-                            <hr>
-
-                            <h5>Estimated cost</h5>
-                            <p class="mb-1"><strong>Payer:</strong> {{ ucfirst(str_replace('_', ' ', $costEstimate['payerType'])) }}</p>
-                            @if ($costEstimate['formattedAmount'] !== null)
-                                <p class="mb-1">
-                                    <strong>Estimated amount:</strong>
-                                    up to {{ $costEstimate['formattedAmount'] }}
-                                </p>
-                            @endif
-                            @if ($costEstimate['unitCount'] !== null)
-                                <p class="mb-1">
-                                    <strong>Units:</strong>
-                                    up to {{ number_format($costEstimate['unitCount']) }} {{ $costEstimate['unitKind'] }}
-                                </p>
-                            @endif
-                            <p class="mb-1"><strong>Basis:</strong> {{ $costEstimate['basis'] === 'exact' ? 'Exact' : 'Upper bound' }}</p>
-                            @if (! $costEstimate['walletSufficient'])
-                                <x-alert variant="warning" class="mb-1">
-                                    The payer's wallet does not currently have enough funds to cover this action.
-                                </x-alert>
-                            @endif
+                            <div class="mb-2">
+                                <h3 class="h6 text-muted mb-25">Estimated cost</h3>
+                                <p class="mb-1"><strong>Payer:</strong> {{ ucfirst(str_replace('_', ' ', $costEstimate['payerType'])) }}</p>
+                                @if ($costEstimate['formattedAmount'] !== null)
+                                    <p class="mb-1">
+                                        <strong>Estimated amount:</strong>
+                                        up to {{ $costEstimate['formattedAmount'] }}
+                                    </p>
+                                @endif
+                                @if ($costEstimate['unitCount'] !== null)
+                                    <p class="mb-1">
+                                        <strong>Units:</strong>
+                                        up to {{ number_format($costEstimate['unitCount']) }} {{ $costEstimate['unitKind'] }}
+                                    </p>
+                                @endif
+                                <p class="mb-1"><strong>Basis:</strong> {{ $costEstimate['basis'] === 'exact' ? 'Exact' : 'Upper bound' }}</p>
+                                @if (! $costEstimate['walletSufficient'])
+                                    <x-alert variant="warning" class="mb-1">
+                                        The payer's wallet does not currently have enough funds to cover this action.
+                                    </x-alert>
+                                @endif
+                            </div>
                         @endif
 
                         @if ($opportunity->status->value === 'open' && $configuredValue !== null)
@@ -181,83 +128,77 @@
                             </form>
                         @endif
 
+                        @if (! empty($evidence))
+                            <details class="mb-2">
+                                <summary class="text-muted small">Why we suggest this</summary>
+                                <ul class="mt-1 mb-0">
+                                    @foreach ($evidence as $item)
+                                        <li>{{ $item['summary'] }}</li>
+                                    @endforeach
+                                </ul>
+                            </details>
+                        @endif
+
                         @if (in_array($opportunity->status->value, ['open', 'awaiting_approval'], true))
-                            <hr>
+                            <div class="d-flex flex-wrap align-items-center gap-2 border-top pt-1" data-role="secondary-actions">
+                                <form method="POST" action="{{ route('customer.opportunities.dismiss', $opportunity->id) }}">
+                                    @csrf
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Removes this from your recommendations. It stays in your history.">Dismiss recommendation</button>
+                                </form>
 
-                            <form method="POST" action="{{ route('customer.opportunities.snooze', $opportunity->id) }}" class="mb-2">
-                                @csrf
-                                <div class="d-flex flex-wrap gap-1 align-items-end">
-                                    <div style="max-width: 200px;">
-                                        <x-select
-                                            name="duration"
-                                            label="Snooze for"
-                                            :options="['1_day' => '1 day', '3_days' => '3 days', '1_week' => '1 week']"
-                                            :selected="old('duration')"
-                                        />
-                                    </div>
-                                    <x-button variant="secondary" type="submit">Snooze opportunity</x-button>
-                                </div>
-                            </form>
-
-                            <form method="POST" action="{{ route('customer.opportunities.dismiss', $opportunity->id) }}" class="mb-2">
-                                @csrf
-                                <p class="text-muted small mb-1">Dismissing removes this opportunity from your actionable queue.</p>
-                                <button type="submit" class="btn btn-outline-danger">Dismiss opportunity</button>
-                            </form>
+                                <details>
+                                    <summary class="text-muted small">More options</summary>
+                                    <form method="POST" action="{{ route('customer.opportunities.snooze', $opportunity->id) }}" class="mt-1">
+                                        @csrf
+                                        <div class="d-flex flex-wrap gap-1 align-items-end">
+                                            <div style="max-width: 200px;">
+                                                <x-select
+                                                    name="duration"
+                                                    label="Remind me in"
+                                                    :options="['1_day' => '1 day', '3_days' => '3 days', '1_week' => '1 week']"
+                                                    :selected="old('duration')"
+                                                />
+                                            </div>
+                                            <x-button variant="secondary" type="submit">Snooze recommendation</x-button>
+                                        </div>
+                                    </form>
+                                </details>
+                            </div>
                         @endif
 
                         @if (in_array($opportunity->status->value, ['snoozed', 'dismissed', 'completed'], true))
-                            <hr>
-
-                            <form method="POST" action="{{ route('customer.opportunities.reopen', $opportunity->id) }}" class="mb-2">
+                            <form method="POST" action="{{ route('customer.opportunities.reopen', $opportunity->id) }}" class="border-top pt-1">
                                 @csrf
-                                <x-button variant="outline">Reopen opportunity</x-button>
+                                <x-button variant="outline">Reopen recommendation</x-button>
                             </form>
                         @endif
 
-                        <hr>
+                        @if ($execution !== null)
+                            <div class="border-top pt-1 mt-2" data-role="activity">
+                                <h3 class="h6 text-muted mb-25">Activity</h3>
+                                @if (in_array($execution['status'], ['pending', 'running'], true))
+                                    <p id="execution-status-text" role="status" aria-live="polite" class="mb-1">
+                                        This action is currently {{ $execution['status'] === 'pending' ? 'queued' : 'in progress' }}.
+                                    </p>
 
-                        <h5>Latest execution</h5>
-                        @if ($execution === null)
-                            <p class="text-muted mb-0">No execution has been started for this opportunity yet.</p>
-                        @else
-                            @if (in_array($execution['status'], ['pending', 'running'], true))
-                                <p id="execution-status-text" role="status" aria-live="polite" class="mb-1">
-                                    This action is currently {{ $execution['status'] === 'pending' ? 'queued' : 'in progress' }}.
-                                </p>
-
-                                @if ($shouldPollExecution)
+                                    @if ($shouldPollExecution)
+                                        <p class="mb-1">
+                                            <a href="{{ route('customer.opportunities.show', $opportunity->id) }}">Refresh status</a>
+                                        </p>
+                                    @endif
+                                @else
                                     <p class="mb-1">
-                                        <a href="{{ route('customer.opportunities.show', $opportunity->id) }}">Refresh status</a>
+                                        <strong>Status:</strong> {{ ucfirst($execution['status']) }}
+                                        (attempt {{ $execution['attempt_number'] }})
                                     </p>
                                 @endif
-                            @else
-                                <p class="mb-1">
-                                    <strong>Status:</strong> {{ ucfirst($execution['status']) }}
-                                    (attempt {{ $execution['attempt_number'] }})
-                                </p>
-                            @endif
 
-                            @if ($execution['safe_result_summary'])
-                                <p class="mb-1 text-success">{{ $execution['safe_result_summary'] }}</p>
-                            @endif
-
-                            @if ($execution['safe_error_summary'])
-                                <p class="mb-1 text-danger">{{ $execution['safe_error_summary'] }}</p>
-                            @endif
-
-                            <div class="row">
-                                @if ($execution['started_at'])
-                                    <div class="col-md-6">
-                                        <strong>Started</strong>
-                                        <div>{{ $execution['started_at']->format('M j, Y g:ia') }}</div>
-                                    </div>
+                                @if ($execution['safe_result_summary'])
+                                    <p class="mb-1 text-success">{{ $execution['safe_result_summary'] }}</p>
                                 @endif
-                                @if ($execution['completed_at'])
-                                    <div class="col-md-6">
-                                        <strong>Completed</strong>
-                                        <div>{{ $execution['completed_at']->format('M j, Y g:ia') }}</div>
-                                    </div>
+
+                                @if ($execution['safe_error_summary'])
+                                    <p class="mb-1 text-danger">{{ $execution['safe_error_summary'] }}</p>
                                 @endif
                             </div>
                         @endif

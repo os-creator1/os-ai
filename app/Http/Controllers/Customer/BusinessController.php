@@ -8,10 +8,12 @@ use App\Http\Requests\Business\UpdateBusinessRequest;
 use App\Library\Business\BusinessManager;
 use App\Models\Customer;
 use App\Repositories\Contracts\BusinessRepository;
+use App\Repositories\Contracts\OpportunityRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 
 class BusinessController extends CustomerBaseController
@@ -19,6 +21,7 @@ class BusinessController extends CustomerBaseController
     public function __construct(
         private readonly BusinessManager $businessManager,
         private readonly BusinessRepository $businessRepository,
+        private readonly OpportunityRepository $opportunityRepository,
     ) {
     }
 
@@ -33,7 +36,13 @@ class BusinessController extends CustomerBaseController
             return redirect()->route('customer.onboarding.show');
         }
 
-        return view('customer.business.edit', compact('business'));
+        // A quiet pointer to optional profile suggestions (e.g. social links) — the only
+        // place besides the Recommendations list they surface; never a Home item.
+        $optionalSuggestionCount = config('opportunity.enabled', false) && Gate::allows('business_advisor')
+            ? $this->opportunityRepository->optionalSuggestionCountForCustomer($business)
+            : 0;
+
+        return view('customer.business.edit', compact('business', 'optionalSuggestionCount'));
     }
 
     public function update(UpdateBusinessRequest $request): RedirectResponse

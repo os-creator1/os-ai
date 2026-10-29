@@ -22,6 +22,7 @@ use App\Library\Dashboard\DashboardLinkGate;
 use App\Library\Navigation\MenuEntitlements;
 use App\Library\Opportunity\OpportunityManager;
 use App\Library\Opportunity\OpportunityPlanEligibility;
+use App\Library\Opportunity\OpportunityTypeRegistry;
 use App\Library\Opportunity\OpportunityActionRegistry;
 use App\Library\Navigation\CustomerContext;
 use App\Models\Business;
@@ -65,6 +66,21 @@ class OpportunityController extends Controller
         'add_gbp_url' => 'Add your Google Business Profile URL',
         'add_facebook_url' => 'Add your Facebook page URL',
         'add_instagram_url' => 'Add your Instagram profile URL',
+    ];
+
+    /**
+     * Plain-language copy for the optional profile suggestions; every other
+     * type keeps its registry title/summary.
+     */
+    private const CUSTOMER_COPY = [
+        'missing_facebook_url' => [
+            'title' => 'Add your Facebook page',
+            'summary' => 'Make it easier for customers to find and recognize your business by linking your Facebook page.',
+        ],
+        'missing_instagram_url' => [
+            'title' => 'Add your Instagram profile',
+            'summary' => 'Make it easier for customers to find and recognize your business by linking your Instagram profile.',
+        ],
     ];
 
     /**
@@ -129,10 +145,12 @@ class OpportunityController extends Controller
             $filters['freshness'] = $selectedFreshness;
         }
 
-        $opportunities = $this->opportunityRepository->paginateForCustomer($business, $filters);
+        $opportunities = $this->opportunityRepository->paginateForCustomer($business, $filters + ['suggestions' => 'exclude']);
+        $optionalSuggestions = $this->opportunityRepository->paginateForCustomer($business, $filters + ['suggestions' => 'only']);
 
         return view('customer.opportunities.index', [
             'opportunities' => $opportunities,
+            'optionalSuggestions' => $optionalSuggestions->items(),
             'selectedStatus' => $selectedStatus,
             'selectedFreshness' => $selectedFreshness,
         ]);
@@ -156,6 +174,9 @@ class OpportunityController extends Controller
             'opportunity' => $ownedOpportunity,
             'evidence' => $this->safeEvidence($ownedOpportunity),
             'actionLabel' => $this->actionLabel($ownedOpportunity),
+            'isOptional' => OpportunityTypeRegistry::isOptionalProfileSuggestion($ownedOpportunity->type),
+            'customerTitle' => self::CUSTOMER_COPY[$ownedOpportunity->type]['title'] ?? $ownedOpportunity->title,
+            'customerSummary' => self::CUSTOMER_COPY[$ownedOpportunity->type]['summary'] ?? $ownedOpportunity->summary,
             'actionDestination' => $this->actionDestination($ownedOpportunity, $business),
             'configuredValue' => $this->configuredValue($ownedOpportunity),
             'completionPolicyLabel' => $this->completionPolicyLabel($ownedOpportunity),

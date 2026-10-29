@@ -55,6 +55,13 @@
             </x-alert>
         @endif
 
+        @if (($optionalSuggestionCount ?? 0) > 0)
+            <x-alert variant="info" data-role="optional-suggestions">
+                {{ $optionalSuggestionCount === 1 ? '1 optional improvement is' : $optionalSuggestionCount . ' optional improvements are' }} available for your profile.
+                <a href="{{ route('customer.opportunities.index') }}#optional-improvements">See recommendations</a>
+            </x-alert>
+        @endif
+
         <div class="sr-grid-main">
             <div class="sr-card">
                 <form method="POST" action="{{ route('customer.business.update') }}">

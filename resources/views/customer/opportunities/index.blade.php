@@ -39,7 +39,7 @@
                         </form>
 
                         @if ($opportunities->isEmpty())
-                            <x-empty-state title="No opportunities are available right now." />
+                            <x-empty-state title="No recommendations right now." />
                         @else
                             <x-table :headers="['Title', 'Status', 'Freshness', 'First detected', '']">
                                     @foreach ($opportunities as $opportunity)
@@ -70,6 +70,20 @@
                             </div>
                         @endif
                 </x-card>
+
+                @if (! empty($optionalSuggestions))
+                    <x-card title="Optional improvements" id="optional-improvements">
+                        <p class="text-muted small">Nice-to-have profile details. These don't affect how your business operates.</p>
+                        <ul class="list-unstyled mb-0">
+                            @foreach ($optionalSuggestions as $suggestion)
+                                <li class="d-flex justify-content-between align-items-center py-50 border-top">
+                                    <span>{{ $suggestion->title }}</span>
+                                    <x-button variant="outline" size="sm" :href="route('customer.opportunities.show', $suggestion->id)">View</x-button>
+                                </li>
+                            @endforeach
+                        </ul>
+                    </x-card>
+                @endif
             </div>
         </div>
     </section>
