@@ -63,12 +63,23 @@ final class GrowthOpportunityReader
 
     private const CAP = 300;
 
+    public function __construct(private readonly GrowthOpportunityEligibility $eligibility)
+    {
+    }
+
     public function base(Business $business, GrowthViewer $viewer): Builder
     {
+        // Live plan entitlement: stored rows of a domain the plan no longer
+        // includes stay in history but are never listed, counted or opened.
+        $types = array_values(array_diff(
+            array_keys(GrowthRuleRegistry::all()),
+            $this->eligibility->ineligibleTypes($business),
+        ));
+
         $query = Opportunity::query()
             ->where('business_id', $business->id)
             ->whereIn('worker_key', GrowthRuleRegistry::workerKeys())
-            ->whereIn('type', array_keys(GrowthRuleRegistry::all()));
+            ->whereIn('type', $types === [] ? ['__none__'] : $types);
 
         if (! $viewer->fullAccess) {
             // Ad spend and cost figures are Business-wide money data: a Location-restricted actor never sees them.

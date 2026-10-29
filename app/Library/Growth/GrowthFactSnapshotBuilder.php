@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Library\Growth;
 
 use App\Enums\Growth\GrowthFactStatus;
+use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Growth\Readers\GrowthAdsFactReader;
 use App\Library\Growth\Readers\GrowthAutomationFactReader;
@@ -66,6 +67,28 @@ class GrowthFactSnapshotBuilder
             // No reader exists for these: reported Unavailable, never zero.
             new GrowthUnavailableFactReader('search_console'),
         ];
+    }
+
+    /**
+     * The canonical domain => entitlement requirement the evaluation itself
+     * applies, exposed so stored Opportunities are filtered by the very same
+     * rule. `feature` null = no entitlement beyond the Growth Center;
+     * `unavailable` = a domain with no reader at all.
+     *
+     * @return array<string, array{feature: ?PlatformFeature, unavailable: bool}>
+     */
+    public function domainRequirements(): array
+    {
+        $requirements = [];
+
+        foreach ($this->readers as $reader) {
+            $requirements[$reader->domain()] = [
+                'feature' => $reader->feature(),
+                'unavailable' => $reader instanceof GrowthUnavailableFactReader,
+            ];
+        }
+
+        return $requirements;
     }
 
     public function build(Business $business, ?CarbonImmutable $now = null): GrowthFactSnapshot

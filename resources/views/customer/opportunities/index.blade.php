@@ -1,12 +1,12 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', 'Opportunities')
+@section('title', 'Recommendations')
 
 @section('content')
     <section id="opportunities-index">
         <div class="row">
             <div class="col-12">
-                <x-card title="Opportunities">
+                <x-card title="Recommendations">
                         @php
                             $statusOptions = ['' => 'All statuses'];
                             foreach (\App\Enums\Opportunity\OpportunityStatus::cases() as $status) {
