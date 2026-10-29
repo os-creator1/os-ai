@@ -466,13 +466,25 @@ class TextMessagingController extends CustomerBaseController
         $validated['consent_confirmations'] = array_values(array_unique($validated['consent_confirmations'] ?? []));
         $validated['message_purposes'] = $validated['use_case'] === 'low_volume_mixed' ? array_values(array_unique($validated['message_purposes'] ?? [])) : null;
 
-        // Consent attestations were made for the messaging type the
-        // customer had saved; a different type needs them re-confirmed.
+        // Consent attestations are about the opt-in wording on the customer's own
+        // website. Moving to a type that adds promotional messages needs them
+        // re-confirmed (they were made for service messages); moving to a
+        // service-only type keeps the common ticks and drops only the
+        // Low Volume Mixed extras that no longer apply. Nothing is ever ticked for them.
         $existing = $this->registrationFor($business);
         $useCaseChanged = $existing !== null && $existing->use_case !== null && $existing->use_case !== $validated['use_case'];
+        $consentReset = false;
 
         if ($useCaseChanged) {
-            $validated['consent_confirmations'] = [];
+            if (! RegistrationTemplateCatalog::isCareOnly($validated['use_case'])) {
+                $consentReset = $validated['consent_confirmations'] !== [];
+                $validated['consent_confirmations'] = [];
+            } else {
+                $validated['consent_confirmations'] = array_values(array_intersect(
+                    $validated['consent_confirmations'],
+                    array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
+                ));
+            }
         }
         $validated['number_type'] = $numberType->value;
         $validated['country_code'] = 'US';
@@ -485,9 +497,11 @@ class TextMessagingController extends CustomerBaseController
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => $useCaseChanged
-                ? 'Business details saved. You changed the messaging type, so please re-confirm the consent checklist and review your sample messages.'
-                : 'Business details saved.',
+            'message' => match (true) {
+                $consentReset => 'Draft saved. You changed to a messaging type that includes promotions, so the consent checklist was cleared — please re-confirm each item on your website and review your sample messages.',
+                $useCaseChanged => 'Draft saved. You changed the messaging type, so please review your sample messages and campaign description.',
+                default => 'Business details saved.',
+            },
         ]);
     }
 

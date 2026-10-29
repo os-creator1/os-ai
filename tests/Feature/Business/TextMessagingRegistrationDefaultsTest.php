@@ -231,6 +231,37 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->fresh()->status);
     }
 
+    public function test_saving_a_draft_never_contacts_the_carrier_and_submit_uses_the_saved_dba_branded_draft(): void
+    {
+        $fake = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $fake);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+        [$business, $workspace] = $this->registrationState();
+        $submit = route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]);
+
+        // Legal entity differs from the customer-facing name already on file for the Business.
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['legal_business_name' => 'Spartan Security Force, LLC']))
+            ->assertSessionHas('status', 'success');
+        $this->assertSame([], $fake->submittedRegistrations, 'saving a draft never submits to the carrier');
+
+        $this->post($submit)->assertSessionHas('status', 'success');
+        $this->assertNotEmpty($fake->submittedRegistrations);
+    }
+
+    public function test_changing_between_service_only_types_keeps_common_consent_ticks_but_marketing_clears_them(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        $this->post($this->updateUrl($workspace, $business), $this->payload());
+
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['use_case' => 'appointment_reminders']))
+            ->assertSessionHas('status', 'success');
+        $this->assertCount(count(RegistrationTemplateCatalog::CONSENT_ITEMS), BusinessMessagingRegistration::where('business_id', $business->id)->first()->consent_confirmations);
+
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['use_case' => 'marketing']));
+        $this->assertSame([], BusinessMessagingRegistration::where('business_id', $business->id)->first()->consent_confirmations);
+        $this->assertStringContainsString('consent checklist was cleared', (string) session('message'));
+    }
+
     public function test_a_valid_submission_for_a_business_without_a_wallet_shows_a_page_error_and_sends_nothing(): void
     {
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);

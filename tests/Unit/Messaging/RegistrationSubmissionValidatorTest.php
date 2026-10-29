@@ -109,4 +109,30 @@ class RegistrationSubmissionValidatorTest extends TestCase
         $this->assertStringContainsString('mentions promotions', implode(' ', $issues));
         $this->assertStringContainsString('reads as a promotion', implode(' ', $issues));
     }
+
+    public function test_opt_in_screenshot_must_be_a_direct_http_image_link_and_a_web_page_is_refused(): void
+    {
+        foreach (['https://i.imgur.com/AbC123.png', 'https://cdn.example-photo.test/optin.jpg', 'https://example-photo.test/uploads/optin?id=7'] as $ok) {
+            $this->assertSame([], $this->issues($this->registration(['opt_in_image_url' => $ok])), $ok);
+        }
+
+        foreach (['https://imgur.com/gallery/verify-Pq0u7sX#GDFfzGQ', 'https://example-photo.test/optin.html', 'ftp://example-photo.test/optin.png', 'javascript://example.com/%0Aalert(1)', 'not a url', ''] as $bad) {
+            $issues = $this->issues($this->registration(['opt_in_image_url' => $bad]));
+            $this->assertCount(1, $issues, $bad);
+            $this->assertMatchesRegularExpression('/opt-in (form|screenshot)|opens a web page/', $issues[0], $bad);
+        }
+    }
+
+    public function test_toll_free_customer_care_does_not_need_local_10dlc_fields(): void
+    {
+        // No brand vertical, support contact or brand id is required for toll-free.
+        $this->assertSame([], $this->issues($this->registration(['brand_vertical' => null, 'support_contact' => null, 'provider_brand_id' => null])));
+    }
+
+    public function test_each_missing_consent_confirmation_is_named_exactly(): void
+    {
+        $issues = $this->issues($this->registration(['consent_confirmations' => ['public_opt_in_url']]));
+        $this->assertCount(count(RegistrationTemplateCatalog::CONSENT_ITEMS) - 1, $issues);
+        $this->assertContains('Confirm on your website, then check: ' . RegistrationTemplateCatalog::CONSENT_ITEMS['stop_help'] . '.', $issues);
+    }
 }

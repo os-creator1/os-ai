@@ -329,7 +329,7 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                                 @continue($definition['use_case'] === 'mixed' && ! config('messaging.ten_dlc_mixed_enabled') && $useCase !== 'mixed')
                                 @continue($definition['use_case'] === 'low_volume_mixed' && $isTollFreeForm)
                                 <label class="pm-choice" for="use_case_{{ $choice }}">
-                                    <input type="radio" id="use_case_{{ $choice }}" name="use_case" value="{{ $definition['use_case'] }}" data-choice="{{ $choice }}" {{ $useCase === $definition['use_case'] ? 'checked' : '' }} required>
+                                    <input type="radio" id="use_case_{{ $choice }}" name="use_case" value="{{ $definition['use_case'] }}" data-choice="{{ $choice }}" data-care-only="{{ \App\Library\Messaging\Registration\RegistrationTemplateCatalog::isCareOnly($definition['use_case']) ? 1 : 0 }}" {{ $useCase === $definition['use_case'] ? 'checked' : '' }} required>
                                     <span class="pm-choice__title">{{ $definition['label'] }}</span>
                                 </label>
                             @endforeach
@@ -381,7 +381,7 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                                 <label class="required" for="opt_in_image_url">Link to a screenshot of your opt-in form</label>
                                 <input type="url" class="form-control @error('opt_in_image_url') is-invalid @enderror" id="opt_in_image_url" name="opt_in_image_url"
                                        value="{{ old('opt_in_image_url', $registration->opt_in_image_url) }}" maxlength="2083" placeholder="https://… (an image of where customers agree to texts)" required aria-describedby="opt-in-image-help">
-                                <p class="pm-hint" id="opt-in-image-help">The carrier requires an image showing how customers opt in.</p>
+                                <p class="pm-hint" id="opt-in-image-help">The carrier requires an image showing how customers opt in. Use the direct image link (ending in .png or .jpg), not a gallery or viewer page, and make sure it is publicly viewable — we can't check that for you.</p>
                                 @error('opt_in_image_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
                             </div>
                         </div>
@@ -530,6 +530,22 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                                 default => ['pm-sec-business', 'Your business'],
                             };
                         };
+                        $fieldFor = static function (string $issue): ?string {
+                            foreach ([
+                                'Confirm on your website' => 'consent_public_opt_in_url',
+                                'screenshot' => 'opt_in_image_url', 'opt-in screenshot' => 'opt_in_image_url', 'messages per month' => 'message_volume',
+                                'sample message 1' => 'sample_message_1', 'sample message 2' => 'sample_message_2', 'Sample messages 1 and 2' => 'sample_message_1',
+                                'business name in at least' => 'sample_message_1', 'opt-out wording' => 'sample_message_1',
+                                'campaign description' => 'campaign_description', 'message-flow' => 'opt_in_method', 'opt in' => 'opt_in_method',
+                                'Privacy Policy URL' => 'privacy_policy_url', 'SMS Terms URL' => 'terms_url', 'separate pages' => 'terms_url',
+                                'EIN' => 'ein', 'website' => 'website_url', 'state' => 'region', 'ZIP' => 'postal_code', 'street address' => 'address_line_1', 'city' => 'city',
+                                'contact first name' => 'contact_first_name', 'contact last name' => 'contact_last_name', 'contact email' => 'contact_email', 'contact phone' => 'contact_phone',
+                                'support email or phone' => 'support_contact', 'legal business name' => 'legal_business_name',
+                            ] as $needle => $id) {
+                                if (stripos($issue, $needle) !== false) { return $id; }
+                            }
+                            return null;
+                        };
                     @endphp
                     @if(session('registration_blocked'))
                         <div class="sr-callout sr-callout--warn mb-2" role="alert" data-role="submission-blocked">
@@ -543,8 +559,9 @@ $isTollFreeForm = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Toll
                             @foreach($submissionIssues as $issue)
                                 @php
                                     [$anchor, $sectionName] = $sectionFor($issue);
+                                    $fieldId = $fieldFor($issue);
                                 @endphp
-                                <li>{{ $issue }} <a href="#{{ $anchor }}" class="text-nowrap">Go to {{ $sectionName }}</a></li>
+                                <li data-issue-section="{{ $anchor }}">{{ $issue }} <a href="#{{ $fieldId ?? $anchor }}" class="text-nowrap">Go to {{ $sectionName }}@if($fieldId) &rsaquo; field @endif</a></li>
                             @endforeach
                         </ul>
                     </x-alert>
@@ -622,6 +639,7 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
             // Submit sends the last SAVED draft, not unsaved edits: say so when the form has changed.
             $('#registration-form').one('input change', function () {
                 $('.pm-actions__note').append(' <strong class="text-warning" data-role="unsaved-note">Unsaved changes — Save draft before submitting.</strong>');
+                $('#pm-submit button[type="submit"]').prop('disabled', true).attr('title', 'Save draft first: submitting uses your last saved draft.');
             });
             // After a blocked submission, bring the exact reasons into view.
             if ($('[data-role="submission-blocked"]').length) {
@@ -685,7 +703,12 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
                     $('[data-role="suggested-topics"]').prop('hidden', false);
                 }
                 // Attestations were made for the previous messaging type.
-                if ((choice || null) !== lastChoice) { $('input[name="consent_confirmations[]"]').prop('checked', false); }
+                // Consent ticks are cleared only when the new type adds promotions (they were
+                // made for service messages); a service-only type keeps the common ticks.
+                if ((choice || null) !== lastChoice) {
+                    if (String($(this).data('care-only')) === '1') { $('[data-role="low-volume-consent"] input[name="consent_confirmations[]"]').prop('checked', false); }
+                    else { $('input[name="consent_confirmations[]"]').prop('checked', false); }
+                }
                 lastChoice = choice || null;
             });
         });
