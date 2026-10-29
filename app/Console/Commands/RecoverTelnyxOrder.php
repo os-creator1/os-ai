@@ -84,16 +84,17 @@ class RecoverTelnyxOrder extends Command
             $facts = $this->verifyAtTelnyx();
 
             $this->line(sprintf(
-                'Verified at Telnyx: order success; %s active (resource %s) on profile %s; purchased %s; upfront %s + monthly %s %s = reservation #%d.',
+                'Verified at Telnyx: order success; %s active (resource %s) on profile %s; purchased %s; one-time %s + full monthly %s (number + SMS) verified against the billing records and reservation #%d.',
                 $this->t('phone_number'), $this->t('phone_resource_id'), $this->t('messaging_profile_id'),
                 $facts['purchased_at']->toIso8601String(),
-                $this->usd($facts['upfront_micro']), $this->usd($facts['monthly_micro']), 'USD', $this->t('reservation_id'),
+                $this->usd($facts['upfront_micro']), $this->usd($facts['monthly_micro']), $this->t('reservation_id'),
             ));
-            $this->line(sprintf('Next renewal would be %s.', $facts['purchased_at']->copy()->addMonthNoOverflow()->toIso8601String()));
-
-            if ($facts['purchased_at']->copy()->addMonthNoOverflow()->isPast()) {
-                $this->warn('That renewal date is already in the past: the next renewal sweep will bill the rental promptly.');
-            }
+            $this->warn(sprintf(
+                'BILLING DECISION NEEDED (nothing is credited or altered by this command): the wallet was charged %s (reservation #%d) but the carrier has so far billed %s — a difference of %s. Credit, if any, belongs to UsageWalletManager::issueManualCredit() (platform admin, audited, idempotent) once the complete carrier charges and billing policy are confirmed.',
+                $this->usd($facts['wallet_charged_micro'], 5), $this->t('reservation_id'),
+                $this->usd($facts['carrier_charged_micro'], 5), $this->usd($facts['wallet_charged_micro'] - $facts['carrier_charged_micro'], 5),
+            ));
+            $this->line('Renewal: next_renewal_at will be left EMPTY, so no automatic renewal charge is scheduled until the billing decision is made.');
 
             if (! $execute) {
                 $this->info('DRY RUN: no changes written. Re-run with --execute to reconcile.');
@@ -158,7 +159,6 @@ class RecoverTelnyxOrder extends Command
             || $number->number_type !== PhoneNumberType::TollFree
             || ! $number->is_primary
             || $number->activated_at === null
-            || $number->next_renewal_at === null
             || $number->upfront_cost_micro === null
             || $number->monthly_cost_micro === null
             || (int) $number->monthly_cost_micro < 1
@@ -274,7 +274,7 @@ class RecoverTelnyxOrder extends Command
      * GET-only verification of the order, the number resource, the profile
      * and the price. Returns the facts to persist.
      *
-     * @return array{purchased_at: Carbon, upfront_micro: int, monthly_micro: int, stored_monthly_micro: int}
+     * @return array{purchased_at: Carbon, upfront_micro: int, monthly_micro: int, carrier_charged_micro: int, wallet_charged_micro: int}
      */
     private function verifyAtTelnyx(): array
     {
@@ -345,64 +345,182 @@ class RecoverTelnyxOrder extends Command
             throw new \DomainException('Telnyx reports no purchase time, so the original renewal timing cannot be derived.');
         }
 
-        $cost = $this->costFrom([$number['cost_information'] ?? null, $ordered[0]['cost_information'] ?? null, $order['cost_information'] ?? null]);
-
-        // Same shape as the purchase path's quote: the carrier's monthly rental
-        // plus the configured SMS add-on is what renewals are billed from.
-        $storedMonthly = $cost['monthly'] + max(0, (int) config('messaging.number_sms_addon_monthly_cost_micro', 0));
-        $ceiling = (int) config('messaging.number_price_ceiling_micro', 25_000_000);
-
-        if ($cost['upfront'] > $ceiling || $storedMonthly > $ceiling) {
-            throw new \DomainException('The carrier price exceeds the platform price ceiling.');
-        }
-
-        // The charge already taken (reservation #21) was upfront + first month.
-        $reservation = $this->assertReservation(false);
-
-        if ($cost['upfront'] + $storedMonthly !== $reservation['quantity_micro']) {
-            throw new \DomainException(sprintf(
-                'Pricing mismatch: carrier upfront %s + monthly %s does not equal the %s already charged on reservation #%d.',
-                $this->usd($cost['upfront']), $this->usd($storedMonthly), $this->usd($reservation['quantity_micro']), $this->t('reservation_id'),
-            ));
-        }
+        $billing = $this->verifyBilling($purchasedAt, $order['user_id'] ?? ($number['user_id'] ?? null));
 
         return [
             'purchased_at' => $purchasedAt,
-            'upfront_micro' => $cost['upfront'],
-            'monthly_micro' => $storedMonthly,
-            'stored_monthly_micro' => $storedMonthly,
+            'upfront_micro' => $billing['upfront_micro'],
+            'monthly_micro' => $billing['monthly_micro'],
+            'carrier_charged_micro' => $billing['carrier_charged_micro'],
+            'wallet_charged_micro' => $billing['wallet_charged_micro'],
         ];
     }
 
     /**
-     * @param  list<mixed>  $candidates
-     * @return array{upfront: int, monthly: int}
+     * The order and number resources no longer expose cost_information for a
+     * purchased number, so price is verified against Telnyx's own billing
+     * records (GET /charges_breakdown, top-level `results` + `currency`) AND the
+     * committed reservation. Every ambiguity fails closed.
+     *
+     * For the number: exactly one otc/numbers, one partial-mrc/numbers and one
+     * partial-mrc/SMS debit, in USD, inside the purchase month, and nothing
+     * else. The full monthly rental is not read from the carrier (it is only
+     * billed prorated so far): it is the reservation's charge less the verified
+     * one-time fee less the configured SMS add-on, and it is accepted ONLY if
+     * both prorated carrier amounts equal that full rate prorated for the days
+     * left in the purchase month (purchase day included).
+     *
+     * @return array{upfront_micro: int, monthly_micro: int, carrier_charged_micro: int, wallet_charged_micro: int}
      */
-    private function costFrom(array $candidates): array
+    private function verifyBilling(Carbon $purchasedAt, mixed $accountId): array
     {
-        foreach ($candidates as $info) {
-            if (! is_array($info)) {
+        $apiKey = (string) config('services.telnyx.api_key');
+        $monthStart = $purchasedAt->copy()->startOfMonth();
+        $monthEnd = $purchasedAt->copy()->endOfMonth();
+
+        try {
+            $response = Http::withToken($apiKey)->timeout(20)->acceptJson()->get(self::API_BASE . '/charges_breakdown', [
+                'start_date' => $monthStart->toDateString(),
+                'end_date' => $monthEnd->toDateString(),
+            ]);
+        } catch (\Throwable) {
+            throw new \DomainException('Telnyx GET /charges_breakdown did not complete.');
+        }
+
+        $results = $response->json('results');
+
+        if (! $response->successful() || ! is_array($results) || $results === [] || $response->json('currency') !== 'USD') {
+            throw new \DomainException('Pricing cannot be verified: /charges_breakdown returned no usable USD results.');
+        }
+
+        $phone = (string) $this->t('phone_number');
+        $found = [];
+
+        foreach ($results as $row) {
+            if (! is_array($row)) {
                 continue;
             }
 
-            $upfront = $this->micro($info['upfront_cost'] ?? null);
-            $monthly = $this->micro($info['monthly_cost'] ?? null);
+            $rowPhone = $this->field($row, ['phone_number', 'number']);
+            $rowResource = $this->field($row, ['phone_number_id', 'resource_id']);
 
-            if (($info['currency'] ?? null) === 'USD' && $upfront !== null && $monthly !== null && $monthly >= 1) {
-                return ['upfront' => $upfront, 'monthly' => $monthly];
+            $mine = $rowPhone === $phone || ($rowResource !== null && $rowResource === (string) $this->t('phone_resource_id'));
+
+            if (! $mine) {
+                continue;
+            }
+
+            if (($rowPhone !== null && $rowPhone !== $phone) || ($rowResource !== null && $rowResource !== (string) $this->t('phone_resource_id'))) {
+                throw new \DomainException('A billing record names inconsistent number identifiers.');
+            }
+
+            $category = strtolower((string) $this->field($row, ['category', 'charge_category', 'charge_type', 'type']));
+            $service = strtolower((string) $this->field($row, ['service', 'product', 'product_category', 'service_type']));
+            $units = $this->toUnits($row['amount'] ?? $row['cost'] ?? $row['total'] ?? null);
+
+            if ($category === '' || $service === '' || $units === null) {
+                throw new \DomainException('A billing record for the number is missing its category, service or amount.');
+            }
+
+            if ($units >= 0) {
+                throw new \DomainException("Billing record {$category}/{$service} is not a debit; refusing to interpret it.");
+            }
+
+            $rowAccount = $this->field($row, ['user_id', 'account_id']);
+
+            if ($rowAccount !== null && ($accountId === null || (string) $accountId !== $rowAccount)) {
+                throw new \DomainException('A billing record belongs to a different (or unverifiable) Telnyx account.');
+            }
+
+            $rowDate = $this->parseTime($this->field($row, ['date', 'start_date', 'period_start', 'billing_period_start']));
+
+            if ($this->field($row, ['date', 'start_date', 'period_start', 'billing_period_start']) !== null
+                && ($rowDate === null || $rowDate->lt($monthStart) || $rowDate->gt($monthEnd))) {
+                throw new \DomainException('A billing record falls outside the purchase month.');
+            }
+
+            $key = $category . '/' . $service;
+
+            if (isset($found[$key])) {
+                throw new \DomainException("More than one {$key} billing record for the number; ambiguous.");
+            }
+
+            $found[$key] = -$units;
+        }
+
+        $expectedKeys = ['otc/numbers', 'partial-mrc/numbers', 'partial-mrc/sms'];
+
+        if (array_diff_key($found, array_flip($expectedKeys)) !== [] || array_diff($expectedKeys, array_keys($found)) !== []) {
+            throw new \DomainException('Billing records for the number are missing or include unexpected charges: ' . implode(', ', array_keys($found)) . '.');
+        }
+
+        $reservation = $this->assertReservation(false);
+        $upfront = $found['otc/numbers'] * 10;
+        $smsMonthly = max(0, (int) config('messaging.number_sms_addon_monthly_cost_micro', 0));
+        $numberMonthly = $reservation['quantity_micro'] - $upfront - $smsMonthly;
+        $ceiling = (int) config('messaging.number_price_ceiling_micro', 25_000_000);
+
+        if ($upfront < 1 || $smsMonthly < 1 || $numberMonthly < 1 || $upfront > $ceiling || $numberMonthly + $smsMonthly > $ceiling) {
+            throw new \DomainException('Pricing mismatch: the reservation, one-time fee and SMS add-on do not yield a valid monthly rate.');
+        }
+
+        $daysInMonth = (int) $purchasedAt->daysInMonth;
+        $remaining = $daysInMonth - (int) $purchasedAt->day + 1;
+
+        if ($this->prorate($numberMonthly, $remaining, $daysInMonth) !== $found['partial-mrc/numbers']
+            || $this->prorate($smsMonthly, $remaining, $daysInMonth) !== $found['partial-mrc/sms']) {
+            throw new \DomainException(sprintf(
+                'Pricing mismatch: prorated carrier charges (numbers %d, SMS %d) do not match a %s + %s monthly rate for %d of %d days.',
+                $found['partial-mrc/numbers'], $found['partial-mrc/sms'], $this->usd($numberMonthly), $this->usd($smsMonthly), $remaining, $daysInMonth,
+            ));
+        }
+
+        return [
+            'upfront_micro' => $upfront,
+            'monthly_micro' => $numberMonthly + $smsMonthly,
+            'carrier_charged_micro' => ($found['otc/numbers'] + $found['partial-mrc/numbers'] + $found['partial-mrc/sms']) * 10,
+            'wallet_charged_micro' => $reservation['quantity_micro'],
+        ];
+    }
+
+    /** @param list<string> $keys */
+    private function field(array $row, array $keys): ?string
+    {
+        foreach ($keys as $key) {
+            if (isset($row[$key]) && is_scalar($row[$key]) && trim((string) $row[$key]) !== '') {
+                return trim((string) $row[$key]);
             }
         }
 
-        throw new \DomainException('Pricing cannot be verified: Telnyx returned no usable USD cost information. No cost is guessed.');
+        return null;
     }
 
-    private function micro(mixed $value): ?int
+    /** A carrier amount as signed integer units of 0.00001 (the carrier's 5-decimal precision), or null if ambiguous. */
+    private function toUnits(mixed $value): ?int
     {
-        if (! is_string($value) || preg_match('/^\d{1,9}(\.\d{1,6})?$/', trim($value)) !== 1) {
+        if (is_int($value) || is_float($value)) {
+            $value = sprintf('%.6F', $value);
+        }
+
+        if (! is_string($value) || preg_match('/^(-?)(\d{1,9}(?:\.\d{1,6})?)$/', trim($value), $m) !== 1) {
             return null;
         }
 
-        return (int) bcmul(trim($value), '1000000', 0);
+        $scaled = bcmul($m[2], '100000', 6);
+
+        if (! str_ends_with($scaled, '.000000')) {
+            return null;
+        }
+
+        return ($m[1] === '-' ? -1 : 1) * (int) bcmul($m[2], '100000', 0);
+    }
+
+    /** monthly micro x days/daysInMonth, rounded half-up to the carrier's 5-decimal units. */
+    private function prorate(int $monthlyMicro, int $days, int $daysInMonth): int
+    {
+        $exact = bcdiv(bcmul((string) $monthlyMicro, (string) $days, 0), (string) ($daysInMonth * 10), 6);
+
+        return (int) bcadd($exact, '0.5', 0);
     }
 
     private function parseTime(mixed $value): ?Carbon
@@ -418,20 +536,19 @@ class RecoverTelnyxOrder extends Command
         }
     }
 
-    private function usd(int $micro): string
+    private function usd(int $micro, int $decimals = 2): string
     {
-        return '$' . number_format($micro / 1_000_000, 2);
+        return '$' . number_format($micro / 1_000_000, $decimals);
     }
 
     /**
-     * @param  array{purchased_at: Carbon, upfront_micro: int, monthly_micro: int}  $facts
+     * @param  array{purchased_at: Carbon, upfront_micro: int, monthly_micro: int, carrier_charged_micro: int, wallet_charged_micro: int}  $facts
      */
     private function write(BusinessMessagingIdentityResolver $identities, ProvisioningIncidentRecorder $incidents, array $facts): void
     {
         $business = Business::query()->findOrFail($this->t('business_id'));
         $tz = (string) config('app.timezone');
         $activatedAt = $facts['purchased_at']->copy()->setTimezone($tz);
-        $nextRenewalAt = $activatedAt->copy()->addMonthNoOverflow();
 
         $identity = $identities->create($business, $this->t('messaging_profile_id'), null, MessagingProvider::Telnyx, BusinessMessagingIdentityStatus::Active);
         $identity->forceFill(['activated_at' => $activatedAt])->save();
@@ -449,7 +566,10 @@ class RecoverTelnyxOrder extends Command
         // are the original purchase's. Costs mirror the normal purchase path.
         DB::table('business_messaging_numbers')->where('id', $number->id)->update([
             'activated_at' => $activatedAt,
-            'next_renewal_at' => $nextRenewalAt,
+            // Deliberately empty: Telnyx bills recurring charges from the 1st of
+            // the month, and the prepaid-balance discrepancy is unresolved. An
+            // empty value keeps the renewal sweep from charging anything.
+            'next_renewal_at' => null,
             'upfront_cost_micro' => $facts['upfront_micro'],
             'monthly_cost_micro' => $facts['monthly_micro'],
             'cost_currency' => 'USD',
@@ -466,10 +586,11 @@ class RecoverTelnyxOrder extends Command
         }
 
         $note = sprintf(
-            '[recovered by messaging:recover-telnyx-order] Telnyx order %s verified success (GET only); number %s resource %s active on profile %s; purchased %s; upfront %s + monthly rental %s (renewal %s) matches committed wallet reservation #%d (%s) — preserved, no new order/profile/reservation/charge. Identity #%d and number #%d created.',
+            '[recovered by messaging:recover-telnyx-order] Telnyx order %s verified success (GET only); number %s resource %s active on profile %s; purchased %s; upfront %s + full monthly rental %s verified against Telnyx billing records and committed wallet reservation #%d (%s) — preserved, no new order/profile/reservation/charge. Wallet charged %s vs carrier billed so far %s: any credit is a separate, pending billing decision (not applied). next_renewal_at left empty pending that decision. Identity #%d and number #%d created.',
             $this->t('order_id'), $this->t('phone_number'), $this->t('phone_resource_id'), $this->t('messaging_profile_id'),
             $activatedAt->toIso8601String(), $this->usd($facts['upfront_micro']), $this->usd($facts['monthly_micro']),
-            $nextRenewalAt->toIso8601String(), $this->t('reservation_id'), $this->usd($this->t('reservation_amount_micro')),
+            $this->t('reservation_id'), $this->usd($this->t('reservation_amount_micro')),
+            $this->usd($facts['wallet_charged_micro'], 5), $this->usd($facts['carrier_charged_micro'], 5),
             $identity->id, $number->id,
         );
 

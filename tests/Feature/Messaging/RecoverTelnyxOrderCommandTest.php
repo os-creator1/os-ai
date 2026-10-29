@@ -27,7 +27,7 @@ class RecoverTelnyxOrderCommandTest extends TestCase
     private const PHONE = '+18446980765';
     private const RESOURCE = '3081436796672803842';
     private const PROFILE = '4001a187-e7fc-4c18-a518-7d1897b41d7e';
-    private const PURCHASED = '2026-10-01T12:00:00Z';
+    private const PURCHASED = '2026-10-29T12:00:00Z';
 
     private Business $business;
     private int $incidentId;
@@ -90,22 +90,33 @@ class RecoverTelnyxOrderCommandTest extends TestCase
         Schema::enableForeignKeyConstraints();
     }
 
-    /** @param array<string, mixed> $override */
+    /**
+     * The real shape: order/number GETs carry no cost_information, and
+     * /charges_breakdown returns `results` + `currency` at the top level.
+     *
+     * @param array<string, mixed> $override
+     */
     private function fakeTelnyx(array $override = []): void
     {
-        $cost = ['upfront_cost' => '1.00', 'monthly_cost' => '1.00', 'currency' => 'USD'];
-
-        $order = ['id' => self::ORDER, 'status' => 'success', 'user_id' => 'acct-1', 'phone_numbers' => [
+        $order = ['id' => self::ORDER, 'status' => 'success', 'user_id' => 'acct-1', 'cost_information' => null, 'phone_numbers' => [
             ['id' => 'order-phone-uuid', 'phone_number' => self::PHONE, 'status' => 'success'],
         ]];
         $number = ['id' => self::RESOURCE, 'phone_number' => self::PHONE, 'status' => 'active', 'user_id' => 'acct-1',
-            'messaging_profile_id' => self::PROFILE, 'purchased_at' => self::PURCHASED, 'cost_information' => $cost];
+            'messaging_profile_id' => self::PROFILE, 'purchased_at' => self::PURCHASED, 'cost_information' => null];
         $profile = ['id' => self::PROFILE];
+
+        $results = $override['results'] ?? [
+            ['phone_number' => '+15550000000', 'category' => 'otc', 'service' => 'numbers', 'amount' => '-5.00000'],
+            ['phone_number' => self::PHONE, 'category' => 'otc', 'service' => 'numbers', 'amount' => '-1.00000'],
+            ['phone_number' => self::PHONE, 'category' => 'partial-mrc', 'service' => 'numbers', 'amount' => '-0.09677'],
+            ['phone_number' => self::PHONE, 'category' => 'partial-mrc', 'service' => 'SMS', 'amount' => '-0.00968'],
+        ];
 
         Http::fake([
             'api.telnyx.com/v2/number_orders/*' => Http::response(['data' => array_replace($order, $override['order'] ?? [])]),
             'api.telnyx.com/v2/phone_numbers/*' => Http::response(['data' => array_replace($number, $override['number'] ?? [])]),
             'api.telnyx.com/v2/messaging_profiles/*' => Http::response(['data' => $profile]),
+            'api.telnyx.com/v2/charges_breakdown*' => Http::response(['results' => $results, 'currency' => $override['currency'] ?? 'USD']),
         ]);
     }
 
@@ -163,13 +174,15 @@ class RecoverTelnyxOrderCommandTest extends TestCase
 
         $purchased = Carbon::parse(self::PURCHASED);
         $this->assertSame($purchased->getTimestamp(), $number->activated_at->getTimestamp());
-        $this->assertSame($purchased->copy()->addMonthNoOverflow()->getTimestamp(), $number->next_renewal_at->getTimestamp());
+        // No automatic renewal is scheduled until the billing decision is made.
+        $this->assertNull($number->next_renewal_at);
 
         $incident = DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->first();
         $this->assertNotNull($incident->resolved_at);
         $this->assertNull($incident->resolved_by_user_id);
         $this->assertStringContainsString('reservation #21', $incident->resolution_note);
         $this->assertStringContainsString(self::RESOURCE, $incident->resolution_note);
+        $this->assertStringContainsString('$1.10645', $incident->resolution_note);
 
         // Reservation #21 is preserved, and no second one exists.
         $this->assertSame(1, DB::table('business_usage_reservations')->count());
@@ -208,16 +221,55 @@ class RecoverTelnyxOrderCommandTest extends TestCase
         }
     }
 
-    public function test_missing_or_inconsistent_cost_fails_closed(): void
+    public function test_missing_ambiguous_or_inconsistent_billing_records_fail_closed(): void
     {
-        $this->fakeTelnyx(['number' => ['cost_information' => null]]);
-        $this->run_()->assertExitCode(1);
-        $this->assertNothingWritten();
+        $row = fn (string $category, string $service, string $amount, ?string $phone = self::PHONE) => ['phone_number' => $phone, 'category' => $category, 'service' => $service, 'amount' => $amount];
+        $otc = $row('otc', 'numbers', '-1.00000');
+        $mrc = $row('partial-mrc', 'numbers', '-0.09677');
+        $sms = $row('partial-mrc', 'SMS', '-0.00968');
 
-        // Carrier cost that does not add up to what reservation #21 charged.
-        $this->fakeTelnyx(['number' => ['cost_information' => ['upfront_cost' => '1.00', 'monthly_cost' => '2.00', 'currency' => 'USD']]]);
+        foreach ([
+            'no results' => ['results' => []],
+            'missing SMS charge' => ['results' => [$otc, $mrc]],
+            'missing otc' => ['results' => [$mrc, $sms]],
+            'only other numbers' => ['results' => [$row('otc', 'numbers', '-1.00000', '+15550000000')]],
+            'duplicate record' => ['results' => [$otc, $otc, $mrc, $sms]],
+            'extra charge' => ['results' => [$otc, $mrc, $sms, $row('other', 'numbers', '-1.00000')]],
+            'credit instead of debit' => ['results' => [$otc, $mrc, $row('partial-mrc', 'SMS', '0.00968')]],
+            'wrong proration' => ['results' => [$otc, $row('partial-mrc', 'numbers', '-0.50000'), $sms]],
+            'wrong one-time fee' => ['results' => [$row('otc', 'numbers', '-2.00000'), $mrc, $sms]],
+            'wrong currency' => ['currency' => 'EUR'],
+            'other account' => ['results' => [$otc + ['user_id' => 'acct-2'], $mrc, $sms]],
+            'outside purchase month' => ['results' => [$otc + ['date' => '2026-09-15'], $mrc, $sms]],
+            'unreadable amount' => ['results' => [$otc, $mrc, $row('partial-mrc', 'SMS', 'n/a')]],
+        ] as $label => $override) {
+            $this->fakeTelnyx($override);
+            $this->run_()->assertExitCode(1);
+            $this->assertNothingWritten();
+        }
+    }
+
+    public function test_billing_must_agree_with_the_original_reservation(): void
+    {
+        // A reservation that charged more/less than one-time + full month + SMS add-on cannot yield a matching proration.
+        DB::table('business_usage_reservations')->where('id', 21)->update(['final_quantity' => '3.100000', 'estimated_quantity' => '3.100000', 'final_amount_micro' => 2_100_000]);
+        $this->fakeTelnyx();
         $this->run_()->assertExitCode(1);
         $this->assertNothingWritten();
+    }
+
+    public function test_dry_run_reports_the_wallet_versus_carrier_difference_and_never_credits(): void
+    {
+        $this->fakeTelnyx();
+
+        $this->run_(false)
+            ->expectsOutputToContain('$2.10000')
+            ->expectsOutputToContain('$1.10645')
+            ->expectsOutputToContain('$0.99355')
+            ->assertExitCode(0);
+
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->count());
+        $this->assertSame(1, DB::table('business_usage_reservations')->count());
     }
 
     public function test_existing_identity_or_number_collision_aborts_without_writing(): void
