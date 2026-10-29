@@ -351,6 +351,74 @@ class TelnyxProvisioningAdapterTest extends TestCase
             && ! str_contains($request->url(), 'verification_requests'));
     }
 
+    private function tollFreeSubmit(int $status, array|string $body, array $overrides = []): array
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake(['api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response($body, $status, ['x-request-id' => 'req-tf-1'])]);
+
+        $logged = [];
+        \Illuminate\Support\Facades\Log::shouldReceive('warning')->andReturnUsing(function ($message, $context = []) use (&$logged) {
+            $logged[] = [(string) $message, (array) $context];
+        });
+        \Illuminate\Support\Facades\Log::shouldReceive('error', 'info', 'notice', 'debug')->andReturnNull();
+
+        try {
+            $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100', null, $overrides));
+            $caught = null;
+        } catch (\Throwable $e) {
+            $result = null;
+            $caught = $e;
+        }
+
+        return [$caught, $logged, $business, $result];
+    }
+
+    public function test_a_definitive_toll_free_4xx_is_a_provider_rejection_with_a_safe_diagnosable_log_and_no_incident(): void
+    {
+        [$e, $logged, $business] = $this->tollFreeSubmit(422, ['errors' => [['code' => '10015', 'title' => 'Invalid value 12-3456789', 'detail' => 'bad ein', 'source' => ['pointer' => '/doingBusinessAs']]]]);
+
+        $this->assertInstanceOf(\App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::class, $e);
+        $this->assertSame('toll_free', $e->step);
+        $this->assertSame(422, $e->httpStatus);
+        $this->assertSame(['/doingBusinessAs'], $e->rejectedFields);
+        $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->where('business_id', $business->id)->count());
+        $this->assertSame('toll_free', $logged[0][1]['stage']);
+        $this->assertSame(422, $logged[0][1]['http_status']);
+        $this->assertSame(['/doingBusinessAs'], $logged[0][1]['rejected_fields']);
+        $dump = json_encode($logged);
+        foreach (['12-3456789', 'Harbor Lane', '5035550100', '+18005550100', 'Bearer', 'Invalid value', 'bad ein'] as $secret) {
+            $this->assertStringNotContainsString($secret, $dump);
+        }
+    }
+
+    public function test_toll_free_server_errors_conflicts_and_odd_statuses_are_uncertain_and_record_an_incident(): void
+    {
+        foreach ([500, 409, 408, 302] as $status) {
+            [$e, , $business] = $this->tollFreeSubmit($status, '');
+            $this->assertInstanceOf(\App\Library\Messaging\Exceptions\MessagingRegistrationRecoveryRequiredException::class, $e, (string) $status);
+        }
+    }
+
+    public function test_an_invalid_local_preflight_is_distinct_sends_nothing_and_names_only_fields(): void
+    {
+        [$e] = $this->tollFreeSubmit(200, ['data' => ['id' => 'x']], ['messageVolume' => 'lots', 'contactLastName' => '']);
+
+        $this->assertInstanceOf(\App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException::class, $e);
+        $this->assertSame(['message_volume', 'contact_name'], $e->fields);
+        Http::assertNothingSent();
+    }
+
+    public function test_a_successful_toll_free_submission_returns_the_provider_id_without_an_incident(): void
+    {
+        [$e, , $business, $result] = $this->tollFreeSubmit(200, ['data' => ['id' => 'tfv_ok_1']]);
+
+        $this->assertNull($e);
+        $this->assertSame('tfv_ok_1', $result->providerRegistrationId);
+        $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->where('business_id', $business->id)->count());
+    }
+
     public function test_toll_free_payload_carries_the_stated_dba_a_truthful_note_and_no_invented_reseller(): void
     {
         $this->enableProvisioning();

@@ -603,7 +603,34 @@ class TextMessagingController extends CustomerBaseController
                 : 'Registration pricing hasn\'t been set up on our side yet, so this can\'t be submitted right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
         } catch (MessagingInsufficientFundsException $e) {
             return $this->textMessagingError($workspaceUid, $businessUid, $this->fundingRefusalMessage($e, 'to submit this registration'));
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException $e) {
+            // Our own check refused it before any carrier request: nothing was sent or charged.
+            \Illuminate\Support\Facades\Log::warning('Messaging registration preflight refused.', [
+                'business_id' => (int) $business->id,
+                'failed_fields' => $e->fields,
+            ]);
+
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Not submitted — we couldn\'t use these saved details: ' . implode(', ', $e->labels()) . '. Nothing was sent to the carrier and nothing was charged. Correct them, press Save draft, then submit again.');
         } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationProviderException $e) {
+            if ($e->step === \App\Library\Messaging\Exceptions\MessagingRegistrationProviderException::STEP_TOLL_FREE) {
+                // The carrier definitively refused (HTTP 4xx): no verification request exists
+                // and there is no toll-free fee. Status, error codes and rejected field names
+                // are in the sanitized provider log for the operator.
+                \Illuminate\Support\Facades\Log::warning('Messaging registration submission failed.', [
+                    'business_id' => (int) $business->id,
+                    'exception' => $e::class,
+                    'step' => $e->step,
+                    'http_status' => $e->httpStatus,
+                    'rejected_fields' => $e->rejectedFields,
+                ]);
+
+                $ourSide = in_array($e->httpStatus, [401, 403, 404], true);
+
+                return $this->textMessagingError($workspaceUid, $businessUid, $ourSide
+                    ? 'The carrier could not accept this request because of a configuration problem on our side, not with your details. Nothing was charged and your saved details remain. Our team has been alerted; please contact support.'
+                    : 'The carrier did not accept this toll-free verification request, so it was not created. Nothing was charged and your saved details remain. Check your details and opt-in link, press Save draft, and try again; if it keeps happening, contact support and we can see which item the carrier rejected.');
+            }
+
             // The carrier partner refused a step. Operator-only detail (HTTP
             // status, code, rejected field) is already in the sanitized
             // provider log; the customer learns the step, what is saved and
