@@ -3,7 +3,7 @@
     plus a compact summary. Two carrier stages (business verification, messaging
     campaign) come only from saved carrier state (RegistrationProgress); the
     third step is phone-number setup, never another carrier verification.
-    Inputs: $progress, $registration, $phoneNumber, $campaignAssignmentStatus,
+    Inputs: $progress, optional $numberPickerAnchor (in-page link to the number picker), $registration, $phoneNumber, $campaignAssignmentStatus,
     $workspaceUid, $businessUid.
 --}}
 @php
@@ -97,14 +97,14 @@
                         @if(! ($step['role'] === 'brand' && $brandDone))
                             <p class="tm-step__text" data-role="detail-{{ $step['role'] }}">{{ $step['detail'] }}</p>
                         @endif
-                        @if($step['role'] === 'number' && $numberKey === 'ready')
-                            <a class="btn btn-sm btn-primary mt-1" data-role="choose-number" href="{{ route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]) }}">Choose a number</a>
+                        @if($step['role'] === 'number' && $numberKey === 'ready' && ! empty($numberPickerAnchor))
+                            <a class="btn btn-sm btn-primary mt-1" data-role="choose-number" href="{{ $numberPickerAnchor }}">Choose a number</a>
                         @endif
                     </div>
                 </li>
             @endforeach
         </ol>
-        <footer class="tm-card__foot">
+        <div class="tm-card__foot">
             <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.refresh', [$workspaceUid, $businessUid]) }}" class="m-0">
                 @csrf
                 <button type="submit" class="btn btn-sm btn-outline-secondary tm-refresh" data-role="refresh-status"><x-ds-icon name="refresh-cw" size="14" aria-hidden="true" /> Refresh status</button>
@@ -116,7 +116,7 @@
                     Not checked with the carrier yet. We check periodically, and you can refresh at any time.
                 @endif
             </span>
-        </footer>
+        </div>
     </section>
 
     <aside class="tm-card tm-card--summary" aria-labelledby="tm-summary-title">

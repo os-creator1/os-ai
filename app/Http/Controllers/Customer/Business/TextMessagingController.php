@@ -182,6 +182,7 @@ class TextMessagingController extends CustomerBaseController
             // ever gets this one opaque, short-lived, Business-bound token.
             'candidateToken' => $candidate !== null ? CandidateToken::encode($business, $candidate) : null,
             'numberTypeLocked' => $this->hasApprovedLocalRegistration($business) ? PhoneNumberType::Local : null,
+            'registration' => $this->registrationFor($business),
             ...$this->portOutContextFor($business),
         ]);
     }
@@ -888,6 +889,7 @@ class TextMessagingController extends CustomerBaseController
             // number" render: the view hides the toll-free/local choice
             // entirely and shows a verified banner instead.
             'numberTypeLocked' => $numberTypeLocked,
+            'registration' => $situation['registration'] ?? $this->registrationFor($business),
             // Review correction — a Business can land in this "no active
             // number" classification while still retaining a Suspended
             // number (Slice 3's own resolveForBusiness()/resolvePrimaryNumber()

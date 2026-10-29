@@ -7,6 +7,7 @@ use App\Library\Messaging\Registration\RegistrationProgress;
 use App\Models\BusinessMessagingRegistration;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
@@ -21,8 +22,9 @@ class TextMessagingProgressScreenTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
+    use CreatesBusinessTestData;
 
-    private function render(array $state, ?string $phoneNumber = null): string
+    private function render(array $state, ?string $phoneNumber = null, ?string $anchor = null): string
     {
         $registration = (new BusinessMessagingRegistration)->forceFill($state);
 
@@ -31,6 +33,7 @@ class TextMessagingProgressScreenTest extends TestCase
             'registration' => $registration,
             'phoneNumber' => $phoneNumber,
             'campaignAssignmentStatus' => null,
+            'numberPickerAnchor' => $anchor,
             'workspaceUid' => 'w1',
             'businessUid' => 'b1',
         ])->render();
@@ -74,10 +77,10 @@ class TextMessagingProgressScreenTest extends TestCase
 
     public function test_approved_campaign_opens_number_setup_and_never_claims_texting_works(): void
     {
-        $html = $this->render(['status' => 'approved', 'number_type' => 'local', 'provider_brand_id' => 'B1', 'brand_status' => 'verified', 'provider_campaign_id' => 'C1'], null);
+        $html = $this->render(['status' => 'approved', 'number_type' => 'local', 'provider_brand_id' => 'B1', 'brand_status' => 'verified', 'provider_campaign_id' => 'C1'], null, '#choose-number');
 
         $this->assertStringContainsString('Step 3 of 3', $html);
-        $this->assertStringContainsString('data-role="choose-number"', $html);
+        $this->assertStringContainsString('data-role="choose-number" href="#choose-number"', $html);
         $this->assertStringContainsString('Approved', $html);
         $this->assertMatchesRegularExpression('#data-role="can-send"[^>]*>\s*<span class="sr-chip">Not yet#', $html);
 
@@ -131,11 +134,71 @@ class TextMessagingProgressScreenTest extends TestCase
             ->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
         $this->assertStringContainsString('data-role="impersonation-banner"', $html);
-        $this->assertStringContainsString('<strong data-role="impersonation-name">' . e($customer->displayName()) . '</strong>', $html);
+        $this->assertStringContainsString('<strong data-role="impersonation-name">' . e($customer->user->displayName()) . '</strong>', $html);
         $this->assertStringContainsString('Changes you make may apply to their account.', $html);
-        $this->assertMatchesRegularExpression('#<a class="va-bar__exit" href="' . preg_quote(route('logout'), '#') . '"[^>]*>Return to Platform Owner</a>#', $html);
+        $this->assertMatchesRegularExpression('#<form method="POST" action="' . preg_quote(route('logout'), '#') . '"[^>]*>\s*<input type="hidden" name="_token"[^>]*>\s*<button type="submit" class="va-bar__exit"[^>]*>Return to Platform Owner</button>#', $html);
+        $this->assertStringNotContainsString('<a class="va-bar__exit"', $html);
         $this->assertStringNotContainsString('Attention!!', $html);
         $this->assertStringNotContainsString('Lumina Aura', $html);
+    }
+
+    public function test_the_banner_exit_restores_the_platform_owner_session(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $owner = \App\Models\User::create([
+            'first_name' => 'Platform', 'last_name' => 'Owner', 'email' => 'owner' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        $this->authenticateAs($customer);
+
+        $this->withSession(['admin_user_id' => $owner->id, 'admin_user_name' => 'Platform Owner', 'temp_user_id' => $customer->user->id])
+            ->post(route('logout'))
+            ->assertRedirect();
+
+        $this->assertAuthenticatedAs($owner);
+        $this->assertNull(session('admin_user_id'));
+        $this->assertNull(session('temp_user_id'));
+    }
+
+    public function test_the_banner_exit_restores_the_parent_account_session(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $parent = $this->createCustomer()->user;
+        $parent->forceFill(['email_verified_at' => now()])->save();
+        $this->authenticateAs($customer);
+
+        $this->withSession(['parent_user_id' => $parent->id, 'parent_user_name' => $parent->displayName(), 'temp_user_id' => $customer->user->id])
+            ->post(route('logout'))
+            ->assertRedirect(route('user.home'));
+
+        $this->assertAuthenticatedAs($parent);
+        $this->assertNull(session('parent_user_id'));
+        $this->assertNull(session('temp_user_id'));
+    }
+
+    public function test_an_approved_local_registration_without_a_number_shows_step_three_on_the_existing_number_picker(): void
+    {
+        Http::fake();
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        BusinessMessagingRegistration::create(array_merge($this->registrationPayload(), [
+            'business_id' => $business->id, 'number_type' => 'local', 'status' => 'approved', 'approved_at' => now(),
+            'provider_brand_id' => 'B1', 'provider_brand_tcr_id' => 'BBBBBB1', 'brand_status' => 'verified', 'provider_campaign_id' => 'C1',
+        ]));
+        $this->authenticateAs($customer);
+
+        $url = route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]);
+        $html = $this->get($url)->assertOk()->getContent();
+
+        Http::assertNothingSent();
+        $this->assertStringContainsString('Step 3 of 3', $html);
+        $this->assertStringContainsString('data-role="registration-progress"', $html);
+        // The CTA is an in-page anchor to the picker, never a link back to this same page.
+        $this->assertStringContainsString('data-role="choose-number" href="#choose-number"', $html);
+        $this->assertStringNotContainsString('href="' . $url . '"', $html);
+        $this->assertStringContainsString('id="choose-number"', $html);
+        // The existing search form (no purchase) is still the only action offered here.
+        $this->assertStringContainsString(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), $html);
+        $this->assertStringNotContainsString('data-role="verified-banner"', $html);
     }
 
     private function registrationPayload(array $overrides = []): array

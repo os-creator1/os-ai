@@ -1071,7 +1071,8 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
 
         $html = $this->showHtml();
         $this->assertMatchesRegularExpression('#data-role="stage-campaign"\s+data-state="under_review"#', $html);
-        $this->assertStringContainsString('Campaign submitted — awaiting carrier review', $html);
+        $this->assertStringContainsString('In review', $html);
+        $this->assertStringContainsString('Step 2 of 3', $html);
         $this->assertStringNotContainsString('One more step', $html);
         $this->assertStringNotContainsString('data-role="choose-toll-free-instead"', $html);
         $this->assertStringNotContainsString('Nothing has been charged or sent to the carrier yet', $html);
