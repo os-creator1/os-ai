@@ -287,6 +287,12 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'opt_in_method' => str_repeat('d', 501),
         ]))->assertSessionHasErrors(['campaign_description', 'opt_in_method']);
 
+        // Either field alone is enough to be refused, and only that field is reported.
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => str_repeat('e', 501), 'opt_in_method' => str_repeat('b', 500)]))
+            ->assertSessionHasErrors('campaign_description')->assertSessionDoesntHaveErrors('opt_in_method');
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => $at500, 'opt_in_method' => str_repeat('f', 501)]))
+            ->assertSessionHasErrors('opt_in_method')->assertSessionDoesntHaveErrors('campaign_description');
+
         $after = BusinessMessagingRegistration::where('business_id', $business->id)->first();
         $this->assertSame($at500, $after->campaign_description);
         $this->assertSame(str_repeat('b', 500), $after->opt_in_method);
