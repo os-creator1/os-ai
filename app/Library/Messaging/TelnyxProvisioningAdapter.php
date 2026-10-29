@@ -480,12 +480,12 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     }
 
     /**
-     * Re-asks Telnyx for exactly this number immediately before it is paid
-     * for. The order response carries no price, so the only way to know the
-     * customer is charged what they confirmed is to confirm the carrier's
-     * current quote still equals it (filter[phone_number][starts_with] is
-     * a documented search filter). Any mismatch, absence or failure to ask
-     * stops the purchase before funds are reserved.
+     * Confirm the exact selected number and its price against fresh Telnyx
+     * inventory before placing an order. Telnyx's number-pattern filters
+     * match national-number digits: a full E.164 value in starts_with can
+     * yield no results even when the ordinary inventory search offered the
+     * number. Search for the last seven digits instead, then ONLY accept an
+     * exact E.164 match with the same valid quote. Never trust a near match.
      */
     private function assertNumberQuoteStillCurrent(AvailableNumberCandidate $candidate): void
     {
@@ -493,25 +493,41 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             throw new NumberPriceChangedException('We couldn\'t confirm the price of this number. Nothing was charged. Please search again.');
         }
 
+        $digits = preg_replace('/\\D/', '', $candidate->phoneNumber);
+        if (! is_string($digits) || strlen($digits) < 10) {
+            throw new NumberPriceChangedException('We couldn\'t confirm this phone number. Nothing was charged. Please search again.');
+        }
+
         try {
             $response = $this->client()->get(self::API_BASE . '/available_phone_numbers', [
-                'filter[phone_number][starts_with]' => $candidate->providerCandidateReference,
+                'filter[country_code]' => 'US',
                 'filter[phone_number_type]' => $candidate->numberType === PhoneNumberType::TollFree ? 'toll_free' : 'local',
                 'filter[features][]' => 'sms',
-                'filter[limit]' => 5,
+                'filter[phone_number][contains]' => substr($digits, -7),
+                'filter[best_effort]' => false,
+                'filter[limit]' => 100,
             ]);
         } catch (ConnectionException) {
             throw new NumberPriceChangedException('We couldn\'t reach the carrier to confirm this number\'s price. Nothing was charged. Please try again.');
         }
 
+        if (! $response->successful()) {
+            // An API/auth/filter failure is not evidence the number was sold.
+            // Never place an order without a successful, exact quote response.
+            \Illuminate\Support\Facades\Log::warning('Telnyx number quote confirmation lookup failed', [
+                'status' => $response->status(),
+                'number_type' => $candidate->numberType->value,
+            ]);
+            throw new NumberPriceChangedException('The carrier could not confirm this number right now. Nothing was charged. Please try again.');
+        }
+
         $current = null;
 
-        if ($response->successful()) {
-            foreach ((array) $response->json('data', []) as $row) {
-                if (is_array($row) && ($row['phone_number'] ?? null) === $candidate->providerCandidateReference) {
-                    $current = $this->quoteFrom($row);
-                    break;
-                }
+        foreach ((array) $response->json('data', []) as $row) {
+            if (is_array($row) && ($row['phone_number'] ?? null) === $candidate->phoneNumber
+                && $candidate->providerCandidateReference === $candidate->phoneNumber) {
+                $current = $this->quoteFrom($row);
+                break;
             }
         }
 
