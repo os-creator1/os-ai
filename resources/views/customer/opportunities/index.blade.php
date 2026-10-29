@@ -23,15 +23,6 @@
                                 />
                             </div>
 
-                            <div class="col-md-4">
-                                <x-select
-                                    name="freshness"
-                                    label="Freshness"
-                                    :options="['current' => 'Current', 'stale' => 'Stale', 'all' => 'All']"
-                                    :selected="$selectedFreshness"
-                                />
-                            </div>
-
                             <div class="col-md-4 d-flex align-items-end">
                                 <x-button type="submit" class="me-1">Apply Filters</x-button>
                                 <x-button variant="secondary" :href="route('customer.opportunities.index')">Clear Filters</x-button>
@@ -41,18 +32,13 @@
                         @if ($opportunities->isEmpty())
                             <x-empty-state title="No recommendations right now." />
                         @else
-                            <x-table :headers="['Title', 'Status', 'Freshness', 'First detected', '']">
+                            <x-table :headers="['Title', 'Status', 'First detected', '']">
                                     @foreach ($opportunities as $opportunity)
                                         <tr>
                                             <td>{{ $opportunity->title }}</td>
                                             <td>
                                                 <x-badge variant="accent">
                                                     {{ ucwords(str_replace('_', ' ', $opportunity->status->value)) }}
-                                                </x-badge>
-                                            </td>
-                                            <td>
-                                                <x-badge :variant="$opportunity->freshness->value === 'current' ? 'success' : 'warning'">
-                                                    {{ ucfirst($opportunity->freshness->value) }}
                                                 </x-badge>
                                             </td>
                                             <td>{{ optional($opportunity->first_detected_at)->format('M j, Y') }}</td>
