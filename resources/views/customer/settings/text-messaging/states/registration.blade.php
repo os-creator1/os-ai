@@ -11,6 +11,8 @@
     // Once a brand or campaign exists at the carrier, the customer is tracking
     // real progress: no "back to number choices", no "nothing was charged".
     $progressActive = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && $progress['committed'];
+    // Toll-free verification already submitted and waiting on the carrier: the compact review screen.
+    $tollFreeReview = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree && $status === 'pending' && filled($phoneNumber);
     $progressChip = match ($progress['campaign']['key']) {
         'approved' => ['Approved', 'success'],
         'under_review' => ['Carrier review', 'warn'],
@@ -37,9 +39,9 @@
     @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
-        'description' => $progressActive ? $progressDescription : 'One more step before this number is ready to send and receive texts.',
-        'chip' => $progressActive ? $progressChip[0] : null,
-        'chipVariant' => $progressActive ? $progressChip[1] : '',
+        'description' => $tollFreeReview ? 'Your toll-free number is being verified by the carrier. There\'s nothing you need to do right now.' : ($progressActive ? $progressDescription : 'One more step before this number is ready to send and receive texts.'),
+        'chip' => $tollFreeReview ? 'Carrier review' : ($progressActive ? $progressChip[0] : null),
+        'chipVariant' => $tollFreeReview ? 'warn' : ($progressActive ? $progressChip[1] : ''),
     ])
 
     @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && ! $progressActive)
@@ -60,6 +62,9 @@
         </div>
     @endif
 
+    @if($tollFreeReview)
+        @include('customer.settings.text-messaging._tollfree-review', ['registration' => $registration, 'phoneNumber' => $phoneNumber, 'retainedNumbers' => $retainedNumbers, 'portOutRequestsByNumberId' => $portOutRequestsByNumberId])
+    @else
     @php
         $statusChip = match (true) {
             $status === 'approved' => ['Approved', 'success'],
@@ -160,6 +165,7 @@
         @endswitch
     </div>
     @endunless
+    @endif
 
     {{-- PR #295 Correction Round 1, item 8 — once a carrier has approved
          this registration, the normal customer edit form is never shown
@@ -622,7 +628,9 @@ $isLocalRegistration = $formNumberType === \App\Enums\Messaging\PhoneNumberType:
     @endif
 
     <div class="mt-2">
+        @unless($tollFreeReview)
         @include('customer.settings.text-messaging._port-out-card')
+        @endunless
     </div>
 @endsection
 
