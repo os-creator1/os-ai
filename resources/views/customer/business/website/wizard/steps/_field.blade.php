@@ -152,7 +152,28 @@
             @break
 
         @case('string_list')
-            @include('customer.business.website.wizard.steps._string-list', ['entries' => is_array($answer) ? $answer : [], 'fieldName' => $n('value'), 'areaState' => $areaState[$stepKey] ?? null])
+            @php
+                $wantsAreaDetails = (bool) ($step['area_details'] ?? false);
+                // The first 40 gallery photos, PLUS every photo already assigned to an area (however far down the gallery it
+                // is), so a saved selection can never vanish from the panel — or be dropped by the next save.
+                $chosenUids = $wantsAreaDetails ? collect($answers[\App\Library\Website\Setup\ServiceAreaDetails::ANSWER_KEY] ?? [])->flatMap(fn ($d) => (array) ($d['photos'] ?? []))->unique()->values()->all() : [];
+                $galleryQuery = $wantsAreaDetails ? $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::Gallery->value) : null;
+                $galleryTotal = $galleryQuery ? (clone $galleryQuery)->count() : 0;
+                $areaPhotos = $galleryQuery
+                    ? $galleryQuery->orderBy('sort_order')->orderBy('id')->get()
+                        ->values()->filter(fn ($asset, $i) => $i < 40 || in_array($asset->uid, $chosenUids, true))
+                        ->map(fn ($asset) => ['uid' => $asset->uid, 'url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($asset), 'alt' => (string) ($asset->alt_text ?? '')])->values()->all()
+                    : [];
+            @endphp
+            @include('customer.business.website.wizard.steps._string-list', [
+                'entries' => is_array($answer) ? $answer : [],
+                'fieldName' => $n('value'),
+                'areaState' => $areaState[$stepKey] ?? null,
+                'areaDetailsName' => $wantsAreaDetails ? $n('area_details') : null,
+                'areaDetailsSaved' => $wantsAreaDetails ? ($answers[\App\Library\Website\Setup\ServiceAreaDetails::ANSWER_KEY] ?? []) : [],
+                'areaPhotos' => $areaPhotos,
+                'areaPhotoTotal' => $galleryTotal,
+            ])
             @break
 
         @case('repeatable_group')

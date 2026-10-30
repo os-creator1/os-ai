@@ -107,6 +107,9 @@ final class WebsiteSnapshotBuilder
                 'uid' => $page->uid,
                 'slug' => $page->slug,
                 'is_home' => $page->is_home,
+                // The generator's page-intent map (null for a page written before it existed or by the owner).
+                'role' => $page->page_role,
+                'intent' => $page->page_intent,
                 'title' => $page->title,
                 'seo' => [
                     'seo_title' => $page->seo_title,
@@ -154,7 +157,7 @@ final class WebsiteSnapshotBuilder
                 'name' => $website->name,
                 'theme' => $website->theme ?? [],
                 'contact' => $this->chromeContact($business, $this->visibleContactFacts($pageSnapshots)),
-                'localBusiness' => $this->localBusinessFacts($business, $this->visibleContactFacts($pageSnapshots)),
+                'localBusiness' => $this->localBusinessFacts($business, $this->visibleContactFacts($pageSnapshots), $this->visibleServiceAreas($business, $pageSnapshots)),
             ],
             'pages' => $pageSnapshots,
             'assets' => $assets,
@@ -323,10 +326,54 @@ final class WebsiteSnapshotBuilder
      * @param  array{phone: bool, email: bool, address: bool}  $visibleContact
      * @return array{name: ?string, telephone: ?string, email: ?string, address: ?array<string, ?string>, hours: ?array}
      */
-    private function localBusinessFacts(?Business $business, array $visibleContact): array
+    /**
+     * The places the owner confirmed serving (their base city and saved service areas) that THIS site actually names in its
+     * visible copy. Structured data must agree with what visitors can read, so an area nobody can see on the site is not
+     * asserted as coverage, however true it is.
+     *
+     * @param  array<int, array{sections: array<int, array{type: string, data: array}>}>  $pageSnapshots
+     * @return array<int, string>
+     */
+    private function visibleServiceAreas(?Business $business, array $pageSnapshots): array
+    {
+        $location = $business?->primaryLocation;
+
+        if ($location === null) {
+            return [];
+        }
+
+        $places = collect(array_merge([(string) $location->city], (array) ($location->service_area_cities ?? [])))
+            ->map(fn ($entry) => trim((string) \Illuminate\Support\Str::before((string) $entry, ',')))
+            ->filter()
+            ->unique(fn ($place) => mb_strtolower($place))
+            ->values();
+
+        if ($places->isEmpty()) {
+            return [];
+        }
+
+        $visible = [];
+        foreach ($pageSnapshots as $page) {
+            foreach ($page['sections'] as $section) {
+                if ($section['type'] === WebsiteSectionType::ContactDetails->value) {
+                    continue;
+                }
+                array_walk_recursive($section['data'], function ($value, $key) use (&$visible) {
+                    if (is_string($value) && ! in_array($key, ['url', 'image', 'uid', 'catalog_item_uid', 'service_uid', 'form_uid'], true)) {
+                        $visible[] = mb_strtolower($value);
+                    }
+                });
+            }
+        }
+        $haystack = implode(' ', $visible);
+
+        return $places->filter(fn (string $place) => str_contains($haystack, mb_strtolower($place)))->take(20)->values()->all();
+    }
+
+    private function localBusinessFacts(?Business $business, array $visibleContact, array $serviceAreas = []): array
     {
         if ($business === null) {
-            return ['name' => null, 'telephone' => null, 'email' => null, 'address' => null, 'hours' => null];
+            return ['name' => null, 'telephone' => null, 'email' => null, 'address' => null, 'hours' => null, 'areas' => []];
         }
 
         $name = trim((string) $business->name);
@@ -352,6 +399,7 @@ final class WebsiteSnapshotBuilder
             'email' => $visibleContact['email'] ? $email : null,
             'address' => $address,
             'hours' => null,
+            'areas' => $serviceAreas,
         ];
     }
 }

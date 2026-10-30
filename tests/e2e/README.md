@@ -26,3 +26,6 @@ Each script prints PASS/FAIL per check and exits non-zero on any failure.
   strict publish gate → every page of the published `/sites/{id}` site at desktop and phone width (broken image,
   overflow and empty-section checks). `TEMPLATE_KEY=photo_booth_modern|_editorial|_luxury|_conversion` picks the design. Needs a folder of sample photos: `IMG_DIR=/path/to/photos` (default `/tmp/claude-0/imgs`);
   screenshots go to `E2E_SHOTS` (default `/tmp`).
+- `area-details.mjs` — the optional per-area local details in the service-area step: add venues/logistics, upload photos later in
+  the Gallery step, return and pick a photo, Next/Back, reload, reorder and remove (details travel with their row). Re-seed the
+  fixture before each run (the wizard resumes where the previous run stopped). Needs `IMG_DIR` with `event-1.jpg … event-3.jpg` and `bulk-01.jpg … bulk-21.jpg` (any small distinct JPEGs; the wizard caps a gallery at 24 photos).

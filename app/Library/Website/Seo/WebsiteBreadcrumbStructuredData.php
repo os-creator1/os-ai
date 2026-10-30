@@ -24,7 +24,7 @@ use App\Library\Website\Design\WebsiteNavigationBuilder;
 final class WebsiteBreadcrumbStructuredData
 {
     /**
-     * @param  array{uid?: string, slug?: ?string, title: string, is_home?: bool}  $page  the current page
+     * @param  array{uid?: string, slug?: ?string, title: string, is_home?: bool, role?: ?string}  $page  the current page
      * @param  array<int, array{uid?: string, slug?: ?string, title: string, is_home?: bool, url: string}>  $pagesWithUrl  every page of the site, each carrying its public URL
      * @return array<int, array{name: string, url: string}>  empty on the Home page
      */
@@ -51,7 +51,8 @@ final class WebsiteBreadcrumbStructuredData
 
         $trail = [['name' => 'Home', 'url' => (string) $home['url']]];
 
-        $parentSlug = str_starts_with((string) ($page['slug'] ?? ''), 'service-') ? 'services' : null;
+        // Booth pages (by address) and event pages (by stored role) both sit under the Services page.
+        $parentSlug = str_starts_with((string) ($page['slug'] ?? ''), 'service-') || ($page['role'] ?? null) === 'event' ? 'services' : null;
 
         if ($parentSlug !== null && isset($byPath[$parentSlug])) {
             $parent = $byPath[$parentSlug];

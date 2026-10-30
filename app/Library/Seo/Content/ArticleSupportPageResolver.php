@@ -112,7 +112,16 @@ final class ArticleSupportPageResolver
         }
 
         foreach (self::linkable($pages) as $page) {
-            if ($page['kind'] === ArticleSiteInventory::KIND_LOCATION && ($page['slug'] ?? '') === 'serving-' . $slug) {
+            if ($page['kind'] !== ArticleSiteInventory::KIND_LOCATION) {
+                continue;
+            }
+
+            // The place the page is about (its stored intent, else the Business's matching place), then the generator's address.
+            if (($page['place'] ?? null) !== null && Str::slug((string) $page['place']) === $slug) {
+                return $page;
+            }
+
+            if (($page['slug'] ?? '') === 'serving-' . $slug) {
                 return $page;
             }
         }
@@ -133,8 +142,9 @@ final class ArticleSupportPageResolver
                 continue;
             }
 
-            $citySlug = (string) preg_replace('/^serving-/', '', (string) ($page['slug'] ?? ''));
-            $cityWords = trim(str_replace('-', ' ', $citySlug));
+            $cityWords = ($page['place'] ?? null) !== null
+                ? trim(str_replace('-', ' ', Str::slug((string) $page['place'])))
+                : trim(str_replace('-', ' ', (string) preg_replace('/^serving-/', '', (string) ($page['slug'] ?? ''))));
 
             if ($cityWords !== '' && str_contains($text, ' ' . $cityWords . ' ')) {
                 return $page;
@@ -175,7 +185,7 @@ final class ArticleSupportPageResolver
         $word = ' ' . trim(preg_replace('/[^\p{L}\p{N}]+/u', ' ', $hint) ?? $hint) . ' ';
 
         foreach ($pages as $page) {
-            if ($page['kind'] !== ArticleSiteInventory::KIND_SERVICE) {
+            if (! in_array($page['kind'], [ArticleSiteInventory::KIND_SERVICE, ArticleSiteInventory::KIND_EVENT], true)) {
                 continue;
             }
 
@@ -218,7 +228,8 @@ final class ArticleSupportPageResolver
      */
     private function distinguishingServicePage(array $pages, string $loweredText): ?array
     {
-        $services = array_values(array_filter($pages, fn (array $p) => $p['kind'] === ArticleSiteInventory::KIND_SERVICE));
+        // Booth/equipment pages and event pages (wedding, corporate, party) are both named by a word only they carry.
+        $services = array_values(array_filter($pages, fn (array $p) => in_array($p['kind'], [ArticleSiteInventory::KIND_SERVICE, ArticleSiteInventory::KIND_EVENT], true)));
         $wordsByPage = [];
         $count = [];
 

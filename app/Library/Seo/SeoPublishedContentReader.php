@@ -109,6 +109,8 @@ final class SeoPublishedContentReader
                 metaDescription: isset($seo['meta_description']) ? (string) $seo['meta_description'] : null,
                 noindex: (bool) ($seo['noindex'] ?? false),
                 sections: is_array($page['sections'] ?? null) ? $page['sections'] : [],
+                role: isset($page['role']) ? (string) $page['role'] : null,
+                intent: is_array($page['intent'] ?? null) ? $page['intent'] : null,
             );
         }
 

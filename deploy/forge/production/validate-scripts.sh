@@ -176,6 +176,41 @@ expect_refuse "install: refuses when already installed (marker)" "already instal
 rm -f "$FS/storage/app/.platform-installed"
 expect_refuse "install: environment guards run (fake site root is not production)" "environment guards failed" run_ins --check-only
 [ ! -s "$TMP/stub2.log" ] && ok "install refusals never invoked php/artisan" || nok "install invoked php: $(cat "$TMP/stub2.log")"
+
+echo "== post-deploy-check.sh against a stubbed curl (no network)"
+PDC="$HERE/deploy/forge/production/post-deploy-check.sh"
+mkdir -p "$TMP/fakecurl"
+cat > "$TMP/fakecurl/curl" <<'STUB'
+#!/usr/bin/env bash
+# Stub of the few curl shapes post-deploy-check.sh uses. Behaviour is chosen by STUB_* variables.
+url="${*: -1}"; want_code=0; post=0
+for a in "$@"; do [ "$a" = "-w" ] && want_code=1; [ "$a" = "-X" ] && post=1; done
+path="${url#http://}"; path="${path#https://}"; path="/${path#*/}"; [ "$path" = "//" ] && path="/"
+case "$url" in http://*) code=301; body="" ;; *)
+  case "$path" in
+    /) code="${STUB_HOME_CODE:-200}"; body="${STUB_HOME_BODY-<html><body><h1>Run your service business</h1><a href=\"https://getmotiongrove.com/pricing\">Pricing</a></body></html>}" ;;
+    /login) code=200; body="login" ;;
+    /register) code=200; body='<div data-role="signup-closed"></div>' ;;
+    /register/account) code=419; body="" ;;
+    /robots.txt) code="${STUB_ROBOTS_CODE:-200}"; body=$'User-agent: *\nDisallow:\n' ;;
+    /stripe/webhook/*) code=400; body="" ;;
+    /sites/*) code=404; body="" ;;
+    *) code=404; body="Not Found" ;;
+  esac ;;
+esac
+if [ "$want_code" = 1 ]; then printf '%s' "$code"; else printf '%s' "$body"; fi
+STUB
+chmod +x "$TMP/fakecurl/curl"
+pdc() { PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed "$@"; }
+expect_pass "post-deploy: marketing homepage with h1 and pricing link passes" pdc
+expect_refuse "post-deploy: homepage 302 fails when marketing is expected on" "GET / is the marketing homepage (expected 200, got 302)" env STUB_HOME_CODE=302 PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_refuse "post-deploy: a bare 200 page is not accepted (no h1)" "homepage has no <h1>" env STUB_HOME_BODY="<html>parked</html>" PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_refuse "post-deploy: homepage without a pricing link fails" "no link to /pricing" env STUB_HOME_BODY="<h1>Hi</h1>" PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_pass "post-deploy: marketing disabled expects the original 302 to /login" env STUB_HOME_CODE=302 STUB_HOME_BODY="" PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed disabled
+expect_refuse "post-deploy: marketing disabled fails if / still answers 200" "marketing disabled" env PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed disabled
+expect_refuse "post-deploy: robots.txt 404 still fails" "/robots.txt answered 404" env STUB_ROBOTS_CODE=404 PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_refuse "post-deploy: bad third argument" "third argument" env PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed sometimes
+
 echo
 echo "validated: $pass passed, $failn failed"
 exit "$failn"

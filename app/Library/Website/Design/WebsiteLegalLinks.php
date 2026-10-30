@@ -34,13 +34,47 @@ final class WebsiteLegalLinks
 
     /**
      * @param  ?array<string, mixed>  $theme
+     * @param  array<string, string>  $pageUrls  this site's own pages: slug => absolute URL ('' = home), when known
      * @return array{privacy: ?string, terms: ?string}
      */
-    public static function fromTheme(?array $theme): array
+    public static function fromTheme(?array $theme, array $pageUrls = []): array
     {
         return [
-            'privacy' => self::clean($theme['privacy_notice_url'] ?? null),
-            'terms' => self::clean($theme['terms_url'] ?? null),
+            'privacy' => self::ownPage(self::clean($theme['privacy_notice_url'] ?? null), $pageUrls),
+            'terms' => self::ownPage(self::clean($theme['terms_url'] ?? null), $pageUrls),
         ];
+    }
+
+    /**
+     * An address the owner pasted that points at THIS site under an older spelling ("/Terms-Conditions" for the page
+     * "/terms-and-conditions") is linked at the page's real address, so the footer never depends on a redirect and
+     * never links to a missing page. Anything else (another host, an external policy, an unknown path) is untouched.
+     *
+     * @param  array<string, string>  $pageUrls
+     */
+    private static function ownPage(?string $url, array $pageUrls): ?string
+    {
+        if ($url === null || $pageUrls === []) {
+            return $url;
+        }
+
+        $parts = parse_url($url);
+        $path = trim((string) ($parts['path'] ?? ''), '/');
+        $key = \App\Library\Website\Seo\WebsiteRedirectMap::slugKey($path);
+        $host = strtolower((string) ($parts['host'] ?? ''));
+
+        if ($path === '' || $key === '' || str_contains($path, '/')) {
+            return $url;
+        }
+
+        $sameHost = collect($pageUrls)->filter(fn ($pageUrl) => strtolower((string) parse_url((string) $pageUrl, PHP_URL_HOST)) === $host);
+
+        if ($sameHost->isEmpty() || $sameHost->has($path)) {
+            return $url;
+        }
+
+        $matches = $sameHost->filter(fn ($pageUrl, $slug) => (string) $slug !== '' && \App\Library\Website\Seo\WebsiteRedirectMap::slugKey((string) $slug) === $key);
+
+        return $matches->count() === 1 ? (string) $matches->first() : $url;
     }
 }

@@ -27,7 +27,7 @@
             <dt class="col-sm-4">Backdrops</dt>
             <dd class="col-sm-8" data-count="backdrops">{{ $c['backdrops'] }}</dd>
             <dt class="col-sm-4">Service areas</dt>
-            <dd class="col-sm-8">{{ $guidedReview['business']['areas'] }}</dd>
+            <dd class="col-sm-8">{{ $guidedReview['business']['areas'] }} <a class="ms-2" href="{{ $stepUrl('service_area_cities') }}" data-testid="edit-service-areas">Edit</a></dd>
             <dt class="col-sm-4">Uploaded photos</dt>
             <dd class="col-sm-8" data-count="photos">{{ $c['photos'] }}</dd>
             <dt class="col-sm-4">Look</dt>

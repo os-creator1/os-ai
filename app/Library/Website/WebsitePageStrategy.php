@@ -87,6 +87,13 @@ final class WebsitePageStrategy
     public const MAX_AREA_PAGES = 8;
 
     /**
+     * Event-type pages (weddings, corporate events, parties): the searches people make when they are hiring for an occasion.
+     * Planned right after the owner's first booth pages and before Gallery, Backdrops and FAQ — a deterministic, reviewable
+     * rule shown on the Review screen — so a new event page never silently displaces a booth or place page.
+     */
+    public const MAX_EVENT_PAGES = 4;
+
+    /**
      * Website V1 final — budget priority knobs (see planWithExplanation()):
      * the owner's first N services always get a page before FAQ/Gallery/
      * Backdrops, and the top M areas are reserved a slot so neither side
@@ -307,9 +314,9 @@ final class WebsitePageStrategy
      *     (up to MAX_AREA_PAGES), until the budget is full.
      * Nothing is ever dropped silently: every candidate has a decision.
      *
-     * @return array{plan: array<int, array>, decisions: array<int, array{key: string, title: string, type: string, included: bool, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>}, budget: array{max: int, planned: int}}
+     * @return array{plan: array<int, array>, decisions: array<int, array{key: string, title: string, type: string, included: bool, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>, hub: array<int, string>}, budget: array{max: int, planned: int}}
      */
-    public function planWithExplanation(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?Collection $servicesOverride = null, ?bool $backdropsOverride = null): array
+    public function planWithExplanation(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?Collection $servicesOverride = null, ?bool $backdropsOverride = null, ?Collection $eventsOverride = null): array
     {
         $manifestByType = collect($template->page_manifest['pages'] ?? [])->keyBy('page_type');
         $allowed = fn (string $type) => $manifestByType->get($type)['allowed_section_types'] ?? [];
@@ -340,8 +347,30 @@ final class WebsitePageStrategy
         $slots = max(0, self::MAX_TOTAL_PAGES - $mandatory);
 
         $serviceCandidates = $hasType('service_detail') ? $services->take(self::MAX_SERVICE_DETAIL_PAGES)->values() : collect();
+
+        // A booth beyond the first CORE_SERVICE_PAGES earns a page of its own only when the owner described it: a page that is
+        // just a name and a generic line differs from its siblings by one word (a doorway page). It stays on the services page.
+        $undescribed = $serviceCandidates->filter(fn ($service, $index) => $index >= self::CORE_SERVICE_PAGES && trim((string) $service->description) === '');
+        $serviceCandidates = $serviceCandidates->reject(fn ($service, $index) => $undescribed->has($index))->values();
         $locationCandidates = $hasType('location') ? $this->eligibleLocations($business)->take(self::MAX_LOCATION_PAGES)->values() : collect();
-        $areaCandidates = $hasType('location') ? $this->plannedAreas($serviceAreas, $services, $catalogItems) : [];
+        $areaEntries = $hasType('location') ? $this->plannedAreas($serviceAreas, $services, $catalogItems) : [];
+        $areaCandidates = array_column($areaEntries, 'name');
+
+        // The local-usefulness bar (LocalAreaUsefulness): an area earns its own page only with a local fact the owner
+        // confirmed. The rest stay in the visible "Areas we serve" list — never a page that differs by the city name alone.
+        $baseCity = $business->primaryLocation()->first()?->city;
+        $areaDetails = [];
+        $hubOnly = [];
+        $usefulAreas = [];
+        foreach ($areaEntries as $entry) {
+            $assessment = LocalAreaUsefulness::assess($entry, $baseCity);
+            $areaDetails[$entry['name']] = $entry['details'];
+            if ($assessment['qualifies']) {
+                $usefulAreas[] = $entry['name'];
+            } else {
+                $hubOnly[$entry['name']] = $assessment['reason'];
+            }
+        }
 
         // Slugs already spoken for by the fixed and saved-location pages: an
         // area that would land on one is skipped, never two pages at one URL.
@@ -363,7 +392,7 @@ final class WebsitePageStrategy
         }
         $areaExcluded = [];
         $areaQueue = [];
-        foreach ($areaCandidates as $area) {
+        foreach ($usefulAreas as $area) {
             $slug = WebsiteSlugRules::bounded('serving-', (string) $area, 'area');
             if (in_array($slug, $usedSlugs, true)) {
                 $areaExcluded[] = ['area' => $area, 'reason' => 'Already covered by another page at the same address.'];
@@ -374,10 +403,45 @@ final class WebsitePageStrategy
             $areaQueue[] = $area;
         }
 
+        // 1b. Event-type pages: only for event types the owner described in their own words (EventPageUsefulness), never one
+        // that another page already targets, each at its own clean address. The manifest entry is `event_detail`; a template
+        // seeded before it existed falls back to the booth-page section list so no re-seed is needed to plan them.
+        $eventManifest = $hasType('event_detail') ? 'event_detail' : ($hasType('service_detail') ? 'service_detail' : null);
+        $eventTypes = $eventManifest === null ? collect() : ($eventsOverride ?? $this->eligibleEventTypes($business));
+        $eventQueue = [];
+        $eventExcluded = [];
+        $boothWords = $serviceCandidates->map(fn ($service) => EventPageUsefulness::words((string) $service->name))->all();
+        foreach ($eventTypes as $event) {
+            $assessment = EventPageUsefulness::assess((string) $event->name, $event->description);
+            $words = EventPageUsefulness::words((string) $event->name);
+            $slug = EventPageUsefulness::slug((string) $event->name);
+            $competing = $words === [] ? null : $serviceCandidates->first(fn ($service, $i) => $words !== [] && array_diff($words, $boothWords[$i]) === []);
+
+            if (! $assessment['qualifies']) {
+                $eventExcluded[$event->uid] = [$event, $assessment['reason']];
+            } elseif ($slug === null) {
+                $eventExcluded[$event->uid] = [$event, 'Its name says nothing a page address can be built from. Rename it (for example "Weddings") and it is planned.'];
+            } elseif ($competing !== null) {
+                $eventExcluded[$event->uid] = [$event, 'Your "' . $competing->name . '" page already targets this search, so a second page would compete with it.'];
+            } elseif (in_array($slug, $usedSlugs, true)) {
+                $eventExcluded[$event->uid] = [$event, 'Already covered by another page at the same address.'];
+            } elseif (count($eventQueue) >= self::MAX_EVENT_PAGES) {
+                $eventExcluded[$event->uid] = [$event, 'Not planned: a website builds at most ' . self::MAX_EVENT_PAGES . ' event pages (your first ones, in your order). It is still listed under "Events we cover".'];
+            } else {
+                $usedSlugs[] = $slug;
+                $eventQueue[] = [$event, $slug];
+            }
+        }
+
         // 2. Core service pages, keeping a small reserve for the top areas.
         $areaReserve = min(count($areaQueue), self::MIN_AREA_PAGES, $slots);
         $coreServices = max(0, min($serviceCandidates->count(), self::CORE_SERVICE_PAGES, $slots - $areaReserve));
         $slots -= $areaReserve + $coreServices;
+
+        // 2b. Event pages come next (see MAX_EVENT_PAGES), then Gallery, Backdrops and FAQ.
+        $eventsPlanned = max(0, min(count($eventQueue), $slots));
+        $slots -= $eventsPlanned;
+        $afterEvents = $eventsPlanned > 0 ? ' Your ' . $eventsPlanned . ' event page' . ($eventsPlanned === 1 ? ' is' : 's are') . ' planned before it.' : '';
 
         // 3. Gallery, Backdrops, FAQ.
         $includeGallery = $galleryReady && $slots > 0;
@@ -450,6 +514,28 @@ final class WebsitePageStrategy
                 $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Move it higher in your services list to include it.');
             }
         }
+        foreach ($eventQueue as $index => [$event, $slug]) {
+            if ($index < $eventsPlanned) {
+                $plan[] = [
+                    'page_key' => 'event:' . $event->uid,
+                    'page_type' => 'event_detail',
+                    'is_home' => false,
+                    'slug' => $slug,
+                    'title' => $event->name,
+                    'allowed_section_types' => $allowed($eventManifest),
+                    'entity' => $this->serviceEntity($event) + ['kind' => 'event'],
+                ];
+                $decide('event:' . $event->uid, $event->name, 'event_detail', true, 'An event type you described in your own words, so it gets its own page (' . $slug . ').');
+            } else {
+                $decide('event:' . $event->uid, $event->name, 'event_detail', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Event pages are planned right after your first ' . self::CORE_SERVICE_PAGES . ' booths and before Gallery, Backdrops and FAQ. It is still listed under "Events we cover".');
+            }
+        }
+        foreach ($eventExcluded as [$event, $reason]) {
+            $decide('event:' . $event->uid, $event->name, 'event_detail', false, $reason);
+        }
+        foreach ($undescribed as $service) {
+            $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Listed on your services page without a page of its own: a page needs a description of this booth (what it is and what is included) so it is not a copy of your other pages. Add one and it is planned.');
+        }
         foreach ($hasType('service_detail') ? $services->slice(self::MAX_SERVICE_DETAIL_PAGES) : [] as $service) {
             $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: a website builds at most ' . self::MAX_SERVICE_DETAIL_PAGES . ' service pages.');
         }
@@ -464,7 +550,7 @@ final class WebsitePageStrategy
                 $plan[] = ['page_key' => 'faq', 'page_type' => 'faq', 'is_home' => false, 'slug' => 'photo-booth-faq', 'title' => 'FAQ', 'allowed_section_types' => $allowed('faq'), 'entity' => null];
                 $decide('faq', 'FAQ', 'faq', true, 'Common questions, answered for your niche.');
             } else {
-                $decide('faq', 'FAQ', 'faq', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full, so your own FAQ answers are not shown anywhere on the site. Free a page (for example a lower-priority service or area) to include them.');
+                $decide('faq', 'FAQ', 'faq', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full, so your own FAQ answers are not shown anywhere on the site.' . $afterEvents . ' Free a page (for example a lower-priority service or area) to include them.');
             }
         }
 
@@ -473,7 +559,7 @@ final class WebsitePageStrategy
                 $plan[] = ['page_key' => 'gallery', 'page_type' => 'gallery', 'is_home' => false, 'slug' => 'gallery', 'title' => 'Gallery', 'allowed_section_types' => $allowed('gallery'), 'entity' => null];
                 $decide('gallery', 'Gallery', 'gallery', true, 'You added ' . self::MIN_GALLERY_ASSETS . ' or more gallery photos.');
             } elseif ($galleryReady) {
-                $decide('gallery', 'Gallery', 'gallery', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.');
+                $decide('gallery', 'Gallery', 'gallery', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.' . $afterEvents);
             } else {
                 $decide('gallery', 'Gallery', 'gallery', false, 'Add at least ' . self::MIN_GALLERY_ASSETS . ' gallery photos to get a Gallery page.');
             }
@@ -489,7 +575,7 @@ final class WebsitePageStrategy
                 $plan[] = ['page_key' => 'backdrops', 'page_type' => 'backdrops', 'is_home' => false, 'slug' => 'backdrops', 'title' => 'Backdrops', 'allowed_section_types' => $allowed('backdrops'), 'entity' => null];
                 $decide('backdrops', 'Backdrops', 'backdrops', true, 'You added backdrops.');
             } elseif ($backdropsReady) {
-                $decide('backdrops', 'Backdrops', 'backdrops', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.');
+                $decide('backdrops', 'Backdrops', 'backdrops', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.' . $afterEvents);
             } else {
                 $decide('backdrops', 'Backdrops', 'backdrops', false, 'No backdrops added.');
             }
@@ -520,8 +606,14 @@ final class WebsitePageStrategy
             }
         }
 
-        $primaryCity = $business->primaryLocation()->first()?->city;
+        $primaryCity = $baseCity;
         $plannedAreas = [];
+        $overBudget = [];
+
+        foreach ($hubOnly as $area => $reason) {
+            $areaExcluded[] = ['area' => (string) $area, 'reason' => $reason];
+            $decide('area:' . Str::slug((string) $area), 'Serving ' . $area, 'location', false, $reason);
+        }
 
         foreach ($areaQueue as $index => $area) {
             if ($index < $areasPlanned) {
@@ -532,7 +624,7 @@ final class WebsitePageStrategy
                     'slug' => WebsiteSlugRules::bounded('serving-', (string) $area, 'area'),
                     'title' => 'Serving ' . $area,
                     'allowed_section_types' => $allowed('location'),
-                    'entity' => $this->areaEntity($area, $areaCandidates, $services, $primaryCity),
+                    'entity' => $this->areaEntity($area, $areaCandidates, $services, $primaryCity, $areaDetails[$area] ?? []),
                 ];
                 $plannedAreas[] = $area;
                 $decide('area:' . Str::slug($area), 'Serving ' . $area, 'location', true, 'One of your top service areas (your order).');
@@ -541,6 +633,7 @@ final class WebsitePageStrategy
                     ? 'Not planned: a website builds at most ' . self::MAX_AREA_PAGES . ' local pages. It is still listed as a service area.'
                     : 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. It is still listed as a service area.';
                 $areaExcluded[] = ['area' => $area, 'reason' => $reason];
+                $overBudget[] = ['area' => $area, 'reason' => $reason];
                 $decide('area:' . Str::slug($area), 'Serving ' . $area, 'location', false, $reason);
             }
         }
@@ -553,8 +646,23 @@ final class WebsitePageStrategy
                 'planned' => count($plannedAreas),
                 'planned_list' => $plannedAreas,
                 'excluded' => $areaExcluded,
+                // Areas with confirmed local details that DID qualify but could not be given a page (page limit): shown to the owner.
+                'over_budget' => $overBudget,
+                // Every area without a page of its own: still named in the "Areas we serve" section of the home page.
+                'hub' => array_values(array_diff($areaCandidates, $plannedAreas)),
             ],
-            'budget' => ['max' => self::MAX_TOTAL_PAGES, 'planned' => count($plan)],
+            'budget' => [
+                'max' => self::MAX_TOTAL_PAGES,
+                'planned' => count($plan),
+                // The order pages are given the budget in, so what was left out is never a mystery.
+                'priority' => [
+                    'Home, Services, Packages, About, Contact and your extra section',
+                    'Your first ' . self::CORE_SERVICE_PAGES . ' booths (with a small reserve for areas you gave local details for)',
+                    'Event pages for the event types you described (up to ' . self::MAX_EVENT_PAGES . ', in your order)',
+                    'Gallery, Backdrops, FAQ',
+                    'More described booths, then place pages',
+                ],
+            ],
         ];
     }
 
@@ -576,12 +684,12 @@ final class WebsitePageStrategy
     }
 
     /**
-     * The owner's chosen service areas that earn a page: distinct URLs,
-     * priority order preserved, capped, and only when the Business has real
-     * service content to write about for them.
+     * The owner's chosen service areas, normalized (a bare name, or a name with confirmed local details): distinct URLs,
+     * priority order preserved, and only when the Business has real service content to write about for them. Which of
+     * them earn a page is decided by LocalAreaUsefulness; the rest are listed on the home page.
      *
-     * @param  ?array<int, string>  $serviceAreas
-     * @return array<int, string>
+     * @param  ?array<int, string|array{name: string, details?: array<string, mixed>}>  $serviceAreas
+     * @return array<int, array{name: string, details: array<string, mixed>}>
      */
     private function plannedAreas(?array $serviceAreas, Collection $services, Collection $catalogItems): array
     {
@@ -592,11 +700,11 @@ final class WebsitePageStrategy
         $seen = [];
         $areas = [];
 
-        foreach ($serviceAreas as $area) {
-            $area = trim((string) $area);
-            $slug = Str::slug($area);
+        foreach ($serviceAreas as $entry) {
+            $area = LocalAreaUsefulness::normalize($entry);
+            $slug = $area === null ? '' : Str::slug($area['name']);
 
-            if ($area === '' || $slug === '' || isset($seen[$slug])) {
+            if ($area === null || $slug === '' || isset($seen[$slug])) {
                 continue;
             }
 
@@ -613,11 +721,13 @@ final class WebsitePageStrategy
      * about the area is invented — no landmarks, distances or statistics.
      *
      * @param  array<int, string>  $areas
+     * @param  array<string, mixed>  $localFacts  the local details the owner confirmed for this area (LocalAreaUsefulness)
      */
-    private function areaEntity(string $area, array $areas, Collection $services, ?string $primaryCity): array
+    private function areaEntity(string $area, array $areas, Collection $services, ?string $primaryCity, array $localFacts = []): array
     {
         return array_filter([
             'area' => $area,
+            'local_facts' => $localFacts,
             'business_home_city' => $primaryCity ?: null,
             'nearby_areas' => array_slice(array_values(array_filter($areas, fn ($other) => $other !== $area)), 0, self::MAX_AREA_NEIGHBORS),
             'services' => $services->take(8)->pluck('name')->values()->all(),

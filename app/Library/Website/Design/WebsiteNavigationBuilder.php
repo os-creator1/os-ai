@@ -59,7 +59,7 @@ final class WebsiteNavigationBuilder
     }
 
     /**
-     * @param  array<int, array{uid: string, title: string, is_home: bool, slug?: ?string, url: string}>  $pages
+     * @param  array<int, array{uid: string, title: string, is_home: bool, slug?: ?string, url: string, role?: ?string}>  $pages
      * @return array{primary: array<int, array<string, mixed>>, footer: array<string, array<int, array{title: string, url: string}>>, has_pages: bool}
      */
     public function build(array $pages, ?string $currentUid = null): array
@@ -67,6 +67,7 @@ final class WebsiteNavigationBuilder
         $home = null;
         $overview = null;
         $services = [];
+        $events = [];
         $packages = null;
         $gallery = null;
         $backdrops = null;
@@ -85,6 +86,8 @@ final class WebsiteNavigationBuilder
                 (bool) ($page['is_home'] ?? false) => $home = $page,
                 $slug === 'services' => $overview = $page,
                 str_starts_with($slug, 'service-') => $services[] = $page,
+                // An event-type page (stored role; no address convention): listed with the services it is one of.
+                ($page['role'] ?? null) === 'event' => $events[] = $page,
                 $slug === 'packages' => $packages = $page,
                 $slug === 'gallery' => $gallery = $page,
                 $slug === 'backdrops' => $backdrops = $page,
@@ -112,10 +115,12 @@ final class WebsiteNavigationBuilder
             $primary[] = $item($home);
         }
 
+        $offered = array_merge($services, $events);
+
         if ($overview !== null) {
-            $primary[] = $item($overview, $children($services));
-        } elseif ($services !== []) {
-            $primary[] = ['title' => 'Services', 'url' => null, 'current' => false, 'children' => $children($services)];
+            $primary[] = $item($overview, $children($offered));
+        } elseif ($offered !== []) {
+            $primary[] = ['title' => 'Services', 'url' => null, 'current' => false, 'children' => $children($offered)];
         }
 
         if ($packages !== null) {
@@ -162,7 +167,7 @@ final class WebsiteNavigationBuilder
             'primary' => $primary,
             'footer' => [
                 'explore' => $explore,
-                'services' => array_map($link, array_slice($services, 0, 8)),
+                'services' => array_map($link, array_slice($offered, 0, 8)),
                 'areas' => array_map($link, array_slice($areas, 0, 8)),
             ],
             'has_pages' => count($pages) > 1,

@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Library\Website\Setup\QuestionnaireVersionPublisher;
 use App\Models\QuestionnaireDefinition;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The guided, one-question-per-page Photo Booth website setup — published as
@@ -32,11 +33,19 @@ use Illuminate\Database\Seeder;
  *    screen (`shared_fact`), not only when the website is generated.
  *
  * Idempotent: it ensures v1/v2 exist, then publishes v3 only when the
- * currently published version's step tree differs from this one.
+ * CURRENTLY PUBLISHED version's step tree differs from this one (a matching
+ * but superseded version does not count: it is published again as a new version).
  */
 class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
 {
     public function run(): void
+    {
+        // One transaction: on a database that still needs v2 first, nobody can start a setup on the intermediate v2 — the
+        // definition goes from its current state straight to v3 for every other connection.
+        DB::transaction(fn () => $this->activate());
+    }
+
+    private function activate(): void
     {
         (new PhotoboothWebsiteSetupQuestionnaireV2Seeder())->run();
 
@@ -44,14 +53,30 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
         // Already part of this definition's history (published now, or since superseded by a later version):
         // never republish it.
         $tree = self::canonical(self::steps());
-        foreach ($definition->versions()->get() as $version) {
-            if (self::canonical($version->storedSteps()) === $tree) {
-                return;
-            }
+        // Only the version that is published NOW counts as already active. A matching tree that was since superseded
+        // (A -> B -> A) is history, not the live version: it is published again as a NEW version, and the old rows are
+        // never edited.
+        $published = $definition->publishedVersion();
+        if ($published !== null && self::canonical($published->storedSteps()) === $tree) {
+            return;
         }
 
         $publisher = app(QuestionnaireVersionPublisher::class);
-        $draft = $definition->draftVersion() ?? $publisher->createDraft($definition, self::steps());
+        $draft = $definition->draftVersion();
+
+        // There is no marker that proves a draft was written by a seeder, so ownership is never guessed. A draft is used
+        // only when its steps are EXACTLY this tree (publishing it changes nothing); any other draft is somebody's work:
+        // refuse, change nothing (inside the V3 transaction everything rolls back) and say how to resolve it.
+        if ($draft === null) {
+            $draft = $publisher->createDraft($definition, self::steps());
+        } elseif (self::canonical($draft->storedSteps()) !== $tree) {
+            throw new \DomainException(
+                'Refusing to seed the v3 questionnaire: the definition "' . $definition->key . '" already has a draft (version id ' . $draft->id
+                . ', version number ' . $draft->version_number . ') whose steps differ from the seeder\'s, and nothing proves the seeder wrote it. '
+                . 'It was left exactly as it is and nothing was published. Publish or discard that draft deliberately, then run the seeder again.'
+            );
+        }
+
         $publisher->publish($draft);
     }
 
@@ -165,7 +190,7 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
             self::step('logo', 'Logo', 'image', false, 'website_look', 'logo', screen: 'basics'),
 
             self::step('base_location', 'Where are you based?', 'location', true, 'business_location', null, sharedFact: true, helpText: 'Your main city. We use it to suggest the areas you serve next.'),
-            self::step('service_area_cities', 'Where do you provide your services?', 'string_list', true, 'business_location', null, sharedFact: true, suggest: true, areaPages: false, helpText: 'One place per row — a city or area customers hire you in. Put your most important areas first.'),
+            self::step('service_area_cities', 'Where do you provide your services?', 'string_list', true, 'business_location', null, sharedFact: true, suggest: true, areaPages: false, areaDetails: true, helpText: 'One place per row — a city or area customers hire you in. Put your most important areas first. Optional: open "Add local details" on a place to add venues you have worked at, how serving it works, or event photos from there — that is what lets it earn its own page.'),
 
             self::step('booth_services', 'What photo booth experiences do you offer?', 'repeatable_group', true, 'business_service', null,
                 helpText: 'Choose each experience you offer. Every one needs a real photo of that booth before your website can be published — you can add it now or later.',
@@ -240,6 +265,7 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
         ?string $itemKind = null,
         ?string $itemType = null,
         ?bool $areaPages = null,
+        ?bool $areaDetails = null,
         bool $completeList = false,
         ?string $defaults = null,
         ?array $templateHint = null,
@@ -274,6 +300,10 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
 
         if ($areaPages !== null) {
             $step['area_pages'] = $areaPages;
+        }
+
+        if ($areaDetails !== null) {
+            $step['area_details'] = $areaDetails;
         }
 
         if ($completeList) {

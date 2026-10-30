@@ -89,7 +89,11 @@ class GuidedWebsiteGenerationTest extends TestCase
         $this->assertSame('Request a quote', $home['hero'][0]['primary_cta']['label']);
 
         $headings = array_map(fn ($d) => $d['heading'] ?? '', $home['services']);
-        $this->assertSame(['Our photo booths', 'Packages', 'Events we cover', 'How booking works', 'Why choose Glow Booths'], $headings, 'Booths, packages, events, how booking works and the confirmed advantages — in that order, each from real facts.');
+        $this->assertSame(['Our photo booths', 'Packages', 'Events we cover', 'How booking works', 'Why choose Glow Booths', 'Areas we serve'], $headings, 'Booths, packages, events, how booking works, the confirmed advantages and the confirmed service areas — in that order, each from real facts.');
+
+        $hub = collect($home['services'])->firstWhere('heading', 'Areas we serve');
+        $this->assertContains('Irvine', array_column($hub['items'], 'name'), 'The areas list is the saved service areas, base city first — a visible, crawlable list, never city pages.');
+        $this->assertSame(array_column($hub['items'], 'name'), array_column($hub['items'], 'place'), 'Each entry carries its place so it links to a page about it when the site has one.');
 
         // Nothing is an empty shell: every list has items, every text has a body.
         foreach ($home['services'] as $section) {
@@ -111,6 +115,30 @@ class GuidedWebsiteGenerationTest extends TestCase
         $this->assertGreaterThanOrEqual(3, count($home['gallery'][0]['items']));
         $this->assertSame('Floral wall', $home['backdrops'][0]['items'][0]['name']);
         $this->assertNotEmpty($home['backdrops'][0]['items'][0]['images'][0]['url']);
+    }
+
+    public function test_generated_titles_and_descriptions_are_intent_led_finished_and_unique_and_every_page_records_what_it_is(): void
+    {
+        $this->fullSetup();
+        $website = $this->generate();
+        $pages = $website->pages()->get();
+        $home = $pages->firstWhere('is_home', true);
+
+        $this->assertSame('Photo Booth Rentals in Irvine | Glow Booths', $home->seo_title, 'What the page is for first, the brand after it.');
+        $this->assertSame('home', $home->page_role);
+
+        foreach ($pages as $page) {
+            $this->assertSame(1, substr_count(mb_strtolower((string) $page->seo_title), 'glow booths'), "{$page->slug}: the brand appears once in the title.");
+            $this->assertLessThanOrEqual(70, mb_strlen((string) $page->seo_title));
+            $this->assertLessThanOrEqual(160, mb_strlen((string) $page->meta_description));
+            $this->assertDoesNotMatchRegularExpression('/(\.\.\.|…)$/u', (string) $page->meta_description, "{$page->slug}: no meaningless ellipsis.");
+            $this->assertMatchesRegularExpression('/[.!?]$/', (string) $page->meta_description, "{$page->slug}: the description ends on a finished sentence.");
+            $this->assertNotNull($page->page_role, "{$page->slug}: the page-intent map is stored.");
+        }
+
+        $this->assertSame($pages->count(), $pages->pluck('seo_title')->unique()->count(), 'Every title is unique.');
+        $this->assertSame($pages->count(), $pages->pluck('meta_description')->unique()->count(), 'Every description is unique.');
+        $this->assertSame(['service'], $pages->filter(fn ($p) => str_starts_with((string) $p->slug, 'service-'))->pluck('page_role')->unique()->values()->all());
     }
 
     public function test_the_other_pages_are_complete_too(): void
@@ -347,16 +375,19 @@ class GuidedWebsiteGenerationTest extends TestCase
         $slugs = $website->pages()->where('slug', 'like', 'service-%')->pluck('slug')->all();
         $this->assertGreaterThanOrEqual(2, count($slugs));
 
+        $eventSlugs = $website->pages()->where('page_role', 'event')->pluck('slug')->all();
+        $this->assertCount(2, $eventSlugs, 'The two event types the owner described in their own words each have a page.');
+
         preg_match_all('/<a class="website-service-link" href="([^"]+)">([^<]+)<\/a>/', $html, $m);
-        $this->assertCount(count($slugs), $m[1], 'Exactly the booths that HAVE a detail page are links — events, steps, advantages, packages and booths without a page are not.');
-        foreach ($slugs as $slug) {
+        $this->assertCount(count($slugs) + count($eventSlugs), $m[1], 'Exactly the booths and event types that HAVE a page are links — steps, advantages, packages and anything without a page are not.');
+        foreach (array_merge($slugs, $eventSlugs) as $slug) {
             $this->assertContains(route('public.website.page', [$website->public_id, $slug]), $m[1]);
         }
         // Each link leads to the page of the booth it names.
         foreach ($m[1] as $i => $url) {
             $this->get($url)->assertOk()->assertSee(trim(html_entity_decode($m[2][$i])), false);
         }
-        $this->assertSame(count($slugs), substr_count($html, 'wd-card-linked'));
+        $this->assertSame(count($slugs) + count($eventSlugs), substr_count($html, 'wd-card-linked'));
         $this->assertStringNotContainsString('<a class="website-service-link" href="#"', $html);
     }
 

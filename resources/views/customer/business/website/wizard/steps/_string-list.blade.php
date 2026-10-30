@@ -13,6 +13,18 @@
     $placeholder = $noun === 'location' ? 'City or area, e.g. Naperville, IL' : '';
     $entries = array_values($entries) !== [] ? array_values($entries) : [''];
     $area = $areaState ?? null;
+
+    // Optional per-area local details (the step's `area_details` flag): saved beside the list, keyed by the area's slug.
+    $detailsName = ! empty($areaDetailsName) ? $areaDetailsName : null;
+    $detailsBySlug = is_array($areaDetailsSaved ?? null) ? $areaDetailsSaved : [];
+    $galleryPhotos = $detailsName ? ($areaPhotos ?? []) : [];
+    $rowFor = fn (string $entry) => [
+        'value' => $entry,
+        'detailsName' => $detailsName,
+        'detail' => $detailsBySlug[\Illuminate\Support\Str::slug($entry)] ?? [],
+        'galleryPhotos' => $galleryPhotos,
+        'galleryTotal' => $areaPhotoTotal ?? count($galleryPhotos),
+    ];
 @endphp
 @if ($area)
     <div data-area-list
@@ -40,11 +52,11 @@
 <div data-repeatable>
     <div data-repeatable-rows>
         @foreach ($entries as $entry)
-            @include('customer.business.website.wizard.steps._string-row', ['value' => $entry])
+            @include('customer.business.website.wizard.steps._string-row', $rowFor($entry))
         @endforeach
     </div>
     <template data-row-template>
-        @include('customer.business.website.wizard.steps._string-row', ['value' => ''])
+        @include('customer.business.website.wizard.steps._string-row', $rowFor(''))
     </template>
     <button type="button" class="btn btn-link px-0" data-add-row>+ Add another {{ $noun }}</button>
     @if ($area && $area['base'])

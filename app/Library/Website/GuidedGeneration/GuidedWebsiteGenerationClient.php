@@ -136,6 +136,13 @@ class GuidedWebsiteGenerationClient
             array_splice($instructions, -1, 0, ['Keep the About page concise: at most two short paragraphs (about 120 words in total) in the owner\'s own voice, never padded.']);
         }
 
+        // Only when the plan contains event-type pages (kept out of every other request so the prompt envelope is unchanged).
+        if (collect($plan)->contains(fn ($page) => ($page['page_type'] ?? null) === 'event_detail')) {
+            array_splice($instructions, -1, 0, [
+                'A plan entry of page_type "event_detail" is a page for one kind of event (its entity name and description). Write it from that description and the services listed only: what the owner offers for that kind of event. Never invent venues, past events, clients, reviews, prices, guarantees or how many events were done, and never write the same copy as another event page.',
+            ]);
+        }
+
         // Only when the plan actually contains service-area pages (kept out
         // of every other request so the prompt envelope is unchanged).
         if (collect($plan)->contains(fn ($page) => is_array($page['entity'] ?? null) && isset($page['entity']['area']))) {
