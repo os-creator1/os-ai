@@ -610,7 +610,7 @@ class FormsLeadCaptureV1Test extends TestCase
         ]))->assertSessionHasNoErrors();
 
         $submission = WebsiteFormSubmission::sole();
-        $this->assertEqualsCanonicalizing(['name', 'phone', 'email', 'event_date', 'event_type', 'message'], array_keys($submission->data));
+        $this->assertEqualsCanonicalizing(['name', 'phone', 'email', 'event_date', 'event_type', 'event_location', 'message'], array_keys($submission->data));
         $this->assertFalse($submission->is_spam);
         $contact = Contacts::findOrFail($submission->contact_id);
         $this->assertSame((int) $business->id, (int) $contact->business_id);
