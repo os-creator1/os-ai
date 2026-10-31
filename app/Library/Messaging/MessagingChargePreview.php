@@ -84,6 +84,8 @@ final class MessagingChargePreview
             'configured' => $configured,
             'balance_text' => DashboardMoney::format((string) $balanceMicro, $wallet?->currency?->code),
             'sufficient' => $configured && $balanceMicro >= $todayMicro,
+            // Display only: the wallet balance left after today's charge (same figures, same currency as balance_text).
+            'balance_after_text' => $configured && $balanceMicro >= $todayMicro ? DashboardMoney::format((string) ($balanceMicro - $todayMicro), $wallet?->currency?->code) : null,
         ];
     }
 
