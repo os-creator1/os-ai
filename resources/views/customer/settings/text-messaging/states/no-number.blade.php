@@ -137,97 +137,107 @@
             $tollFreeSelected = ($criteria['number_type'] ?? 'toll_free') !== 'local';
             $localAvailable = (bool) ($localRegistrationPreview['configured'] ?? false);
         @endphp
-        <div class="pm-types">
-            <section class="pm-type {{ $tollFreeSelected ? 'is-selected' : '' }}" data-role="toll-free-number-card" aria-labelledby="pm-type-toll-free">
-                <div class="pm-type__head">
-                    <span class="sr-tile"><x-ds-icon name="globe" size="20" /></span>
-                    <div>
-                        <h2 class="pm-type__title" id="pm-type-toll-free">Toll-free number <span class="sr-chip sr-chip--accent" data-role="recommended-badge">Recommended</span></h2>
-                        <p class="pm-type__sub">Nationwide, and free for your customers to text. The simplest way to start texting a US audience.</p>
-                    </div>
-                    <span class="sr-chip sr-chip--success pm-type__badge">{{ $available ? 'Available' : 'Preview' }}</span>
-                </div>
-
-                <ol class="sr-steps">
-                    <li><span class="sr-num">1</span><div><strong>Choose and buy your number</strong><span class="sr-step-desc">The carrier requires the number before you can be verified for it.</span></div></li>
-                    <li><span class="sr-num">2</span><div><strong>Verify your business</strong><span class="sr-step-desc">For that number.</span></div></li>
-                </ol>
-
-                <div class="sr-callout" data-role="toll-free-cost-notice">
-                    <x-ds-icon name="credit-card" size="16" />
-                    <p>{{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }} Number rental starts as soon as you complete the order, <strong>before</strong> verification.</p>
-                </div>
-
-                <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceUid, $businessUid]) }}" data-role="toll-free-search-form">
-                    @csrf
-                    <input type="hidden" name="number_type" value="toll_free">
-
-                    <div class="pm-inline">
-                        <div class="pm-field" style="max-width:240px">
-                            <label for="toll_free_prefix">Toll-free prefix <span class="fw-normal text-muted">(optional)</span></label>
-                            <select id="toll_free_prefix" name="toll_free_prefix" class="form-select @error('toll_free_prefix') is-invalid @enderror" aria-describedby="toll-free-prefix-help">
-                                <option value="">Any toll-free prefix</option>
-                                @foreach(['800', '888', '877', '866', '855', '844', '833'] as $prefix)
-                                    <option value="{{ $prefix }}" @selected(old('toll_free_prefix', $criteria['toll_free_prefix'] ?? '') === $prefix)>{{ $prefix }}</option>
-                                @endforeach
-                            </select>
-                            @error('toll_free_prefix')
-                                <div class="invalid-feedback">{{ $message }}</div>
-                            @enderror
+        @php
+            $tfPreview = $numberPreview ?? ['configured' => false];
+            $lowVolume = $lowVolumeRegistrationPreview ?? ['configured' => false];
+            $searchRoute = route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceUid, $businessUid]);
+            $resetRoute = route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
+        @endphp
+        <div class="pm-flow" data-role="number-flow" data-state="{{ $searched ? 'results' : 'choose' }}" data-reset-url="{{ $resetRoute }}">
+            {{-- State 1: the two choice cards. With JS the toll-free card morphs into state 2 in place. --}}
+            <div class="pm-flow__choose" @if($searched) inert @endif>
+              <div class="pm-flow__inner">
+                <p class="pm-lede-sub">Choose the kind of number your customers will text.</p>
+                <div class="pm-types">
+                    <section class="pm-type pm-type--choice is-selected" data-role="toll-free-number-card" aria-labelledby="pm-type-toll-free">
+                        <div class="pm-type__head">
+                            <span class="sr-tile"><x-ds-icon name="globe" size="20" /></span>
+                            <div>
+                                <h2 class="pm-type__title" id="pm-type-toll-free">Toll-free <span class="sr-chip sr-chip--accent" data-role="recommended-badge">Recommended</span></h2>
+                                <p class="pm-type__sub">Fastest way to start texting</p>
+                            </div>
                         </div>
-                        <x-button type="submit" variant="primary" :disabled="! $available" data-role="find-toll-free">{{ $searched ? 'Show different toll-free numbers' : 'Find a toll-free number' }}</x-button>
-                    </div>
-                    <p class="pm-hint" id="toll-free-prefix-help">Toll-free prefixes aren't geographic area codes.</p>
-                </form>
-            </section>
+                        <dl class="pm-rows">
+                            <div><dt>Looks like</dt><dd>+1 (844) 555-0123<small>800, 833, 844, 855, 866, 877, 888 · nationwide</small></dd></div>
+                            <div><dt>Steps</dt><dd>Pick a number now, then a short verification</dd></div>
+                            <div><dt>Cost</dt><dd>
+                                @if($tfPreview['configured'] ?? false)
+                                    {{ $tfPreview['one_time']['text'] }} today, then {{ $tfPreview['recurring']['text'] ?? '' }}
+                                @else
+                                    Shown for each number before you buy
+                                @endif
+                                <small>Verification is free</small></dd></div>
+                            <div><dt>Best for</dt><dd>Customers across the country, getting started quickly</dd></div>
+                        </dl>
+                        <details class="pm-details" data-role="toll-free-cost-notice">
+                            <summary>Cost details</summary>
+                            <p>{{ \App\Library\Messaging\BusinessMessagingRegistrationService::TOLL_FREE_DISCLOSURE }} Number rental starts as soon as you complete the order, <strong>before</strong> verification. The carrier requires the number before it can be verified for it.</p>
+                        </details>
+                        <form method="post" action="{{ $searchRoute }}" data-role="toll-free-search-form" data-flow-search>
+                            @csrf
+                            <input type="hidden" name="number_type" value="toll_free">
+                            @if(! empty($criteria['toll_free_prefix']))<input type="hidden" name="toll_free_prefix" value="{{ $criteria['toll_free_prefix'] }}">@endif
+                            <x-button type="submit" variant="primary" class="w-100" :disabled="! $available" data-role="find-toll-free">Choose a toll-free number &rarr;</x-button>
+                        </form>
+                    </section>
 
-            <section class="pm-type {{ $localAvailable ? '' : 'is-disabled' }}" data-role="local-number-card" aria-labelledby="pm-type-local">
-                <div class="pm-type__head">
-                    <span class="sr-tile sr-tile--neutral"><x-ds-icon name="map-pin" size="20" /></span>
-                    <div>
-                        <h2 class="pm-type__title" id="pm-type-local">Local number</h2>
-                        <p class="pm-type__sub">A specific area code, like a local business. Needs carrier 10DLC registration, which has its own costs.</p>
-                    </div>
-                    @unless($localAvailable)<span class="sr-chip pm-type__badge">Not available yet</span>@endunless
+                    <section class="pm-type pm-type--choice" data-role="local-number-card" aria-labelledby="pm-type-local">
+                        <div class="pm-type__head">
+                            <span class="sr-tile sr-tile--neutral"><x-ds-icon name="map-pin" size="20" /></span>
+                            <div>
+                                <h2 class="pm-type__title" id="pm-type-local">Local</h2>
+                                <p class="pm-type__sub">A number in your own area code</p>
+                            </div>
+                        </div>
+                        <dl class="pm-rows">
+                            <div><dt>Looks like</dt><dd>+1 (601) 555-0123<small>Your city's area code</small></dd></div>
+                            <div><dt>Steps</dt><dd>Register your business first, then pick a number</dd></div>
+                            <div><dt>Cost</dt><dd>
+                                @if($localRegistrationPreview['configured'] ?? false)
+                                    Registration fee + number + monthly campaign fee
+                                @else
+                                    Registration pricing isn't set up yet
+                                @endif
+                                @if($lowVolume['configured'] ?? false)
+                                    <small>Low-volume option: {{ $lowVolume['one_time']['text'] }} to register, {{ $lowVolume['recurring']['text'] }} after 3 months</small>
+                                @endif
+                            </dd></div>
+                            <div><dt>Best for</dt><dd>Feeling local to customers nearby</dd></div>
+                        </dl>
+                        <details class="pm-details" data-role="local-cost-notice">
+                            <summary>Cost details</summary>
+                            <p>{{ \App\Library\Messaging\BusinessMessagingRegistrationService::LOCAL_COST_NOTICE }} The number itself is charged only when you complete that order, after you're verified.</p>
+                            <p>{{ $verificationChargeDisclosure }}</p>
+                            @include('customer.settings.text-messaging._charge-summary', ['preview' => $localRegistrationPreview, 'oneTimeLabel' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'recurringLabel' => '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Local registration pricing isn\'t set up on our side yet, so a local registration can\'t be submitted right now. You can still start by adding your business details.'])
+                            @if($lowVolume['configured'] ?? false)
+                                <p class="pm-hint" data-role="low-volume-note">Small business sending few texts? A lower-cost <strong>Low Volume Mixed</strong> option is available when you register: {{ $lowVolume['one_time']['text'] }} to register, then {{ $lowVolume['recurring']['text'] }} after the first three months. It has lower sending limits.</p>
+                            @endif
+                        </details>
+                        <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspaceUid, $businessUid]) }}">
+                            @csrf
+                            <x-button type="submit" variant="secondary" class="w-100" :disabled="! $available">Register for a local number &rarr;</x-button>
+                        </form>
+                    </section>
                 </div>
-
-                <ol class="sr-steps">
-                    <li><span class="sr-num">1</span><div><strong>Verify your business</strong><span class="sr-step-desc">{{ $verificationChargeDisclosure }}</span></div></li>
-                    <li><span class="sr-num">2</span><div><strong>Choose your number</strong><span class="sr-step-desc">Once verification is approved.</span></div></li>
-                </ol>
-
-                <div class="sr-callout sr-callout--warn" data-role="local-cost-notice">
-                    <x-ds-icon name="credit-card" size="16" />
-                    <p>{{ \App\Library\Messaging\BusinessMessagingRegistrationService::LOCAL_COST_NOTICE }} The number itself is charged only when you complete that order, after you're verified.</p>
-                </div>
-
-                @include('customer.settings.text-messaging._charge-summary', ['preview' => $localRegistrationPreview, 'oneTimeLabel' => '10DLC registration: the carrier brand fee plus the first three months of campaign fees, charged when you submit', 'recurringLabel' => '10DLC campaign, billed monthly after those first three months', 'unconfiguredText' => 'Local registration pricing isn\'t set up on our side yet, so a local number can\'t be registered right now. Toll-free is available.'])
-                @if($lowVolumeRegistrationPreview['configured'])
-                    <p class="pm-hint" data-role="low-volume-note">Small business sending few texts? A lower-cost <strong>Low Volume Mixed</strong> option is available when you register: {{ $lowVolumeRegistrationPreview['one_time']['text'] }} to register, then {{ $lowVolumeRegistrationPreview['recurring']['text'] }} after the first three months. It has lower sending limits.</p>
-                @endif
-
-                <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspaceUid, $businessUid]) }}">
-                    @csrf
-                    <x-button type="submit" variant="secondary" :disabled="! $available || ! $localAvailable">Continue with a local number</x-button>
-                </form>
-            </section>
-        </div>
-
-        @if($searched)
-            <div class="mb-4">
-                @if(count($candidateOffers) > 0)
-                    @include('customer.settings.text-messaging._number-candidate-offers')
-                    <p class="text-muted small mt-2" data-role="number-rotation-note">Want more choices? Click Show different toll-free numbers above to see the next available numbers, without repeating those already shown in this session.</p>
-                @else
-                    @if($numberOptionsExhausted ?? false)
-                        <x-empty-state icon="search" title="No more different numbers" description="The carrier returned no further unseen numbers for these filters. Choose a different toll-free prefix to see other numbers." />
-                    @else
-                        <x-empty-state icon="search" title="No number found"
-                                        description="We couldn't find any toll-free numbers with confirmed pricing for that search. Try another prefix or search again later." />
-                    @endif
-                @endif
+                <p class="pm-footnote">Not sure? Toll-free is quickest &mdash; you can text customers sooner.</p>
+              </div>
             </div>
-        @endif
+
+            {{-- State 2: the chooser compacts to a strip; number list and purchase summary open beneath it. --}}
+            <div class="pm-flow__strip">
+                <span class="sr-chip sr-chip--accent">Toll-free</span>
+                <a href="{{ $resetRoute }}" class="pm-linkbtn" data-flow-reset>Change type</a>
+            </div>
+            <div class="pm-flow__results" @unless($searched) inert @endunless>
+              <div class="pm-flow__inner">
+                <div data-role="toll-free-results" data-flow-body aria-live="polite">
+                    @if($searched)
+                        @include('customer.settings.text-messaging._toll-free-results')
+                    @endif
+                </div>
+              </div>
+            </div>
+        </div>
     @endif
 
     {{--
@@ -242,4 +252,8 @@
         @include('customer.settings.text-messaging._port-out-card')
     </div>
 </div>
+@endsection
+
+@section('page-script')
+    @include('customer.settings.text-messaging._number-flow-script')
 @endsection
