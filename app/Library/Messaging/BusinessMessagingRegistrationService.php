@@ -453,7 +453,11 @@ class BusinessMessagingRegistrationService
             return $registration;
         }
 
-        if ($query->providerCampaignId !== null) {
+        // Local tracks a campaign; toll-free tracks its registration id. Either
+        // way this is a conclusive carrier answer (even if still Pending), so
+        // stamp the real check time. Inconclusive answers returned above.
+        if ($query->providerCampaignId !== null
+            || ($query->numberType === PhoneNumberType::TollFree && $query->providerRegistrationId !== null)) {
             $registration->forceFill(['campaign_status_checked_at' => CarbonImmutable::now()])->save();
         }
 

@@ -409,6 +409,38 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertSame(MessagingRegistrationStatus::Pending, $refreshed->status);
     }
 
+    public function test_toll_free_refresh_stamps_the_check_time_for_a_conclusive_pending_answer(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $registration = $this->submitFully($this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free'])));
+        $this->assertNull($registration->campaign_status_checked_at);
+
+        $refreshed = $this->service()->refreshStatus($registration);
+
+        $this->assertSame(MessagingRegistrationStatus::Pending, $refreshed->status);
+        $this->assertNotNull($refreshed->fresh()->campaign_status_checked_at);
+    }
+
+    public function test_toll_free_refresh_never_stamps_the_check_time_for_an_inconclusive_answer(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $registration = $this->submitFully($this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free'])));
+
+        $this->app->instance(MessagingProvisioningAdapter::class, new class extends FakeProvisioningAdapter {
+            public function refreshRegistrationStatus(\App\Library\Messaging\DTO\RegistrationStatusQuery $query): \App\Library\Messaging\DTO\RegistrationStatusResult
+            {
+                return new \App\Library\Messaging\DTO\RegistrationStatusResult(MessagingRegistrationStatus::Approved, null, false);
+            }
+        });
+
+        $refreshed = $this->service()->refreshStatus($registration);
+
+        $this->assertSame(MessagingRegistrationStatus::Pending, $refreshed->status);
+        $this->assertNull($refreshed->fresh()->campaign_status_checked_at);
+    }
+
     public function test_refresh_routes_a_toll_free_registration_through_its_own_registration_id(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();
