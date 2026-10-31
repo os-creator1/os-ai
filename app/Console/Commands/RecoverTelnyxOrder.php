@@ -21,43 +21,105 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * One-time, deliberately narrow recovery for ONE already-purchased Telnyx
- * number whose local finalization (identity + number rows) never completed:
- * Business #3, provisioning incident #3, carrier order 022c5e59-…, number
- * +18446980765.
+ * Recovery for ONE already-purchased Telnyx toll-free number whose local
+ * finalization (identity + number rows) never completed — the carrier first
+ * answered PENDING (or the call did not complete), the order later succeeded,
+ * and a number_order_outcome_unknown incident is still open.
  *
+ * Every identifier is an explicit, validated option; nothing is hardcoded.
  * It only reconciles LOCAL rows with what Telnyx has already done. It never
  * places an order, creates a Messaging Profile, reserves, commits, releases
- * or charges anything: Telnyx is only ever read with GET, and wallet
- * reservation #21 (already committed, $2.10) is verified and left untouched.
+ * or charges anything: Telnyx is only ever read with GET, and the original
+ * wallet reservation (already committed) is verified separately and left
+ * untouched. The number being active at Telnyx proves nothing about the
+ * reservation or renewal: the reservation is checked on its own, and
+ * next_renewal_at is left empty so no renewal charge is scheduled by recovery.
  *
- * Default is --dry-run. --execute re-checks everything under row locks and
- * writes in one transaction; the incident is resolved only as the last step
- * of a fully successful reconciliation. A repeat run finds the finished state
- * and changes nothing. Any doubt — including pricing that cannot be verified
- * against the carrier AND the committed reservation — aborts with no writes.
+ * Default is --dry-run (zero writes). --execute re-checks everything under row
+ * locks and writes in one transaction; the incident is resolved only as the
+ * last step of a fully successful reconciliation. A repeat run finds the
+ * finished state and changes nothing. Any doubt — including pricing that cannot
+ * be verified against the carrier AND the committed reservation — aborts with
+ * no writes.
  */
 class RecoverTelnyxOrder extends Command
 {
     private const API_BASE = 'https://api.telnyx.com/v2';
 
     protected $signature = 'messaging:recover-telnyx-order
-        {--incident= : Provisioning incident id (must be 3)}
-        {--order= : Telnyx number order id (must be the one recorded for incident 3)}
+        {--business= : Business id that owns the incident}
+        {--incident= : Provisioning incident id (number_order_outcome_unknown)}
+        {--order= : Telnyx PARENT number order id (not the order-item id)}
+        {--order-item= : Optional Telnyx number-order item id; if given it must match the order\'s entry for the number}
+        {--phone= : The ordered toll-free number, E.164}
+        {--resource= : Telnyx phone number resource id}
+        {--profile= : Telnyx Messaging Profile id recorded on the incident}
+        {--reservation= : Original committed wallet reservation id}
+        {--reservation-amount-micro= : Amount the wallet was charged, in micro-units}
         {--dry-run : Verify and report only; writes nothing (default)}
         {--execute : Perform the reconciliation}';
 
-    protected $description = 'One-time recovery of the already-purchased Telnyx number for Business 3 / incident 3 (GET-only against Telnyx; never buys or charges).';
+    protected $description = 'Recover a previously successful Telnyx toll-free number order (GET-only against Telnyx; never buys, charges or creates a profile). Dry-run by default.';
+
+    /** @var array<string, int|string> validated target for this run */
+    private array $target = [];
 
     /**
-     * The one recovery target (config/messaging.php, source-controlled — not
-     * environment-driven).
-     *
-     * @return int|string
+     * Validates and stores the explicit recovery target. Fails with the exact
+     * missing/invalid option before anything is read or written.
      */
+    private function parseTarget(): void
+    {
+        $uuid = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+        $rules = [
+            'business' => ['business_id', '/^[1-9]\d{0,18}$/', 'a positive integer'],
+            'incident' => ['incident_id', '/^[1-9]\d{0,18}$/', 'a positive integer'],
+            'order' => ['order_id', $uuid, 'a UUID (the parent number order id)'],
+            'phone' => ['phone_number', '/^\+1(?:800|833|844|855|866|877|888)\d{7}$/', 'a toll-free E.164 number such as +18449506346 (only toll-free recovery is supported)'],
+            'resource' => ['phone_resource_id', '/^\d{6,24}$/', 'the numeric Telnyx phone number resource id'],
+            'profile' => ['messaging_profile_id', $uuid, 'a UUID (the Messaging Profile id)'],
+            'reservation' => ['reservation_id', '/^[1-9]\d{0,18}$/', 'a positive integer'],
+            'reservation-amount-micro' => ['reservation_amount_micro', '/^[1-9]\d{0,12}$/', 'a positive integer of micro-units'],
+        ];
+
+        $missing = [];
+
+        foreach ($rules as $option => [$key, $pattern, $expect]) {
+            $value = trim((string) $this->option($option));
+
+            if ($value === '') {
+                $missing[] = '--' . $option;
+
+                continue;
+            }
+
+            if (preg_match($pattern, $value) !== 1) {
+                throw new \DomainException("--{$option} must be {$expect}.");
+            }
+
+            $this->target[$key] = in_array($key, ['business_id', 'incident_id', 'reservation_id', 'reservation_amount_micro'], true) ? (int) $value : $value;
+        }
+
+        if ($missing !== []) {
+            throw new \DomainException('Missing required option(s): ' . implode(', ', $missing) . '.');
+        }
+
+        $item = trim((string) $this->option('order-item'));
+
+        if ($item !== '' && preg_match($uuid, $item) !== 1) {
+            throw new \DomainException('--order-item must be a UUID.');
+        }
+
+        if ($item !== '' && strcasecmp($item, (string) $this->target['order_id']) === 0) {
+            throw new \DomainException('--order-item equals --order: the item id and the parent order id are different things.');
+        }
+
+        $this->target['order_item_id'] = $item;
+    }
+
     private function t(string $key): int|string
     {
-        return config('messaging.telnyx_order_recovery.' . $key);
+        return $this->target[$key];
     }
 
     public function handle(BusinessMessagingIdentityResolver $identities, ProvisioningIncidentRecorder $incidents): int
@@ -67,9 +129,7 @@ class RecoverTelnyxOrder extends Command
                 throw new \DomainException('Choose either --dry-run or --execute, not both.');
             }
 
-            if ((string) $this->option('incident') !== (string) $this->t('incident_id') || (string) $this->option('order') !== $this->t('order_id')) {
-                throw new \DomainException(sprintf('This command only recovers incident %d / order %s.', $this->t('incident_id'), $this->t('order_id')));
-            }
+            $this->parseTarget();
 
             $execute = (bool) $this->option('execute');
 
@@ -258,7 +318,7 @@ class RecoverTelnyxOrder extends Command
             || $reservation->feature_key !== PlatformFeature::MessagingTransport->value
             || $reservation->status !== UsageReservationStatus::Committed->value
             || (int) $reservation->final_amount_micro !== $this->t('reservation_amount_micro')) {
-            throw new \DomainException('Wallet reservation #' . $this->t('reservation_id') . ' is not the committed $2.10 number purchase of Business ' . $this->t('business_id') . '.');
+            throw new \DomainException('Wallet reservation #' . $this->t('reservation_id') . ' is not the committed ' . $this->usd((int) $this->t('reservation_amount_micro')) . ' number purchase of Business ' . $this->t('business_id') . '.');
         }
 
         $quantity = $reservation->final_quantity ?? $reservation->estimated_quantity;
@@ -308,6 +368,11 @@ class RecoverTelnyxOrder extends Command
 
         if (count($ordered) !== 1 || strtolower((string) ($ordered[0]['status'] ?? '')) !== 'success') {
             throw new \DomainException('The order does not contain exactly one successful ' . $this->t('phone_number') . '.');
+        }
+
+        // An order-item id, when given, must be this order's own entry for the number (it is not the order id).
+        if ($this->t('order_item_id') !== '' && strcasecmp((string) ($ordered[0]['id'] ?? ''), (string) $this->t('order_item_id')) !== 0) {
+            throw new \DomainException('The supplied --order-item is not this order\'s entry for ' . $this->t('phone_number') . '.');
         }
 
         if (isset($order['messaging_profile_id']) && $order['messaging_profile_id'] !== $this->t('messaging_profile_id')) {
