@@ -143,7 +143,8 @@ class AutomaticNumberPurchaseUiTest extends TestCase
         // No second order was placed, no number attached; the no-number page explains it once.
         $this->assertSame(0, BusinessMessagingNumber::query()->count());
         $this->get($this->showUrl($workspace, $business))->assertOk()
-            ->assertSee("We couldn't finish " . self::PHONE)
+            ->assertSee('data-role="number-order-failed"', false)
+            ->assertSee(self::PHONE)
             ->assertSee('Find a toll-free number');
     }
 
