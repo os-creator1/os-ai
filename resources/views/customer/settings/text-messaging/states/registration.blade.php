@@ -12,7 +12,13 @@
     // real progress: no "back to number choices", no "nothing was charged".
     $progressActive = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && $progress['committed'];
     // Toll-free verification already submitted and waiting on the carrier: the compact review screen.
-    $tollFreeReview = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree && $status === 'pending' && filled($phoneNumber);
+    $tollFreeReview = $formNumberType === \App\Enums\Messaging\PhoneNumberType::TollFree && in_array($status, ['pending', 'approved', 'rejected'], true) && filled($phoneNumber);
+    // Header badge + sentence for that screen come from the saved status only (never from a guess).
+    $tollFreeHeader = match ($status) {
+        'approved' => ['Approved', 'success', 'The carrier approved your toll-free verification. We\'re finishing setup so this number can send and receive texts.'],
+        'rejected' => ['Needs correction', 'danger', 'The carrier needs a correction before your toll-free number can be verified. Update your details below and resubmit.'],
+        default => ['Carrier review', 'warn', 'Your toll-free number is being verified by the carrier. There\'s nothing you need to do right now.'],
+    };
     $progressChip = match ($progress['campaign']['key']) {
         'approved' => ['Approved', 'success'],
         'under_review' => ['Carrier review', 'warn'],
@@ -39,9 +45,9 @@
     @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
-        'description' => $tollFreeReview ? 'Your toll-free number is being verified by the carrier. There\'s nothing you need to do right now.' : ($progressActive ? $progressDescription : 'One more step before this number is ready to send and receive texts.'),
-        'chip' => $tollFreeReview ? 'Carrier review' : ($progressActive ? $progressChip[0] : null),
-        'chipVariant' => $tollFreeReview ? 'warn' : ($progressActive ? $progressChip[1] : ''),
+        'description' => $tollFreeReview ? $tollFreeHeader[2] : ($progressActive ? $progressDescription : 'One more step before this number is ready to send and receive texts.'),
+        'chip' => $tollFreeReview ? $tollFreeHeader[0] : ($progressActive ? $progressChip[0] : null),
+        'chipVariant' => $tollFreeReview ? $tollFreeHeader[1] : ($progressActive ? $progressChip[1] : ''),
     ])
 
     @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && ! $progressActive)
@@ -63,7 +69,7 @@
     @endif
 
     @if($tollFreeReview)
-        @include('customer.settings.text-messaging._tollfree-review', ['registration' => $registration, 'phoneNumber' => $phoneNumber, 'retainedNumbers' => $retainedNumbers, 'portOutRequestsByNumberId' => $portOutRequestsByNumberId])
+        @include('customer.settings.text-messaging._tollfree-review', ['registration' => $registration, 'phoneNumber' => $phoneNumber, 'campaignAssignmentStatus' => $campaignAssignmentStatus ?? null, 'retainedNumbers' => $retainedNumbers, 'portOutRequestsByNumberId' => $portOutRequestsByNumberId])
     @else
     @php
         $statusChip = match (true) {
