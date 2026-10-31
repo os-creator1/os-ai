@@ -15,18 +15,19 @@ use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\TestCase;
 
 /**
- * messaging:recover-telnyx-order — mocked Telnyx only (GET fakes); the
- * recovery target is overridden through config to this test's own rows.
+ * messaging:recover-telnyx-order — mocked Telnyx only (GET fakes). The recovery
+ * target is passed as explicit options; nothing is read from config.
  */
 class RecoverTelnyxOrderCommandTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesMessagingFixtures;
 
-    private const ORDER = '022c5e59-2fcf-46ce-a4cc-53ad70739348';
-    private const PHONE = '+18446980765';
-    private const RESOURCE = '3081436796672803842';
-    private const PROFILE = '4001a187-e7fc-4c18-a518-7d1897b41d7e';
+    private const ORDER = '9b1c7e52-0a7d-4f43-9d2e-6f1a2c3b4d5e';
+    private const ITEM = '1d312144-9c5c-4978-a50f-a2b206807fb9';
+    private const PHONE = '+18449506346';
+    private const RESOURCE = '3082808573835609725';
+    private const PROFILE = '4001a191-a73e-4277-baef-197ca13a0a5d';
     private const PURCHASED = '2026-10-29T12:00:00Z';
 
     private Business $business;
@@ -44,16 +45,6 @@ class RecoverTelnyxOrderCommandTest extends TestCase
         config([
             'services.telnyx.api_key' => 'fixture_api_key_not_a_real_credential',
             'messaging.number_sms_addon_monthly_cost_micro' => 100000,
-            'messaging.telnyx_order_recovery' => [
-                'business_id' => $this->business->id,
-                'incident_id' => $this->incidentId,
-                'order_id' => self::ORDER,
-                'phone_number' => self::PHONE,
-                'phone_resource_id' => self::RESOURCE,
-                'messaging_profile_id' => self::PROFILE,
-                'reservation_id' => 21,
-                'reservation_amount_micro' => 2_100_000,
-            ],
         ]);
 
         $this->insertReservation();
@@ -99,7 +90,7 @@ class RecoverTelnyxOrderCommandTest extends TestCase
     private function fakeTelnyx(array $override = []): void
     {
         $order = ['id' => self::ORDER, 'status' => 'success', 'user_id' => 'acct-1', 'cost_information' => null, 'phone_numbers' => [
-            ['id' => 'order-phone-uuid', 'phone_number' => self::PHONE, 'status' => 'success'],
+            ['id' => self::ITEM, 'phone_number' => self::PHONE, 'status' => 'success'],
         ]];
         $number = ['id' => self::RESOURCE, 'phone_number' => self::PHONE, 'status' => 'active', 'user_id' => 'acct-1',
             'messaging_profile_id' => self::PROFILE, 'purchased_at' => self::PURCHASED, 'cost_information' => null];
@@ -143,13 +134,23 @@ class RecoverTelnyxOrderCommandTest extends TestCase
         ];
     }
 
-    private function run_(bool $execute = true, ?string $order = null, ?int $incident = null)
+    /** @param array<string, mixed> $options overrides or (null) removals of the explicit target options */
+    private function run_(bool $execute = true, array $options = [])
     {
-        return $this->artisan('messaging:recover-telnyx-order', [
-            '--incident' => $incident ?? $this->incidentId,
-            '--order' => $order ?? self::ORDER,
-            $execute ? '--execute' : '--dry-run' => true,
-        ]);
+        $args = array_filter(array_merge([
+            '--business' => (string) $this->business->id,
+            '--incident' => (string) $this->incidentId,
+            '--order' => self::ORDER,
+            '--order-item' => self::ITEM,
+            '--phone' => self::PHONE,
+            '--resource' => self::RESOURCE,
+            '--profile' => self::PROFILE,
+            '--reservation' => '21',
+            '--reservation-amount-micro' => '2100000',
+        ], $options), fn ($v) => $v !== null);
+        $args[$execute ? '--execute' : '--dry-run'] = true;
+
+        return $this->artisan('messaging:recover-telnyx-order', $args);
     }
 
     private function assertNothingWritten(): void
@@ -322,15 +323,78 @@ class RecoverTelnyxOrderCommandTest extends TestCase
         $this->assertNull(DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->value('resolved_at'));
     }
 
-    public function test_wrong_incident_or_order_argument_is_refused_before_any_call(): void
+    public function test_missing_or_malformed_options_are_refused_before_any_call(): void
     {
         Http::fake();
 
-        $this->run_(true, 'some-other-order')->assertExitCode(1);
-        $this->run_(true, null, $this->incidentId + 1)->assertExitCode(1);
+        foreach ([
+            ['--order' => null],
+            ['--reservation' => null],
+            ['--order' => 'some-other-order'],
+            ['--order' => self::ITEM, '--order-item' => self::ITEM],
+            ['--phone' => '+14155550100'],
+            ['--resource' => 'abc'],
+            ['--profile' => 'not-a-uuid'],
+            ['--reservation-amount-micro' => '-1'],
+            ['--business' => '0'],
+        ] as $options) {
+            $this->run_(true, $options)->assertExitCode(1);
+        }
+
+        $this->run_(true, ['--incident' => (string) ($this->incidentId + 1)])->assertExitCode(1);
+        $this->run_(true, ['--business' => (string) ($this->business->id + 1)])->assertExitCode(1);
 
         Http::assertNothingSent();
         $this->assertNothingWritten();
+    }
+
+    public function test_a_supplied_order_item_must_be_the_orders_own_entry_for_the_number(): void
+    {
+        $this->fakeTelnyx();
+
+        $this->run_(true, ['--order-item' => '00000000-0000-4000-8000-000000000000'])->assertExitCode(1);
+        $this->assertNothingWritten();
+    }
+
+    public function test_a_missing_or_uncommitted_original_reservation_is_refused_on_dry_run_and_execute(): void
+    {
+        $this->fakeTelnyx();
+
+        foreach ([false, true] as $execute) {
+            // No reservation with that id.
+            $this->run_($execute, ['--reservation' => '9999'])->assertExitCode(1);
+
+            // Present but not committed.
+            DB::table('business_usage_reservations')->where('id', 21)->update(['status' => 'released']);
+            $this->run_($execute)->assertExitCode(1);
+            DB::table('business_usage_reservations')->where('id', 21)->update(['status' => 'committed']);
+
+            // Committed for a different amount than the operator stated.
+            $this->run_($execute, ['--reservation-amount-micro' => '1000000'])->assertExitCode(1);
+
+            // Belonging to another Business.
+            DB::table('business_usage_reservations')->where('id', 21)->update(['business_id' => $this->business->id + 100]);
+            $this->run_($execute)->assertExitCode(1);
+            DB::table('business_usage_reservations')->where('id', 21)->update(['business_id' => $this->business->id]);
+        }
+
+        $this->assertNothingWritten();
+        Http::assertNotSent(fn ($request) => $request->method() !== 'GET');
+    }
+
+    public function test_an_unresolved_carrier_status_is_never_reconciled(): void
+    {
+        foreach ([
+            ['order' => ['status' => 'pending']],
+            ['order' => ['phone_numbers' => [['id' => self::ITEM, 'phone_number' => self::PHONE, 'status' => 'pending']]]],
+            ['order' => ['phone_numbers' => [['id' => self::ITEM, 'phone_number' => self::PHONE, 'status' => 'failure']]]],
+            ['number' => ['status' => 'port-in-pending']],
+        ] as $override) {
+            $this->fakeTelnyx($override);
+            $this->run_()->assertExitCode(1);
+            $this->run_(false)->assertExitCode(1);
+            $this->assertNothingWritten();
+        }
     }
 
     public function test_reservation_with_the_wrong_meter_or_feature_is_refused(): void
