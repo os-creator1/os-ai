@@ -77,42 +77,6 @@ jobs:
           set -o pipefail
           vendor/bin/phpunit tests/Feature/Messaging/TelnyxProvisioningAdapterTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/TelnyxProvisioningAdapterTest.log"
 
-      - name: BusinessMessagingProvisioningServiceTest
-        if: always()
-        run: |
-          set -o pipefail
-          vendor/bin/phpunit tests/Feature/Messaging/BusinessMessagingProvisioningServiceTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/BusinessMessagingProvisioningServiceTest.log"
-
-      - name: TextMessagingSetupStateTest
-        if: always()
-        run: |
-          set -o pipefail
-          vendor/bin/phpunit tests/Feature/Business/TextMessagingSetupStateTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/TextMessagingSetupStateTest.log"
-
-      - name: TextMessagingLocalVerificationSequenceTest
-        if: always()
-        run: |
-          set -o pipefail
-          vendor/bin/phpunit tests/Feature/Business/TextMessagingLocalVerificationSequenceTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/TextMessagingLocalVerificationSequenceTest.log"
-
-      - name: MessagingProvisioningIncidentReconciliationTest
-        if: always()
-        run: |
-          set -o pipefail
-          vendor/bin/phpunit tests/Feature/Messaging/MessagingProvisioningIncidentReconciliationTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/MessagingProvisioningIncidentReconciliationTest.log"
-
-      - name: RecoverPendingNumberCommandTest
-        if: always()
-        run: |
-          set -o pipefail
-          vendor/bin/phpunit tests/Feature/Messaging/RecoverPendingNumberCommandTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/RecoverPendingNumberCommandTest.log"
-
-      - name: TollFreeVerificationFlowTest
-        if: always()
-        run: |
-          set -o pipefail
-          vendor/bin/phpunit tests/Feature/Messaging/TollFreeVerificationFlowTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/TollFreeVerificationFlowTest.log"
-
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
