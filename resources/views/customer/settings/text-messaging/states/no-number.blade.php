@@ -138,7 +138,6 @@
             $localAvailable = (bool) ($localRegistrationPreview['configured'] ?? false);
         @endphp
         @php
-            $tfPreview = $numberPreview ?? ['configured' => false];
             $lowVolume = $lowVolumeRegistrationPreview ?? ['configured' => false];
             $searchRoute = route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceUid, $businessUid]);
             $resetRoute = route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
@@ -161,11 +160,8 @@
                             <div><dt>Looks like</dt><dd>+1 (844) 555-0123<small>800, 833, 844, 855, 866, 877, 888 · nationwide</small></dd></div>
                             <div><dt>Steps</dt><dd>Pick a number now, then a short verification</dd></div>
                             <div><dt>Cost</dt><dd>
-                                @if($tfPreview['configured'] ?? false)
-                                    {{ $tfPreview['one_time']['text'] }} today, then {{ $tfPreview['recurring']['text'] ?? '' }}
-                                @else
-                                    Shown for each number before you buy
-                                @endif
+                                {{-- Billing rates are not a quote: the exact today/monthly price exists only per number. --}}
+                                Exact price shown when you choose a number
                                 <small>Verification is free</small></dd></div>
                             <div><dt>Best for</dt><dd>Customers across the country, getting started quickly</dd></div>
                         </dl>
