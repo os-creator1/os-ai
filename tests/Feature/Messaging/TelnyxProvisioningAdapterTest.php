@@ -106,17 +106,21 @@ class TelnyxProvisioningAdapterTest extends TestCase
         // docblock on MessagingTransport). meter_key is what
         // reserve()/TelnyxProvisioningAdapter actually key their lookup
         // by, and is exactly the adapter's own feature key.
-        app(UsageMeterRepository::class)->create([
-            'meter_key' => $featureKey,
-            'feature_key' => PlatformFeature::MessagingTransport->value,
-            'business_id' => null,
-            'currency_id' => $currencyId,
-            'description' => 'PR #295 Correction Round 1 fixture meter (test-only).',
-            'updated_by_user_id' => $actorId,
-        ]);
+        // Idempotent: a test that funds several Businesses (or calls this in a loop) must not
+        // re-create the platform-wide meter.
+        if (! DB::table('usage_meters')->where('meter_key', $featureKey)->exists()) {
+            app(UsageMeterRepository::class)->create([
+                'meter_key' => $featureKey,
+                'feature_key' => PlatformFeature::MessagingTransport->value,
+                'business_id' => null,
+                'currency_id' => $currencyId,
+                'description' => 'PR #295 Correction Round 1 fixture meter (test-only).',
+                'updated_by_user_id' => $actorId,
+            ]);
 
-        $wallet->setActiveRate($featureKey, '1000000', '500000', 'per action', $currencyId, $actorId, 'Test rate activation.');
-        $wallet->activateMetering($featureKey, $actorId, 'Test metering activation.');
+            $wallet->setActiveRate($featureKey, '1000000', '500000', 'per action', $currencyId, $actorId, 'Test rate activation.');
+            $wallet->activateMetering($featureKey, $actorId, 'Test metering activation.');
+        }
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => $availableMicro]);
 
@@ -2019,17 +2023,27 @@ class TelnyxProvisioningAdapterTest extends TestCase
             },
         ]);
 
-        foreach (['failure' => 0, 'pending' => 1] as $status => $incidents) {
+        foreach (['failure' => 0, 'pending' => 0] as $status => $incidents) {
             [$business, $candidate] = $this->purchaseFixture('+18885550141', '0.25', '1.00');
 
             try {
-                app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
-                $this->fail('Expected a refusal for status ' . $status);
+                $result = app(TelnyxProvisioningAdapter::class)->provisionNumber($business, $candidate);
+                $caught = false;
             } catch (\RuntimeException) {
-                // expected
+                $caught = true;
             }
 
-            // A definite failure hands the hold back; an unconfirmed order may be billing, so its charge is kept.
+            if ($status === 'failure') {
+                // Definitive failure: refused, and the hold is handed back.
+                $this->assertTrue($caught, $status);
+            } else {
+                // Accepted but unfinished: a processing result (the reconciler finishes it), not an error.
+                $this->assertFalse($caught, $status);
+                $this->assertTrue($result->processing, $status);
+                $this->assertNotNull($result->reservationId, $status);
+            }
+
+            // The accepted order may be billing, so its charge is kept (committed once); a failure hands the hold back.
             $this->assertSame(20_000_000 - ($status === 'pending' ? 1_250_000 : 0), (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'), $status);
             $this->assertSame($incidents, DB::table('business_messaging_provisioning_incidents')->where('business_id', $business->id)->where('stage', TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN)->count(), $status);
         }
