@@ -258,7 +258,11 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         // carrier enablement task is still only Requested.
         $notReadyYet = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
         $notReadyYet->assertOk();
-        $notReadyYet->assertDontSee('Ready');
+        // The tracker's fourth step is titled "Ready to text", so the word alone is not a claim: what must never
+        // appear is the Ready state (status chip, "Texting enabled") or that step marked complete.
+        $notReadyYet->assertDontSee('Texting enabled');
+        $notReadyYet->assertDontSee('data-role="ready-status"', false);
+        $this->assertDoesNotMatchRegularExpression('#pm-tracker__step is-done[^>]*>\s*<span[^>]*>[^<]*</span>\s*<span class="pm-tracker__text">\s*<span class="pm-tracker__title">Ready to text#', $notReadyYet->getContent());
         $notReadyYet->assertSee('+14155552002');
 
         // The same fail-closed check is enforced again at the actual

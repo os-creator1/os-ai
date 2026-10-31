@@ -19,7 +19,7 @@
             </div>
             <div role="radiogroup" aria-labelledby="pm-choose-number" class="pm-list">
                 @foreach($candidateOffers as $i => $offer)
-                    <label class="pm-number" for="pm-candidate-{{ $i }}" data-role="number-candidate">
+                    <label class="pm-number" for="pm-candidate-{{ $i }}" data-role="number-candidate" data-phone="{{ $offer['candidate']->phoneNumber }}">
                         <input type="radio" id="pm-candidate-{{ $i }}" name="candidate_token" value="{{ $offer['token'] }}" data-offer="{{ $i }}" @checked($i === 0)>
                         <span class="pm-number__num" data-role="candidate-phone-number">{{ $prettyNumber($offer['candidate']->phoneNumber) }}</span>
                         <span class="pm-number__price">{{ $offer['preview']['configured'] ? ($offer['preview']['recurring']['text'] ?? '') : 'Price unavailable' }}</span>

@@ -311,16 +311,27 @@ final class RegistrationSubmissionValidator
             return array_merge($issues, $this->tollFreeSampleIssues($registration, $one, $two));
         }
 
-        // Sample message 1 is what Telnyx receives as the production message, so it must
-        // identify the customer-facing brand: the DBA the owner stated, else the Business name
-        // already on file or the registered legal name. Nothing typed into a sample message is
-        // trusted as a brand by itself, and the legal name is not required when a DBA is used.
-        $brands = self::brandCandidates($registration);
+        // Local / 10DLC (unchanged rule): the texts must name the registered legal entity or the
+        // Business's own customer-facing name (a stated DBA or the Business name on file) somewhere
+        // across the samples. Nothing the customer types into a sample is trusted as a name by itself.
+        $names = array_values(array_filter([
+            $this->firstWords(trim((string) $registration->legal_business_name)),
+            $this->firstWords(trim((string) $registration->doing_business_as)),
+            $this->firstWords(trim((string) $registration->business?->name)),
+        ], fn (string $n): bool => $n !== ''));
+        $combined = $one . ' ' . $two;
+        $named = false;
 
-        if ($brands !== [] && $one !== '' && ! self::mentionsAny($one, $brands)) {
-            $issues[] = 'Sample message 1 should name your business the way customers know it. Use your customer-facing name (DBA)'
-                . ($registration->doing_business_as ? '' : ' — enter it under "Customer-facing name (DBA)" if it differs from your legal name —')
-                . ' or your Business name, for example "' . $brands[0] . ': …".';
+        foreach ($names as $name) {
+            if (stripos($combined, $name) !== false) {
+                $named = true;
+                break;
+            }
+        }
+
+        if ($names !== [] && $one !== '' && $two !== '' && ! $named) {
+            $issues[] = 'Include your business name in at least one sample message — your registered name ("' . $names[0] . '…")'
+                . (count($names) > 1 ? ' or your customer-facing name ("' . $names[1] . '…")' : '') . '.';
         }
 
         return $issues;
@@ -425,37 +436,8 @@ final class RegistrationSubmissionValidator
         return $issues;
     }
 
-    /** @return list<string> accepted brand names, most specific first, entity suffixes removed */
-    private static function brandCandidates(BusinessMessagingRegistration $registration): array
+    private function firstWords(string $brand): string
     {
-        $names = [];
-
-        foreach ([$registration->doing_business_as, $registration->business?->name, $registration->legal_business_name] as $name) {
-            $name = trim((string) $name);
-
-            do {
-                $before = $name;
-                $name = trim(preg_replace('/[\s,.]+(?:llc|l\.l\.c|inc|incorporated|corp|corporation|co|company|ltd|llp|lp|pllc)\.?$/i', '', $name) ?? $name, " \t,.");
-            } while ($name !== $before);
-
-            if ($name !== '' && ! in_array(strtolower($name), array_map('strtolower', $names), true)) {
-                $names[] = $name;
-            }
-        }
-
-        return $names;
+        return implode(' ', array_slice(preg_split('/\s+/', $brand) ?: [], 0, 2));
     }
-
-    /** @param list<string> $names */
-    private static function mentionsAny(string $text, array $names): bool
-    {
-        foreach ($names as $name) {
-            if (stripos($text, $name) !== false) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
 }
