@@ -39,7 +39,7 @@ use Illuminate\Support\Facades\Log;
  */
 class RecoverTelnyxOrder extends Command
 {
-    private const API_BASE = 'https://api.telnyx.com/v2';
+    protected const API_BASE = 'https://api.telnyx.com/v2';
 
     protected $signature = 'messaging:recover-telnyx-order
         {--incident= : Provisioning incident id (must be 3)}
@@ -55,9 +55,49 @@ class RecoverTelnyxOrder extends Command
      *
      * @return int|string
      */
-    private function t(string $key): int|string
+    protected function t(string $key): int|string
     {
-        return config('messaging.telnyx_order_recovery.' . $key);
+        return $this->target[$key] ?? config('messaging.telnyx_order_recovery.' . $key);
+    }
+
+    /**
+     * A subclass that works out its own target (see RecoverPendingNumber) fills
+     * this; the Business 3 command leaves it empty and uses the config record.
+     *
+     * @var array<string, int|string>
+     */
+    protected array $target = [];
+
+    /** Audit tag written into (and required back from) the incident resolution note. */
+    protected function commandTag(): string
+    {
+        return 'messaging:recover-telnyx-order';
+    }
+
+    /**
+     * When the recovered number's first renewal is due. Null keeps the renewal
+     * sweep from charging anything (the Business 3 behaviour, pending a billing
+     * decision).
+     */
+    protected function renewalAt(Carbon $activatedAt): ?Carbon
+    {
+        return null;
+    }
+
+    /** Whether "complete" requires a renewal date to be set (billing state resolved). */
+    protected function renewalRequired(): bool
+    {
+        return false;
+    }
+
+    /** Called after Telnyx and the reservation verified; throw DomainException if billing cannot be left in a resolved state. */
+    protected function assertBillingResolved(array $facts): void
+    {
+    }
+
+    protected function renewalSentence(?Carbon $renewalAt): string
+    {
+        return 'next_renewal_at left empty pending that decision.';
     }
 
     public function handle(BusinessMessagingIdentityResolver $identities, ProvisioningIncidentRecorder $incidents): int
@@ -71,8 +111,18 @@ class RecoverTelnyxOrder extends Command
                 throw new \DomainException(sprintf('This command only recovers incident %d / order %s.', $this->t('incident_id'), $this->t('order_id')));
             }
 
-            $execute = (bool) $this->option('execute');
+            return $this->process($identities, $incidents, (bool) $this->option('execute'));
+        } catch (\DomainException $e) {
+            $this->error('Aborted, nothing written: ' . $e->getMessage());
 
+            return self::FAILURE;
+        }
+    }
+
+    /** Shared verify → (dry-run | execute) pipeline for every recovery target. */
+    protected function process(BusinessMessagingIdentityResolver $identities, ProvisioningIncidentRecorder $incidents, bool $execute): int
+    {
+        try {
             // Finished already? Then nothing — not even Telnyx — is touched.
             if ($this->alreadyReconciled()) {
                 $this->info('Already reconciled: identity, number and resolved incident are in place. Nothing to do.');
@@ -82,6 +132,7 @@ class RecoverTelnyxOrder extends Command
 
             $this->preflightLocal(false);
             $facts = $this->verifyAtTelnyx();
+            $this->assertBillingResolved($facts);
 
             $this->line(sprintf(
                 'Verified at Telnyx: order success; %s active (resource %s) on profile %s; purchased %s; one-time %s + full monthly %s (number + SMS) verified against the billing records and reservation #%d.',
@@ -94,7 +145,7 @@ class RecoverTelnyxOrder extends Command
                 $this->usd($facts['wallet_charged_micro'], 5), $this->t('reservation_id'),
                 $this->usd($facts['carrier_charged_micro'], 5), $this->usd($facts['wallet_charged_micro'] - $facts['carrier_charged_micro'], 5),
             ));
-            $this->line('Renewal: next_renewal_at will be left EMPTY, so no automatic renewal charge is scheduled until the billing decision is made.');
+            $this->line($this->renewalSentence($this->renewalAt($facts['purchased_at'])));
 
             if (! $execute) {
                 $this->info('DRY RUN: no changes written. Re-run with --execute to reconcile.');
@@ -124,7 +175,7 @@ class RecoverTelnyxOrder extends Command
      * command's own resolution of the exact incident. Anything in between is a
      * collision, never "already done".
      */
-    private function alreadyReconciled(): bool
+    protected function alreadyReconciled(): bool
     {
         $numbers = BusinessMessagingNumber::query()->where('phone_number', $this->t('phone_number'))->get();
 
@@ -159,6 +210,7 @@ class RecoverTelnyxOrder extends Command
             || $number->number_type !== PhoneNumberType::TollFree
             || ! $number->is_primary
             || $number->activated_at === null
+            || ($this->renewalRequired() && $number->next_renewal_at === null)
             || $number->upfront_cost_micro === null
             || $number->monthly_cost_micro === null
             || (int) $number->monthly_cost_micro < 1
@@ -175,7 +227,7 @@ class RecoverTelnyxOrder extends Command
             || $incident->messaging_profile_id !== $this->t('messaging_profile_id')
             || $incident->resolved_at === null
             || ! is_string($incident->resolution_note)
-            || ! str_contains($incident->resolution_note, '[recovered by messaging:recover-telnyx-order]')
+            || ! str_contains($incident->resolution_note, '[recovered by ' . $this->commandTag() . ']')
             || ! str_contains($incident->resolution_note, (string) $this->t('order_id'))
             || ! str_contains($incident->resolution_note, (string) $this->t('phone_resource_id'))) {
             throw $fail('incident');
@@ -188,7 +240,7 @@ class RecoverTelnyxOrder extends Command
      * Local safety checks. With $lock true they run inside the write
      * transaction under row locks.
      */
-    private function preflightLocal(bool $lock): void
+    protected function preflightLocal(bool $lock): void
     {
         $scope = static fn ($query) => $lock ? $query->lockForUpdate() : $query;
 
@@ -245,7 +297,7 @@ class RecoverTelnyxOrder extends Command
      *
      * @return array{quantity_micro: int}
      */
-    private function assertReservation(bool $lock): array
+    protected function assertReservation(bool $lock): array
     {
         $query = DB::table('business_usage_reservations')->where('id', $this->t('reservation_id'));
         $reservation = ($lock ? $query->lockForUpdate() : $query)->first();
@@ -276,7 +328,7 @@ class RecoverTelnyxOrder extends Command
      *
      * @return array{purchased_at: Carbon, upfront_micro: int, monthly_micro: int, carrier_charged_micro: int, wallet_charged_micro: int}
      */
-    private function verifyAtTelnyx(): array
+    protected function verifyAtTelnyx(): array
     {
         $apiKey = (string) (config('services.telnyx.api_key') ?? '');
 
@@ -373,7 +425,7 @@ class RecoverTelnyxOrder extends Command
      *
      * @return array{upfront_micro: int, monthly_micro: int, carrier_charged_micro: int, wallet_charged_micro: int}
      */
-    private function verifyBilling(Carbon $purchasedAt, mixed $accountId): array
+    protected function verifyBilling(Carbon $purchasedAt, mixed $accountId): array
     {
         $apiKey = (string) config('services.telnyx.api_key');
         $monthStart = $purchasedAt->copy()->startOfMonth();
@@ -501,7 +553,7 @@ class RecoverTelnyxOrder extends Command
     }
 
     /** A carrier amount as signed integer units of 0.00001 (the carrier's 5-decimal precision), or null if ambiguous. */
-    private function toUnits(mixed $value): ?int
+    protected function toUnits(mixed $value): ?int
     {
         if (is_int($value) || is_float($value)) {
             $value = sprintf('%.6F', $value);
@@ -521,14 +573,14 @@ class RecoverTelnyxOrder extends Command
     }
 
     /** monthly micro x days/daysInMonth, rounded half-up to the carrier's 5-decimal units. */
-    private function prorate(int $monthlyMicro, int $days, int $daysInMonth): int
+    protected function prorate(int $monthlyMicro, int $days, int $daysInMonth): int
     {
         $exact = bcdiv(bcmul((string) $monthlyMicro, (string) $days, 0), (string) ($daysInMonth * 10), 6);
 
         return (int) bcadd($exact, '0.5', 0);
     }
 
-    private function parseTime(mixed $value): ?Carbon
+    protected function parseTime(mixed $value): ?Carbon
     {
         if (! is_string($value) || trim($value) === '') {
             return null;
@@ -541,7 +593,7 @@ class RecoverTelnyxOrder extends Command
         }
     }
 
-    private function usd(int $micro, int $decimals = 2): string
+    protected function usd(int $micro, int $decimals = 2): string
     {
         return '$' . number_format($micro / 1_000_000, $decimals);
     }
@@ -549,7 +601,7 @@ class RecoverTelnyxOrder extends Command
     /**
      * @param  array{purchased_at: Carbon, upfront_micro: int, monthly_micro: int, carrier_charged_micro: int, wallet_charged_micro: int}  $facts
      */
-    private function write(BusinessMessagingIdentityResolver $identities, ProvisioningIncidentRecorder $incidents, array $facts): void
+    protected function write(BusinessMessagingIdentityResolver $identities, ProvisioningIncidentRecorder $incidents, array $facts): void
     {
         $business = Business::query()->findOrFail($this->t('business_id'));
         $tz = (string) config('app.timezone');
@@ -571,10 +623,11 @@ class RecoverTelnyxOrder extends Command
         // are the original purchase's. Costs mirror the normal purchase path.
         DB::table('business_messaging_numbers')->where('id', $number->id)->update([
             'activated_at' => $activatedAt,
-            // Deliberately empty: Telnyx bills recurring charges from the 1st of
-            // the month, and the prepaid-balance discrepancy is unresolved. An
-            // empty value keeps the renewal sweep from charging anything.
-            'next_renewal_at' => null,
+            // Business 3: deliberately empty (Telnyx bills recurring charges from the
+            // 1st of the month and the prepaid-balance discrepancy is unresolved, so an
+            // empty value keeps the renewal sweep from charging anything). Targets that
+            // verified their prepaid first month set the normal purchase-anniversary date.
+            'next_renewal_at' => $this->renewalAt($activatedAt),
             'upfront_cost_micro' => $facts['upfront_micro'],
             'monthly_cost_micro' => $facts['monthly_micro'],
             'cost_currency' => 'USD',
@@ -591,11 +644,12 @@ class RecoverTelnyxOrder extends Command
         }
 
         $note = sprintf(
-            '[recovered by messaging:recover-telnyx-order] Telnyx order %s verified success (GET only); number %s resource %s active on profile %s; purchased %s; upfront %s + full monthly rental %s verified against Telnyx billing records and committed wallet reservation #%d (%s) — preserved, no new order/profile/reservation/charge. Wallet charged %s vs carrier billed so far %s: any credit is a separate, pending billing decision (not applied). next_renewal_at left empty pending that decision. Identity #%d and number #%d created.',
-            $this->t('order_id'), $this->t('phone_number'), $this->t('phone_resource_id'), $this->t('messaging_profile_id'),
+            '[recovered by %s] Telnyx order %s verified success (GET only); number %s resource %s active on profile %s; purchased %s; upfront %s + full monthly rental %s verified against Telnyx billing records and committed wallet reservation #%d (%s) — preserved, no new order/profile/reservation/charge. Wallet charged %s vs carrier billed so far %s: any credit is a separate, pending billing decision (not applied). %s Identity #%d and number #%d created.',
+            $this->commandTag(), $this->t('order_id'), $this->t('phone_number'), $this->t('phone_resource_id'), $this->t('messaging_profile_id'),
             $activatedAt->toIso8601String(), $this->usd($facts['upfront_micro']), $this->usd($facts['monthly_micro']),
-            $this->t('reservation_id'), $this->usd($this->t('reservation_amount_micro')),
+            $this->t('reservation_id'), $this->usd((int) $this->t('reservation_amount_micro')),
             $this->usd($facts['wallet_charged_micro'], 5), $this->usd($facts['carrier_charged_micro'], 5),
+            $this->renewalSentence($this->renewalAt($activatedAt)),
             $identity->id, $number->id,
         );
 
