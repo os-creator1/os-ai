@@ -127,7 +127,7 @@ class AutomaticNumberPurchaseUiTest extends TestCase
         $this->post($this->orderUrl($workspace, $business), ['candidate_token' => $token]);
 
         foreach (range(1, 3) as $_) {
-            $this->get($this->showUrl($workspace, $business))->assertOk()->assertSee('Setting up your number')->assertDontSee('Find a toll-free number');
+            $this->get($this->showUrl($workspace, $business))->assertOk()->assertSee('Setting up your number')->assertDontSee('data-role="find-toll-free"', false);
         }
     }
 
@@ -145,7 +145,7 @@ class AutomaticNumberPurchaseUiTest extends TestCase
         $this->get($this->showUrl($workspace, $business))->assertOk()
             ->assertSee('data-role="number-order-failed"', false)
             ->assertSee(self::PHONE)
-            ->assertSee('Find a toll-free number');
+            ->assertSee('data-role="find-toll-free"', false);
     }
 
     public function test_platform_carrier_funds_problem_is_an_operator_issue_not_a_try_another_number_message(): void
