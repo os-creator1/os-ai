@@ -1,0 +1,79 @@
+name: Recover pending number focused tests (one-off)
+
+# One-off, minimal and separate from the AI Subscription Test Gate. Runs on the
+# throwaway branch only, against a disposable MySQL service container that
+# exists for this job alone. Telnyx HTTP is mocked by the tests themselves
+# (Http::fake + preventStrayRequests); no real credentials are provided.
+on:
+  push:
+    branches: [ci/recover-pending-number-tests]
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    name: Focused PHPUnit (disposable MySQL 8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      TELNYX_API_KEY: ""
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Show the tested commit
+        run: |
+          git log -1 --format='tested head: %H %s'
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, bcmath, pdo_mysql, intl, xml, curl, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare disposable test database
+        run: |
+          php artisan config:clear
+          php artisan migrate --force
+
+      - name: Recovery command tests
+        run: |
+          set -o pipefail
+          vendor/bin/phpunit tests/Feature/Messaging/RecoverPendingNumberCommandTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/pending.log"
+          vendor/bin/phpunit tests/Feature/Messaging/RecoverTelnyxOrderCommandTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/kaleb.log"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recover-pending-test-logs
+          path: ${{ runner.temp }}/*.log
