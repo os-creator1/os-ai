@@ -62,7 +62,7 @@ class TextMessagingSetupStateTest extends TestCase
         // Toll-free leads and is marked recommended; local stays available.
         $this->assertLessThan(strpos($html, 'data-role="local-number-card"'), strpos($html, 'data-role="toll-free-number-card"'));
         $this->assertStringContainsString('data-role="recommended-badge"', $html);
-        $this->assertStringContainsString('Continue with a local number', $html);
+        $this->assertStringContainsString('Register for a local number', $html);
 
         // The $0 verification claim never implies texting is free.
         $this->assertStringContainsString('Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.', $html);

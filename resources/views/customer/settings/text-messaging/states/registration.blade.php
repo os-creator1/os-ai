@@ -196,7 +196,7 @@ $textLimit = $isTollFreeForm ? \App\Library\Messaging\Registration\RegistrationS
                 <legend class="visually-hidden">Your business</legend>
                 <div class="pm-section__head" aria-hidden="true">
                     <span class="pm-section__num">1</span>
-                    <div><h2 class="pm-section__title">Your business</h2><p class="pm-section__help">Your business details, exactly as they appear on your registration or tax records.</p></div>
+                    <div><h2 class="pm-section__title">Your business</h2><p class="pm-section__help">Business details exactly as they appear on your registration or tax records.</p></div>
                 </div>
                 <div class="pm-section__body">
                     <div class="pm-field">
