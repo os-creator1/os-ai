@@ -78,6 +78,18 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
     /** Scripted releaseNumber() outcome, keyed by providerPhoneNumberId; defaults to Confirmed. */
     public array $releaseOutcomes = [];
 
+    /** When set, provisionNumber() throws it (e.g. a platform-funds refusal). */
+    public ?\Throwable $provisionThrows = null;
+
+    /** Scripted provisionNumber() result: 'active' (default) or 'processing'. */
+    public string $provisionOutcome = 'active';
+
+    /** @var list<array{phoneNumber: string, messagingProfileId: string, parentOrderId: ?string}> every checkNumberOrder() call. */
+    public array $numberOrderChecks = [];
+
+    /** @var array<string, list<\App\Library\Messaging\DTO\NumberOrderCheckResult>> scripted checkNumberOrder() results per phone number, consumed in order (the last repeats). */
+    public array $numberOrderOutcomes = [];
+
     private int $numberCounter = 0;
 
     private int $profileCounter = 0;
@@ -97,14 +109,42 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
     {
         $this->provisionedOrders[] = ['business' => $business, 'candidate' => $candidate];
 
+        if ($this->provisionThrows !== null) {
+            throw $this->provisionThrows;
+        }
+
         $this->numberCounter++;
         $this->profileCounter++;
+
+        if ($this->provisionOutcome === 'processing') {
+            return new ProvisionedNumberResult(
+                messagingProfileId: sprintf('fake_profile_%06d', $this->profileCounter),
+                providerPhoneNumberId: '',
+                phoneNumber: $candidate->phoneNumber,
+                upfrontCostMicro: $candidate->upfrontCostMicro,
+                monthlyCostMicro: $candidate->monthlyCostMicro,
+                costCurrency: $candidate->currency,
+                processing: true,
+                parentOrderId: sprintf('fake_order_%06d', $this->numberCounter),
+            );
+        }
 
         return new ProvisionedNumberResult(
             messagingProfileId: sprintf('fake_profile_%06d', $this->profileCounter),
             providerPhoneNumberId: sprintf('fake_number_%06d', $this->numberCounter),
             phoneNumber: $candidate->phoneNumber,
         );
+    }
+
+    public function checkNumberOrder(string $phoneNumber, string $messagingProfileId, ?string $parentOrderId): \App\Library\Messaging\DTO\NumberOrderCheckResult
+    {
+        $this->numberOrderChecks[] = ['phoneNumber' => $phoneNumber, 'messagingProfileId' => $messagingProfileId, 'parentOrderId' => $parentOrderId];
+
+        $queue = $this->numberOrderOutcomes[$phoneNumber] ?? [];
+        $next = count($queue) > 1 ? array_shift($queue) : ($queue[0] ?? null);
+        $this->numberOrderOutcomes[$phoneNumber] = count($queue) > 0 ? $queue : [];
+
+        return $next ?? new \App\Library\Messaging\DTO\NumberOrderCheckResult(\App\Library\Messaging\DTO\NumberOrderCheckResult::PENDING, null, null, 'fake_pending');
     }
 
     public function submitRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult

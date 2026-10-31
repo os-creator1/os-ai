@@ -118,6 +118,10 @@
             // retries; oversized or unreadable cases become visible incidents
             // (the command exits non-zero) rather than being guessed.
             $schedule->command('messaging:reconcile-costs --days=7 --apply --recheck-days=3')->hourlyAt(17)->withoutOverlapping();
+            // Pending Telnyx number orders finish on their own: read-only carrier checks,
+            // then the identity/number are attached from the order's own record. Idempotent
+            // and claim-guarded, so overlapping runs and replays are harmless.
+            $schedule->command('messaging:reconcile-number-orders')->everyMinute()->withoutOverlapping(5);
             // Implementation Contract 15 §12.F — an implementation-time
             // cadence decision (not pinned by any authoritative document):
             // frequent enough that a webhook-missed change still converges
