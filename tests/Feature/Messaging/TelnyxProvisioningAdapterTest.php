@@ -2106,4 +2106,284 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame(0, Http::recorded(fn ($request) => str_contains($request->url(), '/10dlc/brand'))->count());
         $this->assertSame(20_000_000 - 1_000_000 - 1_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'));
     }
+
+    // -----------------------------------------------------------------
+    // Automatic completion of pending / unseen-outcome number orders.
+    // -----------------------------------------------------------------
+
+    private const AUTO_PHONE = '+18885550177';
+
+    private const AUTO_RESOURCE = '3081436796672803842';
+
+    /**
+     * A scriptable carrier. $state: order (callable|array response of POST /number_orders),
+     * parent (GET /number_orders/parent-1 payload), numbers (GET /phone_numbers rows).
+     */
+    private function carrier(array &$state): void
+    {
+        Http::fake(function (\Illuminate\Http\Client\Request $request) use (&$state) {
+            $path = (string) parse_url($request->url(), PHP_URL_PATH);
+            $method = $request->method();
+            $state['log'][] = $method . ' ' . $path;
+
+            return match (true) {
+                $path === '/v2/available_phone_numbers' => Http::response(['data' => [$this->quoteRow(self::AUTO_PHONE, ['upfront_cost' => '0.25', 'monthly_cost' => '1.00', 'currency' => 'USD'])]]),
+                $method === 'POST' && $path === '/v2/messaging_profiles' => Http::response(['data' => ['id' => 'mp_auto_1']]),
+                $method === 'POST' && $path === '/v2/number_orders' => ($state['order'])(),
+                $method === 'GET' && $path === '/v2/number_orders/parent-1' => Http::response(['data' => $state['parent']]),
+                $method === 'GET' && $path === '/v2/phone_numbers' => Http::response(['data' => $state['numbers']]),
+                default => Http::response(['errors' => [['code' => '10005']]], 404),
+            };
+        });
+    }
+
+    private function activeNumberRow(): array
+    {
+        return ['id' => self::AUTO_RESOURCE, 'phone_number' => self::AUTO_PHONE, 'status' => 'active', 'messaging_profile_id' => 'mp_auto_1', 'purchased_at' => '2026-10-30T12:00:00Z'];
+    }
+
+    private function pendingOrderResponse(): \GuzzleHttp\Promise\PromiseInterface
+    {
+        return Http::response(['data' => ['id' => 'parent-1', 'status' => 'pending', 'phone_numbers' => [['id' => 'item-1', 'phone_number' => self::AUTO_PHONE, 'status' => 'pending']]]]);
+    }
+
+    /** @return array{0: Business, 1: \App\Library\Messaging\BusinessMessagingProvisioningService, 2: AvailableNumberCandidate} */
+    private function autoSetup(): array
+    {
+        \Illuminate\Support\Carbon::setTestNow('2026-10-30 12:05:00');
+        $this->enableProvisioning();
+        config(['messaging.number_sms_addon_monthly_cost_micro' => 0]);
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_NUMBER_PURCHASE);
+
+        return [$business, app(\App\Library\Messaging\BusinessMessagingProvisioningService::class), new AvailableNumberCandidate(self::AUTO_PHONE, PhoneNumberType::TollFree, self::AUTO_PHONE, 250_000, 1_000_000, 'USD')];
+    }
+
+    private function ledgerAndReservations(): array
+    {
+        return [
+            'reservations' => DB::table('business_usage_reservations')->count(),
+            'committed' => DB::table('business_usage_reservations')->where('status', 'committed')->count(),
+            'ledger' => DB::table('business_usage_ledger_entries')->count(),
+            'balance' => (int) DB::table('business_usage_wallets')->value('available_balance_micro'),
+        ];
+    }
+
+    private function countCalls(array $state, string $needle): int
+    {
+        return count(array_filter($state['log'] ?? [], fn (string $l): bool => $l === $needle));
+    }
+
+    protected function tearDown(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow();
+        parent::tearDown();
+    }
+
+    public function test_immediate_success_completes_the_order_and_stores_the_real_resource_id(): void
+    {
+        [$business, $service, $candidate] = $this->autoSetup();
+        $state = ['order' => fn () => Http::response(['data' => ['id' => 'parent-1', 'status' => 'success', 'phone_numbers' => [['id' => 'item-1', 'phone_number' => self::AUTO_PHONE, 'status' => 'success']]]]),
+            'numbers' => [$this->activeNumberRow()], 'parent' => []];
+        $this->carrier($state);
+
+        $number = $service->provisionNumber($business, $candidate);
+
+        $this->assertInstanceOf(\App\Models\BusinessMessagingNumber::class, $number);
+        $this->assertSame(self::AUTO_RESOURCE, $number->provider_number_reference);
+        $order = \App\Models\BusinessMessagingNumberOrder::query()->sole();
+        $this->assertSame('completed', $order->status);
+        $this->assertSame(1, $this->ledgerAndReservations()['committed']);
+    }
+
+    public function test_pending_order_is_a_processing_result_with_one_charge_and_no_incident_then_completes_automatically(): void
+    {
+        [$business, $service, $candidate] = $this->autoSetup();
+        $state = ['order' => fn () => $this->pendingOrderResponse(), 'numbers' => [], 'parent' => ['id' => 'parent-1', 'status' => 'pending', 'phone_numbers' => [['phone_number' => self::AUTO_PHONE, 'status' => 'pending']]]];
+        $this->carrier($state);
+
+        $order = $service->provisionNumber($business, $candidate);
+
+        // A normal processing result: no exception, no incident, durable state, charged exactly once.
+        $this->assertInstanceOf(\App\Models\BusinessMessagingNumberOrder::class, $order);
+        $this->assertSame('processing', $order->status);
+        $this->assertSame('mp_auto_1', $order->messaging_profile_id);
+        $this->assertSame('parent-1', $order->provider_order_id);
+        $this->assertNotNull($order->usage_reservation_id);
+        $this->assertSame(1_250_000, (int) $order->upfront_cost_micro + (int) $order->monthly_cost_micro);
+        $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->count());
+        $this->assertSame('committed', DB::table('business_usage_reservations')->where('id', $order->usage_reservation_id)->value('status'));
+        $this->assertSame(0, \App\Models\BusinessMessagingNumber::query()->count());
+        $identity = \App\Models\BusinessMessagingIdentity::query()->sole();
+        $this->assertSame('pending', $identity->status->value);
+        $this->assertSame('mp_auto_1', $identity->messaging_profile_id);
+        $before = $this->ledgerAndReservations();
+
+        $reconciler = app(\App\Library\Messaging\NumberOrderReconciler::class);
+
+        // Delayed completion: not visible at the carrier for a while → still processing, nothing changes.
+        \Illuminate\Support\Carbon::setTestNow(now()->addSeconds(30));
+        $this->assertSame(1, $reconciler->reconcileDue());
+        $this->assertSame('processing', $order->fresh()->status);
+        $this->assertSame(0, \App\Models\BusinessMessagingNumber::query()->count());
+
+        // The carrier finishes; the next scheduled check finalizes everything.
+        $state['numbers'] = [$this->activeNumberRow()];
+        \Illuminate\Support\Carbon::setTestNow(now()->addMinutes(2));
+        $this->assertSame(1, $reconciler->reconcileDue());
+
+        $done = $order->fresh();
+        $this->assertSame('completed', $done->status);
+        $number = \App\Models\BusinessMessagingNumber::query()->sole();
+        $this->assertSame(self::AUTO_PHONE, $number->phone_number);
+        $this->assertSame(self::AUTO_RESOURCE, $number->provider_number_reference);
+        $this->assertSame('active', $number->status->value);
+        $this->assertTrue((bool) $number->is_primary);
+        $this->assertSame('active', $identity->fresh()->status->value);
+        // The ORIGINAL quote, not a carrier billing report; the real purchase date; first renewal one month on.
+        $this->assertSame(250_000, (int) $number->upfront_cost_micro);
+        $this->assertSame(1_000_000, (int) $number->monthly_cost_micro);
+        $this->assertSame('USD', $number->cost_currency);
+        $purchased = \Illuminate\Support\Carbon::parse('2026-10-30T12:00:00Z');
+        $this->assertSame($purchased->getTimestamp(), $number->activated_at->getTimestamp());
+        $this->assertSame($purchased->copy()->addMonthNoOverflow()->getTimestamp(), $number->next_renewal_at->getTimestamp());
+
+        // Wallet untouched after acceptance; replays and extra workers change nothing and order nothing.
+        $this->assertSame($before, $this->ledgerAndReservations());
+        $reconciler->finalize($order->id, new \App\Library\Messaging\DTO\NumberOrderCheckResult('success', self::AUTO_RESOURCE, '2026-10-30T12:00:00Z', null));
+        $this->assertSame(0, $reconciler->reconcileDue());
+        $this->assertSame(1, \App\Models\BusinessMessagingNumber::query()->count());
+        $this->assertSame(1, \App\Models\BusinessMessagingIdentity::query()->count());
+        $this->assertSame($before, $this->ledgerAndReservations());
+        $this->assertSame(1, $this->countCalls($state, 'POST /v2/number_orders'));
+        $this->assertSame(1, $this->countCalls($state, 'POST /v2/messaging_profiles'));
+    }
+
+    public function test_pending_order_the_carrier_definitively_fails_is_recorded_without_pretending_success_or_auto_refunding(): void
+    {
+        [$business, $service, $candidate] = $this->autoSetup();
+        $state = ['order' => fn () => $this->pendingOrderResponse(), 'numbers' => [], 'parent' => ['id' => 'parent-1', 'status' => 'failure', 'phone_numbers' => [['phone_number' => self::AUTO_PHONE, 'status' => 'failure']]]];
+        $this->carrier($state);
+        $order = $service->provisionNumber($business, $candidate);
+        $before = $this->ledgerAndReservations();
+
+        \Illuminate\Support\Carbon::setTestNow(now()->addMinute());
+        app(\App\Library\Messaging\NumberOrderReconciler::class)->reconcileDue();
+
+        $this->assertSame('failed', $order->fresh()->status);
+        $this->assertSame(0, \App\Models\BusinessMessagingNumber::query()->count());
+        $this->assertSame(0, \App\Models\BusinessMessagingIdentity::query()->count());
+        $this->assertSame(1, \App\Models\BusinessMessagingProvisioningIncident::query()->where('stage', 'number_order_failed_after_charge')->whereNull('resolved_at')->count());
+        // No automatic credit: a human verifies the billing consequences.
+        $this->assertSame($before, $this->ledgerAndReservations());
+        // The customer may choose another number (no open order remains).
+        $this->assertNull($service->openOrderFor($business));
+    }
+
+    public function test_a_timeout_or_server_error_after_the_order_attempt_reconciles_to_success_instead_of_an_error(): void
+    {
+        foreach (['timeout', 503] as $case) {
+            [$business, $service, $candidate] = $this->autoSetup();
+            $state = [
+                'order' => $case === 'timeout'
+                    ? function () { throw new \Illuminate\Http\Client\ConnectionException('timed out'); }
+                    : fn () => Http::response([], 503),
+                'numbers' => [], 'parent' => [],
+            ];
+            $this->carrier($state);
+
+            $order = $service->provisionNumber($business, $candidate);
+
+            $this->assertSame('processing', $order->status, $case);
+            $this->assertNull($order->provider_order_id, $case);
+            $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->count(), $case);
+            $this->assertSame(1, $this->ledgerAndReservations()['committed'], $case);
+
+            // The earlier outcome is uncertain: another purchase attempt is refused and orders nothing.
+            try {
+                $service->provisionNumber($business, $candidate);
+                $this->fail('A second purchase must be refused.');
+            } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
+            }
+            $this->assertSame(1, $this->countCalls($state, 'POST /v2/number_orders'), $case);
+
+            // Telnyx did buy it after all: found on our Messaging Profile → completed.
+            $state['numbers'] = [$this->activeNumberRow()];
+            \Illuminate\Support\Carbon::setTestNow(now()->addMinute());
+            app(\App\Library\Messaging\NumberOrderReconciler::class)->reconcileDue();
+
+            $this->assertSame('completed', $order->fresh()->status, $case);
+            $this->assertSame(1, \App\Models\BusinessMessagingNumber::query()->count(), $case);
+
+            // Clean slate for the next case.
+            DB::table('business_messaging_numbers')->delete();
+            DB::table('business_messaging_number_orders')->delete();
+            DB::table('business_messaging_identities')->delete();
+            DB::table('business_usage_ledger_entries')->delete();
+            DB::table('business_usage_reservations')->delete();
+        }
+    }
+
+    public function test_concurrent_workers_and_pollers_never_double_check_or_double_create(): void
+    {
+        [$business, $service, $candidate] = $this->autoSetup();
+        $state = ['order' => fn () => $this->pendingOrderResponse(), 'numbers' => [$this->activeNumberRow()], 'parent' => ['id' => 'parent-1', 'status' => 'success', 'phone_numbers' => [['phone_number' => self::AUTO_PHONE, 'status' => 'success']]]];
+        $this->carrier($state);
+        $order = $service->provisionNumber($business, $candidate);
+        $reconciler = app(\App\Library\Messaging\NumberOrderReconciler::class);
+
+        // A status poll right after acceptance claims the check; an immediate second poll does not repeat it.
+        $first = $reconciler->nudge($order->fresh());
+        $second = $reconciler->nudge($order->fresh());
+
+        $this->assertSame('completed', $first->status);
+        $this->assertSame('completed', $second->status);
+        $this->assertSame(1, \App\Models\BusinessMessagingNumber::query()->count());
+        $this->assertSame(1, $this->countCalls($state, 'GET /v2/number_orders/parent-1'));
+    }
+
+    public function test_platform_telnyx_insufficient_funds_is_an_operator_incident_releasing_the_hold(): void
+    {
+        [$business, $service, $candidate] = $this->autoSetup();
+        $before = $this->ledgerAndReservations()['balance'];
+        $state = ['order' => fn () => Http::response(['errors' => [['code' => '20100', 'title' => 'Insufficient funds']]], 402), 'numbers' => [], 'parent' => []];
+        $this->carrier($state);
+
+        try {
+            $service->provisionNumber($business, $candidate);
+            $this->fail('Expected the platform-funds exception.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingPlatformFundsException) {
+        }
+
+        // Nothing was bought or kept: hold released, no order/identity, ONE operator incident.
+        $this->assertSame(0, \App\Models\BusinessMessagingNumberOrder::query()->count());
+        $this->assertSame(0, \App\Models\BusinessMessagingIdentity::query()->count());
+        $this->assertSame($before, $this->ledgerAndReservations()['balance']);
+        $this->assertSame(1, \App\Models\BusinessMessagingProvisioningIncident::query()->where('stage', TelnyxProvisioningAdapter::INCIDENT_PLATFORM_FUNDS)->count());
+    }
+
+    public function test_an_order_that_stays_unresolved_alerts_operators_once_but_still_completes_automatically_later(): void
+    {
+        [$business, $service, $candidate] = $this->autoSetup();
+        $state = ['order' => fn () => $this->pendingOrderResponse(), 'numbers' => [], 'parent' => ['id' => 'parent-1', 'status' => 'pending', 'phone_numbers' => [['phone_number' => self::AUTO_PHONE, 'status' => 'pending']]]];
+        $this->carrier($state);
+        $order = $service->provisionNumber($business, $candidate);
+        $reconciler = app(\App\Library\Messaging\NumberOrderReconciler::class);
+
+        \Illuminate\Support\Carbon::setTestNow(now()->addMinutes(130));
+        $reconciler->reconcileDue();
+        $reconciler->reconcileDue();
+
+        $this->assertSame('needs_attention', $order->fresh()->status);
+        $this->assertSame(1, \App\Models\BusinessMessagingProvisioningIncident::query()->where('stage', 'number_order_needs_attention')->count());
+        $this->assertNotNull($service->openOrderFor($business), 'A second purchase stays blocked.');
+
+        $state['numbers'] = [$this->activeNumberRow()];
+        \Illuminate\Support\Carbon::setTestNow(now()->addMinutes(40));
+        $reconciler->reconcileDue();
+
+        $this->assertSame('completed', $order->fresh()->status);
+        $this->assertSame(1, \App\Models\BusinessMessagingNumber::query()->count());
+        $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->whereNull('resolved_at')->count());
+    }
 }

@@ -601,6 +601,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             ]);
 
             if (! $profileResponse->successful()) {
+                $this->failOnPlatformFunds($business, $candidate, $profileResponse, null);
+
                 // Retain only diagnostic codes/status, never secrets or the
                 // provider's raw error body, which might contain PII.
                 \Illuminate\Support\Facades\Log::warning('Telnyx Messaging Profile creation rejected', [
@@ -623,20 +625,31 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 throw new \RuntimeException('Telnyx returned no Messaging Profile identifier.');
             }
 
+            // A carrier order whose outcome we cannot see (no response, 408, 5xx) or
+            // that Telnyx accepted but reports `pending` is NOT an error: it is a
+            // processing order that the reconciler finishes with read-only requests.
+            // The fresh Messaging Profile created above is unique to this attempt, so a
+            // number later found active on it can only be this order's.
+            $processing = false;
+            $parentOrderId = null;
+
             try {
                 $orderResponse = $this->client()->post(self::API_BASE . '/number_orders', [
                     'phone_numbers' => [['phone_number' => $candidate->providerCandidateReference]],
                     'messaging_profile_id' => $messagingProfileId,
                 ]);
             } catch (ConnectionException) {
-                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order request did not complete');
+                $orderResponse = null;
+                $processing = true;
             }
 
-            if ($orderResponse->serverError() || $orderResponse->status() === 408) {
-                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order status=' . $orderResponse->status());
+            if ($orderResponse !== null && ($orderResponse->serverError() || $orderResponse->status() === 408)) {
+                $processing = true;
             }
 
-            if (! $orderResponse->successful()) {
+            if ($orderResponse !== null && ! $processing && ! $orderResponse->successful()) {
+                $this->failOnPlatformFunds($business, $candidate, $orderResponse, $messagingProfileId);
+
                 // Expose carrier diagnostics in server logs, not to the
                 // customer, and never include an API key or request body.
                 \Illuminate\Support\Facades\Log::warning('Telnyx number order rejected', [
@@ -663,31 +676,56 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 throw new \RuntimeException('Telnyx rejected the number order request.');
             }
 
-            // HTTP 200 is not a completed order: each number carries its own
-            // status (pending | success | failure). A failure is definitive;
-            // a still-pending order may yet complete, so it is an unconfirmed
-            // outcome (incident + block), not a quiet success or a refund.
-            $orderedStatus = strtolower((string) ($orderResponse->json('data.phone_numbers.0.status') ?? $orderResponse->json('data.status') ?? 'success'));
+            if ($orderResponse !== null && ! $processing) {
+                // HTTP 200 is not a completed order: each number carries its own
+                // status (pending | success | failure). A failure is definitive.
+                $orderedStatus = strtolower((string) ($orderResponse->json('data.phone_numbers.0.status') ?? $orderResponse->json('data.status') ?? 'success'));
 
-            if ($orderedStatus === 'failure') {
-                app(ProvisioningIncidentRecorder::class)->record(
-                    business: $business,
-                    stage: 'messaging_profile_created_but_number_order_failed',
-                    messagingProfileId: $messagingProfileId,
-                    providerPhoneNumberId: null,
-                    phoneNumber: $candidate->phoneNumber,
-                    numberType: $candidate->numberType->value,
-                    errorMessage: 'order status=failure',
-                );
+                if ($orderedStatus === 'failure') {
+                    app(ProvisioningIncidentRecorder::class)->record(
+                        business: $business,
+                        stage: 'messaging_profile_created_but_number_order_failed',
+                        messagingProfileId: $messagingProfileId,
+                        providerPhoneNumberId: null,
+                        phoneNumber: $candidate->phoneNumber,
+                        numberType: $candidate->numberType->value,
+                        errorMessage: 'order status=failure',
+                    );
 
-                throw new \RuntimeException('Telnyx could not complete the number order.');
+                    throw new \RuntimeException('Telnyx could not complete the number order.');
+                }
+
+                $parentOrderId = $this->providerValue($orderResponse, ['data.id']) ?: null;
+                $processing = $orderedStatus === 'pending';
             }
 
-            if ($orderedStatus === 'pending') {
-                throw $this->unconfirmedNumberOrder($business, $candidate, $messagingProfileId, 'order accepted but still pending');
+            if ($processing) {
+                // Charged exactly once, here: the reservation is committed, never
+                // re-reserved, and the reconciler never touches the wallet.
+                $this->wallet->commit($reservationId);
+
+                return new ProvisionedNumberResult(
+                    messagingProfileId: $messagingProfileId,
+                    providerPhoneNumberId: '',
+                    phoneNumber: $candidate->phoneNumber,
+                    upfrontCostMicro: $candidate->upfrontCostMicro,
+                    monthlyCostMicro: $candidate->monthlyCostMicro,
+                    costCurrency: $candidate->currency,
+                    processing: true,
+                    parentOrderId: $parentOrderId,
+                    reservationId: $reservationId,
+                );
             }
 
             $providerPhoneNumberId = (string) ($orderResponse->json('data.phone_numbers.0.id') ?? $orderResponse->json('data.id'));
+
+            // The order item's id is not the phone-number resource id that later
+            // lookups and releases use. Use the resource when Telnyx shows it.
+            try {
+                $providerPhoneNumberId = $this->lookUpNumberResource($candidate->phoneNumber, $messagingProfileId)['id'] ?? $providerPhoneNumberId;
+            } catch (\Throwable) {
+                // Best effort only: the order itself already succeeded.
+            }
         } catch (\Throwable $e) {
             $this->settleAfterFailure($reservationId, $e);
 
@@ -703,7 +741,114 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             upfrontCostMicro: $candidate->upfrontCostMicro,
             monthlyCostMicro: $candidate->monthlyCostMicro,
             costCurrency: $candidate->currency,
+            reservationId: $reservationId,
         );
+    }
+
+    /**
+     * Platform Telnyx account out of funds (HTTP 402, code 20100): a platform
+     * operations problem, not something the customer can fix by trying other
+     * numbers. Nothing was ordered, so the hold is released by the caller's
+     * catch; operators get a critical log and ONE open incident.
+     */
+    private function failOnPlatformFunds(Business $business, AvailableNumberCandidate $candidate, \Illuminate\Http\Client\Response $response, ?string $messagingProfileId): void
+    {
+        if ($response->status() !== 402) {
+            return;
+        }
+
+        \Illuminate\Support\Facades\Log::critical('Telnyx platform account cannot fund number orders (HTTP 402).', [
+            'business_id' => $business->id,
+            'provider_code' => $response->json('errors.0.code'),
+            'action' => 'Top up the platform Telnyx balance; customers are being told purchases are temporarily unavailable.',
+        ]);
+
+        if (! BusinessMessagingProvisioningIncident::query()->where('business_id', $business->id)->where('stage', self::INCIDENT_PLATFORM_FUNDS)->whereNull('resolved_at')->exists()) {
+            app(ProvisioningIncidentRecorder::class)->record(
+                business: $business,
+                stage: self::INCIDENT_PLATFORM_FUNDS,
+                messagingProfileId: $messagingProfileId,
+                providerPhoneNumberId: null,
+                phoneNumber: $candidate->phoneNumber,
+                numberType: $candidate->numberType->value,
+                errorMessage: 'HTTP 402 ' . (string) $response->json('errors.0.code'),
+            );
+        }
+
+        throw new \App\Library\Messaging\Exceptions\MessagingPlatformFundsException('The platform carrier account cannot fund number orders right now.');
+    }
+
+    /** Read-only: the Telnyx number resource for a phone number, only when exactly one exact match exists. @return array{id: string, status: string, messaging_profile_id: ?string, purchased_at: ?string}|null */
+    private function lookUpNumberResource(string $phoneNumber, ?string $messagingProfileId = null): ?array
+    {
+        $response = $this->client()->get(self::API_BASE . '/phone_numbers', ['filter[phone_number]' => substr($phoneNumber, 2), 'page[size]' => 20]);
+
+        if (! $response->successful()) {
+            return null;
+        }
+
+        $matches = array_values(array_filter((array) $response->json('data'), fn ($row): bool => is_array($row) && ($row['phone_number'] ?? null) === $phoneNumber));
+
+        if (count($matches) !== 1 || ! is_scalar($matches[0]['id'] ?? null) || trim((string) $matches[0]['id']) === '') {
+            return null;
+        }
+
+        if ($messagingProfileId !== null && ($matches[0]['messaging_profile_id'] ?? null) !== $messagingProfileId) {
+            return null;
+        }
+
+        return [
+            'id' => trim((string) $matches[0]['id']),
+            'status' => strtolower((string) ($matches[0]['status'] ?? '')),
+            'messaging_profile_id' => isset($matches[0]['messaging_profile_id']) ? (string) $matches[0]['messaging_profile_id'] : null,
+            'purchased_at' => isset($matches[0]['purchased_at']) ? (string) $matches[0]['purchased_at'] : null,
+        ];
+    }
+
+    /**
+     * Read-only progress check of an accepted (or unseen-outcome) number order. Success needs
+     * the number resource ACTIVE on the Messaging Profile created for this order (and the parent
+     * order not failed). Never writes at the carrier.
+     */
+    public function checkNumberOrder(string $phoneNumber, string $messagingProfileId, ?string $parentOrderId): \App\Library\Messaging\DTO\NumberOrderCheckResult
+    {
+        $unknown = static fn (string $why) => new \App\Library\Messaging\DTO\NumberOrderCheckResult(\App\Library\Messaging\DTO\NumberOrderCheckResult::UNKNOWN, null, null, $why);
+
+        try {
+            if ($parentOrderId !== null && $parentOrderId !== '') {
+                $order = $this->client()->get(self::API_BASE . '/number_orders/' . rawurlencode($parentOrderId));
+
+                if ($order->successful()) {
+                    $status = strtolower((string) $order->json('data.status'));
+                    $item = collect((array) $order->json('data.phone_numbers'))->first(fn ($row): bool => is_array($row) && ($row['phone_number'] ?? null) === $phoneNumber);
+                    $itemStatus = is_array($item) ? strtolower((string) ($item['status'] ?? '')) : '';
+
+                    if ($status === 'failure' || $itemStatus === 'failure') {
+                        return new \App\Library\Messaging\DTO\NumberOrderCheckResult(\App\Library\Messaging\DTO\NumberOrderCheckResult::FAILED, null, null, 'order_failed');
+                    }
+                } elseif ($order->serverError() || $order->status() === 408 || $order->status() === 429) {
+                    return $unknown('order_lookup_http_' . $order->status());
+                }
+            }
+
+            $resource = $this->lookUpNumberResource($phoneNumber, $messagingProfileId);
+        } catch (\Throwable) {
+            return $unknown('lookup_transport_error');
+        }
+
+        if ($resource === null) {
+            return new \App\Library\Messaging\DTO\NumberOrderCheckResult(\App\Library\Messaging\DTO\NumberOrderCheckResult::PENDING, null, null, 'number_not_visible_yet');
+        }
+
+        if ($resource['status'] === 'active') {
+            return new \App\Library\Messaging\DTO\NumberOrderCheckResult(\App\Library\Messaging\DTO\NumberOrderCheckResult::SUCCESS, $resource['id'], $resource['purchased_at'], null);
+        }
+
+        if (in_array($resource['status'], ['purchase-failed', 'deleted'], true)) {
+            return new \App\Library\Messaging\DTO\NumberOrderCheckResult(\App\Library\Messaging\DTO\NumberOrderCheckResult::FAILED, null, null, 'resource_' . $resource['status']);
+        }
+
+        return new \App\Library\Messaging\DTO\NumberOrderCheckResult(\App\Library\Messaging\DTO\NumberOrderCheckResult::PENDING, null, null, 'resource_' . $resource['status']);
     }
 
     public function submitRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
@@ -969,6 +1114,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
         return $status;
     }
+
+    public const INCIDENT_PLATFORM_FUNDS = 'telnyx_platform_insufficient_funds';
 
     public const INCIDENT_BRAND_UNKNOWN = '10dlc_brand_outcome_unknown';
     public const INCIDENT_CAMPAIGN_UNKNOWN = '10dlc_campaign_outcome_unknown';

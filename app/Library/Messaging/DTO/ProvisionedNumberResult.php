@@ -19,6 +19,11 @@ final readonly class ProvisionedNumberResult
         public ?int $upfrontCostMicro = null,
         public ?int $monthlyCostMicro = null,
         public ?string $costCurrency = null,
+        /** True when the carrier accepted the order but it is not finished (or its outcome was not seen). */
+        public bool $processing = false,
+        public ?string $parentOrderId = null,
+        /** The committed wallet reservation that paid for this order (never re-reserved). */
+        public ?int $reservationId = null,
     ) {
     }
 }

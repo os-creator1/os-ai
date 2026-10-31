@@ -2360,6 +2360,7 @@
             // STATE 1 — no number yet.
             Route::post('/number/search', 'Business\TextMessagingController@searchNumber')->name('number.search');
             Route::post('/number/order', 'Business\TextMessagingController@orderNumber')->name('number.order');
+            Route::get('/number/order-status', 'Business\TextMessagingController@numberOrderStatus')->middleware('throttle:60,1')->name('number.order-status');
 
             // Review correction — the verify-first sequence's entry point:
             // Telnyx genuinely supports completing 10DLC business
