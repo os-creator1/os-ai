@@ -2294,48 +2294,46 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertNull($service->openOrderFor($business));
     }
 
-    public function test_a_timeout_or_server_error_after_the_order_attempt_reconciles_to_success_instead_of_an_error(): void
+    public function test_a_timeout_after_the_order_attempt_reconciles_to_success_instead_of_an_error(): void
     {
-        foreach (['timeout', 503] as $case) {
-            [$business, $service, $candidate] = $this->autoSetup();
-            $state = [
-                'order' => $case === 'timeout'
-                    ? function () { throw new \Illuminate\Http\Client\ConnectionException('timed out'); }
-                    : fn () => Http::response([], 503),
-                'numbers' => [], 'parent' => [],
-            ];
-            $this->carrier($state);
+        $this->assertUncertainOutcomeReconciles(function () { throw new \Illuminate\Http\Client\ConnectionException('timed out'); });
+    }
 
-            $order = $service->provisionNumber($business, $candidate);
+    public function test_a_server_error_after_the_order_attempt_reconciles_to_success_instead_of_an_error(): void
+    {
+        $this->assertUncertainOutcomeReconciles(fn () => Http::response([], 503));
+    }
 
-            $this->assertSame('processing', $order->status, $case);
-            $this->assertNull($order->provider_order_id, $case);
-            $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->count(), $case);
-            $this->assertSame(1, $this->ledgerAndReservations()['committed'], $case);
+    private function assertUncertainOutcomeReconciles(callable $orderResponse): void
+    {
+        [$business, $service, $candidate] = $this->autoSetup();
+        $state = ['order' => $orderResponse, 'numbers' => [], 'parent' => []];
+        $this->carrier($state);
 
-            // The earlier outcome is uncertain: another purchase attempt is refused and orders nothing.
-            try {
-                $service->provisionNumber($business, $candidate);
-                $this->fail('A second purchase must be refused.');
-            } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
-            }
-            $this->assertSame(1, $this->countCalls($state, 'POST /v2/number_orders'), $case);
+        $order = $service->provisionNumber($business, $candidate);
 
-            // Telnyx did buy it after all: found on our Messaging Profile → completed.
-            $state['numbers'] = [$this->activeNumberRow()];
-            \Illuminate\Support\Carbon::setTestNow(now()->addMinute());
-            app(\App\Library\Messaging\NumberOrderReconciler::class)->reconcileDue();
+        $this->assertSame('processing', $order->status);
+        $this->assertNull($order->provider_order_id);
+        $this->assertSame(0, \App\Models\BusinessMessagingProvisioningIncident::query()->count());
+        $this->assertSame(1, $this->ledgerAndReservations()['committed']);
 
-            $this->assertSame('completed', $order->fresh()->status, $case);
-            $this->assertSame(1, \App\Models\BusinessMessagingNumber::query()->count(), $case);
-
-            // Clean slate for the next case.
-            DB::table('business_messaging_numbers')->delete();
-            DB::table('business_messaging_number_orders')->delete();
-            DB::table('business_messaging_identities')->delete();
-            DB::table('business_usage_ledger_entries')->delete();
-            DB::table('business_usage_reservations')->delete();
+        // The earlier outcome is uncertain: another purchase attempt is refused and orders nothing.
+        try {
+            $service->provisionNumber($business, $candidate);
+            $this->fail('A second purchase must be refused.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
         }
+        $this->assertSame(1, $this->countCalls($state, 'POST /v2/number_orders'));
+        $this->assertSame(1, $this->ledgerAndReservations()['committed']);
+
+        // Telnyx did buy it after all: found on our Messaging Profile → completed, no further charge.
+        $state['numbers'] = [$this->activeNumberRow()];
+        \Illuminate\Support\Carbon::setTestNow(now()->addMinute());
+        app(\App\Library\Messaging\NumberOrderReconciler::class)->reconcileDue();
+
+        $this->assertSame('completed', $order->fresh()->status);
+        $this->assertSame(1, \App\Models\BusinessMessagingNumber::query()->count());
+        $this->assertSame(1, $this->ledgerAndReservations()['committed']);
     }
 
     public function test_concurrent_workers_and_pollers_never_double_check_or_double_create(): void
