@@ -142,9 +142,8 @@ class RecoverPendingNumberCommandTest extends TestCase
         $this->fakeTelnyx();
 
         $this->run_(false)
-            ->expectsOutputToContain('Target: Business #' . $this->business->id)
-            ->expectsOutputToContain(self::RESOURCE)
-            ->expectsOutputToContain('parent order ' . self::PARENT)
+            // One line carries the whole target; a console expectation consumes the line it matches.
+            ->expectsOutputToContain('Target: Business #' . $this->business->id . ', incident #' . $this->incidentId . ', number ' . self::PHONE . ', Telnyx resource ' . self::RESOURCE . ', profile ' . self::PROFILE . ', parent order ' . self::PARENT)
             ->expectsOutputToContain('DRY RUN')
             ->assertExitCode(0);
 
