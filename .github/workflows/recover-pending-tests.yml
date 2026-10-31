@@ -65,10 +65,15 @@ jobs:
           php artisan config:clear
           php artisan migrate --force
 
-      - name: Recovery command tests
+      - name: Recover pending number tests
         run: |
           set -o pipefail
           vendor/bin/phpunit tests/Feature/Messaging/RecoverPendingNumberCommandTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/pending.log"
+
+      - name: Business 3 recovery tests (regression)
+        if: always()
+        run: |
+          set -o pipefail
           vendor/bin/phpunit tests/Feature/Messaging/RecoverTelnyxOrderCommandTest.php --testdox 2>&1 | tee "$RUNNER_TEMP/kaleb.log"
 
       - name: Upload logs
