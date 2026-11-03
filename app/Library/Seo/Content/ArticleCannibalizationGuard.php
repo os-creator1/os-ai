@@ -3,6 +3,7 @@
 namespace App\Library\Seo\Content;
 
 use App\Enums\Seo\ArticleStatus;
+use App\Library\Website\Seo\WebsitePageIntentClassifier;
 use App\Models\Business;
 use App\Models\WebsiteArticle;
 
@@ -53,7 +54,9 @@ final class ArticleCannibalizationGuard
 
         $findings = [];
 
-        foreach ($pages ?? $this->inventory->pages($business) as $page) {
+        $pages ??= $this->inventory->pages($business);
+
+        foreach ($pages as $page) {
             if (! $page['money']) {
                 continue;
             }
@@ -91,11 +94,37 @@ final class ArticleCannibalizationGuard
             ->when($ignoreArticleId !== null, fn ($q) => $q->where('id', '!=', $ignoreArticleId))
             ->get(['id', 'uid', 'title', 'primary_topic']);
 
+        // Every place this Business serves: its saved cities and the places its own published pages are about.
+        $placeWords = array_values(array_unique(array_merge(
+            WebsitePageIntentClassifier::forBusiness($business)->placeWords(),
+            ...array_map(fn (array $page) => ($page['place'] ?? null) !== null ? WebsitePageIntentClassifier::tokens((string) $page['place'], false) : [], $pages),
+        )));
+        $withoutPlace = fn (array $core) => array_values(array_filter($core, fn (string $word) => ! in_array($word, $placeWords, true)));
+
         foreach ($articles as $article) {
             foreach (array_filter([$article->title, $article->primary_topic]) as $existingPhrase) {
                 $existing = ArticleTopicSignature::of((string) $existingPhrase);
 
                 foreach ($candidates as $candidate) {
+                    // The same article for a different city: identical once the place words are set aside, and each names a place.
+                    // Swapping the city name makes no new article; it is a doorway page in blog form.
+                    if ($existing['core'] !== [] && $existing['core'] !== $candidate['core']
+                        && $existing['modifiers'] === $candidate['modifiers']
+                        && $withoutPlace($existing['core']) !== []
+                        && $withoutPlace($existing['core']) === $withoutPlace($candidate['core'])
+                        && $withoutPlace($existing['core']) !== $existing['core']
+                        && $withoutPlace($candidate['core']) !== $candidate['core']) {
+                        $findings['article:' . $article->uid] = [
+                            'type' => 'article',
+                            'uid' => (string) $article->uid,
+                            'title' => (string) $article->title,
+                            'strength' => 'strong',
+                            'reason' => 'Your article "' . $article->title . '" is the same article for a different place. Swapping the city name adds nothing new; write about something specific to this place (a venue, a local event, how serving it really works) or link the two.',
+                        ];
+
+                        continue 3;
+                    }
+
                     if ($existing['core'] === [] || $existing['core'] !== $candidate['core']) {
                         continue;
                     }

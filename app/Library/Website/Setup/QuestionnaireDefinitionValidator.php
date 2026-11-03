@@ -354,7 +354,7 @@ final class QuestionnaireDefinitionValidator
      */
     private function validateStepFlags(string $key, array $step, string $inputType, string $targetModule): void
     {
-        foreach (['suggest', 'shared_fact', 'area_pages', 'complete_list', 'owner_confirms'] as $flag) {
+        foreach (['suggest', 'shared_fact', 'area_pages', 'area_details', 'complete_list', 'owner_confirms'] as $flag) {
             if (! array_key_exists($flag, $step)) {
                 continue;
             }
@@ -397,6 +397,10 @@ final class QuestionnaireDefinitionValidator
 
         if (array_key_exists('area_pages', $step) && ! ($inputType === 'string_list' && $targetModule === 'business_location')) {
             throw new DomainException("Step '{$key}' sets area_pages, which only a business_location string_list supports.");
+        }
+
+        if (array_key_exists('area_details', $step) && ! ($inputType === 'string_list' && $targetModule === 'business_location')) {
+            throw new DomainException("Step '{$key}' sets area_details, which only a business_location string_list supports.");
         }
 
         if (($step['shared_fact'] ?? false) && ! in_array($targetModule, ['business', 'business_location'], true)) {

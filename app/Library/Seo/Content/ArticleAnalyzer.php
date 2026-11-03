@@ -74,6 +74,12 @@ final class ArticleAnalyzer
         $overlap = $this->guard->check($business, array_filter([$title, $article->primary_topic]), (int) $article->id);
         $add('duplication', 'Overlap', ! $overlap->strong(), 'No strong overlap with your other pages or articles.', $overlap->strongFindings()[0]['reason'] ?? 'Strong topic overlap.');
 
+        $placeNamed = $this->placeNamed($business, $title . ' ' . (string) $article->primary_topic);
+        if ($placeNamed !== null) {
+            $hasPlacePage = collect($this->inventory->pages($business))->contains(fn (array $page) => $page['linkable'] && $page['kind'] === ArticleSiteInventory::KIND_LOCATION && ($page['place'] ?? null) !== null && \Illuminate\Support\Str::slug((string) $page['place']) === \Illuminate\Support\Str::slug($placeNamed));
+            $add('local', 'Local substance', $hasPlacePage, 'Your site has a page about ' . $placeNamed . ' this article supports.', 'This article is about ' . $placeNamed . ', but your site has no page about ' . $placeNamed . ' with local details. Without one it is generic advice with a city name on it: add that page (a venue you have worked at, how serving it works), or write about something that is not tied to a city.');
+        }
+
         $schemaMissing = $this->schemaGaps($business, $article);
         $add('schema', 'Structured data', $schemaMissing === [], 'Article structured data has everything it needs.', 'Structured data is missing: ' . implode(', ', $schemaMissing) . '.');
 
@@ -135,6 +141,22 @@ final class ArticleAnalyzer
         }
 
         return [true, 'Search engines can find this article.'];
+    }
+
+    /** The first place this Business serves that a title/topic names, as the Business wrote it; null when it names none. */
+    private function placeNamed(Business $business, string $text): ?string
+    {
+        $words = ' ' . implode(' ', \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($text, false)) . ' ';
+
+        foreach (\App\Library\Website\Seo\WebsitePageIntentClassifier::placeNames($business) as $place) {
+            $tokens = \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($place, false);
+
+            if ($tokens !== [] && str_contains($words, ' ' . implode(' ', $tokens) . ' ')) {
+                return $place;
+            }
+        }
+
+        return null;
     }
 
     private function topicRepresented(WebsiteArticle $article): bool

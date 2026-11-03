@@ -18,10 +18,12 @@ use Tests\TestCase;
 
 /**
  * Service-area pages: the owner's chosen cities are SEO/service-area
- * targets — planned straight from the list (never as operational
- * BusinessLocations), prioritized and capped, each with its own slug,
- * facts and internal links, and protected from becoming near-identical
- * doorway pages.
+ * targets — never operational BusinessLocations. A city earns a page of its
+ * own only when the owner confirmed something specific to it (venues they have
+ * worked at, how serving it works, event photos from there:
+ * LocalAreaUsefulness); the rest are listed on the home page. Pages that exist
+ * are prioritized and capped, each with its own slug, facts and internal
+ * links, and protected from becoming near-identical doorway pages.
  */
 class WebsiteServiceAreaPagesTest extends TestCase
 {
@@ -50,6 +52,23 @@ class WebsiteServiceAreaPagesTest extends TestCase
         return app(WebsitePageStrategy::class)->buildPlan($business, $template, $website, null, $catalogUids, $areas);
     }
 
+    /** Areas the owner confirmed local details for (LocalAreaUsefulness): the only ones that earn a page of their own. */
+    private function confirmed(array $names): array
+    {
+        return array_map(fn (string $name) => ['name' => $name, 'details' => ['logistics' => "Serving {$name} takes under an hour from our base; we arrive two hours before the event."]], $names);
+    }
+
+    /** The service areas saved on the business's own location: what the home page's "Areas we serve" list is built from. */
+    private function saveServiceAreas(object $business, array $areas): void
+    {
+        $location = $business->primaryLocation()->first();
+        if ($location === null) {
+            $location = $business->locations()->create(['name' => 'Primary Location', 'service_mode' => 'service_area', 'country_code' => 'US', 'city' => 'Manhattan', 'region' => 'NY']);
+            $location->forceFill(['is_primary' => true])->save();
+        }
+        $location->forceFill(['service_area_cities' => $areas])->save();
+    }
+
     private function areaPages(array $plan): array
     {
         return array_values(array_filter($plan, fn ($page) => str_starts_with($page['page_key'], 'area:')));
@@ -60,7 +79,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
         [, $business] = $this->entitledTenant();
         $this->services($business);
 
-        $areas = $this->areaPages($this->plan($business, ['Manhattan, NY', 'Brooklyn', 'Queens']));
+        $areas = $this->areaPages($this->plan($business, $this->confirmed(['Manhattan, NY', 'Brooklyn', 'Queens'])));
 
         $this->assertSame(['serving-manhattan-ny', 'serving-brooklyn', 'serving-queens'], array_column($areas, 'slug'));
         $this->assertSame(['Serving Manhattan, NY', 'Serving Brooklyn', 'Serving Queens'], array_column($areas, 'title'));
@@ -73,12 +92,13 @@ class WebsiteServiceAreaPagesTest extends TestCase
         [, $business] = $this->entitledTenant();
         $this->services($business, 2);
 
-        $entity = $this->areaPages($this->plan($business, ['Brooklyn', 'Queens', 'Bronx']))[0]['entity'];
+        $entity = $this->areaPages($this->plan($business, $this->confirmed(['Brooklyn', 'Queens', 'Bronx'])))[0]['entity'];
 
         $this->assertSame('Brooklyn', $entity['area']);
         $this->assertSame(['Queens', 'Bronx'], $entity['nearby_areas'], 'The other chosen areas are the nearby context.');
         $this->assertSame(['Booth 1', 'Booth 2'], $entity['services']);
-        $this->assertEqualsCanonicalizing(['area', 'nearby_areas', 'services', 'business_home_city'], array_unique(array_merge(array_keys($entity), ['business_home_city'])));
+        $this->assertEqualsCanonicalizing(['area', 'local_facts', 'nearby_areas', 'services', 'business_home_city'], array_unique(array_merge(array_keys($entity), ['business_home_city'])));
+        $this->assertSame(['logistics'], array_keys($entity['local_facts']), 'Only the local facts the owner confirmed travel with the area.');
     }
 
     public function test_choosing_areas_never_creates_operational_locations(): void
@@ -87,7 +107,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->services($business);
         $before = $business->locations()->count();
 
-        $this->plan($business, ['Manhattan, NY', 'Brooklyn', 'Queens']);
+        $this->plan($business, $this->confirmed(['Manhattan, NY', 'Brooklyn', 'Queens']));
 
         $this->assertSame($before, $business->locations()->count());
     }
@@ -100,7 +120,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertSame([], $this->areaPages($this->plan($business, null)), 'A questionnaire that collects no list plans none (v1 behaviour).');
 
         [, $empty] = $this->entitledTenant();
-        $this->assertSame([], $this->areaPages($this->plan($empty, ['Brooklyn', 'Queens'])), 'No services and no packages: nothing to localize, so no thin pages.');
+        $this->assertSame([], $this->areaPages($this->plan($empty, $this->confirmed(['Brooklyn', 'Queens']))), 'No services and no packages: nothing to localize, so no thin pages.');
     }
 
     public function test_a_long_list_is_capped_instead_of_becoming_dozens_of_thin_pages(): void
@@ -109,7 +129,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->services($business, 2);
         $areas = array_map(fn ($n) => 'Town ' . $n, range(1, 40));
 
-        $plan = $this->plan($business, $areas);
+        $plan = $this->plan($business, $this->confirmed($areas));
         $areaPages = $this->areaPages($plan);
 
         $this->assertGreaterThanOrEqual(5, count($areaPages));
@@ -125,7 +145,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
         [, $business] = $this->entitledTenant();
         $this->services($business, 12);
 
-        $plan = $this->plan($business, ['Manhattan, NY', 'Brooklyn', 'Queens', 'Bronx', 'Hoboken', 'Newark']);
+        $plan = $this->plan($business, $this->confirmed(['Manhattan, NY', 'Brooklyn', 'Queens', 'Bronx', 'Hoboken', 'Newark']));
 
         $this->assertGreaterThanOrEqual(2, count($this->areaPages($plan)));
         $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($plan));
@@ -136,11 +156,58 @@ class WebsiteServiceAreaPagesTest extends TestCase
         [, $business] = $this->entitledTenant();
         $this->services($business);
 
-        $plan = $this->plan($business, ['St. Louis', 'St Louis', 'Saint Louis']);
+        $plan = $this->plan($business, $this->confirmed(['St. Louis', 'St Louis', 'Saint Louis']));
 
         $this->assertSame(['serving-st-louis', 'serving-saint-louis'], array_column($this->areaPages($plan), 'slug'));
         $slugs = array_filter(array_column($plan, 'slug'));
         $this->assertSame(count($slugs), count(array_unique($slugs)), 'No two pages share a URL.');
+    }
+
+    public function test_an_area_with_no_local_details_gets_no_page_and_is_listed_with_how_to_earn_one(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        $website = $this->createWebsite($business);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+
+        $explained = app(WebsitePageStrategy::class)->planWithExplanation($business, $template, $website, null, null, ['Brooklyn', 'Queens', 'Bronx']);
+
+        $this->assertSame([], $this->areaPages($explained['plan']), 'A page that differs from its siblings only by the city name is a doorway page.');
+        $this->assertSame(['Brooklyn', 'Queens', 'Bronx'], $explained['areas']['hub'], 'They stay in the visible "Areas we serve" list.');
+        $this->assertSame(0, $explained['areas']['planned']);
+        $this->assertCount(3, $explained['areas']['excluded']);
+        $this->assertStringContainsString('doorway', $explained['areas']['excluded'][0]['reason']);
+        $this->assertStringContainsString('venue you have worked in Brooklyn', $explained['areas']['excluded'][0]['reason'], 'The owner is told exactly what would earn the page.');
+    }
+
+    public function test_only_the_areas_with_confirmed_details_get_pages_and_the_rest_stay_in_the_list(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        $website = $this->createWebsite($business);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $areas = [['name' => 'Brooklyn', 'details' => ['venues' => ["<b>The Greenpoint Loft</b>", 'The Brooklyn Winery']]], 'Queens', ['name' => 'Bronx', 'details' => ['venues' => [], 'logistics' => '   ']]];
+
+        $explained = app(WebsitePageStrategy::class)->planWithExplanation($business, $template, $website, null, null, $areas);
+
+        $this->assertSame(['Brooklyn'], $explained['areas']['planned_list']);
+        $this->assertSame(['Queens', 'Bronx'], $explained['areas']['hub']);
+        $brooklyn = $this->areaPages($explained['plan'])[0]['entity'];
+        $this->assertSame(['venues' => ['The Greenpoint Loft', 'The Brooklyn Winery']], $brooklyn['local_facts'], 'Markup is stripped; an empty fact is no fact.');
+    }
+
+    public function test_the_base_city_never_gets_a_second_page_competing_with_the_home_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        (new \App\Models\BusinessLocation())->forceFill(['business_id' => $business->id, 'is_primary' => true, 'service_mode' => 'service_area', 'name' => 'Main', 'city' => 'Brooklyn', 'country_code' => 'US'])->save();
+        $website = $this->createWebsite($business);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+
+        $explained = app(WebsitePageStrategy::class)->planWithExplanation($business, $template, $website, null, null, $this->confirmed(['Brooklyn', 'Queens']));
+
+        $this->assertSame(['Queens'], $explained['areas']['planned_list']);
+        $this->assertStringContainsString('base city', collect($explained['areas']['excluded'])->firstWhere('area', 'Brooklyn')['reason']);
     }
 
     // ---------------------------------------------------- anti-doorway
@@ -162,7 +229,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
     {
         [, $business] = $this->entitledTenant();
         $this->services($business);
-        $plan = WebsitePageStrategy::withoutAiUnfillableSections($this->plan($business, ['Brooklyn', 'Queens']));
+        $plan = WebsitePageStrategy::withoutAiUnfillableSections($this->plan($business, $this->confirmed(['Brooklyn', 'Queens'])));
 
         app(GuidedGenerationOutputValidator::class)->validate($this->validPagesFor($plan, fn ($area, $key) => 'Photo booths for ' . $area . ' — ' . hash('sha256', $key) . hash('sha256', $key . 'b')), $plan);
 
@@ -173,7 +240,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
     {
         [, $business] = $this->entitledTenant();
         $this->services($business);
-        $plan = WebsitePageStrategy::withoutAiUnfillableSections($this->plan($business, ['Brooklyn', 'Queens']));
+        $plan = WebsitePageStrategy::withoutAiUnfillableSections($this->plan($business, $this->confirmed(['Brooklyn', 'Queens'])));
         $pages = $this->validPagesFor($plan, fn ($area) => 'We bring our photo booths to ' . $area . ' for weddings, birthdays and corporate events with unlimited prints and props.');
 
         try {
@@ -188,7 +255,7 @@ class WebsiteServiceAreaPagesTest extends TestCase
     {
         [, $business] = $this->entitledTenant();
         $this->services($business);
-        $plan = WebsitePageStrategy::withoutAiUnfillableSections($this->plan($business, ['Brooklyn']));
+        $plan = WebsitePageStrategy::withoutAiUnfillableSections($this->plan($business, $this->confirmed(['Brooklyn'])));
         $pages = $this->validPagesFor($plan, fn ($area, $key) => 'Generic copy about booths ' . hash('sha256', $key));
         $pages = array_map(function (array $page) {
             if (str_starts_with($page['page_key'], 'area:')) {
@@ -211,26 +278,35 @@ class WebsiteServiceAreaPagesTest extends TestCase
 
     // ------------------------------------------------------ end to end
 
-    public function test_generation_builds_area_pages_with_internal_links_and_their_own_urls(): void
+    /** Runs real generation (commit service, media binding, persistence) for a prepared tenant with the given area entries. */
+    private function generate(object $customer, object $business, object $workspace, array $areas): \App\Models\WebsiteGuidedGenerationAttempt
+    {
+        $this->authenticateAsCustomer($customer);
+        $this->completeV2Setup($workspace, $business);
+        $this->services($business);
+        $website = Website::where('business_id', $business->id)->first() ?? $this->createWebsite($business);
+
+        return app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class)->generateFull(
+            $business->fresh(), $website, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), (int) $business->customer_id, 'area-' . uniqid(), null, null, null, null, $areas, null
+        );
+    }
+
+    public function test_generation_builds_pages_for_confirmed_areas_with_internal_links_and_lists_every_area_on_the_home_page(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
-        $this->authenticateAsCustomer($customer);
         $this->bindDistinctAiClient();
-        $areas = ['Manhattan, NY', 'Brooklyn', 'Queens', 'Bronx', 'Hoboken', 'Newark', 'Yonkers', 'Stamford', 'Albany', 'Buffalo'];
-        $this->completeV2Setup($workspace, $business, ['service_area_cities' => ['value' => $areas]]);
+        $names = ['Manhattan, NY', 'Brooklyn', 'Queens', 'Bronx', 'Hoboken', 'Newark'];
+        $attempt = $this->generate($customer, $business, $workspace, array_merge($this->confirmed(['Manhattan, NY', 'Brooklyn', 'Queens']), ['Bronx', 'Hoboken', 'Newark']));
 
-        $this->post($this->wizardUrl($workspace, $business, 'setup.generate'))
-            ->assertRedirect($this->wizardUrl($workspace, $business, 'preview'));
-
+        $this->assertSame('succeeded', $attempt->status);
         $website = Website::where('business_id', $business->id)->sole();
         $areaPages = $website->pages()->where('slug', 'like', 'serving-%')->orderBy('id')->get();
 
-        $this->assertGreaterThanOrEqual(4, $areaPages->count());
-        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_AREA_PAGES, $areaPages->count());
-        $this->assertSame(1, $areaPages->first(fn ($p) => $p->slug === 'serving-manhattan-ny') ? 1 : 0, 'The owner\'s first area has its own page.');
-        $this->assertSame($areaPages->count(), $areaPages->pluck('slug')->unique()->count());
+        $this->assertSame(['serving-manhattan-ny', 'serving-brooklyn', 'serving-queens'], $areaPages->pluck('slug')->all(), 'Only the three areas with confirmed local details earn a page.');
         $this->assertSame($areaPages->count(), $areaPages->pluck('seo_title')->unique()->count(), 'Distinct titles.');
         $this->assertSame($areaPages->count(), $areaPages->pluck('meta_description')->unique()->count(), 'Distinct meta descriptions.');
+        $this->assertSame(['location'], $areaPages->pluck('page_role')->unique()->values()->all(), 'The page-intent map records what these pages are.');
+        $this->assertSame('Brooklyn', $areaPages->firstWhere('slug', 'serving-brooklyn')->page_intent['place']);
 
         foreach ($areaPages as $page) {
             $buttons = collect($page->sections)->flatMap(fn ($s) => $s['data']['buttons'] ?? [])->pluck('url')->all();
@@ -238,13 +314,8 @@ class WebsiteServiceAreaPagesTest extends TestCase
             $this->assertContains('/services', $buttons, "{$page->slug} links to the services overview.");
         }
 
-        // Nearby-area cross links between the area pages themselves.
         $firstButtons = collect($areaPages->first()->sections)->flatMap(fn ($s) => $s['data']['buttons'] ?? [])->pluck('url')->all();
-        $this->assertNotEmpty(array_filter($firstButtons, fn ($url) => str_starts_with($url, '/serving-')));
-
-        // The whole list is still saved for later pages; no per-city locations exist.
-        $this->assertCount(10, $business->fresh()->primaryLocation()->first()->service_area_cities);
-        $this->assertSame(1, $business->locations()->count());
+        $this->assertNotEmpty(array_filter($firstButtons, fn ($url) => str_starts_with($url, '/serving-')), 'Nearby-area cross links between the pages that exist.');
     }
 
     public function test_the_service_area_contract_end_to_end(): void
@@ -271,26 +342,166 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertSame($locationsBefore, $business->locations()->count());
         $this->assertSame($expected, $business->fresh()->primaryLocation()->first()->service_area_cities);
 
-        // Initial planning respects the area cap and the total page budget, in the owner's order.
+        // A bare list of city names confirms nothing local, so no city page is built from it (doorway pages) ...
         $website = Website::where('business_id', $business->id)->sole();
-        $areaSlugs = $website->pages()->where('slug', 'like', 'serving-%')->orderBy('id')->pluck('slug')->all();
-        $this->assertGreaterThanOrEqual(4, count($areaSlugs));
-        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_AREA_PAGES, count($areaSlugs));
+        $this->assertSame(0, $website->pages()->where('slug', 'like', 'serving-%')->count());
         $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, $website->pages()->count());
-        $this->assertSame(
-            array_slice(['serving-manhattan-ny', 'serving-brooklyn', 'serving-queens', 'serving-the-bronx', 'serving-staten-island', 'serving-jersey-city', 'serving-hoboken', 'serving-newark'], 0, count($areaSlugs)),
-            $areaSlugs,
-            'The first (highest-priority) areas get the pages.'
+
+        // ... and every area is still on the home page, in the owner's order, for visitors and crawlers.
+        $hub = collect($website->pages()->where('is_home', true)->sole()->sections)->first(fn ($s) => ($s['data']['heading'] ?? '') === 'Areas we serve');
+        $this->assertNotNull($hub);
+        $this->assertSame(array_slice(array_map(fn ($a) => explode(',', $a)[0], $expected), 0, 12), array_column($hub['data']['items'], 'name'));
+    }
+
+    public function test_a_rebuild_that_no_longer_creates_a_place_page_redirects_its_old_address_instead_of_leaving_a_404(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $first = $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $this->assertSame('succeeded', $first->status);
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertSame(['serving-brooklyn', 'serving-queens'], $website->pages()->where('slug', 'like', 'serving-%')->orderBy('id')->pluck('slug')->all());
+
+        $rebuilt = app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class)->rebuild(
+            $business->fresh(), $website->fresh(), WebsiteTemplate::findActiveOrFail('photo_booth_modern'), (int) $business->customer_id, 'rebuild-' . uniqid(), null, null, null, null, ['Brooklyn', 'Queens'], null
+        );
+
+        $this->assertSame('succeeded', $rebuilt->status);
+        $website = $website->fresh();
+        $this->assertSame(0, $website->pages()->where('slug', 'like', 'serving-%')->count());
+        $this->assertEquals(['serving-brooklyn' => '', 'serving-queens' => ''], $website->custom_redirects, 'Old place addresses 301 to the home page, which lists the areas.');
+    }
+
+    public function test_a_place_the_owner_dropped_entirely_is_not_redirected_to_a_home_page_that_no_longer_mentions_it(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Bronx']);
+
+        // Brooklyn stays a listed area (no details now); Queens is removed from the list altogether.
+        $rebuilt = app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class)->rebuild(
+            $business->fresh(), $website->fresh(), WebsiteTemplate::findActiveOrFail('photo_booth_modern'), (int) $business->customer_id, 'rebuild-' . uniqid(), null, null, null, null, ['Brooklyn', 'Bronx'], null
+        );
+
+        $this->assertSame('succeeded', $rebuilt->status);
+        $this->assertEquals(['serving-brooklyn' => ''], $website->fresh()->custom_redirects, 'Only the place the home page still lists is redirected; the dropped one is an honest 404.');
+    }
+
+    private function rebuildWith(object $business, array $savedAreas, array $confirmedAreas): void
+    {
+        $this->saveServiceAreas($business, $savedAreas);
+        $website = Website::where('business_id', $business->id)->sole();
+
+        $rebuilt = app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class)->rebuild(
+            $business->fresh(), $website->fresh(), WebsiteTemplate::findActiveOrFail('photo_booth_modern'), (int) $business->customer_id, 'rebuild-' . uniqid(), null, null, null, null, $confirmedAreas, null
+        );
+        $this->assertSame('succeeded', $rebuilt->status);
+    }
+
+    public function test_a_similarly_named_city_does_not_stand_in_for_a_removed_place(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Spokane Valley', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Spokane Valley', 'Brooklyn']));
+        $this->assertSame(2, Website::where('business_id', $business->id)->sole()->pages()->where('slug', 'like', 'serving-%')->count());
+
+        // The home page now lists "Spokane" (not Spokane Valley) and Brooklyn: only Brooklyn's old address may redirect.
+        $this->rebuildWith($business, ['Spokane', 'Brooklyn'], ['Spokane', 'Brooklyn']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
+    public function test_same_named_cities_in_different_states_are_different_places(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Brooklyn']));
+        $this->assertContains('serving-portland-or', Website::where('business_id', $business->id)->sole()->pages()->pluck('slug')->all());
+
+        // The home page now lists Portland, ME — not the Oregon city the old page was about.
+        $this->rebuildWith($business, ['Portland, ME', 'Brooklyn'], ['Brooklyn']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
+    public function test_equivalent_spellings_of_the_same_location_are_the_same_place(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Brooklyn']));
+
+        $this->rebuildWith($business, ['portland,  Oregon', 'Brooklyn'], ['Brooklyn']);
+
+        $this->assertEquals(['serving-portland-or' => '', 'serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
+    public function test_legacy_names_without_a_state_match_only_when_unambiguous(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        // Older value: no state on the old page's place, one covered Portland afterwards -> the only interpretation.
+        $this->saveServiceAreas($business, ['Portland', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland', 'Brooklyn']));
+        $this->rebuildWith($business, ['Portland, OR', 'Brooklyn'], ['Brooklyn']);
+        $this->assertEquals(['serving-portland' => '', 'serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+
+        // Two Portlands saved at once: a stateless old page could be either, so it is not redirected.
+        $website = Website::where('business_id', $business->id)->sole();
+        $website->forceFill(['custom_redirects' => null])->save();
+        $this->saveServiceAreas($business, ['Portland', 'Brooklyn']);
+        $this->rebuildWith($business, ['Portland', 'Brooklyn'], $this->confirmed(['Portland', 'Brooklyn']));
+        $website->pages()->where('slug', 'serving-portland')->exists() || $this->fail('fixture: the legacy page exists again');
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME', 'Brooklyn']);
+        $this->rebuildWith($business, ['Portland, OR', 'Portland, ME', 'Brooklyn'], ['Brooklyn']);
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Ambiguous: no redirect for the stateless Portland page.');
+    }
+
+    public function test_a_retained_area_redirects_and_a_completely_removed_one_does_not(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+
+        $this->rebuildWith($business, ['Brooklyn', 'brooklyn heights'], ['Brooklyn']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Brooklyn is still listed; Queens was removed entirely.');
+    }
+
+    public function test_existing_redirects_are_never_replaced_or_erased_by_a_rebuild(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $website = Website::where('business_id', $business->id)->sole();
+        // An owner-approved redirect for a place the rebuild will still cover, one for a page that will vanish entirely,
+        // and an old entry whose provenance cannot be told (it points at the home page).
+        $website->forceFill(['custom_redirects' => ['serving-brooklyn' => 'services', 'old-wedding-page' => 'services', 'serving-queens' => '']])->save();
+
+        $this->rebuildWith($business, ['Brooklyn', 'Bronx'], ['Bronx']);
+
+        $this->assertEquals(
+            ['serving-brooklyn' => 'services', 'old-wedding-page' => 'services', 'serving-queens' => ''],
+            Website::where('business_id', $business->id)->sole()->custom_redirects,
+            'Nothing existing is overwritten or removed, and Queens (no longer listed) gains no new redirect.'
         );
     }
 
-    public function test_a_generation_of_near_duplicate_area_pages_fails_and_never_marks_setup_completed(): void
+    public function test_a_generation_of_near_duplicate_area_pages_fails_and_never_commits_pages(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
-        $this->authenticateAsCustomer($customer);
 
         $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
         $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastCallWasUnavailable')->andReturn(false);
         $mock->shouldReceive('lastRefusalReason')->andReturn(null);
         $mock->shouldReceive('complete')->andReturnUsing(function (array $messages) {
             $user = collect($messages)->firstWhere('role', 'user')['content'];
@@ -308,12 +519,9 @@ class WebsiteServiceAreaPagesTest extends TestCase
         });
         $this->app->instance(WebsiteAiGenerationClient::class, $mock);
 
-        $this->completeV2Setup($workspace, $business);
+        $attempt = $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
 
-        $this->post($this->wizardUrl($workspace, $business, 'setup.generate'))
-            ->assertRedirect($this->wizardUrl($workspace, $business, 'setup.review'));
-
-        $this->assertSame(0, Website::where('business_id', $business->id)->sole()->pages()->count(), 'A doorway batch is never committed.');
-        $this->assertSame('in_progress', $this->activeResponse($business)->status->value);
+        $this->assertSame('failed', $attempt->status);
+        $this->assertSame(0, Website::where('business_id', $business->id)->sole()->pages()->count(), 'A doorway batch is never committed, even for areas with confirmed details.');
     }
 }
