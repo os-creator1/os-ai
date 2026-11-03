@@ -255,7 +255,7 @@ final class BusinessHomePresenter
 
         if ($entitlements->allows('ai_coo_basic') && Gate::forUser($user)->allows('business_advisor')) {
             try {
-                $growth = $this->growthHome->build($business, (int) $user->id, $workspace->uid, $candidate->uid);
+                $growth = $this->growthHome->build($business, (int) $user->id, $workspace->uid, $candidate->uid, $context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth);
 
                 if ($growth['has_evaluation']) {
                     $bands[DashboardSnapshot::BAND_GROWTH] = $growth;
