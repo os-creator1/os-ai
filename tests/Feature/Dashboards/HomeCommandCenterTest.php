@@ -242,6 +242,9 @@ class HomeCommandCenterTest extends TestCase
         $this->assertNotContains(AttentionType::ConversationsAwaitingReply->value, $attentionKeys);
         $this->assertContains(AttentionType::WebsiteUnpublished->value, $attentionKeys, 'A different problem still appears.');
         $this->assertTrue($home['attention']['hasPrimaryException']);
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="needs-details"', $html, 'Growth Home still exposes other actionable problems.');
+        $this->assertStringContainsString('data-band="needs_attention"', $html);
     }
 
     public function test_a_waiting_customer_opens_the_follow_up_drawer_not_just_a_link(): void
