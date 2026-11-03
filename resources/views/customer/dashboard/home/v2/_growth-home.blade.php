@@ -51,6 +51,21 @@
                     @endif
                 </div>
             @endif
+            @if(($needs['others'] ?? []) !== [])
+                <details class="hv2-details" data-role="needs-details">
+                    <summary>{{ count($needs['others']) }} more to review</summary>
+                    <ul class="hv2-list" data-band="needs_attention" data-role="attention-items">
+                        @foreach($needs['others'] as $item)
+                            <li data-role="attention-item" data-attention="{{ $item['key'] }}" data-kind="{{ $item['kind'] }}">
+                                <span data-role="attention-text">{{ $item['text'] }}</span>
+                                @if(($item['action']['url'] ?? null) !== null)
+                                    <a href="{{ $item['action']['url'] }}"@if(($item['action']['drawerUrl'] ?? null) !== null) data-home-drawer="{{ $item['action']['drawerUrl'] }}" data-drawer-title="{{ $item['action']['label'] }}"@endif data-role="attention-action">{{ $item['action']['label'] }}</a>
+                                @endif
+                            </li>
+                        @endforeach
+                    </ul>
+                </details>
+            @endif
         </section>
         @endif
 
