@@ -31,6 +31,9 @@ final class HomeV2Presenter
 
     public const LAYOUT_SETUP = 'setup';
 
+    /** Growth plan: a distinct presentation over the same model (see growthHome()). CRM/Core never gets it. */
+    public const LAYOUT_GROWTH = 'growth';
+
     /** Days of observed data before a trend chart says anything the cards do not. */
     public const MIN_CHART_DAYS = 7;
 
@@ -64,8 +67,14 @@ final class HomeV2Presenter
         $setupLayout = $home['state'] === HomeCommandCenter::STATE_SETUP && ! $active && ($facts['hasHistory'] ?? null) === false
             && ! $headlinesFailed && $welcome['remaining'] > 0 && $needsYou['kind'] === 'caught_up';
 
+        // The Growth presentation is selected by the customer's plan alone (never by whether Growth data exists or could be read), so CRM/Core
+        // always keeps the existing Home and a Growth customer with no evaluation yet still gets truthful empty/unknown states.
+        $growthFailed = in_array('growth', $failed, true);
+        $growthLayout = ! $setupLayout && ($home['growthPlan'] ?? false) === true;
+
         return [
-            'layout' => $setupLayout ? self::LAYOUT_SETUP : self::LAYOUT_HOME,
+            'layout' => $setupLayout ? self::LAYOUT_SETUP : ($growthLayout ? self::LAYOUT_GROWTH : self::LAYOUT_HOME),
+            'growthHome' => $growthLayout ? $this->growthHome($home, $needsYou, $growthFailed, in_array('recent_work', $failed, true)) : null,
             'needs' => $needsYou,
             'growth' => [
                 'available' => $headlines !== null,
@@ -78,6 +87,29 @@ final class HomeV2Presenter
             'suggested' => $this->suggested($home, $facts, $booking),
             'welcome' => $welcome,
             'chips' => $this->chips($home, $needsYou),
+        ];
+    }
+
+    /**
+     * Growth Home: only re-shapes what the model already holds. No reads, no scoring, no new selection — the primary is Needs-you's own
+     * move, the secondaries are the Growth band's existing queue (already ACL-scoped, primary excluded), progress is the band's own score.
+     *
+     * @return array<string, mixed>
+     */
+    private function growthHome(array $home, array $needsYou, bool $growthFailed, bool $recentFailed): array
+    {
+        $progress = $home['growthProgress'] ?? null;
+        $score = is_array($progress) ? $progress['score'] : null;
+        $hasProgress = is_array($progress) && ($score !== null || ($progress['positives'] ?? []) !== []);
+
+        return [
+            'standLabel' => $home['status']['label'],
+            'standKey' => $home['status']['key'],
+            'growthFailed' => $growthFailed,
+            'progress' => $hasProgress ? $progress : null,
+            'secondary' => $needsYou['kind'] === 'unavailable' ? [] : array_slice($home['queue'] ?? [], 0, 2),
+            'handling' => $home['handling'],
+            'handlingFailed' => $recentFailed,
         ];
     }
 

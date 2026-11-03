@@ -194,6 +194,10 @@ final class HomeCommandCenter
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
+            // The customer's PLAN (the context's already-resolved Workspace tier: Growth only; an Agency's own Business keeps the existing Home, while View-As resolves the frame to the client's own workspace and tier), never the presence of Growth data: it alone selects the Growth Home.
+            'growthPlan' => $context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth,
+            // Verified Growth score evidence for the Growth Home, straight from the Growth band (null = no band; score null = none recorded or not visible to this actor).
+            'growthProgress' => is_array($growth) ? ['score' => $growth['score'] ?? null, 'delta' => $growth['delta'] ?? null, 'days' => $growth['days'] ?? null, 'positives' => array_slice($growth['positives'] ?? [], 0, 3), 'url' => $growth['urls']['score'] ?? null] : null,
             'caughtUp' => $primary === null && ! $nbmFailed && ! $sourcesFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
