@@ -62,6 +62,30 @@ class HomeCommandCenterTest extends TestCase
         ], $overrides);
     }
 
+    public function test_core_plan_keeps_the_existing_home_even_when_growth_data_exists_or_fails(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Data Venue', 'Core Data Account');
+        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand()));
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-home-layout="growth"', $html);
+    }
+
+    public function test_growth_plan_without_any_evaluation_still_gets_growth_home_with_truthful_empty_state(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Empty Venue', 'Growth Empty Account');
+        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand(['items' => [], 'open_count' => 0, 'score' => null, 'has_evaluation' => false])));
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="growth-home"', $html);
+        $this->assertStringContainsString('data-role="progress-unknown"', $html);
+        $this->assertStringNotContainsString('data-role="progress-verified"', $html);
+        $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
+    }
+
     public function test_core_plan_keeps_the_existing_home_and_never_sees_growth_only_markup(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Home Venue', 'Core Home Account');

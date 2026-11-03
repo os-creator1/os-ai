@@ -194,6 +194,8 @@ final class HomeCommandCenter
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
+            // The customer's PLAN (the context's already-resolved Workspace tier), never the presence of Growth data: it alone selects the Growth Home.
+            'growthPlan' => in_array($context->frameWorkspace()?->tier, [\App\Enums\Entitlement\WorkspacePlanTier::Growth, \App\Enums\Entitlement\WorkspacePlanTier::Agency], true),
             // Verified Growth score evidence for the Growth Home, straight from the Growth band (null = no band; score null = none recorded or not visible to this actor).
             'growthProgress' => is_array($growth) ? ['score' => $growth['score'] ?? null, 'delta' => $growth['delta'] ?? null, 'days' => $growth['days'] ?? null, 'positives' => array_slice($growth['positives'] ?? [], 0, 3), 'url' => $growth['urls']['score'] ?? null] : null,
             'caughtUp' => $primary === null && ! $nbmFailed && ! $sourcesFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,

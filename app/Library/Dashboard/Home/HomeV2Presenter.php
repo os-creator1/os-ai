@@ -67,10 +67,10 @@ final class HomeV2Presenter
         $setupLayout = $home['state'] === HomeCommandCenter::STATE_SETUP && ! $active && ($facts['hasHistory'] ?? null) === false
             && ! $headlinesFailed && $welcome['remaining'] > 0 && $needsYou['kind'] === 'caught_up';
 
-        // The Growth presentation is for businesses the existing Growth entitlement reached: the Growth band is present, or its read failed
-        // (entitled but unreadable — said plainly, never silently the CRM Home).
+        // The Growth presentation is selected by the customer's plan alone (never by whether Growth data exists or could be read), so CRM/Core
+        // always keeps the existing Home and a Growth customer with no evaluation yet still gets truthful empty/unknown states.
         $growthFailed = in_array('growth', $failed, true);
-        $growthLayout = ! $setupLayout && (($home['growthShown'] ?? false) || $growthFailed);
+        $growthLayout = ! $setupLayout && ($home['growthPlan'] ?? false) === true;
 
         return [
             'layout' => $setupLayout ? self::LAYOUT_SETUP : ($growthLayout ? self::LAYOUT_GROWTH : self::LAYOUT_HOME),
