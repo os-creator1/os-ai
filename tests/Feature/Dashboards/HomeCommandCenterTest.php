@@ -86,6 +86,17 @@ class HomeCommandCenterTest extends TestCase
         $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
     }
 
+    public function test_an_agencys_own_business_keeps_the_existing_home_even_with_growth_data(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Venue', 'Agency Own Account');
+        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand()));
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-home-layout="growth"', $html);
+    }
+
     public function test_core_plan_keeps_the_existing_home_and_never_sees_growth_only_markup(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Home Venue', 'Core Home Account');
