@@ -56,6 +56,25 @@ class AgencySiteController extends Controller
             ->header('X-Frame-Options', 'SAMEORIGIN');
     }
 
+    /**
+     * The marketing stylesheet for the DRAFT preview, in the draft's colours.
+     *
+     * The published site's stylesheet (agency.site.css) answers 404 until the site is live, so a draft preview that
+     * pointed at it rendered as unstyled HTML. This one is authenticated like the preview itself and never cached.
+     */
+    public function previewCss(string $workspaceUid): Response
+    {
+        $agency = $this->authorizedAgency($workspaceUid);
+        $site = $this->sites->find($agency);
+        abort_if($site === null, 404);
+
+        $context = $this->renderer->site($site, AgencySiteManager::values($site), $agency->uid)->context();
+
+        return response($this->renderer->css($context))->header('Content-Type', 'text/css; charset=UTF-8')
+            ->header('X-Content-Type-Options', 'nosniff')
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     /** Save answers (JSON). Returns the refreshed checklist so the editor can show status without a reload. */
     public function save(Request $request, string $workspaceUid): JsonResponse
     {
