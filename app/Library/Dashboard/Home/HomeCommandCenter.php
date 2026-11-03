@@ -194,6 +194,8 @@ final class HomeCommandCenter
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
+            // Verified Growth score evidence for the Growth Home, straight from the Growth band (null = no band; score null = none recorded or not visible to this actor).
+            'growthProgress' => is_array($growth) ? ['score' => $growth['score'] ?? null, 'delta' => $growth['delta'] ?? null, 'days' => $growth['days'] ?? null, 'positives' => array_slice($growth['positives'] ?? [], 0, 3), 'url' => $growth['urls']['score'] ?? null] : null,
             'caughtUp' => $primary === null && ! $nbmFailed && ! $sourcesFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),

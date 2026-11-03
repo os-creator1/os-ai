@@ -46,6 +46,63 @@ class HomeCommandCenterTest extends TestCase
         return $this->dashboardFor($user)->band(DashboardSnapshot::BAND_COMMAND);
     }
 
+    // ── Growth Home (plan-aware presentation) ────────────────────────────
+
+    private function growthBand(array $overrides = []): array
+    {
+        $items = [];
+        foreach (range(1, 4) as $i) {
+            $items[] = ['uid' => "opp-{$i}", 'title' => "Recommendation {$i}", 'headline' => "Headline {$i}", 'category_label' => 'SEO', 'impact' => null, 'awaiting_approval' => false, 'detail_url' => "https://example.test/opp/{$i}", 'state' => 'open'];
+        }
+
+        return array_merge([
+            'items' => $items, 'head' => null, 'open_count' => 4, 'positives' => [], 'score' => 72, 'delta' => null, 'days' => null,
+            'has_evaluation' => true, 'engine_enabled' => true,
+            'urls' => ['all' => 'https://example.test/all', 'score' => 'https://example.test/score', 'advisor' => 'https://example.test/advisor'],
+        ], $overrides);
+    }
+
+    public function test_core_plan_keeps_the_existing_home_and_never_sees_growth_only_markup(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Home Venue', 'Core Home Account');
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-home-layout="growth"', $html);
+    }
+
+    public function test_growth_plan_renders_its_dedicated_layout_with_at_most_two_secondary_recommendations(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Home Venue', 'Growth Home Account');
+        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand()));
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-home-layout="growth"', $html);
+        $this->assertStringContainsString('data-role="growth-home"', $html);
+        $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="next-best-move"'));
+        $this->assertSame(2, substr_count($html, 'data-role="whats-next-item"'));
+        $this->assertStringContainsString('Growth score 72', $html);
+        $this->assertStringNotContainsString('data-role="progress-delta"', $html, 'No earlier score, so no movement is claimed.');
+    }
+
+    public function test_growth_plan_failed_growth_read_is_unknown_never_a_verified_result(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Fail Venue', 'Growth Fail Account');
+        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andThrow(new \RuntimeException('down')));
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-role="growth-home"', $html);
+        $this->assertStringContainsString('data-role="progress-unknown"', $html);
+        $this->assertStringNotContainsString('data-role="progress-verified"', $html);
+        $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
+    }
+
     // ── States ───────────────────────────────────────────────────────────
 
     public function test_a_brand_new_business_sees_a_setup_journey_built_from_real_readiness(): void
