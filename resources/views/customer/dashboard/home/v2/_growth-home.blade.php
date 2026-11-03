@@ -26,7 +26,7 @@
         </section>
 
         @if($needs['kind'] !== 'billing_strip')
-        <section class="hv2-section" aria-labelledby="gh-next-title" data-role="growth-next" data-kind="{{ $needs['kind'] }}">
+        <section class="hv2-section" aria-labelledby="gh-next-title" data-band="next_best_move" data-role="growth-next" data-kind="{{ $needs['kind'] }}">
             <h2 class="hv2-label" id="gh-next-title">Your next move</h2>
             @if($needs['kind'] === 'caught_up')
                 <div class="hv2-card hv2-quiet" data-role="caught-up"><span class="hv2-check" aria-hidden="true">✓</span><strong>{{ $needs['headline'] }}</strong></div>
