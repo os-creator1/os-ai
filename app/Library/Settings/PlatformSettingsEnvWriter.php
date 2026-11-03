@@ -2,6 +2,9 @@
 
 namespace App\Library\Settings;
 
+use App\Library\Settings\Exceptions\EnvironmentFileNotWritableException;
+
+use function App\Helpers\load_env_from_file;
 use function App\Helpers\write_env;
 
 /**
@@ -35,7 +38,18 @@ class PlatformSettingsEnvWriter
      */
     public function set(string $envKey, ?string $configKey, mixed $value): void
     {
+        // write_env() ignores a failed file write, so an unwritable .env used to look like a successful save. Refuse
+        // up front, and confirm afterwards that the key really is in the file.
+        $path = app()->environmentFilePath();
+        if (! is_file($path) || ! is_writable($path)) {
+            throw EnvironmentFileNotWritableException::for($envKey);
+        }
+
         write_env($envKey, (string) $value);
+
+        if (! array_key_exists($envKey, load_env_from_file($path))) {
+            throw EnvironmentFileNotWritableException::for($envKey);
+        }
 
         if ($configKey !== null) {
             config([$configKey => $value]);

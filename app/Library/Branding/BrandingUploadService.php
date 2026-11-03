@@ -3,7 +3,8 @@
 namespace App\Library\Branding;
 
 use App\Library\Branding\Exceptions\InvalidBrandingAssetException;
-use App\Models\AppConfig;
+use App\Library\Settings\Exceptions\EnvironmentFileNotWritableException;
+use App\Library\Settings\PlatformSettingsEnvWriter;
 use App\Rules\ValidBrandingImageRule;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
@@ -82,14 +83,19 @@ class BrandingUploadService
 
         $previousPath = config("app.{$field}");
 
-        AppConfig::setEnv(self::ENV_KEYS[$field], $relativePath);
-        // Keeps the in-process config repository consistent with the
-        // just-written .env file immediately — AppConfig::setEnv() only
-        // rewrites the file, it does not itself update config() for the
-        // remainder of the current request/process (a real gap for any
-        // non-HTTP-redirect caller, e.g. a console command or queued job,
-        // not merely a test-only concern).
-        config(["app.{$field}" => $relativePath]);
+        // The exact-key writer (adds a missing key, never touches a similarly named one, clears a stale cached config,
+        // mirrors into config() for this process). AppConfig::setEnv() only edited lines that already existed, so on a
+        // production .env without APP_LOGO / APP_COMPACT_LOGO / APP_DARK_LOGO / APP_FAVICON the upload was stored and
+        // then silently never saved.
+        try {
+            app(PlatformSettingsEnvWriter::class)->set(self::ENV_KEYS[$field], "app.{$field}", $relativePath);
+        } catch (EnvironmentFileNotWritableException $e) {
+            if ($relativePath !== $previousPath) {
+                @unlink($destination);   // the new file would be an orphan: the setting never pointed at it
+            }
+
+            throw $e;
+        }
 
         $this->invalidateCache();
 
@@ -114,7 +120,7 @@ class BrandingUploadService
         $previousPath = config("app.{$field}");
         $resetValue = self::DEFAULT_PATHS[$field] ?? null;
 
-        AppConfig::setEnv(self::ENV_KEYS[$field], (string) $resetValue);
+        app(PlatformSettingsEnvWriter::class)->set(self::ENV_KEYS[$field], "app.{$field}", $resetValue === null ? '' : (string) $resetValue);
         config(["app.{$field}" => $resetValue]);
 
         $this->invalidateCache();
