@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Library\Growth;
 
+use App\Enums\Growth\GrowthCategory;
 use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
 use App\Models\Opportunity;
@@ -34,7 +35,7 @@ final class GrowthHomeBand
     /**
      * @return array<string, mixed>
      */
-    public function build(Business $business, int $actorUserId, string $workspaceUid, string $businessUid): array
+    public function build(Business $business, int $actorUserId, string $workspaceUid, string $businessUid, bool $seoFirst = false): array
     {
         $viewer = GrowthViewer::resolve($this->locationGuard, $actorUserId, $business);
         // Home is the overview: it carries no Location labels (the detail page does),
@@ -53,7 +54,7 @@ final class GrowthHomeBand
             // The raw head of the same, ACL-scoped read — the one candidate the Home move selector
             // weighs against status exceptions. Never rendered; Home's primary move is chosen by
             // NextBestMoveSelector, not by this band.
-            'head' => $top->first(),
+            'head' => self::preferredHead($top, $seoFirst),
             // top() and this count read the SAME open set, so a short list IS the total: one read saved.
             'open_count' => count($items) < self::LIMIT
                 ? count($items)
@@ -70,5 +71,29 @@ final class GrowthHomeBand
                 'advisor' => $route('advisor'),
             ],
         ];
+    }
+
+    /**
+     * The one candidate the Home move selector weighs. Growth plan only ($seoFirst): the highest-priority open website / SEO /
+     * local-visibility / reputation opportunity among the ALREADY-read, ACL-scoped, already-ordered top rows — no new read and no
+     * re-scoring. A top row that is a lead-response problem is operational and keeps its place; with no eligible SEO row (or the
+     * flag off) the head is the queue's first row, exactly as before. Only opportunities that exist (i.e. have evidence) can be chosen.
+     *
+     * @param  \Illuminate\Support\Collection<int, Opportunity>  $top
+     */
+    public static function preferredHead($top, bool $seoFirst): ?Opportunity
+    {
+        $first = $top->first();
+
+        if (! $seoFirst || $first === null || self::category($first) === GrowthCategory::LeadResponse) {
+            return $first;
+        }
+
+        return $top->first(fn (Opportunity $o): bool => in_array(self::category($o), [GrowthCategory::Seo, GrowthCategory::Website, GrowthCategory::LocalPresence, GrowthCategory::Reviews], true)) ?? $first;
+    }
+
+    private static function category(Opportunity $o): ?GrowthCategory
+    {
+        return GrowthRuleRegistry::find((string) $o->type)?->definition()->category;
     }
 }
