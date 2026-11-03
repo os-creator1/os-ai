@@ -6,8 +6,10 @@ on:
     paths:
       - 'app/Library/Dashboard/Home/**'
       - 'app/Library/Dashboard/BusinessHomePresenter.php'
+      - 'app/Library/Growth/GrowthHomeBand.php'
       - 'resources/views/customer/dashboard/home/**'
       - 'tests/Feature/Dashboards/**'
+      - 'tests/Unit/Growth/GrowthHomeBandSeoHeadTest.php'
       - '.github/workflows/home-focused-tests.yml'
 
 permissions:
@@ -19,7 +21,7 @@ concurrency:
 
 jobs:
   home-regression:
-    name: HomeCommandCenterTest (PHP + MySQL)
+    name: Home + Growth Head (PHP + MySQL)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -62,5 +64,5 @@ jobs:
         run: composer install --no-interaction --prefer-dist --no-progress
       # RefreshDatabase bootstraps TestDatabaseSafety before any migration writes.
       # Never run artisan migrate directly before that guard.
-      - name: Run focused Home regression tests
-        run: php artisan test tests/Feature/Dashboards/HomeCommandCenterTest.php --stop-on-failure
+      - name: Run focused Home and SEO-priority tests
+        run: php artisan test tests/Feature/Dashboards/HomeCommandCenterTest.php tests/Unit/Growth/GrowthHomeBandSeoHeadTest.php --stop-on-failure
