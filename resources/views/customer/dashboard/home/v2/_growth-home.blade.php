@@ -37,6 +37,9 @@
                 </div>
             @else
                 <div class="hv2-card hv2-needs" data-role="next-best-move" data-move="{{ $needs['moveKey'] ?? 'attention' }}">
+                    @if($needs['kind'] === 'waiting')
+                        <span class="hv2-tile" aria-hidden="true" data-role="needs-count">{{ $needs['tile'] }}</span>
+                    @endif
                     <div class="hv2-needs__text">
                         <h3 class="hv2-needs__title" data-role="next-best-move-headline">{{ $needs['headline'] }}</h3>
                         @if($needs['sub'])<p class="hv2-muted mb-0" data-role="needs-sub">{{ $needs['sub'] }}</p>@endif
@@ -92,6 +95,11 @@
                 @endif
             </div>
         </section>
+
+        {{-- A failed automation read is still visible on Growth Home; never silently hide a failed proof of all-clear. --}}
+        @if($dashboard->failed(\App\Library\Dashboard\DashboardSnapshot::BAND_AUTOMATIONS))
+            @include('customer.dashboard.band-failed', ['band' => 'automations', 'title' => 'Automations'])
+        @endif
 
         @include('customer.dashboard.home._ask', ['home' => $home, 'v2Chips' => $v2['chips']])
 
