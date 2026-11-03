@@ -60,9 +60,7 @@ jobs:
           tools: composer:v2
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
-      - name: Prepare disposable test database
-        run: |
-          php artisan config:clear
-          php artisan migrate --force
+      # RefreshDatabase bootstraps TestDatabaseSafety before any migration writes.
+      # Never run artisan migrate directly before that guard.
       - name: Run focused Home regression tests
         run: php artisan test tests/Feature/Dashboards/HomeCommandCenterTest.php --stop-on-failure
