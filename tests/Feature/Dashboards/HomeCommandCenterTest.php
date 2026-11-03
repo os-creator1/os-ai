@@ -359,7 +359,7 @@ class HomeCommandCenterTest extends TestCase
 
     public function test_suggested_next_lists_at_most_three_real_setup_actions_and_never_a_completed_one(): void
     {
-        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Suggest Venue', 'Suggest Account');
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Suggest Venue', 'Suggest Account');
         $this->website($business, 'published');
         $this->authenticateAs($customer);
 
