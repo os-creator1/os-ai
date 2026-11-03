@@ -48,35 +48,34 @@ class HomeCommandCenterTest extends TestCase
 
     // ── Growth Home (plan-aware presentation) ────────────────────────────
 
-    private function growthBand(array $overrides = []): array
+    private function growthSnapshot(\App\Models\Business $business, int $score = 72): void
     {
-        $items = [];
-        foreach (range(1, 4) as $i) {
-            $items[] = ['uid' => "opp-{$i}", 'title' => "Recommendation {$i}", 'headline' => "Headline {$i}", 'category_label' => 'SEO', 'impact' => null, 'awaiting_approval' => false, 'detail_url' => "https://example.test/opp/{$i}", 'state' => 'open'];
-        }
-
-        return array_merge([
-            'items' => $items, 'head' => null, 'open_count' => 4, 'positives' => [], 'score' => 72, 'delta' => null, 'days' => null,
-            'has_evaluation' => true, 'engine_enabled' => true,
-            'urls' => ['all' => 'https://example.test/all', 'score' => 'https://example.test/score', 'advisor' => 'https://example.test/advisor'],
-        ], $overrides);
+        \App\Models\GrowthScoreSnapshot::create([
+            'business_id' => $business->id,
+            'snapshot_date' => now()->toDateString(),
+            'algorithm_version' => \App\Library\Growth\GrowthScoreCalculator::ALGORITHM_VERSION,
+            'overall_score' => $score,
+            'scored_category_count' => 1,
+            'total_category_count' => 9,
+            'applicable_rule_count' => 1,
+            'category_scores' => ['website' => $score],
+            'breakdown' => [],
+            'computed_at' => now(),
+        ]);
     }
-
-    public function test_core_plan_keeps_the_existing_home_even_when_growth_data_exists_or_fails(): void
+    public function test_core_plan_keeps_the_existing_home_even_when_growth_score_data_exists(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Data Venue', 'Core Data Account');
-        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand()));
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Core Data Venue', 'Core Data Account');
+        $this->growthSnapshot($business);
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringNotContainsString('data-role="growth-home"', $html);
         $this->assertStringNotContainsString('data-home-layout="growth"', $html);
     }
-
     public function test_growth_plan_without_any_evaluation_still_gets_growth_home_with_truthful_empty_state(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Empty Venue', 'Growth Empty Account');
-        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand(['items' => [], 'open_count' => 0, 'score' => null, 'has_evaluation' => false])));
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
@@ -85,18 +84,16 @@ class HomeCommandCenterTest extends TestCase
         $this->assertStringNotContainsString('data-role="progress-verified"', $html);
         $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
     }
-
     public function test_an_agencys_own_business_keeps_the_existing_home_even_with_growth_data(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Venue', 'Agency Own Account');
-        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand()));
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Venue', 'Agency Own Account');
+        $this->growthSnapshot($business);
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringNotContainsString('data-role="growth-home"', $html);
         $this->assertStringNotContainsString('data-home-layout="growth"', $html);
     }
-
     public function test_core_plan_keeps_the_existing_home_and_never_sees_growth_only_markup(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Home Venue', 'Core Home Account');
@@ -110,12 +107,19 @@ class HomeCommandCenterTest extends TestCase
 
     public function test_growth_plan_renders_its_dedicated_layout_with_at_most_two_secondary_recommendations(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Home Venue', 'Growth Home Account');
-        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andReturn($this->growthBand()));
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Home Venue', 'Growth Home Account');
+        $this->growthSnapshot($business);
+        foreach (range(1, 4) as $i) {
+            $this->recommendation($business, [
+                'worker_key' => 'website',
+                'type' => 'website.not_published:v1',
+                'title' => "Website recommendation {$i}",
+                'priority_score' => 90 - $i,
+            ]);
+        }
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
-
         $this->assertStringContainsString('data-home-layout="growth"', $html);
         $this->assertStringContainsString('data-role="growth-home"', $html);
         $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="next-best-move"'));
@@ -123,21 +127,19 @@ class HomeCommandCenterTest extends TestCase
         $this->assertStringContainsString('Growth score 72', $html);
         $this->assertStringNotContainsString('data-role="progress-delta"', $html, 'No earlier score, so no movement is claimed.');
     }
-
     public function test_growth_plan_failed_growth_read_is_unknown_never_a_verified_result(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Fail Venue', 'Growth Fail Account');
-        $this->mock(\App\Library\Growth\GrowthHomeBand::class, fn ($m) => $m->shouldReceive('build')->andThrow(new \RuntimeException('down')));
+        // Exercise the real final GrowthHomeBand; fail its mockable eligibility dependency.
+        $this->mock(\App\Library\Growth\GrowthOpportunityEligibility::class, fn ($m) => $m->shouldReceive('ineligibleTypes')->andThrow(new \RuntimeException('down')));
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
-
         $this->assertStringContainsString('data-role="growth-home"', $html);
         $this->assertStringContainsString('data-role="progress-unknown"', $html);
         $this->assertStringNotContainsString('data-role="progress-verified"', $html);
         $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
     }
-
     // ── States ───────────────────────────────────────────────────────────
 
     public function test_a_brand_new_business_sees_a_setup_journey_built_from_real_readiness(): void
