@@ -162,6 +162,26 @@ final class GrowthOpportunityReader
             ->get();
     }
 
+    /**
+     * The first open row (same ACL / entitlement / freshness / open-state filters and the same ordering as top()) among the given rule types.
+     *
+     * @param  array<int, string>  $types
+     */
+    public function topOfTypes(Business $business, GrowthViewer $viewer, array $types): ?Opportunity
+    {
+        if ($types === []) {
+            return null;
+        }
+
+        return $this->applyState($this->base($business, $viewer), self::STATE_OPEN)
+            ->whereIn('type', $types)
+            ->orderByDesc('priority_score')
+            ->orderByDesc('impact')
+            ->orderBy('first_detected_at')
+            ->orderBy('id')
+            ->first();
+    }
+
     public function find(Business $business, GrowthViewer $viewer, string $uid): ?Opportunity
     {
         return $this->base($business, $viewer)->where('uid', $uid)->first();

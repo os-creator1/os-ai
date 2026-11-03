@@ -384,7 +384,8 @@ final class HomeCommandCenter
         $enriched = null;
 
         if ($kind === NextBestMove::KIND_OPPORTUNITY && is_array($growth)) {
-            foreach ($growth['items'] as $item) {
+            // A Growth-plan SEO candidate promoted from beyond the listed rows is enriched like any listed one.
+            foreach (array_merge($growth['items'], is_array($growth['promoted'] ?? null) ? [$growth['promoted']] : []) as $item) {
                 if (($move['subjectUid'] ?? null) === $item['uid']) {
                     $enriched = $item;
 

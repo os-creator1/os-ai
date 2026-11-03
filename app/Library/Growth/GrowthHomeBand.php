@@ -45,6 +45,21 @@ final class GrowthHomeBand
             ->map(fn (Opportunity $o) => $this->presenter->present($o, [], $workspaceUid, $businessUid))
             ->all();
 
+        $head = self::preferredHead($top, $seoFirst);
+        $promoted = null;
+
+        // Growth plan only: the top rows hold no eligible SEO candidate, the queue is longer than what was read, and the first row is not
+        // an operational lead-response problem — so look for the highest-priority one candidate beyond them (one narrow, same-filter query).
+        if ($seoFirst && $head !== null && $head === $top->first() && ! self::isSeoCandidate($head) && self::category($head) !== GrowthCategory::LeadResponse && $top->count() >= self::LIMIT) {
+            $beyond = $this->reader->topOfTypes($business, $viewer, self::seoRuleKeys());
+
+            if ($beyond !== null) {
+                $head = $beyond;
+                // Presented exactly like a listed item so Home can enrich the move; it is NOT added to 'items' or 'open_count'.
+                $promoted = $this->presenter->present($beyond, [], $workspaceUid, $businessUid);
+            }
+        }
+
         $latest = $viewer->maySeeScore() ? $this->scores->latest($business) : null;
         $movement = $latest !== null ? $this->scores->movement($latest, $this->scores->baseline($business, $latest)) : null;
         $route = fn (string $name) => route('customer.workspaces.businesses.growth.' . $name, [$workspaceUid, $businessUid]);
@@ -54,7 +69,8 @@ final class GrowthHomeBand
             // The raw head of the same, ACL-scoped read — the one candidate the Home move selector
             // weighs against status exceptions. Never rendered; Home's primary move is chosen by
             // NextBestMoveSelector, not by this band.
-            'head' => self::preferredHead($top, $seoFirst),
+            'head' => $head,
+            'promoted' => $promoted,
             // top() and this count read the SAME open set, so a short list IS the total: one read saved.
             'open_count' => count($items) < self::LIMIT
                 ? count($items)
@@ -89,7 +105,28 @@ final class GrowthHomeBand
             return $first;
         }
 
-        return $top->first(fn (Opportunity $o): bool => in_array(self::category($o), [GrowthCategory::Seo, GrowthCategory::Website, GrowthCategory::LocalPresence, GrowthCategory::Reviews], true)) ?? $first;
+        return $top->first(fn (Opportunity $o): bool => self::isSeoCandidate($o)) ?? $first;
+    }
+
+    private const SEO_CATEGORIES = [GrowthCategory::Seo, GrowthCategory::Website, GrowthCategory::LocalPresence, GrowthCategory::Reviews];
+
+    private static function isSeoCandidate(Opportunity $o): bool
+    {
+        return in_array(self::category($o), self::SEO_CATEGORIES, true);
+    }
+
+    /** @return array<int, string> */
+    private static function seoRuleKeys(): array
+    {
+        $keys = [];
+
+        foreach (GrowthRuleRegistry::all() as $key => $rule) {
+            if (in_array($rule->definition()->category, self::SEO_CATEGORIES, true)) {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
     }
 
     private static function category(Opportunity $o): ?GrowthCategory
