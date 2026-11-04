@@ -36,13 +36,23 @@
                     <div><strong>{{ $needs['headline'] }}</strong><p class="hv2-muted mb-0">{{ $needs['sub'] }}</p></div>
                 </div>
             @else
-                <div class="hv2-card hv2-needs" data-role="next-best-move" data-move="{{ $needs['moveKey'] ?? 'attention' }}">
+                <div class="hv2-card hv2-needs{{ $needs['kind'] === 'waiting' ? '' : ' hv2-needs--single' }}" data-role="next-best-move" data-move="{{ $needs['moveKey'] ?? 'attention' }}">
                     @if($needs['kind'] === 'waiting')
                         <span class="hv2-tile" aria-hidden="true" data-role="needs-count">{{ $needs['tile'] }}</span>
                     @endif
                     <div class="hv2-needs__text">
                         <h3 class="hv2-needs__title" data-role="next-best-move-headline">{{ $needs['headline'] }}</h3>
                         @if($needs['sub'])<p class="hv2-muted mb-0" data-role="needs-sub">{{ $needs['sub'] }}</p>@endif
+                        @if(($needs['evidence'] ?? []) !== [] || ($needs['why'] ?? []) !== [] || ($needs['impact'] ?? null) !== null)
+                        <details class="hv2-details gh-evidence" data-role="growth-evidence" open>
+                            <summary>Why MotionGrove suggests this</summary>
+                            <ul class="hv2-list">
+                                @foreach(array_merge($needs['evidence'] ?? [], $needs['why'] ?? []) as $line)<li data-role="evidence-line">{{ $line }}</li>@endforeach
+                                @if(($needs['impact'] ?? null) !== null)<li data-role="evidence-impact">{{ is_array($needs['impact']) ? ($needs['impact']['text'] ?? '') : $needs['impact'] }}</li>@endif
+                            </ul>
+                            @if(($needs['confidence'] ?? null) !== null)<p class="hv2-muted mb-0">Confidence: {{ $needs['confidence'] }}</p>@endif
+                        </details>
+                    @endif
                     </div>
                     @if($needs['primary'] !== null)
                         <div class="hv2-needs__actions">

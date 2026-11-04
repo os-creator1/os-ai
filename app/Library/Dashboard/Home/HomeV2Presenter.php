@@ -182,6 +182,12 @@ final class HomeV2Presenter
                 'primary' => $url === null ? null : ['label' => $waiting ? 'Reply now' : ($action['label'] ?? 'Open'), 'url' => $url],
                 'ai' => $primary['aiAction'] ?? null,
                 'why' => $primary['why'],
+                // Evidence-first: the verified facts behind the recommendation, as the engine produced them, plus the exact page that completes it.
+                'evidence' => $primary['evidence'] ?? [],
+                'impact' => $primary['impact'] ?? null,
+                'confidence' => $primary['confidence'] ?? null,
+                'statusLabel' => $primary['statusLabel'] ?? null,
+                'detailUrl' => $primary['detailUrl'] ?? null,
                 'others' => $others,
             ];
         }
