@@ -108,8 +108,11 @@ class WebsiteMetaDescriptionSuggester
         // Any number in the suggestion must already be in the source text: no invented prices, years or counts.
         preg_match_all('/\d+/', $text, $numbers);
 
+        preg_match_all('/\d+/', $source, $sourceNumbers);
+
         foreach ($numbers[0] as $number) {
-            if (! str_contains($source, $number)) {
+            // Compare complete numeric tokens: "19" must not match source year "1998".
+            if (! in_array($number, $sourceNumbers[0], true)) {
                 return null;
             }
         }
