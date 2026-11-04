@@ -53,6 +53,8 @@
 
                 @include('customer.dashboard.home.v2._needs', ['home' => $home, 'needs' => $v2['needs']])
 
+                @include('customer.dashboard.home.v2._revenue', ['revenue' => $v2['revenue'] ?? null])
+
                 @include('customer.dashboard.home._ask', ['home' => $home, 'v2Chips' => $v2['chips']])
 
                 @include('customer.dashboard.home.v2._growth', ['dashboard' => $dashboard, 'growth' => $v2['growth']])

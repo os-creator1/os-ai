@@ -64,6 +64,7 @@ final class HomeCommandCenter
         private readonly HomeV2Presenter $v2,
         private readonly HomeV2Facts $v2Facts,
         private readonly HomeBookingReader $bookingReader,
+        private readonly HomeRevenueReader $revenueReader,
     ) {
     }
 
@@ -253,6 +254,8 @@ final class HomeCommandCenter
             $billing === null ? null : ['text' => (string) $billing->text, 'url' => $billing->url, 'label' => (string) $billing->actionLabel],
         );
 
+        $model['v2']['revenue'] = $this->revenue($business, $context, $user, $entitlements, $scoped);
+
         // A new business is shown setup questions, not performance ones (the same availability rules apply).
         if ($model['v2']['layout'] === HomeV2Presenter::LAYOUT_SETUP) {
             $setupChips = array_values(array_filter($this->assistantSuggestions->for($offering, true), fn (array $s): bool => $s['available']));
@@ -261,6 +264,41 @@ final class HomeCommandCenter
         }
 
         return $model;
+    }
+
+    /**
+     * The revenue pipeline panel: real open opportunities, their true state and one next step each. Null (panel hidden) when the
+     * actor cannot open CRM, there is nothing open, or the read failed — a failure never blocks Home and never invents a result.
+     *
+     * @param  array<int, string>  $scoped
+     * @return array{openCount: int, rows: list<array<string, mixed>>}|null
+     */
+    private function revenue(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped): ?array
+    {
+        $gate = fn (string $route, array $params): ?string => $this->links->url($context, $user, $entitlements, $route, $params, ['view_contact'], 'crm');
+
+        if ($gate('customer.workspaces.businesses.crm.board', $scoped) === null) {
+            return null;
+        }
+
+        try {
+            $data = $this->revenueReader->read($business, (int) $user->id);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($data['rows'] === []) {
+            return null;
+        }
+
+        $data['boardUrl'] = $gate('customer.workspaces.businesses.crm.board', $scoped);
+        $data['rows'] = array_map(function (array $row) use ($gate, $scoped): array {
+            $row['url'] = $gate('customer.workspaces.businesses.crm.opportunities.show', array_merge($scoped, [$row['opportunityUid'] ?? '']));
+
+            return $row;
+        }, $data['rows']);
+
+        return $data;
     }
 
     /**
