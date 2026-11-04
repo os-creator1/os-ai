@@ -19,6 +19,7 @@
                 </li>
             @endforeach
         </ul>
+        <button type="button" class="btn btn-outline-secondary hv2-btn mt-1" data-role="revenue-ask" data-ask-prompt="Which deals need me right now?"><span class="hv2-spark" aria-hidden="true">✦</span> Ask MotionGrove about these deals</button>
         @if(($revenue['boardUrl'] ?? null) !== null && $revenue['openCount'] > count($revenue['rows']))
             <a class="hv2-muted" href="{{ $revenue['boardUrl'] }}">See all {{ $revenue['openCount'] }}</a>
         @endif
