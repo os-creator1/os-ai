@@ -386,6 +386,15 @@ class BusinessEmailImapTest extends TestCase
         $this->smtp->failure = new \RuntimeException('Connection could not be established with host "ssl://x:465": timed out');
         $this->assertSame(Category::TemporaryProviderFailure, $send('c')->failure_category);
 
+        $this->smtp->failure = new \RuntimeException('SMTP operation timed out waiting for final acknowledgement');
+        $timeout = $send('timeout-after-data');
+        $this->assertSame(Category::TemporaryProviderFailure, $timeout->failure_category);
+        $this->assertSame(Status::Unconfirmed, $timeout->status, 'An unknown SMTP delivery outcome is not safe to retry.');
+        $this->smtp->failure = null;
+        $beforeTimeoutRetry = count($this->smtp->sent);
+        $this->assertSame(Status::Unconfirmed, $send('timeout-after-data')->status);
+        $this->assertCount($beforeTimeoutRetry, $this->smtp->sent, 'Ambiguous timeout must not resend a customer email.');
+
         $this->smtp->failure = new \RuntimeException('the stream closed mid-message');
         $unconfirmed = $send('d');
         $this->assertSame(Status::Unconfirmed, $unconfirmed->status);

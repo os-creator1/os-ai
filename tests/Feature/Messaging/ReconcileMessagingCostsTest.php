@@ -167,6 +167,50 @@ class ReconcileMessagingCostsTest extends TestCase
         $this->assertSame(1, DB::table('messaging_cost_reconciliations')->count());
     }
 
+    public function test_report_only_inbound_reports_full_unpaid_cost_without_creating_a_wallet_charge(): void
+    {
+        [$business, $identity] = $this->business();
+        $opId = $this->operation($business, $identity, 'inbound', 'sms', 'dry-in1');
+        $this->telnyx(['dry-in1' => $this->record('sms', 'inbound', 1, '0.004', '0.0030')]);
+        $balanceBefore = $this->balance($business);
+        $inboundKey = sprintf('msg_in:%d:%d', $business->id, $opId);
+
+        $this->reconcile(false);
+
+        $this->assertSame($balanceBefore, $this->balance($business), 'Report-only cannot change the wallet.');
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('idempotency_key', $inboundKey)->count());
+        $row = DB::table('messaging_cost_reconciliations')->first();
+        $this->assertSame('open', $row->status);
+        $this->assertSame(0, (int) $row->billed_micro);
+        $this->assertSame(10_470, (int) $row->adjustment_micro, 'Unpaid base and carrier surcharge must both be reported.');
+
+        $this->reconcile(true);
+        $this->reconcile(true);
+
+        $this->assertSame($balanceBefore - 10_470, $this->balance($business));
+        $this->assertSame(1, DB::table('business_usage_reservations')->where('idempotency_key', $inboundKey)->where('status', 'committed')->count());
+        $this->assertSame('settled', DB::table('messaging_cost_reconciliations')->value('status'));
+    }
+
+    public function test_unmetered_outbound_rows_cannot_starve_a_billable_message_with_a_small_seed_limit(): void
+    {
+        [$business, $identity] = $this->business();
+
+        for ($i = 0; $i < 3; $i++) {
+            // These operations were sent without a committed wallet reservation.
+            $this->operation($business, $identity, 'outbound', 'sms', 'free-' . $i, 'unmetered-' . $i);
+        }
+
+        $this->outbound($business, $identity, 'after-free');
+        $this->telnyx(['after-free' => $this->record('sms', 'outbound', 1, '0.004', '0.0050')]);
+
+        $summary = app(MessageCostReconciler::class)->run(7, true, null, 1);
+
+        $this->assertSame(1, $summary['examined']);
+        $this->assertSame(1, $summary['matched']);
+        $this->assertSame(['after-free'], DB::table('messaging_cost_reconciliations')->pluck('provider_message_id')->all());
+    }
+
     public function test_a_matching_estimate_changes_nothing(): void
     {
         [$business, $identity] = $this->business();
@@ -322,6 +366,54 @@ class ReconcileMessagingCostsTest extends TestCase
         $this->assertSame(0, $this->balance($business));
         $this->assertSame('pending', DB::table('messaging_cost_reconciliations')->value('status'));
         $this->assertStringContainsString('wallet_shortfall', (string) DB::table('messaging_cost_reconciliations')->value('last_error'));
+    }
+
+    public function test_pending_messages_are_prioritized_ahead_of_older_settled_rechecks(): void
+    {
+        [$business, $identity] = $this->business();
+        $this->outbound($business, $identity, 'already-matched');
+        $this->telnyx(['already-matched' => $this->record('sms', 'outbound', 1, '0.004', '0.0050')]);
+        $this->reconcile();
+        $this->assertSame('matched', DB::table('messaging_cost_reconciliations')->value('status'));
+
+        $this->outbound($business, $identity, 'new-pending');
+        $this->telnyx(['new-pending' => $this->record('sms', 'outbound', 1, '0.004', '0.0050')]);
+
+        $summary = app(MessageCostReconciler::class)->run(7, true, null, 1, 3);
+
+        $this->assertSame(1, $summary['examined']);
+        $this->assertSame('matched', DB::table('messaging_cost_reconciliations')->where('provider_message_id', 'new-pending')->value('status'));
+    }
+
+    public function test_inbound_recheck_keeps_the_original_charged_retail_rate_after_a_rate_change(): void
+    {
+        [$business, $identity] = $this->business();
+        $this->operation($business, $identity, 'inbound', 'sms', 'rate-before');
+        $this->telnyx(['rate-before' => $this->record('sms', 'inbound', 1, '0.004', '0.0030')]);
+        $this->reconcile();
+        $after = $this->balance($business);
+
+        app(UsageWalletManager::class)->setActiveRate(MessageMeters::SMS_INBOUND, '9999', '0', 'per unit', $this->currencyId, $this->admin->id, 'Changed rate after the message was billed.');
+        $this->reconcile(true, 3);
+
+        $this->assertSame($after, $this->balance($business), 'A later price change cannot retroactively reprice a billed message.');
+        $this->assertSame(10_470, (int) DB::table('messaging_cost_reconciliations')->value('expected_micro'));
+    }
+
+    public function test_zero_cost_provider_adjustment_refunds_existing_inbound_base_and_surcharge_once(): void
+    {
+        [$business, $identity] = $this->business();
+        $this->operation($business, $identity, 'inbound', 'sms', 'inbound-refund');
+        $this->telnyx(['inbound-refund' => $this->record('sms', 'inbound', 1, '0.004', '0.0030')]);
+        $this->reconcile();
+        $this->assertSame(self::FUNDS - 10_470, $this->balance($business));
+
+        $this->telnyx(['inbound-refund' => $this->record('sms', 'inbound', 1, '0', '0')]);
+        $this->reconcile(true, 3);
+        $this->reconcile(true, 3);
+
+        $this->assertSame(self::FUNDS, $this->balance($business), 'The retail base and carrier fee must both be refunded.');
+        $this->assertSame(0, (int) DB::table('messaging_cost_reconciliations')->value('expected_micro'));
     }
 
     public function test_a_later_telnyx_billing_adjustment_is_settled_once_by_its_own_delta(): void
