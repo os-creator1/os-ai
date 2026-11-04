@@ -73,6 +73,7 @@ jobs:
           php artisan test
           tests/Feature/Business/BusinessOnboardingHttpTest.php
           tests/Feature/Business/OnboardingManagerTest.php
+          tests/Feature/Business/OnboardingFirstMoveTest.php
           tests/Feature/Business/OnboardingSeoFlowTest.php
           tests/Feature/Website/WebsiteOnboardingSetupFlowTest.php
           tests/Feature/PlatformBilling/V1SignupOnboardingHandoffTest.php
