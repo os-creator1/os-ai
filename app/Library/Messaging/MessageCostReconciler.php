@@ -87,13 +87,23 @@ final class MessageCostReconciler
     /** Registers every billable managed message not yet tracked. */
     private function seed(int $days, int $limit): void
     {
-        $operations = DB::table(ManagedMessageDispatcher::TABLE)
+        $operationsTable = ManagedMessageDispatcher::TABLE;
+        $operations = DB::table($operationsTable)
             ->where('transport_mode', 'managed')
             ->where('provider', 'telnyx')
             ->whereNotNull('provider_message_id')
-            ->where(function ($q): void {
-                $q->where(fn ($q) => $q->where('direction', 'outbound')->whereIn('status', ['accepted', 'delivered', 'failed']))
-                    ->orWhere(fn ($q) => $q->where('direction', 'inbound'));
+            ->where(function ($q) use ($operationsTable): void {
+                $q->where(function ($q) use ($operationsTable): void {
+                    $q->where('direction', 'outbound')
+                        ->whereIn('status', ['accepted', 'delivered', 'failed'])
+                        // Filter skipped/unmetered sends BEFORE LIMIT so they cannot starve later billable messages.
+                        ->whereExists(function ($reservation) use ($operationsTable): void {
+                            $reservation->select(DB::raw(1))
+                                ->from('business_usage_reservations as billing_reservations')
+                                ->where('billing_reservations.status', 'committed')
+                                ->whereRaw("billing_reservations.idempotency_key = CONCAT('msg_transport:', {$operationsTable}.business_id, ':', {$operationsTable}.operation_key)");
+                        });
+                })->orWhere('direction', 'inbound');
             })
             ->where('occurred_at', '>=', now()->subDays($days))
             ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('messaging_cost_reconciliations')->whereColumn('messaging_cost_reconciliations.operation_id', ManagedMessageDispatcher::TABLE . '.id'))
@@ -180,7 +190,12 @@ final class MessageCostReconciler
             }
 
             $rate = (int) $rateRow->retail_rate_micro;
-            $billed = $this->chargeInboundBase($business, $row, $meterKey, $parts);
+            // Report-only must never reserve or commit a wallet charge. Existing charges still count as billed;
+            // otherwise report the full unpaid retail base plus surcharge as the prospective variance.
+            $inboundKey = sprintf('msg_in:%d:%d', $business->id, $row->operation_id);
+            $billed = $apply
+                ? $this->chargeInboundBase($business, $row, $meterKey, $parts)
+                : (int) ($this->committedReservation($inboundKey)->final_amount_micro ?? 0);
 
             if ($billed === null) {
                 $this->retry($row, 'wallet_shortfall', 'The wallet could not cover the inbound message base charge.', $summary);
