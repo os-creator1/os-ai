@@ -14,6 +14,8 @@ on:
       - 'tests/Feature/ErrorPages/**'
       - 'tests/Feature/Agency/**'
       - 'tests/Unit/AgencySite/**'
+      - 'app/Library/Messaging/MessageCostReconciler.php'
+      - 'tests/Feature/Messaging/ReconcileMessagingCostsTest.php'
       - '.github/workflows/staging-integration-checks.yml'
 
 permissions:
@@ -25,7 +27,7 @@ concurrency:
 
 jobs:
   agency-legal-regression:
-    name: Legal + Agency + Error Pages (PHP + MySQL)
+    name: Staging safety regressions (PHP + MySQL)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -75,4 +77,5 @@ jobs:
             tests/Feature/Agency/AgencySitePreviewDenialTest.php \
             tests/Feature/Agency/AgencyBrandPropagationTest.php \
             tests/Unit/AgencySite \
+            tests/Feature/Messaging/ReconcileMessagingCostsTest.php \
             --stop-on-failure
