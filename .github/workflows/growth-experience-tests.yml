@@ -1,0 +1,117 @@
+name: Growth Experience Integrated Acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/Library/Business/OnboardingFirstMove.php'
+      - 'app/Http/Controllers/Customer/BusinessOnboardingController.php'
+      - 'app/Library/Dashboard/Home/**'
+      - 'resources/views/customer/dashboard/home/**'
+      - 'resources/views/customer/onboarding/**'
+      - 'app/Library/Assistant/**'
+      - '.github/workflows/growth-experience-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: growth-experience-pr
+  cancel-in-progress: true
+
+jobs:
+  growth-acceptance:
+    name: Onboarding + Growth Home + AI handoff + Blade
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      QUEUE_CONNECTION: sync
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Compile all Blade templates
+        id: blade
+        continue-on-error: true
+        run: php artisan view:cache
+      - name: Onboarding and signup lifecycle
+        id: onboarding
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Business/BusinessOnboardingHttpTest.php
+          tests/Feature/Business/OnboardingManagerTest.php
+          tests/Feature/Business/OnboardingSeoFlowTest.php
+          tests/Feature/Website/WebsiteOnboardingSetupFlowTest.php
+          tests/Feature/PlatformBilling/V1SignupOnboardingHandoffTest.php
+      - name: Growth Home, recommendations, and actor scope
+        id: home
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Dashboards/HomeCommandCenterTest.php
+          tests/Feature/Dashboards/HomeV2ExperienceTest.php
+          tests/Feature/Dashboards/HomeV2PresentationTest.php
+          tests/Feature/Dashboards/HomeV2ScopeFixesTest.php
+          tests/Feature/Dashboards/HomeV2ActionAuthorityTest.php
+          tests/Feature/Dashboards/DashboardRenderTest.php
+          tests/Feature/Growth/GrowthHomeBandSeoCoverageTest.php
+          tests/Feature/Growth/GrowthEngineIntegrationTest.php
+          tests/Feature/Growth/GrowthOpportunityPlanEligibilityTest.php
+          tests/Unit/Growth/GrowthHomeBandSeoHeadTest.php
+      - name: Assistant, AI authorization, and review-only SEO suggestion
+        id: assistant
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Assistant/AssistantHomeUiTest.php
+          tests/Feature/Assistant/AssistantPromptSecurityTest.php
+          tests/Feature/Assistant/AssistantActionTest.php
+          tests/Feature/Assistant/AssistantViewAsApprovalTest.php
+          tests/Feature/Website/WebsiteMetaDescriptionSuggestionTest.php
+          tests/Feature/Security/ViewAsRouteBoundaryTest.php
+      - name: Fail if any acceptance group failed
+        if: always()
+        env:
+          BLADE: ${{ steps.blade.outcome }}
+          ONBOARDING: ${{ steps.onboarding.outcome }}
+          HOME: ${{ steps.home.outcome }}
+          ASSISTANT: ${{ steps.assistant.outcome }}
+        run: |
+          echo "Blade=$BLADE Onboarding=$ONBOARDING Home=$HOME Assistant=$ASSISTANT"
+          test "$BLADE" = success
+          test "$ONBOARDING" = success
+          test "$HOME" = success
+          test "$ASSISTANT" = success
