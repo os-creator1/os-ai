@@ -60,6 +60,8 @@ class TrustHosts extends Middleware
             try {
                 return WebsiteDomain::where('status', WebsiteDomainStatus::Active->value)
                     ->pluck('domain')
+                    // Every Active domain is served on its apex and on www (which redirects to the apex).
+                    ->flatMap(fn (string $domain) => [$domain, 'www.'.$domain])
                     ->map(fn (string $domain) => '^'.preg_quote($domain, '#').'$')
                     ->all();
             } catch (Throwable) {

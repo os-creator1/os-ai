@@ -55,6 +55,31 @@ final class BusinessEmailContactResolver
     }
 
     /**
+     * The id of this Business's ONE Contact carrying this email address, or
+     * null when none or several do (never guess which person wrote).
+     */
+    public function contactIdByAddress(Business $business, string $address): ?int
+    {
+        $address = self::normalize($address);
+
+        if ($address === null) {
+            return null;
+        }
+
+        $ids = DB::table('contacts as c')
+            ->join('contacts_custom_field as v', 'v.contact_id', '=', 'c.id')
+            ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+            ->where('c.business_id', $business->id)
+            ->where('f.tag', self::EMAIL_TAG)
+            ->whereRaw('LOWER(TRIM(v.value)) = ?', [$address])
+            ->distinct()
+            ->limit(2)
+            ->pluck('c.id');
+
+        return $ids->count() === 1 ? (int) $ids->first() : null;
+    }
+
+    /**
      * A bounded list of this Business's most recent Contacts that have
      * exactly one valid address, for the manual-send picker. Two queries,
      * constant in the number of Contacts.

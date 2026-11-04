@@ -33,7 +33,8 @@ class GhlApiClient
     {
         return new self(
             (string) config('ghl_migration.base_url'),
-            (string) config('ghl_migration.token'),
+            // config() is null under a cached production config; a one-off process env var is still readable.
+            (string) (config('ghl_migration.token') ?: getenv('GHL_PRIVATE_INTEGRATION_TOKEN')),
             (string) config('ghl_migration.api_version'),
             (string) config('ghl_migration.user_agent'),
             (int) config('ghl_migration.max_attempts'),

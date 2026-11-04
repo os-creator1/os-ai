@@ -18,6 +18,7 @@ final class BusinessEmailProviderRegistry
         return match ($type) {
             BusinessEmailProviderType::Google => app(GoogleBusinessEmailProvider::class),
             BusinessEmailProviderType::Microsoft => app(MicrosoftBusinessEmailProvider::class),
+            BusinessEmailProviderType::Imap => app(ImapBusinessEmailProvider::class),
         };
     }
 }

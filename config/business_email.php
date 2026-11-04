@@ -24,13 +24,17 @@ return [
         'client_id' => env('BUSINESS_EMAIL_GOOGLE_CLIENT_ID'),
         'client_secret' => env('BUSINESS_EMAIL_GOOGLE_CLIENT_SECRET'),
         'redirect' => env('BUSINESS_EMAIL_GOOGLE_REDIRECT'),
-        // Minimal: identify the mailbox and send. NO mailbox-read scope —
-        // inbound sync is a later slice and would need gmail.readonly
-        // (a Google "restricted" scope) which this slice deliberately avoids.
+        // Identify the mailbox, send, and read incoming mail. gmail.readonly
+        // is a Google RESTRICTED scope: public production use requires Google
+        // OAuth app verification (and a security assessment). Until then only
+        // test users on the OAuth consent screen can grant it. Mailboxes
+        // connected before this scope existed keep sending and are asked to
+        // reauthorize before inbound sync starts.
         'scopes' => [
             'openid',
             'email',
             'https://www.googleapis.com/auth/gmail.send',
+            'https://www.googleapis.com/auth/gmail.readonly',
         ],
     ],
 
@@ -39,8 +43,20 @@ return [
         'client_secret' => env('BUSINESS_EMAIL_MICROSOFT_CLIENT_SECRET'),
         'redirect' => env('BUSINESS_EMAIL_MICROSOFT_REDIRECT'),
         'tenant' => env('BUSINESS_EMAIL_MICROSOFT_TENANT', 'common'),
-        // Identify the mailbox (User.Read) and send (Mail.Send). No Mail.Read.
-        'scopes' => ['offline_access', 'User.Read', 'Mail.Send'],
+        // Identify the mailbox (User.Read), send (Mail.Send) and read incoming
+        // mail (Mail.Read, delegated: only the signed-in user's own mailbox).
+        // Connections made before Mail.Read existed keep sending and are asked
+        // to reauthorize before inbound sync starts.
+        'scopes' => ['offline_access', 'User.Read', 'Mail.Send', 'Mail.Read'],
+    ],
+
+    // "Other email": any standard IMAP/SMTP mailbox. TLS and certificate
+    // verification are mandatory; only these ports are accepted.
+    'imap' => [
+        'imap_ports' => [993, 143],
+        'smtp_ports' => [465, 587],
+        'connect_timeout_seconds' => 8,
+        'io_timeout_seconds' => 20,
     ],
 
     'oauth' => [
@@ -51,6 +67,18 @@ return [
     'http' => [
         'connect_timeout_seconds' => env('BUSINESS_EMAIL_CONNECT_TIMEOUT', 5),
         'request_timeout_seconds' => env('BUSINESS_EMAIL_REQUEST_TIMEOUT', 20),
+    ],
+
+    'inbound' => [
+        // Bounded first sync: only recent inbox mail, never full history.
+        'initial_days' => 7,
+        'initial_max_messages' => 50,
+        // Messages fetched per sync run; more is picked up by the next run.
+        'max_messages_per_run' => 50,
+        'sync_every_minutes' => 5,
+        'max_body_length' => 20000,
+        // Hard storage bound (bytes) for one stored body; body_text is a TEXT column.
+        'max_body_bytes' => 60000,
     ],
 
     'send' => [

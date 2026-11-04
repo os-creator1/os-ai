@@ -41,7 +41,7 @@ class WebsiteComponentValidationTest extends TestCase
 
     public function test_unknown_section_types_are_rejected(): void
     {
-        foreach (['video', 'map', 'custom_html'] as $badType) {
+        foreach (['audio', 'map', 'custom_html'] as $badType) {
             try {
                 $this->validator()->validate([['type' => $badType, 'data' => []]], []);
                 $this->fail("Expected ValidationException for unknown section type '{$badType}'.");
@@ -222,7 +222,7 @@ class WebsiteComponentValidationTest extends TestCase
         $response = $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
             'title' => 'Home',
             'is_home' => true,
-            'sections' => [['type' => 'video', 'data' => []]],
+            'sections' => [['type' => 'audio', 'data' => []]],
         ]);
 
         $response->assertSessionHasErrors('sections.0.type');

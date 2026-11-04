@@ -15,12 +15,23 @@ use Illuminate\Console\Command;
  */
 class BackfillUsageWalletsCommand extends Command
 {
-    protected $signature = 'usage:backfill-wallets';
+    protected $signature = 'usage:backfill-wallets {--dry-run : List Businesses missing a wallet and whether each could be repaired; writes nothing}';
 
     protected $description = 'Create a business_usage_wallets row for every existing Business lacking one (RFC-005 M1)';
 
     public function handle(UsageWalletBackfillV1 $backfill): int
     {
+        if ($this->option('dry-run')) {
+            $rows = $backfill->preview();
+            $this->info('Dry run — nothing was written. Businesses missing a wallet: ' . count($rows));
+
+            foreach ($rows as $row) {
+                $this->line("  business_id={$row['business_id']} currency_code={$row['currency_code']} " . ($row['resolvable'] ? 'repairable' : "NOT repairable ({$row['classification']})"));
+            }
+
+            return self::SUCCESS;
+        }
+
         try {
             $result = $backfill->run();
         } catch (UsageWalletBackfillIncompleteException $e) {

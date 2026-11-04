@@ -850,19 +850,24 @@ class BusinessEmailSenderTest extends TestCase
         $this->assertSame($second->id, (int) $this->sender()->send($this->request($business, $contact, 'loc-hist'))->location_id);
     }
 
-    public function test_the_database_itself_refuses_an_unscoped_message_row(): void
+    public function test_the_database_allows_an_unresolved_location_only_for_a_row_that_exists_and_never_a_dangling_one(): void
     {
         [$business, $contact] = $this->readyTenant();
         $row = [
             'uid' => (string) \Illuminate\Support\Str::uuid(), 'business_id' => $business->id, 'contact_id' => $contact->id,
             'operation_key' => 'raw-null', 'provider' => 'google', 'from_email' => 'a@b.test', 'to_email' => 'c@d.test',
-            'subject' => 's', 'body_text' => 'b', 'created_at' => now(), 'updated_at' => now(),
+            'subject' => 's', 'body_text' => 'b', 'direction' => 'inbound', 'status' => 'received', 'created_at' => now(), 'updated_at' => now(),
         ];
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
-
+        // Unresolved inbound mail (NULL) is storable; the sender still refuses an outbound send with no provable Location (location_required tests).
         DB::table('business_email_messages')->insert($row + ['location_id' => null]);
+        $this->assertSame(1, DB::table('business_email_messages')->whereNull('location_id')->count());
+
+        // A Location that does not exist is still refused by the foreign key.
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('business_email_messages')->insert(array_merge($row, ['operation_key' => 'raw-bogus', 'uid' => (string) \Illuminate\Support\Str::uuid(), 'location_id' => 99999999]));
     }
+
     public function test_no_secret_is_ever_persisted_on_the_message_or_serialized_from_the_account(): void
     {
         [$business, $contact] = $this->readyTenant();

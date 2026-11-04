@@ -3,7 +3,7 @@
 @section('title', __('locale.usage_billing.title'))
 
 @section('page-style')
-    @include('customer.settings._redesign-assets')
+    @include('customer.settings._phone-messaging-assets')
 @endsection
 
 @section('content')
@@ -57,7 +57,7 @@
         $stateLabel = static fn (string $state): string => \Illuminate\Support\Facades\Lang::has('locale.usage_billing.activity.states.' . $state) ? __('locale.usage_billing.activity.states.' . $state) : ucfirst(str_replace('_', ' ', $state));
     @endphp
 
-    <section id="usage-billing-dashboard" class="sr-page">
+    <section id="usage-billing-dashboard" class="sr-page sr-page--wide pm-page">
         <a href="{{ $isAgencyFrame ? route('customer.workspaces.show', $workspaceUid) : route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]) }}" class="sr-back">
             <x-ds-icon name="arrow-left" size="14" aria-hidden="true" /> {{ $isAgencyFrame ? __('locale.usage_billing.back_to_agency') : __('locale.usage_billing.back_to_settings') }}
         </a>
@@ -130,55 +130,65 @@
         @endif
 
         {{-- 1. Balance, this month's usage and AI usage --}}
-        <div class="sr-card" id="usage-billing-wallet">
+        <div id="usage-billing-wallet">
             @if ($wallet === null)
-                <div class="sr-card__body"><p class="mb-0">{{ __('locale.usage_billing.not_set_up') }}</p></div>
+                <div class="sr-card"><div class="sr-card__body"><p class="mb-0">{{ __('locale.usage_billing.not_set_up') }}</p></div></div>
             @else
-                <div class="sr-stats" data-role="balance-summary">
-                    <div class="sr-stat">
-                        <div class="sr-stat__label" id="usage-billing-available-label">{{ __('locale.usage_billing.available_balance') }}</div>
-                        <div class="sr-stat__value" data-role="available-balance" aria-labelledby="usage-billing-available-label">{{ $money($wallet['available_balance_micro']) }}</div>
-                        <div class="sr-stat__note">{{ __('locale.usage_billing.available_balance_help') }}</div>
+                <div class="pm-summary" data-role="balance-summary">
+                    <div class="pm-summary__cell pm-summary__cell--balance">
+                        <div class="pm-summary__label" id="usage-billing-available-label">{{ __('locale.usage_billing.available_balance') }}</div>
+                        <div class="pm-summary__value" data-role="available-balance" aria-labelledby="usage-billing-available-label">{{ $money($wallet['available_balance_micro']) }}</div>
+                        <div class="pm-summary__note">{{ __('locale.usage_billing.available_balance_help') }}</div>
+                        @if ($actorIsPayer && $dashboard->providerConfigured)
+                            <a href="#usage-billing-funding" class="btn btn-primary btn-sm mt-2">{{ __('locale.usage_billing.add_funds.button') }}</a>
+                        @endif
                     </div>
-                    <div class="sr-stat">
-                        <div class="sr-stat__label" id="usage-billing-usage-label">{{ __('locale.usage_billing.usage_this_month') }}</div>
-                        <div class="sr-stat__value" data-role="usage-this-month" aria-labelledby="usage-billing-usage-label">{{ $money($wallet['committed_spend_this_period_micro']) }}</div>
-                        <div class="sr-stat__note">{{ __('locale.usage_billing.usage_this_month_help') }}</div>
+                    <div class="pm-summary__cell">
+                        <div class="pm-summary__label" id="usage-billing-usage-label">{{ __('locale.usage_billing.usage_this_month') }}</div>
+                        <div class="pm-summary__value" data-role="usage-this-month" aria-labelledby="usage-billing-usage-label">{{ $money($wallet['committed_spend_this_period_micro']) }}</div>
+                        <div class="pm-summary__note">{{ __('locale.usage_billing.usage_this_month_help') }}</div>
                     </div>
                     @if ($aiUsage !== null && $aiUsage->businessRows === [])
-                        <div class="sr-stat" id="usage-billing-ai-usage">
-                            <div class="sr-stat__label">{{ __('locale.usage_billing.ai_usage.title') }}</div>
-                            <div class="sr-stat__note mt-1" style="color:var(--color-text-primary);font-size:.8125rem" role="status" data-role="ai-usage-state" data-state="{{ $aiUsage->state->value }}">{{ $aiUsage->sentence }}</div>
+                        <div class="pm-summary__cell" id="usage-billing-ai-usage">
+                            <div class="pm-summary__label">{{ __('locale.usage_billing.ai_usage.title') }}</div>
+                            <div class="pm-summary__note mt-1" style="color:var(--color-text-primary);font-size:.8125rem" role="status" data-role="ai-usage-state" data-state="{{ $aiUsage->state->value }}">{{ $aiUsage->sentence }}</div>
                             @if ($aiUsage->trialLine !== null)
-                                <div class="sr-stat__note mt-1" data-role="ai-usage-trial-line">{{ $aiUsage->trialLine }}</div>
+                                <div class="pm-summary__note mt-1" data-role="ai-usage-trial-line">{{ $aiUsage->trialLine }}</div>
+                            @endif
+                        </div>
+                    @endif
+
+                    @if ($status === 'suspended' || (int) $wallet['debt_balance_micro'] > 0 || (int) $wallet['reserved_balance_micro'] > 0)
+                        <div class="pm-summary__foot">
+                            @if ($status === 'suspended')
+                                <p>{{ __('locale.usage_billing.suspended_help') }}</p>
+                            @elseif ((int) $wallet['debt_balance_micro'] > 0)
+                                <p>{{ __('locale.usage_billing.amount_owed') }}: <span class="text-numeric">{{ $money($wallet['debt_balance_micro']) }}</span>. {{ __('locale.usage_billing.amount_owed_help') }}</p>
+                            @endif
+                            @if ((int) $wallet['reserved_balance_micro'] > 0)
+                                <p>{{ __('locale.usage_billing.held_for_work_in_progress') }}: <span class="text-numeric">{{ $money($wallet['reserved_balance_micro']) }}</span>. {{ __('locale.usage_billing.held_help') }}</p>
                             @endif
                         </div>
                     @endif
                 </div>
-
-                @if ($status === 'suspended' || (int) $wallet['debt_balance_micro'] > 0 || (int) $wallet['reserved_balance_micro'] > 0)
-                    <div class="sr-card__foot sr-card__foot--note" style="display:block">
-                        @if ($status === 'suspended')
-                            <p class="mb-1">{{ __('locale.usage_billing.suspended_help') }}</p>
-                        @elseif ((int) $wallet['debt_balance_micro'] > 0)
-                            <p class="mb-1">{{ __('locale.usage_billing.amount_owed') }}: <span class="text-numeric">{{ $money($wallet['debt_balance_micro']) }}</span>. {{ __('locale.usage_billing.amount_owed_help') }}</p>
-                        @endif
-                        @if ((int) $wallet['reserved_balance_micro'] > 0)
-                            <p class="mb-0">{{ __('locale.usage_billing.held_for_work_in_progress') }}: <span class="text-numeric">{{ $money($wallet['reserved_balance_micro']) }}</span>. {{ __('locale.usage_billing.held_help') }}</p>
-                        @endif
-                    </div>
-                @endif
             @endif
         </div>
 
-        <div class="row">
+        {{-- Payment-method warning: funds can still be used without a card, but top-ups need one. --}}
+        @if ($wallet !== null && $actorIsPayer && $dashboard->providerConfigured && $dashboard->paymentMethod === null)
+            <div class="sr-callout sr-callout--warn mb-3" role="status" data-role="payment-method-warning">
+                <x-ds-icon name="credit-card" size="16" />
+                <p><strong>Add a payment method</strong> to top up or use automatic top-up. {{ __('locale.usage_billing.add_funds.needs_payment_method') }}</p>
+            </div>
+        @endif
+
             {{-- 2b. AI usage — Unified Business Home & COO contract §11.3 (slice AI-2).
                  A state and its sentence only: no tokens, amounts, percentage,
                  provider or model. $aiUsage is null for an actor outside the
                  billing authority, and for an account with no included AI. --}}
             @if ($aiUsage !== null && ($aiUsage->businessRows !== [] || $wallet === null))
-                <div class="col-12">
-                    <x-card id="usage-billing-ai-usage" :title="__('locale.usage_billing.ai_usage.title')">
+                <div class="mb-3">
+                    <x-card id="usage-billing-ai-usage" class="mb-0" :title="__('locale.usage_billing.ai_usage.title')">
                         <p class="mb-0" role="status" data-role="ai-usage-state" data-state="{{ $aiUsage->state->value }}">{{ $aiUsage->sentence }}</p>
                         @if ($aiUsage->trialLine !== null)
                             <p class="text-caption mt-50 mb-0" data-role="ai-usage-trial-line">{{ $aiUsage->trialLine }}</p>
@@ -199,10 +209,14 @@
                 </div>
             @endif
 
-            {{-- 3. Funding — only the payer ever sees add-funds / automatic top-up (T-PAYER-4) --}}
-            @if ($actorIsPayer)
-                <div class="col-12">
-                    <x-card id="usage-billing-funding" :title="__('locale.usage_billing.add_funds.title')">
+        @php
+            $hasSide = ($wallet !== null && $managesLimits) || $managesBillingContact;
+        @endphp
+        <div class="pm-split @unless ($hasSide) pm-split--single @endunless" style="@unless ($hasSide) grid-template-columns:minmax(0,1fr) @endunless">
+            <div class="pm-stack">
+                {{-- 3. Funding — only the payer ever sees add-funds / automatic top-up (T-PAYER-4) --}}
+                @if ($actorIsPayer)
+                    <x-card id="usage-billing-funding" :title="__('locale.usage_billing.add_funds.title')" class="mb-0">
                         @if (! $dashboard->providerConfigured)
                             <div class="sr-callout sr-callout--warn mb-0" data-role="funding-not-available"><x-ds-icon name="clock" size="16" /><p><strong>Not available yet.</strong> {{ __('locale.usage_billing.add_funds.not_configured') }}</p></div>
                         @elseif ($wallet === null)
@@ -223,22 +237,26 @@
                                 <p class="text-caption mb-1" data-role="add-funds-needs-method">{{ __('locale.usage_billing.add_funds.needs_payment_method') }}</p>
                             @endif
 
-                            <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspaceUid, $businessUid]) }}" id="usage-billing-top-up-form" class="row g-1 align-items-end" novalidate>
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspaceUid, $businessUid]) }}" id="usage-billing-top-up-form" novalidate>
                                 @csrf
-                                <div class="col-sm-5">
-                                    <label class="form-label text-label" for="usage-billing-top-up-amount">{{ __('locale.usage_billing.add_funds.amount_label') }} ({{ $currency }})</label>
-                                    <input type="text" inputmode="decimal" class="form-control transition-fast" id="usage-billing-top-up-amount" name="amount" value="{{ old('amount', $decimal($minimumTopUpMicro)) }}" aria-describedby="usage-billing-add-funds-help usage-billing-add-funds-minimum" required>
-                                </div>
-                                <div class="col-sm-auto">
+                                @if (! empty($autoRechargePresetsMicro))
+                                    <div class="pm-presets mb-2" role="group" aria-label="Quick amounts" data-role="top-up-presets">
+                                        @foreach ($autoRechargePresetsMicro as $preset)
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" data-fill-amount="{{ $decimal((string) $preset) }}">{{ $money((string) $preset) }}</button>
+                                        @endforeach
+                                    </div>
+                                @endif
+                                <div class="pm-inline">
+                                    <div class="pm-field">
+                                        <label for="usage-billing-top-up-amount">{{ __('locale.usage_billing.add_funds.amount_label') }} ({{ $currency }})</label>
+                                        <input type="text" inputmode="decimal" class="form-control transition-fast" id="usage-billing-top-up-amount" name="amount" value="{{ old('amount', $decimal($minimumTopUpMicro)) }}" aria-describedby="usage-billing-add-funds-help usage-billing-add-funds-minimum" required>
+                                    </div>
                                     <x-button type="submit" variant="primary">{{ __('locale.usage_billing.add_funds.button') }}</x-button>
                                 </div>
                             </form>
                         @endif
                     </x-card>
-                </div>
-
-                <div class="col-12">
-                    <x-card id="usage-billing-auto-top-up" :title="__('locale.usage_billing.auto_top_up.title')">
+                    <x-card id="usage-billing-auto-top-up" :title="__('locale.usage_billing.auto_top_up.title')" class="mb-0">
                         @if (! $dashboard->providerConfigured)
                             <div class="sr-callout sr-callout--warn mb-0" data-role="funding-not-available"><x-ds-icon name="clock" size="16" /><p><strong>Not available yet.</strong> {{ __('locale.usage_billing.add_funds.not_configured') }}</p></div>
                         @elseif ($wallet === null)
@@ -262,9 +280,12 @@
                             <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.auto-recharge.configure', [$workspaceUid, $businessUid]) }}" id="usage-billing-auto-recharge-form" novalidate>
                                 @csrf
                                 <input type="hidden" name="auto_recharge_enabled" value="0">
-                                <div class="form-check mb-1">
-                                    <input class="form-check-input" type="checkbox" name="auto_recharge_enabled" id="usage-billing-auto-recharge-enabled" value="1" @checked(old('auto_recharge_enabled', $dashboard->autoRecharge['enabled'])) aria-describedby="usage-billing-auto-top-up-help">
-                                    <label class="form-check-label text-label" for="usage-billing-auto-recharge-enabled">{{ __('locale.usage_billing.auto_top_up.enable_label') }}</label>
+                                <div class="pm-toggle-row mb-2">
+                                    <div class="pm-toggle-row__text"><strong>{{ __('locale.usage_billing.auto_top_up.enable_label') }}</strong></div>
+                                    <label class="sr-switch" for="usage-billing-auto-recharge-enabled">
+                                        <input type="checkbox" role="switch" name="auto_recharge_enabled" id="usage-billing-auto-recharge-enabled" value="1" @checked(old('auto_recharge_enabled', $dashboard->autoRecharge['enabled'])) aria-describedby="usage-billing-auto-top-up-help">
+                                        <span class="visually-hidden">{{ __('locale.usage_billing.auto_top_up.enable_label') }}</span>
+                                    </label>
                                 </div>
 
                                 <fieldset class="mb-1">
@@ -273,12 +294,12 @@
                                     @if (! $dashboard->autoRecharge['enabled'])
                                         <p class="text-caption mb-50" data-role="auto-top-up-suggestion">{{ __('locale.usage_billing.auto_top_up.suggested', ['amount' => $money($autoRechargeSuggestedPresetMicro)]) }}</p>
                                     @endif
-                                    <div class="d-flex flex-wrap gap-1" data-role="auto-recharge-presets">
+                                    <div class="pm-presets" data-role="auto-recharge-presets">
                                         @foreach ($autoRechargePresetsMicro as $preset)
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="radio" name="auto_recharge_amount_micro" id="usage-billing-auto-recharge-amount-{{ $preset }}" value="{{ $preset }}" @checked($selectedPreset === (string) $preset) aria-describedby="usage-billing-auto-recharge-amount-help">
-                                                <label class="form-check-label" for="usage-billing-auto-recharge-amount-{{ $preset }}">{{ $money($preset) }}</label>
-                                            </div>
+                                            <label class="pm-preset" for="usage-billing-auto-recharge-amount-{{ $preset }}">
+                                                <input type="radio" name="auto_recharge_amount_micro" id="usage-billing-auto-recharge-amount-{{ $preset }}" value="{{ $preset }}" @checked($selectedPreset === (string) $preset) aria-describedby="usage-billing-auto-recharge-amount-help">
+                                                <span>{{ $money($preset) }}</span>
+                                            </label>
                                         @endforeach
                                     </div>
                                 </fieldset>
@@ -297,18 +318,137 @@
 
                                 <p class="text-caption mt-1 mb-50" data-role="auto-top-up-frequency-help">{{ __('locale.usage_billing.auto_top_up.frequency_help') }}</p>
                                 <p class="text-caption mb-1">{{ __('locale.usage_billing.auto_top_up.charge_note') }}</p>
-                                <x-button type="submit" variant="outline">{{ __('locale.usage_billing.auto_top_up.button') }}</x-button>
+                                <x-button type="submit" variant="secondary">{{ __('locale.usage_billing.auto_top_up.button') }}</x-button>
                             </form>
                         @endif
                     </x-card>
-                </div>
-            @endif
+                @endif
 
-            {{-- 4. Spending controls: the monthly limit and the per-capability limits side by side --}}
-            @if ($wallet !== null && $managesLimits)
-                <div class="col-12">
-                    <div class="sr-grid-2">
-                        <x-card id="usage-billing-spending" :title="__('locale.usage_billing.spending.title')" style="margin-bottom:0">
+                <div class="pm-panel" id="usage-billing-history">
+                    <div class="pm-panel__head">
+                        <h3 class="pm-panel__title">Activity</h3>
+                        <ul class="nav nav-pills" role="tablist" style="gap:4px">
+                            <li class="nav-item" role="presentation"><button class="nav-link active py-1 px-2" id="usage-billing-tab-usage" data-bs-toggle="tab" data-bs-target="#usage-billing-pane-usage" type="button" role="tab" aria-controls="usage-billing-pane-usage" aria-selected="true" style="font-size:.8125rem">Usage</button></li>
+                            <li class="nav-item" role="presentation"><button class="nav-link py-1 px-2" id="usage-billing-tab-funding" data-bs-toggle="tab" data-bs-target="#usage-billing-pane-funding" type="button" role="tab" aria-controls="usage-billing-pane-funding" aria-selected="false" style="font-size:.8125rem">Funding</button></li>
+                        </ul>
+                    </div>
+                    <div class="tab-content">
+                        <div class="tab-pane active" id="usage-billing-pane-usage" role="tabpanel" aria-labelledby="usage-billing-tab-usage">
+                            <div id="usage-billing-ledger">
+<h4 class="sr-card__sub" style="padding:var(--space-4) var(--space-5) 0;margin:0">{{ __('locale.usage_billing.activity.title') }}</h4>
+                                @if ($dashboard->ledger->isEmpty())
+                                    <div class="sr-empty" style="background:transparent">
+                                        <span class="sr-tile"><x-ds-icon name="receipt" size="18" /></span>
+                                        <strong>{{ __('locale.usage_billing.activity.empty') }}</strong>
+                                        <p>{{ __('locale.usage_billing.activity.title') }}</p>
+                                    </div>
+                                @else
+                                    <div>
+                                        <div class="pm-tablewrap">
+                                            <table class="pm-table" data-role="ledger-table">
+                                                <thead><tr>
+                                                    @foreach (__('locale.usage_billing.activity.headers') as $i => $header)
+                                                        <th scope="col" @if ($i === 3) class="is-num" style="text-align:right" @endif>{{ $header }}</th>
+                                                    @endforeach
+                                                </tr></thead>
+                                                <tbody>
+                                                @foreach ($dashboard->ledger as $entry)
+                                                    @php
+                                                        // Presentation only: each ledger entry type is named for what it is.
+                                                        // A hold and its release move funds aside and back; neither is a payment or a refund.
+                                                        [$kindLabel, $kindVariant, $kindNote, $amountClass] = match ($entry->entryType) {
+                                                            'paid_top_up', 'auto_recharge' => ['Wallet deposit', 'success', null, 'pm-amt--in'],
+                                                            'promotional_credit' => ['Promotional credit', 'accent', null, 'pm-amt--in'],
+                                                            'manual_credit' => ['Manual credit', 'accent', null, 'pm-amt--in'],
+                                                            'reservation' => ['Hold', '', 'Set aside while work is in progress — not a charge.', 'pm-amt--hold'],
+                                                            'reservation_release' => ['Hold released', '', 'Returned to your available balance — not a refund.', 'pm-amt--hold'],
+                                                            'usage_charge', 'usage_overage_charge' => ['Charged', '', null, 'pm-amt--out'],
+                                                            'refund' => ['Refund', 'success', null, 'pm-amt--in'],
+                                                            'dispute_chargeback' => ['Disputed', 'danger', null, 'pm-amt--out'],
+                                                            'usage_charge_reversal', 'correction_reversal' => ['Correction', 'warn', null, 'pm-amt--out'],
+                                                            default => [ucfirst(str_replace('_', ' ', $entry->entryType)), '', null, 'pm-amt--out'],
+                                                        };
+                                                    @endphp
+                                                    <tr data-entry-type="{{ $entry->entryType }}">
+                                                        <td class="is-date">{{ $entry->createdAt->format('Y-m-d H:i') }}</td>
+                                                        <td>
+                                                            {{ $entryLabel($entry->entryType) }}
+                                                            <span class="sr-chip {{ $kindVariant !== '' ? 'sr-chip--' . $kindVariant : '' }} ms-1">{{ $kindLabel }}</span>
+                                                            @if ($kindNote !== null)<span class="pm-table__sub">{{ $kindNote }}</span>@endif
+                                                        </td>
+                                                        <td>{{ $capabilityLabel($entry->featureKey) }}</td>
+                                                        <td class="is-num {{ $amountClass }}">{{ $money($entry->signedAmountMicro) }}</td>
+                                                    </tr>
+                                                @endforeach
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        <p class="pm-hint px-3 mt-2 mb-0" data-role="ledger-note">Holds set funds aside while paid work is in progress. Releasing a hold returns that amount to your available balance; it is not a refund or a new payment.</p>
+                                        <div class="mt-2 px-3 pb-2">
+                                            <x-pagination :paginator="$dashboard->ledger" />
+                                        </div>
+                                    </div>
+                                @endif
+                            </div>
+                        </div>
+
+                        <div class="tab-pane" id="usage-billing-pane-funding" role="tabpanel" aria-labelledby="usage-billing-tab-funding">
+                            <div id="usage-billing-funding-history">
+<h4 class="sr-card__sub" style="padding:var(--space-4) var(--space-5) 0;margin:0">{{ __('locale.usage_billing.activity.funding_title') }}</h4>
+                                @if ($dashboard->fundingHistory->isEmpty())
+                                    <div class="sr-empty" style="background:transparent">
+                                        <span class="sr-tile"><x-ds-icon name="wallet" size="18" /></span>
+                                        <strong>{{ __('locale.usage_billing.activity.funding_empty') }}</strong>
+                                        <p>{{ __('locale.usage_billing.activity.funding_title') }}</p>
+                                    </div>
+                                @else
+                                    <div>
+                                        <div class="pm-tablewrap">
+                                            <table class="pm-table" data-role="funding-table">
+                                                <thead><tr>
+                                                    @foreach (__('locale.usage_billing.activity.funding_headers') as $i => $header)
+                                                        <th scope="col" @if ($i === 3) style="text-align:right" @endif>{{ $header }}</th>
+                                                    @endforeach
+                                                </tr></thead>
+                                                <tbody>
+                                                @foreach ($dashboard->fundingHistory as $attempt)
+                                                <tr data-role="funding-attempt" data-result="{{ $attempt['state'] }}">
+                                                    <td class="is-date">{{ $attempt['created_at']->format('Y-m-d H:i') }}</td>
+                                                    <td>{{ $purposeLabel($attempt['purpose']) }}</td>
+                                                    <td>{{ $attempt['payment_method_display'] }}</td>
+                                                    <td class="is-num">{{ $money($attempt['amount_micro']) }}</td>
+                                                    <td>
+                                                        @if (in_array($attempt['state'], ['failed', 'canceled', 'disputed'], true))
+                                                            <x-badge variant="danger">{{ $stateLabel($attempt['state']) }}</x-badge>
+                                                        @elseif ($attempt['state'] === 'succeeded')
+                                                            <x-badge variant="success">{{ $stateLabel($attempt['state']) }}</x-badge>
+                                                        @else
+                                                            <x-badge variant="neutral">{{ $stateLabel($attempt['state']) }}</x-badge>
+                                                        @endif
+                                                    </td>
+                                                </tr>
+                                            @endforeach
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        <div class="mt-2 px-3 pb-2">
+                                            <x-pagination :paginator="$dashboard->fundingHistory" />
+                                        </div>
+                                    </div>
+                                @endif
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @if ($hasSide)
+                <div class="pm-stack" data-role="billing-side">
+                    {{-- 4. Spending controls --}}
+                    @if ($wallet !== null && $managesLimits)
+                        <x-card id="usage-billing-spending" :title="__('locale.usage_billing.spending.title')" class="mb-0">
                             <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.spend-cap', [$workspaceUid, $businessUid]) }}" novalidate>
                                 @csrf
                                 <input type="hidden" name="control" value="business_spend_cap">
@@ -325,9 +465,7 @@
                                 <x-button type="submit" variant="secondary" size="sm">{{ __('locale.usage_billing.spending.button') }}</x-button>
                             </form>
                         </x-card>
-
-                        {{-- 5. Limits by capability — curated catalogue, never a typed key (E-14) --}}
-                        <x-card id="usage-billing-feature-limits" :title="__('locale.usage_billing.capabilities.title')" style="margin-bottom:0">
+                        <x-card id="usage-billing-feature-limits" :title="__('locale.usage_billing.capabilities.title')" class="mb-0">
                             <p class="text-caption mb-2" id="usage-billing-capability-help">{{ __('locale.usage_billing.capabilities.help') }}</p>
 
                             @if (empty($dashboard->featureLimits))
@@ -362,12 +500,7 @@
                                 </form>
                             @endif
                         </x-card>
-                    </div>
-                </div>
-
-                {{-- Emergency stop --}}
-                <div class="col-12">
-                    <x-card id="usage-billing-pause">
+                    <x-card id="usage-billing-pause" class="mb-0">
                         <div class="d-flex align-items-start gap-3 mb-3">
                             <span class="sr-tile" style="background:#fbeae7;color:#a03626"><x-ds-icon name="pause" size="18" /></span>
                             <div>
@@ -396,11 +529,8 @@
                             @endif
                         </form>
                     </x-card>
-                </div>
-
-                @if ($managesAgency && $workspaceControls !== null)
-                    <div class="col-12">
-                        <x-card id="usage-billing-agency" :title="__('locale.usage_billing.spending.agency_title')">
+                        @if ($managesAgency && $workspaceControls !== null)
+                        <x-card id="usage-billing-agency" class="mb-0" :title="__('locale.usage_billing.spending.agency_title')">
                             <h3 class="visually-hidden" id="usage-billing-agency-title">{{ __('locale.usage_billing.spending.agency_title') }}</h3>
                             <p class="text-caption mb-2" id="usage-billing-agency-help">{{ __('locale.usage_billing.spending.agency_help') }}</p>
                             <p class="text-caption mb-2" data-role="agency-spent">{{ __('locale.usage_billing.spending.agency_spent', ['amount' => $money($workspaceControls['workspace_paid_spend_this_period_micro'])]) }}</p>
@@ -430,14 +560,11 @@
                                 <x-button type="submit" variant="secondary" size="sm">{{ __('locale.usage_billing.spending.agency_button') }}</x-button>
                             </form>
                         </x-card>
-                    </div>
-                @endif
-            @endif
-
-            {{-- 6. Billing contact --}}
-            @if ($managesBillingContact)
-                <div class="col-12">
-                    <x-card id="usage-billing-contact">
+                        @endif
+                    @endif
+                    {{-- 6. Billing contact --}}
+                    @if ($managesBillingContact)
+                    <x-card id="usage-billing-contact" class="mb-0">
                         <div class="d-flex align-items-start justify-content-between gap-3 mb-3">
                             <div>
                                 <h3 class="sr-card__title">Billing contact</h3>
@@ -479,91 +606,9 @@
                             </div>
                         </form>
                     </x-card>
+                    @endif
                 </div>
             @endif
-
-            {{-- 7. History — activity and funding; readable labels, never raw keys or states (E-14, §20 C-9) --}}
-            <div class="col-12">
-                <div class="sr-card" id="usage-billing-history">
-                    <div class="sr-card__head">
-                        <h3 class="sr-card__title">History</h3>
-                        <ul class="nav nav-pills" role="tablist" style="gap:4px">
-                            <li class="nav-item" role="presentation"><button class="nav-link active py-1 px-2" id="usage-billing-tab-usage" data-bs-toggle="tab" data-bs-target="#usage-billing-pane-usage" type="button" role="tab" aria-controls="usage-billing-pane-usage" aria-selected="true" style="font-size:.8125rem">Usage</button></li>
-                            <li class="nav-item" role="presentation"><button class="nav-link py-1 px-2" id="usage-billing-tab-funding" data-bs-toggle="tab" data-bs-target="#usage-billing-pane-funding" type="button" role="tab" aria-controls="usage-billing-pane-funding" aria-selected="false" style="font-size:.8125rem">Funding</button></li>
-                        </ul>
-                    </div>
-                    <div class="tab-content">
-                        <div class="tab-pane active" id="usage-billing-pane-usage" role="tabpanel" aria-labelledby="usage-billing-tab-usage">
-                            <div id="usage-billing-ledger">
-<h4 class="sr-card__sub" style="padding:var(--space-4) var(--space-5) 0;margin:0">{{ __('locale.usage_billing.activity.title') }}</h4>
-                                @if ($dashboard->ledger->isEmpty())
-                                    <div class="sr-empty" style="background:transparent">
-                                        <span class="sr-tile"><x-ds-icon name="receipt" size="18" /></span>
-                                        <strong>{{ __('locale.usage_billing.activity.empty') }}</strong>
-                                        <p>{{ __('locale.usage_billing.activity.title') }}</p>
-                                    </div>
-                                @else
-                                    <div class="sr-card__body">
-                                        <x-table :headers="__('locale.usage_billing.activity.headers')">
-                                            @foreach ($dashboard->ledger as $entry)
-                                                <tr>
-                                                    <td class="text-caption">{{ $entry->createdAt->format('Y-m-d H:i') }}</td>
-                                                    <td>{{ $entryLabel($entry->entryType) }}</td>
-                                                    <td>{{ $capabilityLabel($entry->featureKey) }}</td>
-                                                    <td class="text-numeric">{{ $money($entry->signedAmountMicro) }}</td>
-                                                </tr>
-                                            @endforeach
-                                        </x-table>
-
-                                        <div class="mt-2">
-                                            <x-pagination :paginator="$dashboard->ledger" />
-                                        </div>
-                                    </div>
-                                @endif
-                            </div>
-                        </div>
-
-                        <div class="tab-pane" id="usage-billing-pane-funding" role="tabpanel" aria-labelledby="usage-billing-tab-funding">
-                            <div id="usage-billing-funding-history">
-<h4 class="sr-card__sub" style="padding:var(--space-4) var(--space-5) 0;margin:0">{{ __('locale.usage_billing.activity.funding_title') }}</h4>
-                                @if ($dashboard->fundingHistory->isEmpty())
-                                    <div class="sr-empty" style="background:transparent">
-                                        <span class="sr-tile"><x-ds-icon name="wallet" size="18" /></span>
-                                        <strong>{{ __('locale.usage_billing.activity.funding_empty') }}</strong>
-                                        <p>{{ __('locale.usage_billing.activity.funding_title') }}</p>
-                                    </div>
-                                @else
-                                    <div class="sr-card__body">
-                                        <x-table :headers="__('locale.usage_billing.activity.funding_headers')">
-                                            @foreach ($dashboard->fundingHistory as $attempt)
-                                                <tr data-role="funding-attempt" data-result="{{ $attempt['state'] }}">
-                                                    <td class="text-caption">{{ $attempt['created_at']->format('Y-m-d H:i') }}</td>
-                                                    <td>{{ $purposeLabel($attempt['purpose']) }}</td>
-                                                    <td>{{ $attempt['payment_method_display'] }}</td>
-                                                    <td class="text-numeric">{{ $money($attempt['amount_micro']) }}</td>
-                                                    <td>
-                                                        @if (in_array($attempt['state'], ['failed', 'canceled', 'disputed'], true))
-                                                            <x-badge variant="danger">{{ $stateLabel($attempt['state']) }}</x-badge>
-                                                        @elseif ($attempt['state'] === 'succeeded')
-                                                            <x-badge variant="success">{{ $stateLabel($attempt['state']) }}</x-badge>
-                                                        @else
-                                                            <x-badge variant="neutral">{{ $stateLabel($attempt['state']) }}</x-badge>
-                                                        @endif
-                                                    </td>
-                                                </tr>
-                                            @endforeach
-                                        </x-table>
-
-                                        <div class="mt-2">
-                                            <x-pagination :paginator="$dashboard->fundingHistory" />
-                                        </div>
-                                    </div>
-                                @endif
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </section>
 
@@ -582,6 +627,14 @@
                 updateAction();
                 document.getElementById('usage-billing-capability').addEventListener('change', updateAction);
             }
+
+            // Quick amounts only fill the amount box; nothing is submitted by choosing one.
+            document.querySelectorAll('[data-fill-amount]').forEach(function (button) {
+                button.addEventListener('click', function () {
+                    var input = document.getElementById('usage-billing-top-up-amount');
+                    if (input) { input.value = button.getAttribute('data-fill-amount'); input.focus(); }
+                });
+            });
 
             // RFC-005 M3 contract §18/§18.2 — Stripe.js is loaded only when
             // the payment-method setup button is actually rendered (i.e.

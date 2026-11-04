@@ -122,6 +122,8 @@ final class DashboardStatusReader
             ->selectRaw("(SELECT ec2.finished_at FROM external_site_crawls ec2 WHERE ec2.business_id = b.id AND ec2.status = ? AND ec2.pages_fetched > 0 ORDER BY ec2.id DESC LIMIT 1) AS ext_audit_finished_at", [ExternalSiteCrawl::COMPLETED])
             // Whether the customer's (one) onboarding wizard is bound to THIS Business, i.e. whether the wizard can edit it.
             ->selectRaw('EXISTS (SELECT 1 FROM customer_onboardings co WHERE co.business_id = b.id AND co.customer_id = b.customer_id) AS onboarding_bound')
+            // The hostname of the site's ACTIVE custom domain (any other domain state is not live), so Home can tell a custom domain from the preview.
+            ->selectRaw("(SELECT wd.domain FROM website_domains wd WHERE wd.website_id = s.id AND wd.status = 'active' ORDER BY wd.id LIMIT 1) AS website_active_domain")
             ->addSelect('b.readiness_policy')
             ->addSelect('b.website_url as business_website_url')
             ->selectSub(
@@ -168,6 +170,7 @@ final class DashboardStatusReader
                 activeLocationCount: (int) $row->active_location_count,
                 readinessPolicy: is_string($row->readiness_policy) && $row->readiness_policy !== '' ? $row->readiness_policy : null,
                 onboardingBound: (bool) $row->onboarding_bound,
+                websiteActiveDomain: $row->website_active_domain !== null ? (string) $row->website_active_domain : null,
             );
         }
 

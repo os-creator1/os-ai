@@ -6,7 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * Add an existing Business OS user to a Workspace.
+ * Add an existing MotionGrove user to a Workspace, or invite a new person by email.
  *
  * The person is identified by their EMAIL ADDRESS — the one identifier a
  * customer actually knows. The internal User uid is never asked for and never
@@ -40,7 +40,7 @@ class StoreWorkspaceMemberRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'member_email.required' => 'Enter the email address of the person you want to add.',
+            'member_email.required' => 'Enter the email address of the person you want to invite.',
             'member_email.email' => 'Enter a valid email address, like name@example.com.',
             'member_email.max' => 'That email address is too long.',
         ];

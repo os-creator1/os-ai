@@ -76,16 +76,16 @@ class WebsiteBoundaryTest extends TestCase
      * (`backdrops`, `custom_section`) — both, like `gallery`/`form`
      * before them, built entirely server-side and never AI-authored
      * (WebsitePageStrategy::withoutAiUnfillableSections()). The set
-     * remains closed at 12, not open-ended.
+     * remains closed (now 14, including the customer-uploaded `video` section), not open-ended.
      */
-    public function test_website_section_type_enum_has_exactly_the_thirteen_known_cases_and_no_generic_form_variant(): void
+    public function test_website_section_type_enum_has_exactly_the_fourteen_known_cases_and_no_generic_form_variant(): void
     {
         $values = array_map(static fn (WebsiteSectionType $case) => $case->value, WebsiteSectionType::cases());
 
         sort($values);
 
         $this->assertSame(
-            ['backdrops', 'contact_details', 'cta', 'custom_section', 'faq', 'form', 'forms_module_form', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
+            ['backdrops', 'contact_details', 'cta', 'custom_section', 'faq', 'form', 'forms_module_form', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text', 'video'],
             $values
         );
 

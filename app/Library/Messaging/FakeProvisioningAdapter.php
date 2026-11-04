@@ -128,12 +128,28 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
 
         $this->brandCounter++;
 
+        if ($submission->phase === 'brand') {
+            return new RegistrationSubmissionResult(sprintf('fake_brand_%06d', $this->brandCounter), null, null, MessagingRegistrationStatus::NotStarted, sprintf('FAKETCR%03d', $this->brandCounter));
+        }
+
+        if ($submission->phase === 'campaign') {
+            return new RegistrationSubmissionResult($submission->existingBrandId, sprintf('fake_campaign_%06d', $this->brandCounter), null, MessagingRegistrationStatus::Pending);
+        }
+
         return new RegistrationSubmissionResult(
             providerBrandId: sprintf('fake_brand_%06d', $this->brandCounter),
             providerCampaignId: sprintf('fake_campaign_%06d', $this->brandCounter),
             providerRegistrationId: null,
             status: MessagingRegistrationStatus::Pending,
         );
+    }
+
+    /** @var array<string, \App\Library\Messaging\DTO\BrandStatusResult> */
+    public array $scriptedBrandStatuses = [];
+
+    public function refreshBrandStatus(string $providerBrandId): \App\Library\Messaging\DTO\BrandStatusResult
+    {
+        return $this->scriptedBrandStatuses[$providerBrandId] ?? new \App\Library\Messaging\DTO\BrandStatusResult(\App\Library\Messaging\DTO\BrandStatusResult::VERIFIED);
     }
 
     public function refreshRegistrationStatus(RegistrationStatusQuery $query): RegistrationStatusResult

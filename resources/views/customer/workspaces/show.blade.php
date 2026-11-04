@@ -330,6 +330,10 @@
                         form.setAttribute('action', basePath + '/members/' + memberUid + '/' + form.getAttribute('data-member-action'));
                     });
 
+                    document.querySelectorAll('form[data-invitation-action]').forEach(function (form) {
+                        form.setAttribute('action', accountBasePath + '/invitations/' + form.getAttribute('data-invitation-uid') + '/' + form.getAttribute('data-invitation-action'));
+                    });
+
                     document.querySelectorAll('form[data-business-action]').forEach(function (form) {
                         var basePath = accountBasePath;
                         var businessUid = form.getAttribute('data-business-uid');

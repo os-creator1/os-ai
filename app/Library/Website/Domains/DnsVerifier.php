@@ -36,4 +36,38 @@ class DnsVerifier
 
         return false;
     }
+
+    /**
+     * True only when $host carries a CNAME whose target is EXACTLY $expectedTarget (case-insensitive, a trailing dot
+     * ignored). Never a substring match, and never "resolves to our server": a shared IP or generic target proves
+     * nothing about who controls the zone, but a record naming this domain's own unguessable target does.
+     */
+    public function hasCnameTo(string $host, string $expectedTarget): bool
+    {
+        $expected = strtolower(rtrim(trim($expectedTarget), '.'));
+
+        if ($expected === '') {
+            return false;
+        }
+
+        foreach (@dns_get_record($host, DNS_CNAME) ?: [] as $record) {
+            if (strtolower(rtrim((string) ($record['target'] ?? ''), '.')) === $expected) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** True only when $host has an A record equal to $ip. Routing readiness only; never ownership proof. */
+    public function hasARecord(string $host, string $ip): bool
+    {
+        foreach (@dns_get_record($host, DNS_A) ?: [] as $record) {
+            if (($record['ip'] ?? null) === $ip) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

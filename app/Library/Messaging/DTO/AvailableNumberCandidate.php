@@ -17,6 +17,23 @@ final readonly class AvailableNumberCandidate
         public string $phoneNumber,
         public PhoneNumberType $numberType,
         public string $providerCandidateReference,
+        /** Telnyx cost_information.upfront_cost, in micro-units; null when the provider quoted none. */
+        public ?int $upfrontCostMicro = null,
+        /** Telnyx cost_information.monthly_cost, in micro-units. */
+        public ?int $monthlyCostMicro = null,
+        public ?string $currency = null,
     ) {
+    }
+
+    /** A purchase is only ever allowed for a number with a complete, USD quote. */
+    public function hasQuote(): bool
+    {
+        return $this->upfrontCostMicro !== null && $this->monthlyCostMicro !== null && $this->currency === 'USD';
+    }
+
+    /** Carrier cost charged at order: the upfront cost plus the first month's rental. */
+    public function initialCostMicro(): int
+    {
+        return (int) $this->upfrontCostMicro + (int) $this->monthlyCostMicro;
     }
 }

@@ -1,6 +1,6 @@
 {{--
-    Automations V2 (contract §12, V2-D) — Wait form. `until_business_hours`
-    is an explicit non-goal (§12) and is never offered.
+    Automations V2 (contract §12, V2-D) — Wait form. `until_send_window` (quiet hours, optionally
+    business hours) is the pack's send-window wait and must survive an open-edit-save.
 --}}
 <template id="wf-node-form-wait">
     <fieldset class="wf-field">
@@ -13,6 +13,10 @@
             <label class="wf-segmented__option">
                 <input type="radio" name="wf-wait-mode" value="until_datetime">
                 <span>{{ __('automations.v2.wait_form.mode_until_datetime') }}</span>
+            </label>
+            <label class="wf-segmented__option">
+                <input type="radio" name="wf-wait-mode" value="until_send_window">
+                <span>{{ __('automations.v2.wait_form.mode_until_send_window') }}</span>
             </label>
         </div>
     </fieldset>
@@ -36,5 +40,12 @@
         <label class="wf-field__label">{{ __('automations.v2.wait_form.at') }}</label>
         <input type="datetime-local" class="form-control" data-field="at">
         <p class="wf-help mb-0">{{ __('automations.v2.wait_form.at_help') }}</p>
+    </div>
+
+    <div class="wf-field" data-role="wf-wait-window-fields" hidden>
+        <label class="form-check">
+            <input type="checkbox" class="form-check-input" data-field="business_hours">
+            <span class="form-check-label">{{ __('automations.v2.wait_form.business_hours_only') }}</span>
+        </label>
     </div>
 </template>

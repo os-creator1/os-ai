@@ -52,10 +52,13 @@ final class ProvisioningIncidentRecorder
      * — the caller (the controller) turns "0 rows" into a clear "already
      * resolved" response instead of silently succeeding twice.
      *
+     * A null $resolvedByUserId records a system/command resolution (the note
+     * carries who ran it and what was verified); the column is nullable.
+     *
      * @return int the number of rows updated — 1 on a genuine resolution, 0
      *             when the incident was already resolved (or does not exist)
      */
-    public function resolve(int $incidentId, int $resolvedByUserId, string $note): int
+    public function resolve(int $incidentId, ?int $resolvedByUserId, string $note): int
     {
         return DB::table('business_messaging_provisioning_incidents')
             ->where('id', $incidentId)
@@ -66,5 +69,77 @@ final class ProvisioningIncidentRecorder
                 'resolution_note' => $note,
                 'updated_at' => now(),
             ]);
+    }
+
+    /**
+     * Resolution of a 10DLC unknown-outcome incident. Unlike resolve(), it
+     * never lets a free-text note stand in for the provider check: the
+     * operator must record either a provider ID they verified exists
+     * (saved onto the registration, so a retry reuses it instead of
+     * creating another) or an explicit confirmation that the provider
+     * operation did not succeed (so a retry may create it). Both are
+     * written into the resolution note as a structured audit prefix.
+     * Atomic and idempotent — only a still-unresolved incident is touched.
+     *
+     * @param  'verified_provider_id'|'confirmed_not_created'  $type
+     * @return int rows resolved (0 when already resolved, missing, or invalid for this stage)
+     */
+    public function resolveUnknownOutcome(int $incidentId, int $resolvedByUserId, string $type, ?string $brandId, ?string $campaignId, string $note, ?string $verificationId = null): int
+    {
+        return DB::transaction(function () use ($incidentId, $resolvedByUserId, $type, $brandId, $campaignId, $note, $verificationId): int {
+            $incident = DB::table('business_messaging_provisioning_incidents')
+                ->where('id', $incidentId)->whereNull('resolved_at')->lockForUpdate()->first();
+
+            if ($incident === null) {
+                return 0;
+            }
+
+            $registration = DB::table('business_messaging_registrations')
+                ->where('business_id', $incident->business_id)->lockForUpdate()->first();
+
+            $stage = $incident->stage;
+            $audit = '[' . $type;
+
+            if ($type === 'verified_provider_id' && $stage === TelnyxProvisioningAdapter::INCIDENT_TOLLFREE_UNKNOWN) {
+                $verificationId = trim((string) $verificationId);
+
+                if ($registration === null || $verificationId === '') {
+                    return 0;
+                }
+
+                DB::table('business_messaging_registrations')->where('id', $registration->id)
+                    ->update(['provider_registration_id' => $verificationId, 'updated_at' => now()]);
+                $audit .= ' verification=' . $verificationId;
+            } elseif ($type === 'verified_provider_id') {
+                $brandId = trim((string) $brandId);
+                $campaignId = trim((string) $campaignId);
+                $needsBrand = $stage !== TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN
+                    || (trim((string) ($registration->provider_brand_id ?? '')) === '' && $brandId === '');
+                $needsCampaign = $stage !== TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN;
+
+                if ($registration === null || ($needsBrand && $brandId === '') || ($needsCampaign && $campaignId === '')) {
+                    return 0;
+                }
+
+                $update = ['updated_at' => now()];
+                if ($brandId !== '') {
+                    $update['provider_brand_id'] = $brandId;
+                    $audit .= ' brand=' . $brandId;
+                }
+                if ($campaignId !== '' && $needsCampaign) {
+                    $update['provider_campaign_id'] = $campaignId;
+                    $audit .= ' campaign=' . $campaignId;
+                }
+
+                DB::table('business_messaging_registrations')->where('id', $registration->id)->update($update);
+            } elseif ($type === 'confirmed_not_created' && $stage !== TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS) {
+                // A committed fee with no saved ids cannot be "not created":
+                // retrying would hit the same committed funding state.
+            } else {
+                return 0;
+            }
+
+            return $this->resolve($incidentId, $resolvedByUserId, $audit . '] ' . $note);
+        });
     }
 }

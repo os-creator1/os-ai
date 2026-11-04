@@ -237,7 +237,7 @@ class CrmOpportunitiesHttpTest extends TestCase
             ->filter(fn ($name) => is_string($name) && str_starts_with($name, 'customer.workspaces.businesses.crm.'))
             ->values();
 
-        $this->assertCount(19, $names);
+        $this->assertCount(21, $names);
         foreach ($names as $name) {
             $this->assertSame(ViewAsRouteClass::BusinessScoped, $classification->classifyByName($name), $name);
         }

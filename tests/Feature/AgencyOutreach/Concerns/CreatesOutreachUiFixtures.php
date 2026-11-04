@@ -106,7 +106,7 @@ trait CreatesOutreachUiFixtures
     /** What the platform owner does with the existing rate tooling: a meter, a rate, then metering on. */
     protected function priceOutreachTransport(int $rateMicro = 10_000): void
     {
-        $key = PlatformFeature::MessagingTransport->value;
+        $key = \App\Library\Messaging\MessageMeters::SMS_OUTBOUND;
         $currencyId = Currency::query()->first()->id;
         $actorId = User::create([
             'first_name' => 'Rate', 'last_name' => 'Actor', 'email' => 'rate' . uniqid() . '@example.test',
@@ -115,7 +115,7 @@ trait CreatesOutreachUiFixtures
 
         $manager = app(UsageWalletManager::class);
         app(UsageMeterRepository::class)->create([
-            'meter_key' => $key, 'feature_key' => $key, 'business_id' => null,
+            'meter_key' => $key, 'feature_key' => PlatformFeature::MessagingTransport->value, 'business_id' => null,
             'currency_id' => $currencyId, 'description' => 'Managed messaging transport (per segment).', 'updated_by_user_id' => $actorId,
         ]);
         $manager->setActiveRate($key, (string) $rateMicro, '5000', 'per segment', $currencyId, $actorId, 'Fixture.');

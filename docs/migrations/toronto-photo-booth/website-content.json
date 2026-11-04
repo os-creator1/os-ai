@@ -1,0 +1,1757 @@
+{
+ "note": "Content captured verbatim from the live emphotobooth.site (GHL funnel 'Photo Booth #3', location 9Yjeolqf4nEkFxyPmqJY). Binaries are NOT committed; the builder resolves each by sha256 from --assets. Prices are deliberately omitted: the brochure's $679/$779/$889 are for template-labelled 'Booth 1/2/3' and are not tied to named packages. Excluded: partner/client logos, Branded Black/White backdrops (third-party logos), Google-Reviews badge.",
+ "brand_color": "#1f1f1f",
+ "assets": {
+  "logo": {
+   "sha256": "65fea00150a08530fa05704474a67776406015ebeb45aa2119b4aa1aa94bca6b",
+   "file": "5446a48241_6a90db6b60935b340b75662e.jpg",
+   "alt": "The Photo Booth Company of Toronto logo",
+   "purpose": "hero",
+   "title": null,
+   "category": null,
+   "source_key": "6a90db6b60935b340b75662e",
+   "bytes": 12478
+  },
+  "hero": {
+   "sha256": "dc23f56c6df74c6dff94ef9df9750f169bc46def4fc439979eab200b9fc86438",
+   "file": "3422528d33_cb7150dc-034b-40fa-ace5-476b7595fa82.jpg",
+   "alt": "Guests posing with props in front of a luxury photo booth backdrop",
+   "purpose": "hero",
+   "title": null,
+   "category": null,
+   "source_key": "cb7150dc",
+   "bytes": 107746
+  },
+  "feature_backdrops": {
+   "sha256": "f18829333a2f6cd05a1549410616b9d5961ea6e5c708f1bc0f6a0f6fe7be31e1",
+   "file": "0de399f04d_206c265d-c971-4fd9-aaec-c330952cfe8a.jpg",
+   "alt": "Couple posing in front of a gold sequin photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Premium backdrops",
+   "category": "Features",
+   "source_key": "206c265d",
+   "bytes": 175890
+  },
+  "feature_templates": {
+   "sha256": "15ab409e6213c6524806dcd915a862c045b7dd2bcbf2d9f269a5376e9989f20b",
+   "file": "c5d44c51be_6800024a-20c3-4382-88ab-46051898574e.jpg",
+   "alt": "Custom print template strip from a wedding photo booth",
+   "purpose": "gallery",
+   "title": "Photo templates",
+   "category": "Features",
+   "source_key": "6800024a",
+   "bytes": 1752613
+  },
+  "pkg_matinee": {
+   "sha256": "bd41783ffb4985f7a7fcf5cfcb8fc62a71955f1459acd553826e9452a63139d7",
+   "file": "31d7aa999e_c5aaccf0-e398-4b21-b135-9b5e98059b66.jpeg",
+   "alt": "Two friends holding props at an outdoor Matinee package event",
+   "purpose": "gallery",
+   "title": "Matinee",
+   "category": "Packages",
+   "source_key": "c5aaccf0",
+   "bytes": 956157
+  },
+  "pkg_double_feature": {
+   "sha256": "4315e2d684756bbbfcca3a5cdb76cdeb5c9c4b48b7b4ebd3a3a3bca9060006d1",
+   "file": "9bb43af25b_f07bfc1f-0792-45f0-a7fd-8e8cd4370458.jpg",
+   "alt": "Guests posing at a Double Feature package corporate event",
+   "purpose": "gallery",
+   "title": "Double Feature",
+   "category": "Packages",
+   "source_key": "f07bfc1f",
+   "bytes": 143614
+  },
+  "pkg_premiere": {
+   "sha256": "8b578fa992855a18cd2bc3e583f5ad340acd9f0f8cdbb02622806ca66d0dadd2",
+   "file": "ebdf5f6a2c_9f86e0c6-af61-45c0-a8d1-8fb9de3a4060.jpg",
+   "alt": "Guests posing in front of a gold sequin wall at a Premiere package event",
+   "purpose": "gallery",
+   "title": "Premiere",
+   "category": "Packages",
+   "source_key": "9f86e0c6",
+   "bytes": 165040
+  },
+  "addon_decorations": {
+   "sha256": "ec2b3354d0bf04a2e30149bbd5a610de0b12b3651f9f2afa43ca71b157ba3c63",
+   "file": "0807fd6a86_69553c5c-8e51-49e2-b5ef-95e6132aa276.jpg",
+   "alt": "Couple at an event with decorative backdrop styling",
+   "purpose": "gallery",
+   "title": "Decorations",
+   "category": "Add-ons",
+   "source_key": "69553c5c",
+   "bytes": 161254
+  },
+  "addon_props": {
+   "sha256": "828117f0572bb01a4b805434349e30bdd34cac245830b5deeca7fc66f92204ab",
+   "file": "fc586767fa_86dccf52-5f0c-4008-a5fc-1379fba83ebe.jpg",
+   "alt": "Guests wearing fun props in the photo booth",
+   "purpose": "gallery",
+   "title": "Props",
+   "category": "Add-ons",
+   "source_key": "86dccf52",
+   "bytes": 136184
+  },
+  "print_wedding_strip": {
+   "sha256": "9dfd1268634ce66f129f096d53b1adef1b8239cbed0387affc220daed9f2df8c",
+   "file": "09da4fc4f0_a451c572-9397-4c62-86d4-7d0bc49479ea.jpeg",
+   "alt": "Photo strip and card print templates from a wedding",
+   "purpose": "gallery",
+   "title": "Print templates",
+   "category": "Print templates",
+   "source_key": "a451c572",
+   "bytes": 79242
+  },
+  "keepsakes": {
+   "sha256": "8a9e810fe61d136034943bc713fda4e55c76f85ff281406e2c0aa432a765c719",
+   "file": "184dd3e0f8_2a48f533-1ced-44a4-8503-cb19f19ae4a5.jpeg",
+   "alt": "Photo booth prints, albums and neon sign photos",
+   "purpose": "gallery",
+   "title": "Keepsakes",
+   "category": "Print templates",
+   "source_key": "2a48f533",
+   "bytes": 103824
+  },
+  "neon_1": {
+   "sha256": "b7080f4dd828aa03f7845e47064dcf2f0f342c6c5fb05e170f1ea90e446de34d",
+   "file": "1096f85727_c6de0e86-2d99-408c-bcfe-bedfbd9e3fa0.jpeg",
+   "alt": "Guests posing in front of a custom neon name sign",
+   "purpose": "gallery",
+   "title": "Neon sign 1",
+   "category": "Neon signs",
+   "source_key": "c6de0e86",
+   "bytes": 134241
+  },
+  "neon_2": {
+   "sha256": "97fc8ba4774ca8e17c7e975277bbec1ba4a60d9263f4d6a47372d07f067c961d",
+   "file": "d773d7879a_caf284e2-44e1-4fe9-b2ed-701e8e3810da.webp",
+   "alt": "Guests posing in front of a custom neon name sign",
+   "purpose": "gallery",
+   "title": "Neon sign 2",
+   "category": "Neon signs",
+   "source_key": "caf284e2",
+   "bytes": 67990
+  },
+  "neon_3": {
+   "sha256": "ae250290db05e136c1152c056a5c53a3420f263d48fae874426808842590940c",
+   "file": "6a3655aed2_28f0f0c0-e460-4dc9-9de3-5cd06715bf9f.jpeg",
+   "alt": "Guests posing in front of a custom neon name sign",
+   "purpose": "gallery",
+   "title": "Neon sign 3",
+   "category": "Neon signs",
+   "source_key": "28f0f0c0",
+   "bytes": 242642
+  },
+  "neon_4": {
+   "sha256": "e1e86f02020e262bc97607a80fa35cf246f5167178b13153f0f1ea6cd165963e",
+   "file": "9e2f014ddc_1edfd4e1-6f73-4856-a9e9-dcf0c247c070.webp",
+   "alt": "Guests posing in front of a custom neon name sign",
+   "purpose": "gallery",
+   "title": "Neon sign 4",
+   "category": "Neon signs",
+   "source_key": "1edfd4e1",
+   "bytes": 182850
+  },
+  "founder": {
+   "sha256": "89a49f5f682d9502fa4ecb7b5d6cfe77e37d8fba401bcf216928cdb74bf64eac",
+   "file": "6dad7ef375_6a3cefe00cd3954cb2327d88.jpg",
+   "alt": "Roger, founder of The Photo Booth Company of Toronto",
+   "purpose": "hero",
+   "title": null,
+   "category": null,
+   "source_key": "6a3cefe0",
+   "bytes": 374790
+  },
+  "bd_gold_and_black": {
+   "sha256": "192fed3eea3d0566d78e9b7907c256f1503297c128e0d2e0d769a8e94a1e00d3",
+   "file": "0425d97d1e_30f3386a-53af-46c6-900e-5f286b9b0237.jpg",
+   "alt": "Gold and Black photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Gold and Black",
+   "category": "Backdrops",
+   "source_key": "30f3386a",
+   "bytes": 703866
+  },
+  "bd_gold": {
+   "sha256": "8f34c6a674bd4d966a5edfe28304110be3e13243973790714973ea8c11e3e070",
+   "file": "ea9d6da990_42b15667-a4cc-46d5-9079-7c3b5cb893c8.jpg",
+   "alt": "Gold photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Gold",
+   "category": "Backdrops",
+   "source_key": "42b15667",
+   "bytes": 540710
+  },
+  "bd_bricks": {
+   "sha256": "4ebc73457e0a3b9b3727be1719391732e934a22beeebc2d7c2a094d81c01a3e6",
+   "file": "03527817f5_47361edc-1889-4c76-8df0-dd81d182c0c7.jpg",
+   "alt": "Bricks photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Bricks",
+   "category": "Backdrops",
+   "source_key": "47361edc",
+   "bytes": 508848
+  },
+  "bd_gold_curtain": {
+   "sha256": "116274966738e2aeb5df001fff0d4d4e7d0016573eb5350ccb9e8ccd11e2f034",
+   "file": "ca05b6d775_d7835293-5961-44a0-944e-7450663361cd.jpg",
+   "alt": "Gold Curtain photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Gold Curtain",
+   "category": "Backdrops",
+   "source_key": "d7835293",
+   "bytes": 445352
+  },
+  "bd_christmas_wood": {
+   "sha256": "5e147bbb9e74387d6a22e0da89ec85f1f8d889dd12af88dcfa7df7e9293f6eb4",
+   "file": "b3429a85dc_d69bb6a0-be65-4b29-9139-37b3d2870455.jpg",
+   "alt": "Christmas Wood photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Christmas Wood",
+   "category": "Backdrops",
+   "source_key": "d69bb6a0",
+   "bytes": 496394
+  },
+  "bd_silver": {
+   "sha256": "e9f3bbe992f4133db79acd783cf634a7d70c5b9af34adb7af20b6938c34cb22a",
+   "file": "34e9d6ea90_51b499f5-cdd9-4e84-9ed6-c3d777f9a13b.jpg",
+   "alt": "Silver photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Silver",
+   "category": "Backdrops",
+   "source_key": "51b499f5",
+   "bytes": 559768
+  },
+  "bd_black": {
+   "sha256": "f40b300da598adbd2896d47422c427fdef9c3a984e558768f1f0520c978e33fa",
+   "file": "a8c2553be3_92744d11-9229-4837-acc8-b5ca9b806875.jpg",
+   "alt": "Black photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Black",
+   "category": "Backdrops",
+   "source_key": "92744d11",
+   "bytes": 696422
+  },
+  "bd_red": {
+   "sha256": "d076e84c6ade636352cfb6e620a15198eb35ca8f00dc0bb3dec3b9e3331c20cd",
+   "file": "12a6679f8a_7efcf0b2-f668-40a3-9627-8c8b17922144.jpg",
+   "alt": "Red photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Red",
+   "category": "Backdrops",
+   "source_key": "7efcf0b2",
+   "bytes": 283602
+  },
+  "bd_vintage": {
+   "sha256": "e8f2318c9093765e174e0d695f427595020fe488574459c7bef1a777bde8559b",
+   "file": "fd5b16fb15_542ee32b-389c-48e7-857d-adac5c99a7ea.jpg",
+   "alt": "Vintage photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Vintage",
+   "category": "Backdrops",
+   "source_key": "542ee32b",
+   "bytes": 84812
+  },
+  "bd_flowers": {
+   "sha256": "d941104d3fbf3017f8a5d3304a4066681292643a3c1393a2d1175e45adbcc3eb",
+   "file": "c98c63a462_c4b20ced-6117-4591-925b-9f14fb2c8a69.jpg",
+   "alt": "Flowers photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Flowers",
+   "category": "Backdrops",
+   "source_key": "c4b20ced",
+   "bytes": 2499026
+  },
+  "bd_cards": {
+   "sha256": "ee55fb2d921abbd65f792c6bcb1af2571bfc9f3bbde75d6794865a6fca98dac6",
+   "file": "6aae3243f1_07828df2-8a47-462d-b465-c598746cc306.jpg",
+   "alt": "Cards photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Cards",
+   "category": "Backdrops",
+   "source_key": "07828df2",
+   "bytes": 2498438
+  },
+  "bd_blue": {
+   "sha256": "157ca6fdd3e47a22818c68e23685b11d59ad9f2ee56abf784fa47add9d58e49b",
+   "file": "a6f5739e61_806eb953-4c84-4629-8925-4eb335fdfec6.jpg",
+   "alt": "Blue photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Blue",
+   "category": "Backdrops",
+   "source_key": "806eb953",
+   "bytes": 1407605
+  },
+  "bd_colorful": {
+   "sha256": "d1cefecad2957903b9644594f255850eec0469347ce250650c8631cf57e351da",
+   "file": "17163640d1_d2e900b4-1770-41dd-8894-1fe6a10e4ac1.jpg",
+   "alt": "Colorful photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Colorful",
+   "category": "Backdrops",
+   "source_key": "d2e900b4",
+   "bytes": 217764
+  },
+  "event_1": {
+   "sha256": "04c1804ed78c5eaf93d10836acebd11156689ddd04cc26fb7eece317d5d9b493",
+   "file": "3b528d0fb2_6a394f6b18f53fe5a687ab95.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 1",
+   "category": "Events",
+   "source_key": "6a394f6b18f5",
+   "bytes": 192610
+  },
+  "event_2": {
+   "sha256": "09a1e20af5112f67cfb5fc1bd82307c5acc593e97681285380e949af1fde3a44",
+   "file": "fc74290816_6a394f7194d484b9c6a67907.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 2",
+   "category": "Events",
+   "source_key": "6a394f7194d4",
+   "bytes": 69412
+  },
+  "event_3": {
+   "sha256": "0b3cce94a2ed5750e934b026aac0bdfb08b55b47d443fa24b961f0906e746895",
+   "file": "f5a9605904_6a394f6f610e9ace505608c4.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 3",
+   "category": "Events",
+   "source_key": "6a394f6f610e",
+   "bytes": 62038
+  },
+  "event_4": {
+   "sha256": "8202e453af0946945d0f42829c421cbf22a0a1f7d91537a9dff989afa90aacec",
+   "file": "59a63b8a3a_6a394f769104de6d76044635.png",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 4",
+   "category": "Events",
+   "source_key": "6a394f769104",
+   "bytes": 1549100
+  },
+  "event_5": {
+   "sha256": "51d40bff25fd47f99ecd0c51557e53d9f495016af2aadec8f35e22100e51ae01",
+   "file": "e0a9f2b973_6a394f739104de6d760445ef.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 5",
+   "category": "Events",
+   "source_key": "6a394f739104",
+   "bytes": 62944
+  },
+  "event_6": {
+   "sha256": "86911324c50127f585a924d442d10212ae7b5ccba8fc2e67e73ea22bda0cf223",
+   "file": "c55ee32622_6a394f8194d484b9c6a67a85.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 6",
+   "category": "Events",
+   "source_key": "6a394f8194d4",
+   "bytes": 239380
+  },
+  "event_7": {
+   "sha256": "4973a9d4b7b227acf621a515390d79fc143262bbd35870977643561ba50d7d23",
+   "file": "ff66ff8c0a_6a394f88dfe62db453e1ffb0.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 7",
+   "category": "Events",
+   "source_key": "6a394f88dfe6",
+   "bytes": 1440109
+  },
+  "event_8": {
+   "sha256": "712e99b13b41b9a9edad9eae0b9d082f07d4fefd8bc6daed963f381b2611ac9b",
+   "file": "1033704e51_6a394f8a7b005295809a2590.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 8",
+   "category": "Events",
+   "source_key": "6a394f8a7b00",
+   "bytes": 117602
+  },
+  "event_9": {
+   "sha256": "dc23f56c6df74c6dff94ef9df9750f169bc46def4fc439979eab200b9fc86438",
+   "file": "48c930afee_6a394f8c7b005295809a25d0.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 9",
+   "category": "Events",
+   "source_key": "6a394f8c7b00",
+   "bytes": 107746
+  },
+  "event_10": {
+   "sha256": "8d48f33d069bf2b11669b2efaaf31c29bce336f06bfac5c73d4817b25f66ce0c",
+   "file": "2088ee1e2a_6a394f9a9aae5140d0a6a2f9.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 10",
+   "category": "Events",
+   "source_key": "6a394f9a9aae",
+   "bytes": 122348
+  },
+  "event_11": {
+   "sha256": "c81b0a0d5aa5b879f6ff096e6c5f3a9099b74b4d0e2c7e9d24380569227afea4",
+   "file": "2e21c1e66c_6a394f989104de6d76044b3f.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 11",
+   "category": "Events",
+   "source_key": "6a394f989104",
+   "bytes": 159712
+  },
+  "event_12": {
+   "sha256": "4315e2d684756bbbfcca3a5cdb76cdeb5c9c4b48b7b4ebd3a3a3bca9060006d1",
+   "file": "6cc476a3fa_6a394f9c9aae5140d0a6a353.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 12",
+   "category": "Events",
+   "source_key": "6a394f9c9aae",
+   "bytes": 143614
+  },
+  "event_13": {
+   "sha256": "f18829333a2f6cd05a1549410616b9d5961ea6e5c708f1bc0f6a0f6fe7be31e1",
+   "file": "5153f6de56_6a394fa318f53fe5a687b084.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 13",
+   "category": "Events",
+   "source_key": "6a394fa318f5",
+   "bytes": 175890
+  },
+  "event_14": {
+   "sha256": "8b578fa992855a18cd2bc3e583f5ad340acd9f0f8cdbb02622806ca66d0dadd2",
+   "file": "cde9533f65_6a394fa69aae5140d0a6bcb2.jpg",
+   "alt": "Guests at an event photographed in the Toronto photo booth",
+   "purpose": "gallery",
+   "title": "Event 14",
+   "category": "Events",
+   "source_key": "6a394fa69aae",
+   "bytes": 165040
+  }
+ },
+ "catalog": [
+  {
+   "key": "toronto_matinee",
+   "type": "package",
+   "name": "Matinee",
+   "description": "Perfect for birthday parties, school events, fundraisers and shorter mid-week events. Includes an open-air photo booth, 2 hours of service, a trained attendant, a custom-designed template, a standard backdrop, unlimited 2x6 strip or 4x6 postcard prints, a password-protected online gallery, red carpet and stanchions, handheld or digital props and social media sharing."
+  },
+  {
+   "key": "toronto_double_feature",
+   "type": "package",
+   "name": "Double Feature",
+   "description": "Perfect for weddings, bar/bat mitzvahs, cotillions, quinceañeras, corporate parties, galas and golf tournaments. Includes an open-air or enclosed photo booth, 3 hours of service, two trained attendants, two custom-designed templates, unlimited prints, a green screen or premium backdrop, online gallery, red carpet and stanchions, custom handheld props, social media sharing and a scrapbook."
+  },
+  {
+   "key": "toronto_premiere",
+   "type": "package",
+   "name": "Premiere",
+   "description": "Perfect for brand activations, product launches, trade shows and galas. Includes two photo booths (open air or enclosed), 4 hours of engagement, two trained attendants, two custom-designed templates, unlimited prints, a green screen, premium or custom step-and-repeat backdrop, online gallery, red carpet and stanchions, social media sharing and custom props."
+  },
+  {
+   "key": "toronto_director_s_cut",
+   "type": "package",
+   "name": "Director's Cut",
+   "description": "A fully customizable package tailored to your event, with your choice of hours, booth quantity and services. Options include video booths, slow-motion video, animated GIFs, branded booth wraps and social sharing of photos, GIFs and videos, plus A.I. image transformations that turn guest photos into themed, shareable images."
+  },
+  {
+   "key": "toronto_decorations",
+   "type": "product",
+   "name": "Decorations",
+   "description": "Decorative backdrop styling that sets the tone for your event photos."
+  },
+  {
+   "key": "toronto_props",
+   "type": "product",
+   "name": "Props",
+   "description": "Fun, modern photo booth props."
+  }
+ ],
+ "pages": {
+  "": {
+   "title": "Home",
+   "seo_title": "Luxury Photo Booth Rental Toronto | Weddings, Corporate & Parties",
+   "meta_description": "Luxury photo booth rental in Toronto for weddings, corporate events, birthdays and holiday parties. The Photo Booth Company of Toronto - check availability today.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Lights, Camera, Memories!",
+      "subheading": "Luxury wedding, corporate & party photo booth rental in Toronto. Now booking for 2026 and 2027 - limited spots for popular dates.",
+      "background_image": "@asset:hero",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "secondary_cta": {
+       "label": "See packages",
+       "url": "/packages"
+      }
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo booth rental in Toronto",
+      "body": "Our luxury photo booth experiences are designed for weddings, corporate events, birthday parties, brand activations, trade shows and celebrations throughout Toronto and surrounding areas.\n\nEnhance your rental with premium backdrops, custom branding, green screen installations and interactive event upgrades.",
+      "image": "@asset:feature_backdrops",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Matinee",
+        "description": "Perfect for birthday parties, school events, fundraisers and shorter mid-week events. Includes an open-air photo booth, 2 hours of service, a trained attendant, a custom-designed template, a standard backdrop, unlimited 2x6 strip or 4x6 postcard prints, a password-protected online gallery, red carpet and stanchions, handheld or digital props and social media sharing.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_matinee"
+       },
+       {
+        "name": "Double Feature",
+        "description": "Perfect for weddings, bar/bat mitzvahs, cotillions, quinceañeras, corporate parties, galas and golf tournaments. Includes an open-air or enclosed photo booth, 3 hours of service, two trained attendants, two custom-designed templates, unlimited prints, a green screen or premium backdrop, online gallery, red carpet and stanchions, custom handheld props, social media sharing and a scrapbook.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_double_feature"
+       },
+       {
+        "name": "Premiere",
+        "description": "Perfect for brand activations, product launches, trade shows and galas. Includes two photo booths (open air or enclosed), 4 hours of engagement, two trained attendants, two custom-designed templates, unlimited prints, a green screen, premium or custom step-and-repeat backdrop, online gallery, red carpet and stanchions, social media sharing and custom props.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_premiere"
+       },
+       {
+        "name": "Director's Cut",
+        "description": "A fully customizable package tailored to your event, with your choice of hours, booth quantity and services. Options include video booths, slow-motion video, animated GIFs, branded booth wraps and social sharing of photos, GIFs and videos, plus A.I. image transformations that turn guest photos into themed, shareable images.",
+        "price_label": "Request a quote"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Backdrops, templates & add-ons",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "A backdrop can make the difference between an OK picture and an image that POPS! Choose from our premium collection, included in all packages.",
+        "price_label": "Included",
+        "image": "@asset:feature_backdrops"
+       },
+       {
+        "name": "Photo templates",
+        "description": "Custom photo templates designed to match your event theme, brand or style, creating a personalized keepsake for every guest photo.",
+        "price_label": "Included",
+        "image": "@asset:feature_templates"
+       },
+       {
+        "name": "Decorations",
+        "description": "Toronto photo party decorations that set the tone for the digital images that tell the whole story of your event.",
+        "image": "@asset:addon_decorations"
+       },
+       {
+        "name": "Props",
+        "description": "Fun, modern props chosen with attention to detail so every guest has the time of their life.",
+        "image": "@asset:addon_props"
+       }
+      ]
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "See some of our favorite events",
+      "items": [
+       {
+        "image": "@asset:event_1"
+       },
+       {
+        "image": "@asset:event_2"
+       },
+       {
+        "image": "@asset:event_3"
+       },
+       {
+        "image": "@asset:event_4"
+       },
+       {
+        "image": "@asset:event_5"
+       },
+       {
+        "image": "@asset:event_6"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "What type of event are you planning?",
+      "items": [
+       {
+        "name": "Wedding",
+        "description": "Elegant photo booth experiences for your special day."
+       },
+       {
+        "name": "Corporate",
+        "description": "Branded activations, galas and corporate parties."
+       },
+       {
+        "name": "Party",
+        "description": "Birthdays, school dances, holiday parties and private celebrations."
+       }
+      ]
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Hey, I'm Roger!",
+      "body": "Founder & CEO. We specialize in luxury photo booth rentals for weddings, corporate events, birthday parties, school dances and private celebrations throughout Toronto and surrounding areas.\n\nProfessional setup and onsite support, premium backdrops and custom overlays, and instant photo, GIF and video sharing.",
+      "image": "@asset:founder",
+      "image_position": "left"
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "What our clients say",
+      "items": [
+       {
+        "quote": "Roger at PBTO was an absolute pleasure to work with! He made the booking process incredibly quick and easy, with excellent communication leading up to our event. The day of the event was flawless - everyone loved the printed photos and was impressed by how fast they were ready. Highly recommend!",
+        "author_name": "Katie L."
+       },
+       {
+        "quote": "Roger is always friendly and eager to support all our photobooth needs. His pictures are always tons of fun and have given us all a beautiful keepsake of our events.",
+        "author_name": "Mickey E."
+       },
+       {
+        "quote": "The photo booth company Toronto is the great! They are capturing the fun moments!! Great work team!",
+        "author_name": "Alysha M."
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Areas we serve",
+      "body": "We proudly provide luxury photo booth rentals for weddings, corporate events, private parties and celebrations throughout Toronto, North York, Mississauga, Scarborough, Vaughan, Etobicoke, Markham and surrounding communities."
+     }
+    },
+    {
+     "type": "faq",
+     "data": {
+      "heading": "FAQs",
+      "items": [
+       {
+        "question": "Do you travel outside Toronto?",
+        "answer": "Yes! We regularly provide luxury photo booth rentals throughout North York, Mississauga, Scarborough, Vaughan, Etobicoke, Markham and surrounding areas for weddings, corporate events, parties and private celebrations."
+       },
+       {
+        "question": "What types of events do you serve?",
+        "answer": "Weddings, corporate events, birthday parties, school dances, brand activations, galas, holiday parties, baby showers and private celebrations in Toronto and surrounding areas."
+       },
+       {
+        "question": "How far in advance should I book my photo booth rental?",
+        "answer": "We recommend booking as early as possible, especially for weddings and peak event weekends. Popular dates can book several months in advance."
+       },
+       {
+        "question": "Can the photo booth match my event theme?",
+        "answer": "Absolutely! We offer custom overlays, premium backdrops, glam filters, neon signs, hedge walls, shimmer walls and personalized design options to match your event aesthetic and branding."
+       },
+       {
+        "question": "Do you set up and operate the booth during the event?",
+        "answer": "Yes! Our team handles delivery, setup, operation and breakdown so you can enjoy a seamless, stress-free experience from start to finish."
+       },
+       {
+        "question": "How long does it take to set up the booth?",
+        "answer": "Allow an hour for set up and half an hour for pack down. Set up happens before your run time starts and is included in the cost."
+       },
+       {
+        "question": "How many photos or prints can I have during my event?",
+        "answer": "Unlimited prints! You also receive an online gallery with all the prints plus every single photo taken during the event."
+       },
+       {
+        "question": "What space do you need?",
+        "answer": "We need at least 10 by 10 feet of space, access to a single power outlet and level ground. Please note that our backdrop stands are 8 feet tall."
+       },
+       {
+        "question": "Can guests instantly share their photos?",
+        "answer": "Yes! Most of our experiences include instant text, email, AirDrop or QR code sharing so guests can post and share their photos immediately."
+       },
+       {
+        "question": "Do you offer custom branding for corporate events?",
+        "answer": "Yes! We offer fully branded photo booth experiences including custom overlays, branded start screens, lead capture, logo placement and social sharing features."
+       },
+       {
+        "question": "Can we supply our own backdrop?",
+        "answer": "Definitely. Choose a non reflective surface if possible. It is a good idea to brainstorm with your stylist as well."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "packages": {
+   "title": "Photo Booth Packages",
+   "seo_title": "Photo Booth Packages & Experiences | The Photo Booth Company of Toronto",
+   "meta_description": "Matinee, Double Feature, Premiere and Director's Cut photo booth packages for weddings, corporate events and parties in Toronto.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth packages",
+      "subheading": "Request a quote for the experience that fits your event.",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Matinee",
+        "description": "Perfect for birthday parties, school events, fundraisers and shorter mid-week events. Includes an open-air photo booth, 2 hours of service, a trained attendant, a custom-designed template, a standard backdrop, unlimited 2x6 strip or 4x6 postcard prints, a password-protected online gallery, red carpet and stanchions, handheld or digital props and social media sharing.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_matinee"
+       },
+       {
+        "name": "Double Feature",
+        "description": "Perfect for weddings, bar/bat mitzvahs, cotillions, quinceañeras, corporate parties, galas and golf tournaments. Includes an open-air or enclosed photo booth, 3 hours of service, two trained attendants, two custom-designed templates, unlimited prints, a green screen or premium backdrop, online gallery, red carpet and stanchions, custom handheld props, social media sharing and a scrapbook.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_double_feature"
+       },
+       {
+        "name": "Premiere",
+        "description": "Perfect for brand activations, product launches, trade shows and galas. Includes two photo booths (open air or enclosed), 4 hours of engagement, two trained attendants, two custom-designed templates, unlimited prints, a green screen, premium or custom step-and-repeat backdrop, online gallery, red carpet and stanchions, social media sharing and custom props.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_premiere"
+       },
+       {
+        "name": "Director's Cut",
+        "description": "A fully customizable package tailored to your event, with your choice of hours, booth quantity and services. Options include video booths, slow-motion video, animated GIFs, branded booth wraps and social sharing of photos, GIFs and videos, plus A.I. image transformations that turn guest photos into themed, shareable images.",
+        "price_label": "Request a quote"
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Included with every booking",
+      "body": "Premium backdrops are included in all of our packages. The day after your event you also receive a private gallery with all photos - not only the overlay prints, but every single photo taken during the night. Pricing depends on hours, booth count and services: check availability and we will send a custom quote."
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "backdrops": {
+   "title": "Backdrops",
+   "seo_title": "Photo Booth Backdrops Toronto | The Photo Booth Company of Toronto",
+   "meta_description": "Choose from elegant, modern, shimmer, floral and custom photo booth backdrops for weddings, corporate events and parties throughout Toronto.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Premium backdrops",
+      "subheading": "Included in all of our packages. Check availability for your event date.",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Backdrop collection",
+      "items": [
+       {
+        "name": "Gold and Black",
+        "image": "@asset:bd_gold_and_black"
+       },
+       {
+        "name": "Gold",
+        "image": "@asset:bd_gold"
+       },
+       {
+        "name": "Bricks",
+        "image": "@asset:bd_bricks"
+       },
+       {
+        "name": "Gold Curtain",
+        "image": "@asset:bd_gold_curtain"
+       },
+       {
+        "name": "Christmas Wood",
+        "image": "@asset:bd_christmas_wood"
+       },
+       {
+        "name": "Silver",
+        "image": "@asset:bd_silver"
+       },
+       {
+        "name": "Black",
+        "image": "@asset:bd_black"
+       },
+       {
+        "name": "Red",
+        "image": "@asset:bd_red"
+       },
+       {
+        "name": "Vintage",
+        "image": "@asset:bd_vintage"
+       },
+       {
+        "name": "Flowers",
+        "image": "@asset:bd_flowers"
+       },
+       {
+        "name": "Cards",
+        "image": "@asset:bd_cards"
+       },
+       {
+        "name": "Blue",
+        "image": "@asset:bd_blue"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "More backdrops",
+      "items": [
+       {
+        "name": "Colorful",
+        "image": "@asset:bd_colorful"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "gallery": {
+   "title": "Gallery",
+   "seo_title": "Event Gallery | The Photo Booth Company of Toronto",
+   "meta_description": "See some of our favorite events: weddings, corporate parties and celebrations captured by The Photo Booth Company of Toronto.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Event gallery",
+      "subheading": "See some of our favorite events",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "Favorite events",
+      "items": [
+       {
+        "image": "@asset:event_1"
+       },
+       {
+        "image": "@asset:event_2"
+       },
+       {
+        "image": "@asset:event_3"
+       },
+       {
+        "image": "@asset:event_4"
+       },
+       {
+        "image": "@asset:event_5"
+       },
+       {
+        "image": "@asset:event_6"
+       },
+       {
+        "image": "@asset:event_7"
+       },
+       {
+        "image": "@asset:event_8"
+       },
+       {
+        "image": "@asset:event_9"
+       },
+       {
+        "image": "@asset:event_10"
+       },
+       {
+        "image": "@asset:event_11"
+       },
+       {
+        "image": "@asset:event_12"
+       },
+       {
+        "image": "@asset:event_13"
+       },
+       {
+        "image": "@asset:event_14"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "print-templates": {
+   "title": "Print Templates",
+   "seo_title": "Photo Booth Print Templates | The Photo Booth Company of Toronto",
+   "meta_description": "Custom photo booth print templates designed to match your event theme, brand or style.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Print templates",
+      "subheading": "Custom templates designed to match your event.",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "Select your print template",
+      "items": [
+       {
+        "image": "@asset:feature_templates"
+       },
+       {
+        "image": "@asset:print_wedding_strip"
+       },
+       {
+        "image": "@asset:keepsakes"
+       }
+      ]
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "Custom neon name signs",
+      "items": [
+       {
+        "image": "@asset:neon_1"
+       },
+       {
+        "image": "@asset:neon_2"
+       },
+       {
+        "image": "@asset:neon_3"
+       },
+       {
+        "image": "@asset:neon_4"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "about": {
+   "title": "About",
+   "seo_title": "About Roger & The Photo Booth Company of Toronto",
+   "meta_description": "Meet Roger, founder of The Photo Booth Company of Toronto, and learn how we create unforgettable photo booth experiences.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Meet the founder & CEO",
+      "subheading": "Hey, I'm Roger!",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Hey, I'm Roger!",
+      "body": "We specialize in luxury photo booth rentals for weddings, corporate events, birthday parties, school dances and private celebrations throughout Toronto and surrounding areas.\n\nOur team focuses on creating unforgettable guest experiences with premium lighting, instant sharing, studio-quality photography and fully customized event details.",
+      "image": "@asset:founder",
+      "image_position": "left"
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "What our clients say",
+      "items": [
+       {
+        "quote": "Roger at PBTO was an absolute pleasure to work with! He made the booking process incredibly quick and easy, with excellent communication leading up to our event. The day of the event was flawless - everyone loved the printed photos and was impressed by how fast they were ready. Highly recommend!",
+        "author_name": "Katie L."
+       },
+       {
+        "quote": "Roger is always friendly and eager to support all our photobooth needs. His pictures are always tons of fun and have given us all a beautiful keepsake of our events.",
+        "author_name": "Mickey E."
+       },
+       {
+        "quote": "The photo booth company Toronto is the great! They are capturing the fun moments!! Great work team!",
+        "author_name": "Alysha M."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "wedding-photo-booth-rental": {
+   "title": "Wedding Photo Booth Rental",
+   "seo_title": "Wedding Photo Booth Rental Toronto | Luxury Wedding Photo Booth",
+   "meta_description": "Luxury wedding photo booth rental in Toronto with premium backdrops, custom templates and instant sharing.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Wedding Photo Booth Rental",
+      "subheading": "Complete your wedding photo booth rental in Toronto with premium backdrops, sophisticated décor elements and personalized touches that add charm to your celebration.",
+      "background_image": "@asset:hero",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Wedding photo booth experiences",
+      "body": "Complete your wedding photo booth rental in Toronto with premium backdrops, sophisticated décor elements and personalized touches that add charm to your celebration.\n\nFrom custom overlays and premium backdrops to instant sharing and studio-quality photos, every detail is personalized to match your vision throughout Toronto and surrounding areas.",
+      "image": "@asset:feature_backdrops",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Matinee",
+        "description": "Perfect for birthday parties, school events, fundraisers and shorter mid-week events. Includes an open-air photo booth, 2 hours of service, a trained attendant, a custom-designed template, a standard backdrop, unlimited 2x6 strip or 4x6 postcard prints, a password-protected online gallery, red carpet and stanchions, handheld or digital props and social media sharing.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_matinee"
+       },
+       {
+        "name": "Double Feature",
+        "description": "Perfect for weddings, bar/bat mitzvahs, cotillions, quinceañeras, corporate parties, galas and golf tournaments. Includes an open-air or enclosed photo booth, 3 hours of service, two trained attendants, two custom-designed templates, unlimited prints, a green screen or premium backdrop, online gallery, red carpet and stanchions, custom handheld props, social media sharing and a scrapbook.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_double_feature"
+       },
+       {
+        "name": "Premiere",
+        "description": "Perfect for brand activations, product launches, trade shows and galas. Includes two photo booths (open air or enclosed), 4 hours of engagement, two trained attendants, two custom-designed templates, unlimited prints, a green screen, premium or custom step-and-repeat backdrop, online gallery, red carpet and stanchions, social media sharing and custom props.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_premiere"
+       },
+       {
+        "name": "Director's Cut",
+        "description": "A fully customizable package tailored to your event, with your choice of hours, booth quantity and services. Options include video booths, slow-motion video, animated GIFs, branded booth wraps and social sharing of photos, GIFs and videos, plus A.I. image transformations that turn guest photos into themed, shareable images.",
+        "price_label": "Request a quote"
+       }
+      ]
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "What our clients say",
+      "items": [
+       {
+        "quote": "Roger at PBTO was an absolute pleasure to work with! He made the booking process incredibly quick and easy, with excellent communication leading up to our event. The day of the event was flawless - everyone loved the printed photos and was impressed by how fast they were ready. Highly recommend!",
+        "author_name": "Katie L."
+       },
+       {
+        "quote": "Roger is always friendly and eager to support all our photobooth needs. His pictures are always tons of fun and have given us all a beautiful keepsake of our events.",
+        "author_name": "Mickey E."
+       },
+       {
+        "quote": "The photo booth company Toronto is the great! They are capturing the fun moments!! Great work team!",
+        "author_name": "Alysha M."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "corporate-photo-booth-rental": {
+   "title": "Corporate Photo Booth Rental",
+   "seo_title": "Corporate Photo Booth Rental Toronto | Branded Photo Booths",
+   "meta_description": "Branded corporate photo booth rental in Toronto: custom overlays, lead capture and social sharing for events and activations.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Corporate Photo Booth Rental",
+      "subheading": "Branded photo booth experiences for corporate parties, galas, product launches and trade shows in Toronto, with custom overlays, logo placement and social sharing.",
+      "background_image": "@asset:hero",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Corporate photo booth experiences",
+      "body": "Branded photo booth experiences for corporate parties, galas, product launches and trade shows in Toronto, with custom overlays, logo placement and social sharing.\n\nFrom custom overlays and premium backdrops to instant sharing and studio-quality photos, every detail is personalized to match your vision throughout Toronto and surrounding areas.",
+      "image": "@asset:feature_backdrops",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Matinee",
+        "description": "Perfect for birthday parties, school events, fundraisers and shorter mid-week events. Includes an open-air photo booth, 2 hours of service, a trained attendant, a custom-designed template, a standard backdrop, unlimited 2x6 strip or 4x6 postcard prints, a password-protected online gallery, red carpet and stanchions, handheld or digital props and social media sharing.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_matinee"
+       },
+       {
+        "name": "Double Feature",
+        "description": "Perfect for weddings, bar/bat mitzvahs, cotillions, quinceañeras, corporate parties, galas and golf tournaments. Includes an open-air or enclosed photo booth, 3 hours of service, two trained attendants, two custom-designed templates, unlimited prints, a green screen or premium backdrop, online gallery, red carpet and stanchions, custom handheld props, social media sharing and a scrapbook.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_double_feature"
+       },
+       {
+        "name": "Premiere",
+        "description": "Perfect for brand activations, product launches, trade shows and galas. Includes two photo booths (open air or enclosed), 4 hours of engagement, two trained attendants, two custom-designed templates, unlimited prints, a green screen, premium or custom step-and-repeat backdrop, online gallery, red carpet and stanchions, social media sharing and custom props.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_premiere"
+       },
+       {
+        "name": "Director's Cut",
+        "description": "A fully customizable package tailored to your event, with your choice of hours, booth quantity and services. Options include video booths, slow-motion video, animated GIFs, branded booth wraps and social sharing of photos, GIFs and videos, plus A.I. image transformations that turn guest photos into themed, shareable images.",
+        "price_label": "Request a quote"
+       }
+      ]
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "What our clients say",
+      "items": [
+       {
+        "quote": "Roger at PBTO was an absolute pleasure to work with! He made the booking process incredibly quick and easy, with excellent communication leading up to our event. The day of the event was flawless - everyone loved the printed photos and was impressed by how fast they were ready. Highly recommend!",
+        "author_name": "Katie L."
+       },
+       {
+        "quote": "Roger is always friendly and eager to support all our photobooth needs. His pictures are always tons of fun and have given us all a beautiful keepsake of our events.",
+        "author_name": "Mickey E."
+       },
+       {
+        "quote": "The photo booth company Toronto is the great! They are capturing the fun moments!! Great work team!",
+        "author_name": "Alysha M."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "party-photo-booth-rental": {
+   "title": "Party Photo Booth Rental",
+   "seo_title": "Party Photo Booth Rental Toronto | Birthdays & Celebrations",
+   "meta_description": "Photo booth rental for birthdays, school dances, holiday parties and private celebrations across Toronto.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Party Photo Booth Rental",
+      "subheading": "Photo booth rental for birthday parties, school dances, holiday parties and private celebrations throughout Toronto and surrounding areas.",
+      "background_image": "@asset:hero",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Party photo booth experiences",
+      "body": "Photo booth rental for birthday parties, school dances, holiday parties and private celebrations throughout Toronto and surrounding areas.\n\nFrom custom overlays and premium backdrops to instant sharing and studio-quality photos, every detail is personalized to match your vision throughout Toronto and surrounding areas.",
+      "image": "@asset:feature_backdrops",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Matinee",
+        "description": "Perfect for birthday parties, school events, fundraisers and shorter mid-week events. Includes an open-air photo booth, 2 hours of service, a trained attendant, a custom-designed template, a standard backdrop, unlimited 2x6 strip or 4x6 postcard prints, a password-protected online gallery, red carpet and stanchions, handheld or digital props and social media sharing.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_matinee"
+       },
+       {
+        "name": "Double Feature",
+        "description": "Perfect for weddings, bar/bat mitzvahs, cotillions, quinceañeras, corporate parties, galas and golf tournaments. Includes an open-air or enclosed photo booth, 3 hours of service, two trained attendants, two custom-designed templates, unlimited prints, a green screen or premium backdrop, online gallery, red carpet and stanchions, custom handheld props, social media sharing and a scrapbook.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_double_feature"
+       },
+       {
+        "name": "Premiere",
+        "description": "Perfect for brand activations, product launches, trade shows and galas. Includes two photo booths (open air or enclosed), 4 hours of engagement, two trained attendants, two custom-designed templates, unlimited prints, a green screen, premium or custom step-and-repeat backdrop, online gallery, red carpet and stanchions, social media sharing and custom props.",
+        "price_label": "Request a quote",
+        "image": "@asset:pkg_premiere"
+       },
+       {
+        "name": "Director's Cut",
+        "description": "A fully customizable package tailored to your event, with your choice of hours, booth quantity and services. Options include video booths, slow-motion video, animated GIFs, branded booth wraps and social sharing of photos, GIFs and videos, plus A.I. image transformations that turn guest photos into themed, shareable images.",
+        "price_label": "Request a quote"
+       }
+      ]
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "What our clients say",
+      "items": [
+       {
+        "quote": "Roger at PBTO was an absolute pleasure to work with! He made the booking process incredibly quick and easy, with excellent communication leading up to our event. The day of the event was flawless - everyone loved the printed photos and was impressed by how fast they were ready. Highly recommend!",
+        "author_name": "Katie L."
+       },
+       {
+        "quote": "Roger is always friendly and eager to support all our photobooth needs. His pictures are always tons of fun and have given us all a beautiful keepsake of our events.",
+        "author_name": "Mickey E."
+       },
+       {
+        "quote": "The photo booth company Toronto is the great! They are capturing the fun moments!! Great work team!",
+        "author_name": "Alysha M."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "service-areas": {
+   "title": "Service Areas",
+   "seo_title": "Photo Booth Rental Toronto, North York, Mississauga, Vaughan & More",
+   "meta_description": "We provide luxury photo booth rentals throughout Toronto, North York, Mississauga, Scarborough, Vaughan, Etobicoke and Markham.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Areas we serve",
+      "subheading": "Toronto and surrounding communities",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Where we work",
+      "items": [
+       {
+        "name": "Toronto",
+        "description": "Luxury photo booth rental in Toronto for weddings, corporate events and parties."
+       },
+       {
+        "name": "North York",
+        "description": "Luxury photo booth rental in North York for weddings, corporate events and parties."
+       },
+       {
+        "name": "Mississauga",
+        "description": "Luxury photo booth rental in Mississauga for weddings, corporate events and parties."
+       },
+       {
+        "name": "Scarborough",
+        "description": "Luxury photo booth rental in Scarborough for weddings, corporate events and parties."
+       },
+       {
+        "name": "Vaughan",
+        "description": "Luxury photo booth rental in Vaughan for weddings, corporate events and parties."
+       },
+       {
+        "name": "Etobicoke",
+        "description": "Luxury photo booth rental in Etobicoke for weddings, corporate events and parties."
+       },
+       {
+        "name": "Markham",
+        "description": "Luxury photo booth rental in Markham for weddings, corporate events and parties."
+       }
+      ]
+     }
+    },
+    {
+     "type": "faq",
+     "data": {
+      "heading": "FAQs",
+      "items": [
+       {
+        "question": "Do you travel outside Toronto?",
+        "answer": "Yes! We regularly provide luxury photo booth rentals throughout North York, Mississauga, Scarborough, Vaughan, Etobicoke, Markham and surrounding areas for weddings, corporate events, parties and private celebrations."
+       },
+       {
+        "question": "What types of events do you serve?",
+        "answer": "Weddings, corporate events, birthday parties, school dances, brand activations, galas, holiday parties, baby showers and private celebrations in Toronto and surrounding areas."
+       },
+       {
+        "question": "How far in advance should I book my photo booth rental?",
+        "answer": "We recommend booking as early as possible, especially for weddings and peak event weekends. Popular dates can book several months in advance."
+       },
+       {
+        "question": "Can the photo booth match my event theme?",
+        "answer": "Absolutely! We offer custom overlays, premium backdrops, glam filters, neon signs, hedge walls, shimmer walls and personalized design options to match your event aesthetic and branding."
+       },
+       {
+        "question": "Do you set up and operate the booth during the event?",
+        "answer": "Yes! Our team handles delivery, setup, operation and breakdown so you can enjoy a seamless, stress-free experience from start to finish."
+       },
+       {
+        "question": "How long does it take to set up the booth?",
+        "answer": "Allow an hour for set up and half an hour for pack down. Set up happens before your run time starts and is included in the cost."
+       },
+       {
+        "question": "How many photos or prints can I have during my event?",
+        "answer": "Unlimited prints! You also receive an online gallery with all the prints plus every single photo taken during the event."
+       },
+       {
+        "question": "What space do you need?",
+        "answer": "We need at least 10 by 10 feet of space, access to a single power outlet and level ground. Please note that our backdrop stands are 8 feet tall."
+       },
+       {
+        "question": "Can guests instantly share their photos?",
+        "answer": "Yes! Most of our experiences include instant text, email, AirDrop or QR code sharing so guests can post and share their photos immediately."
+       },
+       {
+        "question": "Do you offer custom branding for corporate events?",
+        "answer": "Yes! We offer fully branded photo booth experiences including custom overlays, branded start screens, lead capture, logo placement and social sharing features."
+       },
+       {
+        "question": "Can we supply our own backdrop?",
+        "answer": "Definitely. Choose a non reflective surface if possible. It is a good idea to brainstorm with your stylist as well."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "faq": {
+   "title": "FAQ",
+   "seo_title": "Photo Booth Rental FAQ | The Photo Booth Company of Toronto",
+   "meta_description": "Answers about photo booth booking, setup time, space needs, prints, sharing and branding.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Frequently asked questions",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "faq",
+     "data": {
+      "heading": "FAQs",
+      "items": [
+       {
+        "question": "Do you travel outside Toronto?",
+        "answer": "Yes! We regularly provide luxury photo booth rentals throughout North York, Mississauga, Scarborough, Vaughan, Etobicoke, Markham and surrounding areas for weddings, corporate events, parties and private celebrations."
+       },
+       {
+        "question": "What types of events do you serve?",
+        "answer": "Weddings, corporate events, birthday parties, school dances, brand activations, galas, holiday parties, baby showers and private celebrations in Toronto and surrounding areas."
+       },
+       {
+        "question": "How far in advance should I book my photo booth rental?",
+        "answer": "We recommend booking as early as possible, especially for weddings and peak event weekends. Popular dates can book several months in advance."
+       },
+       {
+        "question": "Can the photo booth match my event theme?",
+        "answer": "Absolutely! We offer custom overlays, premium backdrops, glam filters, neon signs, hedge walls, shimmer walls and personalized design options to match your event aesthetic and branding."
+       },
+       {
+        "question": "Do you set up and operate the booth during the event?",
+        "answer": "Yes! Our team handles delivery, setup, operation and breakdown so you can enjoy a seamless, stress-free experience from start to finish."
+       },
+       {
+        "question": "How long does it take to set up the booth?",
+        "answer": "Allow an hour for set up and half an hour for pack down. Set up happens before your run time starts and is included in the cost."
+       },
+       {
+        "question": "How many photos or prints can I have during my event?",
+        "answer": "Unlimited prints! You also receive an online gallery with all the prints plus every single photo taken during the event."
+       },
+       {
+        "question": "What space do you need?",
+        "answer": "We need at least 10 by 10 feet of space, access to a single power outlet and level ground. Please note that our backdrop stands are 8 feet tall."
+       },
+       {
+        "question": "Can guests instantly share their photos?",
+        "answer": "Yes! Most of our experiences include instant text, email, AirDrop or QR code sharing so guests can post and share their photos immediately."
+       },
+       {
+        "question": "Do you offer custom branding for corporate events?",
+        "answer": "Yes! We offer fully branded photo booth experiences including custom overlays, branded start screens, lead capture, logo placement and social sharing features."
+       },
+       {
+        "question": "Can we supply our own backdrop?",
+        "answer": "Definitely. Choose a non reflective surface if possible. It is a good idea to brainstorm with your stylist as well."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you already have a date in mind, check availability. We will get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call 647-654-7286",
+        "url": "tel:+16476547286"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "check-availability": {
+   "title": "Check availability",
+   "seo_title": "Check Availability & Get a Quote | The Photo Booth Company of Toronto",
+   "meta_description": "Check availability for your event date and get a custom photo booth quote in Toronto.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "subheading": "We'll get in touch as soon as possible with a custom quote that covers all of your needs.",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      }
+     }
+    },
+    {
+     "type": "forms_module_form",
+     "data": {
+      "heading": "Check availability",
+      "forms_module_deployment_uid": "@form"
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "terms-and-conditions": {
+   "title": "Terms & Conditions",
+   "seo_title": "Terms & Conditions | The Photo Booth Company of Toronto",
+   "meta_description": null,
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Terms & Conditions"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "The Photo Booth Company of Toronto is a brand owned by Roger Grubb (hereinafter “ The Photo Booth Company of Toronto ” “we” or “us”), provides this website, product and the services, functionality data, information, tools, updates and similar materials delivered or provided by us (the “Services”) subject to your agreement to and compliance with the terms and conditions, as updated from time to time, as set forth in this Terms of Service Agreement (the “Agreement”).\n\nThis Agreement sets forth the legally binding terms and conditions governing your use of the Services, and the use of the Services by any entity on whose behalf you sign up. If you do not agree to these terms and conditions, you may not use the Services.\n\nLICENSE\n\nAs long as you are in compliance with the conditions of this Agreement and all incorporated documents, we hereby grant you during the Term (as defined herein) a limited, revocable, non-assignable, non- transferable, non-sublicensable, non-exclusive license to access and use the Services and the materials thereon that are intended to be displayed publicly. No rights not explicitly listed herein are granted.\n\nINCORPORATED TERMS\n\nThe following additional terms are incorporated into this Agreement as if fully set forth herein:\n\n- Privacy Policy\n\n- Copyright Policy\n\n- Complaint Policy (including Privacy and Trademark)\n\nThe materials appearing on the Services, including but not limited to summaries, descriptions, backdrops, prints, publications and any other such materials, are not intended to and DO NOT constitute legal, medical, financial, investment, business or professional advice of any kind. You agree that we are not responsible for any decisions that you may make.\n\nWhile we make reasonable efforts to ensure that the Services will be uninterrupted, we do not represent or warrant that the Services will be error-free or uninterrupted. We reserve the right at any time and from time to time to modify or discontinue, temporarily or permanently, the Services, or any part thereof, with or without notice.\n\nELIGIBILITY\n\nYou must be over the age of 18 to register an account or use the Services. By using the Services, you represent that you meet this minimum age requirement. Some parts or all of the Services may not be available to the general public, and we may impose eligibility rules on such portions of the Services from time to time. We reserve the right to amend or eliminate these eligibility requirements at any time. You are not eligible to use the Services if doing so would violate any U.S. law or regulation, including but not limited to export controls or restrictions.\n\nSUBSCRIPTION AND FEES\n\nAs more fully described on the Services, certain elements of the Services may require fees for access (the “Paid Services”).We may use a third-party payment processor (the “Payment Processor”) to charge you through an online account for use of the Paid Service. The processing of payments will be subject to the terms, conditions and privacy policies of the Payment Processor in addition to this Agreement. We are not responsible for errors by the Payment Processor.\n\nYou agree to pay us, through the Payment Processor or in another format accepted by us, all charges for the Paid Services that you access, and you authorize us, where applicable, through the Payment Processor, to charge your chosen payment provider (your “Payment Method”). For Paid Services involving one-time fees, as identified on the Services, your Payment Method will be charged at the time of purchase, or you will be billed by us, as determined by us.\n\nFor recurring subscriptions, we will automatically charge your Payment Method or invoice you (as determined by us) for the next period at the end of each subscription period, as further identified on the Services and at purchase. If you purchase a subscription, it may result in recurring charges, to your Payment Method or otherwise, and you agree that we may charge such amounts until such a time as your subscription expires or you cancel the subscription, depending on the subscription type.\n\nIn addition to other applicable remedies, we reserve the right to suspend and/or terminate your access to the Services and/or terminate this Agreement if your Payment Method is declined or fails and your account therefore is delinquent. Charges to delinquent accounts are subject to interest of 1.5% per month on any outstanding balance, or the maximum permitted by law, whichever is less, plus all expenses of collection, including reasonable attorneys’ fees and court costs.\n\nRULES OF CONDUCT"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Your use of the Services is conditioned on your compliance with the terms of this Agreement, including but not limited to these rules of conduct. You agree that you will not violate any applicable law or regulation in connection with your use of the Services. You agree not to distribute, upload, make available or otherwise publish through the Services any suggestions, information, ideas, comments, causes, promotions, documents, questions, notes, plans, drawings, proposals, or materials similar thereto (“Submissions”) or graphics, text, information, links, profiles, audio, photos, software, music, sounds, video, comments, messages or tags, or similar materials (“Content”) that:\n\n- is unlawful or encourages another to engage in anything unlawful;- contains a virus or any other similar programs or software which may damage the operation of our or another’s computer;- violates the rights of any party or infringes upon the patent, trademark, trade secret, copyright, right of privacy or publicity or other intellectual property right of any party; is false, inaccurate, fraudulent or misleading; or,- is libelous, defamatory, obscene, inappropriate, invasive of privacy or publicity rights, abusing, harassing, threatening or bullying.\n\nYou must keep your user name and password and any other information needed to login to the Services, if applicable, confidential and secure. We are not responsible for any unauthorized access to your account or profile by others.\n\nYou further agree that you will not do any of the following:\n\n- modify, adapt, translate, copy, reverse engineer, decompile or disassemble any portion of the Services;- interfere with or disrupt the operation of the Services, including restricting or inhibiting any other person from using the Services by means of hacking or defacing;\n\n- transmit to or make available in connection with the Services any denial of service attack, virus, worm, Trojan horse or other harmful code or activity;- attempt to probe, scan or test the vulnerability of a system or network of the Services or to breach security or authentication measures without proper authorization;\n\n- take any action that imposes, or may impose, in our sole discretion, an unreasonable or disproportionately large load on our infrastructure;- harvest or collect the email address or other contact information of other users of the Services;\n\n- scrape or collect content from the Services via automated or large group means; submit, post or make available false, incomplete or misleading information to the Services, or otherwise provide such information to us;- register for more than one user account; or,\n\n- impersonate any other person or business.\n\nNotwithstanding the foregoing rules of conduct, our unlimited right to terminate your access to the Service shall not be limited to violations of these rules of conduct.\n\nCONTENT SUBMITTED OR MADE AVAILABLE TO US\n\nYou are under no obligation to submit anything to us, and unless otherwise noted, we will not claim ownership of any Content. However, in order for us to provide the Services, we need your permission to process, display, reproduce and otherwise use Content you make available to us. Therefore, if you choose to submit any Content to the Services, or otherwise make available any Content through the Services, you hereby grant to us a perpetual, irrevocable, transferrable, sub-licensable, non- exclusive, worldwide, royalty-free license to reproduce, use, modify, display, perform, distribute, translate and create derivative works from any such Content, including without limitation distributing part or all of the Content in any media format through any media channels.\n\nBy submitting any Content or Submissions to us you hereby agree, warrant and represent that:\n\n(a) except as provided in the Privacy Policy, the Content and Submissions do not contain proprietary or confidential information, and the provision of the Content and Submissions is not a violation of any third-party’s rights;\n\n(b) all such Submissions and Content are accurate and true,\n\n(c) except as provided in the Privacy Policy, we are not under any confidentiality obligation relating to the Content or Submissions;\n\n(d) except as provided in the Privacy Policy, we shall be entitled to use or disclose the Content or Submissions in any way; and\n\n(e) you are not entitled to compensation or attribution from us in exchange for the Submissions or Content.\n\nYou acknowledge that we are under no obligation to maintain the Services, or any information, materials, Submissions, Content or other matter you submit, post or make available to or on the Services. We reserve the right to withhold, remove and/or discard any such material at any time.\n\nCONTENT SHARED THROUGH THE SERVICES"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "You understand that by sharing information on the Services, and requesting information to be sent through the Services, you may be revealing information about yourself and/or your business that you may include and that may be generated by the Services. You understand and acknowledge that you are fully aware and responsible for the impact of sharing such materials, and you agree that we shall not be held responsible, and we shall be released and held harmless by you from any liability or damages arising out of or relating to such conduct.\n\nOUR INTELLECTUAL PROPERTY\n\nOur graphics, logos, names, designs, page headers, button icons, scripts, and service names are our trademarks, trade names and/or trade dress. The “look” and “feel” of the Services (including color combinations, button shapes, layout, design and all other graphical elements) are protected by U.S. copyright and trademark law. All product names, names of services, trademarks and service marks (collectively, “Marks”) are our property or the property of their respective owners, as indicated. You may not use the Marks or copyrights for any purpose whatsoever other than as permitted by this Agreement.\n\nPASSWORDS AND ACCOUNTS\n\nYou are responsible for controlling the access to and use of your account. Always make sure that your password is kept confidential. You understand and agree that we may assume that instructions from an individual associated with your account are authoritative and should be acted upon by us.\n\nWe are not responsible for any unauthorized access to your account or profile, and any ramifications of such access, and are not required to take action to disable any account. You agree that you will not bring an action against us arising out of or related to any claimed unauthorized access using your account credentials. Under confirmed unauthorized use circumstances, we may take action to address your situation. In the event that you would like to report a breach, please contact\n\n[email protected]\n\nwith the term “Account Breach Notice” in the subject line.\n\nENFORCEMENT AND TERMINATION\n\nThe “Term” of this Agreement will be until terminated as provided herein. We reserve the right to deny all or some portion of the Services to any user, in our sole discretion, at any time. You may terminate this Agreement at any time by canceling any Service Agreement you may have and informing us at\n\n[email protected]\n\n.\n\nDISCLAIMERS AND LIMITATION ON LIABILITY\n\nBY USING THE SERVICES YOU AGREE AND ACKNOWLEDGE THAT WE PROVIDE THE SERVICES “AS IS” AND WITHOUT ANY WARRANTY OR CONDITION, EXPRESS, IMPLIED OR STATUTORY. WE AND OUR PARENTS, SUBSIDIARIES, OFFICERS, DIRECTORS, SHAREHOLDERS, MEMBERS, MANAGERS, EMPLOYEES AND SUPPLIERS (“BUSINESS PARTNERS”), SPECIFICALLY DISCLAIM ANY IMPLIED WARRANTIES OF TITLE, ACCURACY, SUITABILITY, APPLICABILITY, MERCHANTABILITY, PERFORMANCE, FITNESS FOR A PARTICULAR PURPOSE, NON- INFRINGEMENT OR ANY OTHER WARRANTIES OF ANY KIND. NO ADVICE OR INFORMATION (ORAL OR WRITTEN) OBTAINED BY YOU FROM US SHALL CREATE ANY WARRANTY.\n\nUSE OF THE SERVICES IS AT YOUR SOLE RISK. WE DO NOT WARRANT THAT YOU WILL BE ABLE TO ACCESS OR USE THE SERVICES AT THE TIMES OR LOCATIONS OF YOUR CHOOSING; THAT THE SERVICES WILL BE UNINTERRUPTED OR ERROR-FREE; THAT DEFECTS WILL BE CORRECTED; OR THAT THE SERVICES ARE FREE OF INACCURACIES, MISREPRESENTATIONS BY USERS, VIRUSES OR OTHER HARMFUL COMPONENTS.TO THE MAXIMUM EXTENT PERMITTED BY LAW, AND EXCEPT AS OTHERWISE PROHIBITED BY LAW, IN NO EVENT SHALL WE OR OUR AFFILIATES, LICENSORS OR BUSINESS PARTNERS (COLLECTIVELY, THE “RELATED PARTIES”) BE LIABLE TO YOU BASED ON OR RELATED TO THE SERVICES OR THIS AGREEMENT, WHETHER BASED IN CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY OR OTHERWISE, AND SHALL NOT BE RESPONSIBLE FOR ANY LOSSES OR DAMAGES, INCLUDING WITHOUT LIMITATION DIRECT, INDIRECT, INCIDENTAL, CONSEQUENTIAL, OR SPECIAL DAMAGES ARISING OUT OF OR IN ANY WAY CONNECTED WITH ACCESS TO OR USE OF THE SERVICES, EVEN IF WE AND/OR RELATED PARTIES HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Notwithstanding the foregoing, in the event that a court shall find that the above disclaimers are not enforceable, then you agree that neither we nor any of our subsidiaries, affiliated companies, employees, members, shareholders, or directors shall be liable for (1) any damages in excess of the greater of (a) $500.00 or (b) the amounts paid by you to us in the twelve (12) months immediately preceding any claim, nor (2) any indirect, incidental, punitive, special, or consequential damages or loss of use, lost revenue, lost profits or data to you or any third party from your use of the Services. This limitation shall apply regardless of the basis of your claim or whether or not the limited remedies provided herein fail of their essential purpose.\n\nSOME STATES, MAY NOT PERMIT CERTAIN DISCLAIMERS AND LIMITATIONS, AND ANY SUCH DISCLAIMERS OR LIMITATIONS ARE VOID WHERE PROHIBITED.\n\nDISPUTES, GOVERNING LAW AND JURISDICTION\n\nYou agree that any claim or dispute arising out of or relating in any way to your use of the Services or any service provided by us, will be resolved solely and exclusively by binding arbitration, rather than in court, except that you may assert claims in small claims court if your claims qualify. The Federal Arbitration Act and federal arbitration law apply to this agreement. The laws of the State of California shall govern this Agreement, and shall be used in any arbitration proceeding.\n\nThere is no judge or jury in arbitration, and court review of an arbitration award is limited. However, an arbitrator can award on an individual basis the same damages and relief as a court (including injunctive and declaratory relief or statutory damages), and must follow the terms of this Agreement as a court would.\n\nTo begin an arbitration proceeding, you must send a letter requesting arbitration and describing your claim to the following address: 3300 Hwy 7 W #600, Vaughan, ON L4K 4M3, Canada ,\n\nArbitration under this Agreement will be conducted by the American Arbitration Association (AAA) under its rules then in effect. Payment of all filing, administration and arbitrator fees will be governed by the AAA’s rules.\n\nYou and us agree that any dispute resolution proceedings will be conducted only on an individual basis and not in a class, consolidated or representative action. If for any reason a claim proceeds in court rather than in arbitration, both you and us agree that parties have each waived any right to a jury trial.\n\nNotwithstanding the foregoing, you agree that we may bring suit in court to enjoin infringement or other misuse of intellectual property or other proprietary rights.\n\nTo the extent arbitration does not apply, you agree that any dispute arising out of or relating to the Services, or to us, may only be brought by you in a state or federal court located in . YOU HEREBY WAIVE ANY OBJECTION TO THIS VENUE AS INCONVENIENT OR INAPPROPRIATE, AND AGREE TO EXCLUSIVE JURISDICTION AND VENUE IN .\n\nGENERAL\n\nSever-ability. If any provision of this Agreement is found for any reason to be unlawful, void or unenforceable, then that provision will be given its maximum enforceable effect, or shall be deemed severable from this Agreement and will not affect the validity and enforceability of any remaining provision. Revisions. This Agreement may only be revised in a writing signed by us or posted by us to the Services. In the event that we update this Agreement and you are made aware of the update, your continued use of the Services after the update shall constitute an agreement to the updated terms.\n\nNo Partnership. You agree that no joint venture, partnership, employment, or agency relationship exists between you and us as a result of this Agreement or your use of the Services.\n\nAssignment. We may assign our rights under this Agreement, in whole or in part, to any person or entity at any time with or without your consent. You may not assign the Agreement without our prior written consent. Any unauthorized assignment shall be null and void.\n\nNo Waiver. Our failure to enforce any provision of this Agreement shall in no way be construed to be a present or future waiver of such provision, nor in any way affect the right of any party to enforce each and every such provision thereafter. The express waiver by us of any provision, condition or requirement of this Agreement shall not constitute a waiver of any future obligation to comply with such provision, condition or requirement.\n\nNotices. All notices given by you or required under this Agreement shall be in writing and addressed to: 3300 Hwy 7 W #600, Vaughan, ON L4K 4M3, Canada, ."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Equitable Remedies. You hereby agree that we would be irreparably damaged if the terms of this Agreement were not specifically enforced, and therefore you agree that we shall be entitled, without bond, other security, or proof of damages, to appropriate equitable remedies with respect to breaches of this Agreement, in addition to such other remedies as we may otherwise have available to us under applicable laws.\n\nEntire Agreement. This Agreement, including the documents expressly incorporated by reference, constitutes the entire agreement between you and us with respect to the Services, and supersedes all prior or contemporaneous communications, whether electronic, oral or written.\n\nCOPYRIGHT POLICY\n\nIf you believe in good faith that any material posted on our Services infringes the copyright in your work, please contact our copyright agent, designated under the Digital Millennium Copyright Act (“DMCA”) (17 U.S.C. §512(c)(3)), with correspondence containing the following:\n\nA physical or electronic signature of the owner, or a person authorized to act on behalf of the owner, of the copyright that is allegedly infringed; Identification of the copyrighted work claimed to have been infringed; Identification, with information reasonably sufficient to allow its location of the material that disclaimed to be infringing;\n\nInformation reasonably sufficient to permit us to contact you; A statement that you have a good faith belief that use of the material in the manner complained of is not authorized by the copyright owner, its agent, or the law; and, A statement that the information in the notification is accurate, and under penalty of perjury, that you are authorized to act on behalf of the owner of an exclusive right that is allegedly infringed. You acknowledge that if you fail to comply with all of the requirements of this policy, your DMCA notice may not be valid. For any questions regarding this procedure, or to submit a complaint, please contact our designated DMCA Copyright Agent:\n\nhttps://photoboothcompanyoftoronto.com\n\nRoger Grubb\n\nE-mail:\n\n[email protected]\n\nPhone: 647-654-7286\n\nCOMPLAINT POLICY (INCLUDING TRADEMARK AND PRIVACY)\n\nIf you believe in good faith that any material posted on the Services infringes any of your rights other than in copyright, or is otherwise unlawful, you must send a notice to\n\n[email protected]\n\n, containing the following information:\n\nYour name, physical address, e-mail address and phone number; A description of the material posted on the Site that you believe violates your rights or is otherwise unlawful, and which parts of said materials you believe should be remedied or removed; Identification of the location of the material on the Site; If you believe that the material violates your rights, a statement as to the basis of the rights that you claim are violated; If you believe that the material is unlawful or violates the rights of others, a statement as to the basis of this belief;\n\nA statement under penalty of perjury that you have a good faith belief that use of the material in the manner complained of is not authorized and that the information you are providing is accurate to the best of your knowledge and in good faith; and, Your physical or electronic signature. If we receive a message that complies with all of these requirements, we will evaluate the submission, and if appropriate, in our sole discretion, we will take action. We may disclose your submission to the poster of the claimed violative material, or any other party."
+     }
+    }
+   ]
+  },
+  "privacy-policy": {
+   "title": "Privacy Policy",
+   "seo_title": "Privacy Policy | The Photo Booth Company of Toronto",
+   "meta_description": null,
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Privacy Policy"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "This Privacy Policy (“Privacy Policy” or “Policy”) describes the types of information gathered by https://photoboothcompanyoftoronto.com (brand owned by Roger Grubb ) (hereinafter “ The Photo Booth Company of Toronto ” “we” or “us”) in the process of providing this website, services, information, tools, functionality, updates and similar materials (collectively, the “Services”), how we use it, with whom the information may be shared, what choices are available to you regarding collection, use and distribution of information and our efforts to protect the information you provide to us through the Services. By using the Services, you hereby consent to allow us to process information in accordance with this Policy.\n\nThis Policy is subject to change. If our information retention or usage practices change, we will let you know by posting the Privacy Policy changes on the Services and/or otherwise making you aware of the changes. Please refer to the “Effective Date” above to see when this Policy was last updated. No mobile information will be shared with third parties/affiliates for marketing/promotional purposes. Information sharing to subcontractors in support services, such as customer service, is permitted. All other use case categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties.\n\nTERRITORIALITY\n\nRegardless of where our servers are located, your personal data may be processed by us in the United States, where data protection and privacy regulations may or may not be to the same level of protection as in other parts of the world. BY VISITING THE WEBSITE AND USING THE SERVICES, YOU UNEQUIVOCALLY AND UNAMBIGUOUSLY CONSENT TO THE COLLECTION AND PROCESSING IN THE UNITED STATES OF ANY INFORMATION COLLECTED OR OBTAINED BY US THROUGH VOLUNTARY SUBMISSIONS, AND THAT U.S. LAW GOVERNS ANY SUCH COLLECTION AND PROCESSING.\n\nINFORMATION COLLECTED\n\nWe collect two types of information about and from persons who use the Services: Personal Information and Anonymous Information.\n\nPersonal Information means information that is personally identifiable to you, such as your name, address, email address or phone number, as well as other non-public information that is associated with the foregoing. Anything you publicly post or that is available publicly will not be considered Personal Information, and will be outside the restrictions of this policy.\n\nAnonymous Information means information that is not associated with or linked to your Personal Information. We may create Anonymous Information from (i) automatically gathered information or (ii) Personal Information by excluding information (such as name) that may make the information personally identifiable to you.\n\nPERSONAL INFORMATION COLLECTED\n\nWe collect certain Personal Information about you or about those you identify, which may be supplied when you interact with the Services, complete a survey, make a purchase, when you request services or otherwise when you submit such information. The information collected may include one or more of the following:\n\nName\n\nAddress\n\nPhone number\n\nEmail\n\nUsername\n\nInformation from your activities on the Services\n\nAlthough the Services may appear to collect payment card information, such information is collected directly by our credit card processing vendor, and we do not have possession of such information.\n\nANONYMOUS INFORMATION\n\nAnonymous Information is collected about you when you use the Services, including but not limited to enrollment history, the type of device you used and its operating system, the pages accessed most frequently, how pages are used, search terms entered, and similar data. Automatically Tracking Internet Protocol (IP) addresses is one method of automatically collecting information about your activities online and information volunteered by you.\n\nFurther, the Services may utilize web beacons, pixel tags, cookies, embedded links, and other commonly used information-gathering tools. Although it may be possible to turn off the collection of cookies through your device, that may interfere with your use of the Services.\n\nUSE OF INFORMATION\n\nInternal Use of Information by Us: We accept and gather Personal Information and Anonymous Information in an effort to provide the Services to you. We may also use this information to help us develop and improve our Services, fulfill your requests, send materials to you, inform you about our offers and those of others, tailor our Services to meet your interests, and for other purposes permitted by law. We may use Anonymous Information or non-Personal Information for any business purpose.\n\nSHARING COLLECTED INFORMATION"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "No mobile information will be shared with third parties/affiliates for marketing/promotional purposes. Information sharing to subcontractors in support services, such as customer service, is permitted. All other use case categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties. We will not share Personal Information and Anonymous Information with third parties for marketing and analytics, when marketing our Products and Services.\n\nLINKS\n\nThe Services may contain links to other websites. We are not responsible for the privacy practices of such other sites. When you leave our Service to visit another website or application, please read the privacy statements of websites that may collect personally identifiable information. This Privacy Policy applies solely to information collected by us through the Services.\n\nSECURITY\n\nWe employ procedural and technical safeguards to secure your personal information against loss, theft, alteration, and unauthorized access, use and disclosure. We also employ security procedures to protect your information from unauthorized access by users inside and outside the company.\n\nRegardless of the precautions we take, no transmission of data over the internet is guaranteed to be completely secure. It may be possible for third parties not under our control to intercept or access transmissions or private communications unlawfully. While we strive to protect personal information, we cannot ensure or warrant the security of any information you transmit to us.\n\nE-MAIL AND ELECTRONIC NEWSLETTERS\n\nWe may offer electronic newsletters and e-mails concerning available services, as well as new products and services, or may provide other marketing materials as a service to our users. Users may receive newsletters and e-mails concerning promotions and marketing of ours or of our business partners, after registering with the Services or after engaging with us in person or through our agents.\n\nIf you have received a message from us, and you no longer wish to receive such materials, you may opt- out by following the unsubscribe instructions included in each electronic newsletter and e-mail. Please note that you may be required to separately opt out of any e-mails sent by our business associates.\n\nCHILDREN AND PRIVACY\n\nWe do not knowingly permit users to use our Services if they are under 13 years old, and therefore do not request personally identifiable information from anyone under the age of 13. If we become aware that a user or customer is under the age of 13 and has registered without verifiable parental consent, we will remove his or her personally identifiable registration information from our files. If you are the parent or guardian of a person under the age of 13 who has provided personally identifiable information to us without your approval, please inform us by contacting us at the e-mail address below and we will remove such information from our database.\n\nDO NOT TRACK\n\nAt present, the Services do not specifically respond to browser do-not-track signals.\n\nPRIVACY RIGHTS\n\nTo request information regarding our disclosures in the prior calendar year, if any, of their personally identifiable information to third parties. To make such a request, please contact us at\n\n[email protected]\n\nwith “Request for Privacy Information” in the subject line. Please include enough detail for us to locate your file; at a minimum, your name, email, and username, if any. We will attempt to provide you with the requested information within thirty (30) days of receipt. We reserve our right not to respond to requests sent more than once in a calendar year, or requests submitted in a form other than as prescribed in this notice. Please note that this law does not cover all information sharing. Our disclosure only includes information covered by the law.\n\nCONTACT INFORMATION\n\nIf you have any questions or suggestions regarding our Privacy Policy, please contact us:\n\n📧 Email:\n\n[email protected]\n\n📞 Phone: 647-654-7286\n\n📍 State:"
+     }
+    }
+   ]
+  },
+  "terms-of-service": {
+   "title": "Terms of Service",
+   "seo_title": "Terms of Service | The Photo Booth Company of Toronto",
+   "meta_description": null,
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Terms of Service"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "This page outlines the photo booth services provided byThe Photo Booth Company of Toronto (Referred to as Vendor) to clients (Referred to as Client) who booked photo booth services through the Vendor's website: https://photoboothcompanyoftoronto.com\n\nRetainer\n\nAn initial agreed upon retainer must be placed to secure the date.\n\nPayment Schedule and Method\n\nFor your convenience, payments can be made online via our website https://photoboothcompanyoftoronto.com using Stripe or PayPal and a valid credit or debit card. Otherwise, payment is to be made by cash or check. The initial retainer is due upon booking. Remaining balance is due before event date.\n\nContracted services\n\nIncludes all services described in selected package details reviewed and distributed to clients. Any additional services/products requested by the client incurred by vendor will be billed directly to client at cost. All services contracted cannot be deducted, but additional services can be added.\n\nPostponement Policy\n\nIf event is postponed, all services will cease at time of notification of postponement if no determined new date is provided. Payment schedule will be determined and readjusted post new event date notification. If client requires services to resume, post new event date being established, second payment will be required at time of service re-start.\n\nLiability\n\nIt is understood that Vendor is only liable for services completed and provided by Vendor and cannot be held liable for the services of other contracted vendors. It is understood that in no event shall Vendor be liable for consequential damages of any kind.\n\nResponsibility\n\nVendor is not responsible for Acts Of God, Natural Disasters, an Act Of Government such as A Declaration of National or Local Emergency, or Other Incidents Not within the control of the Vendor, i.e. accident, death in the family, illness, pregnancy, or sudden tragic circumstance. In such a situation, Vendor. will obtain, upon approval of the client, a qualified professional replacement to fulfill Vendor’s obligations under the contract, at no additional charge to the client\n\nPermitted Uses of Product(s)\n\nVendor grants to Client a non-exclusive license of product(s) produced with and for Client for personal use only. Personal use includes, but is not limited to, use within the following contexts: In photos on Client’s personal social media pages or profiles; orIn personal creations, such as a scrapbook or personal gift; or In personal communications, such as a family newsletter or email or holiday card.\n\nCancellation Policy\n\nSince the Vendor is exclusively securing the date for the Client and rejecting other business opportunities. If event is canceled, no portion of the retainer fees paid to Vendor will be returned. If the event is postponed, services contracted can be applied to a new date if available (refer to Postponement Policy). You can cancel the SMS service at any time. Simply text \"STOP\" to the shortcode. Upon sending \"STOP,\" we will confirm your unsubscribe status via SMS. Following this confirmation, you will no longer receive SMS messages from us. To rejoin, sign up as you did initially, and we will resume sending SMS messages to you.\n\nCopyright Ownership\n\nIn the event that any copyrighted work(s) are created as a result of the Services provided by Vendor in accordance with this Agreement, Vendor owns all copyrights in any and all work(s) it creates or produces pursuant to federal copyright law (Title 17, Chapter 2, Section 201-02 of the United States Code), whether registered or unregistered. Any and all products, whether tangible or intangible, produced or created in connection with, or in the process of fulfilling this Agreement, are expressly and solely owned by Provider and may be used in the reasonable course of Provider business.\n\nExclusivity\n\nClient understands and agrees that he or she has hired Vendor exclusive of any other service provider. In order to provide a high level of satisfaction and quality of service, no other service providers, other than any assistant or third party that Vendor hires to complete the Services outlined in this Agreement, are permitted to provide the same or similar services or products, paid or unpaid, at the locations and dates specified in this Agreement.\n\nDamage or Loss of Accessories\n\nClient agrees to exercise all due care in caring for, and preserving the property of Vendor. Clients shall remain responsible for all loss or damage to rentals, up to and including actual replacement value for each missing or damaged item per cost.\n\nAppropriate Conduct/ Safe Working Environment"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "The Client(s) expressly agree(s) to take best efforts to provide Vendor and Vendor’s staff with safe and appropriate working conditions. In the event of circumstances deemed by either Vendor or a bystander to present a threat or implied threat of injury or harm to Vendor staff or equipment, the Vendor reserves the right to cancel all services remaining under this Agreement and leave the event. At the Vendor’s discretion, the Vendor may enact a three-strike policy. After the first offense, the Vendor will make reasonable efforts to notify the Client(s) or a responsible party. If the Client(s) is/are able to respond to the threatening situation in a reasonable amount of time (maximum of 15 minutes), Vendor shall resume work in accordance with the original terms of this Agreement. If the threatening behavior occurs for a second time, the Client(s) will agree to remove the offending person for the remainder of the event. If the behavior occurs a third time, the Vendor will immediately leave the event. If the Vendor leaves the event early due to any offending behavior, the Client(s) expressly agree to relieve and hold Vendor harmless as a result of incomplete event coverage, or for a lapse in the quality of the Vendor’s work, and the Client(s) shall be responsible for payment in full."
+     }
+    }
+   ]
+  }
+ },
+ "redirects": {}
+}

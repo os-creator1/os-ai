@@ -234,6 +234,7 @@
                         @unless ($filters->isDefault())
                             <x-button variant="ghost" :href="$boardUrl . '?pipeline=' . $pipeline->uid">Clear</x-button>
                         @endunless
+                        <a class="crm-customize" href="{{ route('customer.workspaces.businesses.crm.tasks.index', [$workspaceUid, $businessUid]) }}" data-role="crm-tasks-link">Tasks</a>
                         @if ($canManage)
                             <a class="crm-customize" href="{{ route('customer.workspaces.businesses.crm.pipelines.settings', [$workspaceUid, $businessUid, $pipeline->uid]) }}" data-role="crm-pipeline-settings">Customize stages</a>
                         @endif

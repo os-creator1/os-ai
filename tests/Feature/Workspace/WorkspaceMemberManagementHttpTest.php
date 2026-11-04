@@ -41,7 +41,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
     use CreatesBusinessTestData;
     use CreatesWorkspaceTestData;
 
-    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they need an existing Business OS account, and can\'t already be on this account or be its owner.';
+    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they can\'t already be on this account or be its owner, and their MotionGrove account must be active.';
 
     // --- Route shape -----------------------------------------------------
 
@@ -597,16 +597,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
         $existingMemberResponse->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
 
-        // An address with no account at all reads exactly the same.
-        $unknownResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'member_email' => 'nobody@example.test',
-            'role' => 'staff',
-            'business_access_scope' => 'all',
-        ]);
-        $unknownResponse->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
-
         $this->assertSame($ownerTargetResponse->headers->get('Location'), $existingMemberResponse->headers->get('Location'));
-        $this->assertSame($ownerTargetResponse->headers->get('Location'), $unknownResponse->headers->get('Location'));
     }
 
     public function test_add_member_on_an_inactive_workspace_fails(): void
@@ -661,7 +652,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
      * actor who IS allowed to add members: back to the account page with the
      * generic message on the email field — never the Page Not Found screen.
      */
-    public function test_add_member_with_an_unknown_email_returns_to_the_page_with_a_generic_error(): void
+    public function test_add_member_with_an_unknown_email_sends_an_invitation_and_adds_no_membership(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
@@ -673,7 +664,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
 
         $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
-        $response->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
+        $response->assertSessionHas('flash_success', 'Invitation sent.');
         $this->assertSame(0, WorkspaceMembership::where('workspace_id', $workspace->id)->count());
     }
 
@@ -1481,11 +1472,11 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $html = $response->getContent();
 
         $this->assertDoesNotMatchRegularExpression(
-            '/data-member-action="deactivate" data-member-uid="' . preg_quote($adminTarget->user->uid, '/') . '"/',
+            '/data-member-action="remove" data-member-uid="' . preg_quote($adminTarget->user->uid, '/') . '"/',
             $html
         );
         $this->assertMatchesRegularExpression(
-            '/data-member-action="deactivate" data-member-uid="' . preg_quote($staffTarget->user->uid, '/') . '"/',
+            '/data-member-action="remove" data-member-uid="' . preg_quote($staffTarget->user->uid, '/') . '"/',
             $html
         );
     }

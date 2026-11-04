@@ -31,7 +31,8 @@ use Illuminate\Support\Facades\Crypt;
  */
 final class CandidateToken
 {
-    private const TTL_MINUTES = 15;
+    /** A quote is only honoured for this long; after it the customer must search (and confirm the price) again. */
+    private const TTL_MINUTES = 10;
 
     public static function encode(Business $business, AvailableNumberCandidate $candidate): string
     {
@@ -40,6 +41,9 @@ final class CandidateToken
             'phone_number' => $candidate->phoneNumber,
             'number_type' => $candidate->numberType->value,
             'provider_candidate_reference' => $candidate->providerCandidateReference,
+            'upfront_cost_micro' => $candidate->upfrontCostMicro,
+            'monthly_cost_micro' => $candidate->monthlyCostMicro,
+            'currency' => $candidate->currency,
             'expires_at' => Carbon::now()->addMinutes(self::TTL_MINUTES)->timestamp,
         ], JSON_THROW_ON_ERROR));
     }
@@ -80,6 +84,9 @@ final class CandidateToken
             phoneNumber: (string) $payload['phone_number'],
             numberType: $numberType,
             providerCandidateReference: (string) $payload['provider_candidate_reference'],
+            upfrontCostMicro: isset($payload['upfront_cost_micro']) ? (int) $payload['upfront_cost_micro'] : null,
+            monthlyCostMicro: isset($payload['monthly_cost_micro']) ? (int) $payload['monthly_cost_micro'] : null,
+            currency: $payload['currency'] ?? null,
         );
     }
 }

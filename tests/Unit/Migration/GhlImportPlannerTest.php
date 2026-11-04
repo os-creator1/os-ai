@@ -109,4 +109,16 @@ class GhlImportPlannerTest extends TestCase
         $b = (new GhlImportPlanner())->plan($this->snapshot());
         $this->assertSame(json_encode($a), json_encode($b));
     }
+
+    public function test_the_stand_in_key_for_a_contact_without_a_phone_can_never_be_dialled(): void
+    {
+        foreach (['ykywMn0gkp6nF7Xmb3er', '17205550101ab', '99999999999999999999', 'QAn3kv5mqzIr872jmFQl'] as $id) {
+            $key = \App\Library\Migration\Ghl\GhlImportWriter::noPhoneKey($id);
+
+            $this->assertMatchesRegularExpression('/^np-[a-z]{16}$/', $key, 'Letters only: no digit survives any normaliser.');
+            $this->assertLessThanOrEqual(20, strlen($key), 'Fits chat_boxes.to.');
+            $this->assertSame('', preg_replace('/\D+/', '', $key));
+            $this->assertSame($key, \App\Library\Migration\Ghl\GhlImportWriter::noPhoneKey($id), 'Stable, so a retry maps to the same contact.');
+        }
+    }
 }

@@ -25,9 +25,11 @@ enum BusinessEmailMessageStatus: string
     case Accepted = 'accepted';
     case Failed = 'failed';
     case Unconfirmed = 'unconfirmed';
+    /** An inbound message synchronized from the mailbox. Never produced by a send. */
+    case Received = 'received';
 
     public function isTerminal(): bool
     {
-        return in_array($this, [self::Accepted, self::Unconfirmed], true);
+        return in_array($this, [self::Accepted, self::Unconfirmed, self::Received], true);
     }
 }

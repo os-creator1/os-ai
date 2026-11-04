@@ -557,6 +557,20 @@ class NodeTypeRegistry
             return [sprintf('Keep the note under %d characters.', self::MAX_NOTIFICATION_LENGTH)];
         }
 
+        if (array_key_exists('task', $config)) {
+            $task = $config['task'];
+            $hours = is_array($task) ? ($task['due_in_hours'] ?? null) : null;
+            $title = is_array($task) ? ($task['title'] ?? null) : null;
+
+            if (! is_array($task) || ($title !== null && (! is_string($title) || trim($title) === '' || mb_strlen($title) > 150))) {
+                return ['The task needs a short title.'];
+            }
+
+            if ($hours !== null && (! is_int($hours) || $hours < 1 || $hours > 720)) {
+                return ['A task can be due between 1 hour and 30 days from now.'];
+            }
+        }
+
         return [];
     }
 
@@ -598,6 +612,15 @@ class NodeTypeRegistry
 
             if (preg_match('/^\d{4}-\d{2}-\d{2}[ T][0-2]\d:[0-5]\d$/', $at) !== 1) {
                 return ['Choose the date and time to wait until.'];
+            }
+
+            return [];
+        }
+
+        if ($mode === 'until_send_window') {
+            // Optional flag: also hold until the Location's recorded opening hours (ignored when none are recorded).
+            if (array_key_exists('business_hours', $config) && ! is_bool($config['business_hours'])) {
+                return ['Choose whether to also wait for business hours.'];
             }
 
             return [];

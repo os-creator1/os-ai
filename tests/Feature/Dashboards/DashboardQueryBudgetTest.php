@@ -101,7 +101,11 @@ class DashboardQueryBudgetTest extends TestCase
     // 31 -> 32: ONE existence read, "does this Business have a Location the actor cannot reach" (CrmLocationScope::hasUnreachableLocation).
     // The daily chart is a Business-wide series, so it is withheld from such an actor; without this read the chart could show records their
     // cards do not count. Flat in rows, contacts, conversations and messages.
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 32;
+    //
+    // 32 -> 33: the plan-entitlement filter on the stored Growth Opportunity reads needs the Business's Workspace model
+    // (GrowthOpportunityEligibility, so a downgrade hides what the plan no longer includes). ONE primary-key read, flat in rows;
+    // the entitlement snapshot itself is still the request's one (the 'entitlement' ceiling above stays 0).
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 33;
 
     /**
      * Observed: three B5 methods per Business performance period, plus

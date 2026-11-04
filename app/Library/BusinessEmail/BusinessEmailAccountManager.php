@@ -53,19 +53,41 @@ final class BusinessEmailAccountManager
      * @throws \App\Exceptions\BusinessEmail\BusinessEmailConfigurationException
      * @throws BusinessEmailConcurrencyException
      * @throws LogicException when an active account already exists
+     *
+     * $reauthorize lets the owner of an ACTIVE mailbox run consent again
+     * (e.g. to grant the inbound read permission) WITHOUT downtime: the
+     * account stays active and its stored credential keeps working. Only the
+     * attempt's actor and a fresh OAuth nonce are recorded; the credential is
+     * replaced solely by a successful, verified callback (completeConnect).
+     * A cancelled, failed or expired attempt therefore changes nothing.
      */
-    public function beginConnect(Business $business, int $actorUserId, BusinessEmailProviderType $provider): string
+    public function beginConnect(Business $business, int $actorUserId, BusinessEmailProviderType $provider, bool $reauthorize = false): string
     {
+        if ($provider === BusinessEmailProviderType::Imap) {
+            throw new LogicException('Other email is connected with its own form, not with an OAuth sign-in.');
+        }
+
         $this->oauthConfig->assertUsable($provider);
 
         $account = $this->findForBusiness($business);
 
-        if ($account !== null && $account->state === BusinessEmailAccountState::Active) {
+        if ($account !== null && $account->state === BusinessEmailAccountState::Active && ! $reauthorize) {
             throw new LogicException('An email account is already connected; disconnect it before connecting a different one.');
+        }
+
+        if ($account !== null && $account->state === BusinessEmailAccountState::Active && $account->provider !== $provider) {
+            throw new LogicException('Reauthorize with the provider that is connected, or disconnect it first to switch provider.');
         }
 
         if ($account === null) {
             $account = $this->createPending($business, $actorUserId, $provider);
+        } elseif ($account->state === BusinessEmailAccountState::Active) {
+            // Reauthorization of a live connection: same state, same credential,
+            // same mailbox. The conditional UPDATE still guards against a
+            // concurrent disconnect/revoke.
+            $this->transition($account, BusinessEmailAccountState::Active, [
+                'connected_by_user_id' => $actorUserId,
+            ]);
         } else {
             // Re-stamp the actor, the provider and any identity, and null the
             // credential, as the row (re-)enters pending. A second initiation
@@ -79,12 +101,61 @@ final class BusinessEmailAccountManager
                 'external_account_id' => null,
                 'display_name' => null,
                 'failure_classification' => null,
+                'inbound_failure' => null,
             ]);
         }
 
         $state = $this->stateSigner->issue($account->fresh());
 
         return $this->providers->for($provider)->authorizationUrl($state, true);
+    }
+
+    /**
+     * Connects (or credential-refreshes) an "Other email" mailbox whose
+     * settings the CALLER has already validated AND tested against the real
+     * servers. There is no OAuth round trip: the validated settings blob is
+     * written through the same encrypted-credential/optimistic-lock path.
+     *
+     * An ACTIVE account may only be updated for the SAME mailbox (new
+     * password/server), and the old credential keeps working until this
+     * write; switching mailbox is a disconnect first.
+     *
+     * @throws LogicException|BusinessEmailConcurrencyException
+     */
+    public function connectWithCredentials(Business $business, int $actorUserId, BusinessEmailProviderType $provider, string $mailboxEmail, string $credentialBlob): BusinessEmailAccount
+    {
+        $account = $this->findForBusiness($business);
+
+        if ($account === null) {
+            $account = $this->createPending($business, $actorUserId, $provider);
+        } elseif ($account->state === BusinessEmailAccountState::Active) {
+            if ($account->provider !== $provider || strtolower((string) $account->mailbox_email) !== strtolower($mailboxEmail)) {
+                throw new LogicException('An email account is already connected; disconnect it before connecting a different one.');
+            }
+        }
+
+        $reconnecting = $account->state === BusinessEmailAccountState::Active;
+
+        $this->transition($account, BusinessEmailAccountState::Active, [
+            'provider' => $provider->value,
+            'connected_by_user_id' => $actorUserId,
+            'refresh_token_encrypted' => $credentialBlob,
+            'granted_scopes' => null,
+            'mailbox_email' => strtolower($mailboxEmail),
+            'display_name' => $account->display_name,
+            'connected_at' => $reconnecting && $account->connected_at !== null ? $account->connected_at : now(),
+            'last_refreshed_at' => now(),
+            'failure_classification' => null,
+            'inbound_failure' => null,
+            'oauth_state_nonce' => null,
+            'oauth_state_expires_at' => null,
+            'revoked_at' => null,
+            'disconnected_at' => null,
+            // A different mailbox/server restarts the inbound window.
+            'inbound_cursor' => $reconnecting ? $account->inbound_cursor : null,
+        ]);
+
+        return $account->fresh();
     }
 
     /**
@@ -128,9 +199,14 @@ final class BusinessEmailAccountManager
      */
     public function completeConnect(BusinessEmailAccount $account, string $code): void
     {
-        if ($account->state !== BusinessEmailAccountState::Pending) {
-            throw new LogicException('Only a pending email connection can be completed.');
+        // Pending = first connect / reconnect. Active = reauthorization of a
+        // live connection (additional consent); it keeps working until the
+        // verified grant below replaces it.
+        if (! in_array($account->state, [BusinessEmailAccountState::Pending, BusinessEmailAccountState::Active], true)) {
+            throw new LogicException('Only a pending or active email connection can be completed.');
         }
+
+        $reauthorizing = $account->state === BusinessEmailAccountState::Active;
 
         // Outside any transaction — a real outbound HTTP request.
         $grant = $this->providers->for($account->provider)->exchangeAuthorizationCode($code);
@@ -139,15 +215,24 @@ final class BusinessEmailAccountManager
             throw new BusinessEmailProviderException(BusinessEmailFailureCategory::PermanentProviderFailure, 'no_refresh_token');
         }
 
+        // A reauthorization must be for the SAME mailbox; switching mailbox
+        // while active is an explicit disconnect first. Nothing is changed.
+        if ($reauthorizing && strtolower((string) $grant->accountEmail) !== strtolower((string) $account->mailbox_email)) {
+            throw new LogicException('Reauthorize with the same mailbox that is connected, or disconnect it first to connect a different one.');
+        }
+
         $this->transition($account, BusinessEmailAccountState::Active, [
             'refresh_token_encrypted' => $grant->refreshToken,
             'granted_scopes' => $grant->grantedScopes !== null ? substr($grant->grantedScopes, 0, 512) : null,
             'mailbox_email' => $grant->accountEmail,
             'external_account_id' => $grant->accountId !== null ? substr($grant->accountId, 0, 191) : null,
             'display_name' => $grant->displayName !== null ? substr($grant->displayName, 0, 191) : null,
-            'connected_at' => now(),
+            'connected_at' => $reauthorizing && $account->connected_at !== null ? $account->connected_at : now(),
             'last_refreshed_at' => now(),
             'failure_classification' => null,
+            'inbound_failure' => null,
+            'oauth_state_nonce' => null,
+            'oauth_state_expires_at' => null,
             'revoked_at' => null,
             'disconnected_at' => null,
         ]);

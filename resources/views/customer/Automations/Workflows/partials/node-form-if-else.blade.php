@@ -55,6 +55,11 @@
                     <option value="contact.subscribed">{{ __('automations.v2.if_else_form.subject_subscribed') }}</option>
                     <option value="contact.in_group">{{ __('automations.v2.if_else_form.subject_in_group') }}</option>
                 </optgroup>
+                <optgroup label="{{ __('automations.v2.if_else_form.group_business') }}">
+                    @foreach (['contact.has_open_deal', 'business.open_now', 'business.quiet_hours_now', 'business.review_link_set', 'business.questionnaire_link_set'] as $businessFact)
+                        <option value="{{ $businessFact }}">{{ __('automations.v2.if_else_form.subject_' . str_replace('.', '_', $businessFact)) }}</option>
+                    @endforeach
+                </optgroup>
                 <optgroup label="{{ __('automations.v2.if_else_form.group_tags') }}" data-role="wf-condition-tag-group"></optgroup>
                 <optgroup label="{{ __('automations.v2.if_else_form.group_facts') }}" data-role="wf-condition-fact-group">
                     @foreach (array_keys(\App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry::FACT_SUBJECTS) as $factSubject)

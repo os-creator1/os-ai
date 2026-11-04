@@ -5,6 +5,8 @@ namespace Tests\Feature\NicheBlueprint;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\NicheBlueprint\Adapters\AutomationWorkflowComponentAdapter;
 use App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter;
+use App\Library\NicheBlueprint\Adapters\CustomFieldComponentAdapter;
+use App\Library\NicheBlueprint\Adapters\FormComponentAdapter;
 use App\Library\NicheBlueprint\Adapters\TagSetComponentAdapter;
 use App\Library\NicheBlueprint\PhotoBoothBusinessPackV3;
 use App\Models\AutomationWorkflow;
@@ -27,7 +29,7 @@ class PhotoBoothBusinessPackV3InstallTest extends TestCase
             fn (array $c) => ['key' => $c['key'], 'type' => $c['type'], 'feature' => self::FEATURE_INSTALLS_EVERYWHERE, 'payload' => $c['payload']],
             array_values(array_filter(
                 PhotoBoothBusinessPackV3::components(),
-                fn ($c) => in_array($c['type'], [TagSetComponentAdapter::TYPE, CrmPipelineComponentAdapter::TYPE, AutomationWorkflowComponentAdapter::TYPE], true),
+                fn ($c) => in_array($c['type'], [TagSetComponentAdapter::TYPE, CustomFieldComponentAdapter::TYPE, FormComponentAdapter::TYPE, CrmPipelineComponentAdapter::TYPE, AutomationWorkflowComponentAdapter::TYPE], true),
             )),
         );
 

@@ -136,6 +136,67 @@ class ManagedTransportBillingTest extends TestCase
         $this->send($b, 'iso-2');
     }
 
+    public function test_with_billing_required_an_unpriced_meter_refuses_the_send_instead_of_sending_free(): void
+    {
+        config(['messaging.require_paid_billing' => true]);
+        [$business] = $this->managedBusiness();
+        $this->fundWallet($business, 1_000_000);
+
+        try {
+            $this->send($business, 'free-1');
+            $this->fail('An unpriced meter must not send for free.');
+        } catch (MessagingInsufficientFundsException $e) {
+            $this->assertSame('messaging_billing_not_configured', $e->denialReason);
+        }
+
+        $this->assertSame(0, $this->fakeAdapter->sentCount());
+        $this->assertSame(0, DB::table(ManagedMessageDispatcher::TABLE)->where('operation_key', 'free-1')->count());
+        $this->assertSame('1000000', $this->balance($business));
+    }
+
+    public function test_with_billing_required_a_priced_base_but_unpriced_surcharge_meter_still_refuses(): void
+    {
+        config(['messaging.require_paid_billing' => true]);
+        [$business] = $this->managedBusiness();
+        $this->fundWallet($business, 1_000_000);
+        $this->priceTransport(); // the SMS base only
+
+        $this->expectException(MessagingInsufficientFundsException::class);
+
+        try {
+            $this->send($business, 'free-2');
+        } finally {
+            $this->assertSame(0, $this->fakeAdapter->sentCount());
+            $this->assertSame(0, DB::table('business_usage_reservations')->count());
+        }
+    }
+
+    public function test_with_billing_required_and_both_meters_priced_the_send_is_charged_base_plus_surcharge_estimate(): void
+    {
+        config(['messaging.require_paid_billing' => true, 'messaging.estimated_carrier_surcharge_micro' => 5000]);
+        [$business] = $this->managedBusiness();
+        $this->fundWallet($business, 1_000_000);
+        $this->priceTransport();
+        $this->priceSurcharge();
+
+        $this->assertTrue($this->send($business, 'paid-1')->accepted);
+        $this->assertSame((string) (1_000_000 - self::RATE_MICRO - 5000), $this->balance($business));
+    }
+
+    private function priceSurcharge(): void
+    {
+        $key = \App\Library\Messaging\MessageMeters::SURCHARGE;
+        $currencyId = Currency::query()->first()->id;
+        $actorId = User::query()->where('is_admin', true)->value('id');
+        $manager = app(UsageWalletManager::class);
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => $key, 'feature_key' => PlatformFeature::MessagingTransport->value, 'business_id' => null,
+            'currency_id' => $currencyId, 'description' => 'Fixture.', 'updated_by_user_id' => $actorId,
+        ]);
+        $manager->setActiveRate($key, '1000000', '1000000', 'per 1.00', $currencyId, $actorId, 'Fixture.');
+        $manager->activateMetering($key, $actorId, 'Fixture.');
+    }
+
     private function send(Business $business, string $key, string $quantity = '1')
     {
         return app(ManagedMessageDispatcher::class)->dispatch($business, '+14155559400', 'billing fixture', $key, [], $quantity);
@@ -166,7 +227,7 @@ class ManagedTransportBillingTest extends TestCase
     /** What the platform owner does with the existing rate tooling: a meter, a rate, then metering on. */
     private function priceTransport(): void
     {
-        $key = PlatformFeature::MessagingTransport->value;
+        $key = \App\Library\Messaging\MessageMeters::SMS_OUTBOUND;
         $currencyId = Currency::query()->first()->id;
         $actorId = User::create([
             'first_name' => 'Test', 'last_name' => 'Actor', 'email' => 'actor' . uniqid() . '@example.test',
@@ -175,7 +236,7 @@ class ManagedTransportBillingTest extends TestCase
 
         $manager = app(UsageWalletManager::class);
         app(UsageMeterRepository::class)->create([
-            'meter_key' => $key, 'feature_key' => $key, 'business_id' => null,
+            'meter_key' => $key, 'feature_key' => PlatformFeature::MessagingTransport->value, 'business_id' => null,
             'currency_id' => $currencyId, 'description' => 'Managed messaging transport (per segment).', 'updated_by_user_id' => $actorId,
         ]);
         $manager->setActiveRate($key, (string) self::RATE_MICRO, '5000', 'per segment', $currencyId, $actorId, 'Fixture.');

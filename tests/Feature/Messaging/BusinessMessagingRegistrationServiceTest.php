@@ -44,6 +44,20 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         return $fake;
     }
 
+    /** Drives both 10DLC stages (toll-free is a single stage): brand, verification refresh, authorized campaign. */
+    private function submitFully(\App\Models\BusinessMessagingRegistration $registration): \App\Models\BusinessMessagingRegistration
+    {
+        $registration = $this->service()->submit($registration);
+
+        if ($registration->number_type !== \App\Enums\Messaging\PhoneNumberType::Local || $registration->status !== MessagingRegistrationStatus::NotStarted) {
+            return $registration;
+        }
+
+        $registration = $this->service()->refreshBrand($registration);
+
+        return $this->service()->submit($registration, true);
+    }
+
     private function service(): BusinessMessagingRegistrationService
     {
         return app(BusinessMessagingRegistrationService::class);
@@ -69,7 +83,8 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
             'sample_message_1' => 'Harbor Lane: your appointment is confirmed for Tuesday. Reply STOP to unsubscribe.',
             'sample_message_2' => 'Harbor Lane: reminder, your appointment is tomorrow at 2pm.',
             'privacy_policy_url' => 'https://harborlane.example/privacy',
-            'terms_url' => 'https://harborlane.example/terms',
+            'terms_url' => 'https://harborlane.example/terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ], $overrides);
     }
 
@@ -132,9 +147,11 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $business = $this->makeBusiness();
         $registration = $this->service()->captureDetails($business, $this->payload());
 
-        $submitted = $this->service()->submit($registration);
+        $submitted = $this->submitFully($registration);
 
-        $this->assertCount(1, $fake->submittedRegistrations);
+        // One request per stage: the business brand first, then the authorized campaign.
+        $this->assertCount(2, $fake->submittedRegistrations);
+        $this->assertSame(['brand', 'campaign'], array_map(fn ($r) => $r->phase, $fake->submittedRegistrations));
         $this->assertSame('Harbor Lane Studios LLC', $fake->submittedRegistrations[0]->legalBusinessName);
         $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->status);
         $this->assertNotNull($submitted->provider_brand_id);
@@ -152,6 +169,113 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
      * the Business's own primary number, never leave it null when one
      * genuinely exists.
      */
+    public function test_retrying_an_already_submitted_registration_is_refused_without_a_second_provider_call(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+
+        $submitted = $this->submitFully($registration);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected MessagingRegistrationAlreadySubmittedException.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException) {
+            // expected
+        }
+
+        $this->assertCount(2, $fake->submittedRegistrations);
+        $this->assertSame($submitted->provider_brand_id, $registration->fresh()->provider_brand_id);
+    }
+
+    public function test_a_pending_registration_cannot_be_edited_back_into_a_resubmittable_state(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $submitted = $this->submitFully($this->service()->captureDetails($business, $this->payload()));
+
+        $this->expectException(MessagingRegistrationImmutableException::class);
+
+        try {
+            $this->service()->captureDetails($business, $this->payload(['legal_business_name' => 'Other LLC']));
+        } finally {
+            $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->fresh()->status);
+        }
+    }
+
+    public function test_editing_after_a_rejection_clears_the_stale_campaign_but_never_the_saved_brand(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_old', 'provider_campaign_id' => 'camp_old']);
+
+        $edited = $this->service()->captureDetails($business, $this->payload());
+
+        $this->assertSame('brand_old', $edited->provider_brand_id);
+        $this->assertNull($edited->provider_campaign_id);
+    }
+
+    public function test_submitting_a_rejected_registration_without_edits_starts_a_fresh_submission(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+        $registration->update(['status' => 'rejected', 'provider_brand_id' => 'brand_old', 'provider_campaign_id' => 'camp_old']);
+
+        // The saved brand is reconciled with the carrier (verified) and reused; only the campaign is redone.
+        $submitted = $this->service()->submit($registration, true);
+
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertSame('campaign', $fake->submittedRegistrations[0]->phase);
+        $this->assertSame('brand_old', $fake->submittedRegistrations[0]->existingBrandId);
+        $this->assertNull($fake->submittedRegistrations[0]->existingCampaignId);
+        $this->assertSame('brand_old', $submitted->provider_brand_id);
+        $this->assertSame(MessagingRegistrationStatus::Pending, $submitted->status);
+    }
+
+    public function test_a_saved_campaign_cannot_be_edited_into_a_different_submission(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['provider_brand_id' => 'brand_1', 'provider_campaign_id' => 'camp_1']);
+
+        try {
+            $this->service()->captureDetails($business, $this->payload(['sample_message_1' => 'Harbor Lane: a brand new sample. Reply STOP to unsubscribe.']));
+            $this->fail('Expected refusal.');
+        } catch (MessagingRegistrationImmutableException) {
+            // expected
+        }
+
+        $fresh = $registration->fresh();
+        $this->assertSame('camp_1', $fresh->provider_campaign_id);
+        $this->assertNotSame('Harbor Lane: a brand new sample. Reply STOP to unsubscribe.', $fresh->sample_message_1);
+    }
+
+    public function test_a_second_worker_cannot_submit_while_the_shared_lock_is_held(): void
+    {
+        if (\Illuminate\Support\Facades\DB::connection()->getDriverName() !== 'mysql') {
+            $this->markTestSkipped('The shared submit lock is a MySQL session lock.');
+        }
+
+        $fake = $this->bindFakeProvisioningAdapter();
+        $registration = $this->service()->captureDetails($this->makeBusiness(), $this->payload());
+
+        $config = config('database.connections.' . config('database.default'));
+        $other = new \PDO(sprintf('mysql:host=%s;port=%s;dbname=%s', $config['host'], $config['port'], $config['database']), $config['username'], $config['password']);
+        $held = $other->query("SELECT GET_LOCK('msgreg-submit:" . $registration->id . "', 0)")->fetchColumn();
+        $this->assertSame(1, (int) $held);
+
+        try {
+            $this->service()->submit($registration);
+            $this->fail('Expected refusal while the lock is held.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationAlreadySubmittedException) {
+            // expected
+        } finally {
+            $other->query("SELECT RELEASE_LOCK('msgreg-submit:" . $registration->id . "')");
+        }
+
+        $this->assertCount(0, $fake->submittedRegistrations);
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $registration->fresh()->status);
+    }
+
     public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();
@@ -176,7 +300,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $business = $this->makeBusiness();
         $registration = $this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free']));
 
-        $submitted = $this->service()->submit($registration);
+        $submitted = $this->submitFully($registration);
 
         $this->assertNull($submitted->provider_brand_id);
         $this->assertNull($submitted->provider_campaign_id);
@@ -189,7 +313,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $business = $this->makeBusiness();
         $registration = $this->service()->captureDetails($business, $this->payload(['number_type' => 'local']));
 
-        $submitted = $this->service()->submit($registration);
+        $submitted = $this->submitFully($registration);
 
         $this->assertNotNull($submitted->provider_brand_id);
         $this->assertNotNull($submitted->provider_campaign_id);
@@ -220,7 +344,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
     {
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
-        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+        $registration = $this->submitFully($this->service()->captureDetails($business, $this->payload()));
         $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
 
         $refreshed = $this->service()->refreshStatus($registration);
@@ -234,7 +358,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
     {
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
-        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+        $registration = $this->submitFully($this->service()->captureDetails($business, $this->payload()));
         $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Rejected);
 
         $refreshed = $this->service()->refreshStatus($registration);
@@ -254,7 +378,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
     {
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
-        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+        $registration = $this->submitFully($this->service()->captureDetails($business, $this->payload()));
         $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Rejected, 'Sample message missing required opt-out language.');
 
         $refreshed = $this->service()->refreshStatus($registration);
@@ -277,7 +401,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
     {
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
-        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+        $registration = $this->submitFully($this->service()->captureDetails($business, $this->payload()));
         config(['messaging.managed_messaging_enabled' => false]);
 
         $refreshed = $this->service()->refreshStatus($registration);
@@ -289,7 +413,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
     {
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
-        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free'])));
+        $registration = $this->submitFully($this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free'])));
         $this->assertNotNull($registration->provider_registration_id);
         $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
 
@@ -308,8 +432,8 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $fake = $this->bindFakeProvisioningAdapter();
         $businessA = $this->makeBusiness();
         $businessB = $this->makeBusiness();
-        $registrationA = $this->service()->submit($this->service()->captureDetails($businessA, $this->payload()));
-        $registrationB = $this->service()->submit($this->service()->captureDetails($businessB, $this->payload(['number_type' => 'toll_free'])));
+        $registrationA = $this->submitFully($this->service()->captureDetails($businessA, $this->payload()));
+        $registrationB = $this->submitFully($this->service()->captureDetails($businessB, $this->payload(['number_type' => 'toll_free'])));
         $fake->scriptRegistrationStatus($registrationA, MessagingRegistrationStatus::Approved);
         $fake->scriptRegistrationStatus($registrationB, MessagingRegistrationStatus::Rejected);
 
@@ -417,11 +541,11 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertSame('No fee is currently configured for business verification in this environment.', $disclosure);
     }
 
-    public function test_charge_disclosure_for_toll_free_states_no_fee_configured_when_no_rate_exists(): void
+    public function test_charge_disclosure_for_toll_free_states_verification_is_free_but_number_and_usage_are_charged(): void
     {
         $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
 
-        $this->assertSame('No fee is currently configured for business verification in this environment.', $disclosure);
+        $this->assertSame('Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.', $disclosure);
     }
 
     public function test_charge_disclosure_for_local_shows_the_real_configured_rate_never_an_invented_one(): void
@@ -435,27 +559,13 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertStringNotContainsString('No fee is currently configured', $disclosure);
     }
 
-    public function test_charge_disclosure_for_toll_free_shows_the_real_configured_rate_never_an_invented_one(): void
-    {
-        $this->configureRateFor(TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION, '1500000', 'verification');
-
-        $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
-
-        $this->assertStringContainsString('USD 1.50', $disclosure);
-        $this->assertStringContainsString('per verification', $disclosure);
-        $this->assertStringNotContainsString('No fee is currently configured', $disclosure);
-    }
-
-    /**
-     * The two feature keys are genuinely distinct meters — configuring one
-     * regime's rate must never leak into the other's disclosure.
-     */
     public function test_charge_disclosure_keeps_local_and_toll_free_rates_independent(): void
     {
         $this->configureRateFor(TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, '2500000', 'registration');
 
         $tollFreeDisclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
 
-        $this->assertSame('No fee is currently configured for business verification in this environment.', $tollFreeDisclosure);
+        $this->assertStringNotContainsString('2.50', $tollFreeDisclosure);
+        $this->assertStringContainsString('$0', $tollFreeDisclosure);
     }
 }
