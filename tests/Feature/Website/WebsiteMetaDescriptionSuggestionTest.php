@@ -73,7 +73,8 @@ class WebsiteMetaDescriptionSuggestionTest extends TestCase
         $this->authenticateAsCustomer($customer, ['view_seo']);
         $this->ai(json_encode(['description' => self::GOOD]), false, 0);
 
-        $this->suggest($workspace, $business, $page)->assertForbidden();
+        // Customer permission middleware returns 401 for a missing module permission (as in WebsiteChoiceScreenTest).
+        $this->suggest($workspace, $business, $page)->assertUnauthorized();
     }
 
     public function test_a_core_plan_without_the_seo_module_gets_no_suggestion(): void
