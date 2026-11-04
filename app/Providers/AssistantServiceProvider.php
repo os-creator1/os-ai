@@ -28,11 +28,13 @@ class AssistantServiceProvider extends ServiceProvider
                 $app->make(Tools\AutomationsStatusTool::class),
                 $app->make(Tools\ContactSearchTool::class),
                 $app->make(Tools\OpenPageTool::class),
+                $app->make(Tools\RevenuePipelineTool::class),
             ],
             [
                 $app->make(Tools\CreateBookingTypeTool::class),
                 $app->make(Tools\CreateAppointmentTool::class),
                 $app->make(Tools\DraftReplyTool::class),
+                $app->make(Tools\AdvanceDealTool::class),
                 $app->make(Tools\PrepareAutomationTool::class),
             ],
         ));

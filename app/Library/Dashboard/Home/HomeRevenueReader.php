@@ -29,6 +29,15 @@ final class HomeRevenueReader
 {
     public const MAX_ROWS = 5;
 
+    /** Candidates classified before ranking; bounds the work however many open deals exist. */
+    public const MAX_CANDIDATES = 50;
+
+    /**
+     * DETERMINISTIC PRIORITY: the further a deal has really got, the sooner the owner is asked. Money the owner can act on
+     * first, then stalled paper, then deals with nothing attached. Ties keep most-recently-updated first.
+     */
+    public const PRIORITY = ['paid' => 1, 'signed' => 2, 'proposal_sent' => 3, 'proposal_expired' => 4, 'proposal_draft' => 5, 'new' => 6, 'booked' => 7];
+
     public function __construct(private readonly CrmLocationScope $scope)
     {
     }
@@ -36,7 +45,7 @@ final class HomeRevenueReader
     /**
      * @return array{openCount: int, rows: list<array{opportunityId: int, opportunityUid: string, title: string, valueMinor: ?int, currency: ?string, state: string, stateLabel: string, nextStep: string}>}
      */
-    public function read(Business $business, int $actorUserId, ?CarbonImmutable $now = null): array
+    public function read(Business $business, int $actorUserId, ?CarbonImmutable $now = null, int $limit = self::MAX_ROWS): array
     {
         $now ??= CarbonImmutable::now();
 
@@ -46,10 +55,10 @@ final class HomeRevenueReader
         );
 
         $openCount = $base()->count();
-        $opportunities = $base()->orderByDesc('updated_at')->limit(self::MAX_ROWS)->get();
+        $opportunities = $base()->orderByDesc('updated_at')->limit(self::MAX_CANDIDATES)->get();
 
         if ($opportunities->isEmpty()) {
-            return ['openCount' => $openCount, 'rows' => []];
+            return ['openCount' => $openCount, 'counts' => [], 'rows' => []];
         }
 
         $ids = $opportunities->pluck('id')->all();
@@ -85,11 +94,15 @@ final class HomeRevenueReader
                 'currency' => $opportunity->currency_code,
                 'state' => $state,
                 'stateLabel' => $label,
+                'priority' => self::PRIORITY[$state],
                 'nextStep' => $next,
             ];
         }
 
-        return ['openCount' => $openCount, 'rows' => $rows];
+        // Stable sort: PHP 8 keeps the updated-at order among equal priorities.
+        usort($rows, fn (array $a, array $b): int => self::PRIORITY[$a['state']] <=> self::PRIORITY[$b['state']]);
+
+        return ['openCount' => $openCount, 'counts' => array_count_values(array_column($rows, 'state')), 'rows' => array_slice($rows, 0, max(1, $limit))];
     }
 
     /** @return array{0: string, 1: string, 2: string} */

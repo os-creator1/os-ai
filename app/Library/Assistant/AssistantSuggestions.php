@@ -22,6 +22,7 @@ final class AssistantSuggestions
             ['key' => 'how_doing', 'label' => 'How is my business doing this month?', 'needs' => 'business_snapshot'],
             ['key' => 'focus_next', 'label' => 'What should I focus on next?', 'needs' => 'growth_recommendations'],
             ['key' => 'seo_improved', 'label' => 'Which keywords improved recently?', 'needs' => 'seo_status'],
+            ['key' => 'deals_need_me', 'label' => 'Which deals need me right now?', 'needs' => 'revenue_pipeline'],
             ['key' => 'unreplied', 'label' => "Show customers who haven't received a reply", 'needs' => 'unanswered_conversations'],
             ['key' => 'ads_help', 'label' => "Why aren't my ads performing well?", 'needs' => 'ads_status'],
             ['key' => 'upcoming', 'label' => 'Show upcoming appointments', 'needs' => 'schedule'],
