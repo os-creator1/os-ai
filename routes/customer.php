@@ -2240,6 +2240,7 @@
             Route::post('/pages/allow-indexing', 'Business\WebsiteController@allowIndexing')->name('pages.allowIndexing');
             Route::get('/pages/{pageUid}/edit', 'Business\WebsiteController@editPage')->name('pages.edit');
             Route::put('/pages/{pageUid}', 'Business\WebsiteController@updatePage')->name('pages.update');
+            Route::post('/pages/{pageUid}/suggest-description', 'Business\WebsiteController@suggestDescription')->middleware('throttle:10,1')->name('pages.suggestDescription');
             Route::delete('/pages/{pageUid}', 'Business\WebsiteController@destroyPage')->name('pages.destroy');
 
             Route::get('/preview/{pageUid?}', 'Business\WebsiteController@preview')->name('preview');

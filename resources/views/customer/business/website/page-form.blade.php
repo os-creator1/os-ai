@@ -168,6 +168,18 @@
                         <label class="form-label" for="meta_description">Meta description</label>
                         <textarea class="form-control" rows="3" id="meta_description" name="meta_description">{{ old('meta_description', $page->meta_description ?? '') }}</textarea>
                         <div class="d-flex justify-content-between mg-muted mt-1"><span>Shown under the title in results</span><span id="meta-count">0 / 160</span></div>
+                        @if(isset($page->uid) && ($canSuggestDescription ?? false))
+                            <div class="mt-1" data-role="suggest-description">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="suggest-desc-btn" data-url="{{ route('customer.workspaces.businesses.website.pages.suggestDescription', [$workspaceUid, $businessUid, $page->uid]) }}">Suggest description</button>
+                                <div id="suggest-desc-panel" class="mt-1" hidden role="status">
+                                    <p class="mg-muted mb-1" id="suggest-desc-text"></p>
+                                    <button type="button" class="btn btn-sm btn-primary" id="suggest-desc-use">Use this</button>
+                                    <button type="button" class="btn btn-sm btn-link" id="suggest-desc-dismiss">Dismiss</button>
+                                    <span class="mg-muted ms-1">Not saved until you save the page.</span>
+                                </div>
+                                <p class="mg-muted mb-0" id="suggest-desc-error" hidden role="alert"></p>
+                            </div>
+                        @endif
                     </div>
                     <div class="mg-toggle-row">
                         <div>
@@ -481,6 +493,28 @@
     var seoTitleEl = document.getElementById('seo_title');
     var metaEl = document.getElementById('meta_description');
     var urlEl = document.getElementById('serp-url');
+
+    // Suggest description: owner-initiated; fills the field only after "Use this" (and a confirm when it would replace text). Nothing is saved or published here.
+    var suggestBtn = document.getElementById('suggest-desc-btn');
+    if (suggestBtn) {
+        var sPanel = document.getElementById('suggest-desc-panel'), sText = document.getElementById('suggest-desc-text'), sErr = document.getElementById('suggest-desc-error'), proposed = '';
+        suggestBtn.addEventListener('click', function () {
+            suggestBtn.disabled = true; sErr.hidden = true; sPanel.hidden = true;
+            fetch(suggestBtn.dataset.url, { method: 'POST', headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 'Accept': 'application/json' } })
+                .then(function (r) { return r.json().catch(function () { return {}; }); })
+                .then(function (d) {
+                    if (d && d.ok && d.description) { proposed = d.description; sText.textContent = proposed; sPanel.hidden = false; }
+                    else { sErr.textContent = (d && d.message) || 'A suggestion is not available right now.'; sErr.hidden = false; }
+                })
+                .catch(function () { sErr.textContent = 'A suggestion is not available right now.'; sErr.hidden = false; })
+                .then(function () { suggestBtn.disabled = false; });
+        });
+        document.getElementById('suggest-desc-dismiss').addEventListener('click', function () { sPanel.hidden = true; });
+        document.getElementById('suggest-desc-use').addEventListener('click', function () {
+            if (metaEl.value.trim() !== '' && !window.confirm('Replace the current description with this suggestion?')) { return; }
+            metaEl.value = proposed; metaEl.dispatchEvent(new Event('input', { bubbles: true })); sPanel.hidden = true;
+        });
+    }
 
     function slugify(v) {
         return v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
