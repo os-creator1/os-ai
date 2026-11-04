@@ -107,6 +107,17 @@ class WebsiteMetaDescriptionSuggestionTest extends TestCase
         $this->suggest($workspace, $business, $page)->assertStatus(422)->assertJson(['ok' => false]);
     }
 
+    public function test_a_year_cannot_ground_an_unrelated_shorter_price(): void
+    {
+        [$customer, $business, $workspace, $page] = $this->growthTenant();
+        $page->update(['title' => 'Photo Booth Rentals Since 1998']);
+        $this->authenticateAsCustomer($customer);
+        $this->ai(json_encode(['description' => 'Photo booth rentals from $19 for every celebration, with flexible event coverage and easy online booking for your date.']));
+
+        $this->suggest($workspace, $business, $page)->assertStatus(422)->assertJson(['ok' => false]);
+        $this->assertNull($page->fresh()->meta_description);
+    }
+
     public function test_another_businesss_page_is_not_found(): void
     {
         [$customer, $business, $workspace] = $this->growthTenant();
