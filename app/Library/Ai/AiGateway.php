@@ -62,7 +62,6 @@ final class AiGateway
                 'business_id' => $request->business?->id,
                 'ledger_entry_id' => $entry?->id,
                 'ledger_uid' => $entry?->uid,
-                'idempotency_key' => $request->idempotencyKey,
             ];
 
             if ($result->ok) {
