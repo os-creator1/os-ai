@@ -181,6 +181,8 @@ final class HomeCommandCenter
         if ($primary !== null && $primary['key'] === AttentionType::ConversationsAwaitingReply->value) {
             $primary['metric'] = $this->waitingMetric($bands);
             $primary['aiAction'] = $this->assistantSuggestions->draftReplies($offering);
+        } elseif ($primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY) {
+            $primary['aiAction'] = $this->assistantSuggestions->explainRecommendation($offering);
         }
 
         $model = [

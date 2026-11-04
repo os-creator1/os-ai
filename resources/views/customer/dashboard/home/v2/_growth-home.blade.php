@@ -57,6 +57,9 @@
                     @if($needs['primary'] !== null)
                         <div class="hv2-needs__actions">
                             <a class="btn btn-primary hv2-btn" href="{{ $needs['primary']['url'] }}" data-role="next-best-move-action">{{ $needs['primary']['label'] }} <span aria-hidden="true">→</span></a>
+                            @if(($needs['ai'] ?? null) !== null)
+                                <button type="button" class="btn btn-outline-secondary hv2-btn" data-role="needs-ai" data-ask-prompt="{{ $needs['ai']['prompt'] }}"><span class="hv2-spark" aria-hidden="true">✦</span> {{ $needs['ai']['label'] }}</button>
+                            @endif
                         </div>
                     @endif
                 </div>
