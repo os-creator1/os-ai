@@ -67,6 +67,15 @@
     </dd>
 </dl>
 
+@if (($firstMove ?? null) !== null && $missing === [])
+    <div class="border rounded p-2 mb-2" data-role="first-move">
+        @if ($firstMove['inPlace'] !== [])
+            <p class="mb-50"><strong>Already in place:</strong> {{ implode(' · ', $firstMove['inPlace']) }}</p>
+        @endif
+        <p class="mb-0" data-role="first-move-need"><strong>Biggest next step: {{ $firstMove['need']['title'] }}.</strong> <span class="text-muted">{{ $firstMove['need']['reason'] }}</span></p>
+    </div>
+@endif
+
 @if ($completed)
     <a class="btn btn-primary" href="{{ route('user.home') }}">Enter MotionGrove</a>
 @elseif ($missing === [])

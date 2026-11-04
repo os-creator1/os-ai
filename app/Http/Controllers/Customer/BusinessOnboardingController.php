@@ -80,6 +80,9 @@ class BusinessOnboardingController extends CustomerBaseController
                 array_filter(OnboardingStep::current(), fn (OnboardingStep $candidate) => $this->onboarding->resolveStep($onboarding, $candidate) === $candidate)
             ),
             'review' => $resolved === OnboardingStep::Finish ? $this->onboarding->review($onboarding) : null,
+            'firstMove' => $resolved === OnboardingStep::Finish && $onboarding->business_id !== null && ($business = \App\Models\Business::query()->find($onboarding->business_id)) !== null
+                ? app(\App\Library\Business\OnboardingFirstMove::class)->for($business, $this->onboarding->review($onboarding))
+                : null,
             'websiteChoice' => $resolved === OnboardingStep::Website ? $this->onboarding->websiteChoice($onboarding) : null,
             'managedWebsite' => $resolved === OnboardingStep::Website && $onboarding->business_id !== null
                 && \App\Models\Website::query()->where('business_id', $onboarding->business_id)->exists(),
