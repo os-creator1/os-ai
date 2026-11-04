@@ -239,6 +239,9 @@ class CalendarController extends Controller
             'contacts' => $this->schedule->searchBookableContacts($business, $location, $search),
             'prefillDate' => $this->anchorDate($request->query('date'), $timezone)->toDateString(),
             'prefillTime' => $this->validTime($request->query('time')) ?? '09:00',
+            // Revenue journey — booking FROM a deal: carried through to store(), which re-validates it.
+            'opportunityUid' => is_string($request->query('opportunity_uid')) ? substr($request->query('opportunity_uid'), 0, 64) : null,
+            'prefillContactUid' => is_string($request->query('contact_uid')) ? substr($request->query('contact_uid'), 0, 64) : null,
         ]);
     }
 
@@ -253,6 +256,7 @@ class CalendarController extends Controller
         $validated = $request->validate([
             'booking_type_uid' => ['required', 'string'],
             'contact_uid' => ['required', 'string'],
+            'opportunity_uid' => ['nullable', 'string', 'max:64'],
             'staff' => ['required', 'string'],
             'date' => ['required', 'date_format:Y-m-d'],
             'time' => ['required', 'date_format:H:i'],
@@ -273,13 +277,29 @@ class CalendarController extends Controller
 
         $contact = $this->schedule->findBookableContact($business, $location, $validated['contact_uid']) ?? abort(404);
 
+        // Revenue journey — a booking made from a deal is linked to it, so the CRM, Home and the booking trigger see the
+        // same Opportunity. The deal must belong to this Business, be open, sit at this Location and be THIS contact's:
+        // anything else is indistinguishable from "not there".
+        $opportunityId = null;
+
+        if (($validated['opportunity_uid'] ?? null) !== null && $validated['opportunity_uid'] !== '') {
+            $opportunity = \App\Models\CrmOpportunity::query()
+                ->where('business_id', $business->id)
+                ->where('uid', $validated['opportunity_uid'])
+                ->where('status', \App\Enums\Crm\CrmOpportunityStatus::Open->value)
+                ->where('contact_id', $contact->id)
+                ->where('location_id', $location->id)
+                ->first() ?? abort(404);
+            $opportunityId = (int) $opportunity->id;
+        }
+
         $startAt = $this->utcFromLocal($validated['date'], $validated['time'], $this->timezoneFor($business));
         $actorId = (int) Auth::id();
 
         try {
             $appointment = $validated['staff'] === 'auto'
-                ? $this->booking->bookWithRoundRobin($bookingType, (int) $contact->id, $startAt, $actorId, null, $meetingLocation)
-                : $this->booking->book($bookingType, $this->staffId($validated['staff']), (int) $contact->id, $startAt, $actorId, null, $meetingLocation);
+                ? $this->booking->bookWithRoundRobin($bookingType, (int) $contact->id, $startAt, $actorId, $opportunityId, $meetingLocation)
+                : $this->booking->book($bookingType, $this->staffId($validated['staff']), (int) $contact->id, $startAt, $actorId, $opportunityId, $meetingLocation);
         } catch (BookingRefusedException $refusal) {
             return $this->refused($refusal)->withInput();
         }

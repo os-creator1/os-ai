@@ -15,7 +15,7 @@
         // eligibility and availability and takes the locks (§7).
         $scope = [$workspace->uid, $business->uid, $location->uid];
         $staffName = static fn ($user) => trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: ($user->email ?? ('User #' . $user->id));
-        $selectedContact = old('contact_uid');
+        $selectedContact = old('contact_uid', $prefillContactUid ?? null);
     @endphp
 
     <a href="{{ route('customer.workspaces.businesses.calendar.schedule', $scope) }}?date={{ $prefillDate }}"
@@ -44,6 +44,8 @@
         <form method="GET" action="{{ route('customer.workspaces.businesses.calendar.appointments.create', $scope) }}" class="form-inline mb-1">
             <input type="hidden" name="date" value="{{ $prefillDate }}">
             <input type="hidden" name="time" value="{{ $prefillTime }}">
+            @if(!empty($opportunityUid))<input type="hidden" name="opportunity_uid" value="{{ $opportunityUid }}">@endif
+            @if(!empty($prefillContactUid))<input type="hidden" name="contact_uid" value="{{ $prefillContactUid }}">@endif
             <label class="sr-only" for="q">Search contacts</label>
             <input type="search" id="q" name="q" class="form-control mr-1" placeholder="Name or phone" value="{{ $search }}">
             <x-button type="submit" variant="secondary" icon="search">Search</x-button>
@@ -60,6 +62,9 @@
         @else
             <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.appointments.store', $scope) }}">
                 @csrf
+                @if(!empty($opportunityUid))
+                    <input type="hidden" name="opportunity_uid" value="{{ $opportunityUid }}">
+                @endif
 
                 <div class="form-group">
                     <label>Customer</label>

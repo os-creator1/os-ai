@@ -153,5 +153,52 @@
                 </x-card>
             </div>
         </div>
+
+        {{-- Revenue journey: offer a booking, send a proposal, see what is attached. Every action posts to the canonical
+             Calendar / Documents endpoints, which keep their own permission, entitlement and Location checks. --}}
+        <div class="row mt-1" data-role="crm-revenue">
+            <div class="col-12">
+                <x-card>
+                    <h2 class="h5 mb-1">Booking, proposal and payment</h2>
+                    @if ($opportunity->status === $Status::Open && $canManage && ($revenue['contactUid'] ?? null) && ($revenue['locationUid'] ?? null))
+                        <div class="d-flex flex-wrap gap-1 mb-1">
+                            <a class="btn btn-outline-primary" data-role="crm-offer-booking"
+                               href="{{ route('customer.workspaces.businesses.calendar.appointments.create', [$workspaceUid, $businessUid, $revenue['locationUid'], 'contact_uid' => $revenue['contactUid'], 'opportunity_uid' => $opportunity->uid]) }}">Book an appointment</a>
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.documents.store', [$workspaceUid, $businessUid]) }}" class="d-inline">
+                                @csrf
+                                <input type="hidden" name="contact_uid" value="{{ $revenue['contactUid'] }}">
+                                <input type="hidden" name="opportunity_uid" value="{{ $opportunity->uid }}">
+                                <input type="hidden" name="kind" value="proposal">
+                                <input type="hidden" name="via" value="editor">
+                                <input type="hidden" name="title" value="{{ \Illuminate\Support\Str::limit('Proposal: ' . $opportunity->title, 200, '') }}">
+                                <button type="submit" class="btn btn-outline-primary" data-role="crm-new-proposal">Create a proposal</button>
+                            </form>
+                        </div>
+                    @endif
+
+                    @if (($revenue['documents'] ?? collect())->isEmpty() && ($revenue['appointments'] ?? collect())->isEmpty())
+                        <p class="text-muted mb-0" data-role="crm-revenue-empty">No appointment or proposal is attached to this deal yet.</p>
+                    @else
+                        <ul class="list-unstyled mb-0" data-role="crm-revenue-list">
+                            @foreach ($revenue['documents'] as $doc)
+                                <li data-role="crm-revenue-document">
+                                    <a href="{{ route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $doc->uid]) }}">{{ $doc->title }}</a>
+                                    <span class="text-muted">· {{ ucfirst($doc->kind->value) }} · {{ ucfirst($doc->status->value) }}</span>
+                                    @if ($doc->status === \App\Enums\Documents\DocumentStatus::Paid && $opportunity->status === $Status::Open)
+                                        <span class="text-success">· Paid in full — mark the deal won above</span>
+                                    @endif
+                                </li>
+                            @endforeach
+                            @foreach ($revenue['appointments'] as $appt)
+                                <li data-role="crm-revenue-appointment">
+                                    Appointment · {{ \Carbon\Carbon::parse($appt->start_at)->format('M j, Y g:i A') }} UTC
+                                    <span class="text-muted">· {{ ucfirst(str_replace('_', ' ', $appt->status->value ?? $appt->status)) }}</span>
+                                </li>
+                            @endforeach
+                        </ul>
+                    @endif
+                </x-card>
+            </div>
+        </div>
     </section>
 @endsection

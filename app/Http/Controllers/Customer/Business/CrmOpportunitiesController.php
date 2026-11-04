@@ -150,7 +150,29 @@ class CrmOpportunitiesController extends CustomerBaseController
             'stages' => $pipeline->activeStages()->get(),
             'contact' => $opportunity->contact_id === null ? null : ($this->contacts->summaries($business, [(int) $opportunity->contact_id], (int) Auth::id())[(int) $opportunity->contact_id] ?? null),
             'history' => $opportunity->history()->with('actor:id,first_name,last_name')->limit(100)->get(),
+            'revenue' => $this->revenueLinks($business, $opportunity),
         ]);
+    }
+
+    /**
+     * Revenue journey — what is actually attached to this deal (its non-void documents and its appointments) and the
+     * contact/location uids the "offer a booking" and "send a proposal" steps need. Reads only; both steps post to the
+     * canonical Calendar and Documents endpoints, which keep their own authorization, entitlement and Location checks.
+     *
+     * @return array<string, mixed>
+     */
+    private function revenueLinks(\App\Models\Business $business, CrmOpportunity $opportunity): array
+    {
+        return [
+            'contactUid' => $opportunity->contact_id === null ? null : \App\Models\Contacts::query()->where('business_id', $business->id)->whereKey($opportunity->contact_id)->value('uid'),
+            'locationUid' => \App\Models\BusinessLocation::query()->where('business_id', $business->id)->whereKey($opportunity->location_id)->value('uid'),
+            'documents' => \App\Models\BusinessDocument::query()
+                ->where('business_id', $business->id)->where('crm_opportunity_id', $opportunity->id)
+                ->orderByDesc('id')->limit(10)->get(['uid', 'kind', 'status', 'title']),
+            'appointments' => \App\Models\Appointment::query()
+                ->where('crm_opportunity_id', $opportunity->id)
+                ->orderByDesc('start_at')->limit(10)->get(['uid', 'status', 'start_at', 'business_location_id']),
+        ];
     }
 
     public function update(Request $request, string $workspaceUid, string $businessUid, string $opportunityUid): RedirectResponse
