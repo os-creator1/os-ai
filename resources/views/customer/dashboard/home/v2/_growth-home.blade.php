@@ -16,7 +16,7 @@
         default => 'Setup is still in progress.',
     };
 @endphp
-<div class="hv2-layout" data-role="growth-home">
+<div class="hv2-layout gh-root" data-role="growth-home">
     <div class="hv2-main">
         <section class="hv2-section" aria-labelledby="gh-stand-title" data-role="growth-stand" data-status="{{ $g['standKey'] }}">
             <h2 class="hv2-label" id="gh-stand-title">Where you stand</h2>

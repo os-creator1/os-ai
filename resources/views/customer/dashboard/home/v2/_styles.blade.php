@@ -144,7 +144,7 @@
 
     /* Growth Home: a next-move card without a count tile uses the full width; long evidence and titles wrap instead of overflowing. */
     .hv2 .hv2-needs--single { grid-template-columns: minmax(0, 1fr); grid-template-areas: "text" "actions"; }
-    .hv2 [data-role="growth-home"] .hv2-needs__title, .hv2 [data-role="growth-home"] li, .hv2 .gh-evidence { overflow-wrap: anywhere; }
+    .hv2 .gh-root .hv2-needs__title, .hv2 .gh-root li, .hv2 .gh-evidence { overflow-wrap: anywhere; }
     .hv2 [data-role="whats-next-items"] li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem .75rem; }
     @media (max-width: 1199.98px) {
         .hv2 .hv2-layout, .hv2 .hv2-layout--setup { grid-template-columns: minmax(0, 1fr); }
@@ -153,7 +153,7 @@
         .hv2 .hv2-greeting__title { font-size: 1.375rem; }
         .hv2 .hv2-needs { grid-template-areas: "tile text" "actions actions"; }
         .hv2 .hv2-needs--single { grid-template-areas: "text" "actions"; }
-        .hv2 [data-role="growth-home"] .hv2-btn { min-height: 2.75rem; }
+        .hv2 .gh-root .hv2-btn { min-height: 2.75rem; }
         .hv2 .hv2-needs__actions { width: 100%; justify-content: stretch; }
         .hv2 .hv2-needs__actions .btn { flex: 1 1 100%; min-height: 2.75rem; }
         .hv2 .hv2-kpis { grid-template-columns: minmax(0, 1fr); }
