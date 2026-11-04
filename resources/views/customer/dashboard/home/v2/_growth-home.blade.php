@@ -3,7 +3,7 @@
     nothing and selects nothing: the next move is Needs-you's own, the "What's next" rows are the Growth band's existing queue, progress
     is the band's own score. Anything unreadable is said to be unknown, never shown as a result. CRM/Core never renders this file.
 
-    Order: Where you stand → Your next move → Your progress → MotionGrove is handling → Ask MotionGrove → What's next.
+    Order: Where you stand → Your next move → Your progress → MotionGrove is handling → Already set up → Results → Ask MotionGrove → What's next.
 --}}
 @php
     $g = $v2['growthHome'];
@@ -123,6 +123,18 @@
                 @endif
             </div>
         </section>
+
+        @if(($g['configured'] ?? []) !== [])
+        <section class="hv2-section" aria-labelledby="gh-config-title" data-role="growth-configured">
+            <h2 class="hv2-label" id="gh-config-title">Already set up</h2>
+            <ul class="hv2-card hv2-list" data-role="configured-items">
+                @foreach($g['configured'] as $item)<li data-role="configured-item"><span aria-hidden="true">✓</span> {{ $item['title'] }}</li>@endforeach
+            </ul>
+        </section>
+        @endif
+
+        {{-- Measured outcomes: the existing performance band, unchanged — real counts, a dash where nothing was collected. --}}
+        @include('customer.dashboard.home.v2._growth', ['dashboard' => $dashboard, 'growth' => $v2['growth']])
 
         {{-- A failed automation read is still visible on Growth Home; never silently hide a failed proof of all-clear. --}}
         @if($dashboard->failed(\App\Library\Dashboard\DashboardSnapshot::BAND_AUTOMATIONS))

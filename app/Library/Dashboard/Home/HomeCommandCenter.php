@@ -192,6 +192,11 @@ final class HomeCommandCenter
             // A billing exception is something that needs the customer even when no move or attention item carries it.
             'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, ($primary !== null ? 1 : 0) + count($attentionItems) + ($billingException ? 1 : 0)),
             'setup' => $state === self::STATE_SETUP ? $journey : null,
+            // Verified configuration only: the journey's own steps that are actually done. No percentage, no count-up.
+            'configured' => array_values(array_map(
+                fn (array $step): array => ['title' => (string) $step['title'], 'outcome' => (string) $step['outcome']],
+                array_filter($journey['steps'] ?? [], fn (array $step): bool => ($step['done'] ?? false) === true),
+            )),
             'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,

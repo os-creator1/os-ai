@@ -109,6 +109,7 @@ final class HomeV2Presenter
             'progress' => $hasProgress ? $progress : null,
             'secondary' => $needsYou['kind'] === 'unavailable' ? [] : array_slice($home['queue'] ?? [], 0, 2),
             'handling' => $home['handling'],
+            'configured' => $home['configured'] ?? [],
             'handlingFailed' => $recentFailed,
         ];
     }
