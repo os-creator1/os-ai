@@ -368,6 +368,54 @@ class ReconcileMessagingCostsTest extends TestCase
         $this->assertStringContainsString('wallet_shortfall', (string) DB::table('messaging_cost_reconciliations')->value('last_error'));
     }
 
+    public function test_pending_messages_are_prioritized_ahead_of_older_settled_rechecks(): void
+    {
+        [$business, $identity] = $this->business();
+        $this->outbound($business, $identity, 'already-matched');
+        $this->telnyx(['already-matched' => $this->record('sms', 'outbound', 1, '0.004', '0.0050')]);
+        $this->reconcile();
+        $this->assertSame('matched', DB::table('messaging_cost_reconciliations')->value('status'));
+
+        $this->outbound($business, $identity, 'new-pending');
+        $this->telnyx(['new-pending' => $this->record('sms', 'outbound', 1, '0.004', '0.0050')]);
+
+        $summary = app(MessageCostReconciler::class)->run(7, true, null, 1, 3);
+
+        $this->assertSame(1, $summary['examined']);
+        $this->assertSame('matched', DB::table('messaging_cost_reconciliations')->where('provider_message_id', 'new-pending')->value('status'));
+    }
+
+    public function test_inbound_recheck_keeps_the_original_charged_retail_rate_after_a_rate_change(): void
+    {
+        [$business, $identity] = $this->business();
+        $this->operation($business, $identity, 'inbound', 'sms', 'rate-before');
+        $this->telnyx(['rate-before' => $this->record('sms', 'inbound', 1, '0.004', '0.0030')]);
+        $this->reconcile();
+        $after = $this->balance($business);
+
+        app(UsageWalletManager::class)->setActiveRate(MessageMeters::SMS_INBOUND, '9999', '0', 'per unit', $this->currencyId, $this->admin->id, 'Changed rate after the message was billed.');
+        $this->reconcile(true, 3);
+
+        $this->assertSame($after, $this->balance($business), 'A later price change cannot retroactively reprice a billed message.');
+        $this->assertSame(10_470, (int) DB::table('messaging_cost_reconciliations')->value('expected_micro'));
+    }
+
+    public function test_zero_cost_provider_adjustment_refunds_existing_inbound_base_and_surcharge_once(): void
+    {
+        [$business, $identity] = $this->business();
+        $this->operation($business, $identity, 'inbound', 'sms', 'inbound-refund');
+        $this->telnyx(['inbound-refund' => $this->record('sms', 'inbound', 1, '0.004', '0.0030')]);
+        $this->reconcile();
+        $this->assertSame(self::FUNDS - 10_470, $this->balance($business));
+
+        $this->telnyx(['inbound-refund' => $this->record('sms', 'inbound', 1, '0', '0')]);
+        $this->reconcile(true, 3);
+        $this->reconcile(true, 3);
+
+        $this->assertSame(self::FUNDS, $this->balance($business), 'The retail base and carrier fee must both be refunded.');
+        $this->assertSame(0, (int) DB::table('messaging_cost_reconciliations')->value('expected_micro'));
+    }
+
     public function test_a_later_telnyx_billing_adjustment_is_settled_once_by_its_own_delta(): void
     {
         [$business, $identity] = $this->business();
