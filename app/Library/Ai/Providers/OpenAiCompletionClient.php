@@ -92,8 +92,39 @@ final class OpenAiCompletionClient implements AiCompletionClient
                 cachedInputTokens: $result->usage?->promptTokensDetails?->cachedTokens ?? 0,
                 finishReason: $result->choices[0]->finishReason,
             );
-        } catch (Throwable) {
-            return AiCompletionResult::failure();
+        } catch (Throwable $e) {
+            // Customer-facing behaviour is unchanged (a generic failure). Only a SAFE, allow-listed summary is kept for the
+            // gateway's diagnostic log: never the exception message, request, response body or headers.
+            return AiCompletionResult::failure(
+                errorClass: $e::class,
+                httpStatus: self::safeHttpStatus($e),
+                errorCode: self::safeProviderCode($e),
+            );
         }
+    }
+
+    private static function safeHttpStatus(Throwable $e): ?int
+    {
+        $status = null;
+
+        if ($e instanceof \OpenAI\Exceptions\ErrorException) {
+            $status = $e->getStatusCode();
+        } elseif ($e instanceof \GuzzleHttp\Exception\RequestException && $e->getResponse() !== null) {
+            $status = $e->getResponse()->getStatusCode();
+        }
+
+        return is_int($status) && $status >= 100 && $status <= 599 ? $status : null;
+    }
+
+    /** The provider's own short error code/type (for example `invalid_api_key`), accepted only in a strict identifier shape. */
+    private static function safeProviderCode(Throwable $e): ?string
+    {
+        if (! $e instanceof \OpenAI\Exceptions\ErrorException) {
+            return null;
+        }
+
+        $code = $e->getErrorCode() ?? $e->getErrorType();
+
+        return is_string($code) && preg_match('/^[A-Za-z0-9_.-]{1,64}$/', $code) === 1 ? $code : null;
     }
 }
