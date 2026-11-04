@@ -55,18 +55,22 @@ final class MessageCostReconciler
 
         $this->seed($days, $limit);
 
+        // Pending work must never be starved by repeatedly eligible settled rechecks.
         $rows = DB::table('messaging_cost_reconciliations')
-            ->where(function ($q) use ($recheckDays): void {
-                $q->where(function ($q): void {
-                    $q->whereIn('status', ['pending', 'open'])
-                        ->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()));
-                });
-
-                if ($recheckDays > 0) {
-                    $q->orWhere(fn ($q) => $q->whereIn('status', ['matched', 'settled'])->where('created_at', '>=', now()->subDays($recheckDays)));
-                }
-            })
+            ->whereIn('status', ['pending', 'open'])
+            ->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
             ->orderBy('id')->limit($limit)->get();
+
+        if ($recheckDays > 0 && $rows->count() < $limit) {
+            // Oldest last-checked first: finish()/applied() update updated_at, so a full settled queue rotates.
+            $rechecks = DB::table('messaging_cost_reconciliations')
+                ->whereIn('status', ['matched', 'settled'])
+                ->where('created_at', '>=', now()->subDays($recheckDays))
+                ->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
+                ->orderBy('updated_at')->orderBy('id')
+                ->limit($limit - $rows->count())->get();
+            $rows = $rows->concat($rechecks);
+        }
 
         foreach ($rows as $row) {
             $summary['examined']++;
@@ -87,13 +91,23 @@ final class MessageCostReconciler
     /** Registers every billable managed message not yet tracked. */
     private function seed(int $days, int $limit): void
     {
-        $operations = DB::table(ManagedMessageDispatcher::TABLE)
+        $operationsTable = ManagedMessageDispatcher::TABLE;
+        $operations = DB::table($operationsTable)
             ->where('transport_mode', 'managed')
             ->where('provider', 'telnyx')
             ->whereNotNull('provider_message_id')
-            ->where(function ($q): void {
-                $q->where(fn ($q) => $q->where('direction', 'outbound')->whereIn('status', ['accepted', 'delivered', 'failed']))
-                    ->orWhere(fn ($q) => $q->where('direction', 'inbound'));
+            ->where(function ($q) use ($operationsTable): void {
+                $q->where(function ($q) use ($operationsTable): void {
+                    $q->where('direction', 'outbound')
+                        ->whereIn('status', ['accepted', 'delivered', 'failed'])
+                        // Filter skipped/unmetered sends BEFORE LIMIT so they cannot starve later billable messages.
+                        ->whereExists(function ($reservation) use ($operationsTable): void {
+                            $reservation->select(DB::raw(1))
+                                ->from('business_usage_reservations as billing_reservations')
+                                ->where('billing_reservations.status', 'committed')
+                                ->whereRaw("billing_reservations.idempotency_key = CONCAT('msg_transport:', {$operationsTable}.business_id, ':', {$operationsTable}.operation_key)");
+                        });
+                })->orWhere('direction', 'inbound');
             })
             ->where('occurred_at', '>=', now()->subDays($days))
             ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('messaging_cost_reconciliations')->whereColumn('messaging_cost_reconciliations.operation_id', ManagedMessageDispatcher::TABLE . '.id'))
@@ -170,17 +184,28 @@ final class MessageCostReconciler
             $rate = (int) $reservation->retail_rate_micro;
             $billed = (int) $reservation->final_amount_micro + (int) ($surchargeReservation->final_amount_micro ?? 0);
         } else {
-            $active = $this->meters->findByMeterKey($meterKey);
-            $rateRow = $active?->active_rate_id !== null && $active->is_metered ? DB::table('business_usage_rates')->where('id', $active->active_rate_id)->first() : null;
+            $inboundKey = sprintf('msg_in:%d:%d', $business->id, $row->operation_id);
+            $charged = $this->committedReservation($inboundKey);
+            if ($charged !== null) {
+                // Once billed, the reservation's approved retail rate is immutable even when today's meter changes.
+                $rate = (int) $charged->retail_rate_micro;
+            } else {
+                $active = $this->meters->findByMeterKey($meterKey);
+                $rateRow = $active?->active_rate_id !== null && $active->is_metered ? DB::table('business_usage_rates')->where('id', $active->active_rate_id)->first() : null;
 
-            if ($rateRow === null) {
-                $this->incident($row, 'meter_unpriced', "The {$meterKey} meter has no active rate, so this inbound message cannot be billed.", $summary);
+                if ($rateRow === null) {
+                    $this->incident($row, 'meter_unpriced', "The {$meterKey} meter has no active rate, so this inbound message cannot be billed.", $summary);
 
-                return;
+                    return;
+                }
+
+                $rate = (int) $rateRow->retail_rate_micro;
             }
 
-            $rate = (int) $rateRow->retail_rate_micro;
-            $billed = $this->chargeInboundBase($business, $row, $meterKey, $parts);
+            // Report-only must never reserve/commit. Unpaid base plus surcharge is reported as prospective variance.
+            $billed = $apply
+                ? $this->chargeInboundBase($business, $row, $meterKey, $parts)
+                : (int) ($charged->final_amount_micro ?? 0);
 
             if ($billed === null) {
                 $this->retry($row, 'wallet_shortfall', 'The wallet could not cover the inbound message base charge.', $summary);
@@ -325,11 +350,17 @@ final class MessageCostReconciler
     /** Charges (once) the retail base of an inbound message; returns what that base charge amounts to, or null when the wallet refused. */
     private function chargeInboundBase(Business $business, object $row, string $meterKey, int $parts): ?int
     {
+        $key = sprintf('msg_in:%d:%d', $business->id, $row->operation_id);
+        // Even a later zero-cost adjustment must count the retail base already charged, so it can be refunded.
+        $charged = $this->committedReservation($key);
+        if ($charged !== null) {
+            return (int) $charged->final_amount_micro;
+        }
+
         if ($parts === 0) {
             return 0;
         }
 
-        $key = sprintf('msg_in:%d:%d', $business->id, $row->operation_id);
         $result = $this->wallet->reserve($business, $meterKey, $key, (string) $parts);
 
         if (! $result->granted || $result->reservationId === null) {
