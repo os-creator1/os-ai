@@ -17,7 +17,7 @@ use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
 use Tests\TestCase;
 
 /**
- * Account → Members → Add member identifies the person by EMAIL ADDRESS.
+ * Settings → Team → Invite a member identifies the person by EMAIL ADDRESS.
  *
  * A customer never types, sees or sends an internal User uid or numeric id.
  * Ordinary form mistakes return to the account page with a useful message;
@@ -30,7 +30,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
     use CreatesBusinessTestData;
     use CreatesWorkspaceTestData;
 
-    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they need an existing Business OS account, and can\'t already be on this account or be its owner.';
+    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they can\'t already be on this account or be its owner, and their MotionGrove account must be active.';
 
     // --- The customer form -------------------------------------------------
 
@@ -44,31 +44,34 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $this->assertStringContainsString('name="member_email"', $form);
         $this->assertStringContainsString('type="email"', $form);
         $this->assertStringContainsString('>Email address</label>', $form);
-        $this->assertStringContainsString('They need an existing MotionGrove account first.', $form);
+        $this->assertStringContainsString('Anyone can be invited', $form);
+        $this->assertStringNotContainsStringIgnoringCase('Business OS', $form);
         $this->assertStringNotContainsString('user_uid', $form);
         $this->assertStringNotContainsStringIgnoringCase('User UID', $form);
         $this->assertStringNotContainsString($customer->user->uid, $form, 'No opaque user uid is rendered in the form.');
     }
 
-    public function test_an_unknown_address_is_shown_back_inline_on_the_same_account_page(): void
+    public function test_an_unknown_address_is_invited_not_refused(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $this->from(route('customer.workspaces.team.show', $workspace->uid))
-            ->post(route('customer.workspaces.members.store', $workspace->uid), [
-                'member_email' => 'mila@example.test',
-                'role' => 'staff',
-                'business_access_scope' => 'all',
-            ])
-            ->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
+        $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'member_email' => 'mila@example.test',
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ])->assertRedirect(route('customer.workspaces.team.show', $workspace->uid))
+            ->assertSessionHas('flash_success', 'Invitation sent.')
+            ->assertSessionDoesntHaveErrors();
+
+        $this->assertSame(1, \App\Models\WorkspaceMemberInvitation::where('workspace_id', $workspace->id)->where('email', 'mila@example.test')->count());
+        $this->assertNull(User::where('email', 'mila@example.test')->first(), 'An invitation is not an account.');
+        \Illuminate\Support\Facades\Notification::assertSentOnDemand(\App\Notifications\Workspace\WorkspaceMemberInvitationNotification::class);
 
         $page = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk()->getContent();
-        $form = $this->membersForm($page);
-
-        $this->assertStringContainsString(e(self::MEMBER_CANNOT_BE_ADDED), $form, 'The message sits on the email field.');
-        $this->assertStringContainsString('value="mila@example.test"', $form, 'What the customer typed is kept.');
-        $this->assertStringNotContainsString('Page Not Found', $page);
+        $this->assertStringContainsString('Pending invitations', $page);
+        $this->assertStringContainsString('mila@example.test', $page);
     }
 
     // --- Adding by email -----------------------------------------------------
@@ -157,7 +160,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $this->assertSame(0, WorkspaceMembership::where('workspace_id', $workspace->id)->count());
     }
 
-    public function test_the_owner_an_existing_member_and_an_unknown_address_all_read_the_same(): void
+    public function test_the_owner_and_an_existing_member_read_the_same(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
@@ -165,7 +168,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $this->createMembership($workspace, $member, ['role' => WorkspaceMembershipRole::Staff, 'is_active' => true]);
 
         $outcomes = [];
-        foreach ([$customer->user->email, 'already@example.test', 'nobody@example.test'] as $address) {
+        foreach ([$customer->user->email, 'already@example.test'] as $address) {
             $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
                 'member_email' => $address,
                 'role' => 'admin',
@@ -318,6 +321,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
             'customer.workspaces.members.access',
             'customer.workspaces.members.deactivate',
             'customer.workspaces.members.reactivate',
+            'customer.workspaces.members.remove',
             'customer.workspaces.members.role',
             'customer.workspaces.members.store',
         ], $memberRoutes);

@@ -33,6 +33,8 @@ use Tests\TestCase;
  */
 class TextMessagingLocalVerificationSequenceTest extends TestCase
 {
+    use \Tests\Support\CompletesTenDlcStages;
+
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
@@ -65,10 +67,13 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
             'contact_phone' => '+15035550100',
             'use_case' => 'appointment_reminders',
             'opt_in_method' => 'Customers check a box on our booking form.',
+            'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
+            'consent_confirmations' => array_keys(\App\Library\Messaging\Registration\RegistrationTemplateCatalog::CONSENT_ITEMS),
             'sample_message_1' => 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.',
             'sample_message_2' => 'Harbor Lane: reminder, your appointment is tomorrow.',
             'privacy_policy_url' => 'https://harborlane.example/privacy',
-            'terms_url' => 'https://harborlane.example/terms',
+            'terms_url' => 'https://harborlane.example/terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ], $overrides);
     }
 
@@ -99,7 +104,7 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         $this->assertDatabaseCount('business_messaging_identities', 0);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration->refresh();
@@ -142,7 +147,7 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspace->uid, $business->uid]));
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
         $fpa->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
@@ -151,7 +156,10 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
         $response->assertOk();
         $response->assertSee('Business verified', false);
-        $response->assertSee('data-role="verified-banner"', false);
+        // Step 3 of the progress screen, on top of the existing authorized number picker.
+        $response->assertSee('data-role="registration-progress"', false);
+        $response->assertSee('Step 3 of 3');
+        $response->assertSee('data-role="choose-number" href="#choose-number"', false);
         $response->assertSee('Choose your local number');
     }
 
@@ -220,7 +228,7 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspace->uid, $business->uid]));
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
         $fpa->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
@@ -250,7 +258,11 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         // carrier enablement task is still only Requested.
         $notReadyYet = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
         $notReadyYet->assertOk();
-        $notReadyYet->assertDontSee('Ready');
+        // The tracker's fourth step is titled "Ready to text", so the word alone is not a claim: what must never
+        // appear is the Ready state (status chip, "Texting enabled") or that step marked complete.
+        $notReadyYet->assertDontSee('Texting enabled');
+        $notReadyYet->assertDontSee('data-role="ready-status"', false);
+        $this->assertDoesNotMatchRegularExpression('#pm-tracker__step is-done[^>]*>\s*<span[^>]*>[^<]*</span>\s*<span class="pm-tracker__text">\s*<span class="pm-tracker__title">Ready to text#', $notReadyYet->getContent());
         $notReadyYet->assertSee('+14155552002');
 
         // The same fail-closed check is enforced again at the actual
@@ -272,7 +284,7 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspace->uid, $business->uid]));
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
         $fpa->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
@@ -315,7 +327,7 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspace->uid, $business->uid]));
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
         $fpa->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
@@ -371,7 +383,7 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspace->uid, $business->uid]));
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
         $fpa->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Rejected, 'MNO_REJECTED: sample message did not include required opt-out language.');

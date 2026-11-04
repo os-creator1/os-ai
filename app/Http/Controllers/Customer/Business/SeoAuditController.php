@@ -6,10 +6,14 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Jobs\Seo\RunSeoAuditForRevision;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Seo\SeoAuditPageReader;
+use App\Library\Seo\SeoAuditRuleRegistry;
 use App\Library\Seo\SeoAuditRunner;
 use App\Library\Seo\SeoConfig;
 use App\Models\Business;
+use App\Models\Website;
+use App\Models\WebsitePage;
 use App\Models\Workspace;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -50,15 +54,18 @@ class SeoAuditController extends CustomerBaseController
 
     public function audit(string $workspaceUid, string $businessUid): View
     {
-        [, $business] = $this->resolveAuditTenancy($workspaceUid, $businessUid);
+        [$workspace, $business] = $this->resolveAuditTenancy($workspaceUid, $businessUid);
 
         $this->authorize('view_seo');
 
+        $auditPage = $this->reader->read($business);
+
         return view('customer.business.seo.audit', [
+            'draftFixes' => $this->draftFixes($workspace, $business, $workspaceUid, $businessUid, $auditPage->findings),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
-            'page' => $this->reader->read($business),
+            'page' => $auditPage,
             'canManage' => auth()->user()->can('manage_seo'),
         ]);
     }
@@ -139,5 +146,65 @@ class SeoAuditController extends CustomerBaseController
     protected function resolveAuditTenancy(string $workspaceUid, string $businessUid): array
     {
         return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::SeoModule->value);
+    }
+
+    /** Page-level findings the existing Website page editor can repair in the DRAFT. */
+    private const DRAFT_FIXABLE = [
+        SeoAuditRuleRegistry::SEO_TITLE_BLANK => 'seo_title',
+        SeoAuditRuleRegistry::META_DESCRIPTION_BLANK => 'meta_description',
+        SeoAuditRuleRegistry::META_DESCRIPTION_SHORT => 'meta_description',
+    ];
+
+    /**
+     * For each fixable finding, a link to the EXISTING Website draft page editor — and only when this actor may edit the website, the
+     * Business is entitled to Website, and the audited page still exists in this Business's draft. The draft is re-read so the link
+     * never claims a problem the draft has already fixed ("fixed" = the field is now non-blank in the draft; nothing is published).
+     * Nothing is written here: the owner edits and saves in the editor (the same authorized, locked draft update), then publishes themselves.
+     *
+     * @param  array<int, \App\Library\Seo\SeoAuditFindingView>  $findings
+     * @return array<int, array{url: string, label: string, draftFixed: bool}>  keyed by finding index
+     */
+    private function draftFixes(Workspace $workspace, Business $business, string $workspaceUid, string $businessUid, array $findings): array
+    {
+        $uids = [];
+
+        foreach ($findings as $finding) {
+            if ($finding->pageUid !== null && isset(self::DRAFT_FIXABLE[$finding->ruleKey])) {
+                $uids[] = $finding->pageUid;
+            }
+        }
+
+        if ($uids === []
+            || ! Auth::user()->can('website')
+            || ! app(EntitlementManager::class)->decide($workspace, $business, PlatformFeature::WebsiteGeneration->value, (int) Auth::id())->allowed) {
+            return [];
+        }
+
+        $draft = WebsitePage::query()
+            ->whereIn('website_id', Website::query()->where('business_id', $business->id)->select('id'))
+            ->whereIn('uid', array_unique($uids))
+            ->get()->keyBy('uid');
+
+        $fixes = [];
+
+        foreach ($findings as $i => $finding) {
+            $field = self::DRAFT_FIXABLE[$finding->ruleKey] ?? null;
+            $page = $finding->pageUid === null ? null : $draft->get($finding->pageUid);
+
+            if ($field === null || $page === null) {
+                continue;
+            }
+
+            // Only a blank field is provably fixed by a non-blank draft value; a "too short" description is never claimed fixed.
+            $fixed = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) $page->{$field}) !== '';
+
+            $fixes[$i] = [
+                'url' => route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid]) . '#' . $field,
+                'label' => $field === 'seo_title' ? 'Set the page title in your draft' : 'Write the description in your draft',
+                'draftFixed' => $fixed,
+            ];
+        }
+
+        return $fixes;
     }
 }

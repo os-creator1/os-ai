@@ -378,6 +378,8 @@ class MergeFieldResolver
             'email' => $business->email,
             'phone' => $business->phone,
             'website' => $business->website_url,
+            'review_link' => \App\Library\Business\BusinessLinks::reviewLink($business),
+            'questionnaire_link' => \App\Library\Business\BusinessLinks::questionnaireLink($business),
             default => null,
         };
 

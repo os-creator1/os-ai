@@ -9,6 +9,7 @@ use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Website\Domains\DnsVerifier;
+use App\Enums\Website\WebsiteDomainCertificateStatus;
 use App\Library\Website\Domains\ForgeDomainProvisioner;
 use App\Library\Website\WebsiteAiGenerationClient;
 use App\Models\AppConfig;
@@ -245,7 +246,21 @@ trait CreatesWebsiteFixtures
     {
         $mock = \Mockery::mock(DnsVerifier::class);
         $mock->shouldReceive('hasTxtRecord')->andReturn($hasTxtRecord);
+        // Website domains use two records (A @ + a unique CNAME on www); $hasTxtRecord doubles as "DNS is correct".
+        $mock->shouldReceive('hasCnameTo')->andReturn($hasTxtRecord)->byDefault();
+        $mock->shouldReceive('hasARecord')->andReturn($hasTxtRecord)->byDefault();
         $this->app->instance(DnsVerifier::class, $mock);
+        config(['services.forge.a_record_ip' => '203.0.113.10', 'services.forge.cname_zone' => 'domains.example-platform.test']);
+
+        return $mock;
+    }
+
+    /** HTTPS reachability is never probed for real in tests. */
+    protected function fakeHttpsProbe(bool $serving = true): \Mockery\MockInterface
+    {
+        $mock = \Mockery::mock(\App\Library\Website\Domains\HttpsProbe::class);
+        $mock->shouldReceive('isServing')->andReturn($serving)->byDefault();
+        $this->app->instance(\App\Library\Website\Domains\HttpsProbe::class, $mock);
 
         return $mock;
     }
@@ -271,7 +286,11 @@ trait CreatesWebsiteFixtures
         // (rather than re-attaching) on any later call for the same row.
         $mock->shouldReceive('attachDomain')->andReturn('forge-domain-fixture-default')->byDefault();
         $mock->shouldReceive('detachDomain')->byDefault();
+        $mock->shouldReceive('isConfigured')->andReturn(true)->byDefault();
+        $mock->shouldReceive('requestCertificate')->andReturn('cert-fixture-default')->byDefault();
+        $mock->shouldReceive('certificateStatus')->andReturn(WebsiteDomainCertificateStatus::Active)->byDefault();
         $this->app->instance(ForgeDomainProvisioner::class, $mock);
+        $this->fakeHttpsProbe();
 
         return $mock;
     }

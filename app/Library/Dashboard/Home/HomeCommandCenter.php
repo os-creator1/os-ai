@@ -194,6 +194,10 @@ final class HomeCommandCenter
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
+            // The customer's PLAN (the context's already-resolved Workspace tier: Growth only; an Agency's own Business keeps the existing Home, while View-As resolves the frame to the client's own workspace and tier), never the presence of Growth data: it alone selects the Growth Home.
+            'growthPlan' => $context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth,
+            // Verified Growth score evidence for the Growth Home, straight from the Growth band (null = no band; score null = none recorded or not visible to this actor).
+            'growthProgress' => is_array($growth) ? ['score' => $growth['score'] ?? null, 'delta' => $growth['delta'] ?? null, 'days' => $growth['days'] ?? null, 'positives' => array_slice($growth['positives'] ?? [], 0, 3), 'url' => $growth['urls']['score'] ?? null] : null,
             'caughtUp' => $primary === null && ! $nbmFailed && ! $sourcesFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
@@ -215,6 +219,7 @@ final class HomeCommandCenter
             // null = the status read failed: UNKNOWN, never "not published".
             // Whether the Business HAS a usable website by the setup policy's own rule (published, or an external site that is configured):
             // true / false, or null when the status could not be read (unknown, never "missing").
+            'website' => $status === null || ! $status->known ? null : ['status' => $status->websiteStatus, 'domain' => $status->websiteActiveDomain],
             'websitePublished' => $status === null || ! $status->known ? null : $this->websiteUsable($business, $status),
             'actions' => $actions,
             'ask' => [
@@ -379,7 +384,8 @@ final class HomeCommandCenter
         $enriched = null;
 
         if ($kind === NextBestMove::KIND_OPPORTUNITY && is_array($growth)) {
-            foreach ($growth['items'] as $item) {
+            // A Growth-plan SEO candidate promoted from beyond the listed rows is enriched like any listed one.
+            foreach (array_merge($growth['items'], is_array($growth['promoted'] ?? null) ? [$growth['promoted']] : []) as $item) {
                 if (($move['subjectUid'] ?? null) === $item['uid']) {
                     $enriched = $item;
 
@@ -711,6 +717,7 @@ final class HomeCommandCenter
             'websiteMode' => $websiteMode,
             'hasCompletedExternalAudit' => $status->hasCompletedExternalAudit,
             'hasExternalWebsiteAddress' => filled($business->website_url),
+            'websiteActiveDomain' => $status->websiteActiveDomain,
             'hasLiveForm' => $status->hasLiveForm,
             'hasActiveWebsiteForm' => $status->hasActiveWebsiteForm,
             // Actor-scoped display detail only (never an input to readiness).

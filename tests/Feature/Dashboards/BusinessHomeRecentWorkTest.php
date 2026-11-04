@@ -305,10 +305,38 @@ class BusinessHomeRecentWorkTest extends TestCase
         $this->authenticateAs($customer, array_values(array_diff($this->allCustomerPermissions(), ['website', 'view_google_business_profile'])));
         $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'handling');
 
-        $this->assertStringContainsString('Your website is live', $band, 'The event happened either way (many versions are one concise outcome on Home).');
+        $this->assertStringContainsString('Your website is published on the MotionGrove preview', $band, 'The event happened either way (many versions are one concise outcome on Home).');
         $this->assertStringContainsString('Google connected', $band);
         $this->assertSame(2, substr_count($band, 'data-role="recent-work-text"'));
         $this->assertStringNotContainsString('data-role="recent-work-link"', $band);
+    }
+
+    public function test_see_activity_opens_this_businesss_website_and_the_status_wording_is_truthful(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Status Venue', 'Status Account');
+        $this->website($business, 'published');
+        $site = \Illuminate\Support\Facades\DB::table('websites')->where('business_id', $business->id)->first();
+        $this->websiteRevision($business, 1, $this->hoursAgo(1));
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $band = $this->bandHtml($html, 'handling');
+        $website = route('customer.workspaces.businesses.website.show', [$workspace->uid, $business->uid]);
+
+        $this->assertMatchesRegularExpression('/<a href="' . preg_quote($website, '/') . '"[^>]*data-role="handling-view-activity"/', $band, 'See activity opens the website page of this Business, not analytics.');
+        $this->assertStringNotContainsString('/analytics', substr($band, (int) strpos($band, 'handling-view-activity') - 200, 260));
+        $this->assertStringContainsString('Your website is published on the MotionGrove preview', $band);
+        $this->assertStringNotContainsString('Your website is live', $band);
+
+        // A domain that is not Active is not live.
+        \Illuminate\Support\Facades\DB::table('website_domains')->insert(['website_id' => $site->id, 'domain' => 'client.example', 'status' => 'pending_verification', 'created_at' => now(), 'updated_at' => now()]);
+        $this->assertStringNotContainsString('client.example', $this->bandHtml($this->home()->assertOk()->getContent(), 'handling'));
+
+        \Illuminate\Support\Facades\DB::table('website_domains')->where('domain', 'client.example')->update(['status' => 'active']);
+        $this->assertStringContainsString('Your website is live on client.example', $this->bandHtml($this->home()->assertOk()->getContent(), 'handling'));
+
+        \Illuminate\Support\Facades\DB::table('websites')->where('id', $site->id)->update(['status' => 'draft']);
+        $this->assertStringContainsString('Your website is a draft and not published yet', $this->bandHtml($this->home()->assertOk()->getContent(), 'handling'));
     }
 
     public function test_an_agency_opened_client_business_gets_its_own_work_and_nothing_of_the_portfolio(): void
@@ -358,7 +386,7 @@ class BusinessHomeRecentWorkTest extends TestCase
 
         $band = $this->bandText($this->home()->assertOk()->getContent(), 'handling');
 
-        $this->assertStringContainsString('Your website is live', $band);
+        $this->assertStringContainsString('Your website is published on the MotionGrove preview', $band);
         $this->assertDoesNotMatchRegularExpression('/\b(balance|payment|invoice|top.?up|prospect|campaign|outreach)\b/i', $band);
     }
 

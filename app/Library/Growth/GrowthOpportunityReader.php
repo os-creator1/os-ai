@@ -63,12 +63,23 @@ final class GrowthOpportunityReader
 
     private const CAP = 300;
 
+    public function __construct(private readonly GrowthOpportunityEligibility $eligibility)
+    {
+    }
+
     public function base(Business $business, GrowthViewer $viewer): Builder
     {
+        // Live plan entitlement: stored rows of a domain the plan no longer
+        // includes stay in history but are never listed, counted or opened.
+        $types = array_values(array_diff(
+            array_keys(GrowthRuleRegistry::all()),
+            $this->eligibility->ineligibleTypes($business),
+        ));
+
         $query = Opportunity::query()
             ->where('business_id', $business->id)
             ->whereIn('worker_key', GrowthRuleRegistry::workerKeys())
-            ->whereIn('type', array_keys(GrowthRuleRegistry::all()));
+            ->whereIn('type', $types === [] ? ['__none__'] : $types);
 
         if (! $viewer->fullAccess) {
             // Ad spend and cost figures are Business-wide money data: a Location-restricted actor never sees them.
@@ -149,6 +160,26 @@ final class GrowthOpportunityReader
             ->orderBy('id')
             ->limit($limit)
             ->get();
+    }
+
+    /**
+     * The first open row (same ACL / entitlement / freshness / open-state filters and the same ordering as top()) among the given rule types.
+     *
+     * @param  array<int, string>  $types
+     */
+    public function topOfTypes(Business $business, GrowthViewer $viewer, array $types): ?Opportunity
+    {
+        if ($types === []) {
+            return null;
+        }
+
+        return $this->applyState($this->base($business, $viewer), self::STATE_OPEN)
+            ->whereIn('type', $types)
+            ->orderByDesc('priority_score')
+            ->orderByDesc('impact')
+            ->orderBy('first_detected_at')
+            ->orderBy('id')
+            ->first();
     }
 
     public function find(Business $business, GrowthViewer $viewer, string $uid): ?Opportunity

@@ -46,6 +46,21 @@ class BackfillUsageWalletsCommandTest extends TestCase
         $this->assertStringContainsString('1 Business(es)', $output);
     }
 
+    public function test_dry_run_lists_unwalleted_businesses_and_writes_nothing(): void
+    {
+        Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->delete();
+
+        $this->artisan('usage:backfill-wallets --dry-run')
+            ->expectsOutputToContain("business_id={$business->id}")
+            ->assertSuccessful();
+
+        $this->assertDatabaseCount('business_usage_wallets', 0);
+    }
+
     public function test_command_is_safe_to_rerun(): void
     {
         Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);

@@ -3,6 +3,7 @@
 namespace App\Library\Automation\Workflow\Conditions;
 
 use App\Enums\Automation\Workflow\ConditionOperator;
+use App\Library\Automation\Workflow\Conditions\Subjects\BusinessFactSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactBusinessFieldSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactCustomFieldSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactHasTagSubject;
@@ -106,6 +107,11 @@ class ConditionSubjectRegistry
      *
      * @var array<string, array{type: string, operators: string, values?: list<string>}>
      */
+    /** Business-level yes/no facts (BusinessFactSubject). Quiet/business hours are read in the Business's own timezone. */
+    public const BUSINESS_FACTS = [
+        'business.open_now', 'business.quiet_hours_now', 'business.review_link_set', 'business.questionnaire_link_set', 'contact.has_open_deal',
+    ];
+
     public const FACT_SUBJECTS = [
         self::OPPORTUNITY_STAGE => ['type' => 'reference', 'operators' => 'reference'],
         self::OPPORTUNITY_STATUS => ['type' => 'text', 'operators' => 'reference', 'values' => ['open', 'won', 'lost']],
@@ -174,6 +180,18 @@ class ConditionSubjectRegistry
 
         if ($key === self::SUBSCRIBED) {
             return new ContactSubscribedSubject();
+        }
+
+        if (in_array($key, self::BUSINESS_FACTS, true)) {
+            return new BusinessFactSubject($key, match ($key) {
+                'business.open_now' => fn ($business) => \App\Library\Automation\Workflow\Runtime\BusinessSendWindow::forBusiness($business, true)->isOpen(\Illuminate\Support\Carbon::now()),
+                'business.quiet_hours_now' => fn ($business) => \App\Library\Automation\Workflow\Runtime\BusinessSendWindow::forBusiness($business)->isQuiet(\Illuminate\Support\Carbon::now()),
+                'business.review_link_set' => fn ($business) => \App\Library\Business\BusinessLinks::reviewLink($business) !== null,
+                'business.questionnaire_link_set' => fn ($business) => \App\Library\Business\BusinessLinks::questionnaireLink($business) !== null,
+                // The deal that started the journey decides; only a journey with no deal falls back to "any open deal".
+                default => fn ($business, $contact, $enrollment) => app(FactConditionReader::class)->triggeringDealIsOpen($enrollment, $contact)
+                    ?? DB::table('crm_opportunities')->where('business_id', $business->id)->where('contact_id', $contact->id)->where('status', 'open')->exists(),
+            });
         }
 
         if ($key === self::IN_GROUP) {
@@ -292,6 +310,7 @@ class ConditionSubjectRegistry
     {
         return array_key_exists($key, self::IDENTITY_SUBJECTS)
             || $key === self::SUBSCRIBED
+            || in_array($key, self::BUSINESS_FACTS, true)
             || $key === self::IN_GROUP
             || $key === self::REPLIED_SINCE_ENROLLMENT
             || array_key_exists($key, self::FACT_SUBJECTS)
@@ -386,7 +405,7 @@ class ConditionSubjectRegistry
             return ConditionOperator::forText();
         }
 
-        if ($key === self::SUBSCRIBED || $key === self::REPLIED_SINCE_ENROLLMENT || self::tagId($key) !== null) {
+        if ($key === self::SUBSCRIBED || $key === self::REPLIED_SINCE_ENROLLMENT || in_array($key, self::BUSINESS_FACTS, true) || self::tagId($key) !== null) {
             return ConditionOperator::forBoolean();
         }
 

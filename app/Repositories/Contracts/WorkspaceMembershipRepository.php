@@ -68,4 +68,19 @@ interface WorkspaceMembershipRepository extends BaseRepository
     ): WorkspaceMembership;
 
     public function setActive(WorkspaceMembership $membership, bool $isActive): WorkspaceMembership;
+
+    /**
+     * Logical removal: deactivates the row and stamps removed_at. The row is kept.
+     */
+    public function markRemoved(WorkspaceMembership $membership, \DateTimeInterface $at): WorkspaceMembership;
+
+    /**
+     * Re-grants a removed row in ONE write: the new role and scopes, active, removal cleared.
+     */
+    public function reinstate(
+        WorkspaceMembership $membership,
+        WorkspaceMembershipRole $role,
+        WorkspaceBusinessAccessScope $scope,
+        LocationAccessScope $locationScope
+    ): WorkspaceMembership;
 }

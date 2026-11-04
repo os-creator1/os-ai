@@ -177,6 +177,28 @@ final class OpportunityTypeRegistry
         ],
     ];
 
+    /**
+     * Low-impact, nonessential profile fields. They stay as recommendations
+     * (history, dismissal and detail pages are unchanged) but are optional
+     * improvements: never a "needs you" move, never in the actionable queue
+     * or its counts. Essential setup (phone, email, location, services...)
+     * is deliberately NOT listed here.
+     */
+    private const OPTIONAL_PROFILE_SUGGESTIONS = ['missing_facebook_url', 'missing_instagram_url'];
+
+    /**
+     * @return array<int, string>
+     */
+    public static function optionalProfileSuggestionTypes(): array
+    {
+        return self::OPTIONAL_PROFILE_SUGGESTIONS;
+    }
+
+    public static function isOptionalProfileSuggestion(string $type): bool
+    {
+        return in_array($type, self::OPTIONAL_PROFILE_SUGGESTIONS, true);
+    }
+
     public static function has(string $workerKey, string $type): bool
     {
         return self::get($workerKey, $type) !== null;

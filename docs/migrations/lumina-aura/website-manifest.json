@@ -1,0 +1,136 @@
+{
+ "note": "Authentic assets retrieved from the customer GHL Media Storage / public site. Binaries are NOT committed; the builder resolves each by sha256 from --assets. Excluded: f28673cb-e60c-434d-9160-58d70b966f18.jpeg (stored under a different GHL location), 2 further library MP4s not used on the live site (the 3 used on the live site are published as `video` section assets).",
+ "assets": {
+  "ivy_1": {
+   "sha256": "542bc4b2aa4d8339e53c4a85c6efba4128ea695f6265ce06438be4af7e67c6a6",
+   "alt": "Ivy backdrop with neon sign",
+   "ghl_file": "694ae696d573500caaeba672.jpg",
+   "bytes": 737457
+  },
+  "ivy_2": {
+   "sha256": "891098a523494103e4c0df74101836e90fc0f21b2a9fb4ab6ba393d8da7bcac2",
+   "alt": "Ivy backdrop, narrow panel",
+   "ghl_file": "694ae6971dea10133793d343.jpg",
+   "bytes": 809519
+  },
+  "ivy_3": {
+   "sha256": "f3b7d4ffc1a0eb11f8bc60d646de8f202fdd5cab2fe4f7653a335ef457d29951",
+   "alt": "Ivy backdrop, wide panel",
+   "ghl_file": "694ae6972442e033e8e8963d.jpg",
+   "bytes": 1240909
+  },
+  "logo": {
+   "sha256": "3925d9b960c56bf1df3c392f2ff6bebe8ecc709ed27a629e64d3d718fa9b331e",
+   "alt": "Lumina Aura Events logo",
+   "ghl_file": "694ae6b32dd46f40cd3b4005.jpeg",
+   "bytes": 33776
+  },
+  "booth_1": {
+   "sha256": "413705867601d2e476515c96b378d0e8895e32dafc99bfdc563d10a0de0b5dc8",
+   "alt": "360 video booth platform lit with colored LEDs",
+   "ghl_file": "694aec2c264de64c04c141bb.jpg",
+   "bytes": 159281
+  },
+  "booth_2": {
+   "sha256": "4e1d58ec762fc297a4c256a8ace854078e38d9a9d066b1c35a00d51a3748f977",
+   "alt": "360 video booth platform with LED ring",
+   "ghl_file": "694aec3e2dd46f34553bfc44.jpeg",
+   "bytes": 42932
+  },
+  "vinyl": {
+   "sha256": "677f2e5a5fad7dbd524926d38f50f511b43f1b635744d1e27113e13e97dd85a4",
+   "alt": "360 video booth platform with custom branded vinyl",
+   "ghl_file": "69d687ee3dd00cb232a3ed4f.jpg",
+   "bytes": 41722
+  },
+  "inflatable_diagram": {
+   "sha256": "4814c280d86ad6a0414799f2c28ae402ef0e62dc6aa2f2d2c5b0c42b21839d05",
+   "alt": "Inflatable 360 enclosure dimensions, 10 ft by 9 ft",
+   "ghl_file": "699d9a6b590acb10c902a09b.jpg",
+   "bytes": 70226
+  },
+  "inflatable_pink": {
+   "sha256": "ec996a21dbc53d646182d3744020e518a909f2f3e5fb00054e1e7fecc63c2f9c",
+   "alt": "Inflatable 360 enclosure lit pink at an evening event",
+   "ghl_file": "699d9a6f1001a5085721ce39.jpg",
+   "bytes": 78990
+  },
+  "inflatable_grass": {
+   "sha256": "0dc1e3002adadb1faaf1a01cc5826e62714e2c5a1e550d6242d5a2fd8bb045dd",
+   "alt": "Inflatable 360 enclosure on a lawn",
+   "ghl_file": "699d9a722837e8328e23de1b.jpg",
+   "bytes": 179022
+  },
+  "event_1": {
+   "sha256": "97fc8ba4774ca8e17c7e975277bbec1ba4a60d9263f4d6a47372d07f067c961d",
+   "alt": "Guest with neon name sign at an event",
+   "ghl_file": "0f5e5def-14b9-4c11-b020-fae8b207f8f0.webp",
+   "bytes": 67990
+  },
+  "event_2": {
+   "sha256": "e1e86f02020e262bc97607a80fa35cf246f5167178b13153f0f1ea6cd165963e",
+   "alt": "Couple with ukulele prop in front of a greenery wall",
+   "ghl_file": "1a01c651-ed84-4190-8e6a-0a7e2da7ad1c.webp",
+   "bytes": 182850
+  },
+  "event_3": {
+   "sha256": "900d280048bed87fe37c0dce51371209ae2c11e6212442d4c11b5b3613ba9cc9",
+   "alt": "Couple in sunglasses, black and white",
+   "ghl_file": "1c9db48d-45c3-46b8-b567-43450bf7e67f.jpeg",
+   "bytes": 2976965
+  },
+  "event_4": {
+   "sha256": "17438eba8ab5fb078ae5c285d1e61e02968d591f471fe07bed84e82df7cfac27",
+   "alt": "Couple against a holographic sequin backdrop",
+   "ghl_file": "2184585d-3991-44c8-971c-dce16ad85009.jpeg",
+   "bytes": 315857
+  },
+  "event_5": {
+   "sha256": "27092667f04a720e61fa15dd1e1eeb6224762aef4aca722f7b7daf803fca3a4c",
+   "alt": "Couple with neon sign \"Better Together\"",
+   "ghl_file": "51154cb6-4ad0-4354-b8be-9998afbbe05b.jpeg",
+   "bytes": 224928
+  },
+  "event_6": {
+   "sha256": "b7080f4dd828aa03f7845e47064dcf2f0f342c6c5fb05e170f1ea90e446de34d",
+   "alt": "Group of friends with a neon name sign",
+   "ghl_file": "88ed68a8-96e0-4488-9728-dbe429f76529.jpeg",
+   "bytes": 134241
+  },
+  "event_7": {
+   "sha256": "8ddefb24e0818b4d1f50950bf6c067e2d84da963ddc1aa2dc945c122b2582855",
+   "alt": "Wedding party with props",
+   "ghl_file": "9bcd6e75-bdce-4ccd-a669-29e64a6415d6.jpeg",
+   "bytes": 136484
+  },
+  "event_8": {
+   "sha256": "813bf4fa093a9c800defb74bd2a124c290f41b916b12265967edfae7dc966945",
+   "alt": "Guest against a gold sequin backdrop",
+   "ghl_file": "b2dc2e8f-acc8-47e2-9127-387a4f2d71a1.jpeg",
+   "bytes": 154728
+  }
+ },
+ "videos": {
+  "video_1": {
+   "sha256": "5fd64b267c975dba707a2b541487e35ad47027fc521c28c2d6c88870a25c2e30",
+   "title": "360\u00b0 booth clip 1",
+   "alt": "360 video booth clip 1 from a Lumina Aura event",
+   "ghl_file": "699cd4275dfd50db0594cc28.mp4",
+   "bytes": 2798848
+  },
+  "video_2": {
+   "sha256": "387f113b63cc3729ac34af9ed3854c7ac483ae9daa87d3be792fcc6ea2f972c5",
+   "title": "360\u00b0 booth clip 2",
+   "alt": "360 video booth clip 2 from a Lumina Aura event",
+   "ghl_file": "699cd42a5dfd501dc594ccdb.mp4",
+   "bytes": 5517614
+  },
+  "video_3": {
+   "sha256": "4430adfc6ab1d73e921b98831148d9af369038f56924a205b39060da621b0e5d",
+   "title": "360\u00b0 booth clip 3",
+   "alt": "360 video booth clip 3 from a Lumina Aura event",
+   "ghl_file": "699cd431d0716bedb74ee903.mp4",
+   "bytes": 6594015
+  }
+ }
+}

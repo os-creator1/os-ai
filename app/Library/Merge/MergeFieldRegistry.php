@@ -66,6 +66,8 @@ final class MergeFieldRegistry
             'email' => 'Business email',
             'phone' => 'Business phone',
             'website' => 'Business website',
+            'review_link' => 'Review link',
+            'questionnaire_link' => 'Event questionnaire link',
         ],
         'location' => [
             'name' => 'Location name',

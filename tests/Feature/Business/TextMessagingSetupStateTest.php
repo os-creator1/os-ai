@@ -29,6 +29,8 @@ use Tests\TestCase;
  */
 class TextMessagingSetupStateTest extends TestCase
 {
+    use \Tests\Support\CompletesTenDlcStages;
+
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
@@ -46,9 +48,31 @@ class TextMessagingSetupStateTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Get a phone number');
-        $response->assertDontSee('Telnyx', false);
         $response->assertDontSee('Twilio', false);
-        $response->assertDontSee('10DLC', false);
+    }
+
+    public function test_toll_free_is_the_recommended_first_choice_and_costs_are_disclosed_honestly(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))
+            ->assertOk()->getContent();
+
+        // Toll-free leads and is marked recommended; local stays available.
+        $this->assertLessThan(strpos($html, 'data-role="local-number-card"'), strpos($html, 'data-role="toll-free-number-card"'));
+        $this->assertStringContainsString('data-role="recommended-badge"', $html);
+        $this->assertStringContainsString('Register for a local number', $html);
+
+        // The $0 verification claim never implies texting is free.
+        $this->assertStringContainsString('Toll-free verification is $0 through Telnyx. Number rental and SMS usage are still charged.', $html);
+
+        // Local discloses 10DLC registration, prepaid campaign fees and ongoing costs up front.
+        $this->assertStringContainsString('10DLC', $html);
+        $this->assertStringContainsString('first three months of campaign fees', $html);
+        $this->assertStringContainsString('monthly campaign fee after those three months', $html);
+        $this->assertStringNotContainsStringIgnoringCase('texting is free', $html);
+        $this->assertStringNotContainsStringIgnoringCase('free texting', $html);
     }
 
     public function test_without_configured_credentials_state_one_renders_a_truthful_inert_preview(): void
@@ -84,6 +108,93 @@ class TextMessagingSetupStateTest extends TestCase
         $response->assertSee('No number found');
         $this->assertDatabaseMissing('business_messaging_numbers', ['business_messaging_identity_id' => null]);
         $this->assertDatabaseCount('business_messaging_numbers', 0);
+    }
+
+    public function test_toll_free_prefix_and_multiple_candidates_have_distinct_business_bound_tokens(): void
+    {
+        $fake = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $fake);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+        $fake->nextSearchResults = [
+            new AvailableNumberCandidate('+18445550101', \App\Enums\Messaging\PhoneNumberType::TollFree, '+18445550101', 100_000, 1_000_000, 'USD'),
+            new AvailableNumberCandidate('+18445550102', \App\Enums\Messaging\PhoneNumberType::TollFree, '+18445550102', 200_000, 1_200_000, 'USD'),
+        ];
+
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $response = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
+            'number_type' => 'toll_free',
+            'toll_free_prefix' => '844',
+            'area_code' => '760',
+        ])->assertOk();
+
+        $this->assertSame('844', $fake->searches[0]->tollFreePrefix);
+        $this->assertNull($fake->searches[0]->areaCode);
+        $html = $response->getContent();
+        $this->assertStringContainsString('+18445550101', $html);
+        $this->assertStringContainsString('+18445550102', $html);
+        preg_match_all('/name="candidate_token" value="([^"]+)"/', $html, $matches);
+        $this->assertCount(2, $matches[1]);
+        $this->assertSame('+18445550101', \App\Library\Messaging\CandidateToken::decode($matches[1][0], $business)->phoneNumber);
+        $this->assertSame('+18445550102', \App\Library\Messaging\CandidateToken::decode($matches[1][1], $business)->phoneNumber);
+    }
+
+    public function test_repeated_searches_show_next_unseen_numbers_instead_of_the_same_first_five(): void
+    {
+        $fake = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $fake);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+
+        foreach (range(1, 8) as $suffix) {
+            $number = sprintf('+184455501%02d', $suffix);
+            $fake->nextSearchResults[] = new AvailableNumberCandidate(
+                $number,
+                \App\Enums\Messaging\PhoneNumberType::TollFree,
+                $number,
+                100_000,
+                1_000_000,
+                'USD',
+            );
+        }
+
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+        $route = route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]);
+        $data = ['number_type' => 'toll_free'];
+
+        $first = $this->post($route, $data)->assertOk()->getContent();
+        $this->assertSame(5, substr_count($first, 'data-role="number-candidate"'));
+        $this->assertStringContainsString('+18445550101', $first);
+        $this->assertStringContainsString('+18445550105', $first);
+        $this->assertStringNotContainsString('+18445550106', $first);
+
+        $second = $this->post($route, $data)->assertOk()->getContent();
+        $this->assertSame(3, substr_count($second, 'data-role="number-candidate"'));
+        $this->assertStringContainsString('+18445550106', $second);
+        $this->assertStringContainsString('+18445550108', $second);
+        $this->assertStringNotContainsString('+18445550101', $second);
+
+        $third = $this->post($route, $data)->assertOk()->getContent();
+        $this->assertSame(0, substr_count($third, 'data-role="number-candidate"'));
+        $this->assertStringContainsString('No more different numbers', $third);
+
+        // Changing criteria starts a separate history without weakening tokens.
+        $prefix = $this->post($route, $data + ['toll_free_prefix' => '844'])->assertOk()->getContent();
+        $this->assertSame(5, substr_count($prefix, 'data-role="number-candidate"'));
+        $this->assertCount(4, $fake->searches);
+        $this->assertDatabaseCount('business_messaging_numbers', 0);
+    }
+
+    public function test_toll_free_rejects_non_toll_free_prefixes(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
+            'number_type' => 'toll_free',
+            'toll_free_prefix' => '760',
+        ])->assertSessionHasErrors('toll_free_prefix');
     }
 
     public function test_ordering_a_number_without_configured_credentials_never_purchases_anything(): void
@@ -238,10 +349,13 @@ class TextMessagingSetupStateTest extends TestCase
             'contact_phone' => '+15035550100',
             'use_case' => 'appointment_reminders',
             'opt_in_method' => 'Customers check a box on our booking form.',
+            'campaign_description' => 'Harbor Lane sends appointment confirmations and reminders to customers who booked.',
+            'consent_confirmations' => array_keys(\App\Library\Messaging\Registration\RegistrationTemplateCatalog::CONSENT_ITEMS),
             'sample_message_1' => 'Harbor Lane: your appointment is confirmed. Reply STOP to unsubscribe.',
             'sample_message_2' => 'Harbor Lane: reminder, your appointment is tomorrow.',
             'privacy_policy_url' => 'https://harborlane.example/privacy',
-            'terms_url' => 'https://harborlane.example/terms',
+            'terms_url' => 'https://harborlane.example/terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ], $overrides);
     }
 
@@ -257,7 +371,6 @@ class TextMessagingSetupStateTest extends TestCase
         $response->assertSee('+14155550300');
         $response->assertSee('Not started');
         $response->assertSee('Business details');
-        $response->assertDontSee('10DLC', false);
         $response->assertSee('Messaging registration');
     }
 
@@ -281,7 +394,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->attachNumber($this->attachIdentity($business), '+14155550302');
         $this->authenticateAs($customer);
 
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'error');
 
         $this->assertDatabaseMissing('business_messaging_registrations', ['business_id' => $business->id]);
@@ -298,7 +411,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->authenticateAs($customer);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
@@ -316,7 +429,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->authenticateAs($customer);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'error');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
@@ -339,7 +452,7 @@ class TextMessagingSetupStateTest extends TestCase
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
-        $response->assertSee('Needs attention');
+        $response->assertSee('Needs correction');
         $response->assertSee('The website did not match the business name.');
         $response->assertSee('Business details');
     }
@@ -464,7 +577,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))->assertOk();
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload())
             ->assertStatus(401);
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertStatus(401);
 
         $this->assertDatabaseMissing('business_messaging_registrations', ['business_id' => $business->id]);
@@ -482,7 +595,7 @@ class TextMessagingSetupStateTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload())
             ->assertSessionHas('status', 'success');
-        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
+        $this->twoStageSubmit(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();

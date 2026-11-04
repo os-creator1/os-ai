@@ -1,0 +1,2205 @@
+{
+ "note": "Content captured from the live transparentphotobooths.com/home (GHL funnel, Spokane WA). Binaries are NOT committed; the builder resolves each by sha256 from --assets. Two booths only: Digital and Polaroid. No prices: the source publishes none (the digital booth is described as flat-rate). Reviews are the three on the source site; the longest is shown in a text section because the testimonial block caps quotes at 400 characters. EXCLUDED: eleven template-carryover images that are byte-identical to Booths To The Max photos (not provably this business's), the Google Reviews badge. Legal text is the owner's own, verbatim. The Polaroid booth is illustrated with the source site's own \"guests holding custom photo booth prints\" photo (its alt text); confirm with the owner.",
+ "business": {
+  "id": 5,
+  "workspace_id": 5,
+  "name": "Transparent Photo Booths",
+  "public_name": "Transparent Photo Booth",
+  "source_site": "https://transparentphotobooths.com/home"
+ },
+ "template_key": "photo_booth_modern",
+ "brand_color": "#188BF6",
+ "secondary_brand_color": "#061633",
+ "blockers": [],
+ "legal_urls": {
+  "privacy": "https://transparentphotobooths.com/Privacy-Policy",
+  "terms": "https://transparentphotobooths.com/Terms-Conditions"
+ },
+ "contact": {
+  "phone": "+1 425 789 7018",
+  "email": "katecraig2002@yahoo.com"
+ },
+ "form": {
+  "business_label": "transparent occasion rentals LLC",
+  "location_label": "Where is your event (city or venue)?",
+  "event_types": [
+   "Wedding",
+   "Corporate event",
+   "Party",
+   "Birthday",
+   "School event",
+   "Other"
+  ]
+ },
+ "services": [
+  {
+   "name": "Photo booth rental",
+   "description": "Luxury Digital and Polaroid photo booth rental for weddings, corporate events, birthday parties and private celebrations in Spokane and surrounding areas."
+  }
+ ],
+ "catalog": [
+  {
+   "key": "transparent_digital",
+   "type": "package",
+   "name": "Digital Photo Booth",
+   "description": "Fully digital, touch-screen Interactive Photo Booth with unlimited photos, videos, GIFs and boomerangs, instantly shareable. Flat rate for the whole event."
+  },
+  {
+   "key": "transparent_polaroid",
+   "type": "package",
+   "name": "Polaroid Photo Booth",
+   "description": "Instant Print Polaroid Photo Booth, compact and versatile: set it up on a table or mount it on a wall."
+  }
+ ],
+ "assets": {
+  "logo": {
+   "sha256": "02137617a100486a09fe6b32f6fa853470afff9bdedf9724a48c80800d3c4f65",
+   "file": "6addb43d736386d0dcb970ac.png",
+   "alt": "Transparent Photo Booth Rentals logo",
+   "purpose": "hero",
+   "title": "Logo",
+   "category": "Events",
+   "source_url": "https://assets.cdn.filesafe.space/gBDi4SCvQpBQAer3u11S/media/6addb43d736386d0dcb970ac.png",
+   "bytes": 531854
+  },
+  "hero": {
+   "sha256": "a73d84e55611cf90857cd5da85ed94cd13ca2224f6c3541d2ae9ccb115bbaeb7",
+   "file": "6943df1259a0a69381a80bf3.jpg",
+   "alt": "Guests posing in front of a green hedge wall at a Transparent Photo Booth event",
+   "purpose": "hero",
+   "title": "Hero",
+   "category": "Events",
+   "source_url": "https://assets.cdn.filesafe.space/K967jIXmQNCKFca7MnGg/media/6943df1259a0a69381a80bf3.jpg",
+   "bytes": 235516
+  },
+  "katie": {
+   "sha256": "b373b7fb003662a07972b2ae7c4bcd7364f45fd7071c2005943bd5d1fd83f58d",
+   "file": "6addb43ec9d5b7168d6d0f4f.jpg",
+   "alt": "Katie, founder of Transparent Photo Booth",
+   "purpose": "gallery",
+   "title": "Katie, founder",
+   "category": "About",
+   "source_url": "https://assets.cdn.filesafe.space/gBDi4SCvQpBQAer3u11S/media/6addb43ec9d5b7168d6d0f4f.jpg",
+   "bytes": 103398
+  },
+  "event_1": {
+   "sha256": "a73d84e55611cf90857cd5da85ed94cd13ca2224f6c3541d2ae9ccb115bbaeb7",
+   "file": "6943df1259a0a69381a80bf3.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 1",
+   "category": "Events",
+   "source_url": "https://assets.cdn.filesafe.space/K967jIXmQNCKFca7MnGg/media/6943df1259a0a69381a80bf3.jpg",
+   "bytes": 235516
+  },
+  "event_2": {
+   "sha256": "758ddc01291c4657280c4e12d87bb440c9504ee7ab66158cb0079343191c7bd2",
+   "file": "cc8b428c-fd85-4063-9df7-9eec0dd978c8.png",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 2",
+   "category": "Events",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/cc8b428c-fd85-4063-9df7-9eec0dd978c8.png",
+   "bytes": 715064
+  },
+  "event_3": {
+   "sha256": "b12201223960115028a957200026fc75090e522500d0d2d4a6d0d1c4374e1b12",
+   "file": "29a21189-fe4f-4418-a7be-251f1a075344.webp",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 3",
+   "category": "Weddings",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/29a21189-fe4f-4418-a7be-251f1a075344.webp",
+   "bytes": 128938
+  },
+  "event_4": {
+   "sha256": "4fc56dc82bcc85ee052d4af59da423ad7eec2dc53408d9a06224bab53a9ba088",
+   "file": "1556c9f6-2fcd-4b7e-b5d7-768f99b7d7ca.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 4",
+   "category": "Weddings",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/1556c9f6-2fcd-4b7e-b5d7-768f99b7d7ca.jpg",
+   "bytes": 631213
+  },
+  "event_5": {
+   "sha256": "e0e65da5b8ee39d1fcc3c5f55df40aaca198dad547160e0c3d326e22296dddbd",
+   "file": "5388a783-babd-4426-aa92-7f991b82a794.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 5",
+   "category": "Events",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/5388a783-babd-4426-aa92-7f991b82a794.jpg",
+   "bytes": 842310
+  },
+  "event_6": {
+   "sha256": "15646c488e1650e9f5269c9d2d9de26a235729323d0c0e3bd7d709eae87f2c03",
+   "file": "4503d452-8ae8-4254-8e55-2c6b772ca8df.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 6",
+   "category": "Weddings",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/4503d452-8ae8-4254-8e55-2c6b772ca8df.jpg",
+   "bytes": 1542481
+  },
+  "event_7": {
+   "sha256": "b74585cf4273ef5b0c8dd5492a7d2a0aba2d561354b5f3e4704f2618431c885d",
+   "file": "63b8cb90-0c8b-43b1-ae9b-b323a5070aac.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 7",
+   "category": "Weddings",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/63b8cb90-0c8b-43b1-ae9b-b323a5070aac.jpg",
+   "bytes": 181160
+  },
+  "event_8": {
+   "sha256": "53e91a51f3a40c92231e5b5a7cd8690f8bc2ec0214e2ff366ad54a1cfc7b8a03",
+   "file": "3ab801f1-bcea-46b1-bcbb-361eaa8d9c65.jpeg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 8",
+   "category": "Weddings",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/3ab801f1-bcea-46b1-bcbb-361eaa8d9c65.jpeg",
+   "bytes": 178510
+  },
+  "event_9": {
+   "sha256": "1d8b7689cfc39e50c0ca1630eb5c733cb1cf5da6867230a42b41213d78c8e633",
+   "file": "df924534-95cf-477a-8bd8-efead10e8079.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 9",
+   "category": "Holiday",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/df924534-95cf-477a-8bd8-efead10e8079.jpg",
+   "bytes": 76983
+  },
+  "event_10": {
+   "sha256": "ddb0a18e9892955c6c4b122e7f00d4fade93d180c7f3cd34e437fa072f186dda",
+   "file": "6943deae9a634face0dd2a38.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 10",
+   "category": "Holiday",
+   "source_url": "https://assets.cdn.filesafe.space/K967jIXmQNCKFca7MnGg/media/6943deae9a634face0dd2a38.jpg",
+   "bytes": 144854
+  },
+  "event_11": {
+   "sha256": "2c3d9f6434841ac449d1266369ab6b97605cc19020ecb81103e0678565355af3",
+   "file": "6943deaf9a634fa2e9dd2a6e.png",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 11",
+   "category": "Events",
+   "source_url": "https://assets.cdn.filesafe.space/K967jIXmQNCKFca7MnGg/media/6943deaf9a634fa2e9dd2a6e.png",
+   "bytes": 1551601
+  },
+  "event_12": {
+   "sha256": "e40d4cc7eb26b12795a3a3ccc6b92769a8ec4e6592f1abcf017efd4a6052d16e",
+   "file": "6943df7d0190af1a95b23f69.jpg",
+   "alt": "Guests posing at a Transparent Photo Booth event",
+   "purpose": "gallery",
+   "title": "Event 12",
+   "category": "Events",
+   "source_url": "https://storage.googleapis.com/msgsndr/K967jIXmQNCKFca7MnGg/media/6943df7d0190af1a95b23f69.jpg",
+   "bytes": 234039
+  },
+  "digital_booth": {
+   "sha256": "53e91a51f3a40c92231e5b5a7cd8690f8bc2ec0214e2ff366ad54a1cfc7b8a03",
+   "file": "3ab801f1-bcea-46b1-bcbb-361eaa8d9c65.jpeg",
+   "alt": "Bride and groom at a wedding with the Transparent Photo Booth digital touch-screen booth and neon sign",
+   "purpose": "gallery",
+   "title": "Digital Photo Booth",
+   "category": "Photo booths",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/3ab801f1-bcea-46b1-bcbb-361eaa8d9c65.jpeg",
+   "bytes": 178510
+  },
+  "polaroid_booth": {
+   "sha256": "e0e65da5b8ee39d1fcc3c5f55df40aaca198dad547160e0c3d326e22296dddbd",
+   "file": "5388a783-babd-4426-aa92-7f991b82a794.jpg",
+   "alt": "Guests holding their instant photo booth prints",
+   "purpose": "gallery",
+   "title": "Polaroid Photo Booth",
+   "category": "Photo booths",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/5388a783-babd-4426-aa92-7f991b82a794.jpg",
+   "bytes": 842310
+  },
+  "bd_white_sequin": {
+   "sha256": "8503608fb1a90cdf4c0b67cb455d0b79b2300cee0e5f2314dda2896e49b4a2b0",
+   "file": "b03c4e49-6471-4d2b-86ad-6fcb2b3e5171.webp",
+   "alt": "Luxe white sequin photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Luxe White Sequin",
+   "category": "Backdrops",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/b03c4e49-6471-4d2b-86ad-6fcb2b3e5171.webp",
+   "bytes": 130952
+  },
+  "bd_black_sequin": {
+   "sha256": "8d17c92a35c0202710df15b4b70a1ffcf2d23b8ca80bb75f9d4d4511e45b0744",
+   "file": "2eec3132-7629-420b-8aff-3d208a0ff5e3.jpeg",
+   "alt": "Luxe black sequin photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Luxe Black Sequin",
+   "category": "Backdrops",
+   "source_url": "https://assets.cdn.filesafe.space/9Q5wrPvupRjFkCCnKdG0/media/2eec3132-7629-420b-8aff-3d208a0ff5e3.jpeg",
+   "bytes": 861460
+  },
+  "bd_silver_sequin": {
+   "sha256": "9e87751f5be304ae5164fda9892d619b8b683548d1eb38ae2ef0142a1ebb43db",
+   "file": "e70a0bff-92b0-40c5-8e56-cca06360a434.jpeg",
+   "alt": "Silver sequin photo booth backdrop",
+   "purpose": "gallery",
+   "title": "Silver Sequin",
+   "category": "Backdrops",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/e70a0bff-92b0-40c5-8e56-cca06360a434.jpeg",
+   "bytes": 521823
+  },
+  "props": {
+   "sha256": "1d8b7689cfc39e50c0ca1630eb5c733cb1cf5da6867230a42b41213d78c8e633",
+   "file": "df924534-95cf-477a-8bd8-efead10e8079.jpg",
+   "alt": "Holiday party guests using fun photo booth props",
+   "purpose": "gallery",
+   "title": "Props",
+   "category": "Props",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/df924534-95cf-477a-8bd8-efead10e8079.jpg",
+   "bytes": 76983
+  },
+  "wedding_img": {
+   "sha256": "4fc56dc82bcc85ee052d4af59da423ad7eec2dc53408d9a06224bab53a9ba088",
+   "file": "1556c9f6-2fcd-4b7e-b5d7-768f99b7d7ca.jpg",
+   "alt": "Bride and groom with the Transparent Photo Booth digital booth at a wedding reception",
+   "purpose": "gallery",
+   "title": "Wedding photo booth",
+   "category": "Weddings",
+   "source_url": "https://assets.cdn.filesafe.space/aD7lJYApw4SDL3OL98BK/media/1556c9f6-2fcd-4b7e-b5d7-768f99b7d7ca.jpg",
+   "bytes": 631213
+  },
+  "corporate_img": {
+   "sha256": "1d8b7689cfc39e50c0ca1630eb5c733cb1cf5da6867230a42b41213d78c8e633",
+   "file": "6943df14aca6ab352453f1f0.jpg",
+   "alt": "Holiday party guests posing with props at a Transparent Photo Booth",
+   "purpose": "gallery",
+   "title": "Corporate and holiday events",
+   "category": "Holiday",
+   "source_url": "https://assets.cdn.filesafe.space/K967jIXmQNCKFca7MnGg/media/6943df14aca6ab352453f1f0.jpg",
+   "bytes": 76983
+  },
+  "party_img": {
+   "sha256": "2c3d9f6434841ac449d1266369ab6b97605cc19020ecb81103e0678565355af3",
+   "file": "6943deaf9a634fa2e9dd2a6e.png",
+   "alt": "Guests celebrating in confetti at a Transparent Photo Booth party",
+   "purpose": "gallery",
+   "title": "Party photo booth",
+   "category": "Parties",
+   "source_url": "https://assets.cdn.filesafe.space/K967jIXmQNCKFca7MnGg/media/6943deaf9a634fa2e9dd2a6e.png",
+   "bytes": 1551601
+  }
+ },
+ "pages": {
+  "": {
+   "title": "Home",
+   "seo_title": "Transparent Photo Booth | Luxury Photo Booth Rentals Spokane WA",
+   "meta_description": "Luxury wedding, corporate and party photo booth rental in Spokane, WA. Digital and Polaroid photo booths from Transparent Photo Booth - check availability.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Lights, Camera, Memories!",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Luxury wedding, corporate & party photo booth rental in Spokane. Now booking out for 2026 and 2027 - limited spots available for popular dates!",
+      "background_image": "@asset:hero",
+      "secondary_cta": {
+       "label": "See our photo booths",
+       "url": "/photo-booths"
+      }
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo booth rental in Spokane",
+      "body": "Our luxury Photo Booth experiences are designed for weddings, corporate events, birthday parties, and celebrations throughout Spokane and surrounding Washington areas.\n\nEnhance your Photo Booth rental in Spokane with premium backdrops, shimmer walls, custom branding, balloon installations, and interactive event upgrades. Unlimited captures and custom photo template designs.",
+      "image": "@asset:event_2",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Special add-ons",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "What type of event are you planning?",
+      "items": [
+       {
+        "name": "Wedding",
+        "description": "Elegant photo booth experiences for your wedding reception.",
+        "image": "@asset:wedding_img"
+       },
+       {
+        "name": "Corporate",
+        "description": "Branded overlays, lead capture and instant sharing for company events.",
+        "image": "@asset:corporate_img"
+       },
+       {
+        "name": "Party",
+        "description": "Birthdays, graduations, holiday parties and private celebrations.",
+        "image": "@asset:party_img"
+       }
+      ]
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "See some of our favorite events",
+      "items": [
+       {
+        "image": "@asset:event_1"
+       },
+       {
+        "image": "@asset:event_2"
+       },
+       {
+        "image": "@asset:event_3"
+       },
+       {
+        "image": "@asset:event_4"
+       },
+       {
+        "image": "@asset:event_5"
+       },
+       {
+        "image": "@asset:event_6"
+       },
+       {
+        "image": "@asset:event_7"
+       },
+       {
+        "image": "@asset:event_8"
+       }
+      ]
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Meet the founder & CEO - Hey, I'm Katie!",
+      "body": "We specialize in luxury Photo Booth rentals for weddings, corporate events, birthday parties, school dances, and private celebrations throughout Spokane and surrounding areas.\n\nOur team focuses on creating unforgettable guest experiences with premium lighting, instant sharing, studio-quality photography, and fully customized event details.\n\nProfessional setup & onsite support - Premium backdrops & custom overlays - Instant photo, GIF & video sharing",
+      "image": "@asset:katie",
+      "image_position": "left"
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "Reviews",
+      "items": [
+       {
+        "quote": "This is the PERFECT addition to any event. I would recommend having these at any party - big or small. It’s classy and fun, and very little work for the host because Transparent Photo Booths does all the work. Love it !",
+        "author_name": "Angela L."
+       },
+       {
+        "quote": "Such a fun addition to my party! Thank you Transparent Photo Booths for making everything so easy 💕",
+        "author_name": "Ellie C."
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "More from our clients",
+      "body": "Beyond my expectations. Thank you for making my girlfriends birthday so special. I thought it was really cool that we were able to share the photos instantly with our family that couldn’t make it. We had so much fun. The Photo Booth had to have been the biggest hit. Bring a local business owner myself, I liked that we were supporting a local business as well. Katie was creative and put together exactly what we had in mind. Another thing that stood out to me, was having the option to do a short video, GIF or boomerang. Thanks again - Reece C."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Areas we serve",
+      "body": "We proudly provide luxury Photo Booth rentals for weddings, corporate events, private parties, and celebrations throughout Spokane, Spokane Valley, Liberty Lake, Cheney, Airway, Coeur d'Alene, Post Falls and surrounding Washington communities."
+     }
+    },
+    {
+     "type": "faq",
+     "data": {
+      "heading": "FAQs",
+      "items": [
+       {
+        "question": "Do you travel outside Spokane?",
+        "answer": "Yes! We regularly provide luxury Photo Booth rentals throughout Spokane Valley, Liberty Lake, Cheney, Airway, Coeur d'Alene, and surrounding Washington areas for weddings, corporate events, parties, and private celebrations."
+       },
+       {
+        "question": "What types of events do you serve?",
+        "answer": "We provide luxury Photo Booth rentals for weddings, corporate events, birthday parties, school dances, brand activations, galas, holiday parties, baby showers, and private celebrations throughout Washington."
+       },
+       {
+        "question": "How far in advance should I book my Photo Booth rental?",
+        "answer": "We recommend booking your Photo Booth rental as early as possible, especially for weddings and peak event weekends throughout Washington. Popular dates can book several months in advance."
+       },
+       {
+        "question": "Can the Photo Booth match my event theme?",
+        "answer": "Absolutely! We offer custom overlays, premium backdrops, glam filters, neon signs, hedge walls, shimmer walls, and personalized design options to perfectly match your event aesthetic and branding."
+       },
+       {
+        "question": "Do you set up and operate the booth during the event?",
+        "answer": "Yes! Our team handles delivery, setup, operation, and breakdown so you can enjoy a seamless, stress-free experience from start to finish."
+       },
+       {
+        "question": "Dimensions",
+        "answer": "We need at least 10 by 10 feet of space, access to a single power outlet, and level ground. Please note that our backdrop stands are 8 feet tall."
+       },
+       {
+        "question": "Can guests instantly share their photos?",
+        "answer": "Yes! Most of our Photo Booth experiences include instant text, email, AirDrop, or QR code sharing so guests can post and share their photos immediately."
+       },
+       {
+        "question": "Do you offer custom branding for corporate events?",
+        "answer": "Yes! We offer fully branded Photo Booth experiences including custom overlays, branded start screens, lead capture, logo placement, and social sharing features perfect for corporate activations and marketing events."
+       },
+       {
+        "question": "Why choose your Photo Booth rentals?",
+        "answer": "Our luxury Photo Booth experiences combine premium technology, studio-quality imagery, modern styling, and interactive entertainment to create unforgettable moments for guests throughout Washington."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "photo-booths": {
+   "title": "Photo Booths",
+   "seo_title": "Digital & Polaroid Photo Booth Rental Spokane | Transparent",
+   "meta_description": "Choose a Digital touch-screen photo booth or an Instant Print Polaroid photo booth for your Spokane event. Flat-rate digital booth, unlimited captures.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Digital and Polaroid photo booths for weddings, corporate events and parties in Spokane.",
+      "background_image": "@asset:digital_booth"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Anything but ordinary",
+      "body": "Our Photo Booth in Spokane are anything but ordinary - they’re uniquely designed to add that extra flair your event deserves! From modern digital experiences to classic glam, our booths seamlessly match any theme, ensuring unforgettable memories and endless fun for your guests."
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Photo booths",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Special add-ons",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Private online gallery",
+      "body": "On top of the instant sharing options at the event you will also receive the following day a private gallery with all photos! YES, all of them! Meaning not only the overlay prints but every single photo taken during the night."
+     }
+    },
+    {
+     "type": "faq",
+     "data": {
+      "heading": "FAQs",
+      "items": [
+       {
+        "question": "Do you travel outside Spokane?",
+        "answer": "Yes! We regularly provide luxury Photo Booth rentals throughout Spokane Valley, Liberty Lake, Cheney, Airway, Coeur d'Alene, and surrounding Washington areas for weddings, corporate events, parties, and private celebrations."
+       },
+       {
+        "question": "What types of events do you serve?",
+        "answer": "We provide luxury Photo Booth rentals for weddings, corporate events, birthday parties, school dances, brand activations, galas, holiday parties, baby showers, and private celebrations throughout Washington."
+       },
+       {
+        "question": "How far in advance should I book my Photo Booth rental?",
+        "answer": "We recommend booking your Photo Booth rental as early as possible, especially for weddings and peak event weekends throughout Washington. Popular dates can book several months in advance."
+       },
+       {
+        "question": "Can the Photo Booth match my event theme?",
+        "answer": "Absolutely! We offer custom overlays, premium backdrops, glam filters, neon signs, hedge walls, shimmer walls, and personalized design options to perfectly match your event aesthetic and branding."
+       },
+       {
+        "question": "Do you set up and operate the booth during the event?",
+        "answer": "Yes! Our team handles delivery, setup, operation, and breakdown so you can enjoy a seamless, stress-free experience from start to finish."
+       },
+       {
+        "question": "Dimensions",
+        "answer": "We need at least 10 by 10 feet of space, access to a single power outlet, and level ground. Please note that our backdrop stands are 8 feet tall."
+       },
+       {
+        "question": "Can guests instantly share their photos?",
+        "answer": "Yes! Most of our Photo Booth experiences include instant text, email, AirDrop, or QR code sharing so guests can post and share their photos immediately."
+       },
+       {
+        "question": "Do you offer custom branding for corporate events?",
+        "answer": "Yes! We offer fully branded Photo Booth experiences including custom overlays, branded start screens, lead capture, logo placement, and social sharing features perfect for corporate activations and marketing events."
+       },
+       {
+        "question": "Why choose your Photo Booth rentals?",
+        "answer": "Our luxury Photo Booth experiences combine premium technology, studio-quality imagery, modern styling, and interactive entertainment to create unforgettable moments for guests throughout Washington."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "backdrops": {
+   "title": "Backdrops",
+   "seo_title": "Photo Booth Backdrops Spokane | Luxury Custom Event Backdrops",
+   "meta_description": "Premium photo booth backdrops included in all packages: luxe white sequin, luxe black sequin and silver sequin.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Premium backdrops",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Included in all of our packages. Check availability for your event date.",
+      "background_image": "@asset:bd_black_sequin"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Backdrop collection",
+      "items": [
+       {
+        "name": "Luxe White Sequin",
+        "image": "@asset:bd_white_sequin"
+       },
+       {
+        "name": "Luxe Black Sequin",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Silver Sequin",
+        "image": "@asset:bd_silver_sequin"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "gallery": {
+   "title": "Gallery",
+   "seo_title": "Photo Booth Gallery Spokane | Weddings, Corporate & Private Events",
+   "meta_description": "See some of our favorite events: weddings, corporate parties and celebrations by Transparent Photo Booth in Spokane.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Event gallery",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "See some of our favorite events.",
+      "background_image": "@asset:event_1"
+     }
+    },
+    {
+     "type": "gallery",
+     "data": {
+      "heading": "Favorite events",
+      "items": [
+       {
+        "image": "@asset:event_1"
+       },
+       {
+        "image": "@asset:event_2"
+       },
+       {
+        "image": "@asset:event_3"
+       },
+       {
+        "image": "@asset:event_4"
+       },
+       {
+        "image": "@asset:event_5"
+       },
+       {
+        "image": "@asset:event_6"
+       },
+       {
+        "image": "@asset:event_7"
+       },
+       {
+        "image": "@asset:event_8"
+       },
+       {
+        "image": "@asset:event_9"
+       },
+       {
+        "image": "@asset:event_10"
+       },
+       {
+        "image": "@asset:event_11"
+       },
+       {
+        "image": "@asset:event_12"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "wedding-photo-booth-rental": {
+   "title": "Wedding Photo Booth Rental",
+   "seo_title": "Wedding Photo Booth Rental Spokane | Transparent Photo Booth",
+   "meta_description": "Luxury wedding photo booth rental in Spokane: Digital and Polaroid photo booths, backdrops and unlimited captures.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Wedding photo booth rental in Spokane",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:wedding_img"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Luxury wedding photo booth rentals",
+      "body": "Celebrate your wedding in style with our luxury Photo Booth in Spokane and surrounding areas, designed to turn unforgettable moments into timeless memories. Each booth experience is thoughtfully customized to bring an extra touch of elegance, energy, and interaction to your special day. Whether you’re planning a modern luxury reception or a timeless romantic celebration, our wedding Photo Booth rentals in Spokane and surrounding areas are designed to match your wedding aesthetic perfectly while creating an experience your guests will remember long after the night ends.\n\nFrom chic digital experiences to glamorous black-and-white photo moments, our wedding Photo Booth setups combine premium technology, stylish backdrops, studio-quality lighting, and personalized details to elevate every part of your celebration. Whether you're hosting an intimate ceremony or a large wedding reception, our team helps create a seamless and unforgettable experience for couples and guests throughout Spokane and surrounding Washington communities.",
+      "image": "@asset:wedding_img",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a wedding photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Special add-ons",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "corporate-photo-booth-rental": {
+   "title": "Corporate Photo Booth Rental",
+   "seo_title": "Corporate Photo Booth Rental Spokane | Transparent Photo Booth",
+   "meta_description": "Corporate photo booth rental in Spokane: branded overlays, lead capture and instant sharing for company events.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Corporate photo booth rental in Spokane",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:corporate_img"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Luxury corporate photo booth rentals",
+      "body": "Elevate your corporate event with our luxury Photo Booth in Spokane and surrounding Washington areas, designed to create engaging experiences and unforgettable brand moments. Each booth setup is thoughtfully customized to bring professionalism, energy, and interaction to your company event. Whether you’re planning a corporate gala, networking event, holiday party, product launch, conference, or company celebration, our corporate Photo Booth rentals are designed to match your event branding perfectly while creating an experience your guests, employees, and clients will remember long after the event ends.\n\nFrom sleek digital experiences to branded photo activations and instant sharing features, our corporate Photo Booth setups combine premium technology, modern backdrops, studio-quality lighting, and personalized branding elements to elevate every part of your event. Whether you're hosting an intimate business gathering or a large corporate event, our team helps create a seamless and unforgettable experience for companies and guests throughout Spokane and surrounding Washington communities.",
+      "image": "@asset:corporate_img",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a corporate photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Special add-ons",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "party-photo-booth-rental": {
+   "title": "Party Photo Booth Rental",
+   "seo_title": "Party Photo Booth Rental Spokane | Transparent Photo Booth",
+   "meta_description": "Party photo booth rental in Spokane for birthdays, graduations, holiday parties and private celebrations.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Party photo booth rental in Spokane",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:party_img"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Luxury party photo booth rentals",
+      "body": "Turn your celebration into an unforgettable experience with our luxury Photo Booth in Spokane and surrounding Washington areas, designed to bring energy, fun, and interactive entertainment to any party. Every booth setup is fully customized to match your vibe and create memorable moments your guests will love. Whether you’re hosting a birthday party, wedding reception, graduation, anniversary, baby shower, holiday party, engagement celebration, or private event, our party Photo Booth rentals are designed to fit your style perfectly while keeping guests entertained all night long.\n\nFrom immersive digital experiences to custom photo templates and instant sharing features, our party Photo Booth setups combine premium technology, stylish backdrops, studio-quality lighting, and personalized details to make your event stand out. Whether you’re planning an intimate gathering or a large celebration, our team creates a smooth, stress-free, and unforgettable experience for hosts and guests throughout Spokane and surrounding Washington communities.",
+      "image": "@asset:party_img",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a party photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Special add-ons",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "about": {
+   "title": "About",
+   "seo_title": "Meet Katie | Transparent Photo Booth Spokane",
+   "meta_description": "Meet Katie, founder of Transparent Photo Booth, and learn how we create unforgettable photo booth experiences in Spokane.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Hey, I'm Katie!",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Meet the founder & CEO of Transparent Photo Booth.",
+      "background_image": "@asset:event_3"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Meet the founder & CEO",
+      "body": "We specialize in luxury Photo Booth rentals for weddings, corporate events, birthday parties, school dances, and private celebrations throughout Spokane and surrounding areas.\n\nOur team focuses on creating unforgettable guest experiences with premium lighting, instant sharing, studio-quality photography, and fully customized event details.\n\nProfessional setup & onsite support - Premium backdrops & custom overlays - Instant photo, GIF & video sharing",
+      "image": "@asset:katie",
+      "image_position": "left"
+     }
+    },
+    {
+     "type": "testimonials",
+     "data": {
+      "heading": "Reviews",
+      "items": [
+       {
+        "quote": "This is the PERFECT addition to any event. I would recommend having these at any party - big or small. It’s classy and fun, and very little work for the host because Transparent Photo Booths does all the work. Love it !",
+        "author_name": "Angela L."
+       },
+       {
+        "quote": "Such a fun addition to my party! Thank you Transparent Photo Booths for making everything so easy 💕",
+        "author_name": "Ellie C."
+       }
+      ]
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "More from our clients",
+      "body": "Beyond my expectations. Thank you for making my girlfriends birthday so special. I thought it was really cool that we were able to share the photos instantly with our family that couldn’t make it. We had so much fun. The Photo Booth had to have been the biggest hit. Bring a local business owner myself, I liked that we were supporting a local business as well. Katie was creative and put together exactly what we had in mind. Another thing that stood out to me, was having the option to do a short video, GIF or boomerang. Thanks again - Reece C."
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "service-areas": {
+   "title": "Service Areas",
+   "seo_title": "Photo Booth Rental Service Areas | Spokane, WA & Coeur d'Alene, ID",
+   "meta_description": "Transparent Photo Booth serves Spokane, Spokane Valley, Liberty Lake, Cheney, Airway, Coeur d'Alene and Post Falls.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Areas we serve",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Luxury photo booth rentals throughout the Spokane area.",
+      "background_image": "@asset:event_4"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "heading": "Locations",
+      "body": "We proudly provide luxury Photo Booth rentals for weddings, corporate events, private parties, and celebrations throughout Spokane, Spokane Valley, Liberty Lake, Cheney, Airway, Coeur d'Alene, Post Falls and surrounding Washington communities.\n\ntransparent occasion rentals LLC, 6127 N. Regal St, Spokane, WA 99208."
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "spokane": {
+   "title": "Photo Booth Rental Spokane",
+   "seo_title": "Photo Booth Rental Spokane WA | Weddings, Parties & Corporate",
+   "meta_description": "Transparent Photo Booth provides luxury wedding Photo Booth rentals in Spokane, corporate Photo Booth rentals in Spokane, and premium party booth...",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rental in Spokane",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:event_1"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo Booth Rental in Spokane",
+      "body": "Transparent Photo Booth provides luxury wedding Photo Booth rentals in Spokane, corporate Photo Booth rentals in Spokane, and premium party booth experiences for private celebrations across the city.",
+      "image": "@asset:event_5",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium photo booth features in Spokane",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "spokane-valley": {
+   "title": "Photo Booth Rental Spokane Valley",
+   "seo_title": "Photo Booth Rental Spokane Valley WA | Weddings & Events",
+   "meta_description": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, and private celebrations across Spokane...",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rental in Spokane Valley",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:event_2"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo Booth Rental in Spokane Valley",
+      "body": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, and private celebrations across Spokane Valley, Washington. Known for its growing event scene, upscale hotels, and beautiful private venues, Spokane Valley is one of the area’s top destinations for weddings and celebrations. Our photo booth experiences are built to match every event with premium lighting, custom overlays, instant sharing, and unforgettable guest interaction.",
+      "image": "@asset:event_6",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium photo booth features in Spokane Valley",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "liberty-lake": {
+   "title": "Photo Booth Rental Liberty Lake",
+   "seo_title": "Photo Booth Rental Liberty Lake WA | Weddings & Private Events",
+   "meta_description": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, and private celebrations throughout Liberty...",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rental in Liberty Lake",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:event_3"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo Booth Rental in Liberty Lake",
+      "body": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, and private celebrations throughout Liberty Lake, Washington. Known for its scenic golf courses, waterfront views, and upscale event venues, Liberty Lake is one of Eastern Washington’s most beautiful destinations for weddings and private celebrations. Our photo booth rentals are designed to match every event with premium lighting, custom overlays, instant sharing, and unforgettable guest interaction.",
+      "image": "@asset:event_7",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium photo booth features in Liberty Lake",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "airway": {
+   "title": "Photo Booth Rental Airway",
+   "seo_title": "Photo Booth Rental Airway Heights WA | Weddings & Events",
+   "meta_description": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, school dances, and private celebrations...",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rental in Airway",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:event_4"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo Booth Rental in Airway",
+      "body": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, school dances, and private celebrations throughout Airway Heights, Washington. Known for its major event venues, casinos, hotels, and growing entertainment scene, Airway Heights has become one of Eastern Washington’s top destinations for weddings, conferences, and large celebrations. Our photo booth rentals are designed to match every event with premium lighting, instant sharing, custom overlays, and unforgettable guest experiences.",
+      "image": "@asset:event_8",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium photo booth features in Airway",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "cheney": {
+   "title": "Photo Booth Rental Cheney",
+   "seo_title": "Photo Booth Rental Cheney WA | Weddings, Graduations & Events",
+   "meta_description": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, school dances, and private celebrations...",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rental in Cheney",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:event_5"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo Booth Rental in Cheney",
+      "body": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, school dances, and private celebrations throughout Cheney, Washington. Home to Eastern Washington University and a growing local event scene, Cheney is a popular destination for weddings, student events, graduation parties, and community celebrations. Our photo booth rentals are designed to match every event with premium lighting, instant sharing, custom overlays, and unforgettable guest experiences.",
+      "image": "@asset:event_9",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium photo booth features in Cheney",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "coeur-dalene": {
+   "title": "Photo Booth Rental Coeur d'Alene",
+   "seo_title": "Photo Booth Rental Coeur d'Alene ID | Weddings & Events",
+   "meta_description": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, private parties, and destination celebrations throughout Coeur...",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rental in Coeur d'Alene",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:event_6"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo Booth Rental in Coeur d'Alene",
+      "body": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, private parties, and destination celebrations throughout Coeur d'Alene, Idaho. Known for its stunning lakefront venues, luxury resorts, and upscale wedding destinations, Coeur d'Alene has become one of the Pacific Northwest’s most sought-after locations for unforgettable celebrations. Our photo booth rentals are designed to match every event with premium lighting, instant sharing, custom overlays, and interactive guest experiences.",
+      "image": "@asset:event_10",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium photo booth features in Coeur d'Alene",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "post-falls": {
+   "title": "Photo Booth Rental Post Falls",
+   "seo_title": "Photo Booth Rental Post Falls ID | Weddings & Private Events",
+   "meta_description": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, and private celebrations throughout Post...",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Photo booth rental in Post Falls",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "Lights, Camera, Memories!",
+      "background_image": "@asset:event_7"
+     }
+    },
+    {
+     "type": "image_text",
+     "data": {
+      "heading": "Photo Booth Rental in Post Falls",
+      "body": "Transparent Photo Booth provides luxury photo booth rentals for weddings, corporate events, birthday parties, and private celebrations throughout Post Falls, Idaho. Known for its scenic riverfront venues, private estates, and growing event community, Post Falls has become a popular destination for weddings, family celebrations, and local gatherings. Our photo booth rentals are designed to match every event with premium lighting, instant sharing, custom overlays, and interactive guest experiences that create unforgettable memories.",
+      "image": "@asset:event_11",
+      "image_position": "right"
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Choose a photo booth experience",
+      "items": [
+       {
+        "name": "Digital Photo Booth",
+        "description": "Make your event unforgettable with our fully digital, touch-screen Interactive Photo Booth! It includes unlimited photos, videos, GIFs, and boomerangs - all instantly available and shareable. We charge a flat rate, so you can enjoy the booth for the entire duration of your event with no extra fees.",
+        "price_label": "Request a quote",
+        "image": "@asset:digital_booth"
+       },
+       {
+        "name": "Polaroid Photo Booth",
+        "description": "Looking for something fun and hands-on? Our Instant Print Polaroid Photo Booth is the perfect choice! It's compact and versatile - it can be set up on a table or mounted on a wall, making it easy to fit into any event space.",
+        "price_label": "Request a quote",
+        "image": "@asset:polaroid_booth"
+       }
+      ]
+     }
+    },
+    {
+     "type": "services",
+     "data": {
+      "heading": "Premium photo booth features in Post Falls",
+      "items": [
+       {
+        "name": "Backdrops",
+        "description": "Enhance your photo booth experience with a premium backdrop that complements your event's theme and style. From elegant and modern designs to fun and vibrant options, our backdrops create the perfect setting for memorable photos and help every picture look polished and professional.",
+        "image": "@asset:bd_black_sequin"
+       },
+       {
+        "name": "Props",
+        "description": "Keep guests entertained and encourage creativity with our collection of fun photo booth props. Choose from a variety of signs, hats, glasses, and themed accessories that help guests express their personalities and create unforgettable keepsakes throughout your event.",
+        "image": "@asset:props"
+       },
+       {
+        "name": "Unlimited Captures",
+        "description": "Unlimited photos, videos, GIFs and boomerangs with the Digital Photo Booth, instantly available and shareable."
+       },
+       {
+        "name": "Custom Photo Template Designs",
+        "description": "Custom photo template designs to match your event."
+       }
+      ]
+     }
+    },
+    {
+     "type": "cta",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "body": "If you've already got a date in mind for your upcoming event, follow the link to book your package. We'll get in touch with you as soon as possible with a custom quote that covers all of your needs.",
+      "buttons": [
+       {
+        "label": "Check availability",
+        "url": "/check-availability"
+       },
+       {
+        "label": "Call +1 425 789 7018",
+        "url": "tel:+14257897018"
+       }
+      ]
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "check-availability": {
+   "title": "Check availability",
+   "seo_title": "Check Photo Booth Availability Spokane | Book Your Event",
+   "meta_description": "Check availability for your event date and get a custom photo booth quote in Spokane.",
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Check availability & get a quote",
+      "primary_cta": {
+       "label": "Check availability",
+       "url": "/check-availability"
+      },
+      "subheading": "We'll get in touch with you as soon as possible with a custom quote that covers all of your needs."
+     }
+    },
+    {
+     "type": "forms_module_form",
+     "data": {
+      "heading": "Check availability",
+      "forms_module_deployment_uid": "@form"
+     }
+    },
+    {
+     "type": "contact_details",
+     "data": {
+      "show_phone": true,
+      "show_email": true,
+      "show_address": false
+     }
+    }
+   ]
+  },
+  "terms-and-conditions": {
+   "title": "Terms & Conditions",
+   "seo_title": "Terms & Conditions | Transparent Photo Booth",
+   "meta_description": null,
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Terms & Conditions"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "transparent occasion rentals LLC is a brand owned by Kate Craig (hereinafter “ transparent occasion rentals LLC ” “we” or “us”), provides this website, product and the services, functionality data, information, tools, updates and similar materials delivered or provided by us (the “Services”) subject to your agreement to and compliance with the terms and conditions, as updated from time to time, as set forth in this Terms of Service Agreement (the “Agreement”).\n\nThis Agreement sets forth the legally binding terms and conditions governing your use of the Services, and the use of the Services by any entity on whose behalf you sign up. If you do not agree to these terms and conditions, you may not use the Services.\n\nLICENSE\n\nAs long as you are in compliance with the conditions of this Agreement and all incorporated documents, we hereby grant you during the Term (as defined herein) a limited, revocable, non-assignable, non- transferable, non-sublicensable, non-exclusive license to access and use the Services and the materials thereon that are intended to be displayed publicly. No rights not explicitly listed herein are granted.\n\nINCORPORATED TERMS\n\nThe following additional terms are incorporated into this Agreement as if fully set forth herein:\n\n- Privacy Policy\n\n- Copyright Policy\n\n- Complaint Policy (including Privacy and Trademark)"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "The materials appearing on the Services, including but not limited to summaries, descriptions, backdrops, prints, publications and any other such materials, are not intended to and DO NOT constitute legal, medical, financial, investment, business or professional advice of any kind. You agree that we are not responsible for any decisions that you may make.\n\nWhile we make reasonable efforts to ensure that the Services will be uninterrupted, we do not represent or warrant that the Services will be error-free or uninterrupted. We reserve the right at any time and from time to time to modify or discontinue, temporarily or permanently, the Services, or any part thereof, with or without notice.\n\nELIGIBILITY\n\nYou must be over the age of 18 to register an account or use the Services. By using the Services, you represent that you meet this minimum age requirement. Some parts or all of the Services may not be available to the general public, and we may impose eligibility rules on such portions of the Services from time to time. We reserve the right to amend or eliminate these eligibility requirements at any time. You are not eligible to use the Services if doing so would violate any U.S. law or regulation, including but not limited to export controls or restrictions.\n\nSUBSCRIPTION AND FEES"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "As more fully described on the Services, certain elements of the Services may require fees for access (the “Paid Services”).We may use a third-party payment processor (the “Payment Processor”) to charge you through an online account for use of the Paid Service. The processing of payments will be subject to the terms, conditions and privacy policies of the Payment Processor in addition to this Agreement. We are not responsible for errors by the Payment Processor.\n\nYou agree to pay us, through the Payment Processor or in another format accepted by us, all charges for the Paid Services that you access, and you authorize us, where applicable, through the Payment Processor, to charge your chosen payment provider (your “Payment Method”). For Paid Services involving one-time fees, as identified on the Services, your Payment Method will be charged at the time of purchase, or you will be billed by us, as determined by us."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "For recurring subscriptions, we will automatically charge your Payment Method or invoice you (as determined by us) for the next period at the end of each subscription period, as further identified on the Services and at purchase. If you purchase a subscription, it may result in recurring charges, to your Payment Method or otherwise, and you agree that we may charge such amounts until such a time as your subscription expires or you cancel the subscription, depending on the subscription type.\n\nIn addition to other applicable remedies, we reserve the right to suspend and/or terminate your access to the Services and/or terminate this Agreement if your Payment Method is declined or fails and your account therefore is delinquent. Charges to delinquent accounts are subject to interest of 1.5% per month on any outstanding balance, or the maximum permitted by law, whichever is less, plus all expenses of collection, including reasonable attorneys’ fees and court costs.\n\nRULES OF CONDUCT"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Your use of the Services is conditioned on your compliance with the terms of this Agreement, including but not limited to these rules of conduct. You agree that you will not violate any applicable law or regulation in connection with your use of the Services. You agree not to distribute, upload, make available or otherwise publish through the Services any suggestions, information, ideas, comments, causes, promotions, documents, questions, notes, plans, drawings, proposals, or materials similar thereto (“Submissions”) or graphics, text, information, links, profiles, audio, photos, software, music, sounds, video, comments, messages or tags, or similar materials (“Content”) that:\n\n- is unlawful or encourages another to engage in anything unlawful;- contains a virus or any other similar programs or software which may damage the operation of our or another’s computer;- violates the rights of any party or infringes upon the patent, trademark, trade secret, copyright, right of privacy or publicity or other intellectual property right of any party; is false, inaccurate, fraudulent or misleading; or,- is libelous, defamatory, obscene, inappropriate, invasive of privacy or publicity rights, abusing, harassing, threatening or bullying."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "You must keep your user name and password and any other information needed to login to the Services, if applicable, confidential and secure. We are not responsible for any unauthorized access to your account or profile by others.\n\nYou further agree that you will not do any of the following:\n\n- modify, adapt, translate, copy, reverse engineer, decompile or disassemble any portion of the Services;- interfere with or disrupt the operation of the Services, including restricting or inhibiting any other person from using the Services by means of hacking or defacing;\n\n- transmit to or make available in connection with the Services any denial of service attack, virus, worm, Trojan horse or other harmful code or activity;- attempt to probe, scan or test the vulnerability of a system or network of the Services or to breach security or authentication measures without proper authorization;\n\n- take any action that imposes, or may impose, in our sole discretion, an unreasonable or disproportionately large load on our infrastructure;- harvest or collect the email address or other contact information of other users of the Services;\n\n- scrape or collect content from the Services via automated or large group means; submit, post or make available false, incomplete or misleading information to the Services, or otherwise provide such information to us;- register for more than one user account; or,"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "- impersonate any other person or business.\n\nNotwithstanding the foregoing rules of conduct, our unlimited right to terminate your access to the Service shall not be limited to violations of these rules of conduct.\n\nCONTENT SUBMITTED OR MADE AVAILABLE TO US\n\nYou are under no obligation to submit anything to us, and unless otherwise noted, we will not claim ownership of any Content. However, in order for us to provide the Services, we need your permission to process, display, reproduce and otherwise use Content you make available to us. Therefore, if you choose to submit any Content to the Services, or otherwise make available any Content through the Services, you hereby grant to us a perpetual, irrevocable, transferrable, sub-licensable, non- exclusive, worldwide, royalty-free license to reproduce, use, modify, display, perform, distribute, translate and create derivative works from any such Content, including without limitation distributing part or all of the Content in any media format through any media channels.\n\nBy submitting any Content or Submissions to us you hereby agree, warrant and represent that:\n\n(a) except as provided in the Privacy Policy, the Content and Submissions do not contain proprietary or confidential information, and the provision of the Content and Submissions is not a violation of any third-party’s rights;"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "(b) all such Submissions and Content are accurate and true,\n\n(c) except as provided in the Privacy Policy, we are not under any confidentiality obligation relating to the Content or Submissions;\n\n(d) except as provided in the Privacy Policy, we shall be entitled to use or disclose the Content or Submissions in any way; and\n\n(e) you are not entitled to compensation or attribution from us in exchange for the Submissions or Content.\n\nYou acknowledge that we are under no obligation to maintain the Services, or any information, materials, Submissions, Content or other matter you submit, post or make available to or on the Services. We reserve the right to withhold, remove and/or discard any such material at any time.\n\nCONTENT SHARED THROUGH THE SERVICES\n\nYou understand that by sharing information on the Services, and requesting information to be sent through the Services, you may be revealing information about yourself and/or your business that you may include and that may be generated by the Services. You understand and acknowledge that you are fully aware and responsible for the impact of sharing such materials, and you agree that we shall not be held responsible, and we shall be released and held harmless by you from any liability or damages arising out of or relating to such conduct.\n\nOUR INTELLECTUAL PROPERTY"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Our graphics, logos, names, designs, page headers, button icons, scripts, and service names are our trademarks, trade names and/or trade dress. The “look” and “feel” of the Services (including color combinations, button shapes, layout, design and all other graphical elements) are protected by U.S. copyright and trademark law. All product names, names of services, trademarks and service marks (collectively, “Marks”) are our property or the property of their respective owners, as indicated. You may not use the Marks or copyrights for any purpose whatsoever other than as permitted by this Agreement.\n\nPASSWORDS AND ACCOUNTS\n\nYou are responsible for controlling the access to and use of your account. Always make sure that your password is kept confidential. You understand and agree that we may assume that instructions from an individual associated with your account are authoritative and should be acted upon by us."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "We are not responsible for any unauthorized access to your account or profile, and any ramifications of such access, and are not required to take action to disable any account. You agree that you will not bring an action against us arising out of or related to any claimed unauthorized access using your account credentials. Under confirmed unauthorized use circumstances, we may take action to address your situation. In the event that you would like to report a breach, please contact katecraig2002@yahoo.com with the term “Account Breach Notice” in the subject line.\n\nENFORCEMENT AND TERMINATION\n\nThe “Term” of this Agreement will be until terminated as provided herein. We reserve the right to deny all or some portion of the Services to any user, in our sole discretion, at any time. You may terminate this Agreement at any time by canceling any Service Agreement you may have and informing us at katecraig2002@yahoo.com .\n\nDISCLAIMERS AND LIMITATION ON LIABILITY"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "BY USING THE SERVICES YOU AGREE AND ACKNOWLEDGE THAT WE PROVIDE THE SERVICES “AS IS” AND WITHOUT ANY WARRANTY OR CONDITION, EXPRESS, IMPLIED OR STATUTORY. WE AND OUR PARENTS, SUBSIDIARIES, OFFICERS, DIRECTORS, SHAREHOLDERS, MEMBERS, MANAGERS, EMPLOYEES AND SUPPLIERS (“BUSINESS PARTNERS”), SPECIFICALLY DISCLAIM ANY IMPLIED WARRANTIES OF TITLE, ACCURACY, SUITABILITY, APPLICABILITY, MERCHANTABILITY, PERFORMANCE, FITNESS FOR A PARTICULAR PURPOSE, NON- INFRINGEMENT OR ANY OTHER WARRANTIES OF ANY KIND. NO ADVICE OR INFORMATION (ORAL OR WRITTEN) OBTAINED BY YOU FROM US SHALL CREATE ANY WARRANTY."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "USE OF THE SERVICES IS AT YOUR SOLE RISK. WE DO NOT WARRANT THAT YOU WILL BE ABLE TO ACCESS OR USE THE SERVICES AT THE TIMES OR LOCATIONS OF YOUR CHOOSING; THAT THE SERVICES WILL BE UNINTERRUPTED OR ERROR-FREE; THAT DEFECTS WILL BE CORRECTED; OR THAT THE SERVICES ARE FREE OF INACCURACIES, MISREPRESENTATIONS BY USERS, VIRUSES OR OTHER HARMFUL COMPONENTS.TO THE MAXIMUM EXTENT PERMITTED BY LAW, AND EXCEPT AS OTHERWISE PROHIBITED BY LAW, IN NO EVENT SHALL WE OR OUR AFFILIATES, LICENSORS OR BUSINESS PARTNERS (COLLECTIVELY, THE “RELATED PARTIES”) BE LIABLE TO YOU BASED ON OR RELATED TO THE SERVICES OR THIS AGREEMENT, WHETHER BASED IN CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY OR OTHERWISE, AND SHALL NOT BE RESPONSIBLE FOR ANY LOSSES OR DAMAGES, INCLUDING WITHOUT LIMITATION DIRECT, INDIRECT, INCIDENTAL, CONSEQUENTIAL, OR SPECIAL DAMAGES ARISING OUT OF OR IN ANY WAY CONNECTED WITH ACCESS TO OR USE OF THE SERVICES, EVEN IF WE AND/OR RELATED PARTIES HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Notwithstanding the foregoing, in the event that a court shall find that the above disclaimers are not enforceable, then you agree that neither we nor any of our subsidiaries, affiliated companies, employees, members, shareholders, or directors shall be liable for (1) any damages in excess of the greater of (a) $500.00 or (b) the amounts paid by you to us in the twelve (12) months immediately preceding any claim, nor (2) any indirect, incidental, punitive, special, or consequential damages or loss of use, lost revenue, lost profits or data to you or any third party from your use of the Services. This limitation shall apply regardless of the basis of your claim or whether or not the limited remedies provided herein fail of their essential purpose.\n\nSOME STATES, MAY NOT PERMIT CERTAIN DISCLAIMERS AND LIMITATIONS, AND ANY SUCH DISCLAIMERS OR LIMITATIONS ARE VOID WHERE PROHIBITED.\n\nDISPUTES, GOVERNING LAW AND JURISDICTION"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "You agree that any claim or dispute arising out of or relating in any way to your use of the Services or any service provided by us, will be resolved solely and exclusively by binding arbitration, rather than in court, except that you may assert claims in small claims court if your claims qualify. The Federal Arbitration Act and federal arbitration law apply to this agreement. The laws of the State of California shall govern this Agreement, and shall be used in any arbitration proceeding.\n\nThere is no judge or jury in arbitration, and court review of an arbitration award is limited. However, an arbitrator can award on an individual basis the same damages and relief as a court (including injunctive and declaratory relief or statutory damages), and must follow the terms of this Agreement as a court would.\n\nTo begin an arbitration proceeding, you must send a letter requesting arbitration and describing your claim to the following address: 6127 N. Regal st Spokane, WA. 99208 , Washington\n\nArbitration under this Agreement will be conducted by the American Arbitration Association (AAA) under its rules then in effect. Payment of all filing, administration and arbitrator fees will be governed by the AAA’s rules."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "You and us agree that any dispute resolution proceedings will be conducted only on an individual basis and not in a class, consolidated or representative action. If for any reason a claim proceeds in court rather than in arbitration, both you and us agree that parties have each waived any right to a jury trial.\n\nNotwithstanding the foregoing, you agree that we may bring suit in court to enjoin infringement or other misuse of intellectual property or other proprietary rights.\n\nTo the extent arbitration does not apply, you agree that any dispute arising out of or relating to the Services, or to us, may only be brought by you in a state or federal court located in Washington . YOU HEREBY WAIVE ANY OBJECTION TO THIS VENUE AS INCONVENIENT OR INAPPROPRIATE, AND AGREE TO EXCLUSIVE JURISDICTION AND VENUE IN Washington .\n\nGENERAL"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Sever-ability. If any provision of this Agreement is found for any reason to be unlawful, void or unenforceable, then that provision will be given its maximum enforceable effect, or shall be deemed severable from this Agreement and will not affect the validity and enforceability of any remaining provision. Revisions. This Agreement may only be revised in a writing signed by us or posted by us to the Services. In the event that we update this Agreement and you are made aware of the update, your continued use of the Services after the update shall constitute an agreement to the updated terms.\n\nNo Partnership. You agree that no joint venture, partnership, employment, or agency relationship exists between you and us as a result of this Agreement or your use of the Services.\n\nAssignment. We may assign our rights under this Agreement, in whole or in part, to any person or entity at any time with or without your consent. You may not assign the Agreement without our prior written consent. Any unauthorized assignment shall be null and void."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "No Waiver. Our failure to enforce any provision of this Agreement shall in no way be construed to be a present or future waiver of such provision, nor in any way affect the right of any party to enforce each and every such provision thereafter. The express waiver by us of any provision, condition or requirement of this Agreement shall not constitute a waiver of any future obligation to comply with such provision, condition or requirement.\n\nNotices. All notices given by you or required under this Agreement shall be in writing and addressed to: 6127 N. Regal st Spokane, WA. 99208, Washington .\n\nEquitable Remedies. You hereby agree that we would be irreparably damaged if the terms of this Agreement were not specifically enforced, and therefore you agree that we shall be entitled, without bond, other security, or proof of damages, to appropriate equitable remedies with respect to breaches of this Agreement, in addition to such other remedies as we may otherwise have available to us under applicable laws.\n\nEntire Agreement. This Agreement, including the documents expressly incorporated by reference, constitutes the entire agreement between you and us with respect to the Services, and supersedes all prior or contemporaneous communications, whether electronic, oral or written.\n\nCOPYRIGHT POLICY"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "If you believe in good faith that any material posted on our Services infringes the copyright in your work, please contact our copyright agent, designated under the Digital Millennium Copyright Act (“DMCA”) (17 U.S.C. §512(c)(3)), with correspondence containing the following:\n\nA physical or electronic signature of the owner, or a person authorized to act on behalf of the owner, of the copyright that is allegedly infringed; Identification of the copyrighted work claimed to have been infringed; Identification, with information reasonably sufficient to allow its location of the material that disclaimed to be infringing;\n\nInformation reasonably sufficient to permit us to contact you; A statement that you have a good faith belief that use of the material in the manner complained of is not authorized by the copyright owner, its agent, or the law; and, A statement that the information in the notification is accurate, and under penalty of perjury, that you are authorized to act on behalf of the owner of an exclusive right that is allegedly infringed. You acknowledge that if you fail to comply with all of the requirements of this policy, your DMCA notice may not be valid. For any questions regarding this procedure, or to submit a complaint, please contact our designated DMCA Copyright Agent:\n\nhttps://transparentphotobooths.com/\n\nKate Craig\n\nE-mail: katecraig2002@yahoo.com"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Phone: +1 425 789 7018\n\nCOMPLAINT POLICY (INCLUDING TRADEMARK AND PRIVACY)\n\nIf you believe in good faith that any material posted on the Services infringes any of your rights other than in copyright, or is otherwise unlawful, you must send a notice to katecraig2002@yahoo.com , containing the following information:\n\nYour name, physical address, e-mail address and phone number; A description of the material posted on the Site that you believe violates your rights or is otherwise unlawful, and which parts of said materials you believe should be remedied or removed; Identification of the location of the material on the Site; If you believe that the material violates your rights, a statement as to the basis of the rights that you claim are violated; If you believe that the material is unlawful or violates the rights of others, a statement as to the basis of this belief;"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "A statement under penalty of perjury that you have a good faith belief that use of the material in the manner complained of is not authorized and that the information you are providing is accurate to the best of your knowledge and in good faith; and, Your physical or electronic signature. If we receive a message that complies with all of these requirements, we will evaluate the submission, and if appropriate, in our sole discretion, we will take action. We may disclose your submission to the poster of the claimed violative material, or any other party."
+     }
+    }
+   ]
+  },
+  "privacy-policy": {
+   "title": "Privacy Policy",
+   "seo_title": "Privacy Policy | Transparent Photo Booth",
+   "meta_description": null,
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Privacy Policy"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Effective Date: Aug 23, 2023\n\nPrivacy Policy\n\nThis Privacy Policy (“Privacy Policy” or “Policy”) describes the types of information gathered by https://transparentphotobooths.com/ (brand owned by Kate Craig ) (hereinafter “ transparent occasion rentals LLC ” “we” or “us”) in the process of providing this website, services, information, tools, functionality, updates and similar materials (collectively, the “Services”), how we use it, with whom the information may be shared, what choices are available to you regarding collection, use and distribution of information and our efforts to protect the information you provide to us through the Services. By using the Services, you hereby consent to allow us to process information in accordance with this Policy."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "This Policy is subject to change. If our information retention or usage practices change, we will let you know by posting the Privacy Policy changes on the Services and/or otherwise making you aware of the changes. Please refer to the “Effective Date” above to see when this Policy was last updated. No mobile information will be shared with third parties/affiliates for marketing/promotional purposes. Information sharing to subcontractors in support services, such as customer service, is permitted. All other use case categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties.\n\nTERRITORIALITY\n\nRegardless of where our servers are located, your personal data may be processed by us in the United States, where data protection and privacy regulations may or may not be to the same level of protection as in other parts of the world. BY VISITING THE WEBSITE AND USING THE SERVICES, YOU UNEQUIVOCALLY AND UNAMBIGUOUSLY CONSENT TO THE COLLECTION AND PROCESSING IN THE UNITED STATES OF ANY INFORMATION COLLECTED OR OBTAINED BY US THROUGH VOLUNTARY SUBMISSIONS, AND THAT U.S. LAW GOVERNS ANY SUCH COLLECTION AND PROCESSING.\n\nINFORMATION COLLECTED\n\nWe collect two types of information about and from persons who use the Services: Personal Information and Anonymous Information."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Personal Information means information that is personally identifiable to you, such as your name, address, email address or phone number, as well as other non-public information that is associated with the foregoing. Anything you publicly post or that is available publicly will not be considered Personal Information, and will be outside the restrictions of this policy.\n\nAnonymous Information means information that is not associated with or linked to your Personal Information. We may create Anonymous Information from (i) automatically gathered information or (ii) Personal Information by excluding information (such as name) that may make the information personally identifiable to you.\n\nPERSONAL INFORMATION COLLECTED\n\nWe collect certain Personal Information about you or about those you identify, which may be supplied when you interact with the Services, complete a survey, make a purchase, when you request services or otherwise when you submit such information. The information collected may include one or more of the following:\n\nName\n\nAddress\n\nPhone number\n\nEmail\n\nUsername\n\nInformation from your activities on the Services\n\nAlthough the Services may appear to collect payment card information, such information is collected directly by our credit card processing vendor, and we do not have possession of such information.\n\nANONYMOUS INFORMATION"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Anonymous Information is collected about you when you use the Services, including but not limited to enrollment history, the type of device you used and its operating system, the pages accessed most frequently, how pages are used, search terms entered, and similar data. Automatically Tracking Internet Protocol (IP) addresses is one method of automatically collecting information about your activities online and information volunteered by you.\n\nFurther, the Services may utilize web beacons, pixel tags, cookies, embedded links, and other commonly used information-gathering tools. Although it may be possible to turn off the collection of cookies through your device, that may interfere with your use of the Services.\n\nUSE OF INFORMATION\n\nInternal Use of Information by Us: We accept and gather Personal Information and Anonymous Information in an effort to provide the Services to you. We may also use this information to help us develop and improve our Services, fulfill your requests, send materials to you, inform you about our offers and those of others, tailor our Services to meet your interests, and for other purposes permitted by law. We may use Anonymous Information or non-Personal Information for any business purpose.\n\nSHARING COLLECTED INFORMATION"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "No mobile information will be shared with third parties/affiliates for marketing/promotional purposes. Information sharing to subcontractors in support services, such as customer service, is permitted. All other use case categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties. We will not share Personal Information and Anonymous Information with third parties for marketing and analytics, when marketing our Products and Services.\n\nLINKS\n\nThe Services may contain links to other websites. We are not responsible for the privacy practices of such other sites. When you leave our Service to visit another website or application, please read the privacy statements of websites that may collect personally identifiable information. This Privacy Policy applies solely to information collected by us through the Services.\n\nSECURITY\n\nWe employ procedural and technical safeguards to secure your personal information against loss, theft, alteration, and unauthorized access, use and disclosure. We also employ security procedures to protect your information from unauthorized access by users inside and outside the company."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Regardless of the precautions we take, no transmission of data over the internet is guaranteed to be completely secure. It may be possible for third parties not under our control to intercept or access transmissions or private communications unlawfully. While we strive to protect personal information, we cannot ensure or warrant the security of any information you transmit to us.\n\nE-MAIL AND ELECTRONIC NEWSLETTERS\n\nWe may offer electronic newsletters and e-mails concerning available services, as well as new products and services, or may provide other marketing materials as a service to our users. Users may receive newsletters and e-mails concerning promotions and marketing of ours or of our business partners, after registering with the Services or after engaging with us in person or through our agents.\n\nIf you have received a message from us, and you no longer wish to receive such materials, you may opt- out by following the unsubscribe instructions included in each electronic newsletter and e-mail. Please note that you may be required to separately opt out of any e-mails sent by our business associates.\n\nCHILDREN AND PRIVACY"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "We do not knowingly permit users to use our Services if they are under 13 years old, and therefore do not request personally identifiable information from anyone under the age of 13. If we become aware that a user or customer is under the age of 13 and has registered without verifiable parental consent, we will remove his or her personally identifiable registration information from our files. If you are the parent or guardian of a person under the age of 13 who has provided personally identifiable information to us without your approval, please inform us by contacting us at the e-mail address below and we will remove such information from our database.\n\nDO NOT TRACK\n\nAt present, the Services do not specifically respond to browser do-not-track signals.\n\nPRIVACY RIGHTS"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "To request information regarding our disclosures in the prior calendar year, if any, of their personally identifiable information to third parties. To make such a request, please contact us at katecraig2002@yahoo.com with “Request for Privacy Information” in the subject line. Please include enough detail for us to locate your file; at a minimum, your name, email, and username, if any. We will attempt to provide you with the requested information within thirty (30) days of receipt. We reserve our right not to respond to requests sent more than once in a calendar year, or requests submitted in a form other than as prescribed in this notice. Please note that this law does not cover all information sharing. Our disclosure only includes information covered by the law.\n\nSMS Communications & Consent\n\nBy providing your mobile phone number through our website contact forms, quote request forms, booking forms, or any other communication channel, and by checking the consent checkbox where applicable, you expressly agree to receive text (SMS) messages from Transparent Photo Booth regarding:\n\nQuote follow-ups\n\nBooking confirmations\n\nAppointment reminders\n\nEvent updates\n\nCustomer support\n\nService notifications\n\nPromotional offers (only if you have opted in)\n\nMessage frequency varies depending on your interaction with us.\n\nMessage and data rates may apply."
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "You may opt out at any time by replying STOP to any SMS message. For assistance, reply HELP or contact us directly at katecraig2002@yahoo.com or (425) 789-7018.\n\nSMS consent is not a condition of purchasing any of our services.\n\nNo mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Information sharing with subcontractors in support services, such as our SMS delivery provider, is permitted solely for the purpose of delivering messages. All other use case categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties.\n\nCONTACT INFORMATION\n\nIf you have any questions or suggestions regarding our Privacy Policy, please contact us:\n\n📧 Email: katecraig2002@yahoo.com\n\n📞 Phone: +1 425 789 7018\n\n📍 State: Washington"
+     }
+    }
+   ]
+  },
+  "terms-of-service": {
+   "title": "Terms of Service",
+   "seo_title": "Terms of Service | Transparent Photo Booth",
+   "meta_description": null,
+   "sections": [
+    {
+     "type": "hero",
+     "data": {
+      "heading": "Terms of Service"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "This page outlines the photo booth services provided bytransparent occasion rentals LLC (Referred to as Vendor) to clients (Referred to as Client) who booked photo booth services through the Vendor's website: https://transparentphotobooths.com/\n\nRetainer\n\nAn initial agreed upon retainer must be placed to secure the date.\n\nPayment Schedule and Method\n\nFor your convenience, payments can be made online via our website https://transparentphotobooths.com/ using Stripe or PayPal and a valid credit or debit card. Otherwise, payment is to be made by cash or check. The initial retainer is due upon booking. Remaining balance is due before event date.\n\nContracted services\n\nIncludes all services described in selected package details reviewed and distributed to clients. Any additional services/products requested by the client incurred by vendor will be billed directly to client at cost. All services contracted cannot be deducted, but additional services can be added.\n\nPostponement Policy\n\nIf event is postponed, all services will cease at time of notification of postponement if no determined new date is provided. Payment schedule will be determined and readjusted post new event date notification. If client requires services to resume, post new event date being established, second payment will be required at time of service re-start.\n\nLiability"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "It is understood that Vendor is only liable for services completed and provided by Vendor and cannot be held liable for the services of other contracted vendors. It is understood that in no event shall Vendor be liable for consequential damages of any kind.\n\nResponsibility\n\nVendor is not responsible for Acts Of God, Natural Disasters, an Act Of Government such as A Declaration of National or Local Emergency, or Other Incidents Not within the control of the Vendor, i.e. accident, death in the family, illness, pregnancy, or sudden tragic circumstance. In such a situation, Vendor. will obtain, upon approval of the client, a qualified professional replacement to fulfill Vendor’s obligations under the contract, at no additional charge to the client\n\nPermitted Uses of Product(s)\n\nVendor grants to Client a non-exclusive license of product(s) produced with and for Client for personal use only. Personal use includes, but is not limited to, use within the following contexts: In photos on Client’s personal social media pages or profiles; orIn personal creations, such as a scrapbook or personal gift; or In personal communications, such as a family newsletter or email or holiday card.\n\nCancellation Policy"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Since the Vendor is exclusively securing the date for the Client and rejecting other business opportunities. If event is canceled, no portion of the retainer fees paid to Vendor will be returned. If the event is postponed, services contracted can be applied to a new date if available (refer to Postponement Policy). You can cancel the SMS service at any time. Simply text \"STOP\" to the shortcode. Upon sending \"STOP,\" we will confirm your unsubscribe status via SMS. Following this confirmation, you will no longer receive SMS messages from us. To rejoin, sign up as you did initially, and we will resume sending SMS messages to you.\n\nCopyright Ownership\n\nIn the event that any copyrighted work(s) are created as a result of the Services provided by Vendor in accordance with this Agreement, Vendor owns all copyrights in any and all work(s) it creates or produces pursuant to federal copyright law (Title 17, Chapter 2, Section 201-02 of the United States Code), whether registered or unregistered. Any and all products, whether tangible or intangible, produced or created in connection with, or in the process of fulfilling this Agreement, are expressly and solely owned by Provider and may be used in the reasonable course of Provider business.\n\nExclusivity"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "Client understands and agrees that he or she has hired Vendor exclusive of any other service provider. In order to provide a high level of satisfaction and quality of service, no other service providers, other than any assistant or third party that Vendor hires to complete the Services outlined in this Agreement, are permitted to provide the same or similar services or products, paid or unpaid, at the locations and dates specified in this Agreement.\n\nDamage or Loss of Accessories\n\nClient agrees to exercise all due care in caring for, and preserving the property of Vendor. Clients shall remain responsible for all loss or damage to rentals, up to and including actual replacement value for each missing or damaged item per cost.\n\nAppropriate Conduct/ Safe Working Environment"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "The Client(s) expressly agree(s) to take best efforts to provide Vendor and Vendor’s staff with safe and appropriate working conditions. In the event of circumstances deemed by either Vendor or a bystander to present a threat or implied threat of injury or harm to Vendor staff or equipment, the Vendor reserves the right to cancel all services remaining under this Agreement and leave the event. At the Vendor’s discretion, the Vendor may enact a three-strike policy. After the first offense, the Vendor will make reasonable efforts to notify the Client(s) or a responsible party. If the Client(s) is/are able to respond to the threatening situation in a reasonable amount of time (maximum of 15 minutes), Vendor shall resume work in accordance with the original terms of this Agreement. If the threatening behavior occurs for a second time, the Client(s) will agree to remove the offending person for the remainder of the event. If the behavior occurs a third time, the Vendor will immediately leave the event. If the Vendor leaves the event early due to any offending behavior, the Client(s) expressly agree to relieve and hold Vendor harmless as a result of incomplete event coverage, or for a lapse in the quality of the Vendor’s work, and the Client(s) shall be responsible for payment in full.\n\nSMS Terms & Conditions\n\nSMS Program Description"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "By providing your mobile phone number through our website, booking forms, quote request forms, or other communication channels, you consent to receive SMS messages from Transparent Photo Booth regarding:\n\nQuote follow-ups\n\nBooking confirmations\n\nAppointment reminders\n\nEvent updates\n\nCustomer support\n\nService notifications\n\nPromotional offers (only if you have opted in)\n\nMessage frequency varies depending on your interaction with us.\n\nOpt-Out\n\nYou can cancel the SMS service at any time by replying STOP to any message. After you send STOP, we will send one final confirmation message confirming that you have been unsubscribed. After this, you will no longer receive SMS messages unless you opt in again.\n\nFor assistance, reply HELP or contact us directly at:\n\nPhone: (425) 789-7018\n\nEmail: info@transparentphotobooths.com\n\nMessage & Data Rates\n\nMessage and data rates may apply. Charges depend on your wireless carrier and mobile plan.\n\nCarrier Disclaimer\n\nMobile carriers are not liable for delayed or undelivered messages.\n\nAge Requirement\n\nYou must be 18 years of age or older to opt into our SMS communications.\n\nPrivacy\n\nYour information will be handled according to our Privacy Policy.\n\nWe do not sell, rent, or share your mobile number or SMS consent information with third parties or affiliates for marketing purposes.\n\nView our Privacy Policy here:"
+     }
+    },
+    {
+     "type": "text",
+     "data": {
+      "body": "https://transparentphotobooths.com/Privacy-Policy\n\nConsent\n\nBy submitting your phone number through our website or booking forms, you agree to receive SMS messages from Transparent Photo Booth related to your inquiry, booking, or requested services. Consent is not a condition of purchase."
+     }
+    }
+   ]
+  }
+ },
+ "redirects": {}
+}

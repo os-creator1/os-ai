@@ -1,6 +1,6 @@
 {{--
     Done for you — only REAL completed events (a published website, a finished recommendation, an automation that ran), each once,
-    with its date. Nothing is ever a placeholder; with nothing completed there is one calm line. "See activity" goes to the existing
+    with its date. Nothing is ever a placeholder; with nothing completed there is one calm line. "See activity" opens the website page when the work is the website, otherwise the existing
     results. A source that could not be read says so instead of claiming nothing happened.
 --}}
 <section class="hv2-section" aria-labelledby="hv2-done-title" data-band="handling" data-role="home-handling">
@@ -21,13 +21,13 @@
                     @php
                         // Many website versions are one outcome on Home: the site is live, with when the latest version went out.
                         $isSite = ($row['key'] ?? '') === 'website_version_published';
-                        $title = $isSite ? 'Your website is live' : $row['text'];
+                        $title = $isSite ? ($done['websiteTitle'] ?? 'Website updated') : $row['text'];
                     @endphp
                     <li data-role="recent-work-item"@if($isSite) data-outcome="website-live"@endif>
                         <span class="hv2-done__mark{{ $isSite ? ' hv2-done__mark--icon' : '' }}" aria-hidden="true">{{ $isSite ? '🌐' : '✓' }}</span>
                         <span>
                             @if($row['url'] !== null)<a href="{{ $row['url'] }}" data-role="recent-work-link">{{ $title }}</a>@else<span data-role="recent-work-text">{{ $title }}</span>@endif
-                            @if($row['at'] !== null)<time class="hv2-muted" datetime="{{ $row['at']->toIso8601String() }}">{{ $isSite ? 'Latest version published · ' : '' }}{{ $row['at']->format('M j') }}</time>@endif
+                            @if($row['at'] !== null)<time class="hv2-muted" datetime="{{ $row['at']->toIso8601String() }}">{{ $isSite ? 'Latest version saved · ' : '' }}{{ $row['at']->format('M j') }}</time>@endif
                         </span>
                     </li>
                 @endforeach

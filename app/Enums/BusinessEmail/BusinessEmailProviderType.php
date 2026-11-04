@@ -13,12 +13,16 @@ enum BusinessEmailProviderType: string
 {
     case Google = 'google';
     case Microsoft = 'microsoft';
+    /** Any standard IMAP/SMTP mailbox (Zoho, Titan, Hostinger, cPanel, ...). Not OAuth. */
+    case Imap = 'imap';
 
     public function label(): string
     {
         return match ($this) {
             self::Google => 'Google (Gmail / Google Workspace)',
             self::Microsoft => 'Microsoft (Outlook / Microsoft 365)',
+            self::Imap => 'Other email (IMAP / SMTP)',
         };
     }
 }
+

@@ -1151,7 +1151,12 @@
         Route::post('{workspaceUid}/members/{memberUid}/role', 'Workspace\WorkspaceController@updateMemberRole')->name('members.role');
         Route::post('{workspaceUid}/members/{memberUid}/access', 'Workspace\WorkspaceController@updateMemberAccess')->name('members.access');
         Route::post('{workspaceUid}/members/{memberUid}/deactivate', 'Workspace\WorkspaceController@deactivateMember')->name('members.deactivate');
+        Route::post('{workspaceUid}/members/{memberUid}/remove', 'Workspace\WorkspaceController@removeMember')->name('members.remove');
         Route::post('{workspaceUid}/members/{memberUid}/reactivate', 'Workspace\WorkspaceController@reactivateMember')->name('members.reactivate');
+
+        // Settings → Team invitations (people with no account yet): resend / revoke a pending one.
+        Route::post('{workspaceUid}/invitations/{invitationUid}/resend', 'Workspace\WorkspaceController@resendInvitation')->middleware('throttle:6,1')->name('invitations.resend');
+        Route::post('{workspaceUid}/invitations/{invitationUid}/revoke', 'Workspace\WorkspaceController@revokeInvitation')->name('invitations.revoke');
 
         /*
         |----------------------------------------------------------------
@@ -1293,8 +1298,10 @@
                 ->whereIn('provider', ['google', 'microsoft'])
                 ->middleware('throttle:10,1')
                 ->name('connect');
+            Route::post('/connect-other', 'Business\BusinessEmailController@connectOther')->middleware('throttle:10,1')->name('connect_other');
             Route::post('/disconnect', 'Business\BusinessEmailController@disconnect')->name('disconnect');
             Route::post('/send', 'Business\BusinessEmailController@send')->middleware('throttle:20,1')->name('send');
+            Route::post('/messages/{messageUid}/reply', 'Business\BusinessEmailController@reply')->middleware('throttle:20,1')->name('reply');
         });
 
         /*
@@ -1792,6 +1799,8 @@
         Route::prefix('{workspaceUid}/businesses/{businessUid}/conversations')->name('businesses.conversations.')->group(function () {
             Route::get('/', 'ChatBoxController@index')->name('index');
             Route::get('/new', 'ChatBoxController@new')->name('new');
+            // Email threads from the connected mailbox (email ledger, not chat_boxes).
+            Route::get('/email', 'Business\EmailConversationsController@threads')->name('email');
             Route::post('/sent', 'ChatBoxController@sent')->name('sent');
             Route::post('/load', 'ChatBoxController@loadChatUsers')->name('load');
             Route::post('/{uid}/messages', 'ChatBoxController@messages')->name('messages');
@@ -1902,6 +1911,10 @@
             Route::get('/new', 'Business\CrmOpportunitiesController@create')->name('opportunities.create');
             Route::post('/', 'Business\CrmOpportunitiesController@store')->name('opportunities.store');
             Route::get('/contacts', 'Business\CrmOpportunitiesController@contactSearch')->name('contacts.search');
+
+            // Call-task inbox (declared before the {opportunityUid} wildcard so "tasks" is never read as a uid).
+            Route::get('/tasks', 'Business\CrmTasksController@list')->name('tasks.index');
+            Route::post('/tasks/{taskUid}/complete', 'Business\CrmTasksController@complete')->name('tasks.complete');
 
             Route::post('/pipelines', 'Business\CrmPipelinesController@store')->name('pipelines.store');
             Route::get('/pipelines/{pipelineUid}', 'Business\CrmPipelinesController@settings')->name('pipelines.settings');
@@ -2228,6 +2241,7 @@
             Route::post('/pages/allow-indexing', 'Business\WebsiteController@allowIndexing')->name('pages.allowIndexing');
             Route::get('/pages/{pageUid}/edit', 'Business\WebsiteController@editPage')->name('pages.edit');
             Route::put('/pages/{pageUid}', 'Business\WebsiteController@updatePage')->name('pages.update');
+            Route::post('/pages/{pageUid}/suggest-description', 'Business\WebsiteController@suggestDescription')->middleware('throttle:10,1')->name('pages.suggestDescription');
             Route::delete('/pages/{pageUid}', 'Business\WebsiteController@destroyPage')->name('pages.destroy');
 
             Route::get('/preview/{pageUid?}', 'Business\WebsiteController@preview')->name('preview');
@@ -2257,8 +2271,7 @@
             Route::get('/domains', 'Business\WebsiteDomainController@home')->name('domains.index');
             Route::post('/domains', 'Business\WebsiteDomainController@store')->name('domains.store');
             Route::post('/domains/{domainUid}/verify', 'Business\WebsiteDomainController@verify')->name('domains.verify');
-            Route::post('/domains/{domainUid}/provision', 'Business\WebsiteDomainController@provision')->name('domains.provision');
-            Route::post('/domains/{domainUid}/check-certificate', 'Business\WebsiteDomainController@checkCertificate')->name('domains.checkCertificate');
+            Route::post('/domains/{domainUid}/retry', 'Business\WebsiteDomainController@retry')->middleware('throttle:10,1')->name('domains.retry');
             Route::post('/domains/{domainUid}/make-primary', 'Business\WebsiteDomainController@makePrimary')->name('domains.makePrimary');
             Route::delete('/domains/{domainUid}', 'Business\WebsiteDomainController@destroy')->name('domains.destroy');
         });
@@ -2356,10 +2369,12 @@
             // toll-free, whose own carrier verification always requires an
             // already-owned number.
             Route::post('/registration/start-local-verification', 'Business\TextMessagingController@startLocalVerification')->name('registration.start-local-verification');
+            Route::post('/registration/leave-local-setup', 'Business\TextMessagingController@leaveLocalSetup')->name('registration.leave-local-setup');
 
             // STATE 2 — number acquired, messaging registration required.
             Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');
             Route::post('/registration/submit', 'Business\TextMessagingController@submitRegistration')->name('registration.submit');
+            Route::post('/registration/refresh', 'Business\TextMessagingController@refreshRegistrationProgress')->middleware('throttle:10,1')->name('registration.refresh');
 
             // STATE 3 — Delivery & usage (relocated out of Business Results,
             // see AnalyticsController's own overview: operational messaging

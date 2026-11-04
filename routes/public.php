@@ -49,7 +49,7 @@
     | mutations use; the GET is sized for a real visitor who reloads.
     */
     Route::get('forms/{deploymentUid}', 'Public\PublicFormController@show')
-        ->whereUuid('deploymentUid')->middleware(['throttle:60,1', 'attribution.capture'])->name('public.forms.show');
+        ->whereUuid('deploymentUid')->middleware(['throttle:60,1', 'attribution.capture', 'forms.frame'])->name('public.forms.show');
     // A questionnaire page. The token (nonce.version.hmac) is part of the address:
     // it is the visitor's bearer for ONE in-progress, version-pinned flow, in the
     // same two-segment spirit as the secure document link. A stale, skipped or
@@ -58,11 +58,11 @@
         ->whereUuid('deploymentUid')
         ->where('token', '[0-9a-f]{32}\.[1-9][0-9]{0,18}\.[0-9a-f]{64}')
         ->where('pageKey', '[a-z][a-z0-9_]{0,31}')
-        ->middleware('throttle:60,1')->name('public.forms.page');
+        ->middleware(['throttle:60,1', 'forms.frame'])->name('public.forms.page');
     Route::post('forms/{deploymentUid}', 'Public\PublicFormController@submit')
-        ->whereUuid('deploymentUid')->middleware('throttle:10,1')->name('public.forms.submit');
+        ->whereUuid('deploymentUid')->middleware(['throttle:10,1', 'forms.frame'])->name('public.forms.submit');
     Route::get('forms/{deploymentUid}/thanks', 'Public\PublicFormController@thanks')
-        ->whereUuid('deploymentUid')->middleware('throttle:60,1')->name('public.forms.thanks');
+        ->whereUuid('deploymentUid')->middleware(['throttle:60,1', 'forms.frame'])->name('public.forms.thanks');
 
     /*
     | Implementation Contract 17 §6.3 — the secure document link.
@@ -225,6 +225,10 @@
     Route::post('inbound/telnyx-managed', 'Customer\DLRController@inboundTelnyxManaged')
         ->middleware('throttle:600,1')
         ->name('inbound.telnyx_managed');
+    // Telnyx porting-order status webhooks (number port-in). Ed25519-verified, idempotent by event id.
+    Route::post('webhooks/telnyx-porting', 'Messaging\TelnyxPortingWebhookController@handle')
+        ->middleware('throttle:120,1')
+        ->name('webhooks.telnyx_porting');
     Route::any('inbound/teletopiasms/{gateway?}', 'Customer\DLRController@inboundTeletopiasms')->name('inbound.teletopiasms');
     Route::any('inbound/flowroute/{gateway?}', 'Customer\DLRController@inboundFlowRoute')->name('inbound.flowroute');
     Route::any('dlr/easysendsms', 'Customer\DLRController@dlrEasySendSMS')->name('dlr.easysendsms');

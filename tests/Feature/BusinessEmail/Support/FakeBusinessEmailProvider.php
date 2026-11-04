@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\BusinessEmail\Support;
 
+use App\DTO\BusinessEmail\BusinessEmailInboundBatch;
 use App\DTO\BusinessEmail\BusinessEmailOutbound;
 use App\DTO\BusinessEmail\BusinessEmailProviderCapabilities;
 use App\DTO\BusinessEmail\BusinessEmailProviderSendResult;
@@ -9,13 +10,14 @@ use App\DTO\BusinessEmail\BusinessEmailTokenGrant;
 use App\Enums\BusinessEmail\BusinessEmailProviderType;
 use App\Exceptions\BusinessEmail\BusinessEmailProviderException;
 use App\Library\BusinessEmail\Contracts\BusinessEmailProvider;
+use App\Library\BusinessEmail\Contracts\InboundBusinessEmailProvider;
 use Closure;
 
 /**
  * A scriptable in-memory provider. No network, ever. Records every call so a
  * test can assert exactly how many provider calls a scenario made.
  */
-final class FakeBusinessEmailProvider implements BusinessEmailProvider
+final class FakeBusinessEmailProvider implements BusinessEmailProvider, InboundBusinessEmailProvider
 {
     /** @var array<string, int> */
     public array $calls = [];
@@ -25,6 +27,12 @@ final class FakeBusinessEmailProvider implements BusinessEmailProvider
 
     /** @var list<BusinessEmailProviderException|null> consumed one per send(); null = success */
     public array $sendScript = [];
+
+    /** @var list<BusinessEmailInboundBatch|BusinessEmailProviderException> consumed one per fetchInbound() */
+    public array $inboundScript = [];
+
+    /** @var list<string|null> the cursor each fetchInbound() call received */
+    public array $inboundCursors = [];
 
     public ?BusinessEmailProviderException $refreshFailure = null;
 
@@ -65,7 +73,7 @@ final class FakeBusinessEmailProvider implements BusinessEmailProvider
 
     public function capabilities(): BusinessEmailProviderCapabilities
     {
-        return new BusinessEmailProviderCapabilities();
+        return new BusinessEmailProviderCapabilities(inboundSync: $this->type === BusinessEmailProviderType::Google);
     }
 
     public function authorizationUrl(string $state, bool $forceConsent): string
@@ -124,6 +132,25 @@ final class FakeBusinessEmailProvider implements BusinessEmailProvider
         }
 
         return new BusinessEmailProviderSendResult('pm-' . $this->callCount('send'), 'thread-' . $this->callCount('send'), '<id' . $this->callCount('send') . '@fake>');
+    }
+
+    public function inboundScope(): string
+    {
+        return 'fake-read-scope';
+    }
+
+    public function fetchInbound(string $accessToken, ?string $cursor, int $limit): BusinessEmailInboundBatch
+    {
+        $this->record('fetchInbound');
+        $this->inboundCursors[] = $cursor;
+
+        $next = array_shift($this->inboundScript) ?? new BusinessEmailInboundBatch([], $cursor);
+
+        if ($next instanceof BusinessEmailProviderException) {
+            throw $next;
+        }
+
+        return $next;
     }
 
     public function revokeGrant(string $refreshToken): void

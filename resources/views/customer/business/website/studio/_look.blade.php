@@ -9,6 +9,7 @@
         $lookTheme = $website->theme ?? [];
         $lookAssets = $website->assets()->whereIn('uid', array_filter([$lookTheme['logo_asset_uid'] ?? null, $lookTheme['hero_asset_uid'] ?? null]))->get()->keyBy('uid');
         $brandColor = $lookTheme['brand_color'] ?? null;
+        $secondaryColor = $lookTheme['secondary_brand_color'] ?? null;
         $privacyNoticeUrl = $lookTheme['privacy_notice_url'] ?? null;
         $termsUrl = $lookTheme['terms_url'] ?? null;
         $logo = isset($lookTheme['logo_asset_uid'], $lookAssets[$lookTheme['logo_asset_uid']]) ? ['url' => $lookAssets[$lookTheme['logo_asset_uid']]->url(), 'alt' => $lookAssets[$lookTheme['logo_asset_uid']]->alt_text] : null;
@@ -22,13 +23,41 @@
             @csrf
 
             <div class="website-look-field">
-                <label class="website-look-label" for="look-brand-color">Brand colour</label>
+                <label class="website-look-label" for="look-brand-color">Primary colour</label>
                 <div class="website-look-color">
-                    <input type="color" class="website-look-swatch" id="look-brand-picker" value="{{ $brandColor ?: '#1a56db' }}" title="Pick a colour" aria-label="Pick a brand colour">
+                    <input type="color" class="website-look-swatch" id="look-brand-picker" data-color-picker="look-brand-color" value="{{ $brandColor ?: '#1a56db' }}" title="Pick a colour" aria-label="Pick a brand colour">
                     <input type="text" class="form-control" id="look-brand-color" name="brand_color" value="{{ old('brand_color', $brandColor) }}" placeholder="Template colour" maxlength="20" inputmode="text" autocomplete="off">
                 </div>
                 @error('brand_color') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
             </div>
+
+            <div class="website-look-field">
+                <label class="website-look-label" for="look-secondary-color">Secondary colour</label>
+                <div class="website-look-color">
+                    <input type="color" class="website-look-swatch" id="look-secondary-picker" data-color-picker="look-secondary-color" value="{{ $secondaryColor ?: '#6b7280' }}" title="Pick a colour" aria-label="Pick a secondary colour">
+                    <input type="text" class="form-control" id="look-secondary-color" name="secondary_brand_color" value="{{ old('secondary_brand_color', $secondaryColor) }}" placeholder="Template default" maxlength="20" inputmode="text" autocomplete="off">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-color-reset="look-secondary-color" aria-label="Reset secondary colour to template default">Reset</button>
+                </div>
+                @error('secondary_brand_color') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
+            </div>
+
+            @include('customer.business.website.studio._color-field', ['name' => 'dark_bg_color', 'label' => 'Dark background colour', 'value' => $lookTheme['dark_bg_color'] ?? null, 'fallback' => '#061633', 'hint' => 'Dark sections and the footer.'])
+
+            <details class="website-look-field" data-testid="advanced-template-colors" @if (collect(array_diff(\App\Library\Website\Design\BrandColors::PALETTE_KEYS, ['dark_bg_color']))->contains(fn ($k) => ! empty($lookTheme[$k]))) open @endif>
+                <summary class="website-look-label">Advanced template colours</summary>
+                @foreach ([
+                    ['surface_color', 'Light section background', '#ffffff', 'Plain content sections.'],
+                    ['tint_color', 'Tinted section background', '#f3f5f9', 'Alternating accent sections.'],
+                    ['page_bg_color', 'Page background', '#ffffff', 'Behind everything else.'],
+                    ['header_bg_color', 'Header background', '#ffffff', null],
+                    ['announce_bg_color', 'Announcement bar background', '#061633', null],
+                    ['footer_bg_color', 'Footer background', '#061633', 'Leave blank to use the dark background colour.'],
+                    ['text_color', 'Main text colour', '#14181f', 'Kept readable on light sections.'],
+                    ['muted_color', 'Secondary text colour', '#4b5563', 'Captions and supporting text.'],
+                ] as [$paletteName, $paletteLabel, $paletteFallback, $paletteHint])
+                    @include('customer.business.website.studio._color-field', ['name' => $paletteName, 'label' => $paletteLabel, 'value' => $lookTheme[$paletteName] ?? null, 'fallback' => $paletteFallback, 'hint' => $paletteHint])
+                @endforeach
+            </details>
 
             <div class="website-look-field">
                 <span class="website-look-label">Logo</span>

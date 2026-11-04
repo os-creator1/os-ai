@@ -18,6 +18,9 @@ final class DomainReservations
 
     public const AGENCY_APP = 'agency_app_domain';
 
+    /** The `www.` hostname of a website domain: reserved with the apex, in the same transaction, for the same owner row. */
+    public const WEBSITE_WWW = 'website_domain_www';
+
     /** @throws DomainUnavailableException the hostname is reserved by the platform or already claimed by someone else */
     public function claim(string $domain, string $ownerType, int $ownerId): void
     {
@@ -58,9 +61,11 @@ final class DomainReservations
             return;
         }
 
-        $alive = $row->owner_type === self::WEBSITE
-            ? DB::table('website_domains')->where('id', $row->owner_id)->where('domain', $domain)->exists()
-            : DB::table('agency_white_label_settings')->where('id', $row->owner_id)->where('app_domain', $domain)->exists();
+        $alive = match ($row->owner_type) {
+            self::WEBSITE => DB::table('website_domains')->where('id', $row->owner_id)->where('domain', $domain)->exists(),
+            self::WEBSITE_WWW => DB::table('website_domains')->where('id', $row->owner_id)->where('domain', preg_replace('/^www\./', '', $domain))->exists(),
+            default => DB::table('agency_white_label_settings')->where('id', $row->owner_id)->where('app_domain', $domain)->exists(),
+        };
 
         if (! $alive) {
             DB::table('domain_reservations')->where('id', $row->id)->delete();

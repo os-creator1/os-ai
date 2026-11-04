@@ -41,6 +41,8 @@
 
     @if($setupLayout)
         @include('customer.dashboard.home.v2._setup', ['home' => $home, 'v2' => $v2, 'greetingName' => $greetingName])
+    @elseif($v2['layout'] === HomeV2Presenter::LAYOUT_GROWTH)
+        @include('customer.dashboard.home.v2._growth-home', ['home' => $home, 'v2' => $v2, 'greetingName' => $greetingName, 'subline' => $subline])
     @else
         <div class="hv2-layout">
             <div class="hv2-main">

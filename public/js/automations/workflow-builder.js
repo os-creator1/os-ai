@@ -5341,7 +5341,7 @@ __webpack_require__.r(__webpack_exports__);
 // zooming or panning can never modify the workflow document (task
 // requirement, test #21).
 
-var MIN_SCALE = 0.4;
+var MIN_SCALE = 0.5;
 var MAX_SCALE = 2;
 var STEP = 1.2;
 function createZoomPan(viewport, surface) {

@@ -7,6 +7,7 @@ use App\Enums\Business\BusinessIndustry;
 use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessServiceStatus;
 use App\Library\Business\InitialBusinessSnapshotBuilder;
+use App\Library\Opportunity\OpportunityPlanEligibility;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\BusinessService;
@@ -27,7 +28,7 @@ class InitialBusinessSnapshotBuilderTest extends TestCase
     {
         parent::setUp();
 
-        $this->builder = new InitialBusinessSnapshotBuilder();
+        $this->builder = new InitialBusinessSnapshotBuilder($this->allowAllEligibility());
     }
 
     public function test_score_is_zero_for_a_fully_blank_business(): void
@@ -661,5 +662,14 @@ class InitialBusinessSnapshotBuilderTest extends TestCase
         ], $attributes));
 
         return $service;
+    }
+
+    private function allowAllEligibility(): OpportunityPlanEligibility
+    {
+        $eligibility = $this->createStub(OpportunityPlanEligibility::class);
+        $eligibility->method('isEligible')->willReturn(true);
+        $eligibility->method('ineligibleTypes')->willReturn([]);
+
+        return $eligibility;
     }
 }

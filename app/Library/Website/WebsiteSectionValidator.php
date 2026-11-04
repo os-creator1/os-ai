@@ -147,6 +147,15 @@ final class WebsiteSectionValidator
                 'items' => 'required|array|min:1|max:24',
                 'items.*.image' => 'required|string',
             ],
+            // Customer-uploaded MP4s (WebsiteAssetUploadService::storeVideo), referenced by asset uid like images are.
+            WebsiteSectionType::Video => [
+                'heading' => 'nullable|string|max:120',
+                'items' => 'required|array|min:1|max:6',
+                'items.*.video' => 'required|string',
+                'items.*.poster' => 'nullable|string',
+                'items.*.title' => 'nullable|string|max:120',
+                'items.*.caption' => 'nullable|string|max:300',
+            ],
             WebsiteSectionType::Form => [
                 'heading' => 'nullable|string|max:120',
                 'form_uid' => 'required|string',
@@ -268,6 +277,13 @@ final class WebsiteSectionValidator
         if ($type === WebsiteSectionType::Services || $type === WebsiteSectionType::Gallery) {
             foreach (($data['items'] ?? []) as $i => $item) {
                 $this->checkAssetValue($item['image'] ?? null, "items.{$i}.image", $validAssetUids, $allowAssetReferences, $errors);
+            }
+        }
+
+        if ($type === WebsiteSectionType::Video) {
+            foreach (($data['items'] ?? []) as $i => $item) {
+                $this->checkAssetValue($item['video'] ?? null, "items.{$i}.video", $validAssetUids, $allowAssetReferences, $errors);
+                $this->checkAssetValue($item['poster'] ?? null, "items.{$i}.poster", $validAssetUids, $allowAssetReferences, $errors);
             }
         }
 

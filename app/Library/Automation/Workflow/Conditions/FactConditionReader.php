@@ -47,6 +47,27 @@ class FactConditionReader
         return $deal === null ? null : (string) $deal->status;
     }
 
+    /**
+     * Whether the deal that started this journey is still open; null when the journey did not start from a deal (the caller
+     * then falls back to "any open deal"). A contact with several deals is judged by THIS one: another open deal must not keep
+     * a won or lost deal's follow-ups running.
+     */
+    public function triggeringDealIsOpen(AutomationEnrollment $enrollment, Contacts $contact): ?bool
+    {
+        $dealId = $this->facts->forEnrollment($enrollment)->opportunityId;
+
+        if ($dealId === null) {
+            return null;
+        }
+
+        return DB::table('crm_opportunities')
+            ->where('id', $dealId)
+            ->where('business_id', (int) $enrollment->business_id)
+            ->where('contact_id', (int) $contact->id)
+            ->where('status', 'open')
+            ->exists();
+    }
+
     public function documentStatus(AutomationEnrollment $enrollment): ?string
     {
         $document = $this->document($enrollment);
