@@ -158,6 +158,8 @@ class EventServiceProvider extends ServiceProvider
         // Queued: the webhook's provider is not kept waiting on enrollment.
         InboundMessageReceived::class => [
             EnrollFromInboundMessage::class,
+            // Revenue journey — a reply (or STOP) ends the lead's follow-up journeys.
+            \App\Listeners\Automation\Workflow\StopFollowUpsOnCustomerOutcome::class.'@handleInbound',
             // Agency Outreach V1 (contract §9) — prospect replies. Queued; matches the Agency's own
             // Business + the sender's number and ignores everything else.
             HandleOutreachInboundMessage::class,
@@ -193,6 +195,8 @@ class EventServiceProvider extends ServiceProvider
         ],
         AppointmentScheduled::class => [
             EnrollFromAppointmentEvent::class,
+            // Revenue journey — a booked lead stops receiving "please book" follow-ups.
+            \App\Listeners\Automation\Workflow\StopFollowUpsOnCustomerOutcome::class.'@handleBooked',
             \App\Listeners\Calendar\SyncZoomMeetingOnAppointmentEvents::class . '@handleScheduled',
         ],
         // Booking Notifications V1 — the Calendar's built-in confirmation/reminder
