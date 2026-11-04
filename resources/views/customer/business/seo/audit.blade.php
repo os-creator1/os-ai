@@ -129,7 +129,18 @@
                                         </span>
                                         <div>{{ $finding->title }}</div>
                                     </td>
-                                    <td>{{ $finding->description }}</td>
+                                    <td>
+                                        {{ $finding->description }}
+                                        @if (isset($draftFixes[$loop->index]))
+                                            @php $fix = $draftFixes[$loop->index]; @endphp
+                                            <div class="mt-50" data-role="audit-draft-fix">
+                                                @if ($fix['draftFixed'])
+                                                    <span class="text-caption text-muted">Updated in your draft. Publish to make it live.</span>
+                                                @endif
+                                                <a href="{{ $fix['url'] }}" data-role="audit-draft-fix-link">{{ $fix['label'] }}</a>
+                                            </div>
+                                        @endif
+                                    </td>
                                 </tr>
                             @endforeach
                         </tbody>
