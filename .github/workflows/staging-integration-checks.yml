@@ -1,0 +1,78 @@
+name: Staging Integration Checks
+
+on:
+  pull_request:
+    branches: [staging]
+    paths:
+      - 'app/Library/AgencySite/**'
+      - 'app/Http/Controllers/Customer/Agency/**'
+      - 'app/Library/Legal/**'
+      - 'app/Models/Legal*.php'
+      - 'resources/legal/**'
+      - 'resources/views/errors/**'
+      - 'tests/Feature/Legal/**'
+      - 'tests/Feature/ErrorPages/**'
+      - 'tests/Feature/Agency/**'
+      - 'tests/Unit/AgencySite/**'
+      - '.github/workflows/staging-integration-checks.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-integration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  agency-legal-regression:
+    name: Legal + Agency + Error Pages (PHP + MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      QUEUE_CONNECTION: sync
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Check out integration PR
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Run focused staging-only feature regressions
+        run: |
+          php artisan test \
+            tests/Feature/Legal \
+            tests/Feature/ErrorPages \
+            tests/Feature/Agency/AgencySiteTest.php \
+            tests/Feature/Agency/AgencySitePreviewDenialTest.php \
+            tests/Feature/Agency/AgencyBrandPropagationTest.php \
+            tests/Unit/AgencySite \
+            --stop-on-failure
