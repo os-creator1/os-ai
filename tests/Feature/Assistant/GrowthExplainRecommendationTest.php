@@ -91,4 +91,35 @@ class GrowthExplainRecommendationTest extends TestCase
         $this->assertStringNotContainsString('Persisted proof', $all);
         $this->assertStringNotContainsString('Publish your website', $all);
     }
+
+    /** The "Explain this with MotionGrove" prompt, exactly as Home sends it, is read-only: only the (metered) model call happens. */
+    public function test_explain_this_is_read_only_no_send_no_publish_no_charge_no_approval(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        \Illuminate\Support\Facades\Notification::fake();
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'ReadOnly Venue', 'ReadOnly Account');
+        $this->seedRecommendations($business);
+        $this->authenticateAs($customer);
+
+        $snapshot = fn (): array => [
+            'proposals' => \App\Models\AssistantActionProposal::query()->count(),
+            'audits' => \App\Models\AssistantActionAudit::query()->count(),
+            'customer_charges' => \App\Models\BusinessUsageLedgerEntry::query()->count(),
+            'messages_sent' => \Illuminate\Support\Facades\DB::table('chat_box_messages')->count(),
+            'opportunity_states' => \Illuminate\Support\Facades\DB::table('opportunities')->orderBy('id')->pluck('status')->all(),
+            'opportunity_transitions' => \Illuminate\Support\Facades\DB::table('opportunity_transitions')->count(),
+            'website_revisions' => \Illuminate\Support\Facades\Schema::hasTable('website_revisions') ? \Illuminate\Support\Facades\DB::table('website_revisions')->count() : 0,
+            'websites' => \Illuminate\Support\Facades\DB::table('websites')->orderBy('id')->pluck('status')->all(),
+        ];
+        $before = $snapshot();
+
+        $this->modelSays(['action' => 'call_tools', 'calls' => [['tool' => 'growth_recommendations', 'args' => []]]]);
+        $this->modelSays(['action' => 'answer', 'message' => 'Publishing your website comes first.']);
+        $this->say($workspace, $business, 'Explain my top recommendation: what evidence supports it, why it matters, and exactly what to do first.')->assertOk();
+
+        $this->assertSame($before, $snapshot(), 'Nothing was proposed, approved, sent, published, charged or changed.');
+        \Illuminate\Support\Facades\Mail::assertNothingSent();
+        \Illuminate\Support\Facades\Notification::assertNothingSent();
+        $this->assertSame(2, $this->aiCalls(), 'Only the metered model calls happened (metering is allowed).');
+    }
 }
