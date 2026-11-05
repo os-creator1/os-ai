@@ -31,7 +31,7 @@ class GrowthExplainRecommendationTest extends TestCase
         return (string) end($messages)['content'];
     }
 
-    private function seed($business): void
+    private function seedRecommendations($business): void
     {
         $this->recommendation($business, [
             'worker_key' => 'website', 'type' => 'website.not_published:v1', 'title' => 'Publish your website', 'priority_score' => 90, 'confidence' => 0.80,
@@ -46,7 +46,7 @@ class GrowthExplainRecommendationTest extends TestCase
     public function test_the_model_receives_the_primary_recommendation_first_with_only_its_persisted_evidence(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Explain Venue', 'Explain Account');
-        $this->seed($business);
+        $this->seedRecommendations($business);
         $this->authenticateAs($customer);
 
         $this->modelSays(['action' => 'call_tools', 'calls' => [['tool' => 'growth_recommendations', 'args' => []]]]);
@@ -78,7 +78,7 @@ class GrowthExplainRecommendationTest extends TestCase
     public function test_an_actor_without_recommendation_permission_gives_the_model_nothing(): void
     {
         [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Denied Venue', 'Denied Account');
-        $this->seed($business);
+        $this->seedRecommendations($business);
         $staff = $this->createCustomer();
         $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
         $this->authenticateAs($staff->fresh(), ['access_backend']);
