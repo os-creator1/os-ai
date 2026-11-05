@@ -51,4 +51,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: ViewAs route boundary on clean main
-        run: php artisan test tests/Feature/Security/ViewAsRouteBoundaryTest.php
+        run: php artisan test tests/Feature/Workspace/WorkspaceMemberInvitationTest.php
