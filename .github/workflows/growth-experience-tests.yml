@@ -89,6 +89,7 @@ jobs:
           tests/Feature/Dashboards/HomeV2ActionAuthorityTest.php
           tests/Feature/Dashboards/DashboardRenderTest.php
           tests/Feature/Dashboards/GrowthHomeExperienceTest.php
+          tests/Feature/Dashboards/GrowthHomeAcceptanceTest.php
           tests/Feature/Growth/GrowthHomeBandSeoCoverageTest.php
           tests/Feature/Growth/GrowthEngineIntegrationTest.php
           tests/Feature/Growth/GrowthOpportunityPlanEligibilityTest.php
