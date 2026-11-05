@@ -2,7 +2,7 @@ name: Temporary combined ViewAs+invitation run
 
 on:
   push:
-    branches: [claude/tmp-ci-main]
+    branches: [claude/tmp-ci-fix]
 
 permissions:
   contents: read
