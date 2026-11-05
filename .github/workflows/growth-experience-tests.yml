@@ -90,6 +90,7 @@ jobs:
           tests/Feature/Dashboards/DashboardRenderTest.php
           tests/Feature/Dashboards/GrowthHomeExperienceTest.php
           tests/Feature/Dashboards/GrowthHomeAcceptanceTest.php
+          tests/Feature/Dashboards/GrowthHomeEvidenceTest.php
           tests/Feature/Growth/GrowthHomeBandSeoCoverageTest.php
           tests/Feature/Growth/GrowthEngineIntegrationTest.php
           tests/Feature/Growth/GrowthOpportunityPlanEligibilityTest.php
@@ -103,6 +104,7 @@ jobs:
           tests/Feature/Assistant/AssistantPromptSecurityTest.php
           tests/Feature/Assistant/AssistantActionTest.php
           tests/Feature/Assistant/AssistantViewAsApprovalTest.php
+          tests/Feature/Assistant/GrowthExplainRecommendationTest.php
           tests/Feature/Website/WebsiteMetaDescriptionSuggestionTest.php
           tests/Feature/Security/ViewAsRouteBoundaryTest.php
       - name: Fail if any acceptance group failed
