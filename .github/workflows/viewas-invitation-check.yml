@@ -50,5 +50,7 @@ jobs:
           tools: composer:v2
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
-      - name: ViewAs boundary and invitation tests
-        run: php artisan test tests/Feature/Security/ViewAsRouteBoundaryTest.php tests/Feature/Workspace/WorkspaceMemberInvitationTest.php
+      - name: ViewAs boundary
+        run: php artisan test tests/Feature/Security/ViewAsRouteBoundaryTest.php
+      - name: Invitation tests (separate process)
+        run: php artisan test tests/Feature/Workspace/WorkspaceMemberInvitationTest.php
