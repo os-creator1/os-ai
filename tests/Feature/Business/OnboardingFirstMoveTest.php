@@ -121,4 +121,28 @@ class OnboardingFirstMoveTest extends TestCase
         $this->assertSame('contacts', $result['need']['key']);
         $this->assertContains('Online booking', $result['inPlace']);
     }
+
+    /** Real booking type, staff and working hours — no stub: the Calendar's canonical readiness decides the onboarding result. */
+    public function test_canonical_readiness_with_real_fixtures_controls_the_result(): void
+    {
+        // tenant() finishes calendar setup: location, active booking type, assigned staff, working hours.
+        [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Real Ready Venue', 'Real Ready Account');
+        $fresh = function () use ($business): array {
+            app()->forgetInstance(\App\Library\Dashboard\Home\HomeBookingReader::class);
+            app()->forgetInstance(OnboardingFirstMove::class);
+
+            return app(OnboardingFirstMove::class)->for($business, ['website' => ['choice' => 'existing']]);
+        };
+
+        $ready = $fresh();
+        $this->assertContains('Online booking', $ready['inPlace']);
+        $this->assertNotSame('booking', $ready['need']['key']);
+
+        // Still ACTIVE, but nobody is assigned: the public page would refuse it, so it is not "in place".
+        DB::table('booking_type_staff')->delete();
+        $unready = $fresh();
+        $this->assertNotContains('Online booking', $unready['inPlace']);
+        $this->assertSame('booking', $unready['need']['key']);
+        $this->assertSame('Finish your booking setup', $unready['need']['title']);
+    }
 }

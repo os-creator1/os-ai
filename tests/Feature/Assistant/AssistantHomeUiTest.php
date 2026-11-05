@@ -21,7 +21,7 @@ class AssistantHomeUiTest extends TestCase
 
     public function test_ask_sits_directly_beneath_the_greeting_and_loading_home_calls_no_model(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Layout Venue', 'Layout Account');
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Layout Venue', 'Layout Account');
         $this->authenticateAs($customer);
 
         $html = $this->get(route('user.home'))->assertOk()->getContent();
@@ -75,7 +75,7 @@ class AssistantHomeUiTest extends TestCase
 
     public function test_the_existing_cards_are_still_on_the_page(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Cards Venue', 'Cards Account');
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Cards Venue', 'Cards Account');
         $this->authenticateAs($customer);
 
         $html = $this->get(route('user.home'))->assertOk()->getContent();
