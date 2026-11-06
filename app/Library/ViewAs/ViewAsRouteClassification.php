@@ -161,6 +161,11 @@ final class ViewAsRouteClassification
         // viewed Business, and never itself business-scoped; denied while
         // viewing exactly like the other Workspace-frame routes above.
         'client-invitations.',
+        // Accepting a Workspace team invitation joins the ACTOR's own account to a Workspace: an account-level action on the
+        // actor's membership, never part of the viewed Business. It is closed (404) while viewing, so a View As session can never
+        // be used to accept an invitation (the signed-in person must do it as themselves). The token-bearing GET/register steps
+        // are not authenticated customer routes and are unaffected.
+        'workspace-invitations.accept',
         // Agency V1 final — routes merged after the inventory above was last swept. Each is
         // the ACTOR's own account-level surface, never part of the viewed Business, so each
         // is closed (404) while viewing rather than left to the Unclassified default:
