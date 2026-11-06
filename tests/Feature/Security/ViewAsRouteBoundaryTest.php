@@ -110,6 +110,25 @@ class ViewAsRouteBoundaryTest extends TestCase
         $this->get(route('customer.opportunities.index'))->assertOk();
     }
 
+    public function test_accepting_a_workspace_invitation_is_closed_while_viewing_and_changes_nothing(): void
+    {
+        [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
+        $this->authenticateAs($agency);
+        $url = route('workspace-invitations.accept', ['uid' => 'no-such-invitation', 'token' => 'no-such-token']);
+
+        // Outside View As the same request reaches the controller, which answers with its own "no longer valid" page.
+        $this->post($url)->assertOk()->assertSee('no longer valid');
+
+        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+        $memberships = \App\Models\WorkspaceMembership::query()->count();
+        $invitations = \App\Models\WorkspaceMemberInvitation::query()->count();
+
+        $this->post($url)->assertNotFound();
+
+        $this->assertSame($memberships, \App\Models\WorkspaceMembership::query()->count(), 'No membership is created or changed while viewing.');
+        $this->assertSame($invitations, \App\Models\WorkspaceMemberInvitation::query()->count());
+    }
+
     // -----------------------------------------------------------------
     // Closed inventories
     // -----------------------------------------------------------------
