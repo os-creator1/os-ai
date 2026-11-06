@@ -36,7 +36,9 @@ final class GrowthRecommendationsTool implements ReadTool
     public function read(AssistantContext $context, array $args): ToolResult
     {
         [$workspaceUid, $businessUid] = $context->scoped;
-        $band = $this->growth->build($context->business, (int) $context->user->id, $workspaceUid, $businessUid);
+        // The SAME head selection Business Home uses (Growth plan: SEO-first), so "my top recommendation" is the one Home shows.
+        $seoFirst = $context->customer->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth;
+        $band = $this->growth->build($context->business, (int) $context->user->id, $workspaceUid, $businessUid, $seoFirst);
 
         if (! $band['has_evaluation']) {
             return new ToolResult($this->key(), ['evaluated' => false], [], [], ['MotionGrove has not finished evaluating this business yet, so there are no recommendations to report.']);
@@ -45,8 +47,36 @@ final class GrowthRecommendationsTool implements ReadTool
         $items = [];
         $links = [];
 
-        foreach (array_slice($band['items'], 0, 5) as $item) {
-            $items[] = ['title' => $item['title'], 'headline' => $item['headline'], 'category' => $item['category_label'], 'impact' => $item['impact']];
+        // The engine's chosen head first (it may be the promoted SEO candidate, which is not in the listed rows), flagged as primary.
+        $headUid = $band['head']?->uid;
+        $listed = $band['items'];
+        $primary = null;
+
+        foreach (array_merge($listed, is_array($band['promoted'] ?? null) ? [$band['promoted']] : []) as $candidate) {
+            if ($headUid !== null && $candidate['uid'] === $headUid) {
+                $primary = $candidate;
+
+                break;
+            }
+        }
+
+        $ordered = $primary === null ? $listed : array_merge([$primary], array_values(array_filter($listed, fn (array $i): bool => $i['uid'] !== $headUid)));
+
+        foreach (array_slice($ordered, 0, 5) as $i => $item) {
+            $isPrimary = $primary !== null && $i === 0;
+            $row = ['title' => $item['title'], 'headline' => $item['headline'], 'category' => $item['category_label'], 'impact' => $item['impact'], 'is_primary' => $isPrimary];
+
+            if ($isPrimary) {
+                // Only what the engine persisted for this recommendation; absent stays absent (never filled in by the model).
+                $row += array_filter([
+                    'why_it_matters' => $item['why'] ?? null,
+                    'evidence' => $item['evidence_summary'] ?? null,
+                    'expected_outcome' => $item['expected'] ?? null,
+                    'confidence' => $item['confidence'] ?? null,
+                ], fn ($v) => $v !== null && $v !== '');
+            }
+
+            $items[] = $row;
             $links[] = ['label' => $item['title'], 'url' => $item['detail_url']];
         }
 

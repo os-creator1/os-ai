@@ -56,7 +56,7 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_an_established_business_gets_the_two_column_home_in_the_approved_order(): void
     {
-        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Layout Venue', 'Layout Account');
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Layout Venue', 'Layout Account');
         $this->contactsAdded($business, 2, '2026-09-02');
         $this->authenticateAs($customer);
 
@@ -124,7 +124,7 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_a_finished_business_leaves_the_setup_home(): void
     {
-        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Graduate Venue', 'Graduate Account');
+        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Core, 'Graduate Venue', 'Graduate Account');
         $this->authenticateAs($customer);
         $this->assertStringContainsString('data-home-layout="setup"', $this->home()->assertOk()->getContent());
 
@@ -305,7 +305,7 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_done_for_you_and_suggested_next_are_separate_and_suggestions_are_capped_at_three(): void
     {
-        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Sections Venue', 'Sections Account');
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Sections Venue', 'Sections Account');
         $this->website($business, 'published');
         $this->websiteRevision($business, 1, $this->minutesAgo(120));
         $this->authenticateAs($customer);
@@ -360,7 +360,7 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_the_home_snapshot_still_carries_the_command_band_the_presenter_reads(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Band Venue', 'Band Account');
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Band Venue', 'Band Account');
         $this->authenticateAs($customer);
 
         $home = $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_COMMAND);

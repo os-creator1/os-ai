@@ -94,7 +94,7 @@ class HomeV2ActionAuthorityTest extends TestCase
 
     public function test_suggested_next_never_offers_email_to_a_viewer_who_cannot_connect(): void
     {
-        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Suggest Venue', 'Suggest Account');
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Suggest Venue', 'Suggest Account');
         // Leave only the email suggestion available: a website, an automation and payments are already in place.
         $this->website($business, 'published');
         $this->automationRuns($business, 1, '2026-09-02');
@@ -111,7 +111,7 @@ class HomeV2ActionAuthorityTest extends TestCase
 
     public function test_connect_payments_is_offered_only_to_an_eligible_owner(): void
     {
-        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Pay Venue', 'Pay Account');
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Pay Venue', 'Pay Account');
         $this->contactsAdded($business, 1, '2026-09-02');
 
         $this->authenticateAs($owner);
@@ -132,7 +132,7 @@ class HomeV2ActionAuthorityTest extends TestCase
 
     public function test_an_unreadable_website_status_does_not_suggest_building_a_website(): void
     {
-        [$owner, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Unknown Site', 'Unknown Account');
+        [$owner, $business] = $this->tenant(WorkspacePlanTier::Core, 'Unknown Site', 'Unknown Account');
         $this->contactsAdded($business, 1, '2026-09-02');
         $this->authenticateAs($owner);
 

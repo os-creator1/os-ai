@@ -3,7 +3,7 @@
     nothing and selects nothing: the next move is Needs-you's own, the "What's next" rows are the Growth band's existing queue, progress
     is the band's own score. Anything unreadable is said to be unknown, never shown as a result. CRM/Core never renders this file.
 
-    Order: Where you stand → Your next move → Your progress → MotionGrove is handling → Ask MotionGrove → What's next.
+    Order: Where you stand → Your next move → Your progress → MotionGrove is handling → Already set up → Results → Ask MotionGrove → What's next.
 --}}
 @php
     $g = $v2['growthHome'];
@@ -16,7 +16,7 @@
         default => 'Setup is still in progress.',
     };
 @endphp
-<div class="hv2-layout" data-role="growth-home">
+<div class="hv2-layout gh-root" data-role="growth-home">
     <div class="hv2-main">
         <section class="hv2-section" aria-labelledby="gh-stand-title" data-role="growth-stand" data-status="{{ $g['standKey'] }}">
             <h2 class="hv2-label" id="gh-stand-title">Where you stand</h2>
@@ -36,17 +36,30 @@
                     <div><strong>{{ $needs['headline'] }}</strong><p class="hv2-muted mb-0">{{ $needs['sub'] }}</p></div>
                 </div>
             @else
-                <div class="hv2-card hv2-needs" data-role="next-best-move" data-move="{{ $needs['moveKey'] ?? 'attention' }}">
+                <div class="hv2-card hv2-needs{{ $needs['kind'] === 'waiting' ? '' : ' hv2-needs--single' }}" data-role="next-best-move" data-move="{{ $needs['moveKey'] ?? 'attention' }}">
                     @if($needs['kind'] === 'waiting')
                         <span class="hv2-tile" aria-hidden="true" data-role="needs-count">{{ $needs['tile'] }}</span>
                     @endif
                     <div class="hv2-needs__text">
                         <h3 class="hv2-needs__title" data-role="next-best-move-headline">{{ $needs['headline'] }}</h3>
                         @if($needs['sub'])<p class="hv2-muted mb-0" data-role="needs-sub">{{ $needs['sub'] }}</p>@endif
+                        @if(($needs['evidence'] ?? []) !== [] || ($needs['why'] ?? []) !== [] || ($needs['impact'] ?? null) !== null)
+                        <details class="hv2-details gh-evidence" data-role="growth-evidence" open>
+                            <summary>Why MotionGrove suggests this</summary>
+                            <ul class="hv2-list">
+                                @foreach(array_merge($needs['evidence'] ?? [], $needs['why'] ?? []) as $line)<li data-role="evidence-line">{{ $line }}</li>@endforeach
+                                @if(($needs['impact'] ?? null) !== null)<li data-role="evidence-impact">{{ is_array($needs['impact']) ? ($needs['impact']['text'] ?? '') : $needs['impact'] }}</li>@endif
+                            </ul>
+                            @if(($needs['confidence'] ?? null) !== null)<p class="hv2-muted mb-0">Confidence: {{ $needs['confidence'] }}</p>@endif
+                        </details>
+                    @endif
                     </div>
                     @if($needs['primary'] !== null)
                         <div class="hv2-needs__actions">
                             <a class="btn btn-primary hv2-btn" href="{{ $needs['primary']['url'] }}" data-role="next-best-move-action">{{ $needs['primary']['label'] }} <span aria-hidden="true">→</span></a>
+                            @if(($needs['ai'] ?? null) !== null)
+                                <button type="button" class="btn btn-outline-secondary hv2-btn" data-role="needs-ai" data-ask-prompt="{{ $needs['ai']['prompt'] }}"><span class="hv2-spark" aria-hidden="true">✦</span> {{ $needs['ai']['label'] }}</button>
+                            @endif
                         </div>
                     @endif
                 </div>
@@ -110,6 +123,18 @@
                 @endif
             </div>
         </section>
+
+        @if(($g['configured'] ?? []) !== [])
+        <section class="hv2-section" aria-labelledby="gh-config-title" data-role="growth-configured">
+            <h2 class="hv2-label" id="gh-config-title">Already set up</h2>
+            <ul class="hv2-card hv2-list" data-role="configured-items">
+                @foreach($g['configured'] as $item)<li data-role="configured-item"><span aria-hidden="true">✓</span> {{ $item['title'] }}</li>@endforeach
+            </ul>
+        </section>
+        @endif
+
+        {{-- Measured outcomes: the existing performance band, unchanged — real counts, a dash where nothing was collected. --}}
+        @include('customer.dashboard.home.v2._growth', ['dashboard' => $dashboard, 'growth' => $v2['growth']])
 
         {{-- A failed automation read is still visible on Growth Home; never silently hide a failed proof of all-clear. --}}
         @if($dashboard->failed(\App\Library\Dashboard\DashboardSnapshot::BAND_AUTOMATIONS))
