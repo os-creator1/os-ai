@@ -220,7 +220,8 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
-            'activity' => $this->activity($bands, $growth),
+            'activity' => $this->activity($bands),
+            'currentWork' => $this->currentWork($growth),
             'googleVisibility' => $this->googleVisibility($business, $context, $user, $entitlements, $scoped),
             'completedWork' => $this->completedWork($bands),
             // The CURRENT number of customers waiting for a reply (the Conversations band's own actor-scoped figure, including zero);
@@ -599,35 +600,48 @@ final class HomeCommandCenter
     }
 
     /**
-     * Growth Home's single "MotionGrove at work" feed (max 10, deduplicated). Awaiting-approval and in-progress recommendations come
-     * first and carry NO time (the source has none; never invented); then recorded work newest first. Pending work is never "completed".
+     * Growth Home's "MotionGrove at work" feed: DATED recorded work only, newest first, deduplicated, max 10. A recommendation completion is
+     * 'completed' and an automation failure 'failed'; everything else the source records (website version, Google link, business details)
+     * is only 'recorded' — the source does not prove MotionGrove did it automatically. Awaiting-approval / in-progress recommendations
+     * have no reliable timestamp, so they are returned separately by currentWork() and never interleaved with the dated feed.
      *
      * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
      */
-    private function activity(array $bands, ?array $growth): array
+    private function activity(array $bands): array
     {
+        $recent = $bands[DashboardSnapshot::BAND_RECENT_WORK] ?? null;
         $rows = [];
         $seen = [];
-        $recent = $bands[DashboardSnapshot::BAND_RECENT_WORK] ?? null;
-
-        $all = array_values(array_filter($this->handling($bands, $growth), fn (array $r): bool => $r['at'] === null));
 
         foreach (is_array($recent) ? $recent['items'] : [] as $item) {
-            $all[] = ['key' => $item['key'], 'text' => $item['text'], 'status' => $item['key'] === 'automation_failed' ? 'failed' : 'completed', 'at' => $item['at'], 'url' => $item['url']];
-        }
-
-        foreach ($all as $row) {
-            $id = $row['key'] . '|' . $row['text'] . '|' . ($row['at'] === null ? '' : $row['at']->format('c'));
+            $status = match (true) {
+                $item['key'] === 'automation_failed' => 'failed',
+                $item['key'] === 'recommendation_completed' => 'completed',
+                default => 'recorded',
+            };
+            $id = $item['key'] . '|' . $item['text'] . '|' . $item['at']->format('c');
 
             if (isset($seen[$id])) {
                 continue;
             }
 
             $seen[$id] = true;
-            $rows[] = $row;
+            $rows[] = ['key' => $item['key'], 'text' => $item['text'], 'status' => $status, 'at' => $item['at'], 'url' => $item['url']];
         }
 
+        usort($rows, fn (array $a, array $b): int => $b['at'] <=> $a['at']);
+
         return array_slice($rows, 0, 10);
+    }
+
+    /**
+     * Work waiting on the customer or under way, from the Growth band's own recommendation states. Undated by design.
+     *
+     * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
+     */
+    private function currentWork(?array $growth): array
+    {
+        return array_slice(array_values(array_filter($this->handling([], $growth), fn (array $r): bool => $r['at'] === null)), 0, 3);
     }
 
     /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
@@ -637,7 +651,7 @@ final class HomeCommandCenter
             return null;
         }
 
-        $url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.keywords.index', $scoped, ['view_seo'], 'seo_basic_visibility');
+        $url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.seo.keywords.index', $scoped, ['view_seo'], 'seo_basic_visibility');
 
         return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url);
     }

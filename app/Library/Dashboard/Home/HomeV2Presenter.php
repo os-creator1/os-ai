@@ -64,13 +64,15 @@ final class HomeV2Presenter
         // History decides it, not the two reporting periods: a Business that ever had a contact, a conversation or an appointment is
         // established and keeps the operational Home however quiet the recent months were. Only a PROVEN absence of history (false, not
         // unknown) is genuinely new.
-        $setupLayout = $home['state'] === HomeCommandCenter::STATE_SETUP && ! $active && ($facts['hasHistory'] ?? null) === false
+        $growthPlan = ($home['growthPlan'] ?? false) === true;
+        // Growth keeps its unified Home even for a brand-new Business (it shows the single next setup step there); the setup Home is Core's.
+        $setupLayout = ! $growthPlan && $home['state'] === HomeCommandCenter::STATE_SETUP && ! $active && ($facts['hasHistory'] ?? null) === false
             && ! $headlinesFailed && $welcome['remaining'] > 0 && $needsYou['kind'] === 'caught_up';
 
         // The Growth presentation is selected by the customer's plan alone (never by whether Growth data exists or could be read), so CRM/Core
         // always keeps the existing Home and a Growth customer with no evaluation yet still gets truthful empty/unknown states.
         $growthFailed = in_array('growth', $failed, true);
-        $growthLayout = ! $setupLayout && ($home['growthPlan'] ?? false) === true;
+        $growthLayout = $growthPlan;
 
         return [
             'layout' => $setupLayout ? self::LAYOUT_SETUP : ($growthLayout ? self::LAYOUT_GROWTH : self::LAYOUT_HOME),
@@ -118,6 +120,7 @@ final class HomeV2Presenter
             'more' => array_slice($queue, 1, 4),
             'moreUrl' => $home['queueUrl'] ?? null,
             'activity' => $activity,
+            'currentWork' => $home['currentWork'] ?? [],
             'activityFailed' => $recentFailed,
             'setupStep' => $step,
         ];

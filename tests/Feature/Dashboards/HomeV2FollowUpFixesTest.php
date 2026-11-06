@@ -173,7 +173,7 @@ class HomeV2FollowUpFixesTest extends TestCase
 
     public function test_a_business_with_no_history_at_all_is_still_new(): void
     {
-        [$owner] = $this->bareTenant(WorkspacePlanTier::Growth, 'Day One', 'Day One Account');
+        [$owner] = $this->bareTenant(WorkspacePlanTier::Core, 'Day One', 'Day One Account');
         $this->authenticateAs($owner);
 
         $this->assertStringContainsString('data-home-layout="setup"', $this->homeHtml());

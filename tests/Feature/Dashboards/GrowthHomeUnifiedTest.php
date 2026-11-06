@@ -3,41 +3,24 @@
 namespace Tests\Feature\Dashboards;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
-use App\Library\Dashboard\Home\HomeGoogleVisibility;
-use App\Models\Business;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
-use Tests\Feature\Seo\Rank\Concerns\CreatesRankFixtures;
-use Tests\Feature\Seo\Rank\Concerns\CreatesRankObservations;
 use Tests\TestCase;
 
 /**
- * The unified Growth Home: layout, absence of the retired sections, honest Google-visibility states (real 30-day comparison only),
- * and Core isolation.
+ * The unified Growth Home over HTTP: layout, retired sections gone, the Google card and its real link, authorization, first-use and
+ * Core isolation. (Rank maths lives in HomeGoogleVisibilityTest, which uses the SEO fixtures; the two fixture sets are never combined.)
  */
 class GrowthHomeUnifiedTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesDashboardFixtures;
-    use CreatesRankFixtures;
-    use CreatesRankObservations;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->rankSetUp();
-    }
-
-    private function summary(Business $business, int $userId): array
-    {
-        return app(HomeGoogleVisibility::class)->summary($business, $userId, '/keywords');
-    }
 
     public function test_growth_home_has_the_new_layout_and_none_of_the_retired_sections(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Unified Venue', 'Unified Account');
         $this->authenticateAs($customer);
-        $html = $this->get(route('user.home'))->assertOk()->getContent();
+        $html = $this->home()->assertOk()->getContent();
 
         foreach (['data-role="growth-home"', 'data-role="growth-performance"', 'data-role="growth-activity"', 'data-band="ask"'] as $marker) {
             $this->assertStringContainsString($marker, $html, $marker);
@@ -50,55 +33,67 @@ class GrowthHomeUnifiedTest extends TestCase
         $this->assertSame(1, substr_count($html, 'data-role="home-ask"'));
     }
 
-    public function test_google_visibility_is_not_tracking_without_keywords_and_links_to_the_keywords_route(): void
+    public function test_an_entitled_growth_owner_sees_the_google_card_and_its_link_reaches_the_seo_keywords_page(): void
     {
-        [$owner, $business] = $this->rankTenant();
-        $s = $this->summary($business, (int) $owner->user_id);
-
-        $this->assertSame('not_tracking', $s['state']);
-        $this->assertSame('Not tracking', $s['label']);
-    }
-
-    public function test_google_visibility_establishing_then_first_rankings_never_claims_a_change(): void
-    {
-        [$owner, $business] = $this->rankTenant();
-        $target = $this->track($owner, $business, $this->keyword($owner, $business));
-
-        $this->assertSame('establishing', $this->summary($business, (int) $owner->user_id)['state']);
-
-        // A previous check only 3 days earlier is NOT a 30-day comparison.
-        $this->obs($target, 'organic', 12, now()->subDays(4));
-        $this->obs($target, 'organic', 5, now()->subDay());
-
-        $s = $this->summary($business, (int) $owner->user_id);
-        $this->assertSame('first_rankings', $s['state']);
-        $this->assertStringNotContainsString('improved', (string) $s['detail']);
-    }
-
-    public function test_google_visibility_reports_genuine_30_day_movement(): void
-    {
-        [$owner, $business] = $this->rankTenant();
-        $up = $this->track($owner, $business, $this->keyword($owner, $business, 'photo booth rental'));
-        $this->obs($up, 'organic', 14, now()->subDays(31));
-        $this->obs($up, 'organic', 6, now()->subDay());
-
-        $this->assertSame('improving', $this->summary($business, (int) $owner->user_id)['state']);
-
-        $down = $this->track($owner, $business, $this->keyword($owner, $business, 'wedding photo booth'));
-        $this->obs($down, 'organic', 4, now()->subDays(31));
-        $this->obs($down, 'organic', 12, now()->subDay());
-
-        $this->assertSame('stable', $this->summary($business, (int) $owner->user_id)['state'], 'One up, one down.');
-    }
-
-    public function test_core_home_never_carries_growth_home_markup(): void
-    {
-        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Unified', 'Core Unified Account');
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Card Venue', 'Card Account');
         $this->authenticateAs($customer);
-        $html = $this->get(route('user.home'))->assertOk()->getContent();
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-role="google-visibility"', $html);
+        $url = route('customer.workspaces.businesses.seo.keywords.index', [$workspace->uid, $business->uid]);
+        $this->assertStringContainsString('href="' . $url . '"', $html);
+        $this->assertStringContainsString('Not tracking', $html, 'No keywords tracked: the honest initial state.');
+        $this->get($url)->assertOk();
+    }
+
+    public function test_an_actor_without_view_seo_gets_no_google_card_and_no_seo_link(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'No Seo Venue', 'No Seo Account');
+        $this->authenticateAs($customer, []);
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('data-role="google-visibility"', $html);
+        $this->assertStringNotContainsString('/seo/keywords', $html);
+    }
+
+    public function test_activity_is_newest_first_and_pending_work_is_not_interleaved_with_dated_work(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Feed Venue', 'Feed Account');
+        $this->website($business, 'published');
+        $this->websiteRevision($business, 1, now()->subHours(30)->toDateTimeString());
+        $this->websiteRevision($business, 2, now()->subHours(3)->toDateTimeString());
+        $this->authenticateAs($customer);
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertLessThan(strpos($html, 'Website version 1 published'), strpos($html, 'Website version 2 published'), 'Newest first.');
+        $this->assertStringContainsString('Recorded', $html, 'A website publication is recorded, not claimed as automatic MotionGrove work.');
+        if (str_contains($html, 'data-role="current-work"')) {
+            $this->assertLessThan(strpos($html, 'data-role="activity-items"'), strpos($html, 'data-role="current-work"'));
+        }
+        $this->assertLessThanOrEqual(10, substr_count($html, 'data-role="activity-item"'));
+    }
+
+    public function test_a_new_growth_business_keeps_the_unified_home_not_the_setup_checklist(): void
+    {
+        [$customer] = $this->bareTenant(WorkspacePlanTier::Growth, 'Fresh Venue', 'Fresh Account');
+        $this->authenticateAs($customer);
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-home-layout="growth"', $html);
+        $this->assertStringContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-role="home-setup"', $html);
+        $this->assertStringNotContainsString('data-role="setup-progress"', $html);
+    }
+
+    public function test_core_home_never_carries_growth_home_markup_and_new_core_keeps_setup(): void
+    {
+        [$customer] = $this->bareTenant(WorkspacePlanTier::Core, 'Core Fresh', 'Core Fresh Account');
+        $this->authenticateAs($customer);
+        $html = $this->home()->assertOk()->getContent();
 
         foreach (['data-role="growth-home"', 'data-role="google-visibility"', 'data-role="growth-activity"'] as $marker) {
             $this->assertStringNotContainsString($marker, $html, $marker);
         }
+        $this->assertStringContainsString('data-home-layout="setup"', $html);
     }
 }

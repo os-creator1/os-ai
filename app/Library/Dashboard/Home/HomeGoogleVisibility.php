@@ -2,6 +2,7 @@
 
 namespace App\Library\Dashboard\Home;
 
+use App\Enums\Seo\SeoRankTrackingState;
 use App\Library\Seo\Rank\SeoRankHistoryReader;
 use App\Library\Seo\SeoConfig;
 use App\Library\Seo\SeoKeywordManager;
@@ -37,6 +38,7 @@ final class HomeGoogleVisibility
             $active = $this->keywords->listVisible($actorUserId, $business)->filter(fn ($k) => $k->isActive());
             $targetIds = $active->isEmpty() ? [] : SeoRankTarget::query()
                 ->where('business_id', $business->id)
+                ->where('tracking_state', SeoRankTrackingState::Tracking->value)
                 ->whereIn('seo_keyword_id', $active->pluck('id')->all())
                 ->pluck('id')->map(fn ($id) => (int) $id)->all();
 
@@ -55,17 +57,27 @@ final class HomeGoogleVisibility
             return $this->result('establishing', 'Establishing visibility', 'Your keywords are tracked; rankings appear after the first check.', $keywordsUrl);
         }
 
-        if ($read['comparable'] === []) {
+        if (! $read['fresh']) {
+            return $this->result('no_recent', 'No recent rankings', 'No current Google position was found in the latest checks.', $keywordsUrl);
+        }
+
+        // One vote per tracked target: local results are preferred (this is a local-business Home); organic is used only when no
+        // target has a comparable local pair, and the source is always named.
+        $local = array_values(array_filter($read['comparable'], fn (array $c): bool => $c['type'] === 'local'));
+        $rows = $local !== [] ? $local : array_values(array_filter($read['comparable'], fn (array $c): bool => $c['type'] === 'organic'));
+
+        if ($rows === []) {
             return $this->result('first_rankings', 'First rankings recorded', 'A 30-day comparison appears once there is enough history.', $keywordsUrl);
         }
 
-        $up = count(array_filter($read['comparable'], fn (array $c): bool => $c['change'] > 0));
-        $down = count(array_filter($read['comparable'], fn (array $c): bool => $c['change'] < 0));
-        $detail = 'Over 30 days: ' . $up . ' improved, ' . $down . ' declined, ' . (count($read['comparable']) - $up - $down) . ' unchanged.';
+        $up = count(array_filter($rows, fn (array $c): bool => $c['change'] > 0));
+        $down = count(array_filter($rows, fn (array $c): bool => $c['change'] < 0));
+        $detail = ($local !== [] ? 'Local results' : 'Website (organic) results') . ' over 30 days: ' . $up . ' improved, ' . $down . ' declined, ' . (count($rows) - $up - $down) . ' unchanged.';
 
         return match (true) {
-            $up > $down => $this->result('improving', 'Improving', $detail, $keywordsUrl),
-            $down > $up => $this->result('declining', 'Declining', $detail, $keywordsUrl),
+            $up > 0 && $down > 0 => $this->result('mixed', 'Mixed movement', $detail, $keywordsUrl),
+            $up > 0 => $this->result('improving', 'Improving', $detail, $keywordsUrl),
+            $down > 0 => $this->result('declining', 'Declining', $detail, $keywordsUrl),
             default => $this->result('stable', 'Stable', $detail, $keywordsUrl),
         };
     }

@@ -158,13 +158,13 @@ final class SeoRankHistoryReader
      * not comparable: a previous-check change is NEVER returned as a 30-day change, and absence is never converted to a number.
      *
      * @param list<int> $targetIds
-     * @return array{observed: bool, comparable: list<array{target: int, type: string, change: int}>}
+     * @return array{observed: bool, fresh: bool, comparable: list<array{target: int, type: string, change: int}>}
      *         change > 0 = moved up (rank 1 is best)
      */
     public function thirtyDayChanges(array $targetIds, \DateTimeInterface $now, int $freshDays): array
     {
         if ($targetIds === []) {
-            return ['observed' => false, 'comparable' => []];
+            return ['observed' => false, 'fresh' => false, 'comparable' => []];
         }
 
         $rows = SeoRankObservation::query()
@@ -175,6 +175,7 @@ final class SeoRankHistoryReader
             ->get(['seo_rank_target_id', 'check_type', 'status', 'position', 'checked_at']);
 
         $comparable = [];
+        $fresh = false;
 
         foreach ($rows->groupBy(fn ($o) => $o->seo_rank_target_id . '|' . $o->check_type->value) as $series) {
             $current = $series->last();
@@ -183,6 +184,7 @@ final class SeoRankHistoryReader
                 continue;
             }
 
+            $fresh = true;
             $baseline = $series->filter(fn ($o) => $o->isFound()
                 && $o->checked_at <= $current->checked_at->subDays(23)
                 && $o->checked_at >= $current->checked_at->subDays(37))->last();
@@ -192,6 +194,6 @@ final class SeoRankHistoryReader
             }
         }
 
-        return ['observed' => $rows->isNotEmpty(), 'comparable' => $comparable];
+        return ['observed' => $rows->isNotEmpty(), 'fresh' => $fresh, 'comparable' => $comparable];
     }
 }

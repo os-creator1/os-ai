@@ -9,8 +9,10 @@
     $needs = $v2['needs'];
     $kpis = collect($v2['growth']['kpis'] ?? [])->filter(fn ($k) => in_array($k['key'], ['contacts', 'bookings'], true))->sortBy(fn ($k) => $k['key'] === 'contacts' ? 0 : 1)->values();
     $google = $g['google'];
+    $labels = ['contacts' => 'New contacts', 'bookings' => 'Bookings'];
+    $missing = array_diff_key($labels, $kpis->keyBy('key')->all());
     $activity = $g['activity'];
-    $words = ['approval' => 'Awaiting your approval', 'progress' => 'In progress', 'failed' => 'Needs attention', 'completed' => 'Completed'];
+    $words = ['approval' => 'Awaiting your approval', 'progress' => 'In progress', 'failed' => 'Needs attention', 'completed' => 'Completed', 'recorded' => 'Recorded'];
 @endphp
 <div class="hv2-layout gh-root" data-role="growth-home">
     <div class="hv2-main">
@@ -34,6 +36,13 @@
                     </{{ $tag }}>
                 @endforeach
             </div>
+            @if($missing !== [] && ! $v2['growth']['failed'])
+                <div class="hv2-kpis" data-role="kpis-initial">
+                    @foreach($missing as $key => $label)
+                        <div class="hv2-kpi" data-role="kpi" data-kpi="{{ $key }}" data-state="initial"><span class="hv2-kpi__label">{{ $label }}</span><span class="hv2-kpi__value">—</span><span class="hv2-kpi__note">Nothing recorded yet</span></div>
+                    @endforeach
+                </div>
+            @endif
             @if($v2['growth']['failed'])
                 <p class="hv2-muted mb-0" data-role="growth-unavailable">Contacts and bookings are unavailable right now.</p>
             @endif
@@ -98,9 +107,24 @@
             <div class="hv2-card">
                 @if($g['activityFailed'])
                     <p class="hv2-muted mb-0" data-role="activity-unavailable">We couldn't load recent activity just now.</p>
-                @elseif($activity === [])
+                @elseif($activity === [] && $g['currentWork'] === [])
                     <p class="hv2-muted mb-0" data-role="activity-empty">No activity yet.</p>
                 @else
+                    @if($g['currentWork'] !== [])
+                        <div data-role="current-work">
+                            <p class="hv2-muted mb-0"><strong>Current work</strong></p>
+                            <ul class="hv2-done">
+                                @foreach($g['currentWork'] as $row)
+                                    <li data-role="current-work-item" data-status="{{ $row['status'] }}">
+                                        @if($row['url'] !== null)<a href="{{ $row['url'] }}">{{ $row['text'] }}</a>@else<span>{{ $row['text'] }}</span>@endif
+                                        <span class="hv2-muted">· {{ $words[$row['status']] ?? '' }}</span>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endif
+                    @if($activity !== [])
+                    <p class="hv2-muted mb-0"><strong>Recent activity</strong></p>
                     <ul class="hv2-done" data-role="activity-items">
                         @foreach($activity as $row)
                             <li data-role="activity-item" data-status="{{ $row['status'] }}"@if($loop->index >= 5) hidden data-extra="1"@endif>
@@ -111,6 +135,7 @@
                     </ul>
                     @if(count($activity) > 5)
                         <button type="button" class="btn btn-link p-0" data-role="activity-more" onclick="this.parentNode.querySelectorAll('[data-extra]').forEach(function (e) { e.hidden = false; }); this.remove();">Show more</button>
+                    @endif
                     @endif
                 @endif
             </div>

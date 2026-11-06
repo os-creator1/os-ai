@@ -99,7 +99,7 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_a_new_business_sees_get_set_up_with_progress_from_saved_state_and_exactly_one_highlighted_step(): void
     {
-        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Newbie Venue', 'Newbie Account');
+        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Core, 'Newbie Venue', 'Newbie Account');
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
