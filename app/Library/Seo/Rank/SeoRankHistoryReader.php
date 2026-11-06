@@ -150,4 +150,48 @@ final class SeoRankHistoryReader
             ->orderBy('id')
             ->get();
     }
+
+    /**
+     * Genuine 30-day movement per target, from stored FOUND observations only (one query for all targets).
+     * Current = a target's newest observation of a check type, which must be at most $freshDays old.
+     * Baseline = that type's newest FOUND observation taken 23-37 days before the current one. A target with no such pair is simply
+     * not comparable: a previous-check change is NEVER returned as a 30-day change, and absence is never converted to a number.
+     *
+     * @param list<int> $targetIds
+     * @return array{observed: bool, comparable: list<array{target: int, type: string, change: int}>}
+     *         change > 0 = moved up (rank 1 is best)
+     */
+    public function thirtyDayChanges(array $targetIds, \DateTimeInterface $now, int $freshDays): array
+    {
+        if ($targetIds === []) {
+            return ['observed' => false, 'comparable' => []];
+        }
+
+        $rows = SeoRankObservation::query()
+            ->whereIn('seo_rank_target_id', $targetIds)
+            ->where('checked_at', '>=', \Carbon\CarbonImmutable::instance($now)->subDays(37 + $freshDays))
+            ->orderBy('checked_at')
+            ->orderBy('id')
+            ->get(['seo_rank_target_id', 'check_type', 'status', 'position', 'checked_at']);
+
+        $comparable = [];
+
+        foreach ($rows->groupBy(fn ($o) => $o->seo_rank_target_id . '|' . $o->check_type->value) as $series) {
+            $current = $series->last();
+
+            if (! $current->isFound() || $current->checked_at < \Carbon\CarbonImmutable::instance($now)->subDays($freshDays)) {
+                continue;
+            }
+
+            $baseline = $series->filter(fn ($o) => $o->isFound()
+                && $o->checked_at <= $current->checked_at->subDays(23)
+                && $o->checked_at >= $current->checked_at->subDays(37))->last();
+
+            if ($baseline !== null) {
+                $comparable[] = ['target' => (int) $current->seo_rank_target_id, 'type' => $current->check_type->value, 'change' => (int) $baseline->position - (int) $current->position];
+            }
+        }
+
+        return ['observed' => $rows->isNotEmpty(), 'comparable' => $comparable];
+    }
 }

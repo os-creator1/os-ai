@@ -80,9 +80,8 @@ class HomeCommandCenterTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-role="growth-home"', $html);
-        $this->assertStringContainsString('data-role="progress-unknown"', $html);
         $this->assertStringNotContainsString('data-role="progress-verified"', $html);
-        $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
+        $this->assertStringNotContainsString('data-role="secondary-opportunity"', $html);
     }
     public function test_an_agencys_own_business_keeps_the_existing_home_even_with_growth_data(): void
     {
@@ -123,9 +122,9 @@ class HomeCommandCenterTest extends TestCase
         $this->assertStringContainsString('data-home-layout="growth"', $html);
         $this->assertStringContainsString('data-role="growth-home"', $html);
         $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="next-best-move"'));
-        $this->assertSame(2, substr_count($html, 'data-role="whats-next-item"'));
-        $this->assertStringContainsString('Growth score 72', $html);
-        $this->assertStringNotContainsString('data-role="progress-delta"', $html, 'No earlier score, so no movement is claimed.');
+        $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="secondary-opportunity"'), 'One compact secondary opportunity.');
+        $this->assertStringNotContainsString('Growth score', $html, 'The score is no longer a Growth Home section.');
+        $this->assertStringNotContainsString('data-role="progress-delta"', $html);
     }
     public function test_growth_plan_failed_growth_read_is_unknown_never_a_verified_result(): void
     {
@@ -136,9 +135,8 @@ class HomeCommandCenterTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-role="growth-home"', $html);
-        $this->assertStringContainsString('data-role="progress-unknown"', $html);
         $this->assertStringNotContainsString('data-role="progress-verified"', $html);
-        $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
+        $this->assertStringNotContainsString('data-role="secondary-opportunity"', $html);
     }
     // ── States ───────────────────────────────────────────────────────────
 

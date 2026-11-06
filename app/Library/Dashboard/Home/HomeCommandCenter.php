@@ -64,6 +64,7 @@ final class HomeCommandCenter
         private readonly HomeV2Presenter $v2,
         private readonly HomeV2Facts $v2Facts,
         private readonly HomeBookingReader $bookingReader,
+        private readonly HomeGoogleVisibility $googleVisibility,
     ) {
     }
 
@@ -219,6 +220,8 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
+            'activity' => $this->activity($bands, $growth),
+            'googleVisibility' => $this->googleVisibility($business, $context, $user, $entitlements, $scoped),
             'completedWork' => $this->completedWork($bands),
             // The CURRENT number of customers waiting for a reply (the Conversations band's own actor-scoped figure, including zero);
             // null when that band is not available to this actor or could not be read.
@@ -593,6 +596,50 @@ final class HomeCommandCenter
         }
 
         return $rows;
+    }
+
+    /**
+     * Growth Home's single "MotionGrove at work" feed (max 10, deduplicated). Awaiting-approval and in-progress recommendations come
+     * first and carry NO time (the source has none; never invented); then recorded work newest first. Pending work is never "completed".
+     *
+     * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
+     */
+    private function activity(array $bands, ?array $growth): array
+    {
+        $rows = [];
+        $seen = [];
+        $recent = $bands[DashboardSnapshot::BAND_RECENT_WORK] ?? null;
+
+        $all = array_values(array_filter($this->handling($bands, $growth), fn (array $r): bool => $r['at'] === null));
+
+        foreach (is_array($recent) ? $recent['items'] : [] as $item) {
+            $all[] = ['key' => $item['key'], 'text' => $item['text'], 'status' => $item['key'] === 'automation_failed' ? 'failed' : 'completed', 'at' => $item['at'], 'url' => $item['url']];
+        }
+
+        foreach ($all as $row) {
+            $id = $row['key'] . '|' . $row['text'] . '|' . ($row['at'] === null ? '' : $row['at']->format('c'));
+
+            if (isset($seen[$id])) {
+                continue;
+            }
+
+            $seen[$id] = true;
+            $rows[] = $row;
+        }
+
+        return array_slice($rows, 0, 10);
+    }
+
+    /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
+    private function googleVisibility(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped): ?array
+    {
+        if ($context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
+            return null;
+        }
+
+        $url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.keywords.index', $scoped, ['view_seo'], 'seo_basic_visibility');
+
+        return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url);
     }
 
     private function handling(array $bands, ?array $growth): array

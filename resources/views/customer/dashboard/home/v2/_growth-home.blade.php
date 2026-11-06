@@ -1,140 +1,120 @@
 {{--
-    Growth Home — the Growth plan's presentation of the SAME Home model (HomeV2Presenter::growthHome). It computes nothing, queries
-    nothing and selects nothing: the next move is Needs-you's own, the "What's next" rows are the Growth band's existing queue, progress
-    is the band's own score. Anything unreadable is said to be unknown, never shown as a result. CRM/Core never renders this file.
-
-    Order: Where you stand → Your next move → Your progress → MotionGrove is handling → Already set up → Results → Ask MotionGrove → What's next.
+    Growth Home — one connected page over the SAME Home model (HomeV2Presenter::growthHome). It computes nothing, queries nothing and
+    selects nothing: performance row (Google visibility from stored rank observations, New contacts, Bookings — the existing headline
+    figures) → ONE Best Next Move (Needs-you's own, evidence collapsed) → one compact secondary → "MotionGrove at work" (the existing
+    recent-work feed) → Ask MotionGrove. Anything unreadable is said to be unknown, never shown as a result. Core/Agency never render this.
 --}}
 @php
     $g = $v2['growthHome'];
     $needs = $v2['needs'];
-    $standCopy = match (true) {
-        $g['growthFailed'] => "We couldn't read your Growth insights just now, so we can't say how things stand. Nothing is assumed.",
-        $g['standKey'] === 'attention' => 'Something needs you before anything else.',
-        $g['standKey'] === 'unavailable' => "Some of your data is temporarily unavailable, so we can't confirm everything is fine.",
-        $g['standKey'] === 'clear' => 'Nothing urgent needs you right now.',
-        default => 'Setup is still in progress.',
-    };
+    $kpis = collect($v2['growth']['kpis'] ?? [])->filter(fn ($k) => in_array($k['key'], ['contacts', 'bookings'], true))->sortBy(fn ($k) => $k['key'] === 'contacts' ? 0 : 1)->values();
+    $google = $g['google'];
+    $activity = $g['activity'];
+    $words = ['approval' => 'Awaiting your approval', 'progress' => 'In progress', 'failed' => 'Needs attention', 'completed' => 'Completed'];
 @endphp
 <div class="hv2-layout gh-root" data-role="growth-home">
     <div class="hv2-main">
-        <section class="hv2-section" aria-labelledby="gh-stand-title" data-role="growth-stand" data-status="{{ $g['standKey'] }}">
-            <h2 class="hv2-label" id="gh-stand-title">Where you stand</h2>
-            <div class="hv2-card hv2-quiet{{ in_array($g['standKey'], ['unavailable'], true) || $g['growthFailed'] ? ' hv2-quiet--warn' : '' }}">
-                <div><strong>{{ $g['standLabel'] }}</strong><p class="hv2-muted mb-0">{{ $standCopy }}</p></div>
+        <section class="hv2-section" aria-label="Performance" data-role="growth-performance">
+            <div class="hv2-kpis" data-role="kpis" style="--hv2-kpis: {{ max(1, $kpis->count() + ($google !== null ? 1 : 0)) }}">
+                @if($google !== null)
+                    <div class="hv2-kpi hv2-kpi--lead" data-role="google-visibility" data-state="{{ $google['state'] }}">
+                        <span class="hv2-kpi__label">Google visibility</span>
+                        <span class="hv2-kpi__value" data-role="google-visibility-state">{{ $google['label'] }}</span>
+                        @if($google['detail'])<span class="hv2-kpi__note">{{ $google['detail'] }}</span>@endif
+                        @if($google['url'])<a href="{{ $google['url'] }}" data-role="view-keywords">View keywords</a>@endif
+                    </div>
+                @endif
+                @foreach($kpis as $kpi)
+                    @php $tag = $kpi['url'] === null ? 'div' : 'a'; @endphp
+                    <{{ $tag }} class="hv2-kpi" @if($kpi['url'] !== null) href="{{ $kpi['url'] }}" @endif data-role="kpi" data-kpi="{{ $kpi['key'] }}">
+                        <span class="hv2-kpi__label">{{ $kpi['label'] }}</span>
+                        <span class="hv2-kpi__value" data-role="headline-figure">{{ $kpi['value'] }}</span>
+                        @if($kpi['badge'] !== null)<span class="hv2-badge hv2-badge--{{ $kpi['badge']['tone'] }}" data-role="kpi-badge" aria-label="{{ $kpi['badge']['sr'] }}">{{ $kpi['badge']['text'] }}</span>@endif
+                        @if($kpi['note'])<span class="hv2-kpi__note" data-role="kpi-note">{{ $kpi['note'] }}</span>@endif
+                    </{{ $tag }}>
+                @endforeach
             </div>
+            @if($v2['growth']['failed'])
+                <p class="hv2-muted mb-0" data-role="growth-unavailable">Contacts and bookings are unavailable right now.</p>
+            @endif
         </section>
 
         @if($needs['kind'] !== 'billing_strip')
         <section class="hv2-section" aria-labelledby="gh-next-title" data-band="next_best_move" data-role="growth-next" data-kind="{{ $needs['kind'] }}">
-            <h2 class="hv2-label" id="gh-next-title">Your next move</h2>
-            @if($needs['kind'] === 'caught_up')
-                <div class="hv2-card hv2-quiet" data-role="caught-up"><span class="hv2-check" aria-hidden="true">✓</span><strong>{{ $needs['headline'] }}</strong></div>
-            @elseif($needs['kind'] === 'unavailable')
-                <div class="hv2-card hv2-quiet hv2-quiet--warn" data-role="needs-unavailable">
-                    <span class="hv2-check hv2-check--warn" aria-hidden="true">!</span>
-                    <div><strong>{{ $needs['headline'] }}</strong><p class="hv2-muted mb-0">{{ $needs['sub'] }}</p></div>
-                </div>
+            <h2 class="hv2-label" id="gh-next-title">Best next move</h2>
+            @if($needs['kind'] === 'caught_up' || $needs['kind'] === 'unavailable')
+                @if($g['setupStep'] !== null && $needs['kind'] === 'caught_up')
+                    <div class="hv2-card hv2-needs hv2-needs--single" data-role="setup-step">
+                        <div class="hv2-needs__text"><h3 class="hv2-needs__title">{{ $g['setupStep']['title'] }}</h3><p class="hv2-muted mb-0">{{ $g['setupStep']['outcome'] }}</p></div>
+                        @if(($g['setupStep']['action']['url'] ?? null) !== null)<div class="hv2-needs__actions"><a class="btn btn-primary hv2-btn" href="{{ $g['setupStep']['action']['url'] }}" data-role="setup-step-action">{{ $g['setupStep']['action']['label'] }} <span aria-hidden="true">→</span></a></div>@endif
+                    </div>
+                @else
+                    <div class="hv2-card hv2-quiet{{ $needs['kind'] === 'unavailable' ? ' hv2-quiet--warn' : '' }}" data-role="{{ $needs['kind'] === 'unavailable' ? 'needs-unavailable' : 'caught-up' }}">
+                        <div><strong>{{ $needs['headline'] }}</strong>@if($needs['sub'])<p class="hv2-muted mb-0">{{ $needs['sub'] }}</p>@endif</div>
+                    </div>
+                @endif
             @else
                 <div class="hv2-card hv2-needs{{ $needs['kind'] === 'waiting' ? '' : ' hv2-needs--single' }}" data-role="next-best-move" data-move="{{ $needs['moveKey'] ?? 'attention' }}">
-                    @if($needs['kind'] === 'waiting')
-                        <span class="hv2-tile" aria-hidden="true" data-role="needs-count">{{ $needs['tile'] }}</span>
-                    @endif
                     <div class="hv2-needs__text">
                         <h3 class="hv2-needs__title" data-role="next-best-move-headline">{{ $needs['headline'] }}</h3>
                         @if($needs['sub'])<p class="hv2-muted mb-0" data-role="needs-sub">{{ $needs['sub'] }}</p>@endif
                         @if(($needs['evidence'] ?? []) !== [] || ($needs['why'] ?? []) !== [] || ($needs['impact'] ?? null) !== null)
-                        <details class="hv2-details gh-evidence" data-role="growth-evidence" open>
-                            <summary>Why MotionGrove suggests this</summary>
+                        <details class="hv2-details gh-evidence" data-role="growth-evidence">
+                            <summary>Why this?</summary>
                             <ul class="hv2-list">
                                 @foreach(array_merge($needs['evidence'] ?? [], $needs['why'] ?? []) as $line)<li data-role="evidence-line">{{ $line }}</li>@endforeach
                                 @if(($needs['impact'] ?? null) !== null)<li data-role="evidence-impact">{{ is_array($needs['impact']) ? ($needs['impact']['text'] ?? '') : $needs['impact'] }}</li>@endif
                             </ul>
                             @if(($needs['confidence'] ?? null) !== null)<p class="hv2-muted mb-0">Confidence: {{ $needs['confidence'] }}</p>@endif
                         </details>
-                    @endif
+                        @endif
                     </div>
                     @if($needs['primary'] !== null)
-                        <div class="hv2-needs__actions">
-                            <a class="btn btn-primary hv2-btn" href="{{ $needs['primary']['url'] }}" data-role="next-best-move-action">{{ $needs['primary']['label'] }} <span aria-hidden="true">→</span></a>
-                            @if(($needs['ai'] ?? null) !== null)
-                                <button type="button" class="btn btn-outline-secondary hv2-btn" data-role="needs-ai" data-ask-prompt="{{ $needs['ai']['prompt'] }}"><span class="hv2-spark" aria-hidden="true">✦</span> {{ $needs['ai']['label'] }}</button>
-                            @endif
-                        </div>
+                        <div class="hv2-needs__actions"><a class="btn btn-primary hv2-btn" href="{{ $needs['primary']['url'] }}" data-role="next-best-move-action">{{ $needs['primary']['label'] }} <span aria-hidden="true">→</span></a></div>
                     @endif
                 </div>
             @endif
-            @if(($needs['others'] ?? []) !== [])
-                <details class="hv2-details" data-role="needs-details">
-                    <summary>{{ count($needs['others']) }} more to review</summary>
-                    <ul class="hv2-list" data-band="needs_attention" data-role="attention-items">
-                        @foreach($needs['others'] as $item)
-                            <li data-role="attention-item" data-attention="{{ $item['key'] }}" data-kind="{{ $item['kind'] }}">
-                                <span data-role="attention-text">{{ $item['text'] }}</span>
-                                @if(($item['action']['url'] ?? null) !== null)
-                                    <a href="{{ $item['action']['url'] }}"@if(($item['action']['drawerUrl'] ?? null) !== null) data-home-drawer="{{ $item['action']['drawerUrl'] }}" data-drawer-title="{{ $item['action']['label'] }}"@endif data-role="attention-action">{{ $item['action']['label'] }}</a>
-                                @endif
-                            </li>
-                        @endforeach
+
+            @if($g['secondary'] !== null)
+                <p class="gh-secondary mb-0" data-role="secondary-opportunity" data-uid="{{ $g['secondary']['uid'] }}">
+                    <span class="hv2-muted">Also worth doing:</span> {{ $g['secondary']['title'] }}
+                    @if($g['secondary']['url'] !== null)<a href="{{ $g['secondary']['url'] }}">View</a>@endif
+                </p>
+            @endif
+            @if($g['more'] !== [] || ($g['secondary'] !== null && $g['moreUrl'] !== null))
+                <details class="hv2-details" data-role="other-opportunities">
+                    <summary>Other recommendations</summary>
+                    <ul class="hv2-list">
+                        @foreach($g['more'] as $item)<li data-role="other-opportunity" data-uid="{{ $item['uid'] }}">{{ $item['title'] }}@if($item['url'] !== null) <a href="{{ $item['url'] }}">View</a>@endif</li>@endforeach
                     </ul>
+                    @if($g['moreUrl'] !== null)<a href="{{ $g['moreUrl'] }}" data-role="all-recommendations">See all recommendations</a>@endif
                 </details>
             @endif
         </section>
         @endif
 
-        <section class="hv2-section" aria-labelledby="gh-progress-title" data-role="growth-progress">
-            <h2 class="hv2-label" id="gh-progress-title">Your progress</h2>
-            @if($g['progress'] === null)
-                <div class="hv2-card hv2-quiet" data-role="progress-unknown"><p class="hv2-muted mb-0">{{ $g['growthFailed'] ? "Progress is unavailable right now." : 'No verified progress yet. It appears here once MotionGrove has measured it.' }}</p></div>
-            @else
-                <div class="hv2-card" data-role="progress-verified">
-                    @if($g['progress']['score'] !== null)
-                        <p class="mb-0"><strong data-role="progress-score">Growth score {{ $g['progress']['score'] }}</strong>
-                            @if($g['progress']['delta'] !== null && $g['progress']['days'] !== null)
-                                <span class="hv2-muted" data-role="progress-delta">{{ $g['progress']['delta'] > 0 ? '▲ ' : ($g['progress']['delta'] < 0 ? '▼ ' : '') }}{{ $g['progress']['delta'] === 0 ? 'No change' : abs($g['progress']['delta']) }} in {{ $g['progress']['days'] }} days</span>
-                            @endif
-                        </p>
-                    @endif
-                    @if($g['progress']['positives'] !== [])
-                        <ul class="hv2-list" data-role="progress-positives">@foreach($g['progress']['positives'] as $line)<li>{{ is_array($line) ? ($line['text'] ?? '') : $line }}</li>@endforeach</ul>
-                    @endif
-                    @if($g['progress']['url'] !== null)<a href="{{ $g['progress']['url'] }}" data-role="progress-link">See details</a>@endif
-                </div>
-            @endif
-        </section>
-
-        <section class="hv2-section" aria-labelledby="gh-handling-title" data-role="growth-handling">
-            <h2 class="hv2-label" id="gh-handling-title">MotionGrove is handling</h2>
+        <section class="hv2-section" aria-labelledby="gh-work-title" data-role="growth-activity">
+            <h2 class="hv2-label" id="gh-work-title">MotionGrove at work</h2>
             <div class="hv2-card">
-                @if($g['handlingFailed'])
-                    <p class="hv2-muted mb-0" data-role="handling-unavailable">We couldn't load recent work just now.</p>
-                @elseif($g['handling'] === [])
-                    <p class="hv2-muted mb-0" data-role="handling-empty">Work MotionGrove is doing for you will appear here.</p>
+                @if($g['activityFailed'])
+                    <p class="hv2-muted mb-0" data-role="activity-unavailable">We couldn't load recent activity just now.</p>
+                @elseif($activity === [])
+                    <p class="hv2-muted mb-0" data-role="activity-empty">No activity yet.</p>
                 @else
-                    <ul class="hv2-done" data-role="handling-items">
-                        @foreach($g['handling'] as $row)
-                            @php $word = ['approval' => 'Waiting for your approval', 'progress' => 'In progress', 'failed' => 'Needs attention', 'completed' => 'Done'][$row['status']] ?? ''; @endphp
-                            <li data-role="handling-item" data-status="{{ $row['status'] }}">
+                    <ul class="hv2-done" data-role="activity-items">
+                        @foreach($activity as $row)
+                            <li data-role="activity-item" data-status="{{ $row['status'] }}"@if($loop->index >= 5) hidden data-extra="1"@endif>
                                 @if($row['url'] !== null)<a href="{{ $row['url'] }}">{{ $row['text'] }}</a>@else<span>{{ $row['text'] }}</span>@endif
-                                <span class="hv2-muted">· {{ $word }}</span>
+                                <span class="hv2-muted">· {{ $words[$row['status']] ?? '' }}@if($row['at'] !== null) · <time datetime="{{ $row['at']->format('c') }}">{{ $row['at']->diffForHumans() }}</time>@endif</span>
                             </li>
                         @endforeach
                     </ul>
+                    @if(count($activity) > 5)
+                        <button type="button" class="btn btn-link p-0" data-role="activity-more" onclick="this.parentNode.querySelectorAll('[data-extra]').forEach(function (e) { e.hidden = false; }); this.remove();">Show more</button>
+                    @endif
                 @endif
             </div>
         </section>
-
-        @if(($g['configured'] ?? []) !== [])
-        <section class="hv2-section" aria-labelledby="gh-config-title" data-role="growth-configured">
-            <h2 class="hv2-label" id="gh-config-title">Already set up</h2>
-            <ul class="hv2-card hv2-list" data-role="configured-items">
-                @foreach($g['configured'] as $item)<li data-role="configured-item"><span aria-hidden="true">✓</span> {{ $item['title'] }}</li>@endforeach
-            </ul>
-        </section>
-        @endif
-
-        {{-- Measured outcomes: the existing performance band, unchanged — real counts, a dash where nothing was collected. --}}
-        @include('customer.dashboard.home.v2._growth', ['dashboard' => $dashboard, 'growth' => $v2['growth']])
 
         {{-- A failed automation read is still visible on Growth Home; never silently hide a failed proof of all-clear. --}}
         @if($dashboard->failed(\App\Library\Dashboard\DashboardSnapshot::BAND_AUTOMATIONS))
@@ -142,19 +122,5 @@
         @endif
 
         @include('customer.dashboard.home._ask', ['home' => $home, 'v2Chips' => $v2['chips']])
-
-        @if($g['secondary'] !== [])
-        <section class="hv2-section" aria-labelledby="gh-more-title" data-role="growth-whats-next">
-            <h2 class="hv2-label" id="gh-more-title">What's next</h2>
-            <ul class="hv2-card hv2-side-card hv2-suggest" data-role="whats-next-items">
-                @foreach($g['secondary'] as $item)
-                    <li data-role="whats-next-item" data-uid="{{ $item['uid'] }}">
-                        <span>{{ $item['title'] }}</span>
-                        @if($item['url'] !== null)<a href="{{ $item['url'] }}">View</a>@endif
-                    </li>
-                @endforeach
-            </ul>
-        </section>
-        @endif
     </div>
 </div>

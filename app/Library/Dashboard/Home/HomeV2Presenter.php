@@ -92,25 +92,34 @@ final class HomeV2Presenter
 
     /**
      * Growth Home: only re-shapes what the model already holds. No reads, no scoring, no new selection — the primary is Needs-you's own
-     * move, the secondaries are the Growth band's existing queue (already ACL-scoped, primary excluded), progress is the band's own score.
+     * move; the secondary is the first of the Growth band's existing queue (primary already excluded) and the rest sit behind a link to
+     * the real recommendations route; the feed is HomeCommandCenter::activity(); the Google card is its stored-observation summary.
      *
      * @return array<string, mixed>
      */
     private function growthHome(array $home, array $needsYou, bool $growthFailed, bool $recentFailed): array
     {
-        $progress = $home['growthProgress'] ?? null;
-        $score = is_array($progress) ? $progress['score'] : null;
-        $hasProgress = is_array($progress) && ($score !== null || ($progress['positives'] ?? []) !== []);
+        $queue = $needsYou['kind'] === 'unavailable' ? [] : array_values($home['queue'] ?? []);
+        $activity = $home['activity'] ?? [];
+        $setup = $home['setup'] ?? null;
+        $step = null;
+
+        // The single most valuable unfinished step of the existing journey (never the whole checklist).
+        foreach (is_array($setup) ? $setup['steps'] : [] as $candidate) {
+            if ($candidate['key'] === ($setup['nextKey'] ?? null)) {
+                $step = $candidate;
+            }
+        }
 
         return [
-            'standLabel' => $home['status']['label'],
-            'standKey' => $home['status']['key'],
             'growthFailed' => $growthFailed,
-            'progress' => $hasProgress ? $progress : null,
-            'secondary' => $needsYou['kind'] === 'unavailable' ? [] : array_slice($home['queue'] ?? [], 0, 2),
-            'handling' => $home['handling'],
-            'configured' => $home['configured'] ?? [],
-            'handlingFailed' => $recentFailed,
+            'google' => $home['googleVisibility'] ?? null,
+            'secondary' => $queue[0] ?? null,
+            'more' => array_slice($queue, 1, 4),
+            'moreUrl' => $home['queueUrl'] ?? null,
+            'activity' => $activity,
+            'activityFailed' => $recentFailed,
+            'setupStep' => $step,
         ];
     }
 
