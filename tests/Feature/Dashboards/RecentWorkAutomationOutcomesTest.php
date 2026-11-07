@@ -75,10 +75,10 @@ class RecentWorkAutomationOutcomesTest extends TestCase
         $this->execution($business, $this->sender($business, 'Field setter', 'update_contact_field'), 'succeeded', now()->subHours(2));
 
         $items = $this->items($business);
-        $sent = $this->keyed($items, 'automation_follow_ups_sent');
+        $sent = $this->keyed($items, 'automation_messages_sent');
 
-        $this->assertCount(1, $sent, 'One group per automation per local day; internal field updates are not follow-ups.');
-        $this->assertSame('Sent 3 automated follow-ups (Welcome text)', $sent[0]->text);
+        $this->assertCount(1, $sent, 'One group per automation per local day; internal field updates are not outgoing messages.');
+        $this->assertSame('Sent 3 automated messages (Welcome text)', $sent[0]->text);
         $this->assertSame(now()->subHours(2)->getTimestamp(), $sent[0]->at->getTimestamp(), 'The newest completion time.');
         $this->assertCount(1, $this->keyed($items, 'automation_failed'), 'The failure is still reported, once.');
         $this->assertSame(['automations'], $sent[0]->permissions);
@@ -103,8 +103,8 @@ class RecentWorkAutomationOutcomesTest extends TestCase
         [, $theirs] = $this->tenant(WorkspacePlanTier::Growth, 'Theirs Venue', 'Theirs Account');
         $this->execution($theirs, $this->sender($theirs, 'Their text'), 'succeeded', now()->subHour());
 
-        $this->assertSame([], $this->keyed($this->items($mine), 'automation_follow_ups_sent'));
-        $this->assertCount(1, $this->keyed($this->items($theirs), 'automation_follow_ups_sent'));
+        $this->assertSame([], $this->keyed($this->items($mine), 'automation_messages_sent'));
+        $this->assertCount(1, $this->keyed($this->items($theirs), 'automation_messages_sent'));
     }
 
     private function workflow(Business $business, string $name, int $completed, int $steps = 2, ?int $locationId = null): void

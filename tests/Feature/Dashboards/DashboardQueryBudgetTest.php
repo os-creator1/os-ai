@@ -107,7 +107,7 @@ class DashboardQueryBudgetTest extends TestCase
     // 32 -> 33: the plan-entitlement filter on the stored Growth Opportunity reads needs the Business's Workspace model
     // (GrowthOpportunityEligibility, so a downgrade hides what the plan no longer includes). ONE primary-key read, flat in rows;
     // the entitlement snapshot itself is still the request's one (the 'entitlement' ceiling above stays 0).
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 39;
+    // 39 -> 40: one bounded workflow-enrollment completion read.\n    private const BUSINESS_HOME_DASHBOARD_OWNED = 40;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
@@ -123,7 +123,7 @@ class DashboardQueryBudgetTest extends TestCase
      * 8 -> 9: the contacts card's own scoped statement (BusinessAnalyticsQueries::newContactsForActor): both periods in ONE statement,
      * over only the contacts in the actor's Locations, so the figure equals the contact list it opens.
      */
-    private const BUSINESS_HOME_ANALYTICS = 9;
+    // 9 -> 10: one bounded successful automated-message execution read (B5-owned).\n    private const BUSINESS_HOME_ANALYTICS = 10;
 
     /**
      * Observed: the two Business performance periods (H-3), then H-4's two —
@@ -192,10 +192,10 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(self::BUSINESS_HOME_ANALYTICS, $cost['analytics']);
         $this->assertSame(self::BUSINESS_HOME_CONVERSATIONS, $cost['conversations']);
 
-        $this->assertLessThanOrEqual(39, $cost['dashboard'], 'Pinned Home budget: existing visits and four bounded SEO activity reads included.');
-        $this->assertLessThanOrEqual(9, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read, plus the import-running check and the actor-scoped contacts statement.');
+        $this->assertLessThanOrEqual(40, $cost['dashboard'], 'Pinned Home budget: existing visits, SEO reads and one workflow-outcome read included.');
+        $this->assertLessThanOrEqual(10, $cost['analytics'], 'Pinned analytics budget includes one bounded successful automated-message read.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
-        $this->assertLessThanOrEqual(52, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Pinned Home total budget: 39 dashboard + 9 analytics + 4 conversations, including the four new SEO reads.');
+        $this->assertLessThanOrEqual(54, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Pinned Home total budget: 40 dashboard + 10 analytics + 4 conversations, including two new automation outcome reads.');
 
         // Within the TTL the CACHED Business performance figures cost nothing.
         // What remains is the one read deliberately never cached: Recent work
@@ -206,7 +206,7 @@ class DashboardQueryBudgetTest extends TestCase
         // Recent work must be fresh, and so must "is an import still running" (a stale answer would hold a comparison back as
         // "Updating…" after it finished): each is one bounded read.
         // The actor-scoped contacts statement is per actor (Location reach), so it is not part of the shared cached comparison either.
-        $this->assertSame(3, $warm['analytics'], 'Only the uncached Recent work, import-running and actor-scoped contacts reads survive a warm cache.');
+        $this->assertSame(4, $warm['analytics'], 'Uncached Recent work failure/success reads, import-running and actor-scoped contacts survive a warm cache.');
     }
 
     /**

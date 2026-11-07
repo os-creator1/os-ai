@@ -200,7 +200,7 @@ final class RecentWorkReader
     }
 
     /**
-     * Verified automation outcomes (the analytics seam owns the reads, as for failures). "Sent N automated follow-ups" counts only
+     * Verified automation outcomes (the analytics seam owns the reads, as for failures). "Sent N automated messages" counts only
      * succeeded send executions; manual messages never create automation executions, so they can never be labelled automated.
      *
      * @return array<int, RecentWorkItem>
@@ -217,8 +217,8 @@ final class RecentWorkReader
 
         foreach ($found['followUps'] as $group) {
             $items[] = new RecentWorkItem(
-                key: 'automation_follow_ups_sent',
-                text: 'Sent ' . $group['count'] . ' automated ' . ($group['count'] === 1 ? 'follow-up' : 'follow-ups') . ' (' . Str::limit($group['automation'], 60) . ')',
+                key: 'automation_messages_sent',
+                text: 'Sent ' . $group['count'] . ' automated ' . ($group['count'] === 1 ? 'message' : 'messages') . ' (' . Str::limit($group['automation'], 60) . ')',
                 at: $group['at'],
                 routeName: 'customer.workspaces.businesses.automations.workflows.index',
                 permissions: ['automations'],

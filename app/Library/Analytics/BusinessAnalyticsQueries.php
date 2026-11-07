@@ -534,7 +534,7 @@ class BusinessAnalyticsQueries
     /**
      * Verified automation outcomes for Recent work, grouped per automation (or workflow) per Business-local day. Two bounded reads:
      *
-     *  - follow-ups: `automation_executions` rows whose terminal status is `succeeded` (the dispatcher reported the send done; a row is
+     *  - automated messages (not necessarily follow-ups): `automation_executions` rows whose terminal status is `succeeded` (the dispatcher reported the send done; a row is
      *    one logical execution, so a retried execution counts once, by its final status) for `send_message` actions. Pending, failed,
      *    skipped and merely attempted rows never count, and a failed execution can never also appear here: one row has one status.
      *  - workflows: enrollments that reached `completed` after running at least one step. Completion is NOT proof of a booking or a reply.
