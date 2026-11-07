@@ -119,4 +119,38 @@ class GrowthHomeSeoActivationTest extends TestCase
         $this->assertSame(0, DB::table('seo_rank_check_runs')->count());
         $this->assertSame(0, DB::table('seo_rank_targets')->count());
     }
+
+    public function test_a_verified_broken_booking_path_is_not_displaced_by_seo_setup(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Booking Path Venue', 'Booking Path Account');
+        $this->recommendation($business, ['worker_key' => 'sales', 'type' => 'booking.type_not_ready:v1', 'title' => 'A booking type is not ready', 'priority_score' => 90]);
+        $this->authenticateAs($customer);
+
+        $html = $this->html();
+
+        $this->assertStringNotContainsString('seo_keyword_activation', $html);
+        $this->assertStringContainsString('A booking type is not ready', $html);
+        $this->assertStringContainsString('Not known yet: how many enquiries or bookings this is costing you', $html);
+    }
+
+    public function test_the_explanation_states_what_is_unknown_and_never_invents_a_conversion_diagnosis(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Unknown Venue', 'Unknown Account');
+        $this->reviewLink($business);
+        $this->authenticateAs($customer);
+
+        $html = $this->html();
+
+        $this->assertStringContainsString('Not known yet: how many visitors or enquiries Google sends you', $html);
+        $this->assertDoesNotMatchRegularExpression('/conversion rate of|\d+\s*%|lost (traffic|bookings|leads)|will (increase|bring)|projected|uplift/i', strip_tags($html));
+    }
+
+    public function test_core_evidence_carries_no_growth_unknown_line(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Core Unknown Venue', 'Core Unknown Account');
+        $this->recommendation($business, ['worker_key' => 'website', 'type' => 'website.not_published:v1', 'title' => 'Publish your website', 'priority_score' => 90]);
+        $this->authenticateAs($customer);
+
+        $this->assertStringNotContainsString('Not known yet:', $this->html());
+    }
 }
