@@ -92,7 +92,11 @@ final class OpportunityActionRegistry
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
-            'parameter_rules' => [],
+            'parameter_rules' => [
+                'value' => ['required' => true, 'type' => 'string', 'max_length' => 255, 'allow_blank' => false, 'format' => 'email'],
+            ],
+            'handler_identifier' => 'business.update_email',
+            'verifier_identifier' => 'business.email_matches_parameter',
         ],
         'add_website' => [
             'schema_version' => 1,
@@ -112,7 +116,11 @@ final class OpportunityActionRegistry
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
-            'parameter_rules' => [],
+            'parameter_rules' => [
+                'value' => ['required' => true, 'type' => 'string', 'max_length' => 5000, 'allow_blank' => false, 'min_length' => 50],
+            ],
+            'handler_identifier' => 'business.update_description',
+            'verifier_identifier' => 'business.description_matches_parameter',
         ],
         'add_location' => [
             'schema_version' => 1,
@@ -185,6 +193,32 @@ final class OpportunityActionRegistry
             'parameter_rules' => [],
         ],
     ];
+
+    /**
+     * Whether a candidate `value` satisfies this action's registry-owned rule: the same check at configuration, at approval and again at
+     * execution, so a stored value can never drift past what the registry allows. Never trims or alters the value.
+     */
+    public static function valueIsValid(string $actionKey, mixed $value): bool
+    {
+        $rule = self::get($actionKey)['parameter_rules']['value'] ?? null;
+
+        if (! is_array($rule) || ! is_string($value)) {
+            return false;
+        }
+
+        if (($rule['allow_blank'] ?? true) === false && trim($value) === '') {
+            return false;
+        }
+
+        if (mb_strlen($value) > (int) ($rule['max_length'] ?? 0) || mb_strlen(trim($value)) < (int) ($rule['min_length'] ?? 0)) {
+            return false;
+        }
+
+        return ($rule['format'] ?? null) !== 'email' || filter_var($value, FILTER_VALIDATE_EMAIL) !== false;
+    }
+
+    /** Actions a customer can configure, approve and run today (a closed, source-controlled list). */
+    public const CONFIGURABLE = ['add_phone', 'add_email', 'add_description'];
 
     public static function has(string $actionKey): bool
     {

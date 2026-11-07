@@ -107,7 +107,7 @@ class OpportunityActionRegistryTest extends TestCase
         $forbiddenKeys = ['validator', 'handler', 'verifier', 'callback', 'handler_class', 'verifier_class', 'system_verification_method'];
 
         foreach (OpportunityActionRegistry::all() as $actionKey => $definition) {
-            $expectedKeys = $actionKey === 'add_phone' ? $addPhoneKeys : $baseKeys;
+            $expectedKeys = in_array($actionKey, ['add_phone', 'add_email', 'add_description'], true) ? $addPhoneKeys : $baseKeys;
 
             $this->assertSame($expectedKeys, array_keys($definition), "Action [{$actionKey}] should expose exactly its trusted metadata keys.");
 
@@ -121,13 +121,15 @@ class OpportunityActionRegistryTest extends TestCase
         $this->assertSame('business.phone_matches_parameter', $addPhone['verifier_identifier']);
     }
 
-    public function test_19d_keeps_only_add_phone_executable_and_preserves_both_hash_guards(): void
+    public function test_only_the_three_profile_actions_are_executable_and_the_rest_stay_unsupported(): void
     {
         $executable = array_keys(array_filter(
             OpportunityActionRegistry::all(),
             static fn (array $definition): bool => isset($definition['handler_identifier']),
         ));
-        $this->assertSame(['add_phone'], $executable);
+        $this->assertSame(['add_phone', 'add_email', 'add_description'], $executable);
+        $this->assertSame($executable, OpportunityActionRegistry::CONFIGURABLE);
+        $this->assertNotContains('add_website', $executable, 'add_website stays unsupported: its value is normalised and claims a canonical domain, so the approved string is not what is stored.');
         $this->assertFalse(OpportunityActionRegistry::hasPaidEffect('add_phone'));
         $this->assertFalse(OpportunityActionRegistry::isLocationBound('add_phone'));
         $this->assertFalse(OpportunityActionRegistry::mayRetryUnderOriginalApproval('add_phone'));
@@ -158,12 +160,18 @@ class OpportunityActionRegistryTest extends TestCase
                 'allow_blank' => false,
             ],
         ];
+        $addEmailParameterRules = ['value' => ['required' => true, 'type' => 'string', 'max_length' => 255, 'allow_blank' => false, 'format' => 'email']];
+        $addDescriptionParameterRules = ['value' => ['required' => true, 'type' => 'string', 'max_length' => 5000, 'allow_blank' => false, 'min_length' => 50]];
 
         foreach (OpportunityActionRegistry::all() as $actionKey => $definition) {
             $this->assertArrayHasKey('parameter_rules', $definition, "Action [{$actionKey}] should declare parameter_rules.");
 
             if ($actionKey === 'add_phone') {
                 $this->assertSame($addPhoneParameterRules, $definition['parameter_rules'], "Action [{$actionKey}] should declare its exact trusted parameter_rules.");
+            } elseif ($actionKey === 'add_email') {
+                $this->assertSame($addEmailParameterRules, $definition['parameter_rules']);
+            } elseif ($actionKey === 'add_description') {
+                $this->assertSame($addDescriptionParameterRules, $definition['parameter_rules']);
             } else {
                 $this->assertSame([], $definition['parameter_rules'], "Action [{$actionKey}] should accept no parameters.");
             }

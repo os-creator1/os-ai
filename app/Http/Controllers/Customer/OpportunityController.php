@@ -184,6 +184,7 @@ class OpportunityController extends Controller
             'canRetry' => $this->canRetry($ownedOpportunity),
             'shouldPollExecution' => $this->shouldPollExecution($ownedOpportunity, $latestExecution),
             'canConfigureAction' => $this->canConfigureAction($ownedOpportunity),
+            'profileField' => $this->profileField($ownedOpportunity, $business),
             'costEstimate' => $this->safeCostEstimate($ownedOpportunity, $business),
         ]);
     }
@@ -243,7 +244,7 @@ class OpportunityController extends Controller
 
         return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
             'status' => 'success',
-            'message' => 'Phone number saved.',
+            'message' => (['add_phone' => 'Phone number', 'add_email' => 'Public business email', 'add_description' => 'Business description'][(string) ($ownedOpportunity->recommended_action['action_key'] ?? '')] ?? 'Value') . ' saved.',
         ]);
     }
 
@@ -776,7 +777,34 @@ class OpportunityController extends Controller
 
         $actionKey = $recommendedAction['action_key'] ?? null;
 
-        return is_string($actionKey) && $actionKey !== '' && $actionKey === 'add_phone';
+        return is_string($actionKey) && in_array($actionKey, OpportunityActionRegistry::CONFIGURABLE, true);
+    }
+
+    /**
+     * For the three profile actions only: the field's customer-facing label, the value on the Business profile NOW (so the existing and the
+     * proposed value sit side by side before approval, and the verified result afterwards), and the input shape. Read from the already-loaded
+     * Business; null for every other action.
+     *
+     * @return array{label: string, current: ?string, max: int, multiline: bool}|null
+     */
+    private function profileField(Opportunity $opportunity, Business $business): ?array
+    {
+        $actionKey = is_array($opportunity->recommended_action) ? ($opportunity->recommended_action['action_key'] ?? null) : null;
+
+        $fields = [
+            'add_phone' => ['Phone number', 'phone', 50, false],
+            'add_email' => ['Public business email', 'email', 255, false],
+            'add_description' => ['Business description', 'description', 5000, true],
+        ];
+
+        if (! is_string($actionKey) || ! isset($fields[$actionKey])) {
+            return null;
+        }
+
+        [$label, $column, $max, $multiline] = $fields[$actionKey];
+        $current = trim((string) $business->{$column});
+
+        return ['label' => $label, 'current' => $current === '' ? null : $current, 'max' => $max, 'multiline' => $multiline];
     }
 
     /**
