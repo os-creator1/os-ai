@@ -102,12 +102,14 @@ class DashboardQueryBudgetTest extends TestCase
     // The daily chart is a Business-wide series, so it is withheld from such an actor; without this read the chart could show records their
     // cards do not count. Flat in rows, contacts, conversations and messages.
     //
-    // 35 -> 39: Recent work's four SEO reads (rank-check runs, MotionGrove audits, external audits, published articles), one bounded read each.\n    // Baseline 35 also includes the existing business_home_visits lookup and insert-ignore (two statements).
+    // 35 -> 39: Recent work's four SEO reads (rank checks, audits and articles), one bounded read each.
+    // Baseline 35 also includes the existing business_home_visits lookup and insert-ignore (two statements).
     //
     // 32 -> 33: the plan-entitlement filter on the stored Growth Opportunity reads needs the Business's Workspace model
     // (GrowthOpportunityEligibility, so a downgrade hides what the plan no longer includes). ONE primary-key read, flat in rows;
     // the entitlement snapshot itself is still the request's one (the 'entitlement' ceiling above stays 0).
-    // 39 -> 40: one bounded workflow-enrollment completion read.\n    private const BUSINESS_HOME_DASHBOARD_OWNED = 40;
+    // 39 -> 40: one bounded workflow-enrollment completion read.
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 40;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
@@ -123,7 +125,8 @@ class DashboardQueryBudgetTest extends TestCase
      * 8 -> 9: the contacts card's own scoped statement (BusinessAnalyticsQueries::newContactsForActor): both periods in ONE statement,
      * over only the contacts in the actor's Locations, so the figure equals the contact list it opens.
      */
-    // 9 -> 10: one bounded successful automated-message execution read (B5-owned).\n    private const BUSINESS_HOME_ANALYTICS = 10;
+    // 9 -> 10: one bounded successful automated-message execution read (B5-owned).
+    private const BUSINESS_HOME_ANALYTICS = 10;
 
     /**
      * Observed: the two Business performance periods (H-3), then H-4's two —

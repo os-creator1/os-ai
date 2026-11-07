@@ -539,7 +539,7 @@ class BusinessAnalyticsQueries
      *    skipped and merely attempted rows never count, and a failed execution can never also appear here: one row has one status.
      *  - workflows: enrollments that reached `completed` after running at least one step. Completion is NOT proof of a booking or a reply.
      *
-     * Nothing about the contact, the message or any payload is read; only the automation / workflow name and a count leave this method.
+     * Only current Contact Location is read for actor access filtering; no contact identity, message or payload leaves this method. The execution ledger itself has no immutable historical Location, so Location filtering follows the current Contact.
      * `$workflowLocationIds` is called lazily, and only when a Location-bound enrollment is read (null result = no Location restriction).
      * Absent (null) when the table is missing, like recentAutomationFailures().
      *
@@ -552,15 +552,17 @@ class BusinessAnalyticsQueries
         try {
             $sends = DB::table('automation_executions as e')
                 ->join('automations as a', 'a.id', '=', 'e.automation_id')
+                ->join('contacts as c', 'c.id', '=', 'e.contact_id')
                 ->where('e.business_id', $business->id)
                 ->where('a.business_id', $business->id)
+                ->where('c.business_id', $business->id)
                 ->where('e.status', AutomationExecutionStatus::Succeeded->value)
                 ->where('a.action_type', 'send_message')
                 ->whereNotNull('e.completed_at')
                 ->orderByDesc('e.completed_at')
                 ->orderByDesc('e.id')
                 ->limit($fanOut)
-                ->get(['e.automation_id', 'e.completed_at', 'a.name']);
+                ->get(['e.automation_id', 'e.completed_at', 'a.name', 'c.location_id']);
 
             $runs = DB::table('automation_enrollments as n')
                 ->join('automation_workflows as w', 'w.id', '=', 'n.workflow_id')
@@ -581,10 +583,15 @@ class BusinessAnalyticsQueries
             throw $exception;
         }
 
-        if ($runs->contains(fn ($row) => $row->business_location_id !== null) && $workflowLocationIds !== null) {
+        // Shared actor-reach lookup only when a recorded workflow or current Contact is Location-bound.
+        $hasLocation = $sends->contains(fn ($row) => $row->location_id !== null)
+            || $runs->contains(fn ($row) => $row->business_location_id !== null);
+
+        if ($hasLocation && $workflowLocationIds !== null) {
             $reach = $workflowLocationIds();
 
             if ($reach !== null) {
+                $sends = $sends->filter(fn ($row) => $row->location_id === null || in_array((int) $row->location_id, $reach, true))->values();
                 $runs = $runs->filter(fn ($row) => $row->business_location_id === null || in_array((int) $row->business_location_id, $reach, true))->values();
             }
         }

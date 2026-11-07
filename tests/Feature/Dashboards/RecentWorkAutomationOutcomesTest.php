@@ -148,6 +148,23 @@ class RecentWorkAutomationOutcomesTest extends TestCase
         $this->assertCount(1, $this->keyed($this->items($business, (int) $customer->user_id), 'workflow_completed'));
     }
 
+    public function test_location_bound_message_sends_follow_the_actors_contact_reach(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Scoped Messages Venue', 'Scoped Messages Account');
+        $location = (int) DB::table('business_locations')->where('business_id', $business->id)->value('id');
+        $this->assertGreaterThan(0, $location);
+        $this->execution($business, $this->sender($business), 'succeeded', now()->subHour());
+        $contactId = DB::table('automation_executions')->where('business_id', $business->id)->value('contact_id');
+        DB::table('contacts')->where('id', $contactId)->update(['location_id' => $location]);
+
+        $this->mock(LocationAccessGuard::class, fn ($m) => $m->shouldReceive('accessibleLocationIdsForBusiness')->andReturn([]));
+        $this->assertSame([], $this->keyed($this->items($business, (int) $customer->user_id), 'automation_messages_sent'));
+        $this->assertCount(1, $this->keyed($this->items($business), 'automation_messages_sent'));
+
+        $this->mock(LocationAccessGuard::class, fn ($m) => $m->shouldReceive('accessibleLocationIdsForBusiness')->andReturn([$location]));
+        $this->assertCount(1, $this->keyed($this->items($business, (int) $customer->user_id), 'automation_messages_sent'));
+    }
+
     public function test_reading_the_feed_sends_nothing_and_writes_nothing(): void
     {
         [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Venue', 'Quiet Account');
