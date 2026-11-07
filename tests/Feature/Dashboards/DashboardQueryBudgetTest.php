@@ -195,7 +195,7 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertLessThanOrEqual(39, $cost['dashboard'], 'Pinned Home budget: existing visits and four bounded SEO activity reads included.');
         $this->assertLessThanOrEqual(9, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read, plus the import-running check and the actor-scoped contacts statement.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
-        $this->assertLessThanOrEqual(46, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling (31) plus the fifteen Home V2 reads.');
+        $this->assertLessThanOrEqual(52, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Pinned Home total budget: 39 dashboard + 9 analytics + 4 conversations, including the four new SEO reads.');
 
         // Within the TTL the CACHED Business performance figures cost nothing.
         // What remains is the one read deliberately never cached: Recent work
