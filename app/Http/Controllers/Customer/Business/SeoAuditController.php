@@ -62,6 +62,7 @@ class SeoAuditController extends CustomerBaseController
         $auditPage = $this->reader->read($business);
 
         return view('customer.business.seo.audit', [
+            'resolved' => $this->resolvedByFreshAudit($business, $auditPage),
             'draftFixes' => $this->draftFixes($workspace, $business, $workspaceUid, $businessUid, $auditPage->findings),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
@@ -215,7 +216,7 @@ class SeoAuditController extends CustomerBaseController
 
             // live = the current published version has the value; drafted = only the draft has it; open = neither. A value that is merely
             // saved or published is never described as improved rankings.
-            $live = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) ($published[$page->uid][$field] ?? '')) !== '';
+            $live = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) ($published[$page->uid]['seo'][$field] ?? '')) !== '';
 
             $fixes[$i] = [
                 'live' => $live,
@@ -226,5 +227,59 @@ class SeoAuditController extends CustomerBaseController
         }
 
         return $fixes;
+    }
+    /**
+     * Blank title / description findings that the PREVIOUS completed audit of this Website had and the latest audit no longer has: the
+     * only evidence that a fix is resolved. Publishing alone never produces an entry. Two bounded reads, on this page only.
+     *
+     * @return array<int, array{title: string, what: string}>
+     */
+    private function resolvedByFreshAudit(Business $business, \App\Library\Seo\SeoAuditPage $auditPage): array
+    {
+        $latest = $auditPage->latestRun;
+
+        if ($latest === null || $latest->status !== \App\Enums\Seo\SeoAuditRunStatus::Completed) {
+            return [];
+        }
+
+        $previous = \App\Models\SeoAuditRun::query()
+            ->where('business_id', $business->id)
+            ->where('website_id', $latest->website_id)
+            ->where('id', '<', $latest->id)
+            ->where('status', \App\Enums\Seo\SeoAuditRunStatus::Completed->value)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($previous === null) {
+            return [];
+        }
+
+        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK];
+        $rows = DB::table('seo_audit_findings')
+            ->whereIn('seo_audit_run_id', [$previous->id, $latest->id])
+            ->whereIn('rule_key', $blank)
+            ->whereNotNull('page_uid')
+            ->get(['seo_audit_run_id', 'rule_key', 'page_uid']);
+
+        $now = [];
+        $before = [];
+
+        foreach ($rows as $row) {
+            $key = $row->rule_key . '|' . $row->page_uid;
+            ((int) $row->seo_audit_run_id === (int) $latest->id) ? $now[$key] = true : $before[$key] = $row;
+        }
+
+        $resolved = [];
+
+        foreach ($before as $key => $row) {
+            if (! isset($now[$key])) {
+                $resolved[] = ['title' => 'A page', 'what' => $row->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'page title' : 'description', 'uid' => (string) $row->page_uid];
+            }
+        }
+
+        $titles = WebsitePage::query()->whereIn('uid', array_column($resolved, 'uid'))
+            ->whereIn('website_id', Website::query()->where('business_id', $business->id)->select('id'))->pluck('title', 'uid');
+
+        return array_map(fn (array $r): array => ['title' => (string) ($titles[$r['uid']] ?? 'A page'), 'what' => $r['what']], array_slice($resolved, 0, 5));
     }
 }

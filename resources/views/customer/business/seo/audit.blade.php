@@ -75,6 +75,14 @@
                 @endif
             </div>
 
+            @if (! empty($resolved))
+                <div class="mb-1" data-role="audit-resolved">
+                    @foreach ($resolved as $item)
+                        <p class="text-caption mb-25">Verified resolved by a fresh audit: {{ $item['title'] }} now has a {{ $item['what'] }}.</p>
+                    @endforeach
+                </div>
+            @endif
+
             @if ($state === SeoAuditPage::STATE_NO_WEBSITE)
                 <p class="mb-0" data-role="audit-message">You have no published website yet. Publish your website and we will check it automatically.</p>
             @elseif ($state === SeoAuditPage::STATE_NOT_CHECKED)

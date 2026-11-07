@@ -114,7 +114,7 @@ class SeoAuditDraftFixLinkTest extends TestCase
         // Publication verified from the persisted published revision (what the existing publish workflow writes).
         $revision = DB::table('website_revisions')->where('id', $website->fresh()->published_revision_id)->first();
         $snapshot = json_decode($revision->snapshot, true);
-        $snapshot['pages'][0]['meta_description'] = 'A clear description of the home page for searchers.';
+        $snapshot['pages'][0]['seo']['meta_description'] = 'A clear description of the home page for searchers.'; // the real snapshot shape (WebsiteSnapshotBuilder)
         DB::table('website_revisions')->where('id', $revision->id)->update(['snapshot' => json_encode($snapshot)]);
 
         $live = $this->get($this->auditUrl($workspace, $business))->assertOk()->getContent();
