@@ -102,10 +102,12 @@ class DashboardQueryBudgetTest extends TestCase
     // The daily chart is a Business-wide series, so it is withheld from such an actor; without this read the chart could show records their
     // cards do not count. Flat in rows, contacts, conversations and messages.
     //
+    // 33 -> 37: Recent work's four SEO reads (rank-check runs, MotionGrove audits, external audits, published articles), one bounded read each.
+    //
     // 32 -> 33: the plan-entitlement filter on the stored Growth Opportunity reads needs the Business's Workspace model
     // (GrowthOpportunityEligibility, so a downgrade hides what the plan no longer includes). ONE primary-key read, flat in rows;
     // the entitlement snapshot itself is still the request's one (the 'entitlement' ceiling above stays 0).
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 33;
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 37;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
@@ -190,7 +192,7 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(self::BUSINESS_HOME_ANALYTICS, $cost['analytics']);
         $this->assertSame(self::BUSINESS_HOME_CONVERSATIONS, $cost['conversations']);
 
-        $this->assertLessThanOrEqual(33, $cost['dashboard'], 'Contract §16 ceiling (18) plus the fifteen bounded Home V2 reads documented above.');
+        $this->assertLessThanOrEqual(37, $cost['dashboard'], 'Contract §16 ceiling (18) plus the fifteen bounded Home V2 reads documented above.');
         $this->assertLessThanOrEqual(9, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read, plus the import-running check and the actor-scoped contacts statement.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
         $this->assertLessThanOrEqual(46, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling (31) plus the fifteen Home V2 reads.');

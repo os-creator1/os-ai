@@ -394,7 +394,7 @@ class BusinessHomeRecentWorkTest extends TestCase
     // Cost
     // =================================================================
 
-    public function test_recent_work_costs_five_statements_and_stays_flat_as_rows_double(): void
+    public function test_recent_work_costs_nine_statements_and_stays_flat_as_rows_double(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Cost Venue', 'Cost Account');
         $this->website($business, 'published');
@@ -405,7 +405,7 @@ class BusinessHomeRecentWorkTest extends TestCase
         $this->seedEverySource($business, 4);
         $after = $this->recentWorkSql($business);
 
-        $this->assertCount(5, $before, 'One bounded read per source: ' . implode(' | ', $before));
+        $this->assertCount(9, $before, 'One bounded read per source: ' . implode(' | ', $before));
         $this->assertCount(count($before), $after, 'Flat when the data grows: ' . implode(' | ', $after));
 
         foreach ($after as $sql) {
@@ -473,7 +473,11 @@ class BusinessHomeRecentWorkTest extends TestCase
                 || str_contains($sql, 'opportunity_transitions')
                 || str_contains($sql, 'automation_executions')
                 || str_contains($sql, 'business_google_operations')
-                || str_contains($sql, 'business_knowledge_profile_changes'),
+                || str_contains($sql, 'business_knowledge_profile_changes')
+                || str_contains($sql, 'seo_rank_check_runs')
+                || str_contains($sql, 'seo_audit_runs')
+                || str_contains($sql, 'external_site_crawls')
+                || str_contains($sql, 'website_articles'),
         ));
     }
 
