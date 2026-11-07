@@ -87,4 +87,39 @@ class SeoAuditDraftFixLinkTest extends TestCase
 
         $this->assertStringNotContainsString('data-role="audit-draft-fix-link"', $html);
     }
+
+    public function test_the_finding_offers_prepare_fix_to_the_exact_page_and_generates_nothing(): void
+    {
+        [$customer, $business, $workspace, , $page] = $this->audited();
+        $this->authenticateAsSeoCustomer($customer);
+        $this->app->instance(\App\Library\Website\WebsiteAiGenerationClient::class, \Mockery::mock(\App\Library\Website\WebsiteAiGenerationClient::class));
+
+        $html = $this->get($this->auditUrl($workspace, $business))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('#<a href="[^"]*' . preg_quote($page->uid, '#') . '[^"]*\#meta_description" data-role="audit-draft-fix-link">Prepare fix</a>#', $html);
+        $this->assertStringNotContainsString('data-role="audit-fix-live"', $html);
+        $this->assertNull($page->fresh()->meta_description);
+    }
+
+    public function test_a_drafted_fix_is_drafted_and_only_a_published_version_with_the_value_is_reported_live(): void
+    {
+        [$customer, $business, $workspace, $website, $page] = $this->audited();
+        $this->authenticateAsSeoCustomer($customer);
+        $page->update(['meta_description' => 'A clear description of the home page for searchers.']);
+
+        $drafted = $this->get($this->auditUrl($workspace, $business))->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="audit-fix-drafted"', $drafted);
+        $this->assertStringNotContainsString('data-role="audit-fix-live"', $drafted, 'A failed or missing publication never reports a live fix.');
+
+        // Publication verified from the persisted published revision (what the existing publish workflow writes).
+        $revision = DB::table('website_revisions')->where('id', $website->fresh()->published_revision_id)->first();
+        $snapshot = json_decode($revision->snapshot, true);
+        $snapshot['pages'][0]['meta_description'] = 'A clear description of the home page for searchers.';
+        DB::table('website_revisions')->where('id', $revision->id)->update(['snapshot' => json_encode($snapshot)]);
+
+        $live = $this->get($this->auditUrl($workspace, $business))->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="audit-fix-live"', $live);
+        $this->assertStringNotContainsString('rankings improved', $live);
+        $this->assertStringNotContainsString('SEO improved', $live);
+    }
 }

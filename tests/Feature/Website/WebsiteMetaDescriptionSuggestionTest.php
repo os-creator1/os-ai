@@ -128,4 +128,48 @@ class WebsiteMetaDescriptionSuggestionTest extends TestCase
 
         $this->suggest($workspace, $business, $foreign)->assertNotFound();
     }
+
+    private function save($workspace, $business, $page, array $data)
+    {
+        return $this->put(route('customer.workspaces.businesses.website.pages.update', [$workspace->uid, $business->uid, $page->uid]), array_merge([
+            'title' => $page->title, 'slug' => $page->slug ?? '', 'meta_description' => '',
+        ], $data));
+    }
+
+    public function test_an_approved_suggestion_is_saved_exactly_to_the_draft_and_is_still_not_published(): void
+    {
+        [$customer, $business, $workspace, $page] = $this->growthTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->ai(json_encode(['description' => self::GOOD]));
+
+        $proposed = $this->suggest($workspace, $business, $page)->assertOk()->json('description');
+        $this->save($workspace, $business, $page, ['meta_description' => $proposed, 'draft_token' => $page->fresh()->updated_at->getTimestamp()]);
+
+        $this->assertSame(self::GOOD, $page->fresh()->meta_description);
+        $this->assertNull($page->website->fresh()->published_revision_id, 'Saving is not publishing.');
+    }
+
+    public function test_a_stale_editor_never_overwrites_newer_draft_work(): void
+    {
+        [$customer, $business, $workspace, $page] = $this->growthTenant();
+        $this->authenticateAsCustomer($customer);
+        $token = $page->fresh()->updated_at->getTimestamp() - 60; // the editor was opened before the page last changed
+
+        $this->save($workspace, $business, $page, ['meta_description' => 'Stale proposal that must not win.', 'draft_token' => $token])
+            ->assertSessionHas('status', 'error');
+
+        $this->assertNotSame('Stale proposal that must not win.', $page->fresh()->meta_description);
+    }
+
+    public function test_another_businesss_page_cannot_be_changed(): void
+    {
+        [$customer, $business, $workspace] = $this->growthTenant();
+        [, $otherBusiness, , $otherPage] = $this->growthTenant();
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.website.pages.update', [$workspace->uid, $business->uid, $otherPage->uid]), ['title' => 'X', 'meta_description' => 'Hijack'])
+            ->assertNotFound();
+
+        $this->assertNotSame('Hijack', $otherPage->fresh()->meta_description);
+    }
 }

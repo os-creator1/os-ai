@@ -13,6 +13,7 @@ use App\Library\Seo\SeoAuditRunner;
 use App\Library\Seo\SeoConfig;
 use App\Models\Business;
 use App\Models\Website;
+use Illuminate\Support\Facades\DB;
 use App\Models\WebsitePage;
 use App\Models\Workspace;
 use Illuminate\Contracts\View\View;
@@ -162,7 +163,7 @@ class SeoAuditController extends CustomerBaseController
      * Nothing is written here: the owner edits and saves in the editor (the same authorized, locked draft update), then publishes themselves.
      *
      * @param  array<int, \App\Library\Seo\SeoAuditFindingView>  $findings
-     * @return array<int, array{url: string, label: string, draftFixed: bool}>  keyed by finding index
+     * @return array<int, array{url: string, label: string, draftFixed: bool, live: bool}>  keyed by finding index
      */
     private function draftFixes(Workspace $workspace, Business $business, string $workspaceUid, string $businessUid, array $findings): array
     {
@@ -185,6 +186,20 @@ class SeoAuditController extends CustomerBaseController
             ->whereIn('uid', array_unique($uids))
             ->get()->keyBy('uid');
 
+        // What the PUBLISHED revision now says for these pages: the only evidence that a fix is live. One read of the current published snapshot.
+        $published = [];
+        $revisionId = Website::query()->where('business_id', $business->id)->value('published_revision_id');
+
+        if ($revisionId !== null) {
+            $snapshot = DB::table('website_revisions')->where('id', $revisionId)->value('snapshot');
+
+            foreach ((json_decode((string) $snapshot, true)['pages'] ?? []) as $snapPage) {
+                if (isset($snapPage['uid'])) {
+                    $published[(string) $snapPage['uid']] = $snapPage;
+                }
+            }
+        }
+
         $fixes = [];
 
         foreach ($findings as $i => $finding) {
@@ -198,9 +213,14 @@ class SeoAuditController extends CustomerBaseController
             // Only a blank field is provably fixed by a non-blank draft value; a "too short" description is never claimed fixed.
             $fixed = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) $page->{$field}) !== '';
 
+            // live = the current published version has the value; drafted = only the draft has it; open = neither. A value that is merely
+            // saved or published is never described as improved rankings.
+            $live = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) ($published[$page->uid][$field] ?? '')) !== '';
+
             $fixes[$i] = [
+                'live' => $live,
                 'url' => route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid]) . '#' . $field,
-                'label' => $field === 'seo_title' ? 'Set the page title in your draft' : 'Write the description in your draft',
+                'label' => $field === 'seo_title' ? 'Set the page title in your draft' : 'Prepare fix',
                 'draftFixed' => $fixed,
             ];
         }
