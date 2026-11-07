@@ -52,8 +52,10 @@ class SeoMetaFixPublishFlowTest extends TestCase
     private function save($workspace, $business, $page, array $data)
     {
         return $this->put(route('customer.workspaces.businesses.website.pages.update', [$workspace->uid, $business->uid, $page->uid]), array_merge([
-            'title' => $page->title, 'slug' => $page->slug ?? '',
-            'draft_token' => $page->fresh()->updated_at->getTimestamp(),
+            'title' => $page->title, 'slug' => $page->slug ?? '', 'is_home' => $page->is_home ? '1' : '0',
+            'sections' => json_encode($page->sections ?? []), 'seo_title' => $page->seo_title ?? '',
+            'noindex' => $page->noindex ? '1' : '0',
+            'draft_token' => $page->fresh()->draftToken(),
         ], $data));
     }
 
@@ -132,10 +134,12 @@ class SeoMetaFixPublishFlowTest extends TestCase
 
         $before = $page->fresh()->only(['meta_description', 'seo_title']);
         // The owner dismisses the suggestion: no request is made. A stale editor then tries to save over newer work.
-        $stale = $page->fresh()->updated_at->getTimestamp() - 120;
+        $stale = $page->fresh()->draftToken();
+        \Illuminate\Support\Facades\DB::table('website_pages')->where('id', $page->id)->update(['meta_description' => 'Newer work from another editor.']);
         $this->save($workspace, $business, $page, ['meta_description' => 'Stale text.', 'draft_token' => $stale])->assertSessionHas('status', 'error');
 
-        $this->assertSame($before, $page->fresh()->only(['meta_description', 'seo_title']));
+        $this->assertSame('Newer work from another editor.', $page->fresh()->meta_description, 'Stale editor must preserve the newer draft.');
+        $this->assertSame($before['seo_title'], $page->fresh()->seo_title);
         $this->assertSame((int) $website->published_revision_id, (int) $website->fresh()->published_revision_id);
     }
 
