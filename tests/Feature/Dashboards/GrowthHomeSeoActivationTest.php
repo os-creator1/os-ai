@@ -142,7 +142,8 @@ class GrowthHomeSeoActivationTest extends TestCase
         $html = $this->html();
 
         $this->assertStringContainsString('Not known yet: how many visitors or enquiries Google sends you', $html);
-        $this->assertDoesNotMatchRegularExpression('/conversion rate of|\d+\s*%|lost (traffic|bookings|leads)|will (increase|bring)|projected|uplift/i', strip_tags($html));
+        $this->assertSame(1, preg_match('/<details[^>]*data-role="growth-evidence"[^>]*>(.*?)<\/details>/s', $html, $evidence), 'The assertion must inspect the move evidence, not unrelated scripts and styles on the full page.');
+        $this->assertDoesNotMatchRegularExpression('/conversion rate of|\d+\s*%|lost (traffic|bookings|leads)|will (increase|bring)|projected|uplift/i', strip_tags($evidence[1]));
     }
 
     public function test_core_evidence_carries_no_growth_unknown_line(): void
