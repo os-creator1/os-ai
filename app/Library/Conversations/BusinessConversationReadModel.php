@@ -218,10 +218,7 @@ final class BusinessConversationReadModel
         $graceCutoff = $now->subMinutes($this->graceMinutes());
         $scanFloor = $now->subDays($this->scanDays());
 
-        $latest = DB::table('chat_box_messages as m')
-            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
-            ->groupBy('m.box_id')
-            ->selectRaw('MAX(m.id) as last_message_id');
+        $latest = $this->latestEffectiveMessage($business, $scanFloor, $actorUserId);
 
         return (int) DB::table('chat_box_messages as last')
             ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
@@ -246,10 +243,7 @@ final class BusinessConversationReadModel
         $graceCutoff = $now->subMinutes($this->graceMinutes());
         $scanFloor = $now->subDays($this->scanDays());
 
-        $latest = DB::table('chat_box_messages as m')
-            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
-            ->groupBy('m.box_id')
-            ->selectRaw('MAX(m.id) as last_message_id');
+        $latest = $this->latestEffectiveMessage($business, $scanFloor, $actorUserId);
 
         return DB::table('chat_box_messages as last')
             ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
@@ -271,10 +265,7 @@ final class BusinessConversationReadModel
         $graceCutoff = $now->subMinutes($this->graceMinutes());
         $scanFloor = $now->subDays($this->scanDays());
 
-        $latest = DB::table('chat_box_messages as m')
-            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
-            ->groupBy('m.box_id')
-            ->selectRaw('MAX(m.id) as last_message_id');
+        $latest = $this->latestEffectiveMessage($business, $scanFloor, $actorUserId);
 
         $rows = DB::table('chat_box_messages as last')
             ->joinSub($latest, 'latest', 'latest.last_message_id', '=', 'last.id')
@@ -293,6 +284,27 @@ final class BusinessConversationReadModel
             'body' => (string) $r->body,
         ])->all();
     }
+
+    /**
+     * The per-conversation latest message that can decide "answered or waiting" — ONE definition for the waiting count, the inbox's
+     * waiting list and Home. A message whose send was explicitly recorded as failed (`send_status` failed / delivery_failed) is not a
+     * reply the customer received, so it is skipped: the conversation is judged by the message before it. Every other row — including
+     * the many legacy, quick-send, campaign and automation rows whose `send_status` is NULL — is judged exactly as before: no delivery
+     * outcome is invented for them. A failed attempt followed by a later successful (or unrecorded) reply makes that reply the latest.
+     */
+    private function latestEffectiveMessage(Business $business, CarbonInterface $scanFloor, ?int $actorUserId): \Illuminate\Database\Query\Builder
+    {
+        return DB::table('chat_box_messages as m')
+            ->whereIn('m.box_id', $this->conversationIds($business, $scanFloor, $actorUserId))
+            ->where(function ($query): void {
+                $query->whereNull('m.send_status')->orWhereNotIn('m.send_status', self::FAILED_SEND_STATUSES);
+            })
+            ->groupBy('m.box_id')
+            ->selectRaw('MAX(m.id) as last_message_id');
+    }
+
+    /** Explicitly recorded send failures (see the manual-send state migration). */
+    private const FAILED_SEND_STATUSES = ['failed', 'delivery_failed'];
 
     /**
      * This Business's conversation ids, as a SUBQUERY rather than a join.
