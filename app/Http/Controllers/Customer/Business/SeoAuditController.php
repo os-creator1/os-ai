@@ -344,17 +344,42 @@ class SeoAuditController extends CustomerBaseController
             ((int) $row->seo_audit_run_id === (int) $latest->id) ? $now[$key] = true : $before[$key] = $row;
         }
 
-        $resolved = [];
+        // A finding can disappear because its page was REMOVED. Only call it fixed when
+        // the current published snapshot still contains the same page and the field is nonblank.
+        // This replaces the old draft-page title lookup with one bounded revision read.
+        $raw = DB::table('website_revisions')
+            ->where('website_id', $latest->website_id)
+            ->where('id', $latest->website_revision_id)
+            ->value('snapshot');
+        $snapshot = json_decode((string) $raw, true);
+        $pages = [];
 
-        foreach ($before as $key => $row) {
-            if (! isset($now[$key])) {
-                $resolved[] = ['title' => 'A page', 'what' => $row->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'page title' : 'description', 'uid' => (string) $row->page_uid];
+        foreach (($snapshot['pages'] ?? []) as $snapPage) {
+            if (is_array($snapPage) && isset($snapPage['uid'])) {
+                $pages[(string) $snapPage['uid']] = $snapPage;
             }
         }
 
-        $titles = WebsitePage::query()->whereIn('uid', array_column($resolved, 'uid'))
-            ->whereIn('website_id', Website::query()->where('business_id', $business->id)->select('id'))->pluck('title', 'uid');
+        $resolved = [];
 
-        return array_map(fn (array $r): array => ['title' => (string) ($titles[$r['uid']] ?? 'A page'), 'what' => $r['what']], array_slice($resolved, 0, 5));
+        foreach ($before as $key => $row) {
+            $page = $pages[(string) $row->page_uid] ?? null;
+            $field = $row->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'seo_title' : 'meta_description';
+
+            if (isset($now[$key]) || $page === null || trim((string) ($page['seo'][$field] ?? '')) === '') {
+                continue;
+            }
+
+            $resolved[] = [
+                'title' => (string) ($page['title'] ?? 'A page'),
+                'what' => $field === 'seo_title' ? 'page title' : 'description',
+            ];
+
+            if (count($resolved) >= 5) {
+                break;
+            }
+        }
+
+        return $resolved;
     }
 }
