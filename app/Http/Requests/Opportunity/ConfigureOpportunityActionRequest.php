@@ -5,7 +5,7 @@ namespace App\Http\Requests\Opportunity;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
- * Validates only the single generic `value` parameter OpportunityManager::
+ * Validates only the single generic `value` parameter (the per-action length and format rules are the registry's, enforced again by OpportunityManager) OpportunityManager::
  * configureAction() accepts (RFC-002 §13.1, §28, §45) — every registry-owned
  * field (action_key, approval_required, completion_policy, schema_version,
  * recommended_action_hash) and every tenant/workflow field (business_id,
@@ -22,7 +22,7 @@ class ConfigureOpportunityActionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'value' => ['required', 'string', 'max:50'],
+            'value' => ['required', 'string', 'max:5000'],
         ];
     }
 }

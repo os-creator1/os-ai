@@ -60,24 +60,33 @@
                             <p class="text-muted small mb-2" data-role="optional-note">Optional improvement &mdash; this does not affect your CRM setup.</p>
                         @endif
 
+                        @if ($profileField !== null)
+                            <p class="mb-1" data-role="profile-current"><strong>On your profile now:</strong> {{ $profileField['current'] ?? 'Nothing yet' }}</p>
+                        @endif
+
                         @if ($configuredValue !== null)
-                            <p class="mb-1"><strong>Saved value:</strong> {{ $configuredValue }}</p>
+                            <p class="mb-1" data-role="profile-proposed"><strong>{{ $profileField !== null ? 'Proposed value' : 'Saved value' }}:</strong> {{ $configuredValue }}</p>
                         @endif
 
                         @if ($opportunity->status->value === 'open' && $canConfigureAction)
                             <form method="POST" action="{{ route('customer.opportunities.configure-action', $opportunity->id) }}" class="mb-2">
                                 @csrf
                                 <div class="d-flex flex-wrap gap-1 align-items-end">
-                                    <div style="max-width: 260px;">
-                                        <x-input
-                                            type="text"
-                                            name="value"
-                                            label="Phone number"
-                                            maxlength="50"
-                                            value="{{ old('value', $configuredValue) }}"
-                                        />
+                                    <div style="max-width: {{ ($profileField['multiline'] ?? false) ? '520px' : '260px' }};">
+                                        @if ($profileField['multiline'] ?? false)
+                                            <label class="form-label" for="opportunity-value">{{ $profileField['label'] }}</label>
+                                            <textarea class="form-control" rows="4" id="opportunity-value" name="value" maxlength="{{ $profileField['max'] }}">{{ old('value', $configuredValue) }}</textarea>
+                                        @else
+                                            <x-input
+                                                type="text"
+                                                name="value"
+                                                label="{{ $profileField['label'] ?? 'Value' }}"
+                                                maxlength="{{ $profileField['max'] ?? 50 }}"
+                                                value="{{ old('value', $configuredValue) }}"
+                                            />
+                                        @endif
                                     </div>
-                                    <x-button type="submit">Save phone number</x-button>
+                                    <x-button type="submit">Save {{ strtolower($profileField['label'] ?? 'value') }}</x-button>
                                 </div>
                             </form>
                         @endif
