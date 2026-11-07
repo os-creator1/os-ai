@@ -65,6 +65,7 @@ final class HomeCommandCenter
         private readonly HomeV2Facts $v2Facts,
         private readonly HomeBookingReader $bookingReader,
         private readonly HomeGoogleVisibility $googleVisibility,
+        private readonly \App\Library\Conversations\BusinessConversationReadModel $conversations,
     ) {
     }
 
@@ -119,7 +120,7 @@ final class HomeCommandCenter
             $primaryAttentionType = null;
         }
 
-        $primary = $this->withUnknowns($primary, $nbm, $growth, $context);
+        $primary = $this->withUnknowns($primary, $nbm, $growth, $context, $business, (int) $user->id);
 
         $queue = [];
 
@@ -739,7 +740,7 @@ final class HomeCommandCenter
      * @param  array<string, mixed>|null  $growth
      * @return array<string, mixed>|null
      */
-    private function withUnknowns(?array $primary, mixed $nbm, ?array $growth, CustomerContext $context): ?array
+    private function withUnknowns(?array $primary, mixed $nbm, ?array $growth, CustomerContext $context, Business $business, int $actorUserId): ?array
     {
         if ($primary === null || $context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
             return $primary;
@@ -760,11 +761,39 @@ final class HomeCommandCenter
             default => null,
         };
 
+        // Measured, not estimated: how long the oldest still-unanswered customer message has been waiting, by the inbox's own "waiting"
+        // definition and Location rule. No contact, number or message text is read into the summary. Typical reply speed over time is NOT
+        // measured (most outbound rows record no delivery state), so that stays unknown, as does any booking outcome.
+        if ($primary['key'] === AttentionType::ConversationsAwaitingReply->value) {
+            $waiting = $this->oldestWaiting($business, $actorUserId);
+            $unknown = 'Not known yet: how quickly you usually reply (there is no reliable reply history), and whether a reply leads to a booking.';
+
+            if ($waiting !== null) {
+                $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+                $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], [
+                    'The oldest message still waiting for a reply arrived ' . $waiting->setTimezone($timezone)->format('M j, g:i A') . ' (' . $waiting->diffForHumans(['parts' => 1]) . ').',
+                    'Next: open the waiting conversations and reply. Customers who hear back sooner are more likely to book.',
+                ]));
+            }
+        }
+
         if ($unknown !== null) {
             $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], [$unknown]));
         }
 
         return $primary;
+    }
+
+    /** When the oldest still-unanswered customer message arrived (the inbox's own waiting definition); null when none can be identified. */
+    private function oldestWaiting(Business $business, int $actorUserId): ?CarbonImmutable
+    {
+        try {
+            return $this->conversations->awaitingReplyConversations($business, $actorUserId, 1)[0]['at'] ?? null;
+        } catch (\Throwable $e) {
+            report($e);
+
+            return null;
+        }
     }
 
     /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
