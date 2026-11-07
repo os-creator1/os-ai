@@ -133,7 +133,9 @@ class WebsiteMetaDescriptionSuggestionTest extends TestCase
     private function save($workspace, $business, $page, array $data)
     {
         return $this->put(route('customer.workspaces.businesses.website.pages.update', [$workspace->uid, $business->uid, $page->uid]), array_merge([
-            'title' => $page->title, 'slug' => $page->slug ?? '', 'meta_description' => '',
+            'title' => $page->title, 'slug' => $page->slug ?? '', 'is_home' => $page->is_home ? '1' : '0',
+            'sections' => json_encode($page->sections ?? []), 'seo_title' => $page->seo_title ?? '',
+            'noindex' => $page->noindex ? '1' : '0', 'meta_description' => '',
         ], $data));
     }
 
@@ -144,7 +146,7 @@ class WebsiteMetaDescriptionSuggestionTest extends TestCase
         $this->ai(json_encode(['description' => self::GOOD]));
 
         $proposed = $this->suggest($workspace, $business, $page)->assertOk()->json('description');
-        $this->save($workspace, $business, $page, ['meta_description' => $proposed, 'draft_token' => $page->fresh()->draftToken()]);
+        $this->save($workspace, $business, $page, ['meta_description' => $proposed, 'draft_token' => $page->fresh()->draftToken()])->assertSessionHas('status', 'success');
 
         $this->assertSame(self::GOOD, $page->fresh()->meta_description);
         $this->assertNull($page->website->fresh()->published_revision_id, 'Saving is not publishing.');
