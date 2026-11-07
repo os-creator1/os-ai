@@ -23,6 +23,11 @@ class GrowthHomeLeadResponseTest extends TestCase
         config(['opportunity.enabled' => true]);
     }
 
+    private function minutesAgo(int $minutes): string
+    {
+        return now()->subMinutes($minutes)->format('Y-m-d H:i:s');
+    }
+
     private function evidence(): string
     {
         $html = $this->home()->assertOk()->getContent();
