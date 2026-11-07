@@ -237,9 +237,9 @@ class SeoAuditController extends CustomerBaseController
      *
      * @return array<int, array{title: string, what: string}>
      */
-    private function publishedPendingFreshAudit(Business $business, \\App\\Library\\Seo\\SeoAuditPage $auditPage): array
+    private function publishedPendingFreshAudit(Business $business, \App\Library\Seo\SeoAuditPage $auditPage): array
     {
-        if ($auditPage->state() !== \\App\\Library\\Seo\\SeoAuditPage::STATE_NOT_CHECKED) {
+        if ($auditPage->state() !== \App\Library\Seo\SeoAuditPage::STATE_NOT_CHECKED) {
             return [];
         }
 
@@ -250,7 +250,7 @@ class SeoAuditController extends CustomerBaseController
         }
 
         $prior = collect($auditPage->history)->first(
-            fn ($run) => $run->status === \\App\\Enums\\Seo\\SeoAuditRunStatus::Completed
+            fn ($run) => $run->status === \App\Enums\Seo\SeoAuditRunStatus::Completed
                 && (int) $run->rule_set_version === SeoAuditRuleRegistry::VERSION
                 && (int) $run->website_revision_id !== (int) $website->published_revision_id
         );
