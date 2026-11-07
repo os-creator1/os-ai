@@ -1211,7 +1211,7 @@ final class BusinessHomePresenter
     {
         $items = [];
 
-        foreach ($this->recentWorkReader->recent($business) as $item) {
+        foreach ($this->recentWorkReader->recent($business, RecentWorkReader::PER_SOURCE_LIMIT, (int) $user->id) as $item) {
             $items[] = [
                 'key' => $item->key,
                 'text' => $item->text,
