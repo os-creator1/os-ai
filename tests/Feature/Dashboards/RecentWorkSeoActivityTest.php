@@ -146,31 +146,34 @@ class RecentWorkSeoActivityTest extends TestCase
     public function test_another_business_never_contributes(): void
     {
         [$owner, $business] = $this->rankTenant();
-        [$owner2, $other] = $this->rankTenant();
+        [$owner2, $other] = $this->rankTenant(domain: 'other-photobooth.example');
         $this->obs($this->track($owner2, $other, $this->keyword($owner2, $other)), 'organic', 3, now()->subHour());
         $this->article($other);
         DB::table('external_site_crawls')->insert(['uid' => (string) Str::uuid(), 'business_id' => $other->id, 'start_url' => 'https://o.example/', 'host' => 'o.example', 'status' => 'completed', 'critical_count' => 0, 'warning_count' => 0, 'info_count' => 0, 'finished_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
 
-        $this->assertSame([], $this->items($business));
-        $this->assertNotSame([], $this->items($other));
+        // rankTenant creates a website revision. Only the new SEO sources are expected to be empty here.
+        $seo = fn (Business $b): array => array_values(array_filter($this->items($b), fn ($i) => in_array($i->key, ['rank_check_scheduled', 'rank_check_manual', 'article_published', 'external_audit_completed'], true)));
+        $this->assertSame([], $seo($business));
+        $this->assertCount(3, $seo($other));
     }
 
     public function test_location_bound_rank_checks_and_articles_follow_the_actors_reach(): void
     {
         [$owner, $business] = $this->rankTenant();
-        $location = (int) DB::table('business_locations')->where('business_id', $business->id)->value('id');
+        $location = (int) \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'North site', 'service_mode' => 'storefront', 'country_code' => 'US'])->id;
         $keyword = $this->keyword($owner, $business, 'north site phrase');
         $target = $this->track($owner, $business, $keyword);
         DB::table('seo_keywords')->where('id', $keyword->id)->update(['business_location_id' => $location]);
         $this->obs($target, 'organic', 4, now()->subHour());
         $this->article($business, ['business_location_id' => $location]);
 
+        $seo = fn (?int $actor = null): array => array_values(array_filter($this->items($business, $actor), fn ($i) => in_array($i->key, ['rank_check_scheduled', 'rank_check_manual', 'article_published'], true)));
         $this->mock(LocationAccessGuard::class, fn ($m) => $m->shouldReceive('accessibleLocationIdsForBusiness')->andReturn([]));
-        $this->assertSame([], $this->items($business, (int) $owner->user_id), 'No reach: neither the rank check nor the article.');
-        $this->assertCount(2, $this->items($business), 'Business-wide readers (no actor) are unchanged.');
+        $this->assertSame([], $seo((int) $owner->user_id), 'No reach: neither the rank check nor the article.');
+        $this->assertCount(2, $seo(), 'Business-wide readers (no actor) are unchanged.');
 
         $this->mock(LocationAccessGuard::class, fn ($m) => $m->shouldReceive('accessibleLocationIdsForBusiness')->andReturn([$location]));
-        $this->assertCount(2, $this->items($business, (int) $owner->user_id), 'With reach, both are shown.');
+        $this->assertCount(2, $seo((int) $owner->user_id), 'With reach, both are shown.');
     }
 
     public function test_reading_activity_never_calls_a_provider_or_queues_work(): void

@@ -256,7 +256,7 @@ class BusinessHomeRecentWorkTest extends TestCase
 
     public function test_the_band_renders_after_automations_in_the_locked_order(): void
     {
-        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Order Venue', 'Order Account');
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Order Venue', 'Order Account');
         $this->website($business, 'published');
         $this->websiteRevision($business, 1, $this->hoursAgo(2));
         $this->automationRuns($business, 2, '2026-09-02', 'succeeded');
@@ -296,24 +296,22 @@ class BusinessHomeRecentWorkTest extends TestCase
 
         // With the permissions, both are links.
         $this->authenticateAs($customer);
-        $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'handling');
+        $band = $this->growthActivityHtml($this->home()->assertOk()->getContent());
 
-        $this->assertSame(2, substr_count($band, 'data-role="recent-work-link"'));
-        $this->assertStringNotContainsString('data-role="recent-work-text"', $band);
+        $this->assertSame(2, preg_match_all('/<li data-role="activity-item"[^>]*>\s*<a href="/', $band), 'Both verified activities have authorized links.');
 
         // Without them, the same two facts still render — as text.
         $this->authenticateAs($customer, array_values(array_diff($this->allCustomerPermissions(), ['website', 'view_google_business_profile'])));
-        $band = $this->bandHtml($this->home()->assertOk()->getContent(), 'handling');
+        $band = $this->growthActivityHtml($this->home()->assertOk()->getContent());
 
-        $this->assertStringContainsString('Your website is published on the MotionGrove preview', $band, 'The event happened either way (many versions are one concise outcome on Home).');
+        $this->assertStringContainsString('Website version 3 published', $band, 'Publication remains visible as recorded work.');
         $this->assertStringContainsString('Google connected', $band);
-        $this->assertSame(2, substr_count($band, 'data-role="recent-work-text"'));
-        $this->assertStringNotContainsString('data-role="recent-work-link"', $band);
+        $this->assertSame(0, preg_match_all('/<li data-role="activity-item"[^>]*>\s*<a href="/', $band), 'Both facts remain plain text when links are forbidden.');
     }
 
     public function test_see_activity_opens_this_businesss_website_and_the_status_wording_is_truthful(): void
     {
-        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Status Venue', 'Status Account');
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Status Venue', 'Status Account');
         $this->website($business, 'published');
         $site = \Illuminate\Support\Facades\DB::table('websites')->where('business_id', $business->id)->first();
         $this->websiteRevision($business, 1, $this->hoursAgo(1));
@@ -384,9 +382,9 @@ class BusinessHomeRecentWorkTest extends TestCase
         $this->websiteRevision($business, 1, $this->hoursAgo(2));
         $this->authenticateAs($customer);
 
-        $band = $this->bandText($this->home()->assertOk()->getContent(), 'handling');
+        $band = $this->growthActivityHtml($this->home()->assertOk()->getContent());
 
-        $this->assertStringContainsString('Your website is published on the MotionGrove preview', $band);
+        $this->assertStringContainsString('Website version 1 published', $band);
         $this->assertDoesNotMatchRegularExpression('/\b(balance|payment|invoice|top.?up|prospect|campaign|outreach)\b/i', $band);
     }
 
@@ -519,6 +517,13 @@ class BusinessHomeRecentWorkTest extends TestCase
     }
 
     /** @return array<int, string> */
+    private function growthActivityHtml(string $html): string
+    {
+        preg_match('/<section[^>]*data-role="growth-activity"[^>]*>.*?<\/section>/s', $html, $match);
+
+        return $match[0] ?? '';
+    }
+
     private function bandOrder(string $html): array
     {
         preg_match_all('/data-band="([a-z_]+)"/', $this->mainHtml($html), $matches);
