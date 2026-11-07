@@ -63,6 +63,7 @@ class SeoAuditController extends CustomerBaseController
 
         return view('customer.business.seo.audit', [
             'resolved' => $this->resolvedByFreshAudit($business, $auditPage),
+            'auditRunUid' => $auditPage->latestRun?->uid,
             'publishedPending' => $this->publishedPendingFreshAudit($business, $auditPage),
             'draftFixes' => $this->draftFixes($workspace, $business, $workspaceUid, $businessUid, $auditPage->findings),
             'workspaceUid' => $workspaceUid,
@@ -165,7 +166,7 @@ class SeoAuditController extends CustomerBaseController
      * Nothing is written here: the owner edits and saves in the editor (the same authorized, locked draft update), then publishes themselves.
      *
      * @param  array<int, \App\Library\Seo\SeoAuditFindingView>  $findings
-     * @return array<int, array{url: string, label: string, draftFixed: bool, live: bool}>  keyed by finding index
+     * @return array<int, array{url: string, label: string, draftFixed: bool, live: bool, proposal: ?string, pageUid: string, pageTitle: string, draftToken: ?int}>  keyed by finding index
      */
     private function draftFixes(Workspace $workspace, Business $business, string $workspaceUid, string $businessUid, array $findings): array
     {
@@ -219,7 +220,16 @@ class SeoAuditController extends CustomerBaseController
             // saved or published is never described as improved rankings.
             $live = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) ($published[$page->uid]['seo'][$field] ?? '')) !== '';
 
+            // A blank title also gets a deterministic proposal the owner can edit and approve right here (nothing is generated or saved).
+            $proposal = $finding->ruleKey === SeoAuditRuleRegistry::SEO_TITLE_BLANK && ! $fixed && ! $live
+                ? \App\Library\Seo\SeoTitleProposal::for((string) $page->title, (string) $business->name, (bool) $page->is_home, $this->config->auditSeoTitleMaxRecommended())
+                : null;
+
             $fixes[$i] = [
+                'proposal' => $proposal,
+                'pageUid' => $page->uid,
+                'pageTitle' => (string) $page->title,
+                'draftToken' => $page->updated_at?->getTimestamp(),
                 'live' => $live,
                 'url' => route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid]) . '#' . $field,
                 'label' => $field === 'seo_title' ? 'Set the page title in your draft' : 'Prepare fix',
@@ -301,6 +311,92 @@ class SeoAuditController extends CustomerBaseController
         }
 
         return $result;
+    }
+
+    /**
+     * The customer's explicit approval of a proposed SEO title for ONE page whose blank title the latest completed audit reported.
+     * It saves exactly the approved text to that page's Website DRAFT through the canonical draft-page service, under the Website lock,
+     * and nothing else: it never publishes, never overwrites an existing title, and is a no-op when repeated. Rejected when the audit
+     * evidence is gone or has moved on, the page is not this Business's, or the draft changed since the proposal was shown.
+     */
+    public function applyTitle(\Illuminate\Http\Request $request, string $workspaceUid, string $businessUid, string $pageUid): RedirectResponse
+    {
+        [$workspace, $business] = $this->resolveAuditTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('view_seo');
+        $this->authorize('website');
+
+        $back = redirect()->route('customer.workspaces.businesses.seo.audit.index', [$workspaceUid, $businessUid]);
+        $refuse = fn (string $message): RedirectResponse => $back->with(['status' => 'error', 'message' => $message]);
+
+        if (! app(EntitlementManager::class)->decide($workspace, $business, PlatformFeature::WebsiteGeneration->value, (int) Auth::id())->allowed) {
+            abort(404);
+        }
+
+        $data = $request->validate([
+            'seo_title' => ['required', 'string', 'max:70'],
+            'audit_run' => ['required', 'string'],
+            'draft_token' => ['required', 'string'],
+        ]);
+        $title = trim($data['seo_title']);
+
+        if ($title === '') {
+            return $refuse('Enter a page title to save.');
+        }
+
+        // Evidence: the latest COMPLETED audit must still report a blank title for this page, and must be the audit the proposal was shown for.
+        $auditPage = $this->reader->read($business);
+        $run = $auditPage->latestRun;
+        $reported = $run !== null && $run->status === \App\Enums\Seo\SeoAuditRunStatus::Completed && $run->uid === $data['audit_run']
+            && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && $f->ruleKey === SeoAuditRuleRegistry::SEO_TITLE_BLANK);
+
+        if (! $reported) {
+            return $refuse('That finding is no longer in your latest audit, so nothing was saved. Review the audit and try again.');
+        }
+
+        $website = Website::query()->where('business_id', $business->id)->firstOrFail();
+        $page = WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->firstOrFail();
+
+        try {
+            $outcome = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class)->runExclusive($website, function () use ($website, $pageUid, $title, $data) {
+                $locked = WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->first();
+
+                if ($locked === null) {
+                    return 'gone';
+                }
+
+                if (trim((string) $locked->seo_title) !== '') {
+                    return trim((string) $locked->seo_title) === $title ? 'already' : 'has_title';
+                }
+
+                if ((string) $locked->updated_at?->getTimestamp() !== $data['draft_token']) {
+                    return 'stale';
+                }
+
+                app(\App\Library\Website\WebsiteDraftPageService::class)->updatePage($website, $locked, [
+                    'title' => $locked->title,
+                    'slug' => $locked->slug,
+                    'is_home' => (bool) $locked->is_home,
+                    'sections' => $locked->sections ?? [],
+                    'seo_title' => $title,
+                    'meta_description' => $locked->meta_description,
+                    'noindex' => (bool) $locked->noindex,
+                    'noindex_explicit' => (bool) $locked->noindex_explicit,
+                ]);
+
+                return 'saved';
+            });
+        } catch (\App\Library\Website\Setup\Exceptions\GenerationInProgressException $e) {
+            return $refuse($e->getMessage());
+        }
+
+        return match ($outcome) {
+            'saved' => $back->with(['status' => 'success', 'message' => 'Title saved to your draft. It is not live until you publish your website.']),
+            'already' => $back->with(['status' => 'success', 'message' => 'That title is already in your draft. Nothing changed. Publish your website to make it live.']),
+            'has_title' => $refuse('This page already has a title in your draft, so nothing was overwritten.'),
+            'stale' => $refuse('This page changed after the proposal was shown, so nothing was saved. Review it and try again.'),
+            default => $refuse('That page no longer exists, so nothing was saved.'),
+        };
     }
 
     /**
