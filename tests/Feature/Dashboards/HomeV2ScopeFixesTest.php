@@ -57,7 +57,7 @@ class HomeV2ScopeFixesTest extends TestCase
 
     public function test_new_contacts_and_conversations_count_only_the_locations_the_actor_may_reach(): void
     {
-        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Two Site', 'Two Site Account');
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Two Site', 'Two Site Account');
         $first = BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
         $second = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Hidden site', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $thisPeriod = '2026-09-03 12:00:00';
@@ -145,7 +145,7 @@ class HomeV2ScopeFixesTest extends TestCase
 
     public function test_the_chart_is_withheld_from_a_location_restricted_actor_and_kept_for_full_access(): void
     {
-        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Chart Scope', 'Chart Scope Account');
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Chart Scope', 'Chart Scope Account');
         $first = BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
         $second = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Hidden site', 'service_mode' => 'storefront', 'country_code' => 'US']);
         for ($i = 0; $i < 3; $i++) {

@@ -85,11 +85,11 @@ class HomeGoogleVisibilityTest extends TestCase
         $this->assertSame('mixed', $this->summary($business, $owner)['state'], 'One up and one down is mixed movement, never stable.');
         $this->assertSame('Mixed movement', $this->summary($business, $owner)['label']);
 
-        [$o2, $b2] = $this->rankTenant();
+        [$o2, $b2] = $this->rankTenant(domain: 'photobooth-flat.example');
         $this->pair($o2, $b2, 'flat', 'local', 8, 8);
         $this->assertSame('stable', $this->summary($b2, $o2)['state']);
 
-        [$o3, $b3] = $this->rankTenant();
+        [$o3, $b3] = $this->rankTenant(domain: 'photobooth-down.example');
         $this->pair($o3, $b3, 'down', 'local', 3, 9);
         $this->assertSame('declining', $this->summary($b3, $o3)['state']);
     }
