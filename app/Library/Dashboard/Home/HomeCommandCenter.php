@@ -120,7 +120,7 @@ final class HomeCommandCenter
             $primaryAttentionType = null;
         }
 
-        $primary = $this->withUnknowns($primary, $nbm, $growth, $context, $business, (int) $user->id);
+        $primary = $this->withUnknowns($primary, $nbm, $growth, $context, $business, (int) $user->id, $booking);
 
         $queue = [];
 
@@ -740,7 +740,7 @@ final class HomeCommandCenter
      * @param  array<string, mixed>|null  $growth
      * @return array<string, mixed>|null
      */
-    private function withUnknowns(?array $primary, mixed $nbm, ?array $growth, CustomerContext $context, Business $business, int $actorUserId): ?array
+    private function withUnknowns(?array $primary, mixed $nbm, ?array $growth, CustomerContext $context, Business $business, int $actorUserId, ?array $booking = null): ?array
     {
         if ($primary === null || $context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
             return $primary;
@@ -756,6 +756,7 @@ final class HomeCommandCenter
         $unknown = match (true) {
             $primary['key'] === AttentionType::ConversationsAwaitingReply->value,
             $category === \App\Enums\Growth\GrowthCategory::LeadResponse => 'Not known yet: how quickly customers are usually answered, and whether a reply leads to a booking.',
+            $category === \App\Enums\Growth\GrowthCategory::Bookings => 'Not known yet: which of your new contacts went on to book. Bookings are saved against contacts, but new contacts also include imports and manual entries and are counted separately, so no conversion rate is claimed.',
             in_array($category, [\App\Enums\Growth\GrowthCategory::Bookings, \App\Enums\Growth\GrowthCategory::Forms, \App\Enums\Growth\GrowthCategory::Website], true) => 'Not known yet: how many enquiries or bookings this is costing you. New contacts and bookings are counted separately, so no conversion rate is claimed.',
             in_array($category, [\App\Enums\Growth\GrowthCategory::Seo, \App\Enums\Growth\GrowthCategory::LocalPresence], true) => 'Not known yet: how many visitors or enquiries Google sends you. Search traffic is not measured here.',
             default => null,
@@ -775,6 +776,25 @@ final class HomeCommandCenter
                     'Next: review the conversations currently marked waiting and reply where needed.',
                 ]));
             }
+        }
+
+        // Booking readiness, from facts the Home already read for this actor's Locations (no extra query).
+        if ($category === \App\Enums\Growth\GrowthCategory::Bookings && $booking !== null) {
+            $active = (int) $booking['activeTypeCount'];
+            $ready = (int) $booking['readyCount'];
+            $lines = [];
+
+            if ($active === 0) {
+                $lines[] = 'No booking type is active for the Locations you can see, so customers cannot book online.';
+            } else {
+                $lines[] = $ready . ' of ' . (int) $booking['evaluated'] . ' active booking ' . ((int) $booking['evaluated'] === 1 ? 'type is' : 'types are') . ' ready to take bookings.';
+
+                if (($booking['problems'] ?? []) !== []) {
+                    $lines[] = 'Next: finish setting up "' . $booking['problems'][0]['name'] . '" - ' . $booking['problems'][0]['reason'];
+                }
+            }
+
+            $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], $lines));
         }
 
         if ($unknown !== null) {
