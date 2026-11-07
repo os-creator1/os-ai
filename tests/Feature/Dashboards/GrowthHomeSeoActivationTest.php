@@ -130,7 +130,7 @@ class GrowthHomeSeoActivationTest extends TestCase
 
         $this->assertStringNotContainsString('seo_keyword_activation', $html);
         $this->assertStringContainsString('A booking type is not ready', $html);
-        $this->assertStringContainsString('Not known yet: how many enquiries or bookings this is costing you', $html);
+        $this->assertStringContainsString('Not known yet: which of your new contacts went on to book', $html);
     }
 
     public function test_the_explanation_states_what_is_unknown_and_never_invents_a_conversion_diagnosis(): void
